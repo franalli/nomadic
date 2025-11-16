@@ -1,9 +1,12 @@
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
 
+import app.db_models as db_models
+from app.db import get_db
 from app.tile_service import search_tiles
 
 from .config import settings
@@ -41,3 +44,16 @@ def health():
 @app.post("/v1/tiles/search", response_model=TilesSearchResponse)
 def tiles_search(req: TilesSearchRequest):
     return search_tiles(req)
+
+
+db_dependency = Depends(get_db)
+
+
+@app.get("/debug/db-ping")
+def db_ping(db: Session = db_dependency):
+    # simple insert + count
+    user = db_models.User()
+    db.add(user)
+    db.commit()
+    count = db.query(db_models.User).count()
+    return {"users_count": count}
