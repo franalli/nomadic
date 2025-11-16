@@ -1,0 +1,21 @@
+# Node
+frontend/node_modules
+frontend/.next
+frontend/.turbo
+
+# Python
+backend/__pycache__
+backend/.venv
+
+# OS
+.DS_Store
+
+# Docker
+db-data
+
+# Environment variables
+frontend/.env.local
+backend/.env.
+
+# Virtual environments
+backend/.venv/

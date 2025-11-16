@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Base */
+  --background: 0 0% 99%;
+  --foreground: 222 47% 11%;
+
+  /* Primary (cyan) */
+  --primary: 188 80% 31%;
+  --primary-foreground: 210 40% 98%;
+
+  /* Secondary */
+  --secondary: 186 94% 53%;
+  --secondary-foreground: 210 40% 98%;
+
+  /* Accent (amber) */
+  --accent: 42 100% 61%;
+  --accent-foreground: 222 47% 11%;
+
+  /* Border & muted */
+  --border: 214 32% 91%;
+  --muted: 215 20% 65%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-800 font-sans;
+}
