@@ -1,0 +1,47 @@
+{
+  "editor.formatOnSave": true,
+
+  // Prettier for JS/TS (frontend)
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[javascriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+
+  // Use Black for Python formatting
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+
+  // Ensure the old formatter pipeline is off
+  "python.formatting.provider": "none",
+
+  // Ruff extension handles linting & code
+  "ruff.enable": true,
+  "ruff.path": ["ruff"],   // Use Ruff from the environment
+  "ruff.organizeImports": false, // Ruff already fixes imports via pre-commit; keep off if you prefer
+  "ruff.importStrategy": "fromEnvironment",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.ruff": "explicit"  // Run Ruff quick-fixes explicitly on save if you want
+  },
+
+  // Tailwind support
+  "tailwindCSS.includeLanguages": {
+    "typescript": "html",
+    "typescriptreact": "html"
+  },
+
+  // Show lint markers (Ruff, ESLint)
+  "python.linting.enabled": false,
+
+  // Optional: Auto organize imports for TS/TSX
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.updateImportsOnFileMove.enabled": "always"
+}

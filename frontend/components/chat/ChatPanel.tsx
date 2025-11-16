@@ -1,8 +1,10 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { TileCard } from "@/components/tiles/TileCard";
+import { useState } from 'react';
+
+import { TileCard } from '@/components/tiles/TileCard';
+import { Button } from '@/components/ui/button';
+import { apiFetch } from '@/lib/api';
 
 type Tile = {
   id: string;
@@ -18,8 +20,8 @@ type Tile = {
 };
 
 export function ChatPanel() {
-  const [origin, setOrigin] = useState("AMS");
-  const [destination, setDestination] = useState("LIS");
+  const [origin, setOrigin] = useState('AMS');
+  const [destination, setDestination] = useState('LIS');
   const [tiles, setTiles] = useState<Tile[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,29 +29,22 @@ export function ChatPanel() {
   async function handleSearch() {
     setLoading(true);
     setError(null);
+
     try {
-      const res = await fetch(
-        process.env.NEXT_PUBLIC_API_URL
-          ? `${process.env.NEXT_PUBLIC_API_URL}/v1/tiles/search`
-          : "http://localhost:8000/v1/tiles/search",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            origin,
-            destination,
-            verticals: ["hotel"],
-            max_results_per_vertical: 4
-          })
-        }
-      );
-      if (!res.ok) {
-        throw new Error(`Backend error: ${res.status}`);
-      }
-      const data = await res.json();
-      setTiles(data.tiles || []);
-    } catch (e: any) {
-      setError(e.message ?? "Error contacting backend");
+      const data = await apiFetch('/v1/tiles/search', {
+        method: 'POST',
+        body: JSON.stringify({
+          origin,
+          destination,
+          verticals: ['hotel'],
+          max_results_per_vertical: 4,
+        }),
+      });
+
+      setTiles((data.tiles ?? []) as Tile[]);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Error contacting backend';
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -59,19 +54,19 @@ export function ChatPanel() {
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex gap-2">
         <input
-          className="flex-1 rounded-md border border-border px-3 py-2 text-sm"
+          className="border-border flex-1 rounded-md border px-3 py-2 text-sm"
           placeholder="Origin (e.g. AMS)"
           value={origin}
           onChange={(e) => setOrigin(e.target.value.toUpperCase())}
         />
         <input
-          className="flex-1 rounded-md border border-border px-3 py-2 text-sm"
+          className="border-border flex-1 rounded-md border px-3 py-2 text-sm"
           placeholder="Destination (e.g. LIS)"
           value={destination}
           onChange={(e) => setDestination(e.target.value.toUpperCase())}
         />
         <Button onClick={handleSearch} disabled={loading}>
-          {loading ? "Searching..." : "Search"}
+          {loading ? 'Searching...' : 'Search'}
         </Button>
       </div>
 

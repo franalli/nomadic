@@ -25,5 +25,5 @@
 }
 
 body {
-  @apply bg-slate-50 text-slate-800 font-sans;
+  @apply bg-slate-50 font-sans text-slate-800;
 }

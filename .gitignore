@@ -16,6 +16,10 @@ db-data
 # Environment variables
 frontend/.env.local
 backend/.env.
+backend/.env.docker
 
 # Virtual environments
 backend/.venv/
+
+# Ruff
+**/.ruff_cache/

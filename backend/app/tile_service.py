@@ -1,6 +1,7 @@
 import uuid
 from typing import List
-from .schemas import TilesSearchRequest, TilesSearchResponse, Tile, Geo
+
+from .schemas import Geo, Tile, TilesSearchRequest, TilesSearchResponse
 
 
 def _mock_hotel_tile(dest: str, idx: int) -> Tile:

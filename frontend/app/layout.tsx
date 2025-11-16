@@ -1,11 +1,11 @@
-import "./globals.css";
-import type { ReactNode } from "react";
+import './globals.css';
+
+import type { ReactNode } from 'react';
 
 export const metadata = {
-  title: "Nomadic – Interactive Travel Planner",
-  description: "Explore trips visually and book seamlessly with Nomadic"
+  title: 'Nomadic – Interactive Travel Planner',
+  description: 'Explore trips visually and book seamlessly with Nomadic',
 };
-
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

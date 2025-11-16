@@ -1,0 +1,14 @@
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+include = "app/"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+select = ["E", "F", "I", "B"]  # Errors, flake8, imports, bugbear
+ignore = []
+exclude = ["alembic"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
