@@ -68,3 +68,11 @@ class TilesSearchResponse(BaseModel):
     request_id: str
     tiles: List[Tile]
     summary: dict
+
+
+class TileClickEvent(BaseModel):
+    request_id: Optional[str] = None
+    tile_id: str  # the tile identifier coming from the UI
+    user_id: Optional[str] = None  # optional, for later
+    branch_id: Optional[int] = None  # can be None if not using branches yet
+    session_id: Optional[str] = None  # your frontend-generated session id

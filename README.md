@@ -11,7 +11,8 @@
 ## Local dev
 
 ```bash
-docker compose up --build  # backend + Postgres on :8000 and :5432
+docker compose up db --build #postgres only
+docker compose --profile backend up --build db backend # backend + Postgres on :8000 and :5432
 uvicorn app.main:app --reload # run fastAPI locally (without Docker)
 
 cd frontend

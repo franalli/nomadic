@@ -11,7 +11,7 @@ services:
       - db-data:/var/lib/postgresql/data
 
   backend:
-    profiles: ["backend"] # Enable with: docker compose --profile backend up --build
+    profiles: ["backend"] # Enable with: docker compose --profile backend up --build backend
     build: ./backend
     env_file:
       - backend/.env.docker
@@ -22,3 +22,6 @@ services:
 
 volumes:
   db-data:
+
+# postgres only: docker compose up db --build
+# backend and postgres: docker compose --profile backend up --build db backend

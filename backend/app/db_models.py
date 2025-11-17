@@ -145,10 +145,17 @@ class TileClick(Base, TimestampMixin):
     __tablename__ = "tile_clicks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    tile_id: Mapped[int] = mapped_column(ForeignKey("tiles.id"))
-    branch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("branches.id"))
-    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sessions.id"))
 
-    request_id: Mapped[Optional[str]] = mapped_column(String(64))
+    # make nullable=True so you can log clicks even before tiles are in the DB
+    tile_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("tiles.id"), nullable=True
+    )
+    tile_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    branch_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("branches.id"), nullable=True
+    )
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    tile: Mapped[Tile] = relationship("Tile", back_populates="clicks")
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+    tile: Mapped[Optional["Tile"]] = relationship("Tile", back_populates="clicks")

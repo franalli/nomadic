@@ -1,0 +1,80 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Docker: Compose DB",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; docker compose up db --build"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/backend",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "Backend: Uvicorn",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; uvicorn app.main:app --reload"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/backend",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "isBackground": true,
+            "problemMatcher": []
+        },
+        {
+            "label": "Frontend: Next Dev",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; npm run dev"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}/frontend",
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            },
+            "isBackground": true,
+            "problemMatcher": []
+        }
+    ]
+}

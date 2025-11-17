@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
+import { apiFetch } from '@/lib/api';
 
 type TileCardProps = {
   tile: {
@@ -17,11 +18,37 @@ type TileCardProps = {
 };
 
 export function TileCard({ tile }: TileCardProps) {
+  const handleClick = () => {
+    // 1. Ensure we have a stable session_id
+    let sessionId = localStorage.getItem('session_id');
+    if (!sessionId) {
+      sessionId = crypto.randomUUID();
+      localStorage.setItem('session_id', sessionId);
+    }
+
+    // 2. Fire-and-forget click tracking
+    apiFetch('/v1/tiles/click', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        request_id: null,
+        tile_id: tile.id,
+        branch_id: null,
+        session_id: sessionId,
+        user_id: null,
+      }),
+    }).catch(() => {});
+
+    // 3. Open partner deeplink immediately
+    window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <Card className="flex flex-col overflow-hidden">
       {tile.image_url && (
         <img src={tile.image_url} alt={tile.title} className="h-32 w-full object-cover" />
       )}
+
       <CardBody className="flex flex-1 flex-col gap-1">
         <div className="text-sm font-semibold">{tile.title}</div>
         {tile.subtitle && <div className="text-xs text-slate-500">{tile.subtitle}</div>}
@@ -33,17 +60,15 @@ export function TileCard({ tile }: TileCardProps) {
             Rating: {tile.rating.toFixed(1)}
           </div>
         )}
+
         <div className="mt-auto flex items-center justify-between pt-2">
           <div className="text-sm font-semibold">
             {tile.price_estimate != null
               ? `${tile.price_estimate} ${tile.currency}`
               : 'See price on partner'}
           </div>
-          <Button
-            variant="outline"
-            className="text-xs"
-            onClick={() => window.open(tile.deeplink_url, '_blank')}
-          >
+
+          <Button variant="outline" className="text-xs" onClick={handleClick}>
             View
           </Button>
         </div>
