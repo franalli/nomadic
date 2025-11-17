@@ -1,18 +1,29 @@
 import os
 import sys
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 import app.db_models as db_models
 import app.schemas as schemas
 from app.config import settings
+from app.crud_trip import get_or_create_session, snapshot_tiles_for_branch
 from app.db import get_db
-from app.plan import PlanRequest, PlanResponse, plan_trip
-from app.schemas import TilesSearchRequest, TilesSearchResponse
+from app.plan import plan_trip
+from app.schemas import (
+    PlanBranch,
+    PlanRequest,
+    PlanResponse,
+    SessionStateResponse,
+    SessionTripContext,
+    Tile,
+    TilesSearchRequest,
+    TilesSearchResponse,
+)
 from app.tile_service.service import search_tiles
 
 APP_DIR = Path(__file__).resolve().parent
@@ -45,6 +56,33 @@ app.add_middleware(
 )
 
 
+def _tile_from_model(tile: db_models.Tile) -> Tile:
+    return Tile(
+        id=str(tile.id),
+        type=tile.type or "hotel",
+        partner=tile.partner or "nomadic",
+        partner_product_id=tile.partner_product_id or str(tile.id),
+        title=tile.title,
+        subtitle=tile.subtitle,
+        image_url=tile.image_url,
+        price_estimate=tile.price_estimate,
+        live_price=None,
+        currency=tile.currency or "EUR",
+        price_basis=tile.price_basis or "per_trip",
+        is_estimate_only=tile.is_estimate_only,
+        deeplink_url=tile.deeplink_url or "",
+        rating=tile.rating,
+        review_count=tile.review_count,
+        location_label=tile.location_label,
+        geo=None,
+        tags=tile.tags or [],
+        availability_status="unknown",
+        meta=tile.meta or {},
+        score=None,
+        source=None,
+    )
+
+
 @app.get("/health")
 def health():
     return {
@@ -54,8 +92,43 @@ def health():
 
 
 @app.post("/v1/tiles/search", response_model=TilesSearchResponse)
-def tiles_search(req: TilesSearchRequest):
-    return search_tiles(req)
+def tiles_search(req: TilesSearchRequest, db: Session = db_dependency):
+    session = None
+    did_mutate = False
+
+    if req.session_id:
+        session = get_or_create_session(db, session_token=req.session_id)
+        # get_or_create_session flushes when creating a new row
+        did_mutate = True
+
+    branch = None
+    if req.branch_id is not None:
+        branch = db.get(db_models.Branch, req.branch_id)
+        if not branch:
+            raise HTTPException(status_code=404, detail="Branch not found")
+
+        if (
+            session
+            and branch.trip_context is not None
+            and branch.trip_context.session_id != session.id
+        ):
+            raise HTTPException(status_code=403, detail="Branch does not belong to session")
+
+    response = search_tiles(req)
+
+    if branch and response.tiles:
+        snapshot_tiles_for_branch(
+            db,
+            branch=branch,
+            tiles=response.tiles,
+            replace_existing=True,
+        )
+        did_mutate = True
+
+    if did_mutate:
+        db.commit()
+
+    return response
 
 
 @app.post("/v1/tiles/click")
@@ -107,9 +180,105 @@ def track_tile_click(
 
 
 @app.post("/v1/plan", response_model=PlanResponse)
-def plan(req: PlanRequest):
+def plan(req: PlanRequest, db: Session = db_dependency):
     """
     Chat-like planning endpoint:
     message + preferences -> branches via LLM -> tiles for primary branch.
     """
-    return plan_trip(req)
+    try:
+        return plan_trip(db, req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/sessions/{session_token}/state", response_model=SessionStateResponse)
+def get_session_state(session_token: str, db: Session = db_dependency):
+    session = (
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_token).first()
+    )
+
+    if not session:
+        return SessionStateResponse(
+            session_id=session_token,
+            session_exists=False,
+        )
+
+    trip_ctx = (
+        db.query(db_models.TripContext)
+        .filter(db_models.TripContext.session_id == session.id)
+        .order_by(db_models.TripContext.created_at.desc())
+        .first()
+    )
+
+    if not trip_ctx:
+        return SessionStateResponse(
+            session_id=session_token,
+            session_exists=True,
+        )
+
+    branches = (
+        db.query(db_models.Branch)
+        .filter(db_models.Branch.trip_context_id == trip_ctx.id)
+        .order_by(db_models.Branch.created_at.asc())
+        .all()
+    )
+
+    plan_branches: list[PlanBranch] = [
+        PlanBranch(
+            id=str(branch.id),
+            label=branch.label,
+            description=branch.description or "",
+            destination=branch.destination,
+        )
+        for branch in branches
+    ]
+
+    selected_branch = None
+    primary_branch_id: str | None = None
+    for branch in branches:
+        if branch.is_primary:
+            selected_branch = branch
+            primary_branch_id = str(branch.id)
+            break
+
+    if selected_branch is None and branches:
+        selected_branch = branches[0]
+        primary_branch_id = str(selected_branch.id)
+
+    tiles: list[Tile] = []
+    if selected_branch is not None:
+        tile_models = (
+            db.query(db_models.Tile)
+            .join(
+                db_models.BranchTile,
+                db_models.BranchTile.tile_id == db_models.Tile.id,
+            )
+            .filter(db_models.BranchTile.branch_id == selected_branch.id)
+            .order_by(db_models.BranchTile.position.asc())
+            .all()
+        )
+        tiles = [_tile_from_model(tile_model) for tile_model in tile_models]
+
+    ctx_payload = SessionTripContext(
+        id=trip_ctx.id,
+        origin=trip_ctx.origin,
+        destination_hint=trip_ctx.destination_hint,
+        start_date=trip_ctx.start_date.isoformat() if trip_ctx.start_date else None,
+        end_date=trip_ctx.end_date.isoformat() if trip_ctx.end_date else None,
+        budget_bucket=trip_ctx.budget_bucket,
+        group_size=trip_ctx.group_size,
+        vibes=trip_ctx.vibes or [],
+        raw_prompt=trip_ctx.raw_prompt,
+    )
+
+    tiles_request_id = uuid.uuid4().hex if tiles else None
+
+    return SessionStateResponse(
+        session_id=session_token,
+        session_exists=True,
+        trip_context=ctx_payload,
+        branches=plan_branches,
+        primary_branch_id=primary_branch_id,
+        tiles=tiles,
+        tiles_request_id=tiles_request_id,
+    )

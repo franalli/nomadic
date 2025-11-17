@@ -45,10 +45,13 @@ class Tile(BaseModel):
 
 class TilesSearchRequest(BaseModel):
     user_id: Optional[str] = None
-    branch_id: Optional[str] = None
+    branch_id: Optional[int] = None
+    session_id: Optional[str] = None
+    trip_context_id: Optional[int] = None
 
     origin: Optional[str] = None
     destination: Optional[str] = None
+    destination_hint: Optional[str] = None
     trip_type: Optional[str] = "round_trip"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -65,7 +68,8 @@ class TilesSearchRequest(BaseModel):
 
 
 class TilesSearchResponse(BaseModel):
-    request_id: str
+    tiles_request_id: str
+    request_id: Optional[str] = None
     tiles: List[Tile]
     summary: dict
 
@@ -76,3 +80,54 @@ class TileClickEvent(BaseModel):
     user_id: Optional[str] = None  # optional, for later
     branch_id: Optional[int] = None  # can be None if not using branches yet
     session_id: Optional[str] = None  # your frontend-generated session id
+
+
+class PlanRequest(BaseModel):
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    message: str
+
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    budget_bucket: Optional[str] = None
+    group_size: Optional[int] = None
+    vibes: List[str] = Field(default_factory=list)
+
+
+class PlanBranch(BaseModel):
+    id: str
+    label: str
+    description: str
+    destination: str
+
+
+class PlanResponse(BaseModel):
+    trip_context_id: Optional[int] = None
+    branches: List[PlanBranch]
+    tiles: List[Tile]  # tiles for the primary branch
+    primary_branch_id: Optional[str] = None
+    tiles_request_id: Optional[str] = None
+    tiles_summary: Optional[dict] = None
+
+
+class SessionTripContext(BaseModel):
+    id: int
+    origin: Optional[str] = None
+    destination_hint: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    budget_bucket: Optional[str] = None
+    group_size: Optional[int] = None
+    vibes: List[str] = Field(default_factory=list)
+    raw_prompt: Optional[str] = None
+
+
+class SessionStateResponse(BaseModel):
+    session_id: str
+    session_exists: bool = False
+    trip_context: Optional[SessionTripContext] = None
+    branches: List[PlanBranch] = Field(default_factory=list)
+    primary_branch_id: Optional[str] = None
+    tiles: List[Tile] = Field(default_factory=list)
+    tiles_request_id: Optional[str] = None

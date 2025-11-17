@@ -5,15 +5,31 @@ import { useMemo, useState } from 'react';
 
 import type { PlanRequest, PlanResponse } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
-import type { PlanBranch, PlanMeta } from '@/types/plan';
+import type { PlanBranch } from '@/types/plan';
 import type { Tile } from '@/types/tile';
+import { getOrCreateSessionId } from '@/lib/session';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 interface ChatPanelProps {
   onBranchesChange: (branches: PlanBranch[]) => void;
   onTilesChange: (tiles: Tile[]) => void;
-  onPlanMetaChange?: (meta: PlanMeta) => void;
+  onPrimaryBranchSelected: (branchId: string | null) => void;
+  onTilesRequestIdChange?: (requestId: string | null) => void;
+  onTripContextChange: (tripContextId: number | null) => void;
+  origin: string;
+  startDate: string;
+  endDate: string;
+  budgetBucket: string;
+  groupSize: string;
+  vibes: string[];
+  onOriginChange: (value: string) => void;
+  onStartDateChange: (value: string) => void;
+  onEndDateChange: (value: string) => void;
+  onBudgetBucketChange: (value: string) => void;
+  onGroupSizeChange: (value: string) => void;
+  onVibesChange: (values: string[]) => void;
+  onClearContext: () => void;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -26,12 +42,6 @@ export function ChatPanel(props: ChatPanelProps) {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [origin, setOrigin] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [budgetBucket, setBudgetBucket] = useState('');
-  const [groupSize, setGroupSize] = useState('2');
-  const [vibes, setVibes] = useState<string[]>([]);
 
   const vibeOptions = useMemo(
     () => [
@@ -46,18 +56,14 @@ export function ChatPanel(props: ChatPanelProps) {
   );
 
   function toggleVibe(value: string) {
-    setVibes((prev) =>
-      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
-    );
+    const nextVibes = props.vibes.includes(value)
+      ? props.vibes.filter((v) => v !== value)
+      : [...props.vibes, value];
+    props.onVibesChange(nextVibes);
   }
 
   function clearContext() {
-    setOrigin('');
-    setStartDate('');
-    setEndDate('');
-    setBudgetBucket('');
-    setGroupSize('2');
-    setVibes([]);
+    props.onClearContext();
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -76,15 +82,17 @@ export function ChatPanel(props: ChatPanelProps) {
     setIsLoading(true);
 
     try {
+      const sessionId = getOrCreateSessionId();
       const body: PlanRequest = {
         user_id: undefined, // optional, wire later
+        session_id: sessionId,
         message: trimmed,
-        origin: origin || undefined,
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
-        budget_bucket: budgetBucket || undefined,
-        group_size: groupSize ? Number(groupSize) : undefined,
-        vibes,
+        origin: props.origin || undefined,
+        start_date: props.startDate || undefined,
+        end_date: props.endDate || undefined,
+        budget_bucket: props.budgetBucket || undefined,
+        group_size: props.groupSize ? Number(props.groupSize) : undefined,
+        vibes: props.vibes,
       };
 
       const res = await fetch(`${API_BASE}/v1/plan`, {
@@ -102,10 +110,9 @@ export function ChatPanel(props: ChatPanelProps) {
       // Update tiles + branches in parent
       props.onBranchesChange(data.branches);
       props.onTilesChange(data.tiles);
-      props.onPlanMetaChange?.({
-        primaryBranchId: data.primary_branch_id ?? null,
-        tilesRequestId: data.tiles_request_id ?? null,
-      });
+      props.onPrimaryBranchSelected(data.branches[0]?.id ?? null);
+      props.onTilesRequestIdChange?.(data.tiles_request_id ?? null);
+      props.onTripContextChange(data.trip_context_id ?? null);
 
       // Build assistant message summarising the branches
       const summaryLines =
@@ -161,8 +168,8 @@ export function ChatPanel(props: ChatPanelProps) {
             <input
               className="w-full rounded-md border border-slate-200 px-2 py-1"
               placeholder="e.g. Amsterdam"
-              value={origin}
-              onChange={(e) => setOrigin(e.target.value)}
+              value={props.origin}
+              onChange={(e) => props.onOriginChange(e.target.value)}
             />
           </label>
           <label className="space-y-1">
@@ -171,8 +178,8 @@ export function ChatPanel(props: ChatPanelProps) {
             </span>
             <select
               className="w-full rounded-md border border-slate-200 px-2 py-1"
-              value={budgetBucket}
-              onChange={(e) => setBudgetBucket(e.target.value)}
+              value={props.budgetBucket}
+              onChange={(e) => props.onBudgetBucketChange(e.target.value)}
             >
               <option value="">Flexible</option>
               <option value="value">Value</option>
@@ -189,8 +196,8 @@ export function ChatPanel(props: ChatPanelProps) {
             <input
               type="date"
               className="w-full rounded-md border border-slate-200 px-2 py-1"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              value={props.startDate}
+              onChange={(e) => props.onStartDateChange(e.target.value)}
             />
           </label>
           <label className="space-y-1">
@@ -200,8 +207,8 @@ export function ChatPanel(props: ChatPanelProps) {
             <input
               type="date"
               className="w-full rounded-md border border-slate-200 px-2 py-1"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              value={props.endDate}
+              onChange={(e) => props.onEndDateChange(e.target.value)}
             />
           </label>
 
@@ -213,8 +220,8 @@ export function ChatPanel(props: ChatPanelProps) {
               type="number"
               min="1"
               className="w-full rounded-md border border-slate-200 px-2 py-1"
-              value={groupSize}
-              onChange={(e) => setGroupSize(e.target.value)}
+              value={props.groupSize}
+              onChange={(e) => props.onGroupSizeChange(e.target.value)}
             />
           </label>
         </div>
@@ -223,7 +230,7 @@ export function ChatPanel(props: ChatPanelProps) {
           <p className="font-medium uppercase tracking-wide text-slate-500">Vibes</p>
           <div className="flex flex-wrap gap-2">
             {vibeOptions.map((option) => {
-              const isActive = vibes.includes(option.value);
+              const isActive = props.vibes.includes(option.value);
               const baseClasses =
                 'rounded-full border px-3 py-1 text-[11px] font-medium transition-colors';
               return (

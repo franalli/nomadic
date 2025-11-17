@@ -3,39 +3,28 @@ import os
 from typing import List, Optional
 
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
-from app.schemas import Tile, TilesSearchRequest
+from app.crud_trip import (
+    create_branches_for_context,
+    create_trip_context,
+    get_or_create_session,
+    snapshot_tiles_for_branch,
+)
+from app.schemas import (
+    PlanBranch,
+    PlanRequest,
+    PlanResponse,
+    TilesSearchRequest,
+)
 from app.tile_service import search_tiles
 
 _openai_client: Optional[OpenAI] = None
-
-
-class PlanRequest(BaseModel):
-    user_id: Optional[str] = None
-    message: str
-
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    budget_bucket: Optional[str] = None
-    group_size: Optional[int] = None
-    vibes: list[str] = Field(default_factory=list)
-
-
-class PlanBranch(BaseModel):
-    id: str
-    label: str
-    description: str
-    destination: str
-
-
-class PlanResponse(BaseModel):
-    branches: List[PlanBranch]
-    tiles: List[Tile]  # tiles for the primary branch
-    primary_branch_id: Optional[str] = None
-    tiles_request_id: Optional[str] = None
-    tiles_summary: Optional[dict] = None
+_DEFAULT_PLAN_MODELS: List[str] = [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "gpt-4.1-mini",
+]
 
 
 def _get_openai_client() -> Optional[OpenAI]:
@@ -51,7 +40,7 @@ def _get_openai_client() -> Optional[OpenAI]:
     return _openai_client
 
 
-def _mock_branches(req: PlanRequest) -> List[PlanBranch]:
+def _mock_branch_specs(req: PlanRequest) -> List[dict]:
     """Return deterministic mock branches so the flow works without OpenAI."""
 
     base_destinations = [
@@ -60,15 +49,14 @@ def _mock_branches(req: PlanRequest) -> List[PlanBranch]:
         ("Valencia beach & paella", "Valencia, Spain"),
     ]
 
-    branches: List[PlanBranch] = []
+    branches: List[dict] = []
     for idx, (label, destination) in enumerate(base_destinations, start=1):
         branches.append(
-            PlanBranch(
-                id=f"mock_branch_{idx}",
-                label=label,
-                description=f"Idea #{idx} inspired by: {req.message[:80]}",
-                destination=destination,
-            )
+            {
+                "label": label,
+                "description": f"Idea #{idx} inspired by: {req.message[:80]}",
+                "destination": destination,
+            }
         )
 
     return branches
@@ -94,23 +82,44 @@ def _build_user_prompt(req: PlanRequest) -> str:
     return "\n".join(lines)
 
 
-def _call_openai_for_branches(req: PlanRequest) -> List[PlanBranch]:
+def _plan_model_candidates() -> List[str]:
+    """Return preferred OpenAI models, honoring env overrides with safe fallbacks."""
+
+    configured_raw = os.getenv("OPENAI_PLAN_MODEL", "").strip()
+    configured: List[str] = []
+    if configured_raw:
+        configured = [model.strip() for model in configured_raw.split(",") if model.strip()]
+
+    candidates: List[str] = []
+    for model in configured + _DEFAULT_PLAN_MODELS:
+        if model not in candidates:
+            candidates.append(model)
+
+    return candidates
+
+
+def _is_model_missing_error(exc: Exception) -> bool:
+    """Detect the common 'model not found' error so we can retry with fallbacks."""
+
+    message = str(exc).lower()
+    return "model_not_found" in message or "does not exist" in message
+
+
+def _call_openai_for_branches_raw(req: PlanRequest) -> List[dict]:
     if os.getenv("PLAN_FORCE_MOCK", "0") == "1":
-        return _mock_branches(req)
+        return _mock_branch_specs(req)
 
     system_prompt = (
         "You are a travel planner.\n"
-        "Given the user's trip preferences, suggest 2/3 trip branches.\n\n"
+        "Given the user's trip preferences, suggest 2–3 trip branches.\n\n"
         "Each branch is one destination idea. For each branch, provide:\n"
-        "- id: a short opaque id (e.g. 'branch_1')\n"
         "- label: a short friendly label (e.g. 'Beach week in Barcelona')\n"
-        "- description: 1/2 sentences summarising the idea\n"
+        "- description: 1–2 sentences summarising the idea\n"
         "- destination: a concise destination string (e.g. 'Barcelona, Spain').\n\n"
         "Return ONLY JSON with this shape:\n"
         "{\n"
         '  "branches": [\n'
-        '    {"id": "branch_1", "label": "...", '
-        '"description": "...", "destination": "..."},\n'
+        '    {"label": "...", "description": "...", "destination": "..."},\n'
         "    ...\n"
         "  ]\n"
         "}\n"
@@ -119,77 +128,73 @@ def _call_openai_for_branches(req: PlanRequest) -> List[PlanBranch]:
 
     user_prompt = _build_user_prompt(req)
 
-    # Chat Completions with JSON output (simple, robust)
-    # :contentReference[oaicite:1]{index=1}
     client = _get_openai_client()
     if client is None:
-        return _mock_branches(req)
+        return _mock_branch_specs(req)
 
-    model = os.getenv("OPENAI_PLAN_MODEL", "gpt-5.1-mini")
+    last_error: Exception | None = None
 
-    try:
-        completion = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-        )
-    except Exception as exc:
-        # Keep the planner responsive even if OpenAI fails or API keys are missing.
-        print(f"OpenAI planning call failed, using mock branches: {exc}")
-        return _mock_branches(req)
-
-    raw = completion.choices[0].message.content
-    if raw is None:
-        raw = '{"branches": []}'
-    data = json.loads(raw)
-
-    branches_raw = data.get("branches", [])
-    branches: List[PlanBranch] = []
-
-    for b in branches_raw:
-        # Defensive; ignore malformed entries
-        if not all(k in b for k in ("id", "label", "destination")):
-            continue
-        branches.append(
-            PlanBranch(
-                id=str(b["id"]),
-                label=str(b["label"]),
-                description=str(b.get("description", "")),
-                destination=str(b["destination"]),
+    for model_name in _plan_model_candidates():
+        try:
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
             )
-        )
+        except Exception as exc:  # pragma: no cover - depends on OpenAI availability
+            last_error = exc
+            if _is_model_missing_error(exc):
+                print(f"OpenAI model '{model_name}' unavailable, trying fallback: {exc}")
+                continue
 
-    if not branches:
-        # Fallback: a generic branch so endpoint never totally fails
-        branches = _mock_branches(req)
+            print(f"OpenAI planning call failed with '{model_name}': {exc}")
+            break
 
-    return branches
+        raw = completion.choices[0].message.content
+        data = json.loads(raw or '{"branches": []}')
+        branches_raw = data.get("branches", []) or []
+
+        cleaned: List[dict] = []
+        for b in branches_raw:
+            if not all(k in b for k in ("label", "destination")):
+                continue
+            cleaned.append(
+                {
+                    "label": str(b["label"]),
+                    "description": str(b.get("description", "")),
+                    "destination": str(b["destination"]),
+                }
+            )
+
+        if cleaned:
+            return cleaned
+
+        print(f"OpenAI planning call with '{model_name}' returned no usable branches; falling back")
+
+    if last_error is not None:
+        print(f"OpenAI planning call failed, using mock branches: {last_error}")
+
+    return _mock_branch_specs(req)
 
 
-def plan_trip(req: PlanRequest) -> PlanResponse:
-    """The LLM contract is minimal: returns { "branches": [...] } with
-    id/label/description/destination.
+def plan_trip(db: Session, req: PlanRequest) -> PlanResponse:
+    if not req.session_id:
+        raise ValueError("session_id is required for planning")
 
-    We only use branch[0] to feed search_tiles, as per your step 5 spec.
+    db_session = get_or_create_session(
+        db,
+        session_token=req.session_id,
+        user_external_id=req.user_id,
+    )
 
-    You can later persist PlanRequest → TripContext + Branch rows and map
-    branch.id to DB IDs.
-    """
-    # 1) Get branches from LLM
-    branches = _call_openai_for_branches(req)
-
-    # 2) For now, pick the first branch as the "primary" branch
-    primary = branches[0] if branches else None
-
-    # 3) Call existing tile search layer with that destination
-    destination = primary.destination if primary else req.origin
-
-    tiles_request = TilesSearchRequest(
+    trip_ctx = create_trip_context(
+        db,
+        session=db_session,
+        req_message=req.message,
         origin=req.origin,
-        destination=destination,
         start_date=req.start_date,
         end_date=req.end_date,
         budget_bucket=req.budget_bucket,
@@ -197,12 +202,65 @@ def plan_trip(req: PlanRequest) -> PlanResponse:
         vibes=req.vibes,
     )
 
+    branch_specs = _call_openai_for_branches_raw(req)
+    db_branches = create_branches_for_context(
+        db,
+        trip_context=trip_ctx,
+        branch_specs=branch_specs,
+        primary_index=0,
+    )
+
+    if not db_branches:
+        raise ValueError("No branches generated for trip context")
+
+    plan_branches: List[PlanBranch] = []
+    for db_branch in db_branches:
+        plan_branches.append(
+            PlanBranch(
+                id=str(db_branch.id),
+                label=db_branch.label,
+                description=db_branch.description or "",
+                destination=db_branch.destination,
+            )
+        )
+
+    primary_db_branch = db_branches[0]
+    tiles_request = TilesSearchRequest(
+        user_id=req.user_id,
+        branch_id=primary_db_branch.id,
+        origin=req.origin,
+        destination=primary_db_branch.destination,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        budget_bucket=req.budget_bucket,
+        group_size=req.group_size,
+        vibes=req.vibes,
+        session_id=req.session_id,
+        trip_context_id=trip_ctx.id,
+    )
+
     tiles_response = search_tiles(tiles_request)
 
-    return PlanResponse(
-        branches=branches,
+    if tiles_response.tiles:
+        snapshot_tiles_for_branch(
+            db,
+            branch=primary_db_branch,
+            tiles=tiles_response.tiles,
+        )
+
+    response = PlanResponse(
+        trip_context_id=trip_ctx.id,
+        branches=plan_branches,
         tiles=tiles_response.tiles,
-        primary_branch_id=primary.id if primary else None,
-        tiles_request_id=tiles_response.request_id,
+        primary_branch_id=str(primary_db_branch.id),
+        tiles_request_id=(
+            tiles_response.tiles_request_id
+            if hasattr(tiles_response, "tiles_request_id")
+            else tiles_response.request_id
+        ),
         tiles_summary=tiles_response.summary,
     )
+
+    db.commit()
+
+    return response

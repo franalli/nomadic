@@ -6,11 +6,11 @@ import type { Tile } from '@/types/tile';
 
 type TilesGridProps = {
   tiles: Tile[];
-  primaryBranch?: PlanBranch | null;
+  activeBranch?: PlanBranch | null;
   tilesRequestId?: string | null;
 };
 
-export function TilesGrid({ tiles, primaryBranch, tilesRequestId }: TilesGridProps) {
+export function TilesGrid({ tiles, activeBranch, tilesRequestId }: TilesGridProps) {
   if (!tiles.length) {
     return (
       <p className="text-sm text-slate-500">
@@ -21,11 +21,11 @@ export function TilesGrid({ tiles, primaryBranch, tilesRequestId }: TilesGridPro
 
   return (
     <div className="flex flex-col gap-3">
-      {primaryBranch && (
+      {activeBranch && (
         <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
           Showing live options for{' '}
-          <span className="font-semibold text-slate-800">{primaryBranch.label}</span> (
-          {primaryBranch.destination}).
+          <span className="font-semibold text-slate-800">{activeBranch.label}</span> (
+          {activeBranch.destination}).
         </div>
       )}
 
@@ -34,7 +34,7 @@ export function TilesGrid({ tiles, primaryBranch, tilesRequestId }: TilesGridPro
           <TileCard
             key={tile.id}
             tile={tile}
-            branchId={primaryBranch?.id}
+            branchId={activeBranch?.id}
             requestId={tilesRequestId ?? undefined}
           />
         ))}

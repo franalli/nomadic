@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
+import { getOrCreateSessionId } from '@/lib/session';
 import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
@@ -11,12 +12,7 @@ type TileCardProps = {
 
 export function TileCard({ tile, requestId, branchId }: TileCardProps) {
   const handleClick = () => {
-    // 1. Ensure we have a stable session_id
-    let sessionId = localStorage.getItem('session_id');
-    if (!sessionId) {
-      sessionId = crypto.randomUUID();
-      localStorage.setItem('session_id', sessionId);
-    }
+    const sessionId = getOrCreateSessionId();
 
     // 2. Fire-and-forget click tracking
     const numericBranchId = branchId && /^\d+$/.test(branchId) ? Number(branchId) : null;

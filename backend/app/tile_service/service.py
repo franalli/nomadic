@@ -19,7 +19,7 @@ def _build_search_context(req: TilesSearchRequest) -> SearchContext:
     """
     return SearchContext(
         origin=req.origin,
-        destination=req.destination,
+        destination=req.destination or req.destination_hint,
         trip_type=req.trip_type,
         start_date=req.start_date,
         end_date=req.end_date,
@@ -88,4 +88,9 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
         ),
     }
 
-    return TilesSearchResponse(request_id=request_id, tiles=all_tiles, summary=summary)
+    return TilesSearchResponse(
+        tiles_request_id=request_id,
+        request_id=request_id,
+        tiles=all_tiles,
+        summary=summary,
+    )
