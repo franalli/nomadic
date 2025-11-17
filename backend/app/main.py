@@ -11,6 +11,7 @@ import app.db_models as db_models
 import app.schemas as schemas
 from app.config import settings
 from app.db import get_db
+from app.plan import PlanRequest, PlanResponse, plan_trip
 from app.schemas import TilesSearchRequest, TilesSearchResponse
 from app.tile_service.service import search_tiles
 
@@ -103,3 +104,12 @@ def track_tile_click(
     db.commit()
 
     return {"status": "ok"}
+
+
+@app.post("/v1/plan", response_model=PlanResponse)
+def plan(req: PlanRequest):
+    """
+    Chat-like planning endpoint:
+    message + preferences -> branches via LLM -> tiles for primary branch.
+    """
+    return plan_trip(req)

@@ -1,36 +1,63 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import type { PlanBranch } from '@/types/plan';
 
-const mockBranches = [
-  { id: 'lisbon', label: 'Lisbon · City & Coast' },
-  { id: 'alps', label: 'Alps · Hiking' },
-  { id: 'city', label: 'City Break' },
-];
+type BranchPanelProps = {
+  branches: PlanBranch[];
+};
 
-export function BranchPanel() {
-  const [active, setActive] = useState<string>('lisbon');
+export function BranchPanel({ branches }: BranchPanelProps) {
+  const [active, setActive] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!branches.length) {
+      setActive(null);
+      return;
+    }
+
+    setActive((prev) => {
+      if (prev && branches.some((branch) => branch.id === prev)) {
+        return prev;
+      }
+      return branches[0].id;
+    });
+  }, [branches]);
+
+  const activeBranch = branches.find((branch) => branch.id === active);
+
+  if (!branches.length) {
+    return (
+      <p className="text-xs text-slate-500">
+        Ask for a plan to see branches populate here.
+      </p>
+    );
+  }
 
   return (
-    <div className="flex flex-1 flex-col gap-2">
+    <div className="flex flex-1 flex-col gap-3">
       <div className="flex flex-wrap gap-1">
-        {mockBranches.map((b) => (
+        {branches.map((branch) => (
           <Button
-            key={b.id}
-            variant={b.id === active ? 'primary' : 'outline'}
+            key={branch.id}
+            variant={branch.id === active ? 'primary' : 'outline'}
             className="px-2 py-1 text-xs"
-            onClick={() => setActive(b.id)}
+            onClick={() => setActive(branch.id)}
           >
-            {b.label}
+            {branch.label}
           </Button>
         ))}
       </div>
-      <p className="text-muted mt-3 text-xs">
-        Branch selection is static for now. Later this will reflect actual branching from
-        the conversation and attach tiles per branch.
-      </p>
+
+      {activeBranch && (
+        <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+          <p className="text-sm font-semibold text-slate-800">{activeBranch.label}</p>
+          <p className="mt-1">{activeBranch.description || activeBranch.destination}</p>
+          <p className="mt-2 text-slate-500">Destination: {activeBranch.destination}</p>
+        </div>
+      )}
     </div>
   );
 }

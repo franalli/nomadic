@@ -1,23 +1,15 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
+import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
-  tile: {
-    id: string;
-    type: string;
-    title: string;
-    subtitle?: string;
-    image_url?: string;
-    price_estimate?: number;
-    currency: string;
-    deeplink_url: string;
-    rating?: number;
-    location_label?: string;
-  };
+  tile: Tile;
+  requestId?: string;
+  branchId?: string;
 };
 
-export function TileCard({ tile }: TileCardProps) {
+export function TileCard({ tile, requestId, branchId }: TileCardProps) {
   const handleClick = () => {
     // 1. Ensure we have a stable session_id
     let sessionId = localStorage.getItem('session_id');
@@ -27,13 +19,15 @@ export function TileCard({ tile }: TileCardProps) {
     }
 
     // 2. Fire-and-forget click tracking
+    const numericBranchId = branchId && /^\d+$/.test(branchId) ? Number(branchId) : null;
+
     apiFetch('/v1/tiles/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        request_id: null,
+        request_id: requestId ?? null,
         tile_id: tile.id,
-        branch_id: null,
+        branch_id: numericBranchId,
         session_id: sessionId,
         user_id: null,
       }),
