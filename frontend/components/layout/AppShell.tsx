@@ -7,7 +7,7 @@ import { ChatPanel } from '@/components/chat/ChatPanel';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
 import { getOrCreateSessionId } from '@/lib/session';
 import type {
-  SessionStateResponse,
+  SessionSnapshot,
   TilesSearchRequest,
   TilesSearchResponse,
 } from '@/types/api';
@@ -16,6 +16,18 @@ import type { Tile } from '@/types/tile';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
+type BranchSelectionOverrides = {
+  branch?: PlanBranch;
+  origin?: string;
+  startDate?: string;
+  endDate?: string;
+  budgetBucket?: string;
+  groupSize?: number;
+  vibes?: string[];
+  tripContextId?: number | null;
+  errorMessageOverride?: string;
+};
+
 export function AppShell() {
   const [branches, setBranches] = useState<PlanBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
@@ -23,6 +35,7 @@ export function AppShell() {
   const [tilesRequestId, setTilesRequestId] = useState<string | null>(null);
   const [tripContextId, setTripContextId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
 
   const [origin, setOrigin] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -42,27 +55,36 @@ export function AppShell() {
   }, [groupSize]);
 
   const handleBranchSelect = useCallback(
-    async (branchId: string) => {
+    async (branchId: string, overrides?: BranchSelectionOverrides) => {
       setSelectedBranchId(branchId);
-      const branch = branches.find((b) => b.id === branchId);
+      const branch = overrides?.branch ?? branches.find((b) => b.id === branchId);
       if (!branch) return;
 
       const sessionId = getOrCreateSessionId();
       const parsedBranchId = Number(branchId);
       const branchIdNumber = Number.isFinite(parsedBranchId) ? parsedBranchId : undefined;
 
+      const requestOrigin = overrides?.origin ?? origin;
+      const requestStartDate = overrides?.startDate ?? startDate;
+      const requestEndDate = overrides?.endDate ?? endDate;
+      const requestBudgetBucket = overrides?.budgetBucket ?? budgetBucket;
+      const requestGroupSize = overrides?.groupSize ?? numericGroupSize;
+      const requestVibes = overrides?.vibes ?? vibes;
+      const requestTripContextId = overrides?.tripContextId ?? tripContextId;
+      const errorMessageOverride = overrides?.errorMessageOverride;
+
       const body: TilesSearchRequest = {
         branch_id: branchIdNumber,
         session_id: sessionId || undefined,
-        trip_context_id: tripContextId ?? undefined,
-        origin: origin || undefined,
+        trip_context_id: requestTripContextId ?? undefined,
+        origin: requestOrigin || undefined,
         destination: branch.destination,
         destination_hint: branch.destination,
-        start_date: startDate || undefined,
-        end_date: endDate || undefined,
-        budget_bucket: budgetBucket || undefined,
-        group_size: numericGroupSize,
-        vibes: vibes.length ? vibes : undefined,
+        start_date: requestStartDate || undefined,
+        end_date: requestEndDate || undefined,
+        budget_bucket: requestBudgetBucket || undefined,
+        group_size: requestGroupSize,
+        vibes: requestVibes.length ? requestVibes : undefined,
       };
 
       try {
@@ -74,7 +96,10 @@ export function AppShell() {
 
         if (!res.ok) {
           console.error('Failed to fetch tiles for branch', res.status);
-          setToastMessage('Unable to refresh tiles for that branch. Please try again.');
+          setToastMessage(
+            errorMessageOverride ??
+              'Unable to refresh tiles for that branch. Please try again.'
+          );
           return;
         }
 
@@ -83,7 +108,10 @@ export function AppShell() {
         setTilesRequestId(data.tiles_request_id ?? data.request_id ?? null);
       } catch (error) {
         console.error('Failed to fetch tiles for branch', error);
-        setToastMessage('Unable to refresh tiles for that branch. Please try again.');
+        setToastMessage(
+          errorMessageOverride ??
+            'Unable to refresh tiles for that branch. Please try again.'
+        );
       }
     },
     [
@@ -107,15 +135,18 @@ export function AppShell() {
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateSessionState() {
+    async function hydrateSessionSnapshot() {
       try {
+        setIsHydratingSnapshot(true);
         const sessionId = getOrCreateSessionId();
         if (!sessionId) return;
 
-        const res = await fetch(`${API_BASE}/v1/sessions/${sessionId}/state`);
+        const res = await fetch(
+          `${API_BASE}/v1/session/snapshot?session_id=${sessionId}`
+        );
         if (!res.ok) return;
 
-        const data: SessionStateResponse = await res.json();
+        const data: SessionSnapshot = await res.json();
         if (cancelled) return;
 
         if (data.trip_context) {
@@ -132,23 +163,72 @@ export function AppShell() {
           setTripContextId(data.trip_context.id);
         }
 
-        if (data.branches.length) {
-          setBranches(data.branches);
-          const fallbackBranchId = data.primary_branch_id ?? data.branches[0].id;
-          setSelectedBranchId(fallbackBranchId);
-          setTiles(data.tiles);
-          setTilesRequestId(data.tiles_request_id ?? null);
+        if (!data.branches.length) return;
+
+        const hydratedBranches: PlanBranch[] = data.branches.map((branch) => ({
+          id: String(branch.id),
+          label: branch.label,
+          description: branch.description,
+          destination: branch.destination,
+        }));
+
+        setBranches(hydratedBranches);
+
+        const fallbackBranchId =
+          data.primary_branch_id != null
+            ? String(data.primary_branch_id)
+            : hydratedBranches[0].id;
+        const fallbackBranch =
+          hydratedBranches.find((branch) => branch.id === fallbackBranchId) ||
+          hydratedBranches[0];
+
+        setSelectedBranchId(fallbackBranchId);
+
+        const snapshotTiles = data.tiles ?? [];
+        setTiles(snapshotTiles);
+        setTilesRequestId(null);
+
+        const shouldFetchTiles = snapshotTiles.length === 0 && Boolean(fallbackBranch);
+        if (shouldFetchTiles && fallbackBranch) {
+          const overrides: BranchSelectionOverrides | undefined = data.trip_context
+            ? {
+                branch: fallbackBranch,
+                origin: data.trip_context.origin ?? '',
+                startDate: data.trip_context.start_date ?? '',
+                endDate: data.trip_context.end_date ?? '',
+                budgetBucket: data.trip_context.budget_bucket ?? '',
+                groupSize: data.trip_context.group_size ?? undefined,
+                vibes: data.trip_context.vibes ?? [],
+                tripContextId: data.trip_context.id,
+                errorMessageOverride:
+                  'We restored your branches but could not refresh tiles automatically. Select a branch to try again.',
+              }
+            : {
+                branch: fallbackBranch,
+                tripContextId: null,
+                errorMessageOverride:
+                  'We restored your branches but could not refresh tiles automatically. Select a branch to try again.',
+              };
+
+          await handleBranchSelect(fallbackBranchId, overrides);
         }
       } catch (error) {
-        console.error('Failed to hydrate session state', error);
+        console.error('Failed to hydrate session snapshot', error);
+        setToastMessage(
+          'Unable to reload your previous session. You can still plan a new trip.'
+        );
+      } finally {
+        setIsHydratingSnapshot(false);
       }
     }
 
-    hydrateSessionState();
+    hydrateSessionSnapshot();
 
     return () => {
       cancelled = true;
     };
+    // We intentionally run this only once on mount to restore the last session snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleClearContext = useCallback(() => {
@@ -208,11 +288,15 @@ export function AppShell() {
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-600">
               Branches
             </h2>
-            <BranchPanel
-              branches={branches}
-              selectedBranchId={selectedBranchId}
-              onBranchSelect={handleBranchSelect}
-            />
+            {isHydratingSnapshot && branches.length === 0 ? (
+              <p className="text-sm text-slate-500">Restoring your last session…</p>
+            ) : (
+              <BranchPanel
+                branches={branches}
+                selectedBranchId={selectedBranchId}
+                onBranchSelect={handleBranchSelect}
+              />
+            )}
           </section>
 
           <section className="rounded-lg border bg-white p-4 shadow-sm">

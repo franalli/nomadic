@@ -23,6 +23,18 @@ export interface PlanResponse {
   tiles_summary?: Record<string, unknown> | null;
 }
 
+export interface SessionTripContext {
+  id: number;
+  origin?: string | null;
+  destination_hint?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  budget_bucket?: string | null;
+  group_size?: number | null;
+  vibes?: string[];
+  raw_prompt?: string | null;
+}
+
 export interface TilesSearchRequest {
   user_id?: string;
   branch_id?: number;
@@ -45,24 +57,16 @@ export interface TilesSearchResponse {
   summary?: Record<string, unknown> | null;
 }
 
-export interface SessionTripContext {
+export interface SessionSnapshotBranch {
   id: number;
-  origin?: string | null;
-  destination_hint?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
-  budget_bucket?: string | null;
-  group_size?: number | null;
-  vibes?: string[];
-  raw_prompt?: string | null;
+  label: string;
+  description: string;
+  destination: string;
 }
 
-export interface SessionStateResponse {
-  session_id: string;
-  session_exists: boolean;
-  trip_context?: SessionTripContext | null;
-  branches: PlanBranch[];
-  primary_branch_id?: string | null;
+export interface SessionSnapshot {
+  branches: SessionSnapshotBranch[];
+  primary_branch_id?: number | null;
   tiles: Tile[];
-  tiles_request_id?: string | null;
+  trip_context?: SessionTripContext | null;
 }

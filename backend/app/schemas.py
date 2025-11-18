@@ -123,11 +123,15 @@ class SessionTripContext(BaseModel):
     raw_prompt: Optional[str] = None
 
 
-class SessionStateResponse(BaseModel):
-    session_id: str
-    session_exists: bool = False
-    trip_context: Optional[SessionTripContext] = None
-    branches: List[PlanBranch] = Field(default_factory=list)
-    primary_branch_id: Optional[str] = None
+class SessionSnapshotBranch(BaseModel):
+    id: int
+    label: str
+    description: str
+    destination: str
+
+
+class SessionSnapshot(BaseModel):
+    branches: List[SessionSnapshotBranch] = Field(default_factory=list)
+    primary_branch_id: Optional[int] = None
     tiles: List[Tile] = Field(default_factory=list)
-    tiles_request_id: Optional[str] = None
+    trip_context: Optional[SessionTripContext] = None

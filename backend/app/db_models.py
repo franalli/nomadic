@@ -1,5 +1,5 @@
 # backend/app/db_models.py
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Dict, List, Optional
 
 from sqlalchemy import (
@@ -21,12 +21,16 @@ from sqlalchemy.orm import (
 from app.db import Base
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=_utcnow, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
 
 
@@ -69,12 +73,8 @@ class TripContext(Base, TimestampMixin):
     vibes: Mapped[Optional[List[str]]] = mapped_column(JSON)
     raw_prompt: Mapped[Optional[str]] = mapped_column(String)
 
-    session: Mapped[Optional[Session]] = relationship(
-        "Session", back_populates="trip_contexts"
-    )
-    branches: Mapped[List["Branch"]] = relationship(
-        "Branch", back_populates="trip_context"
-    )
+    session: Mapped[Optional[Session]] = relationship("Session", back_populates="trip_contexts")
+    branches: Mapped[List["Branch"]] = relationship("Branch", back_populates="trip_context")
 
 
 class Branch(Base, TimestampMixin):
@@ -88,9 +88,7 @@ class Branch(Base, TimestampMixin):
     destination: Mapped[str] = mapped_column(String(64))
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    trip_context: Mapped[TripContext] = relationship(
-        "TripContext", back_populates="branches"
-    )
+    trip_context: Mapped[TripContext] = relationship("TripContext", back_populates="branches")
     branch_tiles: Mapped[List["BranchTile"]] = relationship(
         "BranchTile", back_populates="branch", cascade="all, delete-orphan"
     )
@@ -147,13 +145,9 @@ class TileClick(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
     # make nullable=True so you can log clicks even before tiles are in the DB
-    tile_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("tiles.id"), nullable=True
-    )
+    tile_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tiles.id"), nullable=True)
     tile_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    branch_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("branches.id"), nullable=True
-    )
+    branch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("branches.id"), nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

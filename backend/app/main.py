@@ -1,10 +1,9 @@
 import os
 import sys
-import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -15,10 +14,10 @@ from app.crud_trip import get_or_create_session, snapshot_tiles_for_branch
 from app.db import get_db
 from app.plan import plan_trip
 from app.schemas import (
-    PlanBranch,
     PlanRequest,
     PlanResponse,
-    SessionStateResponse,
+    SessionSnapshot,
+    SessionSnapshotBranch,
     SessionTripContext,
     Tile,
     TilesSearchRequest,
@@ -191,17 +190,17 @@ def plan(req: PlanRequest, db: Session = db_dependency):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/v1/sessions/{session_token}/state", response_model=SessionStateResponse)
-def get_session_state(session_token: str, db: Session = db_dependency):
+@app.get("/v1/session/snapshot", response_model=SessionSnapshot)
+def get_session_snapshot(
+    session_id: str = Query(..., description="Frontend session UUID"),
+    db: Session = db_dependency,
+):
     session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_token).first()
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
     )
 
     if not session:
-        return SessionStateResponse(
-            session_id=session_token,
-            session_exists=False,
-        )
+        return SessionSnapshot()
 
     trip_ctx = (
         db.query(db_models.TripContext)
@@ -211,53 +210,28 @@ def get_session_state(session_token: str, db: Session = db_dependency):
     )
 
     if not trip_ctx:
-        return SessionStateResponse(
-            session_id=session_token,
-            session_exists=True,
-        )
+        return SessionSnapshot()
 
     branches = (
         db.query(db_models.Branch)
         .filter(db_models.Branch.trip_context_id == trip_ctx.id)
-        .order_by(db_models.Branch.created_at.asc())
+        .order_by(db_models.Branch.id.asc())
         .all()
     )
 
-    plan_branches: list[PlanBranch] = [
-        PlanBranch(
-            id=str(branch.id),
-            label=branch.label,
-            description=branch.description or "",
-            destination=branch.destination,
-        )
-        for branch in branches
-    ]
+    if not branches:
+        return SessionSnapshot()
 
-    selected_branch = None
-    primary_branch_id: str | None = None
-    for branch in branches:
-        if branch.is_primary:
-            selected_branch = branch
-            primary_branch_id = str(branch.id)
-            break
+    primary_branch = next((branch for branch in branches if branch.is_primary), branches[0])
 
-    if selected_branch is None and branches:
-        selected_branch = branches[0]
-        primary_branch_id = str(selected_branch.id)
-
-    tiles: list[Tile] = []
-    if selected_branch is not None:
-        tile_models = (
-            db.query(db_models.Tile)
-            .join(
-                db_models.BranchTile,
-                db_models.BranchTile.tile_id == db_models.Tile.id,
-            )
-            .filter(db_models.BranchTile.branch_id == selected_branch.id)
-            .order_by(db_models.BranchTile.position.asc())
-            .all()
-        )
-        tiles = [_tile_from_model(tile_model) for tile_model in tile_models]
+    tile_models = (
+        db.query(db_models.Tile)
+        .join(db_models.BranchTile, db_models.BranchTile.tile_id == db_models.Tile.id)
+        .filter(db_models.BranchTile.branch_id == primary_branch.id)
+        .order_by(db_models.BranchTile.position.asc())
+        .all()
+    )
+    tiles = [_tile_from_model(tile_model) for tile_model in tile_models]
 
     ctx_payload = SessionTripContext(
         id=trip_ctx.id,
@@ -271,14 +245,17 @@ def get_session_state(session_token: str, db: Session = db_dependency):
         raw_prompt=trip_ctx.raw_prompt,
     )
 
-    tiles_request_id = uuid.uuid4().hex if tiles else None
-
-    return SessionStateResponse(
-        session_id=session_token,
-        session_exists=True,
-        trip_context=ctx_payload,
-        branches=plan_branches,
-        primary_branch_id=primary_branch_id,
+    return SessionSnapshot(
+        branches=[
+            SessionSnapshotBranch(
+                id=branch.id,
+                label=branch.label,
+                description=branch.description or "",
+                destination=branch.destination,
+            )
+            for branch in branches
+        ],
+        primary_branch_id=primary_branch.id,
         tiles=tiles,
-        tiles_request_id=tiles_request_id,
+        trip_context=ctx_payload,
     )

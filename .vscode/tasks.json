@@ -11,7 +11,7 @@
                 "-ExecutionPolicy",
                 "Bypass",
                 "-Command",
-                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; docker compose up db --build"
+                "& \"${workspaceFolder}\\.venv\\Scripts\\Activate.ps1\"; docker compose up db --build -d; alembic upgrade head"
             ],
             "options": {
                 "cwd": "${workspaceFolder}/backend",
