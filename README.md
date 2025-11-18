@@ -3,6 +3,11 @@
 - `frontend/` – Next.js + Tailwind UI for travel planner
 - `backend/` – FastAPI service exposing `/v1/tiles/search`
 
+## Session APIs
+
+- `GET /v1/session/snapshot?session_id=<uuid>` – Restore the latest trip context, branches, and tiles for an existing browser session.
+- `DELETE /v1/session?session_id=<uuid>` – Archive all persisted data for that session (trip contexts, branches, tiles, tile clicks) and allow the UI to start a fresh planning session. The frontend “Start new session” control calls this endpoint before clearing `localStorage`.
+
 # DB Setup
 
 - `backend/.env` # for local uvicorn dev

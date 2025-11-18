@@ -166,3 +166,39 @@ def test_session_snapshot_handles_missing_session():
     assert payload["primary_branch_id"] is None
     assert payload["tiles"] == []
     assert payload["trip_context"] is None
+
+
+def test_session_delete_wipes_state():
+    seed = seed_trip_with_branches(session_token="session-reset-123")
+
+    response = client.delete("/v1/session", params={"session_id": seed["session_token"]})
+
+    assert response.status_code == 204
+
+    with TestingSessionLocal() as db:
+        session_row = (
+            db.query(models.Session)
+            .filter(models.Session.session_token == seed["session_token"])
+            .first()
+        )
+        assert session_row is None
+
+        trip_ctx = (
+            db.query(models.TripContext)
+            .filter(models.TripContext.id == seed["trip_context_id"])
+            .first()
+        )
+        assert trip_ctx is None
+
+        branches = (
+            db.query(models.Branch)
+            .filter(models.Branch.trip_context_id == seed["trip_context_id"])
+            .all()
+        )
+        assert branches == []
+
+    snapshot = client.get("/v1/session/snapshot", params={"session_id": seed["session_token"]})
+    payload = snapshot.json()
+
+    assert payload["branches"] == []
+    assert payload["trip_context"] is None

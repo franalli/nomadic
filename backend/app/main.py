@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -259,3 +259,80 @@ def get_session_snapshot(
         tiles=tiles,
         trip_context=ctx_payload,
     )
+
+
+@app.delete("/v1/session", status_code=204)
+def reset_session(
+    session_id: str = Query(..., description="Frontend session UUID"),
+    db: Session = db_dependency,
+):
+    session = (
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
+    )
+    if not session:
+        return Response(status_code=204)
+
+    trip_context_ids = [
+        ctx_id
+        for (ctx_id,) in (
+            db.query(db_models.TripContext.id)
+            .filter(db_models.TripContext.session_id == session.id)
+            .all()
+        )
+    ]
+
+    if trip_context_ids:
+        branch_ids = [
+            branch_id
+            for (branch_id,) in (
+                db.query(db_models.Branch.id)
+                .filter(db_models.Branch.trip_context_id.in_(trip_context_ids))
+                .all()
+            )
+        ]
+
+        if branch_ids:
+            tile_ids = [
+                tile_id
+                for (tile_id,) in (
+                    db.query(db_models.BranchTile.tile_id)
+                    .filter(db_models.BranchTile.branch_id.in_(branch_ids))
+                    .all()
+                )
+                if tile_id is not None
+            ]
+
+            (
+                db.query(db_models.BranchTile)
+                .filter(db_models.BranchTile.branch_id.in_(branch_ids))
+                .delete(synchronize_session=False)
+            )
+            (
+                db.query(db_models.Branch)
+                .filter(db_models.Branch.id.in_(branch_ids))
+                .delete(synchronize_session=False)
+            )
+
+            if tile_ids:
+                (
+                    db.query(db_models.Tile)
+                    .filter(db_models.Tile.id.in_(tile_ids))
+                    .delete(synchronize_session=False)
+                )
+
+        (
+            db.query(db_models.TripContext)
+            .filter(db_models.TripContext.id.in_(trip_context_ids))
+            .delete(synchronize_session=False)
+        )
+
+    (
+        db.query(db_models.TileClick)
+        .filter(db_models.TileClick.session_id == session_id)
+        .delete(synchronize_session=False)
+    )
+
+    db.delete(session)
+    db.commit()
+
+    return Response(status_code=204)

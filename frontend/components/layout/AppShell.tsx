@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
-import { getOrCreateSessionId } from '@/lib/session';
+import { TripContextForm } from '@/components/TripContextForm';
+import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import type {
   SessionSnapshot,
   TilesSearchRequest,
@@ -36,12 +37,21 @@ export function AppShell() {
   const [tripContextId, setTripContextId] = useState<number | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
+  const [isResettingSession, setIsResettingSession] = useState(false);
+  const tilesFetchControllerRef = useRef<AbortController | null>(null);
+
+  const abortTilesFetch = useCallback(() => {
+    if (tilesFetchControllerRef.current) {
+      tilesFetchControllerRef.current.abort();
+      tilesFetchControllerRef.current = null;
+    }
+  }, []);
 
   const [origin, setOrigin] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [budgetBucket, setBudgetBucket] = useState('');
-  const [groupSize, setGroupSize] = useState('2');
+  const [budgetBucket, setBudgetBucket] = useState<string | undefined>(undefined);
+  const [groupSize, setGroupSize] = useState<number | undefined>(2);
   const [vibes, setVibes] = useState<string[]>([]);
 
   const selectedBranch = useMemo(
@@ -49,13 +59,12 @@ export function AppShell() {
     [branches, selectedBranchId]
   );
 
-  const numericGroupSize = useMemo(() => {
-    const parsed = parseInt(groupSize, 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-  }, [groupSize]);
-
   const handleBranchSelect = useCallback(
     async (branchId: string, overrides?: BranchSelectionOverrides) => {
+      abortTilesFetch();
+      const controller = new AbortController();
+      tilesFetchControllerRef.current = controller;
+
       setSelectedBranchId(branchId);
       const branch = overrides?.branch ?? branches.find((b) => b.id === branchId);
       if (!branch) return;
@@ -68,7 +77,7 @@ export function AppShell() {
       const requestStartDate = overrides?.startDate ?? startDate;
       const requestEndDate = overrides?.endDate ?? endDate;
       const requestBudgetBucket = overrides?.budgetBucket ?? budgetBucket;
-      const requestGroupSize = overrides?.groupSize ?? numericGroupSize;
+      const requestGroupSize = overrides?.groupSize ?? groupSize;
       const requestVibes = overrides?.vibes ?? vibes;
       const requestTripContextId = overrides?.tripContextId ?? tripContextId;
       const errorMessageOverride = overrides?.errorMessageOverride;
@@ -92,6 +101,7 @@ export function AppShell() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+          signal: controller.signal,
         });
 
         if (!res.ok) {
@@ -104,23 +114,30 @@ export function AppShell() {
         }
 
         const data: TilesSearchResponse = await res.json();
+        if (controller.signal.aborted) return;
         setTiles(data.tiles);
         setTilesRequestId(data.tiles_request_id ?? data.request_id ?? null);
       } catch (error) {
+        if ((error as DOMException).name === 'AbortError') return;
         console.error('Failed to fetch tiles for branch', error);
         setToastMessage(
           errorMessageOverride ??
             'Unable to refresh tiles for that branch. Please try again.'
         );
+      } finally {
+        if (tilesFetchControllerRef.current === controller) {
+          tilesFetchControllerRef.current = null;
+        }
       }
     },
     [
+      abortTilesFetch,
       branches,
       budgetBucket,
       endDate,
-      numericGroupSize,
       origin,
       startDate,
+      groupSize,
       tripContextId,
       vibes,
     ]
@@ -153,11 +170,9 @@ export function AppShell() {
           setOrigin(data.trip_context.origin ?? '');
           setStartDate(data.trip_context.start_date ?? '');
           setEndDate(data.trip_context.end_date ?? '');
-          setBudgetBucket(data.trip_context.budget_bucket ?? '');
+          setBudgetBucket(data.trip_context.budget_bucket ?? undefined);
           setGroupSize(
-            data.trip_context.group_size != null
-              ? String(data.trip_context.group_size)
-              : '2'
+            data.trip_context.group_size != null ? data.trip_context.group_size : 2
           );
           setVibes(data.trip_context.vibes ?? []);
           setTripContextId(data.trip_context.id);
@@ -196,7 +211,7 @@ export function AppShell() {
                 origin: data.trip_context.origin ?? '',
                 startDate: data.trip_context.start_date ?? '',
                 endDate: data.trip_context.end_date ?? '',
-                budgetBucket: data.trip_context.budget_bucket ?? '',
+                budgetBucket: data.trip_context.budget_bucket ?? undefined,
                 groupSize: data.trip_context.group_size ?? undefined,
                 vibes: data.trip_context.vibes ?? [],
                 tripContextId: data.trip_context.id,
@@ -232,13 +247,80 @@ export function AppShell() {
   }, []);
 
   const handleClearContext = useCallback(() => {
+    abortTilesFetch();
     setOrigin('');
     setStartDate('');
     setEndDate('');
-    setBudgetBucket('');
-    setGroupSize('2');
+    setBudgetBucket(undefined);
+    setGroupSize(2);
     setVibes([]);
+    setTripContextId(null);
+    setBranches([]);
+    setSelectedBranchId(null);
+    setTiles([]);
+    setTilesRequestId(null);
+  }, [abortTilesFetch]);
+
+  const handleStartNewSession = useCallback(async () => {
+    const sessionId = getOrCreateSessionId();
+    abortTilesFetch();
+    setIsResettingSession(true);
+    let didResetServerState = false;
+
+    try {
+      if (sessionId) {
+        const res = await fetch(
+          `${API_BASE}/v1/session?session_id=${encodeURIComponent(sessionId)}`,
+          {
+            method: 'DELETE',
+          }
+        );
+
+        if (!res.ok) {
+          throw new Error(`Failed to reset session: ${res.status}`);
+        }
+
+        didResetServerState = true;
+      }
+    } catch (error) {
+      console.error('Failed to reset planning session', error);
+    } finally {
+      clearSessionId();
+      handleClearContext();
+      setIsResettingSession(false);
+    }
+
+    setToastMessage(
+      didResetServerState
+        ? 'Started a fresh planning session.'
+        : 'Cleared your local planner, but the previous session may reappear if you refresh.'
+    );
+  }, [abortTilesFetch, handleClearContext]);
+
+  useEffect(() => () => abortTilesFetch(), [abortTilesFetch]);
+
+  const handleToggleVibe = useCallback((value: string) => {
+    setVibes((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    );
   }, []);
+
+  const handlePlanResult = useCallback(
+    (result: {
+      tripContextId: number | null;
+      branches: PlanBranch[];
+      tiles: Tile[];
+      primaryBranchId: string | null;
+      tilesRequestId: string | null;
+    }) => {
+      setTripContextId(result.tripContextId);
+      setBranches(result.branches);
+      setTiles(result.tiles);
+      setTilesRequestId(result.tilesRequestId);
+      setSelectedBranchId(result.primaryBranchId);
+    },
+    []
+  );
 
   return (
     <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 p-4">
@@ -260,7 +342,24 @@ export function AppShell() {
       </header>
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-        <section className="rounded-lg border bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4">
+          <TripContextForm
+            origin={origin}
+            onOriginChange={setOrigin}
+            startDate={startDate}
+            onStartDateChange={setStartDate}
+            endDate={endDate}
+            onEndDateChange={setEndDate}
+            budgetBucket={budgetBucket}
+            onBudgetBucketChange={setBudgetBucket}
+            groupSize={groupSize}
+            onGroupSizeChange={setGroupSize}
+            vibes={vibes}
+            onToggleVibe={handleToggleVibe}
+            onStartNewSession={handleStartNewSession}
+            isStartingNewSession={isResettingSession}
+          />
+
           <ChatPanel
             origin={origin}
             startDate={startDate}
@@ -268,20 +367,11 @@ export function AppShell() {
             budgetBucket={budgetBucket}
             groupSize={groupSize}
             vibes={vibes}
-            onOriginChange={setOrigin}
-            onStartDateChange={setStartDate}
-            onEndDateChange={setEndDate}
-            onBudgetBucketChange={setBudgetBucket}
-            onGroupSizeChange={setGroupSize}
-            onVibesChange={setVibes}
-            onClearContext={handleClearContext}
-            onBranchesChange={(bs) => setBranches(bs)}
-            onTilesChange={setTiles}
-            onPrimaryBranchSelected={(id) => setSelectedBranchId(id)}
-            onTilesRequestIdChange={setTilesRequestId}
-            onTripContextChange={setTripContextId}
+            tripContextId={tripContextId}
+            selectedBranchId={selectedBranchId}
+            onPlanResult={handlePlanResult}
           />
-        </section>
+        </div>
 
         <div className="flex flex-col gap-4">
           <section className="rounded-lg border bg-white p-4 shadow-sm">

@@ -12,6 +12,7 @@ export interface PlanRequest {
   budget_bucket?: string;
   group_size?: number;
   vibes: string[];
+  trip_context_id?: number;
 }
 
 export interface PlanResponse {
