@@ -3,27 +3,31 @@
 @tailwind utilities;
 
 :root {
-  /* Base */
-  --background: 0 0% 99%;
-  --foreground: 222 47% 11%;
+  /* Premium Nomad palette */
+  --bg: 32 36% 95%;
+  --bg-soft: 30 28% 90%;
+  --bg-strong: 24 29% 16%;
+  --surface: 0 0% 100%;
+  --border: 30 19% 80%;
 
-  /* Primary (cyan) */
-  --primary: 188 80% 31%;
+  --text: 24 17% 16%;
+  --text-soft: 24 12% 36%;
+  --text-muted: 27 10% 52%;
+  --text-onDark: 40 47% 92%;
+
+  --charcoal: 214 21% 18%;
+  --sand: 39 43% 82%;
+  --bronze: 32 45% 46%;
+  --sky: 199 86% 62%;
+
+  /* Legacy tokens kept for compatibility */
+  --primary: 199 86% 62%;
   --primary-foreground: 210 40% 98%;
-
-  /* Secondary */
-  --secondary: 186 94% 53%;
-  --secondary-foreground: 210 40% 98%;
-
-  /* Accent (amber) */
-  --accent: 42 100% 61%;
-  --accent-foreground: 222 47% 11%;
-
-  /* Border & muted */
-  --border: 214 32% 91%;
-  --muted: 215 20% 65%;
+  --accent: 32 45% 46%;
+  --accent-foreground: 24 17% 16%;
+  --muted: 30 19% 80%;
 }
 
 body {
-  @apply bg-slate-50 font-sans text-slate-800;
+  @apply bg-bg text-text font-body;
 }

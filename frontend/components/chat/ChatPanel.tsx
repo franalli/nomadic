@@ -123,15 +123,15 @@ export function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <div className="flex h-full flex-col gap-3 rounded-xl border p-3">
+    <div className="border-border bg-bg-soft text-text flex h-full flex-col gap-3 rounded-xl border p-3">
       <div className="flex-1 space-y-2 overflow-y-auto text-sm">
         {messages.map((m) => (
           <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
             <div
               className={
                 m.role === 'user'
-                  ? 'inline-block rounded-xl bg-gray-200 px-3 py-2'
-                  : 'inline-block rounded-xl bg-gray-100 px-3 py-2'
+                  ? 'bg-bronze text-surface inline-block max-w-[80%] rounded-2xl px-3 py-2'
+                  : 'bg-surface text-text inline-block max-w-[80%] rounded-2xl px-3 py-2'
               }
             >
               {m.content}
@@ -142,7 +142,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input
-          className="flex-1 rounded-lg border px-3 py-2 text-sm"
+          className="border-border bg-surface text-text placeholder:text-text-muted focus-visible:ring-sky focus-visible:ring-offset-bg-soft flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           placeholder="Describe your ideal trip..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -150,10 +150,10 @@ export function ChatPanel(props: ChatPanelProps) {
         />
         <button
           type="submit"
-          className="rounded-lg border px-4 py-2 text-sm"
+          className="bg-bronze text-surface rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:bg-[#b48645] disabled:opacity-60"
           disabled={isLoading}
         >
-          {isLoading ? 'Thinking...' : 'Plan'}
+          {isLoading ? 'Thinking…' : 'Plan'}
         </button>
       </form>
     </div>

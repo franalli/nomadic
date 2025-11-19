@@ -6,7 +6,19 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        bg: 'hsl(var(--bg))',
+        'bg-soft': 'hsl(var(--bg-soft))',
+        'bg-strong': 'hsl(var(--bg-strong))',
+        surface: 'hsl(var(--surface))',
         border: 'hsl(var(--border))',
+        text: 'hsl(var(--text))',
+        'text-soft': 'hsl(var(--text-soft))',
+        'text-muted': 'hsl(var(--text-muted))',
+        'text-onDark': 'hsl(var(--text-onDark))',
+        charcoal: 'hsl(var(--charcoal))',
+        sand: 'hsl(var(--sand))',
+        bronze: 'hsl(var(--bronze))',
+        sky: 'hsl(var(--sky))',
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
@@ -23,6 +35,23 @@ const config: Config = {
       },
       fontFamily: {
         sans: ['Inter', ...defaultTheme.fontFamily.sans],
+        body: ['Inter', ...defaultTheme.fontFamily.sans],
+        heading: ['"Playfair Display"', 'ui-serif', 'Georgia', 'serif'],
+      },
+      fontSize: {
+        display: ['3.5rem', { lineHeight: '1.05', letterSpacing: '-0.04em' }],
+        h2: ['2rem', { lineHeight: '1.2', letterSpacing: '-0.02em' }],
+        h3: ['1.375rem', { lineHeight: '1.3' }],
+      },
+      boxShadow: {
+        soft: '0 20px 45px rgba(10, 14, 18, 0.08)',
+        card: '0 15px 35px rgba(10, 14, 18, 0.08)',
+      },
+      maxWidth: {
+        content: '1200px',
+      },
+      spacing: {
+        18: '4.75rem',
       },
     },
   },

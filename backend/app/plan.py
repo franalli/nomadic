@@ -111,10 +111,10 @@ def _call_openai_for_branches_raw(req: PlanRequest) -> List[dict]:
 
     system_prompt = (
         "You are a travel planner.\n"
-        "Given the user's trip preferences, suggest 2–3 trip branches.\n\n"
+        "Given the user's trip preferences, suggest 2/3 trip branches.\n\n"
         "Each branch is one destination idea. For each branch, provide:\n"
         "- label: a short friendly label (e.g. 'Beach week in Barcelona')\n"
-        "- description: 1–2 sentences summarising the idea\n"
+        "- description: 1/2 sentences summarising the idea\n"
         "- destination: a concise destination string (e.g. 'Barcelona, Spain').\n\n"
         "Return ONLY JSON with this shape:\n"
         "{\n"
