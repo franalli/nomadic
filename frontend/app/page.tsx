@@ -1,5 +1,5 @@
-import { AppShell } from '@/components/layout/AppShell';
+import { NomadicLanding } from '@/components/layout/NomadicLanding';
 
 export default function HomePage() {
-  return <AppShell />;
+  return <NomadicLanding />;
 }

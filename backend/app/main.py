@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 import app.db_models as db_models
@@ -12,7 +13,7 @@ import app.schemas as schemas
 from app.config import settings
 from app.crud_trip import get_or_create_session, snapshot_tiles_for_branch
 from app.db import get_db
-from app.plan import plan_trip
+from app.plan import plan_trip, plan_trip_event_stream
 from app.schemas import (
     PlanRequest,
     PlanResponse,
@@ -179,12 +180,22 @@ def track_tile_click(
 
 
 @app.post("/v1/plan", response_model=PlanResponse)
-def plan(req: PlanRequest, db: Session = db_dependency):
+def plan(
+    req: PlanRequest,
+    db: Session = db_dependency,
+    stream: bool = Query(False, description="Stream incremental planner events"),
+):
     """
     Chat-like planning endpoint:
     message + preferences -> branches via LLM -> tiles for primary branch.
     """
     try:
+        if stream:
+            return StreamingResponse(
+                plan_trip_event_stream(db, req),
+                media_type="application/jsonl",
+            )
+
         return plan_trip(db, req)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

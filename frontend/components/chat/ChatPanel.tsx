@@ -1,15 +1,14 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
 import type { PlanRequest, PlanResponse } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
 import type { PlanBranch } from '@/types/plan';
 import type { Tile } from '@/types/tile';
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 interface ChatPanelProps {
   origin: string;
@@ -29,6 +28,49 @@ interface ChatPanelProps {
   }) => void;
 }
 
+type PlanStreamEvent =
+  | {
+      event: 'assistant_message';
+      message_id: string;
+      delta: string;
+      is_final?: boolean;
+      follow_up_question?: string | null;
+    }
+  | {
+      event: 'plan_update';
+      trip_context_id?: number | null;
+      branches: PlanBranch[];
+      primary_branch_id?: string | null;
+      assistant_message_id?: string | null;
+    }
+  | {
+      event: 'tiles_update';
+      tiles: Tile[];
+      tiles_request_id?: string | null;
+      summary?: Record<string, unknown> | null;
+    }
+  | {
+      event: 'complete';
+      response: PlanResponse;
+    }
+  | {
+      event: 'error';
+      message: string;
+    };
+
+const summariseBranches = (branches: PlanBranch[]): string => {
+  if (!branches.length) {
+    return 'I could not settle on clear directions yet, but here are some starter booking options.';
+  }
+
+  const lines = branches.map((branch, idx) => {
+    const label = `${idx + 1}. ${branch.label} (${branch.destination})`;
+    return branch.description ? `${label}\n   ${branch.description}` : label;
+  });
+
+  return ['Here are a few trip directions I’d consider:', ...lines].join('\n\n');
+};
+
 export function ChatPanel(props: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -39,6 +81,17 @@ export function ChatPanel(props: ChatPanelProps) {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = useCallback(() => {
+    const node = scrollContainerRef.current;
+    if (!node) return;
+    node.scrollTop = node.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,7 +111,7 @@ export function ChatPanel(props: ChatPanelProps) {
     try {
       const sessionId = getOrCreateSessionId();
       const body: PlanRequest = {
-        user_id: undefined, // optional, wire later
+        user_id: undefined,
         session_id: sessionId,
         message: trimmed,
         origin: props.origin || undefined,
@@ -70,44 +123,186 @@ export function ChatPanel(props: ChatPanelProps) {
         trip_context_id: props.tripContextId ?? undefined,
       };
 
-      const res = await fetch(`${API_BASE}/v1/plan`, {
+      const res = await fetch(`${API_BASE}/v1/plan?stream=true`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
       if (!res.ok) {
-        throw new Error(`Plan failed: ${res.status}`);
+        const text = await res.text();
+        throw new Error(text || `Plan failed: ${res.status}`);
       }
 
-      const data: PlanResponse = await res.json();
-
-      props.onPlanResult({
-        tripContextId: data.trip_context_id ?? null,
-        branches: data.branches,
-        tiles: data.tiles,
-        primaryBranchId: data.primary_branch_id ?? data.branches[0]?.id ?? null,
-        tilesRequestId: data.tiles_request_id ?? null,
-      });
-
-      // Build assistant message summarising the branches
-      const summaryLines =
-        data.branches.length === 0
-          ? ['I couldn’t find clear branches yet, but here are some initial tiles.']
-          : data.branches.map((b, idx) => {
-              const prefix = `${idx + 1}. ${b.label} (${b.destination})`;
-              if (b.description) return `${prefix}\n   ${b.description}`;
-              return prefix;
-            });
-
-      const assistantMessage: ChatMessage = {
-        id: `a_${Date.now()}`,
-        role: 'assistant',
-        content:
-          'Here are some trip directions I’d consider:\n\n' + summaryLines.join('\n\n'),
+      const handlePlanResult = (data: PlanResponse) => {
+        props.onPlanResult({
+          tripContextId: data.trip_context_id ?? null,
+          branches: data.branches,
+          tiles: data.tiles,
+          primaryBranchId:
+            data.primary_branch_id ??
+            data.branches[0]?.id ??
+            props.selectedBranchId ??
+            null,
+          tilesRequestId: data.tiles_request_id ?? null,
+        });
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      const consumeStream = async () => {
+        const stream = res.body;
+        if (!stream || typeof stream.getReader !== 'function') {
+          const fallback: PlanResponse = await res.json();
+          handlePlanResult(fallback);
+          const assistantText =
+            fallback.assistant_message || summariseBranches(fallback.branches);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: fallback.assistant_message_id ?? `a_${Date.now()}`,
+              role: 'assistant',
+              content: assistantText,
+            },
+          ]);
+          return;
+        }
+
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let sawComplete = false;
+        let activeAssistantId: string | null = null;
+        let latestPlan: Partial<PlanResponse> = {};
+
+        const emitPlanSnapshot = () => {
+          const snapshot: PlanResponse = {
+            branches: latestPlan.branches ?? [],
+            tiles: latestPlan.tiles ?? [],
+            trip_context_id: latestPlan.trip_context_id ?? null,
+            primary_branch_id: latestPlan.primary_branch_id ?? null,
+            tiles_request_id: latestPlan.tiles_request_id ?? null,
+            tiles_summary: latestPlan.tiles_summary ?? null,
+            assistant_message: latestPlan.assistant_message ?? null,
+            assistant_message_id: latestPlan.assistant_message_id ?? null,
+            follow_up_question: latestPlan.follow_up_question ?? null,
+          };
+          handlePlanResult(snapshot);
+        };
+
+        const ensureAssistantMessage = (messageId: string) => {
+          if (activeAssistantId === messageId) return;
+          activeAssistantId = messageId;
+          setMessages((prev) => {
+            const exists = prev.some((msg) => msg.id === messageId);
+            if (exists) return prev;
+            return [...prev, { id: messageId, role: 'assistant', content: '' }];
+          });
+        };
+
+        const appendAssistantDelta = (
+          messageId: string,
+          delta: string,
+          followUp?: string | null
+        ) => {
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id !== messageId) return msg;
+              const next = `${msg.content || ''}${delta}`;
+              const withFollowUp = followUp ? `${next}\n\n${followUp}` : next;
+              return { ...msg, content: withFollowUp };
+            })
+          );
+        };
+
+        const applyCompleteSnapshot = (plan: PlanResponse) => {
+          handlePlanResult(plan);
+          if (plan.assistant_message_id && plan.assistant_message) {
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === plan.assistant_message_id
+                  ? { ...msg, content: plan.assistant_message }
+                  : msg
+              )
+            );
+          }
+        };
+
+        const handleEvent = (payload: PlanStreamEvent) => {
+          switch (payload.event) {
+            case 'assistant_message': {
+              const messageId =
+                payload.message_id || activeAssistantId || `a_${Date.now()}`;
+              ensureAssistantMessage(messageId);
+              appendAssistantDelta(
+                messageId,
+                payload.delta,
+                payload.is_final ? payload.follow_up_question : undefined
+              );
+              break;
+            }
+            case 'plan_update': {
+              latestPlan = {
+                ...latestPlan,
+                trip_context_id: payload.trip_context_id ?? latestPlan.trip_context_id,
+                branches: payload.branches ?? latestPlan.branches ?? [],
+                primary_branch_id:
+                  payload.primary_branch_id ?? latestPlan.primary_branch_id,
+                assistant_message_id:
+                  payload.assistant_message_id ?? latestPlan.assistant_message_id,
+              };
+              if (payload.assistant_message_id) {
+                ensureAssistantMessage(payload.assistant_message_id);
+              }
+              emitPlanSnapshot();
+              break;
+            }
+            case 'tiles_update': {
+              latestPlan = {
+                ...latestPlan,
+                tiles: payload.tiles ?? latestPlan.tiles ?? [],
+                tiles_request_id: payload.tiles_request_id ?? latestPlan.tiles_request_id,
+                tiles_summary: payload.summary ?? latestPlan.tiles_summary,
+              };
+              emitPlanSnapshot();
+              break;
+            }
+            case 'complete':
+              sawComplete = true;
+              applyCompleteSnapshot(payload.response);
+              break;
+            case 'error':
+              throw new Error(payload.message);
+            default:
+              break;
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let newlineIndex = buffer.indexOf('\n');
+          while (newlineIndex >= 0) {
+            const raw = buffer.slice(0, newlineIndex).trim();
+            buffer = buffer.slice(newlineIndex + 1);
+            if (raw) {
+              const parsed = JSON.parse(raw) as PlanStreamEvent;
+              handleEvent(parsed);
+            }
+            newlineIndex = buffer.indexOf('\n');
+          }
+        }
+
+        if (buffer.trim()) {
+          const parsed = JSON.parse(buffer.trim()) as PlanStreamEvent;
+          handleEvent(parsed);
+        }
+
+        if (!sawComplete) {
+          throw new Error('Plan stream ended before completion.');
+        }
+      };
+
+      await consumeStream();
     } catch (error) {
       console.error('Failed to plan trip', error);
       const assistantMessage: ChatMessage = {
@@ -124,7 +319,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
   return (
     <div className="border-border bg-bg-soft text-text flex h-full flex-col gap-3 rounded-xl border p-3">
-      <div className="flex-1 space-y-2 overflow-y-auto text-sm">
+      <div ref={scrollContainerRef} className="flex-1 space-y-2 overflow-y-auto text-sm">
         {messages.map((m) => (
           <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
             <div

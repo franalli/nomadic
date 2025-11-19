@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AppShell } from '../components/layout/AppShell';
+import { NomadicLanding } from '../components/layout/NomadicLanding';
 
 const SNAPSHOT_RESPONSE = {
   branches: [
@@ -58,7 +58,7 @@ const TILE_SEARCH_RESPONSE = {
   tiles_request_id: 'req-1',
 };
 
-describe('AppShell snapshot hydration', () => {
+describe('NomadicLanding snapshot hydration', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_API_URL = 'http://test.local';
     window.localStorage.setItem('session_id', 'session-abc');
@@ -72,7 +72,7 @@ describe('AppShell snapshot hydration', () => {
 
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    render(<AppShell />);
+    render(<NomadicLanding />);
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toContain('/v1/session/snapshot');

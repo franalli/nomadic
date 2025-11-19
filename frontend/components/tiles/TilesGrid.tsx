@@ -14,7 +14,7 @@ export function TilesGrid({ tiles, activeBranch, tilesRequestId }: TilesGridProp
   if (!tiles.length) {
     return (
       <p className="text-sm text-slate-500">
-        Tiles will appear after you request a plan.
+        Booking options will appear after you request a plan.
       </p>
     );
   }

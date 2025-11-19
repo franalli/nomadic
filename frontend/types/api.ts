@@ -22,6 +22,9 @@ export interface PlanResponse {
   primary_branch_id?: string | null;
   tiles_request_id?: string | null;
   tiles_summary?: Record<string, unknown> | null;
+  assistant_message?: string | null;
+  assistant_message_id?: string | null;
+  follow_up_question?: string | null;
 }
 
 export interface SessionTripContext {

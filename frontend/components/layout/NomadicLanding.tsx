@@ -1,10 +1,12 @@
 'use client';
 
+import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
+import { API_BASE } from '@/lib/api';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import type {
   SessionSnapshot,
@@ -14,12 +16,13 @@ import type {
 import type { PlanBranch } from '@/types/plan';
 import type { Tile } from '@/types/tile';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
-
 const VIBE_OPTIONS = [
+  { value: 'adventure', label: 'Adventure' },
+  { value: 'history', label: 'History' },
+  { value: 'local_culture', label: 'Local Culture' },
+  { value: 'art', label: 'Art' },
   { value: 'foodie', label: 'Foodie' },
   { value: 'nightlife', label: 'Nightlife' },
-  { value: 'culture', label: 'Culture' },
   { value: 'outdoors', label: 'Outdoors' },
   { value: 'relaxation', label: 'Relaxation' },
   { value: 'family', label: 'Family' },
@@ -37,7 +40,151 @@ type BranchSelectionOverrides = {
   errorMessageOverride?: string;
 };
 
-export function AppShell() {
+const POPULAR_ROUTES = [
+  {
+    title: 'Alpine Weekends',
+    subtitle: 'Zurich → Alps → Milan',
+  },
+  {
+    title: 'Desert to Coast',
+    subtitle: 'Marrakesh → Atlas → Essaouira',
+  },
+  {
+    title: 'Steppe & Skyline',
+    subtitle: 'Ulaanbaatar → Seoul → Tokyo',
+  },
+];
+
+type LandingHeaderProps = {
+  onStartNewSession: () => void | Promise<void>;
+  isResettingSession: boolean;
+};
+
+function LandingHeader({
+  onStartNewSession,
+  isResettingSession,
+}: LandingHeaderProps) {
+  return (
+    <header className="border-border bg-surface/80 border-b backdrop-blur">
+      <div className="max-w-content mx-auto flex items-center justify-between p-4 md:px-8">
+        <div className="flex items-center gap-3">
+          <Image
+            src="/nomadic_logo.png"
+            alt="Nomadic logo"
+            width={60}
+            height={60}
+            priority
+            className="size-20"
+          />
+          <span className="font-heading text-text text-xl md:text-2xl">Nomadic</span>
+        </div>
+
+        <nav className="text-text-soft hidden items-center gap-6 text-sm md:flex">
+          <button className="hover:text-text transition-colors">Stays</button>
+          <button className="hover:text-text transition-colors">Flights</button>
+          <button className="hover:text-text transition-colors">Activities</button>
+          <button className="hover:text-text transition-colors">Deals</button>
+        </nav>
+
+        <div className="flex items-center gap-3">
+          <button className="text-text-soft hover:text-text hidden text-sm md:inline-flex">
+            Sign in
+          </button>
+          <button
+            type="button"
+            onClick={onStartNewSession}
+            disabled={isResettingSession}
+            className="bg-charcoal text-surface shadow-soft focus-visible:ring-sky focus-visible:ring-offset-bg inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-medium tracking-wide transition-colors hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60"
+          >
+            {isResettingSession ? 'Resetting…' : 'Start new trip'}
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function HeroIntro() {
+  return (
+    <div className="space-y-5 text-center md:text-left">
+      <h1 className="font-heading text-display text-text">
+        Plan trips with
+        <span className="text-bronze block">nomad-level precision.</span>
+      </h1>
+      <p className="text-text-soft mx-auto max-w-3xl text-base md:mx-0">
+        Nomadic weaves flights, stays, and experiences into a single, elegant
+        itinerary—so your journeys feel as curated as they look.
+      </p>
+      <div className="text-text-muted flex flex-wrap items-center justify-center gap-4 text-xs md:justify-start">
+        <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
+          <span className="bg-bronze size-2 rounded-full" />
+          Trusted by frequent flyers
+        </span>
+        <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
+          <span className="bg-sky size-2 rounded-full" />
+          Built for complex itineraries
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function PopularRoutesSection() {
+  return (
+    <section className="border-border bg-bg border-t">
+      <div className="max-w-content mx-auto px-4 py-12 md:px-8 md:py-16">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h2 className="font-heading text-h2 text-text">Popular routes</h2>
+            <p className="text-text-soft mt-2 text-sm">
+              Curated itineraries where Nomadic truly shines.
+            </p>
+          </div>
+          <button className="text-text-soft hover:text-text hidden text-sm font-medium underline-offset-4 hover:underline md:inline-flex">
+            See all routes
+          </button>
+        </div>
+        <div className="mt-8 grid gap-6 md:grid-cols-3">
+          {POPULAR_ROUTES.map((item) => (
+            <article
+              key={item.title}
+              className="border-border bg-surface shadow-card hover:shadow-soft group overflow-hidden rounded-lg border transition-all duration-200 hover:-translate-y-0.5"
+            >
+              <div className="from-charcoal/80 via-bronze/60 to-sky/70 h-32 bg-gradient-to-tr" />
+              <div className="space-y-1.5 p-4">
+                <h3 className="font-heading text-text text-lg">{item.title}</h3>
+                <p className="text-text-soft text-xs">{item.subtitle}</p>
+                <p className="text-text-muted pt-2 text-[11px]">
+                  Layer flights, trains, and stays into one synced plan. Save as a
+                  template or share with friends.
+                </p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LandingFooter() {
+  return (
+    <footer className="border-border bg-bg-strong text-text-onDark border-t">
+      <div className="max-w-content mx-auto flex flex-col gap-6 px-4 py-8 text-sm md:flex-row md:items-center md:justify-between md:px-8">
+        <p className="text-text-onDark/80 text-xs">
+          © {new Date().getFullYear()} Nomadic. Crafted for modern nomads.
+        </p>
+        <div className="text-text-onDark/80 flex flex-wrap gap-4 text-xs">
+          <button className="hover:text-sky transition-colors">Privacy</button>
+          <button className="hover:text-sky transition-colors">Terms</button>
+          <button className="hover:text-sky transition-colors">Support</button>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+export function NomadicLanding() {
   const [branches, setBranches] = useState<PlanBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [tiles, setTiles] = useState<Tile[]>([]);
@@ -366,61 +513,15 @@ export function AppShell() {
         </div>
       )}
 
-      <header className="border-border bg-surface/80 border-b backdrop-blur">
-        <div className="max-w-content mx-auto flex items-center justify-between p-4 md:px-8">
-          <div className="flex items-center gap-3">
-            <div className="bg-charcoal text-sand shadow-soft flex size-10 items-center justify-center rounded-full">
-              <span className="text-lg font-semibold leading-none">🦅</span>
-            </div>
-            <span className="font-heading text-text text-xl md:text-2xl">NomadiC</span>
-          </div>
-
-          <nav className="text-text-soft hidden items-center gap-6 text-sm md:flex">
-            <button className="hover:text-text transition-colors">Stays</button>
-            <button className="hover:text-text transition-colors">Flights</button>
-            <button className="hover:text-text transition-colors">Activities</button>
-            <button className="hover:text-text transition-colors">Deals</button>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <button className="text-text-soft hover:text-text hidden text-sm md:inline-flex">
-              Sign in
-            </button>
-            <button
-              type="button"
-              onClick={handleStartNewSession}
-              disabled={isResettingSession}
-              className="bg-charcoal text-surface shadow-soft focus-visible:ring-sky focus-visible:ring-offset-bg inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-medium tracking-wide transition-colors hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60"
-            >
-              {isResettingSession ? 'Resetting…' : 'Start new trip'}
-            </button>
-          </div>
-        </div>
-      </header>
+      <LandingHeader
+        onStartNewSession={handleStartNewSession}
+        isResettingSession={isResettingSession}
+      />
 
       <main>
         <section className="bg-bg-soft">
           <div className="max-w-content md:py-18 mx-auto flex flex-col gap-10 px-4 py-12 md:px-8">
-            <div className="space-y-5 text-center md:text-left">
-              <h1 className="font-heading text-display text-text">
-                Plan trips with
-                <span className="text-bronze block">nomad-level precision.</span>
-              </h1>
-              <p className="text-text-soft mx-auto max-w-3xl text-base md:mx-0">
-                NomadiC weaves flights, stays, and experiences into a single, elegant
-                itinerary—so your journeys feel as curated as they look.
-              </p>
-              <div className="text-text-muted flex flex-wrap items-center justify-center gap-4 text-xs md:justify-start">
-                <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
-                  <span className="bg-bronze size-2 rounded-full" />
-                  Trusted by frequent flyers
-                </span>
-                <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
-                  <span className="bg-sky size-2 rounded-full" />
-                  Built for complex itineraries
-                </span>
-              </div>
-            </div>
+            <HeroIntro />
 
             <div className="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
               <div className="flex flex-col gap-4">
@@ -572,7 +673,7 @@ export function AppShell() {
                     className="hover:bg-bg-soft flex w-full items-center justify-between p-4 text-left transition-colors"
                   >
                     <h3 className="text-text-soft text-sm font-semibold uppercase tracking-wide">
-                      Branches {branches.length > 0 && `(${branches.length})`}
+                      Your Trip Ideas {branches.length > 0 && `(${branches.length})`}
                     </h3>
                     <span className="text-text-muted">
                       {branchesExpanded ? '−' : '+'}
@@ -612,7 +713,7 @@ export function AppShell() {
                   >
                     <div>
                       <h3 className="text-text-soft text-sm font-semibold uppercase tracking-wide">
-                        Tiles {tiles.length > 0 && `(${tiles.length})`}
+                        Booking Options {tiles.length > 0 && `(${tiles.length})`}
                       </h3>
                       <p className="text-text-muted text-xs">
                         {groupSize && groupSize > 0
@@ -647,66 +748,10 @@ export function AppShell() {
           </div>
         </section>
 
-        <section className="border-border bg-bg border-t">
-          <div className="max-w-content mx-auto px-4 py-12 md:px-8 md:py-16">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h2 className="font-heading text-h2 text-text">Popular routes</h2>
-                <p className="text-text-soft mt-2 text-sm">
-                  Curated itineraries where NomadiC truly shines.
-                </p>
-              </div>
-              <button className="text-text-soft hover:text-text hidden text-sm font-medium underline-offset-4 hover:underline md:inline-flex">
-                See all routes
-              </button>
-            </div>
-            <div className="mt-8 grid gap-6 md:grid-cols-3">
-              {[
-                {
-                  title: 'Alpine Weekends',
-                  subtitle: 'Zurich → Alps → Milan',
-                },
-                {
-                  title: 'Desert to Coast',
-                  subtitle: 'Marrakesh → Atlas → Essaouira',
-                },
-                {
-                  title: 'Steppe & Skyline',
-                  subtitle: 'Ulaanbaatar → Seoul → Tokyo',
-                },
-              ].map((item) => (
-                <article
-                  key={item.title}
-                  className="border-border bg-surface shadow-card hover:shadow-soft group overflow-hidden rounded-lg border transition-all duration-200 hover:-translate-y-0.5"
-                >
-                  <div className="from-charcoal/80 via-bronze/60 to-sky/70 h-32 bg-gradient-to-tr" />
-                  <div className="space-y-1.5 p-4">
-                    <h3 className="font-heading text-text text-lg">{item.title}</h3>
-                    <p className="text-text-soft text-xs">{item.subtitle}</p>
-                    <p className="text-text-muted pt-2 text-[11px]">
-                      Layer flights, trains, and stays into one synced plan. Save as a
-                      template or share with friends.
-                    </p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </div>
-        </section>
+        <PopularRoutesSection />
       </main>
 
-      <footer className="border-border bg-bg-strong text-text-onDark border-t">
-        <div className="max-w-content mx-auto flex flex-col gap-6 px-4 py-8 text-sm md:flex-row md:items-center md:justify-between md:px-8">
-          <p className="text-text-onDark/80 text-xs">
-            © {new Date().getFullYear()} NomadiC. Crafted for modern nomads.
-          </p>
-          <div className="text-text-onDark/80 flex flex-wrap gap-4 text-xs">
-            <button className="hover:text-sky transition-colors">Privacy</button>
-            <button className="hover:text-sky transition-colors">Terms</button>
-            <button className="hover:text-sky transition-colors">Support</button>
-          </div>
-        </div>
-      </footer>
+      <LandingFooter />
     </div>
   );
 }

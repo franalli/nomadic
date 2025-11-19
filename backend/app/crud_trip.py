@@ -53,6 +53,7 @@ def create_trip_context(
     db: Session,
     *,
     session: models.Session,
+    parent_trip_context: Optional[models.TripContext],
     req_message: str,
     origin: Optional[str],
     start_date: Optional[str],
@@ -64,6 +65,7 @@ def create_trip_context(
     ctx = models.TripContext(
         session_id=session.id,
         user_id=session.user_id,
+        parent_trip_context_id=parent_trip_context.id if parent_trip_context else None,
         origin=origin,
         destination_hint=None,
         start_date=_to_date(start_date),
@@ -76,6 +78,19 @@ def create_trip_context(
     db.add(ctx)
     db.flush()
     return ctx
+
+
+def get_latest_trip_context_for_session(
+    db: Session,
+    *,
+    session: models.Session,
+) -> Optional[models.TripContext]:
+    return (
+        db.query(models.TripContext)
+        .filter(models.TripContext.session_id == session.id)
+        .order_by(models.TripContext.created_at.desc())
+        .first()
+    )
 
 
 def create_branches_for_context(
@@ -150,3 +165,40 @@ def snapshot_tiles_for_branch(
             position=idx,
         )
         db.add(link)
+
+
+def record_chat_message(
+    db: Session,
+    *,
+    session: models.Session,
+    trip_context: Optional[models.TripContext],
+    role: str,
+    content: str,
+    metadata: Optional[dict] = None,
+) -> models.ChatMessage:
+    message = models.ChatMessage(
+        session_id=session.id,
+        trip_context_id=trip_context.id if trip_context else None,
+        role=role,
+        content=content,
+        meta=metadata,
+    )
+    db.add(message)
+    db.flush()
+    return message
+
+
+def fetch_chat_history(
+    db: Session,
+    *,
+    session: models.Session,
+    limit: int = 12,
+) -> list[models.ChatMessage]:
+    messages = (
+        db.query(models.ChatMessage)
+        .filter(models.ChatMessage.session_id == session.id)
+        .order_by(models.ChatMessage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return list(reversed(messages))

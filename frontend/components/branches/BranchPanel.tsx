@@ -16,7 +16,7 @@ export function BranchPanel({
   if (!branches.length) {
     return (
       <div className="rounded-xl border p-3 text-sm text-gray-500">
-        Branches will appear here after you plan a trip.
+        Trip ideas will appear here after you plan a trip.
       </div>
     );
   }

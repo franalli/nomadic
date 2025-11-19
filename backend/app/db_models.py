@@ -63,6 +63,9 @@ class TripContext(Base, TimestampMixin):
 
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sessions.id"))
+    parent_trip_context_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("trip_contexts.id"), nullable=True
+    )
 
     origin: Mapped[Optional[str]] = mapped_column(String(16))
     destination_hint: Mapped[Optional[str]] = mapped_column(String(64))
@@ -74,6 +77,9 @@ class TripContext(Base, TimestampMixin):
     raw_prompt: Mapped[Optional[str]] = mapped_column(String)
 
     session: Mapped[Optional[Session]] = relationship("Session", back_populates="trip_contexts")
+    parent_trip_context: Mapped[Optional["TripContext"]] = relationship(
+        "TripContext", remote_side="TripContext.id"
+    )
     branches: Mapped[List["Branch"]] = relationship("Branch", back_populates="trip_context")
 
 
@@ -153,3 +159,17 @@ class TileClick(Base, TimestampMixin):
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     tile: Mapped[Optional["Tile"]] = relationship("Tile", back_populates="clicks")
+
+
+class ChatMessage(Base, TimestampMixin):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"))
+    trip_context_id: Mapped[Optional[int]] = mapped_column(ForeignKey("trip_contexts.id"))
+    role: Mapped[str] = mapped_column(String(16))  # "user" | "assistant"
+    content: Mapped[str] = mapped_column(String)
+    meta: Mapped[Optional[Dict]] = mapped_column(JSON)
+
+    session: Mapped[Session] = relationship("Session")
+    trip_context: Mapped[Optional[TripContext]] = relationship("TripContext")

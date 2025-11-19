@@ -86,6 +86,7 @@ class PlanRequest(BaseModel):
     user_id: Optional[str] = None
     session_id: Optional[str] = None
     message: str
+    trip_context_id: Optional[int] = None
 
     origin: Optional[str] = None
     start_date: Optional[str] = None
@@ -109,6 +110,9 @@ class PlanResponse(BaseModel):
     primary_branch_id: Optional[str] = None
     tiles_request_id: Optional[str] = None
     tiles_summary: Optional[dict] = None
+    assistant_message: Optional[str] = None
+    assistant_message_id: Optional[str] = None
+    follow_up_question: Optional[str] = None
 
 
 class SessionTripContext(BaseModel):
