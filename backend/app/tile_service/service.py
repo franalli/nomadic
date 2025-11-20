@@ -29,6 +29,7 @@ def _build_search_context(req: TilesSearchRequest) -> SearchContext:
         verticals=req.verticals or [],
         max_results_per_vertical=req.max_results_per_vertical,
         currency=req.currency,
+        response_mode=req.response_mode,
     )
 
 
@@ -86,11 +87,11 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
             (t.price_estimate for t in all_tiles if t.price_estimate is not None),
             default=None,
         ),
+        "response_mode": ctx.response_mode,
     }
 
     return TilesSearchResponse(
         tiles_request_id=request_id,
-        request_id=request_id,
         tiles=all_tiles,
         summary=summary,
     )

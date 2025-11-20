@@ -1,6 +1,6 @@
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 TileType = Literal["flight", "hotel", "activity"]
 AvailabilityStatus = Literal["available", "low", "unknown", "not_available"]
@@ -69,9 +69,13 @@ class TilesSearchRequest(BaseModel):
 
 class TilesSearchResponse(BaseModel):
     tiles_request_id: str
-    request_id: Optional[str] = None
     tiles: List[Tile]
     summary: dict
+
+    @computed_field
+    @property
+    def request_id(self) -> str:
+        return self.tiles_request_id
 
 
 class TileClickEvent(BaseModel):

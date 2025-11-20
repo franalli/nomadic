@@ -155,6 +155,7 @@ class TileClick(Base, TimestampMixin):
     tile_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     branch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("branches.id"), nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 

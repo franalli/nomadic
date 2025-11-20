@@ -26,3 +26,4 @@ class SearchContext(BaseModel):
     max_results_per_vertical: int = 5
 
     currency: str = "EUR"
+    response_mode: Optional[str] = None

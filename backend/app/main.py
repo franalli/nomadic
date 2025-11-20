@@ -2,7 +2,6 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -31,9 +30,6 @@ BACKEND_DIR = APP_DIR.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-
-load_dotenv(BACKEND_DIR / ".env")
-load_dotenv(BACKEND_DIR / ".env.docker", override=False)
 
 APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 
@@ -170,6 +166,7 @@ def track_tile_click(
         tile_identifier=event.tile_id,
         branch_id=branch_id_int,
         session_id=event.session_id,
+        user_id=event.user_id,
         request_id=event.request_id,
     )
 
@@ -347,3 +344,9 @@ def reset_session(
     db.commit()
 
     return Response(status_code=204)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host=settings.backend_host, port=settings.backend_port)

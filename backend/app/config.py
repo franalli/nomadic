@@ -1,6 +1,13 @@
 import os
+from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+# Ensure .env values are loaded once for the entire app (FastAPI, DB, and helpers).
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR / ".env.docker", override=False)
 
 
 class Settings(BaseSettings):

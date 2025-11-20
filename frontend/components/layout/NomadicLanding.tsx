@@ -60,10 +60,7 @@ type LandingHeaderProps = {
   isResettingSession: boolean;
 };
 
-function LandingHeader({
-  onStartNewSession,
-  isResettingSession,
-}: LandingHeaderProps) {
+function LandingHeader({ onStartNewSession, isResettingSession }: LandingHeaderProps) {
   return (
     <header className="border-border bg-surface/80 border-b backdrop-blur">
       <div className="max-w-content mx-auto flex items-center justify-between p-4 md:px-8">
@@ -112,8 +109,8 @@ function HeroIntro() {
         <span className="text-bronze block">nomad-level precision.</span>
       </h1>
       <p className="text-text-soft mx-auto max-w-3xl text-base md:mx-0">
-        Nomadic weaves flights, stays, and experiences into a single, elegant
-        itinerary—so your journeys feel as curated as they look.
+        Nomadic weaves flights, stays, and experiences into a single, elegant itinerary—so
+        your journeys feel as curated as they look.
       </p>
       <div className="text-text-muted flex flex-wrap items-center justify-center gap-4 text-xs md:justify-start">
         <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
@@ -538,6 +535,21 @@ export function NomadicLanding() {
                     </button>
                   </div>
 
+                  <div className="h-64">
+                    <ChatPanel
+                      key={chatKey}
+                      origin={origin}
+                      startDate={startDate}
+                      endDate={endDate}
+                      budgetBucket={budgetBucket}
+                      groupSize={groupSize}
+                      vibes={vibes}
+                      tripContextId={tripContextId}
+                      selectedBranchId={selectedBranchId}
+                      onPlanResult={handlePlanResult}
+                    />
+                  </div>
+
                   <div className="space-y-4 text-sm">
                     <div className="space-y-1.5">
                       <label className="text-text-soft block text-xs font-medium">
@@ -646,20 +658,6 @@ export function NomadicLanding() {
                     <h3 className="text-text-soft text-sm font-semibold uppercase tracking-wide">
                       Planner chat
                     </h3>
-                  </div>
-                  <div className="h-64">
-                    <ChatPanel
-                      key={chatKey}
-                      origin={origin}
-                      startDate={startDate}
-                      endDate={endDate}
-                      budgetBucket={budgetBucket}
-                      groupSize={groupSize}
-                      vibes={vibes}
-                      tripContextId={tripContextId}
-                      selectedBranchId={selectedBranchId}
-                      onPlanResult={handlePlanResult}
-                    />
                   </div>
                 </div>
               </div>

@@ -8,6 +8,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from sqlalchemy.orm import Session
 
 from app import db_models as models
+from app.config import settings
 from app.crud_trip import (
     create_branches_for_context,
     create_trip_context,
@@ -173,7 +174,7 @@ class _AssistantMessageParser:
 def _get_openai_client() -> Optional[OpenAI]:
     global _openai_client
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
 
@@ -656,8 +657,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
         yield {
             "event": "tiles_update",
             "tiles": [tile.dict() for tile in tiles_response.tiles],
-            "tiles_request_id": getattr(tiles_response, "tiles_request_id", None)
-            or getattr(tiles_response, "request_id", None),
+            "tiles_request_id": tiles_response.tiles_request_id,
             "summary": tiles_response.summary,
         }
 
@@ -666,11 +666,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             branches=plan_branches,
             tiles=tiles_response.tiles,
             primary_branch_id=str(primary_db_branch.id),
-            tiles_request_id=(
-                tiles_response.tiles_request_id
-                if hasattr(tiles_response, "tiles_request_id")
-                else tiles_response.request_id
-            ),
+            tiles_request_id=tiles_response.tiles_request_id,
             tiles_summary=tiles_response.summary,
             assistant_message=planner_output.assistant_message,
             assistant_message_id=str(assistant_chat.id),
