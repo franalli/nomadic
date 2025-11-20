@@ -3,29 +3,50 @@
 @tailwind utilities;
 
 :root {
-  /* Premium Nomad palette */
-  --bg: 32 36% 95%;
-  --bg-soft: 30 28% 90%;
-  --bg-strong: 24 29% 16%;
+  /* Earthy Nomadic palette */
+  --bg: 35 30% 96%;
+  --bg-soft: 160 20% 92%;
+  --bg-strong: 160 50% 8%;
   --surface: 0 0% 100%;
-  --border: 30 19% 80%;
+  --border: 160 20% 90%;
 
-  --text: 24 17% 16%;
-  --text-soft: 24 12% 36%;
-  --text-muted: 27 10% 52%;
-  --text-onDark: 40 47% 92%;
+  --text: 160 40% 15%;
+  --text-soft: 160 25% 32%;
+  --text-muted: 160 20% 45%;
+  --text-onDark: 35 20% 90%;
 
-  --charcoal: 214 21% 18%;
-  --sand: 39 43% 82%;
-  --bronze: 32 45% 46%;
-  --sky: 199 86% 62%;
+  --charcoal: 160 45% 12%;
+  --sand: 25 40% 90%;
+  --bronze: 25 90% 60%;
+  --sky: 160 45% 25%;
 
-  /* Legacy tokens kept for compatibility */
-  --primary: 199 86% 62%;
-  --primary-foreground: 210 40% 98%;
-  --accent: 32 45% 46%;
-  --accent-foreground: 24 17% 16%;
-  --muted: 30 19% 80%;
+  /* Core theme tokens */
+  --background: 35 30% 96%;
+  --foreground: 160 40% 15%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 160 40% 15%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 160 40% 15%;
+
+  --primary: 160 45% 25%;
+  --primary-foreground: 35 30% 96%;
+
+  --secondary: 25 40% 90%;
+  --secondary-foreground: 25 60% 30%;
+
+  --muted: 160 20% 92%;
+  --muted-foreground: 160 20% 40%;
+
+  --accent: 25 90% 60%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+
+  --input: 160 20% 90%;
+  --ring: 160 45% 25%;
 }
 
 body {

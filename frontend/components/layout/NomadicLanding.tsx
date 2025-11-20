@@ -1,11 +1,19 @@
 'use client';
 
-import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
+import { Compass, Menu, Sparkles, User } from 'lucide-react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
+import { BookingOption } from '@/components/nomadic/booking-option';
+import { FeaturesSection } from '@/components/nomadic/features-section';
+import { Footer } from '@/components/nomadic/footer';
+import { TripCard } from '@/components/nomadic/trip-card';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { MOCK_TRAVEL_OPTIONS, MOCK_TRIPS } from '@/lib/mock-data';
 import { API_BASE } from '@/lib/api';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import type {
@@ -15,18 +23,6 @@ import type {
 } from '@/types/api';
 import type { PlanBranch } from '@/types/plan';
 import type { Tile } from '@/types/tile';
-
-const VIBE_OPTIONS = [
-  { value: 'adventure', label: 'Adventure' },
-  { value: 'history', label: 'History' },
-  { value: 'local_culture', label: 'Local Culture' },
-  { value: 'art', label: 'Art' },
-  { value: 'foodie', label: 'Foodie' },
-  { value: 'nightlife', label: 'Nightlife' },
-  { value: 'outdoors', label: 'Outdoors' },
-  { value: 'relaxation', label: 'Relaxation' },
-  { value: 'family', label: 'Family' },
-];
 
 type BranchSelectionOverrides = {
   branch?: PlanBranch;
@@ -40,146 +36,8 @@ type BranchSelectionOverrides = {
   errorMessageOverride?: string;
 };
 
-const POPULAR_ROUTES = [
-  {
-    title: 'Alpine Weekends',
-    subtitle: 'Zurich → Alps → Milan',
-  },
-  {
-    title: 'Desert to Coast',
-    subtitle: 'Marrakesh → Atlas → Essaouira',
-  },
-  {
-    title: 'Steppe & Skyline',
-    subtitle: 'Ulaanbaatar → Seoul → Tokyo',
-  },
-];
-
-type LandingHeaderProps = {
-  onStartNewSession: () => void | Promise<void>;
-  isResettingSession: boolean;
-};
-
-function LandingHeader({ onStartNewSession, isResettingSession }: LandingHeaderProps) {
-  return (
-    <header className="border-border bg-surface/80 border-b backdrop-blur">
-      <div className="max-w-content mx-auto flex items-center justify-between p-4 md:px-8">
-        <div className="flex items-center gap-3">
-          <Image
-            src="/nomadic_logo.png"
-            alt="Nomadic logo"
-            width={60}
-            height={60}
-            priority
-            className="size-20"
-          />
-          <span className="font-heading text-text text-xl md:text-2xl">Nomadic</span>
-        </div>
-
-        <nav className="text-text-soft hidden items-center gap-6 text-sm md:flex">
-          <button className="hover:text-text transition-colors">Stays</button>
-          <button className="hover:text-text transition-colors">Flights</button>
-          <button className="hover:text-text transition-colors">Activities</button>
-          <button className="hover:text-text transition-colors">Deals</button>
-        </nav>
-
-        <div className="flex items-center gap-3">
-          <button className="text-text-soft hover:text-text hidden text-sm md:inline-flex">
-            Sign in
-          </button>
-          <button
-            type="button"
-            onClick={onStartNewSession}
-            disabled={isResettingSession}
-            className="bg-charcoal text-surface shadow-soft focus-visible:ring-sky focus-visible:ring-offset-bg inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-medium tracking-wide transition-colors hover:bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60"
-          >
-            {isResettingSession ? 'Resetting…' : 'Start new trip'}
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-function HeroIntro() {
-  return (
-    <div className="space-y-5 text-center md:text-left">
-      <h1 className="font-heading text-display text-text">
-        Plan trips with
-        <span className="text-bronze block">nomad-level precision.</span>
-      </h1>
-      <p className="text-text-soft mx-auto max-w-3xl text-base md:mx-0">
-        Nomadic weaves flights, stays, and experiences into a single, elegant itinerary—so
-        your journeys feel as curated as they look.
-      </p>
-      <div className="text-text-muted flex flex-wrap items-center justify-center gap-4 text-xs md:justify-start">
-        <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
-          <span className="bg-bronze size-2 rounded-full" />
-          Trusted by frequent flyers
-        </span>
-        <span className="bg-surface shadow-soft inline-flex items-center gap-2 rounded-full px-3 py-1">
-          <span className="bg-sky size-2 rounded-full" />
-          Built for complex itineraries
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PopularRoutesSection() {
-  return (
-    <section className="border-border bg-bg border-t">
-      <div className="max-w-content mx-auto px-4 py-12 md:px-8 md:py-16">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="font-heading text-h2 text-text">Popular routes</h2>
-            <p className="text-text-soft mt-2 text-sm">
-              Curated itineraries where Nomadic truly shines.
-            </p>
-          </div>
-          <button className="text-text-soft hover:text-text hidden text-sm font-medium underline-offset-4 hover:underline md:inline-flex">
-            See all routes
-          </button>
-        </div>
-        <div className="mt-8 grid gap-6 md:grid-cols-3">
-          {POPULAR_ROUTES.map((item) => (
-            <article
-              key={item.title}
-              className="border-border bg-surface shadow-card hover:shadow-soft group overflow-hidden rounded-lg border transition-all duration-200 hover:-translate-y-0.5"
-            >
-              <div className="from-charcoal/80 via-bronze/60 to-sky/70 h-32 bg-gradient-to-tr" />
-              <div className="space-y-1.5 p-4">
-                <h3 className="font-heading text-text text-lg">{item.title}</h3>
-                <p className="text-text-soft text-xs">{item.subtitle}</p>
-                <p className="text-text-muted pt-2 text-[11px]">
-                  Layer flights, trains, and stays into one synced plan. Save as a
-                  template or share with friends.
-                </p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function LandingFooter() {
-  return (
-    <footer className="border-border bg-bg-strong text-text-onDark border-t">
-      <div className="max-w-content mx-auto flex flex-col gap-6 px-4 py-8 text-sm md:flex-row md:items-center md:justify-between md:px-8">
-        <p className="text-text-onDark/80 text-xs">
-          © {new Date().getFullYear()} Nomadic. Crafted for modern nomads.
-        </p>
-        <div className="text-text-onDark/80 flex flex-wrap gap-4 text-xs">
-          <button className="hover:text-sky transition-colors">Privacy</button>
-          <button className="hover:text-sky transition-colors">Terms</button>
-          <button className="hover:text-sky transition-colors">Support</button>
-        </div>
-      </div>
-    </footer>
-  );
-}
+const HERO_IMAGE =
+  'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
 
 export function NomadicLanding() {
   const [branches, setBranches] = useState<PlanBranch[]>([]);
@@ -190,10 +48,23 @@ export function NomadicLanding() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
   const [isResettingSession, setIsResettingSession] = useState(false);
-  const tilesFetchControllerRef = useRef<AbortController | null>(null);
   const [branchesExpanded, setBranchesExpanded] = useState(false);
   const [tilesExpanded, setTilesExpanded] = useState(false);
+  const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [chatKey, setChatKey] = useState(0);
+  const tilesFetchControllerRef = useRef<AbortController | null>(null);
+
+  const [origin, setOrigin] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [budgetBucket, setBudgetBucket] = useState<string | undefined>(undefined);
+  const [groupSize, setGroupSize] = useState<number | undefined>(undefined);
+  const [vibes, setVibes] = useState<string[]>([]);
+
+  const selectedBranch = useMemo(
+    () => branches.find((branch) => branch.id === selectedBranchId) ?? null,
+    [branches, selectedBranchId]
+  );
 
   const abortTilesFetch = useCallback(() => {
     if (tilesFetchControllerRef.current) {
@@ -201,18 +72,6 @@ export function NomadicLanding() {
       tilesFetchControllerRef.current = null;
     }
   }, []);
-
-  const [origin, setOrigin] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [budgetBucket, setBudgetBucket] = useState<string | undefined>(undefined);
-  const [groupSize, setGroupSize] = useState<number | undefined>(2);
-  const [vibes, setVibes] = useState<string[]>([]);
-
-  const selectedBranch = useMemo(
-    () => branches.find((branch) => branch.id === selectedBranchId) ?? null,
-    [branches, selectedBranchId]
-  );
 
   const handleBranchSelect = useCallback(
     async (branchId: string, overrides?: BranchSelectionOverrides) => {
@@ -272,6 +131,7 @@ export function NomadicLanding() {
         if (controller.signal.aborted) return;
         setTiles(data.tiles);
         setTilesRequestId(data.tiles_request_id ?? data.request_id ?? null);
+        setTilesExpanded(true);
       } catch (error) {
         if ((error as DOMException).name === 'AbortError') return;
         console.error('Failed to fetch tiles for branch', error);
@@ -326,11 +186,10 @@ export function NomadicLanding() {
           setStartDate(data.trip_context.start_date ?? '');
           setEndDate(data.trip_context.end_date ?? '');
           setBudgetBucket(data.trip_context.budget_bucket ?? undefined);
-          setGroupSize(
-            data.trip_context.group_size != null ? data.trip_context.group_size : 2
-          );
+          setGroupSize(data.trip_context.group_size ?? undefined);
           setVibes(data.trip_context.vibes ?? []);
           setTripContextId(data.trip_context.id);
+          setHasTriggeredChat(true);
         }
 
         if (!data.branches.length) return;
@@ -343,10 +202,7 @@ export function NomadicLanding() {
         }));
 
         setBranches(hydratedBranches);
-
-        if (hydratedBranches.length > 0) {
-          setBranchesExpanded(true);
-        }
+        setBranchesExpanded(true);
 
         const fallbackBranchId =
           data.primary_branch_id != null
@@ -415,7 +271,7 @@ export function NomadicLanding() {
     setStartDate('');
     setEndDate('');
     setBudgetBucket(undefined);
-    setGroupSize(2);
+    setGroupSize(undefined);
     setVibes([]);
     setTripContextId(null);
     setBranches([]);
@@ -424,6 +280,7 @@ export function NomadicLanding() {
     setTilesRequestId(null);
     setBranchesExpanded(false);
     setTilesExpanded(false);
+    setHasTriggeredChat(false);
     setChatKey((prev) => prev + 1);
   }, [abortTilesFetch]);
 
@@ -465,12 +322,6 @@ export function NomadicLanding() {
 
   useEffect(() => () => abortTilesFetch(), [abortTilesFetch]);
 
-  const handleToggleVibe = useCallback((value: string) => {
-    setVibes((prev) =>
-      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
-    );
-  }, []);
-
   const handlePlanResult = useCallback(
     (result: {
       tripContextId: number | null;
@@ -484,6 +335,7 @@ export function NomadicLanding() {
       setTiles(result.tiles);
       setTilesRequestId(result.tilesRequestId);
       setSelectedBranchId(result.primaryBranchId);
+      setHasTriggeredChat(true);
 
       if (result.branches.length > 0) {
         setBranchesExpanded(true);
@@ -495,14 +347,20 @@ export function NomadicLanding() {
     []
   );
 
+  const handleChatTriggered = useCallback(() => {
+    setHasTriggeredChat(true);
+  }, []);
+
+  const showResults = hasTriggeredChat || branches.length > 0 || tiles.length > 0;
+
   return (
-    <div className="bg-bg font-body text-text min-h-screen">
+    <div className="bg-background text-foreground min-h-screen">
       {toastMessage && (
-        <div className="fixed right-4 top-4 z-50 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 shadow-lg">
+        <div className="border-border/60 bg-card/95 text-foreground fixed right-4 top-4 z-50 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg">
           <span>{toastMessage}</span>
           <button
             type="button"
-            className="text-xs font-semibold uppercase tracking-wide text-red-700"
+            className="text-primary text-xs font-semibold uppercase tracking-wide"
             onClick={() => setToastMessage(null)}
           >
             Dismiss
@@ -510,185 +368,146 @@ export function NomadicLanding() {
         </div>
       )}
 
-      <LandingHeader
-        onStartNewSession={handleStartNewSession}
-        isResettingSession={isResettingSession}
-      />
+      <div className="relative overflow-hidden">
+        <div className="absolute inset-0">
+          <img
+            src={HERO_IMAGE}
+            alt="Nomadic hero"
+            className="h-full w-full object-cover"
+          />
+          <div className="to-background absolute inset-0 bg-gradient-to-b from-black/65 via-black/35" />
+        </div>
 
-      <main>
-        <section className="bg-bg-soft">
-          <div className="max-w-content md:py-18 mx-auto flex flex-col gap-10 px-4 py-12 md:px-8">
-            <HeroIntro />
+        <div className="relative z-10">
+          <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 text-white">
+            <div className="flex items-center gap-2">
+              <Compass className="h-6 w-6" />
+              <span className="font-display text-xl font-bold tracking-tight">
+                Nomadic
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                variant="ghost"
+                size="icon"
+                type="button"
+                className="text-white hover:bg-white/10 focus:ring-white"
+              >
+                <User className="h-5 w-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                type="button"
+                className="text-white hover:bg-white/10 focus:ring-white"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            </div>
+          </header>
 
-            <div className="grid gap-6 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-              <div className="flex flex-col gap-4">
-                <div className="border-border bg-surface shadow-card space-y-4 rounded-lg border p-5">
-                  <div className="flex items-center justify-between gap-2">
-                    <h2 className="font-heading text-h3 text-text">Trip details</h2>
-                    <button
-                      type="button"
-                      onClick={handleStartNewSession}
-                      disabled={isResettingSession}
-                      className="border-border text-text-soft hover:border-bronze hover:text-bronze rounded-full border px-3 py-1 text-xs font-semibold transition-colors disabled:opacity-60"
-                    >
-                      {isResettingSession ? 'Starting…' : 'New session'}
-                    </button>
-                  </div>
+          <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pb-12 pt-6">
+            <div className="space-y-6 text-center text-white -mt-8">
+              <h1 className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl">
+                Roam freely. <span className="text-accent">We plan the rest.</span>
+              </h1>
+            </div>
 
-                  <div className="h-64">
-                    <ChatPanel
-                      key={chatKey}
-                      origin={origin}
-                      startDate={startDate}
-                      endDate={endDate}
-                      budgetBucket={budgetBucket}
-                      groupSize={groupSize}
-                      vibes={vibes}
-                      tripContextId={tripContextId}
-                      selectedBranchId={selectedBranchId}
-                      onPlanResult={handlePlanResult}
-                    />
-                  </div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+              className="w-full max-w-2xl mt-8"
+            >
+              <Card className="bg-card/95 border-white/20 p-1 shadow-2xl backdrop-blur">
+                <CardContent className="p-3 sm:p-4">
+                  <ChatPanel
+                    key={chatKey}
+                    origin={origin}
+                    startDate={startDate}
+                    endDate={endDate}
+                    budgetBucket={budgetBucket}
+                    groupSize={groupSize}
+                    vibes={vibes}
+                    tripContextId={tripContextId}
+                    selectedBranchId={selectedBranchId}
+                    onPlanResult={handlePlanResult}
+                    onChatTriggered={handleChatTriggered}
+                  />
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+        </div>
+      </div>
 
-                  <div className="space-y-4 text-sm">
-                    <div className="space-y-1.5">
-                      <label className="text-text-soft block text-xs font-medium">
-                        Origin
-                      </label>
-                      <input
-                        type="text"
-                        value={origin}
-                        onChange={(event) => setOrigin(event.target.value)}
-                        placeholder="e.g. Amsterdam"
-                        className="border-border bg-surface text-text placeholder:text-text-muted focus-visible:ring-sky focus-visible:ring-offset-surface w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                      />
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="text-text-soft block text-xs font-medium">
-                          Check-in
-                        </label>
-                        <input
-                          type="date"
-                          value={startDate}
-                          onChange={(event) => setStartDate(event.target.value)}
-                          className="border-border bg-surface text-text focus-visible:ring-sky focus-visible:ring-offset-surface w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-text-soft block text-xs font-medium">
-                          Check-out
-                        </label>
-                        <input
-                          type="date"
-                          value={endDate}
-                          onChange={(event) => setEndDate(event.target.value)}
-                          className="border-border bg-surface text-text focus-visible:ring-sky focus-visible:ring-offset-surface w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="text-text-soft block text-xs font-medium">
-                          Budget
-                        </label>
-                        <select
-                          value={budgetBucket ?? ''}
-                          onChange={(event) =>
-                            setBudgetBucket(event.target.value || undefined)
-                          }
-                          className="border-border bg-surface text-text focus-visible:ring-sky focus-visible:ring-offset-surface w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                        >
-                          <option value="">Flexible</option>
-                          <option value="value">Value</option>
-                          <option value="mid">Mid</option>
-                          <option value="premium">Premium</option>
-                          <option value="luxury">Luxury</option>
-                        </select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-text-soft block text-xs font-medium">
-                          Travelers
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={groupSize ?? ''}
-                          onChange={(event) =>
-                            setGroupSize(
-                              event.target.value ? Number(event.target.value) : undefined
-                            )
-                          }
-                          className="border-border bg-surface text-text focus-visible:ring-sky focus-visible:ring-offset-surface w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className="text-text-soft block text-xs font-medium">
-                        Vibes
-                      </label>
-                      <div className="flex flex-wrap gap-2">
-                        {VIBE_OPTIONS.map((option) => {
-                          const active = vibes.includes(option.value);
-                          return (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() => handleToggleVibe(option.value)}
-                              className={`rounded-full border px-3 py-1 text-[11px] font-medium transition-colors ${
-                                active
-                                  ? 'border-bronze bg-bronze/10 text-bronze'
-                                  : 'border-border bg-surface text-text-soft hover:border-bronze/60'
-                              }`}
-                            >
-                              {option.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
+      <section className="bg-background pb-16 pt-12">
+        <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4">
+          {showResults ? (
+            <>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                    Planner outputs
+                  </p>
+                  <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
+                    Branches and live booking tiles
+                  </h2>
+                  <p className="text-muted-foreground text-sm">
+                    Branches and tiles expand only after you spark the chat.
+                  </p>
                 </div>
-
-                <div className="border-border bg-surface shadow-card rounded-lg border p-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <h3 className="text-text-soft text-sm font-semibold uppercase tracking-wide">
-                      Planner chat
-                    </h3>
-                  </div>
-                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isResettingSession}
+                  onClick={handleStartNewSession}
+                >
+                  {isResettingSession ? 'Resetting…' : 'Start fresh'}
+                </Button>
               </div>
 
-              <div className="flex flex-col gap-4">
-                <div className="border-border bg-surface shadow-card rounded-lg border">
-                  <button
-                    type="button"
-                    onClick={() => setBranchesExpanded((prev) => !prev)}
-                    aria-expanded={branchesExpanded}
-                    className="hover:bg-bg-soft flex w-full items-center justify-between p-4 text-left transition-colors"
-                  >
-                    <h3 className="text-text-soft text-sm font-semibold uppercase tracking-wide">
-                      Your Trip Ideas {branches.length > 0 && `(${branches.length})`}
-                    </h3>
-                    <span className="text-text-muted">
-                      {branchesExpanded ? '−' : '+'}
-                    </span>
-                  </button>
+              <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+                <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
+                  <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
+                  <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
+                  <div className="relative flex items-center justify-between gap-3 px-5 py-4">
+                    <div className="space-y-1">
+                      <div className="bg-primary/15 text-primary inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
+                        <Sparkles className="h-4 w-4" />
+                        Branches
+                      </div>
+                      <h3 className="text-foreground font-display text-xl font-bold">
+                        Curated paths from the chat
+                      </h3>
+                      <p className="text-muted-foreground text-sm">
+                        Trip ideas show here after your first prompt.
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setBranchesExpanded((prev) => !prev)}
+                      disabled={!hasTriggeredChat}
+                      className="bg-white/5 text-white shadow-sm hover:bg-white/10 disabled:opacity-60"
+                    >
+                      {branchesExpanded ? 'Hide' : 'Show'}
+                    </Button>
+                  </div>
                   <div
                     className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-                      branchesExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                      branchesExpanded && hasTriggeredChat
+                        ? 'grid-rows-[1fr]'
+                        : 'grid-rows-[0fr]'
                     }`}
                   >
-                    <div className="border-border overflow-hidden border-t p-4">
+                    <CardContent className="overflow-hidden">
                       {isHydratingSnapshot && branches.length === 0 ? (
-                        <p className="text-text-soft text-sm">
+                        <p className="text-muted-foreground text-sm">
                           Restoring your last session…
                         </p>
                       ) : branches.length === 0 ? (
-                        <p className="text-text-muted text-sm">
+                        <p className="text-muted-foreground text-sm">
                           Start chatting to generate trip branches.
                         </p>
                       ) : (
@@ -698,37 +517,46 @@ export function NomadicLanding() {
                           onBranchSelect={handleBranchSelect}
                         />
                       )}
-                    </div>
+                    </CardContent>
                   </div>
-                </div>
+                </Card>
 
-                <div className="border-border bg-surface shadow-card rounded-lg border">
-                  <button
-                    type="button"
-                    onClick={() => setTilesExpanded((prev) => !prev)}
-                    aria-expanded={tilesExpanded}
-                    className="hover:bg-bg-soft flex w-full items-center justify-between p-4 text-left transition-colors"
-                  >
-                    <div>
-                      <h3 className="text-text-soft text-sm font-semibold uppercase tracking-wide">
-                        Booking Options {tiles.length > 0 && `(${tiles.length})`}
+                <Card className="from-accent/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
+                  <div className="bg-accent/25 pointer-events-none absolute -left-16 -top-10 h-40 w-40 rounded-full blur-3xl" />
+                  <div className="bg-primary/15 pointer-events-none absolute bottom-0 right-0 h-36 w-36 rounded-full blur-3xl" />
+                  <div className="relative flex items-center justify-between gap-3 px-5 py-4">
+                    <div className="space-y-1">
+                      <div className="bg-accent/15 text-accent inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
+                        <Sparkles className="h-4 w-4" />
+                        Booking tiles
+                      </div>
+                      <h3 className="text-foreground font-display text-xl font-bold">
+                        Live options tailored to the branches
                       </h3>
-                      <p className="text-text-muted text-xs">
-                        {groupSize && groupSize > 0
-                          ? `${groupSize} ${groupSize === 1 ? 'traveler' : 'travelers'}`
-                          : 'Travelers not set'}
+                      <p className="text-muted-foreground text-sm">
+                        Live options refresh after you pick a branch.
                       </p>
                     </div>
-                    <span className="text-text-muted">{tilesExpanded ? '−' : '+'}</span>
-                  </button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setTilesExpanded((prev) => !prev)}
+                      disabled={!hasTriggeredChat}
+                      className="bg-white/5 text-white shadow-sm hover:bg-white/10 disabled:opacity-60"
+                    >
+                      {tilesExpanded ? 'Hide' : 'Show'}
+                    </Button>
+                  </div>
                   <div
                     className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-                      tilesExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                      tilesExpanded && hasTriggeredChat
+                        ? 'grid-rows-[1fr]'
+                        : 'grid-rows-[0fr]'
                     }`}
                   >
-                    <div className="border-border overflow-hidden border-t p-4">
+                    <CardContent className="overflow-hidden">
                       {tiles.length === 0 ? (
-                        <p className="text-text-muted text-sm">
+                        <p className="text-muted-foreground text-sm">
                           Select a branch to see destination tiles.
                         </p>
                       ) : (
@@ -738,18 +566,59 @@ export function NomadicLanding() {
                           tilesRequestId={tilesRequestId}
                         />
                       )}
-                    </div>
+                    </CardContent>
                   </div>
+                </Card>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                    Inspiration
+                  </p>
+                  <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
+                    Curated escapes while you plan
+                  </h2>
+                  <p className="text-muted-foreground text-sm">
+                    Explore a few AI-picked ideas before you kick off the planner chat.
+                  </p>
                 </div>
               </div>
-            </div>
-          </div>
-        </section>
+              <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {MOCK_TRIPS.map((trip, idx) => (
+                    <TripCard key={trip.id} trip={trip} index={idx} />
+                  ))}
+                </div>
+                <Card className="border-border/70 bg-card/90 shadow-lg">
+                  <CardContent className="space-y-4 p-5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                          Sample branches
+                        </p>
+                        <h3 className="text-foreground font-display text-xl font-bold">
+                          Travel options to spark ideas
+                        </h3>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      {MOCK_TRAVEL_OPTIONS.map((option, idx) => (
+                        <BookingOption key={option.id} option={option} index={idx} />
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
 
-        <PopularRoutesSection />
-      </main>
-
-      <LandingFooter />
+      <FeaturesSection />
+      <Footer />
     </div>
   );
 }

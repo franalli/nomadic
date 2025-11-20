@@ -19,6 +19,7 @@ interface ChatPanelProps {
   vibes: string[];
   tripContextId: number | null;
   selectedBranchId: string | null;
+  onChatTriggered?: () => void;
   onPlanResult: (result: {
     tripContextId: number | null;
     branches: PlanBranch[];
@@ -76,7 +77,8 @@ export function ChatPanel(props: ChatPanelProps) {
     {
       id: 'm0',
       role: 'assistant',
-      content: 'Tell me about your trip and I’ll suggest a few destinations.',
+      content:
+        "Tell me about your trip: where you're headed, dates, vibes, and how many travelers are going.",
     },
   ]);
   const [input, setInput] = useState('');
@@ -98,6 +100,8 @@ export function ChatPanel(props: ChatPanelProps) {
     const trimmed = input.trim();
     if (!trimmed || isLoading) return;
 
+    props.onChatTriggered?.();
+
     const userMessage: ChatMessage = {
       id: `u_${Date.now()}`,
       role: 'user',
@@ -111,17 +115,33 @@ export function ChatPanel(props: ChatPanelProps) {
     try {
       const sessionId = getOrCreateSessionId();
       const body: PlanRequest = {
-        user_id: undefined,
-        session_id: sessionId,
         message: trimmed,
-        origin: props.origin || undefined,
-        start_date: props.startDate || undefined,
-        end_date: props.endDate || undefined,
-        budget_bucket: props.budgetBucket || undefined,
-        group_size: props.groupSize ?? undefined,
-        vibes: props.vibes,
-        trip_context_id: props.tripContextId ?? undefined,
       };
+
+      if (sessionId) {
+        body.session_id = sessionId;
+      }
+      if (props.origin) {
+        body.origin = props.origin;
+      }
+      if (props.startDate) {
+        body.start_date = props.startDate;
+      }
+      if (props.endDate) {
+        body.end_date = props.endDate;
+      }
+      if (props.budgetBucket) {
+        body.budget_bucket = props.budgetBucket;
+      }
+      if (props.groupSize != null) {
+        body.group_size = props.groupSize;
+      }
+      if (props.vibes.length) {
+        body.vibes = props.vibes;
+      }
+      if (props.tripContextId != null) {
+        body.trip_context_id = props.tripContextId;
+      }
 
       const res = await fetch(`${API_BASE}/v1/plan?stream=true`, {
         method: 'POST',
@@ -318,15 +338,22 @@ export function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <div className="border-border bg-bg-soft text-text flex h-full flex-col gap-3 rounded-xl border p-3">
+    <div className="flex h-full flex-col gap-3 rounded-2xl border border-white/20 bg-card/90 p-4 text-foreground shadow-xl backdrop-blur">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Planner chat
+        </div>
+        {isLoading && <span className="text-xs text-accent">Streaming…</span>}
+      </div>
+
       <div ref={scrollContainerRef} className="flex-1 space-y-2 overflow-y-auto text-sm">
         {messages.map((m) => (
           <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
             <div
               className={
                 m.role === 'user'
-                  ? 'bg-bronze text-surface inline-block max-w-[80%] rounded-2xl px-3 py-2'
-                  : 'bg-surface text-text inline-block max-w-[80%] rounded-2xl px-3 py-2'
+                  ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm'
+                  : 'border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2'
               }
             >
               {m.content}
@@ -337,7 +364,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
       <form onSubmit={handleSubmit} className="flex gap-2">
         <input
-          className="border-border bg-surface text-text placeholder:text-text-muted focus-visible:ring-sky focus-visible:ring-offset-bg-soft flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+          className="border-input bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:ring-primary focus-visible:ring-offset-card flex-1 rounded-xl border px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           placeholder="Describe your ideal trip..."
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -345,7 +372,7 @@ export function ChatPanel(props: ChatPanelProps) {
         />
         <button
           type="submit"
-          className="bg-bronze text-surface rounded-lg px-4 py-2 text-sm font-medium transition-colors hover:bg-[#b48645] disabled:opacity-60"
+          className="bg-primary text-primary-foreground rounded-xl px-4 py-2 text-sm font-semibold transition-colors hover:bg-primary/90 disabled:opacity-60"
           disabled={isLoading}
         >
           {isLoading ? 'Thinking…' : 'Plan'}

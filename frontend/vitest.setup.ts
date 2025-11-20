@@ -16,6 +16,24 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
+if (typeof window.IntersectionObserver === 'undefined') {
+  class MockIntersectionObserver implements IntersectionObserver {
+    readonly root: Element | null = null;
+    readonly rootMargin: string = '';
+    readonly thresholds: ReadonlyArray<number> = [];
+
+    constructor(public readonly callback: IntersectionObserverCallback) {}
+
+    observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+    takeRecords = vi.fn((): IntersectionObserverEntry[] => []);
+  }
+
+  // @ts-expect-error - attach mock to the test window
+  window.IntersectionObserver = MockIntersectionObserver;
+}
+
 if (!globalThis.crypto) {
   globalThis.crypto = {
     randomUUID: () => 'test-session-id',

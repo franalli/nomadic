@@ -1,3 +1,5 @@
+import { ArrowUpRight, Star } from 'lucide-react';
+
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
@@ -34,32 +36,68 @@ export function TileCard({ tile, requestId, branchId }: TileCardProps) {
   };
 
   return (
-    <Card className="flex flex-col overflow-hidden">
-      {tile.image_url && (
-        <img src={tile.image_url} alt={tile.title} className="h-32 w-full object-cover" />
-      )}
-
-      <CardBody className="flex flex-1 flex-col gap-1">
-        <div className="text-sm font-semibold">{tile.title}</div>
-        {tile.subtitle && <div className="text-xs text-slate-500">{tile.subtitle}</div>}
-        {tile.location_label && (
-          <div className="text-xs text-slate-500">{tile.location_label}</div>
+    <Card className="group relative flex h-full flex-col overflow-hidden border-none bg-card/80 shadow-lg ring-1 ring-border/40 transition hover:-translate-y-0.5 hover:shadow-xl">
+      <div className="relative h-40 w-full overflow-hidden">
+        {tile.image_url ? (
+          <img
+            src={tile.image_url}
+            alt={tile.title}
+            className="h-full w-full object-cover transition duration-700 group-hover:scale-105"
+          />
+        ) : (
+          <div className="h-full w-full bg-gradient-to-br from-primary/15 via-card to-background" />
         )}
-        {tile.rating && (
-          <div className="mt-1 text-xs text-slate-600">
-            Rating: {tile.rating.toFixed(1)}
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/30 to-transparent" />
+        <div className="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-black/50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-white backdrop-blur">
+          {tile.type}
+        </div>
+        {tile.rating != null && (
+          <div className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white backdrop-blur">
+            <Star className="h-3 w-3 fill-accent text-accent" />
+            {tile.rating.toFixed(1)}
           </div>
         )}
+      </div>
+
+      <CardBody className="relative flex flex-1 flex-col gap-2 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">
+              Booking match
+            </p>
+            <div className="text-base font-display font-bold text-foreground">{tile.title}</div>
+            {tile.subtitle && (
+              <div className="text-sm text-muted-foreground">{tile.subtitle}</div>
+            )}
+            {tile.location_label && (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                {tile.location_label}
+              </div>
+            )}
+          </div>
+          <div className="rounded-lg bg-primary/10 px-3 py-2 text-right">
+            <div className="text-sm font-semibold text-primary">
+              {tile.price_estimate != null
+                ? `${tile.price_estimate} ${tile.currency}`
+                : 'See price'}
+            </div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              Live link
+            </div>
+          </div>
+        </div>
 
         <div className="mt-auto flex items-center justify-between pt-2">
-          <div className="text-sm font-semibold">
-            {tile.price_estimate != null
-              ? `${tile.price_estimate} ${tile.currency}`
-              : 'See price on partner'}
-          </div>
-
-          <Button variant="outline" className="text-xs" onClick={handleClick}>
+          <span className="text-xs text-muted-foreground">Opens partner in a new tab</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-primary hover:bg-primary/10"
+            onClick={handleClick}
+          >
             View
+            <ArrowUpRight className="h-4 w-4" />
           </Button>
         </div>
       </CardBody>

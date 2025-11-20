@@ -6,11 +6,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
         bg: 'hsl(var(--bg))',
         'bg-soft': 'hsl(var(--bg-soft))',
         'bg-strong': 'hsl(var(--bg-strong))',
         surface: 'hsl(var(--surface))',
         border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
         text: 'hsl(var(--text))',
         'text-soft': 'hsl(var(--text-soft))',
         'text-muted': 'hsl(var(--text-muted))',
@@ -19,15 +23,34 @@ const config: Config = {
         sand: 'hsl(var(--sand))',
         bronze: 'hsl(var(--bronze))',
         sky: 'hsl(var(--sky))',
+        card: {
+          DEFAULT: 'hsl(var(--card))',
+          foreground: 'hsl(var(--card-foreground))',
+        },
+        popover: {
+          DEFAULT: 'hsl(var(--popover))',
+          foreground: 'hsl(var(--popover-foreground))',
+        },
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
+        },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
         },
         accent: {
           DEFAULT: 'hsl(var(--accent))',
           foreground: 'hsl(var(--accent-foreground))',
         },
-        muted: 'hsl(var(--muted))',
+        muted: {
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
+        },
+        destructive: {
+          DEFAULT: 'hsl(var(--destructive))',
+          foreground: 'hsl(var(--destructive-foreground))',
+        },
       },
       borderRadius: {
         lg: '0.75rem',
@@ -37,6 +60,7 @@ const config: Config = {
         sans: ['Inter', ...defaultTheme.fontFamily.sans],
         body: ['Inter', ...defaultTheme.fontFamily.sans],
         heading: ['"Playfair Display"', 'ui-serif', 'Georgia', 'serif'],
+        display: ['"Space Grotesk"', 'Inter', ...defaultTheme.fontFamily.sans],
       },
       fontSize: {
         display: ['3.5rem', { lineHeight: '1.05', letterSpacing: '-0.04em' }],
