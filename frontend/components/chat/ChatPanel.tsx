@@ -3,6 +3,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Loader2 } from 'lucide-react';
+
 import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
 import type { PlanRequest, PlanResponse } from '@/types/api';
@@ -11,12 +13,6 @@ import type { PlanBranch } from '@/types/plan';
 import type { Tile } from '@/types/tile';
 
 interface ChatPanelProps {
-  origin: string;
-  startDate: string;
-  endDate: string;
-  budgetBucket?: string;
-  groupSize?: number;
-  vibes: string[];
   tripContextId: number | null;
   selectedBranchId: string | null;
   onChatTriggered?: () => void;
@@ -120,24 +116,6 @@ export function ChatPanel(props: ChatPanelProps) {
 
       if (sessionId) {
         body.session_id = sessionId;
-      }
-      if (props.origin) {
-        body.origin = props.origin;
-      }
-      if (props.startDate) {
-        body.start_date = props.startDate;
-      }
-      if (props.endDate) {
-        body.end_date = props.endDate;
-      }
-      if (props.budgetBucket) {
-        body.budget_bucket = props.budgetBucket;
-      }
-      if (props.groupSize != null) {
-        body.group_size = props.groupSize;
-      }
-      if (props.vibes.length) {
-        body.vibes = props.vibes;
       }
       if (props.tripContextId != null) {
         body.trip_context_id = props.tripContextId;
@@ -343,7 +321,7 @@ export function ChatPanel(props: ChatPanelProps) {
         <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           Planner chat
         </div>
-        {isLoading && <span className="text-xs text-accent">Streaming…</span>}
+        {isLoading && <Loader2 className="h-4 w-4 animate-spin text-accent" aria-label="Loading" />}
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 space-y-2 overflow-y-auto text-sm">

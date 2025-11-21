@@ -1,17 +1,8 @@
 # backend/app/db_models.py
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Date,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-)
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -66,14 +57,6 @@ class TripContext(Base, TimestampMixin):
     parent_trip_context_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("trip_contexts.id"), nullable=True
     )
-
-    origin: Mapped[Optional[str]] = mapped_column(String(16))
-    destination_hint: Mapped[Optional[str]] = mapped_column(String(64))
-    start_date: Mapped[Optional[date]] = mapped_column(Date)
-    end_date: Mapped[Optional[date]] = mapped_column(Date)
-    budget_bucket: Mapped[Optional[str]] = mapped_column(String(32))
-    group_size: Mapped[Optional[int]] = mapped_column(Integer)
-    vibes: Mapped[Optional[List[str]]] = mapped_column(JSON)
     raw_prompt: Mapped[Optional[str]] = mapped_column(String)
 
     session: Mapped[Optional[Session]] = relationship("Session", back_populates="trip_contexts")

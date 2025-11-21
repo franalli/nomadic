@@ -49,16 +49,8 @@ class TilesSearchRequest(BaseModel):
     session_id: Optional[str] = None
     trip_context_id: Optional[int] = None
 
-    origin: Optional[str] = None
     destination: Optional[str] = None
     destination_hint: Optional[str] = None
-    trip_type: Optional[str] = "round_trip"
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-
-    budget_bucket: Optional[str] = None
-    group_size: Optional[int] = 2
-    vibes: List[str] = Field(default_factory=list)
 
     verticals: List[TileType] = Field(default_factory=lambda: ["hotel"])
     max_results_per_vertical: int = 5
@@ -92,13 +84,6 @@ class PlanRequest(BaseModel):
     message: str
     trip_context_id: Optional[int] = None
 
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    budget_bucket: Optional[str] = None
-    group_size: Optional[int] = None
-    vibes: List[str] = Field(default_factory=list)
-
 
 class PlanBranch(BaseModel):
     id: str
@@ -121,13 +106,6 @@ class PlanResponse(BaseModel):
 
 class SessionTripContext(BaseModel):
     id: int
-    origin: Optional[str] = None
-    destination_hint: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    budget_bucket: Optional[str] = None
-    group_size: Optional[int] = None
-    vibes: List[str] = Field(default_factory=list)
     raw_prompt: Optional[str] = None
 
 

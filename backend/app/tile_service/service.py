@@ -18,14 +18,7 @@ def _build_search_context(req: TilesSearchRequest) -> SearchContext:
     This is where you normalize / pre-process API input.
     """
     return SearchContext(
-        origin=req.origin,
         destination=req.destination or req.destination_hint,
-        trip_type=req.trip_type,
-        start_date=req.start_date,
-        end_date=req.end_date,
-        budget_bucket=req.budget_bucket,
-        group_size=req.group_size,
-        vibes=req.vibes or [],
         verticals=req.verticals or [],
         max_results_per_vertical=req.max_results_per_vertical,
         currency=req.currency,

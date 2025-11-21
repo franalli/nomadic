@@ -241,23 +241,8 @@ def _mock_plan_output(req: PlanRequest) -> PlannerLLMOutput:
 
 
 def _build_user_prompt(req: PlanRequest) -> str:
-    """Compact summary of user preferences for the LLM."""
-    lines = [f"User message: {req.message}"]
-
-    if req.origin:
-        lines.append(f"Origin: {req.origin}")
-    if req.start_date:
-        lines.append(f"Start date: {req.start_date}")
-    if req.end_date:
-        lines.append(f"End date: {req.end_date}")
-    if req.budget_bucket:
-        lines.append(f"Budget: {req.budget_bucket}")
-    if req.group_size:
-        lines.append(f"Group size: {req.group_size}")
-    if req.vibes:
-        lines.append(f"Vibes: {', '.join(req.vibes)}")
-
-    return "\n".join(lines)
+    """Compact summary of the latest user message for the LLM."""
+    return f"User message: {req.message}"
 
 
 def _plan_model_name() -> str:
@@ -552,12 +537,6 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             session=db_session,
             parent_trip_context=parent_ctx,
             req_message=req.message,
-            origin=req.origin,
-            start_date=req.start_date,
-            end_date=req.end_date,
-            budget_bucket=req.budget_bucket,
-            group_size=req.group_size,
-            vibes=req.vibes,
         )
 
         record_chat_message(
@@ -635,13 +614,8 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             branch_id=primary_db_branch.id,
             session_id=req.session_id,
             trip_context_id=trip_ctx.id,
-            origin=req.origin,
             destination=primary_db_branch.destination,
-            start_date=req.start_date,
-            end_date=req.end_date,
-            budget_bucket=req.budget_bucket,
-            group_size=req.group_size,
-            vibes=req.vibes,
+            destination_hint=primary_db_branch.destination,
         )
 
         tiles_response = search_tiles(tiles_request)

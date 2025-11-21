@@ -17,13 +17,6 @@ const SNAPSHOT_RESPONSE = {
   tiles: [],
   trip_context: {
     id: 99,
-    origin: 'AMS',
-    destination_hint: 'Europe',
-    start_date: '2025-06-01',
-    end_date: '2025-06-10',
-    budget_bucket: 'mid',
-    group_size: 2,
-    vibes: ['foodie'],
     raw_prompt: 'Need a trip',
   },
 };

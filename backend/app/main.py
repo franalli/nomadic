@@ -243,13 +243,6 @@ def get_session_snapshot(
 
     ctx_payload = SessionTripContext(
         id=trip_ctx.id,
-        origin=trip_ctx.origin,
-        destination_hint=trip_ctx.destination_hint,
-        start_date=trip_ctx.start_date.isoformat() if trip_ctx.start_date else None,
-        end_date=trip_ctx.end_date.isoformat() if trip_ctx.end_date else None,
-        budget_bucket=trip_ctx.budget_bucket,
-        group_size=trip_ctx.group_size,
-        vibes=trip_ctx.vibes or [],
         raw_prompt=trip_ctx.raw_prompt,
     )
 
@@ -289,7 +282,14 @@ def reset_session(
         )
     ]
 
+    (
+        db.query(db_models.ChatMessage)
+        .filter(db_models.ChatMessage.session_id == session.id)
+        .delete(synchronize_session=False)
+    )
+
     if trip_context_ids:
+
         branch_ids = [
             branch_id
             for (branch_id,) in (

@@ -1,6 +1,5 @@
 import os
 import sys
-from datetime import date
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -48,13 +47,6 @@ def seed_trip_with_branches(session_token: str = "session-123") -> dict:
 
         trip_ctx = models.TripContext(
             session_id=session.id,
-            origin="AMS",
-            destination_hint="Europe",
-            start_date=date(2025, 6, 1),
-            end_date=date(2025, 6, 10),
-            budget_bucket="mid",
-            group_size=2,
-            vibes=["foodie", "culture"],
             raw_prompt="Some context",
         )
         db.add(trip_ctx)
@@ -147,10 +139,8 @@ def test_session_snapshot_returns_branches_tiles_and_trip_context():
     assert payload["branches"][0]["label"] == "Beach Escape"
     assert payload["branches"][1]["destination"] == "Paris"
 
-    assert payload["trip_context"]["origin"] == "AMS"
-    assert payload["trip_context"]["budget_bucket"] == "mid"
-    assert payload["trip_context"]["vibes"] == ["foodie", "culture"]
     assert payload["trip_context"]["id"] == seed["trip_context_id"]
+    assert payload["trip_context"]["raw_prompt"] == "Some context"
 
     assert len(payload["tiles"]) == 1
     assert payload["tiles"][0]["title"] == "Seaside Hotel"

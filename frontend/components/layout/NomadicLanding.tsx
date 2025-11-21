@@ -26,12 +26,6 @@ import type { Tile } from '@/types/tile';
 
 type BranchSelectionOverrides = {
   branch?: PlanBranch;
-  origin?: string;
-  startDate?: string;
-  endDate?: string;
-  budgetBucket?: string;
-  groupSize?: number;
-  vibes?: string[];
   tripContextId?: number | null;
   errorMessageOverride?: string;
 };
@@ -53,13 +47,6 @@ export function NomadicLanding() {
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [chatKey, setChatKey] = useState(0);
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
-
-  const [origin, setOrigin] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [budgetBucket, setBudgetBucket] = useState<string | undefined>(undefined);
-  const [groupSize, setGroupSize] = useState<number | undefined>(undefined);
-  const [vibes, setVibes] = useState<string[]>([]);
 
   const selectedBranch = useMemo(
     () => branches.find((branch) => branch.id === selectedBranchId) ?? null,
@@ -87,12 +74,6 @@ export function NomadicLanding() {
       const parsedBranchId = Number(branchId);
       const branchIdNumber = Number.isFinite(parsedBranchId) ? parsedBranchId : undefined;
 
-      const requestOrigin = overrides?.origin ?? origin;
-      const requestStartDate = overrides?.startDate ?? startDate;
-      const requestEndDate = overrides?.endDate ?? endDate;
-      const requestBudgetBucket = overrides?.budgetBucket ?? budgetBucket;
-      const requestGroupSize = overrides?.groupSize ?? groupSize;
-      const requestVibes = overrides?.vibes ?? vibes;
       const requestTripContextId = overrides?.tripContextId ?? tripContextId;
       const errorMessageOverride = overrides?.errorMessageOverride;
 
@@ -100,14 +81,8 @@ export function NomadicLanding() {
         branch_id: branchIdNumber,
         session_id: sessionId || undefined,
         trip_context_id: requestTripContextId ?? undefined,
-        origin: requestOrigin || undefined,
         destination: branch.destination,
         destination_hint: branch.destination,
-        start_date: requestStartDate || undefined,
-        end_date: requestEndDate || undefined,
-        budget_bucket: requestBudgetBucket || undefined,
-        group_size: requestGroupSize,
-        vibes: requestVibes.length ? requestVibes : undefined,
       };
 
       try {
@@ -122,7 +97,7 @@ export function NomadicLanding() {
           console.error('Failed to fetch tiles for branch', res.status);
           setToastMessage(
             errorMessageOverride ??
-              'Unable to refresh tiles for that branch. Please try again.'
+              'Unable to refresh options for that suggestion. Please try again.'
           );
           return;
         }
@@ -137,7 +112,7 @@ export function NomadicLanding() {
         console.error('Failed to fetch tiles for branch', error);
         setToastMessage(
           errorMessageOverride ??
-            'Unable to refresh tiles for that branch. Please try again.'
+            'Unable to refresh options for that suggestion. Please try again.'
         );
       } finally {
         if (tilesFetchControllerRef.current === controller) {
@@ -148,13 +123,7 @@ export function NomadicLanding() {
     [
       abortTilesFetch,
       branches,
-      budgetBucket,
-      endDate,
-      origin,
-      startDate,
-      groupSize,
       tripContextId,
-      vibes,
     ]
   );
 
@@ -182,12 +151,6 @@ export function NomadicLanding() {
         if (cancelled) return;
 
         if (data.trip_context) {
-          setOrigin(data.trip_context.origin ?? '');
-          setStartDate(data.trip_context.start_date ?? '');
-          setEndDate(data.trip_context.end_date ?? '');
-          setBudgetBucket(data.trip_context.budget_bucket ?? undefined);
-          setGroupSize(data.trip_context.group_size ?? undefined);
-          setVibes(data.trip_context.vibes ?? []);
           setTripContextId(data.trip_context.id);
           setHasTriggeredChat(true);
         }
@@ -227,21 +190,15 @@ export function NomadicLanding() {
           const overrides: BranchSelectionOverrides | undefined = data.trip_context
             ? {
                 branch: fallbackBranch,
-                origin: data.trip_context.origin ?? '',
-                startDate: data.trip_context.start_date ?? '',
-                endDate: data.trip_context.end_date ?? '',
-                budgetBucket: data.trip_context.budget_bucket ?? undefined,
-                groupSize: data.trip_context.group_size ?? undefined,
-                vibes: data.trip_context.vibes ?? [],
                 tripContextId: data.trip_context.id,
                 errorMessageOverride:
-                  'We restored your branches but could not refresh tiles automatically. Select a branch to try again.',
+                  'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.',
               }
             : {
                 branch: fallbackBranch,
                 tripContextId: null,
                 errorMessageOverride:
-                  'We restored your branches but could not refresh tiles automatically. Select a branch to try again.',
+                  'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.',
               };
 
           await handleBranchSelect(fallbackBranchId, overrides);
@@ -267,12 +224,6 @@ export function NomadicLanding() {
 
   const handleClearContext = useCallback(() => {
     abortTilesFetch();
-    setOrigin('');
-    setStartDate('');
-    setEndDate('');
-    setBudgetBucket(undefined);
-    setGroupSize(undefined);
-    setVibes([]);
     setTripContextId(null);
     setBranches([]);
     setSelectedBranchId(null);
@@ -423,12 +374,6 @@ export function NomadicLanding() {
                 <CardContent className="p-3 sm:p-4">
                   <ChatPanel
                     key={chatKey}
-                    origin={origin}
-                    startDate={startDate}
-                    endDate={endDate}
-                    budgetBucket={budgetBucket}
-                    groupSize={groupSize}
-                    vibes={vibes}
                     tripContextId={tripContextId}
                     selectedBranchId={selectedBranchId}
                     onPlanResult={handlePlanResult}
@@ -451,10 +396,10 @@ export function NomadicLanding() {
                     Planner outputs
                   </p>
                   <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                    Branches and live booking tiles
+                    Suggestions for You and Your Best Options
                   </h2>
                   <p className="text-muted-foreground text-sm">
-                    Branches and tiles expand only after you spark the chat.
+                    Suggestions and options expand only after you spark the chat.
                   </p>
                 </div>
                 <Button
@@ -475,10 +420,10 @@ export function NomadicLanding() {
                     <div className="space-y-1">
                       <div className="bg-primary/15 text-primary inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
                         <Sparkles className="h-4 w-4" />
-                        Branches
+                        Suggestions for You
                       </div>
                       <h3 className="text-foreground font-display text-xl font-bold">
-                        Curated paths from the chat
+                        Curated suggestions from the chat
                       </h3>
                       <p className="text-muted-foreground text-sm">
                         Trip ideas show here after your first prompt.
@@ -508,7 +453,7 @@ export function NomadicLanding() {
                         </p>
                       ) : branches.length === 0 ? (
                         <p className="text-muted-foreground text-sm">
-                          Start chatting to generate trip branches.
+                          Start chatting to generate suggestions for you.
                         </p>
                       ) : (
                         <BranchPanel
@@ -528,13 +473,13 @@ export function NomadicLanding() {
                     <div className="space-y-1">
                       <div className="bg-accent/15 text-accent inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
                         <Sparkles className="h-4 w-4" />
-                        Booking tiles
+                        Your Best Options
                       </div>
                       <h3 className="text-foreground font-display text-xl font-bold">
-                        Live options tailored to the branches
+                        Live options tailored to your suggestions
                       </h3>
                       <p className="text-muted-foreground text-sm">
-                        Live options refresh after you pick a branch.
+                        Live options refresh after you pick a suggestion.
                       </p>
                     </div>
                     <Button
@@ -557,7 +502,7 @@ export function NomadicLanding() {
                     <CardContent className="overflow-hidden">
                       {tiles.length === 0 ? (
                         <p className="text-muted-foreground text-sm">
-                          Select a branch to see destination tiles.
+                          Pick a suggestion to see your best options.
                         </p>
                       ) : (
                         <TilesGrid
@@ -597,7 +542,7 @@ export function NomadicLanding() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                          Sample branches
+                          Sample suggestions
                         </p>
                         <h3 className="text-foreground font-display text-xl font-bold">
                           Travel options to spark ideas

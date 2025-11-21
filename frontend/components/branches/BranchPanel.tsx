@@ -46,7 +46,7 @@ export function BranchPanel({
                   : 'border-border/40 bg-white/5 text-muted-foreground hover:border-primary/40 hover:text-foreground')
               }
             >
-              <span className="mr-1 opacity-70">Branch {idx + 1} ·</span> {b.label}
+              <span className="mr-1 opacity-70">Suggestion {idx + 1} ·</span> {b.label}
             </button>
           );
         })}
@@ -59,7 +59,7 @@ export function BranchPanel({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-                Selected branch
+                Selected suggestion
               </p>
               <h4 className="text-foreground font-display text-xl font-bold">
                 {selected.destination}
@@ -82,7 +82,7 @@ export function BranchPanel({
               {selected.destination}
             </span>
             <span className="rounded-full bg-white/5 px-3 py-1 font-medium text-foreground/80">
-              Branch {selectedIndex + 1} of {branches.length}
+              Suggestion {selectedIndex + 1} of {branches.length}
             </span>
           </div>
         </div>
