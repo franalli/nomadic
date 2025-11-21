@@ -13,6 +13,10 @@ class SearchContext(BaseModel):
     """
 
     destination: Optional[str] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
 
     verticals: List[TileType] = Field(default_factory=list)
     max_results_per_vertical: int = 5

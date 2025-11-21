@@ -68,9 +68,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_sessions_id"), "sessions", ["id"], unique=False)
-    op.create_index(
-        op.f("ix_sessions_session_token"), "sessions", ["session_token"], unique=True
-    )
+    op.create_index(op.f("ix_sessions_session_token"), "sessions", ["session_token"], unique=True)
     op.create_table(
         "trip_contexts",
         sa.Column("id", sa.Integer(), nullable=False),

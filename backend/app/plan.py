@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from datetime import datetime
 from typing import Any, Generator, List, Optional, cast
 
 from openai import OpenAI
@@ -18,12 +19,7 @@ from app.crud_trip import (
     record_chat_message,
     snapshot_tiles_for_branch,
 )
-from app.schemas import (
-    PlanBranch,
-    PlanRequest,
-    PlanResponse,
-    TilesSearchRequest,
-)
+from app.schemas import PlanBranch, PlanRequest, PlanResponse, TilesSearchRequest, TripInputs
 from app.tile_service import search_tiles
 
 
@@ -34,10 +30,12 @@ class PlannerLLMOutput:
         branches: List[dict],
         assistant_message: str,
         follow_up_question: Optional[str] = None,
+        trip_inputs: Optional[dict] = None,
     ) -> None:
         self.branches = branches
         self.assistant_message = assistant_message
         self.follow_up_question = follow_up_question
+        self.trip_inputs = trip_inputs or {}
 
 
 _CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "12"))
@@ -45,6 +43,12 @@ _STREAM_CHUNK_SIZE = int(os.getenv("PLAN_STREAM_CHUNK_SIZE", "220"))
 _STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "10"))
 
 _openai_client: Optional[OpenAI] = None
+
+_TRIP_INPUT_FIELDS = ("destination", "origin", "start_date", "end_date", "traveler_count")
+
+
+def _today_iso() -> str:
+    return datetime.utcnow().strftime("%Y-%m-%d")
 
 
 class _AssistantMessageParser:
@@ -225,24 +229,43 @@ def _summarise_branches(branches: List[dict]) -> str:
 
 def _mock_plan_output(req: PlanRequest) -> PlannerLLMOutput:
     branches = _mock_branch_specs(req)
+    request_trip_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
+    trip_inputs = _clean_trip_inputs(request_trip_inputs)
     assistant_message = (
         "Pulling from what you shared, I sketched a few sample trips you can react to."
         " Let me know what to double-click on or what to change."
     )
-
+    follow_up_question = _default_follow_up_question(trip_inputs.get("missing_fields") or [])
     summary = _summarise_branches(branches)
     combined_message = f"{assistant_message}\n\n{summary}"
 
     return PlannerLLMOutput(
         branches=branches,
         assistant_message=combined_message,
-        follow_up_question=None,
+        follow_up_question=follow_up_question,
+        trip_inputs=trip_inputs,
     )
 
 
 def _build_user_prompt(req: PlanRequest) -> str:
     """Compact summary of the latest user message for the LLM."""
-    return f"User message: {req.message}"
+    base = f"User message: {req.message}"
+    if req.trip_inputs is None:
+        return base
+
+    inputs = _clean_trip_inputs(req.trip_inputs.dict())
+    details: list[str] = []
+    details.append(f"destination: {inputs.get('destination') or 'unknown'}")
+    details.append(f"origin: {inputs.get('origin') or 'unknown'}")
+    details.append(f"start_date: {inputs.get('start_date') or 'unknown'}")
+    details.append(f"end_date: {inputs.get('end_date') or 'unknown'}")
+    traveler_value = inputs.get("traveler_count")
+    details.append(f"traveler_count: {traveler_value if traveler_value is not None else 'unknown'}")
+    missing = inputs.get("missing_fields") or []
+    if missing:
+        details.append(f"missing_fields: {', '.join(missing)}")
+
+    return f"{base}\nProvided trip details: {', '.join(details)}"
 
 
 def _plan_model_name() -> str:
@@ -311,6 +334,135 @@ def _chunk_message_for_streaming(message: str) -> List[str]:
     return chunks or [message.strip()]
 
 
+def _normalize_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    value_str = str(value).strip()
+    return value_str or None
+
+
+def _normalize_date(value: Any) -> Optional[str]:
+    text = _normalize_str(value)
+    if not text:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    iso_match = re.match(r"^\d{4}-\d{2}-\d{2}$", text)
+    return text if iso_match else None
+
+
+def _normalize_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(str(value).strip())
+        except Exception:
+            return None
+
+
+def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
+    if value is None:
+        return None
+    return max(1, min(20, value))
+
+
+def _clean_trip_inputs(*sources: Any, fallback: Optional[dict] = None) -> dict:
+    sentinel = object()
+    merged: dict[str, Any] = {field: sentinel for field in _TRIP_INPUT_FIELDS}
+    noted_missing: set[str] = set()
+
+    def _ingest(source: Any) -> None:
+        if not isinstance(source, dict):
+            return
+
+        raw_missing = source.get("missing_fields", [])
+        if isinstance(raw_missing, list):
+            for entry in raw_missing:
+                entry_str = str(entry).strip()
+                if entry_str:
+                    noted_missing.add(entry_str)
+
+        for field in _TRIP_INPUT_FIELDS:
+            if field in ("start_date", "end_date"):
+                normalizer = _normalize_date
+            elif field == "traveler_count":
+                normalizer = _normalize_int
+            else:
+                normalizer = _normalize_str
+            value = normalizer(source.get(field))
+            current_value = merged[field]
+            if value is not None:
+                if current_value in (sentinel, None):
+                    merged[field] = value
+            elif current_value is sentinel:
+                merged[field] = None
+
+    for source in sources:
+        _ingest(source)
+    if fallback is not None:
+        _ingest(fallback)
+
+    if merged.get("start_date") is sentinel or merged.get("start_date") is None:
+        merged["start_date"] = _today_iso()
+
+    if merged.get("end_date") is sentinel or merged.get("end_date") is None:
+        merged["end_date"] = _today_iso()
+
+    if merged.get("traveler_count") is sentinel or merged.get("traveler_count") is None:
+        merged["traveler_count"] = 1
+    else:
+        merged["traveler_count"] = _clamp_traveler_count(merged.get("traveler_count"))
+
+    final_missing: set[str] = set()
+    for field in _TRIP_INPUT_FIELDS:
+        if merged[field] is sentinel:
+            merged[field] = None
+        if merged[field] is None:
+            final_missing.add(field)
+
+    for field in noted_missing:
+        if field in _TRIP_INPUT_FIELDS:
+            if merged.get(field) is None:
+                final_missing.add(field)
+        else:
+            final_missing.add(field)
+
+    ordered_missing = [field for field in _TRIP_INPUT_FIELDS if field in final_missing]
+    for field in sorted(final_missing):
+        if field not in ordered_missing:
+            ordered_missing.append(field)
+
+    merged["missing_fields"] = ordered_missing
+    return merged
+
+
+def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
+    if not missing_fields:
+        return None
+
+    prompt_by_field = {
+        "destination": "Where are you headed?",
+        "origin": "Which city or airport will you depart from?",
+        "start_date": "When does this trip start? Please share the date in YYYY-MM-DD.",
+        "end_date": "When will you return? Please share the date in YYYY-MM-DD.",
+        "traveler_count": "How many travelers are going?",
+    }
+
+    for field in _TRIP_INPUT_FIELDS:
+        if field in missing_fields:
+            return prompt_by_field.get(field)
+    return None
+
+
 def _emit_assistant_events(
     message: str, message_id: str, follow_up_question: Optional[str]
 ) -> Generator[dict, None, None]:
@@ -359,28 +511,49 @@ def _call_openai_for_plan(
     history: List[ChatCompletionMessageParam],
     message_id: str,
 ) -> Generator[dict, None, PlannerLLMOutput]:
-    if os.getenv("PLAN_FORCE_MOCK", "0") == "1":
-        output = _mock_plan_output(req)
-        yield from _emit_assistant_events(
-            output.assistant_message,
-            message_id,
-            output.follow_up_question,
-        )
-        return output
+    # if os.getenv("PLAN_FORCE_MOCK", "0") == "1":
+    #     output = _mock_plan_output(req)
+    #     yield from _emit_assistant_events(
+    #         output.assistant_message,
+    #         message_id,
+    #         output.follow_up_question,
+    #     )
+    #     return output
+
+    request_trip_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
 
     system_prompt = (
-        "You are a travel planner who is sustaining a live conversation with the user.\n"
-        "Always acknowledge prior context briefly, highlight how the new message changes the plan, "
-        "and propose up to 3 refreshed trip branches.\n\n"
+        "You are a live travel planner speaking like a sharp, friendly travel agent.\n"
+        "Always acknowledge prior context, note how the latest user message changes the plan, "
+        "and keep the chat concise.\n"
+        "Continuously capture these core fields from the conversation: destination city/region, "
+        "origin city/airport, start_date, end_date, and traveler_count. "
+        "Infer from history when possible. If anything is missing or fuzzy, ask one targeted "
+        "follow-up at a time until all fields are set. "
+        "Prompt for destination first if it is missing. Dates must be ISO formatted as YYYY-MM-DD "
+        "and traveler_count is an integer.\n\n"
         "Respond strictly with JSON:\n"
         "{\n"
-        '  "assistant_message": "concise conversational reply",\n'
-        '  "follow_up_question": "optional question string",\n'
+        '  "assistant_message": "brief conversational reply that reacts to the user",\n'
+        '  "follow_up_question": "one crisp question for the next missing field, or null",\n'
+        '  "trip_inputs": {\n'
+        '    "destination": "city/region, or null",\n'
+        '    "origin": "city or airport code, or null",\n'
+        '    "start_date": "YYYY-MM-DD or null",\n'
+        '    "end_date": "YYYY-MM-DD or null",\n'
+        '    "traveler_count": 2,\n'
+        '    "missing_fields": ["destination", "origin", "start_date"]\n'
+        "  },\n"
         '  "branches": [\n'
-        '    {"label": "...", "description": "...", "destination": "..."}\n'
+        '    {"label": "...", "description": "...", "destination": "...", "origin": "...", '
+        '"start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD", "traveler_count": 2}\n'
         "  ]\n"
         "}\n"
-        "Do not include markdown or commentary outside JSON."
+        "Rules: up to 3 branches only; always include trip_inputs with missing_fields listing any "
+        "unknowns (destination first); carry known trip_inputs into every branch so tiles can "
+        "align with origin and dates (use null when unknown); "
+        "if all fields are present, set follow_up_question to null; never include markdown or "
+        "commentary outside the JSON."
     )
 
     user_prompt = _build_user_prompt(req)
@@ -460,6 +633,8 @@ def _call_openai_for_plan(
 
                 cleaned: List[dict] = []
                 for b in branches_raw:
+                    if not isinstance(b, dict):
+                        continue
                     if not all(k in b for k in ("label", "destination")):
                         continue
                     cleaned.append(
@@ -467,7 +642,31 @@ def _call_openai_for_plan(
                             "label": str(b["label"]),
                             "description": str(b.get("description", "")),
                             "destination": str(b["destination"]),
+                            "origin": _normalize_str(b.get("origin")),
+                            "start_date": _normalize_str(b.get("start_date")),
+                            "end_date": _normalize_str(b.get("end_date")),
+                            "traveler_count": _normalize_int(b.get("traveler_count")),
                         }
+                    )
+
+                fallback_trip_inputs = {}
+                if cleaned:
+                    first_branch = cleaned[0]
+                    fallback_trip_inputs = {
+                        "destination": first_branch.get("destination"),
+                        "origin": first_branch.get("origin"),
+                        "start_date": first_branch.get("start_date"),
+                        "end_date": first_branch.get("end_date"),
+                        "traveler_count": first_branch.get("traveler_count"),
+                    }
+                trip_inputs = _clean_trip_inputs(
+                    request_trip_inputs,
+                    data.get("trip_inputs") or {},
+                    fallback=fallback_trip_inputs,
+                )
+                if not follow_up_question:
+                    follow_up_question = _default_follow_up_question(
+                        trip_inputs.get("missing_fields") or []
                     )
 
                 if not cleaned:
@@ -486,6 +685,7 @@ def _call_openai_for_plan(
                     branches=cleaned,
                     assistant_message=assistant_message,
                     follow_up_question=follow_up_question,
+                    trip_inputs=trip_inputs,
                 )
 
                 final_delta = assistant_stream_buffer
@@ -571,12 +771,19 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
                 break
             yield stream_event
 
-        assistant_chat.content = planner_output.assistant_message
-        assistant_chat.meta = (
-            {"follow_up_question": planner_output.follow_up_question}
-            if planner_output.follow_up_question
+        trip_inputs_model = (
+            TripInputs(**planner_output.trip_inputs)
+            if planner_output.trip_inputs is not None
             else None
         )
+        trip_inputs_payload = trip_inputs_model.dict() if trip_inputs_model else None
+        assistant_chat.content = planner_output.assistant_message
+        assistant_meta: dict[str, Any] = {}
+        if planner_output.follow_up_question:
+            assistant_meta["follow_up_question"] = planner_output.follow_up_question
+        if trip_inputs_payload:
+            assistant_meta["trip_inputs"] = trip_inputs_payload
+        assistant_chat.meta = assistant_meta or None
 
         branch_specs = planner_output.branches
         db_branches = create_branches_for_context(
@@ -590,13 +797,19 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             raise ValueError("No branches generated for trip context")
 
         plan_branches: List[PlanBranch] = []
-        for db_branch in db_branches:
+        for idx, db_branch in enumerate(db_branches):
+            source_spec = branch_specs[idx] if idx < len(branch_specs) else {}
+            spec_dict = source_spec if isinstance(source_spec, dict) else {}
             plan_branches.append(
                 PlanBranch(
                     id=str(db_branch.id),
                     label=db_branch.label,
                     description=db_branch.description or "",
                     destination=db_branch.destination,
+                    origin=_normalize_str(spec_dict.get("origin")),
+                    start_date=_normalize_str(spec_dict.get("start_date")),
+                    end_date=_normalize_str(spec_dict.get("end_date")),
+                    traveler_count=_normalize_int(spec_dict.get("traveler_count")),
                 )
             )
 
@@ -607,6 +820,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             "branches": [branch.dict() for branch in plan_branches],
             "primary_branch_id": str(primary_db_branch.id),
             "assistant_message_id": str(assistant_chat.id),
+            "trip_inputs": trip_inputs_payload,
         }
 
         tiles_request = TilesSearchRequest(
@@ -616,6 +830,10 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             trip_context_id=trip_ctx.id,
             destination=primary_db_branch.destination,
             destination_hint=primary_db_branch.destination,
+            origin=trip_inputs_model.origin if trip_inputs_model else None,
+            start_date=trip_inputs_model.start_date if trip_inputs_model else None,
+            end_date=trip_inputs_model.end_date if trip_inputs_model else None,
+            traveler_count=trip_inputs_model.traveler_count if trip_inputs_model else None,
         )
 
         tiles_response = search_tiles(tiles_request)
@@ -645,6 +863,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             assistant_message=planner_output.assistant_message,
             assistant_message_id=str(assistant_chat.id),
             follow_up_question=planner_output.follow_up_question,
+            trip_inputs=trip_inputs_model,
         )
 
         db.commit()

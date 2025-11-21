@@ -1,4 +1,4 @@
-import type { PlanBranch } from '@/types/plan';
+import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile } from '@/types/tile';
 
 // frontend/types/api.ts
@@ -7,6 +7,7 @@ export interface PlanRequest {
   session_id?: string;
   message: string;
   trip_context_id?: number;
+  trip_inputs?: TripInputs | null;
 }
 
 export interface PlanResponse {
@@ -19,6 +20,7 @@ export interface PlanResponse {
   assistant_message?: string | null;
   assistant_message_id?: string | null;
   follow_up_question?: string | null;
+  trip_inputs?: TripInputs | null;
 }
 
 export interface SessionTripContext {
@@ -33,6 +35,10 @@ export interface TilesSearchRequest {
   trip_context_id?: number;
   destination?: string;
   destination_hint?: string;
+  origin?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  traveler_count?: number | null;
 }
 
 export interface TilesSearchResponse {

@@ -9,12 +9,13 @@ import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
 import type { PlanRequest, PlanResponse } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
-import type { PlanBranch } from '@/types/plan';
+import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile } from '@/types/tile';
 
 interface ChatPanelProps {
   tripContextId: number | null;
   selectedBranchId: string | null;
+  tripInputs?: TripInputs | null;
   onChatTriggered?: () => void;
   onPlanResult: (result: {
     tripContextId: number | null;
@@ -22,6 +23,7 @@ interface ChatPanelProps {
     tiles: Tile[];
     primaryBranchId: string | null;
     tilesRequestId: string | null;
+    tripInputs?: TripInputs | null;
   }) => void;
 }
 
@@ -39,6 +41,7 @@ type PlanStreamEvent =
       branches: PlanBranch[];
       primary_branch_id?: string | null;
       assistant_message_id?: string | null;
+      trip_inputs?: TripInputs | null;
     }
   | {
       event: 'tiles_update';
@@ -74,7 +77,7 @@ export function ChatPanel(props: ChatPanelProps) {
       id: 'm0',
       role: 'assistant',
       content:
-        "Tell me about your trip: where you're headed, dates, vibes, and how many travelers are going.",
+        "Tell me about your trip: where you're headed, where you're leaving from, dates, vibes, and how many travelers are going.",
     },
   ]);
   const [input, setInput] = useState('');
@@ -120,6 +123,9 @@ export function ChatPanel(props: ChatPanelProps) {
       if (props.tripContextId != null) {
         body.trip_context_id = props.tripContextId;
       }
+      if (props.tripInputs) {
+        body.trip_inputs = props.tripInputs;
+      }
 
       const res = await fetch(`${API_BASE}/v1/plan?stream=true`, {
         method: 'POST',
@@ -143,6 +149,7 @@ export function ChatPanel(props: ChatPanelProps) {
             props.selectedBranchId ??
             null,
           tilesRequestId: data.tiles_request_id ?? null,
+          tripInputs: data.trip_inputs ?? null,
         });
       };
 
@@ -151,8 +158,12 @@ export function ChatPanel(props: ChatPanelProps) {
         if (!stream || typeof stream.getReader !== 'function') {
           const fallback: PlanResponse = await res.json();
           handlePlanResult(fallback);
+          const followUp = fallback.follow_up_question
+            ? `\n\n${fallback.follow_up_question}`
+            : '';
           const assistantText =
-            fallback.assistant_message || summariseBranches(fallback.branches);
+            (fallback.assistant_message || summariseBranches(fallback.branches)) +
+            followUp;
           setMessages((prev) => [
             ...prev,
             {
@@ -182,6 +193,7 @@ export function ChatPanel(props: ChatPanelProps) {
             assistant_message: latestPlan.assistant_message ?? null,
             assistant_message_id: latestPlan.assistant_message_id ?? null,
             follow_up_question: latestPlan.follow_up_question ?? null,
+            trip_inputs: latestPlan.trip_inputs ?? null,
           };
           handlePlanResult(snapshot);
         };
@@ -246,6 +258,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   payload.primary_branch_id ?? latestPlan.primary_branch_id,
                 assistant_message_id:
                   payload.assistant_message_id ?? latestPlan.assistant_message_id,
+                trip_inputs: payload.trip_inputs ?? latestPlan.trip_inputs ?? null,
               };
               if (payload.assistant_message_id) {
                 ensureAssistantMessage(payload.assistant_message_id);
@@ -316,12 +329,14 @@ export function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <div className="flex h-full flex-col gap-3 rounded-2xl border border-white/20 bg-card/90 p-4 text-foreground shadow-xl backdrop-blur">
+    <div className="bg-card/90 text-foreground flex h-full flex-col gap-3 rounded-2xl border border-white/20 p-4 shadow-xl backdrop-blur">
       <div className="flex items-center justify-between">
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Planner chat
+        <div className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
+          Travel planner
         </div>
-        {isLoading && <Loader2 className="h-4 w-4 animate-spin text-accent" aria-label="Loading" />}
+        {isLoading && (
+          <Loader2 className="text-accent h-4 w-4 animate-spin" aria-label="Loading" />
+        )}
       </div>
 
       <div ref={scrollContainerRef} className="flex-1 space-y-2 overflow-y-auto text-sm">
@@ -350,7 +365,7 @@ export function ChatPanel(props: ChatPanelProps) {
         />
         <button
           type="submit"
-          className="bg-primary text-primary-foreground rounded-xl px-4 py-2 text-sm font-semibold transition-colors hover:bg-primary/90 disabled:opacity-60"
+          className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-xl px-4 py-2 text-sm font-semibold transition-colors disabled:opacity-60"
           disabled={isLoading}
         >
           {isLoading ? 'Thinking…' : 'Plan'}

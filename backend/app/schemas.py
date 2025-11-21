@@ -51,6 +51,10 @@ class TilesSearchRequest(BaseModel):
 
     destination: Optional[str] = None
     destination_hint: Optional[str] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
 
     verticals: List[TileType] = Field(default_factory=lambda: ["hotel"])
     max_results_per_vertical: int = 5
@@ -78,11 +82,21 @@ class TileClickEvent(BaseModel):
     session_id: Optional[str] = None  # your frontend-generated session id
 
 
+class TripInputs(BaseModel):
+    destination: Optional[str] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
+    missing_fields: List[str] = Field(default_factory=list)
+
+
 class PlanRequest(BaseModel):
     user_id: Optional[str] = None
     session_id: Optional[str] = None
     message: str
     trip_context_id: Optional[int] = None
+    trip_inputs: Optional[TripInputs] = None
 
 
 class PlanBranch(BaseModel):
@@ -90,6 +104,10 @@ class PlanBranch(BaseModel):
     label: str
     description: str
     destination: str
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
 
 
 class PlanResponse(BaseModel):
@@ -102,6 +120,7 @@ class PlanResponse(BaseModel):
     assistant_message: Optional[str] = None
     assistant_message_id: Optional[str] = None
     follow_up_question: Optional[str] = None
+    trip_inputs: Optional[TripInputs] = None
 
 
 class SessionTripContext(BaseModel):

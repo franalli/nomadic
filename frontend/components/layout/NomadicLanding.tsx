@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Compass, Menu, Sparkles, User } from 'lucide-react';
+import {
+  CalendarRange,
+  Compass,
+  MapPin,
+  Menu,
+  Sparkles,
+  User,
+  Users,
+} from 'lucide-react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
@@ -21,13 +29,114 @@ import type {
   TilesSearchRequest,
   TilesSearchResponse,
 } from '@/types/api';
-import type { PlanBranch } from '@/types/plan';
+import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile } from '@/types/tile';
 
 type BranchSelectionOverrides = {
   branch?: PlanBranch;
   tripContextId?: number | null;
   errorMessageOverride?: string;
+};
+
+type TripInputsDraft = {
+  destination?: string | null;
+  origin: string;
+  start_date: string;
+  end_date: string;
+  traveler_count: string;
+};
+
+const DISPLAY_DATE_FORMAT = 'dd-mm-yyyy';
+const today = new Date();
+const pad = (value: number) => value.toString().padStart(2, '0');
+const TODAY_DISPLAY = `${pad(today.getDate())}-${pad(today.getMonth() + 1)}-${today.getFullYear()}`;
+const TODAY_ISO = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+
+const formatDateForDisplay = (value?: string | null): string => {
+  if (!value) return '';
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return `${day}-${month}-${year}`;
+  }
+  return value;
+};
+
+const parseDisplayDate = (value: string): string | null => {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const displayMatch = /^(\d{2})-(\d{2})-(\d{4})$/.exec(trimmed);
+  if (displayMatch) {
+    const [, day, month, year] = displayMatch;
+    const iso = `${year}-${month}-${day}`;
+    const parsed = new Date(iso);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return iso;
+  }
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (isoMatch) {
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return trimmed;
+  }
+  return null;
+};
+
+const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => ({
+  destination: inputs.destination ?? null,
+  origin: inputs.origin ?? '',
+  start_date: formatDateForDisplay(inputs.start_date) || TODAY_DISPLAY,
+  end_date: formatDateForDisplay(inputs.end_date) || TODAY_DISPLAY,
+  traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : '1',
+});
+
+const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
+  const destination = draft.destination?.trim() || null;
+  const origin = draft.origin.trim() || null;
+  const startDate = parseDisplayDate(draft.start_date) ?? TODAY_ISO;
+  const endDate = parseDisplayDate(draft.end_date) ?? TODAY_ISO;
+  const travelerText = draft.traveler_count.trim();
+  const parsedTravelerCount = travelerText === '' ? null : Number(travelerText);
+  const travelerCount =
+    Number.isFinite(parsedTravelerCount) && parsedTravelerCount != null
+      ? Math.min(20, Math.max(1, parsedTravelerCount))
+      : 1;
+
+  const missingFields: string[] = [];
+  if (!destination) missingFields.push('destination');
+  if (!origin) missingFields.push('origin');
+
+  return {
+    destination,
+    origin,
+    start_date: startDate,
+    end_date: endDate,
+    traveler_count: travelerCount,
+    missing_fields: missingFields,
+  };
+};
+
+const DEFAULT_TRIP_INPUTS: TripInputs = {
+  destination: null,
+  origin: null,
+  start_date: TODAY_ISO,
+  end_date: TODAY_ISO,
+  traveler_count: 1,
+  missing_fields: ['destination', 'origin'],
+};
+
+const fillTripInputDefaults = (inputs?: TripInputs | null): TripInputs => {
+  return normalizeTripInputsDraft(toTripInputsDraft(inputs ?? DEFAULT_TRIP_INPUTS));
+};
+
+const sanitizeOrigin = (origin: string | null, destination?: string | null): string | null => {
+  if (!origin || !destination) return origin;
+  const originNorm = origin.trim().toLowerCase();
+  const destinationNorm = destination.trim().toLowerCase();
+  if (originNorm && destinationNorm && originNorm === destinationNorm) {
+    return null;
+  }
+  return origin;
 };
 
 const HERO_IMAGE =
@@ -40,6 +149,13 @@ export function NomadicLanding() {
   const [tiles, setTiles] = useState<Tile[]>([]);
   const [tilesRequestId, setTilesRequestId] = useState<string | null>(null);
   const [tripContextId, setTripContextId] = useState<number | null>(null);
+  const [tripInputsDraft, setTripInputsDraft] = useState<TripInputsDraft>(() =>
+    toTripInputsDraft(DEFAULT_TRIP_INPUTS)
+  );
+  const [tripInputs, setTripInputs] = useState<TripInputs>(() =>
+    normalizeTripInputsDraft(toTripInputsDraft(DEFAULT_TRIP_INPUTS))
+  );
+  const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
   const [isResettingSession, setIsResettingSession] = useState(false);
@@ -54,12 +170,38 @@ export function NomadicLanding() {
     [branches, selectedBranchId]
   );
 
+  const updateFromDraft = useCallback(
+    (draft: TripInputsDraft, destinationHint?: string | null) => {
+      const normalized = normalizeTripInputsDraft(draft);
+      normalized.origin = sanitizeOrigin(
+        normalized.origin,
+        destinationHint ?? selectedBranch?.destination
+      );
+      setTripInputs(normalized);
+      setTripInputsDraft(draft);
+      setEditingField(null);
+    },
+    [selectedBranch?.destination]
+  );
+
+  const applyIncomingTripInputs = useCallback(
+    (incoming?: TripInputs | null, destinationHint?: string | null) => {
+      const filled = fillTripInputDefaults(incoming);
+      filled.origin = sanitizeOrigin(filled.origin, destinationHint);
+      filled.destination = filled.destination ?? destinationHint ?? null;
+      const draft = toTripInputsDraft(filled);
+      updateFromDraft(draft, destinationHint);
+    },
+    [updateFromDraft]
+  );
+
   const abortTilesFetch = useCallback(() => {
     if (tilesFetchControllerRef.current) {
       tilesFetchControllerRef.current.abort();
       tilesFetchControllerRef.current = null;
     }
   }, []);
+
 
   const handleBranchSelect = useCallback(
     async (branchId: string, overrides?: BranchSelectionOverrides) => {
@@ -85,6 +227,10 @@ export function NomadicLanding() {
         destination: branch.destination,
         destination_hint: branch.destination,
       };
+      if (branch.origin) body.origin = branch.origin;
+      if (branch.start_date) body.start_date = branch.start_date;
+      if (branch.end_date) body.end_date = branch.end_date;
+      if (branch.traveler_count != null) body.traveler_count = branch.traveler_count;
 
       try {
         const res = await fetch(`${API_BASE}/v1/tiles/search`, {
@@ -121,11 +267,7 @@ export function NomadicLanding() {
         }
       }
     },
-    [
-      abortTilesFetch,
-      branches,
-      tripContextId,
-    ]
+    [abortTilesFetch, branches, tripContextId]
   );
 
   useEffect(() => {
@@ -230,11 +372,12 @@ export function NomadicLanding() {
     setSelectedBranchId(null);
     setTiles([]);
     setTilesRequestId(null);
+    applyIncomingTripInputs(DEFAULT_TRIP_INPUTS, null);
     setBranchesExpanded(false);
     setTilesExpanded(false);
     setHasTriggeredChat(false);
     setChatKey((prev) => prev + 1);
-  }, [abortTilesFetch]);
+  }, [abortTilesFetch, applyIncomingTripInputs]);
 
   const handleStartNewSession = useCallback(async () => {
     const sessionId = getOrCreateSessionId();
@@ -272,6 +415,29 @@ export function NomadicLanding() {
     );
   }, [abortTilesFetch, handleClearContext]);
 
+  const handleStartEditingField = useCallback(
+    (field: keyof TripInputsDraft) => {
+      setEditingField(field);
+    },
+    []
+  );
+
+  const handleFieldChange = useCallback((field: keyof TripInputsDraft, value: string) => {
+    setTripInputsDraft((prev) => (prev ? { ...prev, [field]: value } : prev));
+  }, []);
+
+  const handleCommitField = useCallback(
+    (field?: keyof TripInputsDraft, value?: string) => {
+      setTripInputsDraft((prev) => {
+        const base = prev ?? toTripInputsDraft(tripInputs);
+        const next = field ? { ...base, [field]: value ?? base[field] } : base;
+        updateFromDraft(next, selectedBranch?.destination);
+        return next;
+      });
+    },
+    [tripInputs, selectedBranch?.destination, updateFromDraft]
+  );
+
   useEffect(() => () => abortTilesFetch(), [abortTilesFetch]);
 
   const handlePlanResult = useCallback(
@@ -281,11 +447,14 @@ export function NomadicLanding() {
       tiles: Tile[];
       primaryBranchId: string | null;
       tilesRequestId: string | null;
+      tripInputs?: TripInputs | null;
     }) => {
       setTripContextId(result.tripContextId);
       setBranches(result.branches);
       setTiles(result.tiles);
       setTilesRequestId(result.tilesRequestId);
+      const destinationHint = result.branches[0]?.destination ?? null;
+      applyIncomingTripInputs(result.tripInputs ?? undefined, destinationHint);
       setSelectedBranchId(result.primaryBranchId);
       setHasTriggeredChat(true);
 
@@ -296,7 +465,7 @@ export function NomadicLanding() {
         setTilesExpanded(true);
       }
     },
-    []
+    [applyIncomingTripInputs]
   );
 
   const handleChatTriggered = useCallback(() => {
@@ -304,6 +473,11 @@ export function NomadicLanding() {
   }, []);
 
   const showResults = hasTriggeredChat || branches.length > 0 || tiles.length > 0;
+  const missingFields = tripInputs.missing_fields ?? [];
+  const isMissingField = (key: string, value?: string | number | null) =>
+    !value || missingFields.includes(key);
+  const formatTravelers = (value?: number | null) =>
+    value != null ? `${value} traveler${value === 1 ? '' : 's'}` : 'Needed';
 
   return (
     <div className="bg-background text-foreground min-h-screen">
@@ -375,7 +549,7 @@ export function NomadicLanding() {
           </header>
 
           <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pb-12 pt-6">
-            <div className="space-y-6 text-center text-white -mt-8">
+            <div className="-mt-8 space-y-6 text-center text-white">
               <h1 className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl">
                 Roam freely. <span className="text-accent">We plan the rest.</span>
               </h1>
@@ -385,7 +559,7 @@ export function NomadicLanding() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
-              className="w-full max-w-2xl mt-8"
+              className="mt-8 w-full max-w-2xl"
             >
               <Card className="bg-card/95 border-white/20 p-1 shadow-2xl backdrop-blur">
                 <CardContent className="p-3 sm:p-4">
@@ -393,6 +567,7 @@ export function NomadicLanding() {
                     key={chatKey}
                     tripContextId={tripContextId}
                     selectedBranchId={selectedBranchId}
+                    tripInputs={tripInputs}
                     onPlanResult={handlePlanResult}
                     onChatTriggered={handleChatTriggered}
                   />
@@ -410,10 +585,10 @@ export function NomadicLanding() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                    Planner outputs
+                    Let's dive right into it
                   </p>
                   <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                    Suggestions for You and Your Best Options
+                    Your Destinations and Best Booking Options
                   </h2>
                   <p className="text-muted-foreground text-sm">
                     Suggestions and options expand only after you spark the chat.
@@ -428,6 +603,142 @@ export function NomadicLanding() {
                   {isResettingSession ? 'Resetting…' : 'Start fresh'}
                 </Button>
               </div>
+
+              {tripInputs && (
+                <Card className="border-primary/30 bg-card/90 border shadow-lg">
+                  <CardContent className="flex flex-col gap-4 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                          Trip details I'm tracking
+                        </p>
+                        <p className="text-muted-foreground text-sm">
+                          Update them here or in chat—I’ll keep prompting until each field is locked in.
+                        </p>
+                        <p className="text-muted-foreground text-xs">
+                          Click any field to edit it instantly.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
+                            missingFields.length > 0
+                              ? 'bg-amber-100 text-amber-700'
+                              : 'bg-emerald-100 text-emerald-700'
+                          }`}
+                        >
+                          {missingFields.length > 0 ? 'Need more info' : 'Ready to search'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {(['origin', 'start_date', 'end_date', 'traveler_count'] as const).map(
+                        (field) => {
+                          const isEditing = editingField === field;
+                          const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
+                          const draftValue = draftBase ? draftBase[field] : '';
+
+                          let displayValue = 'Needed';
+                          if (field === 'traveler_count') {
+                            displayValue =
+                              tripInputs.traveler_count != null
+                                ? formatTravelers(tripInputs.traveler_count)
+                                : '1 traveler';
+                          } else if (field === 'start_date' || field === 'end_date') {
+                            const formatted = formatDateForDisplay(
+                              tripInputs[field as keyof TripInputs] as string | null | undefined
+                            );
+                            displayValue = formatted || 'Needed';
+                          } else {
+                            displayValue =
+                              (tripInputs[field as keyof TripInputs] as string | null | undefined) ||
+                              'Needed';
+                          }
+
+                          const icon =
+                            field === 'origin' ? (
+                              <MapPin className="h-4 w-4" />
+                            ) : field === 'traveler_count' ? (
+                              <Users className="h-4 w-4" />
+                            ) : (
+                              <CalendarRange className="h-4 w-4" />
+                            );
+
+                          const label =
+                            field === 'origin'
+                              ? 'Origin'
+                              : field === 'start_date'
+                                ? 'Start'
+                                : field === 'end_date'
+                                  ? 'End'
+                                  : 'Travelers';
+
+                          const inputType = field === 'traveler_count' ? 'number' : 'text';
+
+                          return (
+                            <div
+                              key={field}
+                              className="border-border/60 bg-muted/40 rounded-lg border px-3 py-2"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => handleStartEditingField(field)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  handleStartEditingField(field);
+                                }
+                              }}
+                            >
+                              <div className="text-muted-foreground flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                                {icon}
+                                {label}
+                              </div>
+                              {isEditing ? (
+                                <div className="mt-2 space-y-2">
+                                  <input
+                                    type={inputType}
+                                    value={draftValue}
+                                    onChange={(e) =>
+                                      handleFieldChange(field, e.target.value)
+                                    }
+                                    className="border-border/60 bg-card/30 text-foreground placeholder:text-muted-foreground w-full rounded-md border px-2 py-1 text-sm focus:border-primary focus:outline-none"
+                                    placeholder={
+                                      field === 'traveler_count'
+                                        ? 'Number of travelers'
+                                        : field === 'origin'
+                                          ? 'City or airport'
+                                          : DISPLAY_DATE_FORMAT
+                                    }
+                                    onClick={(e) => e.stopPropagation()}
+                                    onBlur={(e) => handleCommitField(field, e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleCommitField(field, (e.target as HTMLInputElement).value);
+                                      }
+                                    }}
+                                    autoFocus
+                                  />
+                                </div>
+                              ) : (
+                                <div
+                                  className={`text-sm font-semibold ${
+                                    isMissingField(field, tripInputs[field as keyof TripInputs])
+                                      ? 'text-amber-600'
+                                      : 'text-foreground'
+                                  }`}
+                                >
+                                  {displayValue}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
                 <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">

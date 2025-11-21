@@ -19,6 +19,10 @@ def _build_search_context(req: TilesSearchRequest) -> SearchContext:
     """
     return SearchContext(
         destination=req.destination or req.destination_hint,
+        origin=req.origin,
+        start_date=req.start_date,
+        end_date=req.end_date,
+        traveler_count=req.traveler_count,
         verticals=req.verticals or [],
         max_results_per_vertical=req.max_results_per_vertical,
         currency=req.currency,
@@ -81,6 +85,10 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
             default=None,
         ),
         "response_mode": ctx.response_mode,
+        "origin": ctx.origin,
+        "start_date": ctx.start_date,
+        "end_date": ctx.end_date,
+        "traveler_count": ctx.traveler_count,
     }
 
     return TilesSearchResponse(
