@@ -32,6 +32,7 @@ type BranchSelectionOverrides = {
 
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
+const HERO_VIDEO = '/hiking_video.mp4';
 
 export function NomadicLanding() {
   const [branches, setBranches] = useState<PlanBranch[]>([]);
@@ -321,11 +322,27 @@ export function NomadicLanding() {
 
       <div className="relative overflow-hidden">
         <div className="absolute inset-0">
-          <img
-            src={HERO_IMAGE}
-            alt="Nomadic hero"
-            className="h-full w-full object-cover"
-          />
+          <div className="flex h-full w-full">
+            <div className="h-full w-1/2">
+              <img
+                src={HERO_IMAGE}
+                alt="Nomadic hero"
+                className="h-full w-full object-cover"
+              />
+            </div>
+            <div className="h-full w-1/2">
+              <video
+                className="h-full w-full object-cover"
+                src={HERO_VIDEO}
+                poster={HERO_IMAGE}
+                autoPlay
+                loop
+                muted
+                playsInline
+                aria-hidden="true"
+              />
+            </div>
+          </div>
           <div className="to-background absolute inset-0 bg-gradient-to-b from-black/65 via-black/35" />
         </div>
 
