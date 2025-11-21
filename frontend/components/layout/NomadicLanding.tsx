@@ -129,7 +129,10 @@ const fillTripInputDefaults = (inputs?: TripInputs | null): TripInputs => {
   return normalizeTripInputsDraft(toTripInputsDraft(inputs ?? DEFAULT_TRIP_INPUTS));
 };
 
-const sanitizeOrigin = (origin: string | null, destination?: string | null): string | null => {
+const sanitizeOrigin = (
+  origin: string | null,
+  destination?: string | null
+): string | null => {
   if (!origin || !destination) return origin;
   const originNorm = origin.trim().toLowerCase();
   const destinationNorm = destination.trim().toLowerCase();
@@ -142,6 +145,9 @@ const sanitizeOrigin = (origin: string | null, destination?: string | null): str
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
 const HERO_VIDEO = '/hiking_video.mp4';
+const HERO_TAGLINE = 'We Plan the Rest.';
+const HERO_TYPING_INTERVAL_MS = 200;
+const HERO_TYPING_PAUSE_MS = 8000;
 
 export function NomadicLanding() {
   const [branches, setBranches] = useState<PlanBranch[]>([]);
@@ -164,6 +170,7 @@ export function NomadicLanding() {
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [chatKey, setChatKey] = useState(0);
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
+  const [typedTagline, setTypedTagline] = useState('');
 
   const selectedBranch = useMemo(
     () => branches.find((branch) => branch.id === selectedBranchId) ?? null,
@@ -174,7 +181,7 @@ export function NomadicLanding() {
     (draft: TripInputsDraft, destinationHint?: string | null) => {
       const normalized = normalizeTripInputsDraft(draft);
       normalized.origin = sanitizeOrigin(
-        normalized.origin,
+        normalized.origin ?? null,
         destinationHint ?? selectedBranch?.destination
       );
       setTripInputs(normalized);
@@ -187,7 +194,7 @@ export function NomadicLanding() {
   const applyIncomingTripInputs = useCallback(
     (incoming?: TripInputs | null, destinationHint?: string | null) => {
       const filled = fillTripInputDefaults(incoming);
-      filled.origin = sanitizeOrigin(filled.origin, destinationHint);
+      filled.origin = sanitizeOrigin(filled.origin ?? null, destinationHint);
       filled.destination = filled.destination ?? destinationHint ?? null;
       const draft = toTripInputsDraft(filled);
       updateFromDraft(draft, destinationHint);
@@ -201,7 +208,6 @@ export function NomadicLanding() {
       tilesFetchControllerRef.current = null;
     }
   }, []);
-
 
   const handleBranchSelect = useCallback(
     async (branchId: string, overrides?: BranchSelectionOverrides) => {
@@ -415,12 +421,9 @@ export function NomadicLanding() {
     );
   }, [abortTilesFetch, handleClearContext]);
 
-  const handleStartEditingField = useCallback(
-    (field: keyof TripInputsDraft) => {
-      setEditingField(field);
-    },
-    []
-  );
+  const handleStartEditingField = useCallback((field: keyof TripInputsDraft) => {
+    setEditingField(field);
+  }, []);
 
   const handleFieldChange = useCallback((field: keyof TripInputsDraft, value: string) => {
     setTripInputsDraft((prev) => (prev ? { ...prev, [field]: value } : prev));
@@ -439,6 +442,26 @@ export function NomadicLanding() {
   );
 
   useEffect(() => () => abortTilesFetch(), [abortTilesFetch]);
+
+  useEffect(() => {
+    let timeoutId: number | null = null;
+
+    const typeNext = (index: number) => {
+      setTypedTagline(HERO_TAGLINE.slice(0, index));
+      const isComplete = index === HERO_TAGLINE.length;
+      const nextIndex = isComplete ? 0 : index + 1;
+      const delay = isComplete ? HERO_TYPING_PAUSE_MS : HERO_TYPING_INTERVAL_MS;
+      timeoutId = window.setTimeout(() => typeNext(nextIndex), delay);
+    };
+
+    typeNext(0);
+
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, []);
 
   const handlePlanResult = useCallback(
     (result: {
@@ -550,8 +573,20 @@ export function NomadicLanding() {
 
           <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pb-12 pt-6">
             <div className="-mt-8 space-y-6 text-center text-white">
-              <h1 className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl">
-                Roam freely. <span className="text-accent">We plan the rest.</span>
+              <h1
+                className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl"
+                aria-label={`Roam freely. ${HERO_TAGLINE}`}
+              >
+                Roam freely.{' '}
+                <span className="text-accent relative inline-block">
+                  <span className="invisible">{HERO_TAGLINE}</span>
+                  <span
+                    className="absolute left-0 top-0 whitespace-nowrap"
+                    aria-live="polite"
+                  >
+                    {typedTagline}
+                  </span>
+                </span>
               </h1>
             </div>
 
@@ -613,7 +648,8 @@ export function NomadicLanding() {
                           Trip details I'm tracking
                         </p>
                         <p className="text-muted-foreground text-sm">
-                          Update them here or in chat—I’ll keep prompting until each field is locked in.
+                          Update them here or in chat—I’ll keep prompting until each field
+                          is locked in.
                         </p>
                         <p className="text-muted-foreground text-xs">
                           Click any field to edit it instantly.
@@ -627,114 +663,132 @@ export function NomadicLanding() {
                               : 'bg-emerald-100 text-emerald-700'
                           }`}
                         >
-                          {missingFields.length > 0 ? 'Need more info' : 'Ready to search'}
+                          {missingFields.length > 0
+                            ? 'Need more info'
+                            : 'Ready to search'}
                         </span>
                       </div>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      {(['origin', 'start_date', 'end_date', 'traveler_count'] as const).map(
-                        (field) => {
-                          const isEditing = editingField === field;
-                          const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
-                          const draftValue = draftBase ? draftBase[field] : '';
+                      {(
+                        ['origin', 'start_date', 'end_date', 'traveler_count'] as const
+                      ).map((field) => {
+                        const isEditing = editingField === field;
+                        const draftBase =
+                          tripInputsDraft ?? toTripInputsDraft(tripInputs);
+                        const draftValue = draftBase ? draftBase[field] : '';
 
-                          let displayValue = 'Needed';
-                          if (field === 'traveler_count') {
-                            displayValue =
-                              tripInputs.traveler_count != null
-                                ? formatTravelers(tripInputs.traveler_count)
-                                : '1 traveler';
-                          } else if (field === 'start_date' || field === 'end_date') {
-                            const formatted = formatDateForDisplay(
-                              tripInputs[field as keyof TripInputs] as string | null | undefined
-                            );
-                            displayValue = formatted || 'Needed';
-                          } else {
-                            displayValue =
-                              (tripInputs[field as keyof TripInputs] as string | null | undefined) ||
-                              'Needed';
-                          }
-
-                          const icon =
-                            field === 'origin' ? (
-                              <MapPin className="h-4 w-4" />
-                            ) : field === 'traveler_count' ? (
-                              <Users className="h-4 w-4" />
-                            ) : (
-                              <CalendarRange className="h-4 w-4" />
-                            );
-
-                          const label =
-                            field === 'origin'
-                              ? 'Origin'
-                              : field === 'start_date'
-                                ? 'Start'
-                                : field === 'end_date'
-                                  ? 'End'
-                                  : 'Travelers';
-
-                          const inputType = field === 'traveler_count' ? 'number' : 'text';
-
-                          return (
-                            <div
-                              key={field}
-                              className="border-border/60 bg-muted/40 rounded-lg border px-3 py-2"
-                              role="button"
-                              tabIndex={0}
-                              onClick={() => handleStartEditingField(field)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  handleStartEditingField(field);
-                                }
-                              }}
-                            >
-                              <div className="text-muted-foreground flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-                                {icon}
-                                {label}
-                              </div>
-                              {isEditing ? (
-                                <div className="mt-2 space-y-2">
-                                  <input
-                                    type={inputType}
-                                    value={draftValue}
-                                    onChange={(e) =>
-                                      handleFieldChange(field, e.target.value)
-                                    }
-                                    className="border-border/60 bg-card/30 text-foreground placeholder:text-muted-foreground w-full rounded-md border px-2 py-1 text-sm focus:border-primary focus:outline-none"
-                                    placeholder={
-                                      field === 'traveler_count'
-                                        ? 'Number of travelers'
-                                        : field === 'origin'
-                                          ? 'City or airport'
-                                          : DISPLAY_DATE_FORMAT
-                                    }
-                                    onClick={(e) => e.stopPropagation()}
-                                    onBlur={(e) => handleCommitField(field, e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.preventDefault();
-                                        handleCommitField(field, (e.target as HTMLInputElement).value);
-                                      }
-                                    }}
-                                    autoFocus
-                                  />
-                                </div>
-                              ) : (
-                                <div
-                                  className={`text-sm font-semibold ${
-                                    isMissingField(field, tripInputs[field as keyof TripInputs])
-                                      ? 'text-amber-600'
-                                      : 'text-foreground'
-                                  }`}
-                                >
-                                  {displayValue}
-                                </div>
-                              )}
-                            </div>
+                        let displayValue = 'Needed';
+                        if (field === 'traveler_count') {
+                          displayValue =
+                            tripInputs.traveler_count != null
+                              ? formatTravelers(tripInputs.traveler_count)
+                              : '1 traveler';
+                        } else if (field === 'start_date' || field === 'end_date') {
+                          const formatted = formatDateForDisplay(
+                            tripInputs[field as keyof TripInputs] as
+                              | string
+                              | null
+                              | undefined
                           );
+                          displayValue = formatted || 'Needed';
+                        } else {
+                          displayValue =
+                            (tripInputs[field as keyof TripInputs] as
+                              | string
+                              | null
+                              | undefined) || 'Needed';
                         }
-                      )}
+
+                        const icon =
+                          field === 'origin' ? (
+                            <MapPin className="h-4 w-4" />
+                          ) : field === 'traveler_count' ? (
+                            <Users className="h-4 w-4" />
+                          ) : (
+                            <CalendarRange className="h-4 w-4" />
+                          );
+
+                        const label =
+                          field === 'origin'
+                            ? 'Origin'
+                            : field === 'start_date'
+                              ? 'Start'
+                              : field === 'end_date'
+                                ? 'End'
+                                : 'Travelers';
+
+                        const inputType = field === 'traveler_count' ? 'number' : 'text';
+
+                        return (
+                          <div
+                            key={field}
+                            className="border-border/60 bg-muted/40 rounded-lg border px-3 py-2"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => handleStartEditingField(field)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleStartEditingField(field);
+                              }
+                            }}
+                          >
+                            <div className="text-muted-foreground flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                              {icon}
+                              {label}
+                            </div>
+                            {isEditing ? (
+                              <div className="mt-2 space-y-2">
+                                <input
+                                  type={inputType}
+                                  value={draftValue}
+                                  onChange={(e) =>
+                                    handleFieldChange(field, e.target.value)
+                                  }
+                                  className="border-border/60 bg-card/30 text-foreground placeholder:text-muted-foreground focus:border-primary w-full rounded-md border px-2 py-1 text-sm focus:outline-none"
+                                  placeholder={
+                                    field === 'traveler_count'
+                                      ? 'Number of travelers'
+                                      : field === 'origin'
+                                        ? 'City or airport'
+                                        : DISPLAY_DATE_FORMAT
+                                  }
+                                  onClick={(e) => e.stopPropagation()}
+                                  onBlur={(e) => handleCommitField(field, e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleCommitField(
+                                        field,
+                                        (e.target as HTMLInputElement).value
+                                      );
+                                    }
+                                  }}
+                                  autoFocus
+                                />
+                              </div>
+                            ) : (
+                              <div
+                                className={`text-sm font-semibold ${
+                                  isMissingField(
+                                    field,
+                                    field === 'traveler_count'
+                                      ? tripInputs.traveler_count
+                                      : (tripInputs[
+                                          field as 'origin' | 'start_date' | 'end_date'
+                                        ] as string | null | undefined)
+                                  )
+                                    ? 'text-amber-600'
+                                    : 'text-foreground'
+                                }`}
+                              >
+                                {displayValue}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>
@@ -758,7 +812,7 @@ export function NomadicLanding() {
                       </p>
                     </div>
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       size="sm"
                       onClick={() => setBranchesExpanded((prev) => !prev)}
                       disabled={!hasTriggeredChat}
@@ -811,7 +865,7 @@ export function NomadicLanding() {
                       </p>
                     </div>
                     <Button
-                      variant="secondary"
+                      variant="outline"
                       size="sm"
                       onClick={() => setTilesExpanded((prev) => !prev)}
                       disabled={!hasTriggeredChat}
