@@ -798,7 +798,7 @@ export function NomadicLanding() {
                 <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
                   <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
                   <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
-                  <div className="relative flex items-center justify-between gap-3 px-5 py-4">
+                  <div className="relative flex items-center gap-3 px-5 py-4">
                     <div className="space-y-1">
                       <div className="bg-primary/15 text-primary inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
                         <Sparkles className="h-4 w-4" />
@@ -811,15 +811,6 @@ export function NomadicLanding() {
                         Trip ideas show here after your first prompt.
                       </p>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setBranchesExpanded((prev) => !prev)}
-                      disabled={!hasTriggeredChat}
-                      className="bg-white/5 text-white shadow-sm hover:bg-white/10 disabled:opacity-60"
-                    >
-                      {branchesExpanded ? 'Hide' : 'Show'}
-                    </Button>
                   </div>
                   <div
                     className={`grid transition-[grid-template-rows] duration-300 ease-out ${
@@ -851,7 +842,7 @@ export function NomadicLanding() {
                 <Card className="from-accent/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
                   <div className="bg-accent/25 pointer-events-none absolute -left-16 -top-10 h-40 w-40 rounded-full blur-3xl" />
                   <div className="bg-primary/15 pointer-events-none absolute bottom-0 right-0 h-36 w-36 rounded-full blur-3xl" />
-                  <div className="relative flex items-center justify-between gap-3 px-5 py-4">
+                  <div className="relative flex items-center gap-3 px-5 py-4">
                     <div className="space-y-1">
                       <div className="bg-accent/15 text-accent inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
                         <Sparkles className="h-4 w-4" />
@@ -864,15 +855,6 @@ export function NomadicLanding() {
                         Live options refresh after you pick a suggestion.
                       </p>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setTilesExpanded((prev) => !prev)}
-                      disabled={!hasTriggeredChat}
-                      className="bg-white/5 text-white shadow-sm hover:bg-white/10 disabled:opacity-60"
-                    >
-                      {tilesExpanded ? 'Hide' : 'Show'}
-                    </Button>
                   </div>
                   <div
                     className={`grid transition-[grid-template-rows] duration-300 ease-out ${

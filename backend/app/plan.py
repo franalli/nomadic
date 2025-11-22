@@ -40,7 +40,7 @@ class PlannerLLMOutput:
 
 _CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "12"))
 _STREAM_CHUNK_SIZE = int(os.getenv("PLAN_STREAM_CHUNK_SIZE", "220"))
-_STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "10"))
+_STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "5"))
 
 _openai_client: Optional[OpenAI] = None
 
