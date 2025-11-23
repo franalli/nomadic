@@ -9,4 +9,11 @@ export type Tile = {
   deeplink_url: string;
   rating?: number;
   location_label?: string;
+  meta?: Record<string, unknown>;
+};
+
+export type TileSelection = {
+  stay?: Tile;
+  flight?: Tile;
+  activities: Tile[];
 };

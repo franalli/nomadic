@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import {
   CalendarRange,
@@ -23,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { MOCK_TRAVEL_OPTIONS, MOCK_TRIPS } from '@/lib/mock-data';
 import { API_BASE } from '@/lib/api';
+import { saveTripSummary } from '@/lib/summary';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import type {
   PlanResponse,
@@ -31,7 +33,8 @@ import type {
   TilesSearchResponse,
 } from '@/types/api';
 import type { PlanBranch, TripInputs } from '@/types/plan';
-import type { Tile } from '@/types/tile';
+import type { Tile, TileSelection } from '@/types/tile';
+import type { TripSummaryPayload } from '@/types/summary';
 
 type BranchSelectionOverrides = {
   branch?: PlanBranch;
@@ -47,11 +50,20 @@ type TripInputsDraft = {
   traveler_count: string;
 };
 
-const DISPLAY_DATE_FORMAT = 'dd-mm-yyyy';
-const today = new Date();
-const pad = (value: number) => value.toString().padStart(2, '0');
-const TODAY_DISPLAY = `${pad(today.getDate())}-${pad(today.getMonth() + 1)}-${today.getFullYear()}`;
-const TODAY_ISO = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+const getFreshDateDefaults = () => {
+  const today = new Date();
+  const nextWeek = new Date(today);
+  nextWeek.setDate(today.getDate() + 7);
+
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  const todayIso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  const nextWeekIso = `${nextWeek.getFullYear()}-${pad(nextWeek.getMonth() + 1)}-${pad(nextWeek.getDate())}`;
+
+  return { todayIso, nextWeekIso };
+};
+
+const { todayIso: INITIAL_TODAY_ISO, nextWeekIso: INITIAL_NEXT_WEEK_ISO } =
+  getFreshDateDefaults();
 
 const formatDateForDisplay = (value?: string | null): string => {
   if (!value) return '';
@@ -83,19 +95,23 @@ const parseDisplayDate = (value: string): string | null => {
   return null;
 };
 
-const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => ({
-  destination: inputs.destination ?? null,
-  origin: inputs.origin ?? '',
-  start_date: formatDateForDisplay(inputs.start_date) || TODAY_DISPLAY,
-  end_date: formatDateForDisplay(inputs.end_date) || TODAY_DISPLAY,
-  traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : '1',
-});
+const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
+  const { todayIso, nextWeekIso } = getFreshDateDefaults();
+  return {
+    destination: inputs.destination ?? null,
+    origin: inputs.origin ?? '',
+    start_date: formatDateForDisplay(inputs.start_date) || formatDateForDisplay(todayIso),
+    end_date: formatDateForDisplay(inputs.end_date) || formatDateForDisplay(nextWeekIso),
+    traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : '1',
+  };
+};
 
 const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
+  const { todayIso, nextWeekIso } = getFreshDateDefaults();
   const destination = draft.destination?.trim() || null;
   const origin = draft.origin.trim() || null;
-  const startDate = parseDisplayDate(draft.start_date) ?? TODAY_ISO;
-  const endDate = parseDisplayDate(draft.end_date) ?? TODAY_ISO;
+  const startDate = parseDisplayDate(draft.start_date) ?? todayIso;
+  const endDate = parseDisplayDate(draft.end_date) ?? nextWeekIso;
   const travelerText = draft.traveler_count.trim();
   const parsedTravelerCount = travelerText === '' ? null : Number(travelerText);
   const travelerCount =
@@ -119,11 +135,11 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
 
 const DEFAULT_TRIP_INPUTS: TripInputs = {
   destination: null,
-  origin: null,
-  start_date: TODAY_ISO,
-  end_date: TODAY_ISO,
+  origin: 'Amsterdam',
+  start_date: INITIAL_TODAY_ISO,
+  end_date: INITIAL_NEXT_WEEK_ISO,
   traveler_count: 1,
-  missing_fields: ['destination', 'origin'],
+  missing_fields: ['destination'],
 };
 
 const fillTripInputDefaults = (inputs?: TripInputs | null): TripInputs => {
@@ -207,6 +223,64 @@ const summarizeTileCounts = (counts: TileCounts): string => {
   return `Coverage: ${parts.join(' · ')}.`;
 };
 
+type SelectionCategory = 'stay' | 'flight' | 'activity';
+
+const resolveSelectionCategory = (tile: Tile): SelectionCategory => {
+  const tab = resolveTileTab(tile);
+  if (tab === 'flights') return 'flight';
+  if (tab === 'activities') return 'activity';
+  return 'stay';
+};
+
+const parseDateValue = (value: unknown): Date | null => {
+  if (!value || typeof value !== 'string') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+const extractActivityRange = (tile: Tile): { start?: Date | null; end?: Date | null } => {
+  const meta = (tile.meta as Record<string, unknown> | undefined) ?? {};
+  const startRaw =
+    meta.start_date ?? meta.date ?? meta.date_time ?? meta.start ?? meta.activity_date;
+  const endRaw = meta.end_date ?? meta.end ?? meta.activity_end;
+  const start = parseDateValue(startRaw);
+  const end = parseDateValue(endRaw) ?? start;
+  return { start, end };
+};
+
+const activitiesOverlap = (a: Tile, b: Tile): boolean => {
+  const rangeA = extractActivityRange(a);
+  const rangeB = extractActivityRange(b);
+  const startA = rangeA.start;
+  const startB = rangeB.start;
+  const endA = rangeA.end ?? startA;
+  const endB = rangeB.end ?? startB;
+  if (!startA || !startB || !endA || !endB) return false;
+  return startA.getTime() <= endB.getTime() && startB.getTime() <= endA.getTime();
+};
+
+const summarizeSelections = (selection?: TileSelection): string | null => {
+  if (!selection) return null;
+  const parts: string[] = [];
+  if (selection.stay) {
+    parts.push(`Stay: ${selection.stay.title}`);
+  }
+  if (selection.flight) {
+    parts.push(`Flight: ${selection.flight.title}`);
+  }
+  if (selection.activities.length > 0) {
+    const activityNames = selection.activities
+      .map((act) => act.title)
+      .slice(0, 3)
+      .join(', ');
+    const suffix = selection.activities.length > 3 ? ' +' : '';
+    parts.push(`Activities: ${activityNames}${suffix}`);
+  }
+
+  if (!parts.length) return null;
+  return `Locked choices — ${parts.join(' · ')}`;
+};
+
 type TripInputSignature = {
   destination: string | null;
   origin: string | null;
@@ -242,6 +316,7 @@ const tripInputSignaturesEqual = (
 };
 
 export function NomadicLanding() {
+  const router = useRouter();
   const [branches, setBranches] = useState<PlanBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [tiles, setTiles] = useState<Tile[]>([]);
@@ -249,6 +324,10 @@ export function NomadicLanding() {
   const [tilesBranchId, setTilesBranchId] = useState<string | null>(null);
   const [branchTileNotes, setBranchTileNotes] = useState<Record<string, string>>({});
   const [branchTileCounts, setBranchTileCounts] = useState<Record<string, TileCounts>>(
+    {}
+  );
+  const [branchTabNotes, setBranchTabNotes] = useState<Record<string, string>>({});
+  const [branchSelections, setBranchSelections] = useState<Record<string, TileSelection>>(
     {}
   );
   const [tripContextId, setTripContextId] = useState<number | null>(null);
@@ -275,6 +354,14 @@ export function NomadicLanding() {
   const selectedBranch = useMemo(
     () => branches.find((branch) => branch.id === selectedBranchId) ?? null,
     [branches, selectedBranchId]
+  );
+
+  const activeBranchSelection = useMemo(
+    () =>
+      selectedBranchId
+        ? branchSelections[selectedBranchId] ?? { activities: [] }
+        : { activities: [] },
+    [branchSelections, selectedBranchId]
   );
 
   const branchesWithTileNotes = useMemo(
@@ -341,6 +428,11 @@ export function NomadicLanding() {
         [branchId]: 'Refreshing booking options for this suggestion.',
       }));
       setBranchTileCounts((prev) => {
+        const next = { ...prev };
+        delete next[branchId];
+        return next;
+      });
+      setBranchTabNotes((prev) => {
         const next = { ...prev };
         delete next[branchId];
         return next;
@@ -516,6 +608,8 @@ export function NomadicLanding() {
     setTilesRequestId(null);
     setBranchTileNotes({});
     setBranchTileCounts({});
+    setBranchTabNotes({});
+    setBranchSelections({});
     applyIncomingTripInputs(DEFAULT_TRIP_INPUTS, null);
     setLastRegeneratedTripInputs(toTripInputSignature(DEFAULT_TRIP_INPUTS));
     setBranchesExpanded(false);
@@ -638,6 +732,26 @@ export function NomadicLanding() {
       setBranchTileCounts((prev) => {
         const allowedIds = new Set(result.branches.map((b) => b.id));
         const next: Record<string, TileCounts> = {};
+        allowedIds.forEach((id) => {
+          if (prev[id]) {
+            next[id] = prev[id];
+          }
+        });
+        return next;
+      });
+      setBranchTabNotes((prev) => {
+        const allowedIds = new Set(result.branches.map((b) => b.id));
+        const next: Record<string, string> = {};
+        allowedIds.forEach((id) => {
+          if (prev[id]) {
+            next[id] = prev[id];
+          }
+        });
+        return next;
+      });
+      setBranchSelections((prev) => {
+        const allowedIds = new Set(result.branches.map((b) => b.id));
+        const next: Record<string, TileSelection> = {};
         allowedIds.forEach((id) => {
           if (prev[id]) {
             next[id] = prev[id];
@@ -769,6 +883,71 @@ export function NomadicLanding() {
     tripInputs,
   ]);
 
+  const buildBranchNote = useCallback(
+    (
+      branchId: string,
+      options?: {
+        tabNote?: string;
+        countsOverride?: TileCounts;
+        selectionOverride?: TileSelection;
+      }
+    ) => {
+      const selectionNote = summarizeSelections(
+        options?.selectionOverride ?? branchSelections[branchId]
+      );
+      const counts = options?.countsOverride ?? branchTileCounts[branchId];
+      const countsNote = counts ? summarizeTileCounts(counts) : null;
+      const tabNote = options?.tabNote ?? branchTabNotes[branchId];
+      return [selectionNote, countsNote, tabNote].filter(Boolean).join(' ');
+    },
+    [branchSelections, branchTabNotes, branchTileCounts]
+  );
+
+  const handleTileSelection = useCallback(
+    (tile: Tile, _tab?: TileTabKey) => {
+      const branchId = tilesBranchId ?? selectedBranchId;
+      if (!branchId) return;
+
+      setBranchSelections((prev) => {
+        const current = prev[branchId] ?? { activities: [] };
+        const nextSelection: TileSelection = {
+          stay: current.stay,
+          flight: current.flight,
+          activities: [...current.activities],
+        };
+
+        const category = resolveSelectionCategory(tile);
+        if (category === 'stay') {
+          nextSelection.stay =
+            current.stay && current.stay.id === tile.id ? undefined : tile;
+        } else if (category === 'flight') {
+          nextSelection.flight =
+            current.flight && current.flight.id === tile.id ? undefined : tile;
+        } else {
+          const existingIdx = nextSelection.activities.findIndex(
+            (activity) => activity.id === tile.id
+          );
+          if (existingIdx >= 0) {
+            nextSelection.activities.splice(existingIdx, 1);
+          } else {
+            const pruned = nextSelection.activities.filter(
+              (activity) => !activitiesOverlap(activity, tile)
+            );
+            nextSelection.activities = [...pruned, tile];
+          }
+        }
+
+        setBranchTileNotes((prevNotes) => ({
+          ...prevNotes,
+          [branchId]: buildBranchNote(branchId, { selectionOverride: nextSelection }),
+        }));
+
+        return { ...prev, [branchId]: nextSelection };
+      });
+    },
+    [buildBranchNote, selectedBranchId, tilesBranchId]
+  );
+
   const describeTileSelection = useCallback((tab: TileTabKey, filteredTiles: Tile[]) => {
     const label = TILE_TAB_LABELS[tab] ?? 'Options';
     if (!filteredTiles.length) {
@@ -807,30 +986,84 @@ export function NomadicLanding() {
   useEffect(() => {
     if (!tilesBranchId) return;
     const counts = countTilesByTab(tiles);
-    const countsNote = summarizeTileCounts(counts);
     setBranchTileCounts((prev) => ({ ...prev, [tilesBranchId]: counts }));
-    setBranchTileNotes((prev) => ({ ...prev, [tilesBranchId]: countsNote }));
-  }, [tiles, tilesBranchId]);
-
-  const formatBranchNote = useCallback(
-    (branchId: string, tabNote?: string) => {
-      const counts = branchTileCounts[branchId];
-      const countsNote = counts ? summarizeTileCounts(counts) : null;
-      return [countsNote, tabNote].filter(Boolean).join(' ');
-    },
-    [branchTileCounts]
-  );
+    setBranchTileNotes((prev) => ({
+      ...prev,
+      [tilesBranchId]: buildBranchNote(tilesBranchId, { countsOverride: counts }),
+    }));
+  }, [buildBranchNote, tiles, tilesBranchId]);
 
   const handleTilesTabChange = useCallback(
     (tab: TileTabKey, filteredTiles: Tile[]) => {
       if (!selectedBranchId) return;
       if (!tilesBranchId || tilesBranchId !== selectedBranchId) return;
       const tabNote = describeTileSelection(tab, filteredTiles);
-      const note = formatBranchNote(selectedBranchId, tabNote);
+      setBranchTabNotes((prev) => ({ ...prev, [selectedBranchId]: tabNote }));
+      const note = buildBranchNote(selectedBranchId, { tabNote });
       setBranchTileNotes((prev) => ({ ...prev, [selectedBranchId]: note }));
     },
-    [describeTileSelection, formatBranchNote, selectedBranchId, tilesBranchId]
+    [buildBranchNote, describeTileSelection, selectedBranchId, tilesBranchId]
   );
+
+  const handleBookTrip = useCallback(
+    (branchId: string) => {
+      const branch = branches.find((b) => b.id === branchId);
+      if (!branch) return;
+      const selection = branchSelections[branchId] ?? { activities: [] };
+      const payload: TripSummaryPayload = {
+        branch,
+        selection: {
+          stay: selection.stay,
+          flight: selection.flight,
+          activities: selection.activities ?? [],
+        },
+        tiles: tilesBranchId === branchId ? tiles : [],
+        note: branchTileNotes[branchId] ?? null,
+        generatedAt: new Date().toISOString(),
+      };
+      saveTripSummary(payload);
+      if (typeof window !== 'undefined') {
+        window.open('/summary', '_blank', 'noopener,noreferrer');
+      } else {
+        router.push('/summary');
+      }
+    },
+    [branchSelections, branchTileNotes, branches, router, tiles, tilesBranchId]
+  );
+
+  useEffect(() => {
+    const branchIds = new Set([
+      ...branches.map((b) => b.id),
+      ...Object.keys(branchSelections),
+      ...Object.keys(branchTileCounts),
+      ...Object.keys(branchTabNotes),
+    ]);
+    if (branchIds.size === 0) return;
+
+    setBranchTileNotes((prev) => {
+      let didChange = false;
+      const next = { ...prev };
+      branchIds.forEach((branchId) => {
+        const note = buildBranchNote(branchId);
+        if (note) {
+          if (next[branchId] !== note) {
+            next[branchId] = note;
+            didChange = true;
+          }
+        } else if (next[branchId]) {
+          delete next[branchId];
+          didChange = true;
+        }
+      });
+      Object.keys(next).forEach((branchId) => {
+        if (!branchIds.has(branchId)) {
+          delete next[branchId];
+          didChange = true;
+        }
+      });
+      return didChange ? next : prev;
+    });
+  }, [branchSelections, branches, branchTabNotes, branchTileCounts, buildBranchNote]);
 
   const handleChatTriggered = useCallback(() => {
     setHasTriggeredChat(true);
@@ -1172,6 +1405,8 @@ export function NomadicLanding() {
                           selectedBranchId={selectedBranchId}
                           onBranchSelect={handleBranchSelect}
                           branchTileCounts={branchTileCounts}
+                          onBookTrip={handleBookTrip}
+                          canBookTrip={missingFields.length === 0}
                         />
                       )}
                     </CardContent>
@@ -1214,6 +1449,8 @@ export function NomadicLanding() {
                           activeBranch={selectedBranch}
                           tilesRequestId={tilesRequestId}
                           onTabChange={handleTilesTabChange}
+                          selectedTiles={activeBranchSelection}
+                          onTileToggle={handleTileSelection}
                         />
                       )}
                     </CardContent>

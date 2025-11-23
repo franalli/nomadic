@@ -6,7 +6,7 @@ import { MapPin, Plane, Sparkles, TentTree } from 'lucide-react';
 
 import { TileCard } from '@/components/tiles/TileCard';
 import type { PlanBranch } from '@/types/plan';
-import type { Tile } from '@/types/tile';
+import type { Tile, TileSelection } from '@/types/tile';
 
 export type TileTabKey = 'stays' | 'flights' | 'activities';
 
@@ -51,6 +51,8 @@ type TilesGridProps = {
   activeBranch?: PlanBranch | null;
   tilesRequestId?: string | null;
   onTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
+  selectedTiles?: TileSelection;
+  onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
 };
 
 export function TilesGrid({
@@ -58,6 +60,8 @@ export function TilesGrid({
   activeBranch,
   tilesRequestId,
   onTabChange,
+  selectedTiles,
+  onTileToggle,
 }: TilesGridProps) {
   const [activeTab, setActiveTab] = useState<TileTabKey>('stays');
 
@@ -72,10 +76,9 @@ export function TilesGrid({
     );
   }, [tiles]);
 
-  const filteredTiles = useMemo(
-    () => tiles.filter((tile) => resolveTabForTile(tile) === activeTab),
-    [activeTab, tiles]
-  );
+  const filteredTiles = useMemo(() => {
+    return tiles.filter((tile) => resolveTabForTile(tile) === activeTab);
+  }, [activeTab, tiles]);
 
   useEffect(() => {
     onTabChange?.(activeTab, filteredTiles);
@@ -150,6 +153,15 @@ export function TilesGrid({
               tile={tile}
               branchId={activeBranch?.id}
               requestId={tilesRequestId ?? undefined}
+              isSelected={
+                activeTab === 'stays'
+                  ? selectedTiles?.stay?.id === tile.id
+                  : activeTab === 'flights'
+                    ? selectedTiles?.flight?.id === tile.id
+                    : selectedTiles?.activities.some((activity) => activity.id === tile.id) ??
+                      false
+              }
+              onToggleSelect={() => onTileToggle?.(tile, activeTab)}
             />
           ))
         )}

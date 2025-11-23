@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { Loader2 } from 'lucide-react';
+import { Compass } from 'lucide-react';
 
 import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
@@ -83,6 +83,7 @@ export function ChatPanel(props: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const hasUserMessage = messages.some((msg) => msg.role === 'user');
 
   const scrollToBottom = useCallback(() => {
     const node = scrollContainerRef.current;
@@ -229,17 +230,18 @@ export function ChatPanel(props: ChatPanelProps) {
             const assistantWithFollowUp = plan.follow_up_question
               ? `${plan.assistant_message}\n\n${plan.follow_up_question}`
               : plan.assistant_message;
+            const messageId = plan.assistant_message_id ?? `a_${Date.now()}`;
             setMessages((prev) =>
-              prev.some((msg) => msg.id === plan.assistant_message_id)
+              prev.some((msg) => msg.id === messageId)
                 ? prev.map((msg) =>
-                    msg.id === plan.assistant_message_id
+                    msg.id === messageId
                       ? { ...msg, content: assistantWithFollowUp }
                       : msg
                   )
                 : [
                     ...prev,
                     {
-                      id: plan.assistant_message_id,
+                      id: messageId,
                       role: 'assistant',
                       content: assistantWithFollowUp,
                     },
@@ -341,13 +343,20 @@ export function ChatPanel(props: ChatPanelProps) {
   }
 
   return (
-    <div className="bg-card/90 text-foreground flex h-full flex-col gap-3 rounded-2xl border border-white/20 p-4 shadow-xl backdrop-blur">
+    <div
+      className={`bg-card/90 text-foreground flex ${
+        hasUserMessage ? 'h-[350px]' : 'h-[220px]'
+      } flex-col gap-3 rounded-2xl border border-white/20 p-4 shadow-xl backdrop-blur transition-[height] duration-300`}
+    >
       <div className="flex items-center justify-between">
         <div className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
           Travel planner
         </div>
         {isLoading && (
-          <Loader2 className="text-accent h-4 w-4 animate-spin" aria-label="Loading" />
+          <Compass
+            className="text-accent h-5 w-5 compass-spin drop-shadow-sm"
+            aria-label="Planning in progress"
+          />
         )}
       </div>
 

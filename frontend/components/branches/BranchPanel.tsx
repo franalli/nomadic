@@ -135,6 +135,8 @@ type BranchPanelProps = {
   selectedBranchId: string | null;
   onBranchSelect: (branchId: string) => void;
   branchTileCounts?: Record<string, TileCounts>;
+  onBookTrip?: (branchId: string) => void;
+  canBookTrip?: boolean;
 };
 
 export function BranchPanel({
@@ -142,6 +144,8 @@ export function BranchPanel({
   selectedBranchId,
   onBranchSelect,
   branchTileCounts,
+  onBookTrip,
+  canBookTrip = true,
 }: BranchPanelProps) {
   if (!branches.length) {
     return (
@@ -383,6 +387,21 @@ export function BranchPanel({
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => canBookTrip && onBookTrip?.(selected.id)}
+          disabled={!canBookTrip}
+          className={`rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+            canBookTrip
+              ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/40 hover:bg-primary/90'
+              : 'cursor-not-allowed bg-muted text-muted-foreground shadow-inner'
+          }`}
+        >
+          Book Your Trip
+        </button>
       </div>
     </div>
   );

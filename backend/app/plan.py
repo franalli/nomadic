@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Generator, List, Optional, cast
 
 from openai import OpenAI
@@ -38,8 +38,8 @@ class PlannerLLMOutput:
         self.trip_inputs = trip_inputs or {}
 
 
-_CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "12"))
-_STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "5"))
+_CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "20"))  # messages
+_STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "5"))  # chars
 
 _openai_client: Optional[OpenAI] = None
 
@@ -187,26 +187,26 @@ def _get_openai_client() -> Optional[OpenAI]:
     return _openai_client
 
 
-def _mock_branch_specs(req: PlanRequest) -> List[dict]:
-    """Return deterministic mock branches so the flow works without OpenAI."""
+# def _mock_branch_specs(req: PlanRequest) -> List[dict]:
+#     """Return deterministic mock branches so the flow works without OpenAI."""
 
-    base_destinations = [
-        ("Barcelona food & nightlife", "Barcelona, Spain"),
-        ("Lisbon city break", "Lisbon, Portugal"),
-        ("Valencia beach & paella", "Valencia, Spain"),
-    ]
+#     base_destinations = [
+#         ("Barcelona food & nightlife", "Barcelona, Spain"),
+#         ("Lisbon city break", "Lisbon, Portugal"),
+#         ("Valencia beach & paella", "Valencia, Spain"),
+#     ]
 
-    branches: List[dict] = []
-    for idx, (label, destination) in enumerate(base_destinations, start=1):
-        branches.append(
-            {
-                "label": label,
-                "description": f"Idea #{idx} inspired by: {req.message[:80]}",
-                "destination": destination,
-            }
-        )
+#     branches: List[dict] = []
+#     for idx, (label, destination) in enumerate(base_destinations, start=1):
+#         branches.append(
+#             {
+#                 "label": label,
+#                 "description": f"Idea #{idx} inspired by: {req.message[:80]}",
+#                 "destination": destination,
+#             }
+#         )
 
-    return branches
+#     return branches
 
 
 def _summarise_branches(branches: List[dict]) -> str:
@@ -226,24 +226,24 @@ def _summarise_branches(branches: List[dict]) -> str:
     return "\n".join(lines)
 
 
-def _mock_plan_output(req: PlanRequest) -> PlannerLLMOutput:
-    branches = _mock_branch_specs(req)
-    request_trip_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
-    trip_inputs = _clean_trip_inputs(request_trip_inputs)
-    assistant_message = (
-        "Pulling from what you shared, I sketched a few sample trips you can react to."
-        " Let me know what to double-click on or what to change."
-    )
-    follow_up_question = _default_follow_up_question(trip_inputs.get("missing_fields") or [])
-    summary = _summarise_branches(branches)
-    combined_message = f"{assistant_message}\n\n{summary}"
+# def _mock_plan_output(req: PlanRequest) -> PlannerLLMOutput:
+#     branches = _mock_branch_specs(req)
+#     request_trip_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
+#     trip_inputs = _clean_trip_inputs(request_trip_inputs)
+#     assistant_message = (
+#         "Pulling from what you shared, I sketched a few sample trips you can react to."
+#         " Let me know what to double-click on or what to change."
+#     )
+#     follow_up_question = _default_follow_up_question(trip_inputs.get("missing_fields") or [])
+#     summary = _summarise_branches(branches)
+#     combined_message = f"{assistant_message}\n\n{summary}"
 
-    return PlannerLLMOutput(
-        branches=branches,
-        assistant_message=combined_message,
-        follow_up_question=follow_up_question,
-        trip_inputs=trip_inputs,
-    )
+#     return PlannerLLMOutput(
+#         branches=branches,
+#         assistant_message=combined_message,
+#         follow_up_question=follow_up_question,
+#         trip_inputs=trip_inputs,
+#     )
 
 
 def _build_user_prompt(req: PlanRequest) -> str:
@@ -381,7 +381,15 @@ def _clean_trip_inputs(*sources: Any, fallback: Optional[dict] = None) -> dict:
         merged["start_date"] = _today_iso()
 
     if merged.get("end_date") is sentinel or merged.get("end_date") is None:
-        merged["end_date"] = _today_iso()
+        try:
+            start_dt = datetime.strptime(merged["start_date"], "%Y-%m-%d")
+            end_dt = start_dt + timedelta(days=7)
+            merged["end_date"] = end_dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            merged["end_date"] = _today_iso()
+
+    if merged.get("origin") is sentinel or merged.get("origin") is None:
+        merged["origin"] = "Amsterdam"
 
     if merged.get("traveler_count") is sentinel or merged.get("traveler_count") is None:
         merged["traveler_count"] = 1
@@ -465,8 +473,14 @@ def _call_openai_for_plan(
 ) -> Generator[dict, None, PlannerLLMOutput]:
     request_trip_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
 
+    today = _today_iso()
+
+    # The system prompt defines the persona and the strict JSON output format.
+    # It instructs the LLM to extract trip details (destination, dates, etc.)
+    # and generate potential trip branches based on the user's request.
     system_prompt = (
-        "You are a live travel planner speaking like a sharp, friendly travel agent.\n"
+        f"You are a live travel planner speaking like a sharp, friendly travel agent. "
+        f"Today is {today}.\n"
         "Always acknowledge prior context, note how the latest user message changes the plan, "
         "and keep the chat concise.\n"
         "Continuously capture these core fields from the conversation: destination city/region, "
@@ -474,7 +488,9 @@ def _call_openai_for_plan(
         "Infer from history when possible. If anything is missing or fuzzy, ask one targeted "
         "follow-up at a time until all fields are set. "
         "Prompt for destination first if it is missing. Dates must be ISO formatted as YYYY-MM-DD "
-        "and traveler_count is an integer.\n\n"
+        "and traveler_count is an integer. Resolve relative dates (e.g. 'next Friday') using "
+        "today's date. If the user specifies a duration (e.g. '3 days'), calculate the end_date "
+        "from the start_date. If no duration or end date is specified, assume a 7-day trip.\n\n"
         "Respond strictly with JSON:\n"
         "{\n"
         '  "assistant_message": "brief conversational reply that reacts to the user",\n'
@@ -503,7 +519,8 @@ def _call_openai_for_plan(
 
     client = _get_openai_client()
     if client is None:
-        return _mock_plan_output(req)
+        # return _mock_plan_output(req)
+        raise RuntimeError("OpenAI client is not configured")
 
     last_error: Exception | None = None
 
@@ -516,6 +533,9 @@ def _call_openai_for_plan(
 
     model_name = _plan_model_name()
     try:
+        # We use JSON mode to ensure the output is machine-readable.
+        # Streaming is enabled to provide immediate feedback to the user
+        # via the 'assistant_message' field.
         stream = client.chat.completions.create(
             model=model_name,
             messages=messages,
@@ -539,6 +559,8 @@ def _call_openai_for_plan(
                     continue
 
                 raw_response_parts.append(delta_text)
+                # The parser extracts the "assistant_message" value from the streaming JSON
+                # so we can display the text to the user while the JSON is still being built.
                 new_assistant_text = assistant_parser.feed(delta_text)
                 if new_assistant_text:
                     assistant_stream_buffer += new_assistant_text
@@ -597,8 +619,8 @@ def _call_openai_for_plan(
                         "traveler_count": first_branch.get("traveler_count"),
                     }
                 trip_inputs = _clean_trip_inputs(
-                    request_trip_inputs,
                     data.get("trip_inputs") or {},
+                    request_trip_inputs,
                     fallback=fallback_trip_inputs,
                 )
                 if not follow_up_question:
@@ -607,11 +629,12 @@ def _call_openai_for_plan(
                     )
 
                 if not cleaned:
-                    print(
-                        f"OpenAI planning call with '{model_name}' "
-                        "returned no usable branches; falling back"
-                    )
-                    cleaned = _mock_branch_specs(req)
+                    raise RuntimeError("No valid branches generated")
+                    # print(
+                    #     f"OpenAI planning call with '{model_name}' "
+                    #     "returned no usable branches; falling back"
+                    # )
+                    # cleaned = _mock_branch_specs(req)
 
                 if not assistant_message:
                     assistant_message = assistant_parser.text.strip()
@@ -640,15 +663,15 @@ def _call_openai_for_plan(
                 return output
 
     if last_error is not None:
-        print(f"OpenAI planning call failed, using mock branches: {last_error}")
-
-    return _mock_plan_output(req)
+        print(f"OpenAI planning call failed: {last_error}")
+        raise RuntimeError(f"OpenAI planning call failed: {last_error}")
 
 
 def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanResponse]:
     if not req.session_id:
         raise ValueError("session_id is required for planning")
 
+    # 1. Setup session and context
     db_session = get_or_create_session(
         db,
         session_token=req.session_id,
@@ -672,6 +695,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             req_message=req.message,
         )
 
+        # 2. Record user message
         record_chat_message(
             db,
             session=db_session,
@@ -681,6 +705,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             metadata=None,
         )
 
+        # 3. Prepare placeholder for assistant message
         assistant_chat = record_chat_message(
             db,
             session=db_session,
@@ -690,6 +715,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             metadata=None,
         )
 
+        # 4. Call LLM and stream response
         openai_stream = _call_openai_for_plan(
             req,
             history=history_messages,
@@ -704,6 +730,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
                 break
             yield stream_event
 
+        # 5. Process LLM output and update DB
         trip_inputs_model = (
             TripInputs(**planner_output.trip_inputs)
             if planner_output.trip_inputs is not None
@@ -756,6 +783,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             "trip_inputs": trip_inputs_payload,
         }
 
+        # 6. Search for tiles (hotels, activities, etc.) for the primary branch
         tiles_request = TilesSearchRequest(
             user_id=req.user_id,
             branch_id=primary_db_branch.id,
@@ -786,6 +814,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             "summary": tiles_response.summary,
         }
 
+        # 7. Final response
         response = PlanResponse(
             trip_context_id=trip_ctx.id,
             branches=plan_branches,

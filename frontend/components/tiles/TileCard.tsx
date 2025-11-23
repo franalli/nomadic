@@ -1,3 +1,5 @@
+import type { KeyboardEvent, MouseEvent } from 'react';
+
 import { ArrowUpRight, Star } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -10,9 +12,11 @@ type TileCardProps = {
   tile: Tile;
   requestId?: string;
   branchId?: string;
+  isSelected?: boolean;
+  onToggleSelect?: (tile: Tile) => void;
 };
 
-export function TileCard({ tile, requestId, branchId }: TileCardProps) {
+export function TileCard({ tile, requestId, branchId, isSelected, onToggleSelect }: TileCardProps) {
   const handleClick = () => {
     const sessionId = getOrCreateSessionId();
 
@@ -35,8 +39,26 @@ export function TileCard({ tile, requestId, branchId }: TileCardProps) {
     window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
   };
 
+  const handleToggleSelect = (event: MouseEvent | KeyboardEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onToggleSelect?.(tile);
+  };
+
   return (
-    <Card className="group relative flex h-full flex-col overflow-hidden border-none bg-card/80 shadow-lg ring-1 ring-border/40 transition hover:-translate-y-0.5 hover:shadow-xl">
+    <Card
+      onClick={handleToggleSelect}
+      className={`group relative flex h-full flex-col overflow-hidden border-none bg-card/80 shadow-lg ring-1 transition hover:-translate-y-0.5 hover:shadow-xl ${
+        isSelected ? 'ring-2 ring-accent/70 shadow-accent/20' : 'ring-border/40'
+      }`}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          handleToggleSelect(event);
+        }
+      }}
+    >
       <div className="relative h-40 w-full overflow-hidden">
         {tile.image_url ? (
           <img
@@ -55,6 +77,11 @@ export function TileCard({ tile, requestId, branchId }: TileCardProps) {
           <div className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-xs text-white backdrop-blur">
             <Star className="h-3 w-3 fill-accent text-accent" />
             {tile.rating.toFixed(1)}
+          </div>
+        )}
+        {isSelected && (
+          <div className="absolute right-3 bottom-3 rounded-full bg-black/60 px-2 py-1 text-xs font-semibold text-white backdrop-blur">
+            Selected
           </div>
         )}
       </div>
@@ -82,19 +109,19 @@ export function TileCard({ tile, requestId, branchId }: TileCardProps) {
                 ? `${tile.price_estimate} ${tile.currency}`
                 : 'See price'}
             </div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              Live link
-            </div>
           </div>
         </div>
 
-        <div className="mt-auto flex items-center justify-between pt-2">
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
           <span className="text-xs text-muted-foreground">Opens partner in a new tab</span>
           <Button
             variant="ghost"
             size="sm"
             className="gap-1 text-primary hover:bg-primary/10"
-            onClick={handleClick}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleClick();
+            }}
           >
             View
             <ArrowUpRight className="h-4 w-4" />

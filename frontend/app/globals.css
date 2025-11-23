@@ -52,3 +52,17 @@
 body {
   @apply bg-bg text-text font-body;
 }
+
+@keyframes compass-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.compass-spin {
+  animation: compass-spin 1s linear infinite;
+  transform-origin: center;
+}
