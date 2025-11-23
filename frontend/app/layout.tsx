@@ -2,6 +2,8 @@ import './globals.css';
 
 import type { ReactNode } from 'react';
 
+import { ConsentManager } from '@/components/nomadic/consent-manager';
+
 export const metadata = {
   title: 'Nomadic – Interactive Travel Planner',
   description: 'Explore trips visually and book seamlessly with Nomadic',
@@ -10,7 +12,10 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-50 text-slate-800">{children}</body>
+      <body className="min-h-screen bg-slate-50 text-slate-800">
+        {children}
+        <ConsentManager />
+      </body>
     </html>
   );
 }
