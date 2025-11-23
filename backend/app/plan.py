@@ -39,7 +39,6 @@ class PlannerLLMOutput:
 
 
 _CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "12"))
-_STREAM_CHUNK_SIZE = int(os.getenv("PLAN_STREAM_CHUNK_SIZE", "220"))
 _STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "5"))
 
 _openai_client: Optional[OpenAI] = None
@@ -301,39 +300,6 @@ def _coerce_delta_content(delta_content: Any) -> str:
     return str(delta_content)
 
 
-def _chunk_message_for_streaming(message: str) -> List[str]:
-    if not message:
-        return []
-
-    paragraphs = [segment.strip() for segment in message.split("\n\n") if segment.strip()]
-    if not paragraphs:
-        paragraphs = [message.strip()]
-
-    chunks: List[str] = []
-    for paragraph in paragraphs:
-        if len(paragraph) <= _STREAM_CHUNK_SIZE:
-            chunks.append(paragraph)
-            continue
-
-        sentences = re.split(r"(?<=[.!?])\s+", paragraph)
-        buffer = ""
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-            candidate = sentence if not buffer else f"{buffer} {sentence}"
-            if len(candidate) <= _STREAM_CHUNK_SIZE:
-                buffer = candidate
-            else:
-                if buffer:
-                    chunks.append(buffer)
-                buffer = sentence
-        if buffer:
-            chunks.append(buffer)
-
-    return chunks or [message.strip()]
-
-
 def _normalize_str(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -463,20 +429,6 @@ def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
     return None
 
 
-def _emit_assistant_events(
-    message: str, message_id: str, follow_up_question: Optional[str]
-) -> Generator[dict, None, None]:
-    chunks = _chunk_message_for_streaming(message) or [message]
-    for idx, chunk in enumerate(chunks):
-        yield {
-            "event": "assistant_message",
-            "message_id": message_id,
-            "delta": chunk,
-            "is_final": idx == len(chunks) - 1,
-            "follow_up_question": follow_up_question if idx == len(chunks) - 1 else None,
-        }
-
-
 def _history_to_messages(history: List[models.ChatMessage]) -> List[ChatCompletionMessageParam]:
     messages: List[ChatCompletionMessageParam] = []
     for entry in history:
@@ -511,15 +463,6 @@ def _call_openai_for_plan(
     history: List[ChatCompletionMessageParam],
     message_id: str,
 ) -> Generator[dict, None, PlannerLLMOutput]:
-    # if os.getenv("PLAN_FORCE_MOCK", "0") == "1":
-    #     output = _mock_plan_output(req)
-    #     yield from _emit_assistant_events(
-    #         output.assistant_message,
-    #         message_id,
-    #         output.follow_up_question,
-    #     )
-    #     return output
-
     request_trip_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
 
     system_prompt = (
@@ -560,13 +503,7 @@ def _call_openai_for_plan(
 
     client = _get_openai_client()
     if client is None:
-        output = _mock_plan_output(req)
-        yield from _emit_assistant_events(
-            output.assistant_message,
-            message_id,
-            output.follow_up_question,
-        )
-        return output
+        return _mock_plan_output(req)
 
     last_error: Exception | None = None
 
@@ -705,11 +642,7 @@ def _call_openai_for_plan(
     if last_error is not None:
         print(f"OpenAI planning call failed, using mock branches: {last_error}")
 
-    output = _mock_plan_output(req)
-    yield from _emit_assistant_events(
-        output.assistant_message, message_id, output.follow_up_question
-    )
-    return output
+    return _mock_plan_output(req)
 
 
 def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanResponse]:

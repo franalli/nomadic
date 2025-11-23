@@ -39,6 +39,8 @@ export interface TilesSearchRequest {
   start_date?: string | null;
   end_date?: string | null;
   traveler_count?: number | null;
+  verticals?: Array<'hotel' | 'flight' | 'activity'>;
+  max_results_per_vertical?: number;
 }
 
 export interface TilesSearchResponse {

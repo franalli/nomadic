@@ -18,13 +18,14 @@ import { BookingOption } from '@/components/nomadic/booking-option';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
 import { TripCard } from '@/components/nomadic/trip-card';
-import { TilesGrid } from '@/components/tiles/TilesGrid';
+import { TilesGrid, type TileTabKey } from '@/components/tiles/TilesGrid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { MOCK_TRAVEL_OPTIONS, MOCK_TRIPS } from '@/lib/mock-data';
 import { API_BASE } from '@/lib/api';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import type {
+  PlanResponse,
   SessionSnapshot,
   TilesSearchRequest,
   TilesSearchResponse,
@@ -142,6 +143,16 @@ const sanitizeOrigin = (
   return origin;
 };
 
+const resolveTripInputs = (
+  incoming?: TripInputs | null,
+  destinationHint?: string | null
+): TripInputs => {
+  const filled = fillTripInputDefaults(incoming);
+  filled.origin = sanitizeOrigin(filled.origin ?? null, destinationHint);
+  filled.destination = filled.destination ?? destinationHint ?? null;
+  return filled;
+};
+
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
 const HERO_VIDEO = '/hiking_video.mp4';
@@ -149,11 +160,95 @@ const HERO_TAGLINE = 'We Plan the Rest.';
 const HERO_TYPING_INTERVAL_MS = 200;
 const HERO_TYPING_PAUSE_MS = 8000;
 
+const TILE_TAB_LABELS: Record<TileTabKey, string> = {
+  stays: 'Stays',
+  flights: 'Flights',
+  activities: 'Activities',
+};
+
+type TileCounts = Record<TileTabKey, number>;
+
+const resolveTileTab = (tile: Tile): TileTabKey => {
+  const type = (tile.type || '').toLowerCase();
+  if (['flight', 'air', 'fare', 'plane'].some((needle) => type.includes(needle))) {
+    return 'flights';
+  }
+  if (
+    ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'].some((needle) =>
+      type.includes(needle)
+    )
+  ) {
+    return 'activities';
+  }
+  return 'stays';
+};
+
+const countTilesByTab = (tileList: Tile[]): TileCounts =>
+  tileList.reduce(
+    (acc, tile) => {
+      const tab = resolveTileTab(tile);
+      acc[tab] += 1;
+      return acc;
+    },
+    { stays: 0, flights: 0, activities: 0 } as TileCounts
+  );
+
+const summarizeTileCounts = (counts: TileCounts): string => {
+  const parts: string[] = [];
+  if (counts.stays) parts.push(`${counts.stays} stay${counts.stays === 1 ? '' : 's'}`);
+  if (counts.flights)
+    parts.push(`${counts.flights} flight${counts.flights === 1 ? '' : 's'}`);
+  if (counts.activities)
+    parts.push(`${counts.activities} activit${counts.activities === 1 ? 'y' : 'ies'}`);
+
+  if (!parts.length) {
+    return 'No live tiles yet—still hunting for stays, flights, and activities.';
+  }
+  return `Coverage: ${parts.join(' · ')}.`;
+};
+
+type TripInputSignature = {
+  destination: string | null;
+  origin: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  traveler_count: number | null;
+};
+
+const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature => ({
+  destination: inputs?.destination?.trim() || null,
+  origin: inputs?.origin?.trim() || null,
+  start_date: inputs?.start_date ?? null,
+  end_date: inputs?.end_date ?? null,
+  traveler_count:
+    inputs?.traveler_count != null
+      ? Math.min(20, Math.max(1, Number(inputs.traveler_count)))
+      : null,
+});
+
+const tripInputSignaturesEqual = (
+  a: TripInputSignature | null,
+  b: TripInputSignature | null
+): boolean => {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (
+    a.destination === b.destination &&
+    a.origin === b.origin &&
+    a.start_date === b.start_date &&
+    a.end_date === b.end_date &&
+    a.traveler_count === b.traveler_count
+  );
+};
+
 export function NomadicLanding() {
   const [branches, setBranches] = useState<PlanBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [tiles, setTiles] = useState<Tile[]>([]);
   const [tilesRequestId, setTilesRequestId] = useState<string | null>(null);
+  const [tilesBranchId, setTilesBranchId] = useState<string | null>(null);
+  const [branchTileNotes, setBranchTileNotes] = useState<Record<string, string>>({});
+  const [branchTileCounts, setBranchTileCounts] = useState<Record<string, TileCounts>>({});
   const [tripContextId, setTripContextId] = useState<number | null>(null);
   const [tripInputsDraft, setTripInputsDraft] = useState<TripInputsDraft>(() =>
     toTripInputsDraft(DEFAULT_TRIP_INPUTS)
@@ -161,6 +256,8 @@ export function NomadicLanding() {
   const [tripInputs, setTripInputs] = useState<TripInputs>(() =>
     normalizeTripInputsDraft(toTripInputsDraft(DEFAULT_TRIP_INPUTS))
   );
+  const [lastRegeneratedTripInputs, setLastRegeneratedTripInputs] =
+    useState<TripInputSignature>(() => toTripInputSignature(DEFAULT_TRIP_INPUTS));
   const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
@@ -170,11 +267,25 @@ export function NomadicLanding() {
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [chatKey, setChatKey] = useState(0);
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
+  const tripInputsPlanControllerRef = useRef<AbortController | null>(null);
   const [typedTagline, setTypedTagline] = useState('');
 
   const selectedBranch = useMemo(
     () => branches.find((branch) => branch.id === selectedBranchId) ?? null,
     [branches, selectedBranchId]
+  );
+
+  const branchesWithTileNotes = useMemo(
+    () =>
+      branches.map((branch) => {
+        const note = branchTileNotes[branch.id];
+        const baseDescription = (branch.description ?? '').trim();
+        const mergedDescription = [baseDescription, note]
+          .filter(Boolean)
+          .join(baseDescription && note ? ' ' : '');
+        return { ...branch, description: mergedDescription };
+      }),
+    [branchTileNotes, branches]
   );
 
   const updateFromDraft = useCallback(
@@ -192,12 +303,11 @@ export function NomadicLanding() {
   );
 
   const applyIncomingTripInputs = useCallback(
-    (incoming?: TripInputs | null, destinationHint?: string | null) => {
-      const filled = fillTripInputDefaults(incoming);
-      filled.origin = sanitizeOrigin(filled.origin ?? null, destinationHint);
-      filled.destination = filled.destination ?? destinationHint ?? null;
+    (incoming?: TripInputs | null, destinationHint?: string | null): TripInputs => {
+      const filled = resolveTripInputs(incoming, destinationHint);
       const draft = toTripInputsDraft(filled);
       updateFromDraft(draft, destinationHint);
+      return filled;
     },
     [updateFromDraft]
   );
@@ -215,9 +325,24 @@ export function NomadicLanding() {
       const controller = new AbortController();
       tilesFetchControllerRef.current = controller;
 
+      const branchChanged = branchId !== selectedBranchId;
       setSelectedBranchId(branchId);
+      setTilesBranchId(null);
+      if (branchChanged) {
+        setTiles([]);
+        setTilesRequestId(null);
+      }
       const branch = overrides?.branch ?? branches.find((b) => b.id === branchId);
       if (!branch) return;
+      setBranchTileNotes((prev) => ({
+        ...prev,
+        [branchId]: 'Refreshing booking options for this suggestion.',
+      }));
+      setBranchTileCounts((prev) => {
+        const next = { ...prev };
+        delete next[branchId];
+        return next;
+      });
 
       const sessionId = getOrCreateSessionId();
       const parsedBranchId = Number(branchId);
@@ -232,6 +357,8 @@ export function NomadicLanding() {
         trip_context_id: requestTripContextId ?? undefined,
         destination: branch.destination,
         destination_hint: branch.destination,
+        verticals: ['hotel', 'flight', 'activity'],
+        max_results_per_vertical: 3,
       };
       if (branch.origin) body.origin = branch.origin;
       if (branch.start_date) body.start_date = branch.start_date;
@@ -258,6 +385,7 @@ export function NomadicLanding() {
         const data: TilesSearchResponse = await res.json();
         if (controller.signal.aborted) return;
         setTiles(data.tiles);
+        setTilesBranchId(branchId);
         setTilesRequestId(data.tiles_request_id ?? data.request_id ?? null);
         setTilesExpanded(true);
       } catch (error) {
@@ -273,7 +401,7 @@ export function NomadicLanding() {
         }
       }
     },
-    [abortTilesFetch, branches, tripContextId]
+    [abortTilesFetch, branches, selectedBranchId, tripContextId]
   );
 
   useEffect(() => {
@@ -328,6 +456,7 @@ export function NomadicLanding() {
 
         const snapshotTiles = data.tiles ?? [];
         setTiles(snapshotTiles);
+        setTilesBranchId(fallbackBranchId);
         setTilesRequestId(null);
 
         if (snapshotTiles.length > 0) {
@@ -373,12 +502,20 @@ export function NomadicLanding() {
 
   const handleClearContext = useCallback(() => {
     abortTilesFetch();
+    if (tripInputsPlanControllerRef.current) {
+      tripInputsPlanControllerRef.current.abort();
+      tripInputsPlanControllerRef.current = null;
+    }
     setTripContextId(null);
     setBranches([]);
     setSelectedBranchId(null);
     setTiles([]);
+    setTilesBranchId(null);
     setTilesRequestId(null);
+    setBranchTileNotes({});
+    setBranchTileCounts({});
     applyIncomingTripInputs(DEFAULT_TRIP_INPUTS, null);
+    setLastRegeneratedTripInputs(toTripInputSignature(DEFAULT_TRIP_INPUTS));
     setBranchesExpanded(false);
     setTilesExpanded(false);
     setHasTriggeredChat(false);
@@ -441,7 +578,16 @@ export function NomadicLanding() {
     [tripInputs, selectedBranch?.destination, updateFromDraft]
   );
 
-  useEffect(() => () => abortTilesFetch(), [abortTilesFetch]);
+  useEffect(
+    () => () => {
+      abortTilesFetch();
+      if (tripInputsPlanControllerRef.current) {
+        tripInputsPlanControllerRef.current.abort();
+        tripInputsPlanControllerRef.current = null;
+      }
+    },
+    [abortTilesFetch]
+  );
 
   useEffect(() => {
     let timeoutId: number | null = null;
@@ -475,9 +621,34 @@ export function NomadicLanding() {
       setTripContextId(result.tripContextId);
       setBranches(result.branches);
       setTiles(result.tiles);
+      setTilesBranchId(result.primaryBranchId);
       setTilesRequestId(result.tilesRequestId);
+      setBranchTileNotes((prev) => {
+        const allowedIds = new Set(result.branches.map((b) => b.id));
+        const next: Record<string, string> = {};
+        allowedIds.forEach((id) => {
+          if (prev[id]) {
+            next[id] = prev[id];
+          }
+        });
+        return next;
+      });
+      setBranchTileCounts((prev) => {
+        const allowedIds = new Set(result.branches.map((b) => b.id));
+        const next: Record<string, TileCounts> = {};
+        allowedIds.forEach((id) => {
+          if (prev[id]) {
+            next[id] = prev[id];
+          }
+        });
+        return next;
+      });
       const destinationHint = result.branches[0]?.destination ?? null;
-      applyIncomingTripInputs(result.tripInputs ?? undefined, destinationHint);
+      const resolvedTripInputs = applyIncomingTripInputs(
+        result.tripInputs ?? undefined,
+        destinationHint
+      );
+      setLastRegeneratedTripInputs(toTripInputSignature(resolvedTripInputs));
       setSelectedBranchId(result.primaryBranchId);
       setHasTriggeredChat(true);
 
@@ -489,6 +660,173 @@ export function NomadicLanding() {
       }
     },
     [applyIncomingTripInputs]
+  );
+
+  // Auto-refresh branches and tiles whenever the core trip inputs change.
+  useEffect(() => {
+    const signature = toTripInputSignature(tripInputs);
+    const destinationHint = selectedBranch?.destination ?? signature.destination;
+    const hasPlanContext = hasTriggeredChat || branches.length > 0 || tripContextId != null;
+    const shouldRefresh =
+      hasPlanContext &&
+      destinationHint &&
+      !tripInputSignaturesEqual(signature, lastRegeneratedTripInputs) &&
+      !isHydratingSnapshot &&
+      !isResettingSession;
+
+    if (!shouldRefresh) return undefined;
+
+    if (tripInputsPlanControllerRef.current) {
+      tripInputsPlanControllerRef.current.abort();
+      tripInputsPlanControllerRef.current = null;
+    }
+
+    const controller = new AbortController();
+    tripInputsPlanControllerRef.current = controller;
+    abortTilesFetch();
+
+    const normalizedInputs = resolveTripInputs(tripInputs, destinationHint);
+    const detailParts = [
+      normalizedInputs.origin ? `origin ${normalizedInputs.origin}` : null,
+      normalizedInputs.start_date ? `start ${normalizedInputs.start_date}` : null,
+      normalizedInputs.end_date ? `end ${normalizedInputs.end_date}` : null,
+      normalizedInputs.traveler_count != null
+        ? `${normalizedInputs.traveler_count} traveler${normalizedInputs.traveler_count === 1 ? '' : 's'}`
+        : null,
+    ].filter(Boolean);
+
+    const refreshMessage =
+      detailParts.length > 0
+        ? `Auto-refresh (fields changed): ${detailParts.join(', ')}. Regenerate branches and booking tiles.`
+        : 'Auto-refresh triggered by updated trip details. Regenerate branches and booking tiles.';
+
+    const sessionId = getOrCreateSessionId();
+
+    const regenerate = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/v1/plan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: refreshMessage,
+            session_id: sessionId || undefined,
+            trip_context_id: tripContextId ?? undefined,
+            trip_inputs: normalizedInputs,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          console.error('Failed to regenerate plan after trip inputs change', res.status);
+          setToastMessage(
+            'Unable to refresh suggestions after updating your trip details. Try again.'
+          );
+          return;
+        }
+
+        const data: PlanResponse = await res.json();
+        if (controller.signal.aborted) return;
+
+        handlePlanResult({
+          tripContextId: data.trip_context_id ?? null,
+          branches: data.branches,
+          tiles: data.tiles,
+          primaryBranchId:
+            data.primary_branch_id ?? data.branches[0]?.id ?? selectedBranchId ?? null,
+          tilesRequestId: data.tiles_request_id ?? null,
+          tripInputs: data.trip_inputs ?? null,
+        });
+      } catch (error) {
+        if ((error as DOMException).name === 'AbortError') return;
+        console.error('Failed to regenerate plan after trip inputs change', error);
+        setToastMessage(
+          'Unable to refresh suggestions after updating your trip details. Try again.'
+        );
+      } finally {
+        if (tripInputsPlanControllerRef.current === controller) {
+          tripInputsPlanControllerRef.current = null;
+        }
+      }
+    };
+
+    regenerate();
+
+    return () => controller.abort();
+  }, [
+    abortTilesFetch,
+    branches.length,
+    handlePlanResult,
+    hasTriggeredChat,
+    isHydratingSnapshot,
+    isResettingSession,
+    lastRegeneratedTripInputs,
+    selectedBranch?.destination,
+    selectedBranchId,
+    tripContextId,
+    tripInputs,
+  ]);
+
+  const describeTileSelection = useCallback((tab: TileTabKey, filteredTiles: Tile[]) => {
+    const label = TILE_TAB_LABELS[tab] ?? 'Options';
+    if (!filteredTiles.length) {
+      return `${label}: no live options yet for this branch. I will keep it flexible until new results arrive.`;
+    }
+
+    const priceValues = filteredTiles
+      .map((tile) => tile.price_estimate)
+      .filter((value): value is number => typeof value === 'number');
+    const currency = filteredTiles.find((tile) => tile.currency)?.currency ?? '';
+    const priceSummary = (() => {
+      if (!priceValues.length) return '';
+      const min = Math.min(...priceValues);
+      const max = Math.max(...priceValues);
+      const formattedMin = Math.round(min).toLocaleString();
+      const formattedMax = Math.round(max).toLocaleString();
+      if (min === max) return `${formattedMin} ${currency}`.trim();
+      return `${formattedMin}–${formattedMax} ${currency}`.trim();
+    })();
+
+    const parts: string[] = [];
+    parts.push(
+      `${label} tuned: ${filteredTiles.length} option${filteredTiles.length === 1 ? '' : 's'}.`
+    );
+    if (priceSummary) {
+      parts.push(`Price band around ${priceSummary}.`);
+    }
+    const highlightTitle = filteredTiles[0]?.title;
+    if (highlightTitle) {
+      parts.push(`Highlighting ${highlightTitle}.`);
+    }
+
+    return parts.join(' ');
+  }, []);
+
+  useEffect(() => {
+    if (!tilesBranchId) return;
+    const counts = countTilesByTab(tiles);
+    const countsNote = summarizeTileCounts(counts);
+    setBranchTileCounts((prev) => ({ ...prev, [tilesBranchId]: counts }));
+    setBranchTileNotes((prev) => ({ ...prev, [tilesBranchId]: countsNote }));
+  }, [tiles, tilesBranchId]);
+
+  const formatBranchNote = useCallback(
+    (branchId: string, tabNote?: string) => {
+      const counts = branchTileCounts[branchId];
+      const countsNote = counts ? summarizeTileCounts(counts) : null;
+      return [countsNote, tabNote].filter(Boolean).join(' ');
+    },
+    [branchTileCounts]
+  );
+
+  const handleTilesTabChange = useCallback(
+    (tab: TileTabKey, filteredTiles: Tile[]) => {
+      if (!selectedBranchId) return;
+      if (!tilesBranchId || tilesBranchId !== selectedBranchId) return;
+      const tabNote = describeTileSelection(tab, filteredTiles);
+      const note = formatBranchNote(selectedBranchId, tabNote);
+      setBranchTileNotes((prev) => ({ ...prev, [selectedBranchId]: note }));
+    },
+    [describeTileSelection, formatBranchNote, selectedBranchId, tilesBranchId]
   );
 
   const handleChatTriggered = useCallback(() => {
@@ -830,9 +1168,10 @@ export function NomadicLanding() {
                         </p>
                       ) : (
                         <BranchPanel
-                          branches={branches}
+                          branches={branchesWithTileNotes}
                           selectedBranchId={selectedBranchId}
                           onBranchSelect={handleBranchSelect}
+                          branchTileCounts={branchTileCounts}
                         />
                       )}
                     </CardContent>
@@ -870,9 +1209,11 @@ export function NomadicLanding() {
                         </p>
                       ) : (
                         <TilesGrid
+                          key={selectedBranchId ?? 'tiles-default'}
                           tiles={tiles}
                           activeBranch={selectedBranch}
                           tilesRequestId={tilesRequestId}
+                          onTabChange={handleTilesTabChange}
                         />
                       )}
                     </CardContent>

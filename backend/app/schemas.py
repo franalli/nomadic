@@ -56,7 +56,7 @@ class TilesSearchRequest(BaseModel):
     end_date: Optional[str] = None
     traveler_count: Optional[int] = None
 
-    verticals: List[TileType] = Field(default_factory=lambda: ["hotel"])
+    verticals: List[TileType] = Field(default_factory=lambda: ["hotel", "flight", "activity"])
     max_results_per_vertical: int = 5
 
     currency: str = "EUR"

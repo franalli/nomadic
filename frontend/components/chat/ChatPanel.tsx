@@ -226,12 +226,24 @@ export function ChatPanel(props: ChatPanelProps) {
         const applyCompleteSnapshot = (plan: PlanResponse) => {
           handlePlanResult(plan);
           if (plan.assistant_message_id && plan.assistant_message) {
+            const assistantWithFollowUp = plan.follow_up_question
+              ? `${plan.assistant_message}\n\n${plan.follow_up_question}`
+              : plan.assistant_message;
             setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === plan.assistant_message_id
-                  ? { ...msg, content: plan.assistant_message }
-                  : msg
-              )
+              prev.some((msg) => msg.id === plan.assistant_message_id)
+                ? prev.map((msg) =>
+                    msg.id === plan.assistant_message_id
+                      ? { ...msg, content: assistantWithFollowUp }
+                      : msg
+                  )
+                : [
+                    ...prev,
+                    {
+                      id: plan.assistant_message_id,
+                      role: 'assistant',
+                      content: assistantWithFollowUp,
+                    },
+                  ]
             );
           }
         };

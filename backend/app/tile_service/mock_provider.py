@@ -87,3 +87,162 @@ class MockHotelProvider(Provider):
             )
 
         return tiles
+
+
+class MockFlightProvider(Provider):
+    name = "mock_flight"
+
+    def search(self, ctx: SearchContext) -> List[Tile]:
+        """Return simple mock flights for the given route."""
+        dest = ctx.destination or "Somewhere"
+        origin = ctx.origin or "Home"
+        tiles: List[Tile] = []
+
+        source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
+        traveler_count = ctx.traveler_count or 1
+        max_results = max(1, min(ctx.max_results_per_vertical, 3))
+
+        options = [
+            {
+                "title": "Morning express",
+                "depart": "08:10",
+                "duration": "7h 50m",
+                "price": 610.0,
+                "stops": "Nonstop",
+                "image_url": "https://images.unsplash.com/photo-1489515217757-5fd1be406fef?auto=format&fit=crop&w=1200&q=80",
+            },
+            {
+                "title": "Evening sleeper",
+                "depart": "19:20",
+                "duration": "9h 10m",
+                "price": 480.0,
+                "stops": "1 stop via AMS",
+                "image_url": "https://images.unsplash.com/photo-1485939420040-3e4a274307d0?auto=format&fit=crop&w=1200&q=80",
+            },
+            {
+                "title": "Weekend saver",
+                "depart": "22:05",
+                "duration": "11h 05m",
+                "price": 420.0,
+                "stops": "1 stop via LHR",
+                "image_url": "https://images.unsplash.com/photo-1474302770737-173ee21bab63?auto=format&fit=crop&w=1200&q=80",
+            },
+        ]
+
+        for idx, option in enumerate(options[:max_results]):
+            base_price = option["price"]
+            price = round(base_price * traveler_count, 2)
+            tiles.append(
+                Tile(
+                    id=f"tile_mock_flight_{idx + 1}",
+                    type="flight",
+                    partner=self.name,
+                    partner_product_id=f"mock_flight_{idx + 1}",
+                    title=f"{option['title']} · {origin} → {dest}",
+                    subtitle=(
+                        f"{option['depart']} departure · {option['duration']} · "
+                        f"{option['stops']}"
+                    ),
+                    image_url=option["image_url"],
+                    price_estimate=price,
+                    live_price=None if source_mode == "cache" else round(price * 1.03, 2),
+                    currency=ctx.currency,
+                    price_basis="per_trip",
+                    is_estimate_only=source_mode == "cache",
+                    deeplink_url="https://example.com/flights/search?aff_id=DEMO",
+                    rating=4.3 + 0.05 * idx,
+                    review_count=120 + 35 * idx,
+                    location_label=f"{origin} → {dest}",
+                    tags=["flight", option["stops"]],
+                    availability_status="available",
+                    meta={
+                        "stops": option["stops"],
+                        "fare_class": "Main cabin",
+                        "destination": dest,
+                        "origin": origin,
+                        "traveler_count": traveler_count,
+                    },
+                    score=0.65 + 0.05 * idx,
+                    source=source_mode,
+                )
+            )
+
+        return tiles
+
+
+class MockActivityProvider(Provider):
+    name = "mock_activity"
+
+    def search(self, ctx: SearchContext) -> List[Tile]:
+        """Return simple mock activities for the given destination."""
+        dest = ctx.destination or "your destination"
+        tiles: List[Tile] = []
+
+        source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
+        traveler_count = ctx.traveler_count or 2
+        max_results = max(1, min(ctx.max_results_per_vertical, 3))
+
+        activities = [
+            {
+                "title": f"Sunrise ridge hike in {dest}",
+                "subtitle": "Guide-led, breakfast at the summit",
+                "price": 95.0,
+                "image_url": "https://images.unsplash.com/photo-1452626038306-9aae5e071dd3?auto=format&fit=crop&w=1200&q=80",
+                "duration": "3h",
+                "tag": "outdoors",
+                "availability": "available",
+            },
+            {
+                "title": f"Night market food crawl, {dest} center",
+                "subtitle": "Street bites, rooftop nightcap, hidden alleys",
+                "price": 68.0,
+                "image_url": "https://images.unsplash.com/photo-1440404653325-ab127d49abb4?auto=format&fit=crop&w=1200&q=80",
+                "duration": "2.5h",
+                "tag": "food",
+                "availability": "available",
+            },
+            {
+                "title": f"Golden-hour harbor sail near {dest}",
+                "subtitle": "Small group, bubbly on board, sunset views",
+                "price": 125.0,
+                "image_url": "https://images.unsplash.com/photo-1500375592092-40eb2168fd21?auto=format&fit=crop&w=1200&q=80",
+                "duration": "2h",
+                "tag": "water",
+                "availability": "low",
+            },
+        ]
+
+        for idx, activity in enumerate(activities[:max_results]):
+            per_person = round(activity["price"], 2)
+            total = round(per_person * traveler_count, 2)
+            tiles.append(
+                Tile(
+                    id=f"tile_mock_activity_{idx + 1}",
+                    type="activity",
+                    partner=self.name,
+                    partner_product_id=f"mock_activity_{idx + 1}",
+                    title=activity["title"],
+                    subtitle=f"{activity['subtitle']} · {activity['duration']}",
+                    image_url=activity["image_url"],
+                    price_estimate=total,
+                    live_price=None if source_mode == "cache" else round(total * 1.02, 2),
+                    currency=ctx.currency,
+                    price_basis="per_trip",
+                    is_estimate_only=source_mode == "cache",
+                    deeplink_url="https://example.com/activities/book?aff_id=DEMO",
+                    rating=4.5 + 0.06 * idx,
+                    review_count=220 + 55 * idx,
+                    location_label=dest,
+                    tags=["activity", activity["tag"]],
+                    availability_status=activity["availability"],
+                    meta={
+                        "duration": activity["duration"],
+                        "destination": dest,
+                        "traveler_count": traveler_count,
+                    },
+                    score=0.6 + 0.05 * idx,
+                    source=source_mode,
+                )
+            )
+
+        return tiles

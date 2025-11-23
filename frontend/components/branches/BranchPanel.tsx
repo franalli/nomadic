@@ -4,6 +4,14 @@ import { MapPin, Sparkles } from 'lucide-react';
 
 import type { PlanBranch } from '@/types/plan';
 
+type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
+
+const TILE_BADGE_LABELS: Record<keyof TileCounts, string> = {
+  stays: 'Stays',
+  flights: 'Flights',
+  activities: 'Activities',
+};
+
 type BranchDetails = {
   vibe: string;
   duration: string;
@@ -126,12 +134,14 @@ type BranchPanelProps = {
   branches: PlanBranch[];
   selectedBranchId: string | null;
   onBranchSelect: (branchId: string) => void;
+  branchTileCounts?: Record<string, TileCounts>;
 };
 
 export function BranchPanel({
   branches,
   selectedBranchId,
   onBranchSelect,
+  branchTileCounts,
 }: BranchPanelProps) {
   if (!branches.length) {
     return (
@@ -147,6 +157,9 @@ export function BranchPanel({
     branches.findIndex((branch) => branch.id === selected.id)
   );
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
+  const countsForSelected = branchTileCounts?.[selected.id];
+  const hasTileCounts =
+    countsForSelected && Object.values(countsForSelected).some((value) => value > 0);
 
   return (
     <div className="space-y-4">
@@ -187,6 +200,22 @@ export function BranchPanel({
                 <p className="text-muted-foreground text-sm leading-relaxed">
                   {selected.description}
                 </p>
+              )}
+              {hasTileCounts && countsForSelected && (
+                <div className="flex flex-wrap gap-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-foreground">
+                  {(Object.keys(TILE_BADGE_LABELS) as Array<keyof TileCounts>).map((key) => (
+                    <span
+                      key={key}
+                      className="inline-flex items-center gap-1 rounded-full bg-black/15 px-3 py-1 text-white shadow-sm backdrop-blur"
+                    >
+                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                      {TILE_BADGE_LABELS[key]}
+                      <span className="rounded bg-white/10 px-2 py-0.5 text-[10px]">
+                        {countsForSelected[key] ?? 0}
+                      </span>
+                    </span>
+                  ))}
+                </div>
               )}
             </div>
             <div className="inline-flex items-center gap-2 rounded-full bg-black/20 px-3 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur">

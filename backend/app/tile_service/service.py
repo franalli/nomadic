@@ -7,7 +7,11 @@ from app.schemas import (
     TilesSearchResponse,
 )
 
-from .mock_provider import MockHotelProvider
+from .mock_provider import (
+    MockActivityProvider,
+    MockFlightProvider,
+    MockHotelProvider,
+)
 from .models import SearchContext
 from .provider_base import Provider
 
@@ -41,9 +45,13 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
     """
     providers: List[Provider] = []
 
-    # Example: only attach hotel provider if hotels requested
+    # Example: only attach providers if their vertical was requested
     if "hotel" in ctx.verticals or not ctx.verticals:
         providers.append(MockHotelProvider())
+    if "flight" in ctx.verticals or not ctx.verticals:
+        providers.append(MockFlightProvider())
+    if "activity" in ctx.verticals or not ctx.verticals:
+        providers.append(MockActivityProvider())
 
     return providers
 
