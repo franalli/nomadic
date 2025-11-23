@@ -248,7 +248,9 @@ export function NomadicLanding() {
   const [tilesRequestId, setTilesRequestId] = useState<string | null>(null);
   const [tilesBranchId, setTilesBranchId] = useState<string | null>(null);
   const [branchTileNotes, setBranchTileNotes] = useState<Record<string, string>>({});
-  const [branchTileCounts, setBranchTileCounts] = useState<Record<string, TileCounts>>({});
+  const [branchTileCounts, setBranchTileCounts] = useState<Record<string, TileCounts>>(
+    {}
+  );
   const [tripContextId, setTripContextId] = useState<number | null>(null);
   const [tripInputsDraft, setTripInputsDraft] = useState<TripInputsDraft>(() =>
     toTripInputsDraft(DEFAULT_TRIP_INPUTS)
@@ -666,7 +668,8 @@ export function NomadicLanding() {
   useEffect(() => {
     const signature = toTripInputSignature(tripInputs);
     const destinationHint = selectedBranch?.destination ?? signature.destination;
-    const hasPlanContext = hasTriggeredChat || branches.length > 0 || tripContextId != null;
+    const hasPlanContext =
+      hasTriggeredChat || branches.length > 0 || tripContextId != null;
     const shouldRefresh =
       hasPlanContext &&
       destinationHint &&
@@ -963,9 +966,6 @@ export function NomadicLanding() {
                   <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
                     Your Destinations and Best Booking Options
                   </h2>
-                  <p className="text-muted-foreground text-sm">
-                    Suggestions and options expand only after you spark the chat.
-                  </p>
                 </div>
                 <Button
                   variant="outline"
@@ -989,9 +989,9 @@ export function NomadicLanding() {
                           Update them here or in chat—I’ll keep prompting until each field
                           is locked in.
                         </p>
-                        <p className="text-muted-foreground text-xs">
+                        {/* <p className="text-muted-foreground text-xs">
                           Click any field to edit it instantly.
-                        </p>
+                        </p> */}
                       </div>
                       <div className="flex items-center gap-2">
                         <span

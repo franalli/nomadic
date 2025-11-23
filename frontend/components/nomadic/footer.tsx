@@ -7,18 +7,15 @@ import { requestOpenConsentPreferences } from '@/components/nomadic/consent-mana
 
 export function Footer() {
   return (
-    <footer className="border-border bg-secondary/30 border-t py-6 text-sm">
-      <div className="container mx-auto px-4">
-        <div className="mb-2 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+    <footer className="border-border bg-secondary/30 border-t py-4 text-sm">
+      <div className="container mx-auto flex flex-col items-center justify-between gap-4 px-4 md:flex-row">
+        <div className="flex flex-col items-center gap-4 md:flex-row md:gap-8">
           <div className="text-primary flex items-center gap-2">
-            <Compass className="h-6 w-6" />
-            <span className="font-display text-xl font-bold tracking-tight">Nomadic</span>
+            <Compass className="h-5 w-5" />
+            <span className="font-display text-lg font-bold tracking-tight">Nomadic</span>
           </div>
-        </div>
 
-        <div className="border-border/50 text-muted-foreground flex flex-col items-center justify-between gap-2 border-t pt-3 md:flex-row md:items-center">
-          <p>© {new Date().getFullYear()} Nomadic Inc. All rights reserved.</p>
-          <div className="flex flex-wrap items-center gap-3 md:gap-4">
+          <div className="text-muted-foreground flex flex-wrap items-center justify-center gap-3 md:gap-4">
             <Link
               href="/privacy"
               className="hover:text-foreground transition-colors"
@@ -64,6 +61,10 @@ export function Footer() {
             </Link>
           </div>
         </div>
+
+        <p className="text-muted-foreground text-center md:text-right">
+          © {new Date().getFullYear()} Nomadic Inc. All rights reserved.
+        </p>
       </div>
     </footer>
   );
