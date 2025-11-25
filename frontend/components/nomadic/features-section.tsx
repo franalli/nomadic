@@ -35,7 +35,13 @@ const features = [
 
 export function FeaturesSection() {
   return (
-    <section className="relative overflow-hidden bg-background py-24">
+    <motion.section
+      initial={{ opacity: 0, y: 40 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, amount: 0.2 }}
+      transition={{ duration: 0.6 }}
+      className="relative overflow-hidden bg-background pt-16 pb-20"
+    >
       <div className="container mx-auto px-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -73,6 +79,6 @@ export function FeaturesSection() {
           ))}
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }

@@ -1,9 +1,9 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { Compass } from 'lucide-react';
+import { ChevronDown, Compass } from 'lucide-react';
 
 import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
@@ -11,6 +11,43 @@ import type { PlanRequest, PlanResponse } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
 import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile } from '@/types/tile';
+
+const CHAT_HISTORY_KEY = 'chat_history';
+const DEFAULT_MESSAGES: ChatMessage[] = [
+  {
+    id: 'm0',
+    role: 'assistant',
+    content:
+      "Tell me about your trip: where you're headed, where you're leaving from, dates, vibes, and how many travelers are going.",
+  },
+];
+
+const getChatStorageKey = (sessionId: string) => `${CHAT_HISTORY_KEY}:${sessionId}`;
+
+const parseStoredMessages = (raw: string | null): ChatMessage[] | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    const isValid = parsed.every(
+      (msg) =>
+        msg &&
+        typeof msg.id === 'string' &&
+        (msg.role === 'user' || msg.role === 'assistant') &&
+        typeof msg.content === 'string'
+    );
+    return isValid ? (parsed as ChatMessage[]) : null;
+  } catch (error) {
+    console.error('Failed to parse stored chat history', error);
+    return null;
+  }
+};
+
+const loadStoredMessages = (sessionId: string): ChatMessage[] | null => {
+  if (typeof window === 'undefined' || !sessionId) return null;
+  const raw = window.localStorage.getItem(getChatStorageKey(sessionId));
+  return parseStoredMessages(raw);
+};
 
 interface ChatPanelProps {
   tripContextId: number | null;
@@ -25,6 +62,10 @@ interface ChatPanelProps {
     tilesRequestId: string | null;
     tripInputs?: TripInputs | null;
   }) => void;
+  tripDetails?: {
+    content: ReactNode;
+    missingFields?: string[];
+  };
 }
 
 type PlanStreamEvent =
@@ -72,18 +113,17 @@ const summariseBranches = (branches: PlanBranch[]): string => {
 };
 
 export function ChatPanel(props: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: 'm0',
-      role: 'assistant',
-      content:
-        "Tell me about your trip: where you're headed, where you're leaving from, dates, vibes, and how many travelers are going.",
-    },
-  ]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_MESSAGES);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [detailsCollapsed, setDetailsCollapsed] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const hasUserMessage = messages.some((msg) => msg.role === 'user');
+  const showTripDetails = Boolean(props.tripDetails) && hasUserMessage;
+  const panelHeightClass = hasUserMessage
+    ? 'min-h-[360px] max-h-[620px]'
+    : 'min-h-[220px] max-h-[320px]';
 
   const scrollToBottom = useCallback(() => {
     const node = scrollContainerRef.current;
@@ -94,6 +134,36 @@ export function ChatPanel(props: ChatPanelProps) {
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    if (!sessionId || typeof window === 'undefined') return;
+    const stored = loadStoredMessages(sessionId);
+    if (stored) {
+      setMessages(stored);
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(
+        getChatStorageKey(sessionId),
+        JSON.stringify(messages)
+      );
+    } catch (error) {
+      console.error('Failed to persist chat history', error);
+    }
+  }, [messages, sessionId]);
+
+  useEffect(() => {
+    // Defer session id creation until after mount to avoid SSR/client mismatches.
+    const id = getOrCreateSessionId();
+    setSessionId(id);
+    const stored = loadStoredMessages(id);
+    if (stored) {
+      setMessages(stored);
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -113,13 +183,16 @@ export function ChatPanel(props: ChatPanelProps) {
     setIsLoading(true);
 
     try {
-      const sessionId = getOrCreateSessionId();
       const body: PlanRequest = {
         message: trimmed,
       };
 
-      if (sessionId) {
-        body.session_id = sessionId;
+      const activeSessionId = sessionId ?? getOrCreateSessionId();
+      if (!sessionId) {
+        setSessionId(activeSessionId);
+      }
+      if (activeSessionId) {
+        body.session_id = activeSessionId;
       }
       if (props.tripContextId != null) {
         body.trip_context_id = props.tripContextId;
@@ -344,9 +417,7 @@ export function ChatPanel(props: ChatPanelProps) {
 
   return (
     <div
-      className={`bg-card/90 text-foreground flex ${
-        hasUserMessage ? 'h-[350px]' : 'h-[220px]'
-      } flex-col gap-3 rounded-2xl border border-white/20 p-4 shadow-xl backdrop-blur transition-[height] duration-300`}
+      className={`bg-card/90 text-foreground flex ${panelHeightClass} flex-col gap-3 rounded-2xl border border-white/20 p-4 shadow-xl backdrop-blur transition-[min-height,max-height] duration-300`}
     >
       <div className="flex items-center justify-between">
         <div className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
@@ -354,11 +425,37 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
         {isLoading && (
           <Compass
-            className="text-accent h-5 w-5 compass-spin drop-shadow-sm"
+            className="text-accent compass-spin h-5 w-5 drop-shadow-sm"
             aria-label="Planning in progress"
           />
         )}
       </div>
+
+      {showTripDetails ? (
+        <div className="border-border/60 bg-muted/50 rounded-xl border px-2 py-1.5">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-4 text-left"
+            onClick={() => setDetailsCollapsed((prev) => !prev)}
+          >
+            <span className="text-muted-foreground text-[11px] font-semibold uppercase leading-none tracking-wide">
+              Trip details
+            </span>
+            <ChevronDown
+              className={`text-muted-foreground h-4 w-4 transition-transform ${
+                detailsCollapsed ? '-rotate-90' : ''
+              }`}
+            />
+          </button>
+          <div
+            className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
+              detailsCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'
+            }`}
+          >
+            <div className="overflow-hidden pt-2">{props.tripDetails?.content}</div>
+          </div>
+        </div>
+      ) : null}
 
       <div ref={scrollContainerRef} className="flex-1 space-y-2 overflow-y-auto text-sm">
         {messages.map((m) => (

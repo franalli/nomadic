@@ -15,14 +15,11 @@ import {
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
-import { BookingOption } from '@/components/nomadic/booking-option';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
-import { TripCard } from '@/components/nomadic/trip-card';
 import { TilesGrid, type TileTabKey } from '@/components/tiles/TilesGrid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { MOCK_TRAVEL_OPTIONS, MOCK_TRIPS } from '@/lib/mock-data';
 import { API_BASE } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
@@ -64,6 +61,8 @@ const getFreshDateDefaults = () => {
 
 const { todayIso: INITIAL_TODAY_ISO, nextWeekIso: INITIAL_NEXT_WEEK_ISO } =
   getFreshDateDefaults();
+
+const DISPLAY_DATE_FORMAT = 'DD-MM-YYYY';
 
 const formatDateForDisplay = (value?: string | null): string => {
   if (!value) return '';
@@ -359,7 +358,7 @@ export function NomadicLanding() {
   const activeBranchSelection = useMemo(
     () =>
       selectedBranchId
-        ? branchSelections[selectedBranchId] ?? { activities: [] }
+        ? (branchSelections[selectedBranchId] ?? { activities: [] })
         : { activities: [] },
     [branchSelections, selectedBranchId]
   );
@@ -1075,6 +1074,121 @@ export function NomadicLanding() {
     !value || missingFields.includes(key);
   const formatTravelers = (value?: number | null) =>
     value != null ? `${value} traveler${value === 1 ? '' : 's'}` : 'Needed';
+  const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
+  const tripDetailsContent = (
+    <div className="space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {(['origin', 'start_date', 'end_date', 'traveler_count'] as const).map(
+          (field) => {
+            const isEditing = editingField === field;
+            const draftValue = draftBase ? draftBase[field] : '';
+
+            let displayValue = 'Needed';
+            if (field === 'traveler_count') {
+              displayValue =
+                tripInputs.traveler_count != null
+                  ? formatTravelers(tripInputs.traveler_count)
+                  : '1 traveler';
+            } else if (field === 'start_date' || field === 'end_date') {
+              const formatted = formatDateForDisplay(
+                tripInputs[field as keyof TripInputs] as string | null | undefined
+              );
+              displayValue = formatted || 'Needed';
+            } else {
+              displayValue =
+                (tripInputs[field as keyof TripInputs] as string | null | undefined) ||
+                'Needed';
+            }
+
+            const icon =
+              field === 'origin' ? (
+                <MapPin className="h-4 w-4" />
+              ) : field === 'traveler_count' ? (
+                <Users className="h-4 w-4" />
+              ) : (
+                <CalendarRange className="h-4 w-4" />
+              );
+
+            const label =
+              field === 'origin'
+                ? 'Origin'
+                : field === 'start_date'
+                  ? 'Start'
+                  : field === 'end_date'
+                    ? 'End'
+                    : 'Travelers';
+
+            const inputType = field === 'traveler_count' ? 'number' : 'text';
+
+            return (
+              <div
+                key={field}
+                className="border-border/60 bg-muted/40 rounded-lg border px-3 py-2"
+                role="button"
+                tabIndex={0}
+                onClick={() => handleStartEditingField(field)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleStartEditingField(field);
+                  }
+                }}
+              >
+                <div className="text-muted-foreground flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                  {icon}
+                  {label}
+                </div>
+                {isEditing ? (
+                  <div className="mt-2 space-y-2">
+                    <input
+                      type={inputType}
+                      value={draftValue}
+                      onChange={(e) => handleFieldChange(field, e.target.value)}
+                      className="border-border/60 bg-card/30 text-foreground placeholder:text-muted-foreground focus:border-primary w-full rounded-md border px-2 py-1 text-sm focus:outline-none"
+                      placeholder={
+                        field === 'traveler_count'
+                          ? 'Number of travelers'
+                          : field === 'origin'
+                            ? 'City or airport'
+                            : DISPLAY_DATE_FORMAT
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => handleCommitField(field, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCommitField(field, (e.target as HTMLInputElement).value);
+                        }
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                ) : (
+                  <div
+                    className={`text-sm font-semibold ${
+                      isMissingField(
+                        field,
+                        field === 'traveler_count'
+                          ? tripInputs.traveler_count
+                          : (tripInputs[field as 'origin' | 'start_date' | 'end_date'] as
+                              | string
+                              | null
+                              | undefined)
+                      )
+                        ? 'text-amber-600'
+                        : 'text-foreground'
+                    }`}
+                  >
+                    {displayValue}
+                  </div>
+                )}
+              </div>
+            );
+          }
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="bg-background text-foreground min-h-screen">
@@ -1179,17 +1293,31 @@ export function NomadicLanding() {
                     tripInputs={tripInputs}
                     onPlanResult={handlePlanResult}
                     onChatTriggered={handleChatTriggered}
+                    tripDetails={{ content: tripDetailsContent, missingFields }}
                   />
                 </CardContent>
               </Card>
+              {hasTriggeredChat ? (
+                <div className="flex w-full justify-end px-1 pt-6">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={isResettingSession}
+                    onClick={handleStartNewSession}
+                    className="border-orange-500 bg-white/60 text-orange-500 hover:bg-white/70 hover:text-orange-600"
+                  >
+                    {isResettingSession ? 'Resetting…' : 'Start fresh'}
+                  </Button>
+                </div>
+              ) : null}
             </motion.div>
           </div>
         </div>
       </div>
 
-      <section className="bg-background pb-16 pt-12">
-        <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4">
-          {showResults ? (
+      {showResults ? (
+        <section className="bg-background pb-14 pt-10">
+          <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4">
             <>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -1200,170 +1328,7 @@ export function NomadicLanding() {
                     Your Destinations and Best Booking Options
                   </h2>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={isResettingSession}
-                  onClick={handleStartNewSession}
-                >
-                  {isResettingSession ? 'Resetting…' : 'Start fresh'}
-                </Button>
               </div>
-
-              {tripInputs && (
-                <Card className="border-primary/30 bg-card/90 border shadow-lg">
-                  <CardContent className="flex flex-col gap-4 p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                          Trip details I'm tracking
-                        </p>
-                        <p className="text-muted-foreground text-sm">
-                          Update them here or in chat—I’ll keep prompting until each field
-                          is locked in.
-                        </p>
-                        {/* <p className="text-muted-foreground text-xs">
-                          Click any field to edit it instantly.
-                        </p> */}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${
-                            missingFields.length > 0
-                              ? 'bg-amber-100 text-amber-700'
-                              : 'bg-emerald-100 text-emerald-700'
-                          }`}
-                        >
-                          {missingFields.length > 0
-                            ? 'Need more info'
-                            : 'Ready to search'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      {(
-                        ['origin', 'start_date', 'end_date', 'traveler_count'] as const
-                      ).map((field) => {
-                        const isEditing = editingField === field;
-                        const draftBase =
-                          tripInputsDraft ?? toTripInputsDraft(tripInputs);
-                        const draftValue = draftBase ? draftBase[field] : '';
-
-                        let displayValue = 'Needed';
-                        if (field === 'traveler_count') {
-                          displayValue =
-                            tripInputs.traveler_count != null
-                              ? formatTravelers(tripInputs.traveler_count)
-                              : '1 traveler';
-                        } else if (field === 'start_date' || field === 'end_date') {
-                          const formatted = formatDateForDisplay(
-                            tripInputs[field as keyof TripInputs] as
-                              | string
-                              | null
-                              | undefined
-                          );
-                          displayValue = formatted || 'Needed';
-                        } else {
-                          displayValue =
-                            (tripInputs[field as keyof TripInputs] as
-                              | string
-                              | null
-                              | undefined) || 'Needed';
-                        }
-
-                        const icon =
-                          field === 'origin' ? (
-                            <MapPin className="h-4 w-4" />
-                          ) : field === 'traveler_count' ? (
-                            <Users className="h-4 w-4" />
-                          ) : (
-                            <CalendarRange className="h-4 w-4" />
-                          );
-
-                        const label =
-                          field === 'origin'
-                            ? 'Origin'
-                            : field === 'start_date'
-                              ? 'Start'
-                              : field === 'end_date'
-                                ? 'End'
-                                : 'Travelers';
-
-                        const inputType = field === 'traveler_count' ? 'number' : 'text';
-
-                        return (
-                          <div
-                            key={field}
-                            className="border-border/60 bg-muted/40 rounded-lg border px-3 py-2"
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => handleStartEditingField(field)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault();
-                                handleStartEditingField(field);
-                              }
-                            }}
-                          >
-                            <div className="text-muted-foreground flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-                              {icon}
-                              {label}
-                            </div>
-                            {isEditing ? (
-                              <div className="mt-2 space-y-2">
-                                <input
-                                  type={inputType}
-                                  value={draftValue}
-                                  onChange={(e) =>
-                                    handleFieldChange(field, e.target.value)
-                                  }
-                                  className="border-border/60 bg-card/30 text-foreground placeholder:text-muted-foreground focus:border-primary w-full rounded-md border px-2 py-1 text-sm focus:outline-none"
-                                  placeholder={
-                                    field === 'traveler_count'
-                                      ? 'Number of travelers'
-                                      : field === 'origin'
-                                        ? 'City or airport'
-                                        : DISPLAY_DATE_FORMAT
-                                  }
-                                  onClick={(e) => e.stopPropagation()}
-                                  onBlur={(e) => handleCommitField(field, e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      handleCommitField(
-                                        field,
-                                        (e.target as HTMLInputElement).value
-                                      );
-                                    }
-                                  }}
-                                  autoFocus
-                                />
-                              </div>
-                            ) : (
-                              <div
-                                className={`text-sm font-semibold ${
-                                  isMissingField(
-                                    field,
-                                    field === 'traveler_count'
-                                      ? tripInputs.traveler_count
-                                      : (tripInputs[
-                                          field as 'origin' | 'start_date' | 'end_date'
-                                        ] as string | null | undefined)
-                                  )
-                                    ? 'text-amber-600'
-                                    : 'text-foreground'
-                                }`}
-                              >
-                                {displayValue}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
 
               <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
                 <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
@@ -1458,51 +1423,9 @@ export function NomadicLanding() {
                 </Card>
               </div>
             </>
-          ) : (
-            <>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                    Inspiration
-                  </p>
-                  <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                    Curated escapes while you plan
-                  </h2>
-                  <p className="text-muted-foreground text-sm">
-                    Explore a few AI-picked ideas before you kick off the planner chat.
-                  </p>
-                </div>
-              </div>
-              <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  {MOCK_TRIPS.map((trip, idx) => (
-                    <TripCard key={trip.id} trip={trip} index={idx} />
-                  ))}
-                </div>
-                <Card className="border-border/70 bg-card/90 shadow-lg">
-                  <CardContent className="space-y-4 p-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                          Sample suggestions
-                        </p>
-                        <h3 className="text-foreground font-display text-xl font-bold">
-                          Travel options to spark ideas
-                        </h3>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      {MOCK_TRAVEL_OPTIONS.map((option, idx) => (
-                        <BookingOption key={option.id} option={option} index={idx} />
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            </>
-          )}
-        </div>
-      </section>
+          </div>
+        </section>
+      ) : null}
 
       <FeaturesSection />
       <Footer />
