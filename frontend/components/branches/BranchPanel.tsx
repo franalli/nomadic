@@ -1,16 +1,29 @@
 'use client';
 
-import { MapPin, Sparkles } from 'lucide-react';
+import { MapPin, Plane, Sparkles, TentTree, type LucideIcon } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 
+import {
+  resolveTabForTile,
+  TilesGrid,
+  type TileTabKey,
+} from '@/components/tiles/TilesGrid';
 import type { PlanBranch } from '@/types/plan';
+import type { Tile, TileSelection } from '@/types/tile';
 
 type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
 
-const TILE_BADGE_LABELS: Record<keyof TileCounts, string> = {
-  stays: 'Stays',
-  flights: 'Flights',
-  activities: 'Activities',
+const TILE_TAB_META: Record<TileTabKey, { label: string; icon: LucideIcon }> = {
+  stays: { label: 'Stays', icon: TentTree },
+  flights: { label: 'Flights', icon: Plane },
+  activities: { label: 'Activities', icon: Sparkles },
 };
+const TILE_BADGE_LABELS: Record<keyof TileCounts, string> = {
+  stays: TILE_TAB_META.stays.label,
+  flights: TILE_TAB_META.flights.label,
+  activities: TILE_TAB_META.activities.label,
+};
+const labelize = (key: TileTabKey) => TILE_BADGE_LABELS[key];
 
 type BranchDetails = {
   vibe: string;
@@ -135,6 +148,13 @@ type BranchPanelProps = {
   selectedBranchId: string | null;
   onBranchSelect: (branchId: string) => void;
   branchTileCounts?: Record<string, TileCounts>;
+  tiles?: Tile[];
+  tilesBranchId?: string | null;
+  tilesRequestId?: string | null;
+  selectedTiles?: TileSelection;
+  onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
+  onTilesTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
+  branchSelections?: Record<string, TileSelection>;
   onBookTrip?: (branchId: string) => void;
   canBookTrip?: boolean;
 };
@@ -144,105 +164,292 @@ export function BranchPanel({
   selectedBranchId,
   onBranchSelect,
   branchTileCounts,
+  tiles,
+  tilesBranchId,
+  tilesRequestId,
+  selectedTiles,
+  onTileToggle,
+  onTilesTabChange,
+  branchSelections,
   onBookTrip,
   canBookTrip = true,
 }: BranchPanelProps) {
-  if (!branches.length) {
+  const hasBranches = branches.length > 0;
+  const selected = hasBranches
+    ? (branches.find((b) => b.id === selectedBranchId) ?? branches[0])
+    : null;
+  const selectedIndex = hasBranches
+    ? Math.max(
+        0,
+        branches.findIndex((branch) => branch.id === selected?.id)
+      )
+    : 0;
+  const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
+  const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
+  const priceHintFromBudget = (budget: string) => {
+    if (/^\$\s*\$\$?/.test(budget)) return '$2,000+';
+    if (/^\$\$\$/.test(budget)) return '$3,000+';
+    if (/^\$\$/.test(budget)) return '$2,400+';
+    return '$1,500+';
+  };
+  const branchTiles = useMemo(() => {
+    if (!selected) return [];
+    if (tilesBranchId == null || tilesBranchId === selected.id) {
+      return tiles ?? [];
+    }
+    return [];
+  }, [selected, tiles, tilesBranchId]);
+  const isStaleTiles =
+    selected != null && tilesBranchId != null && tilesBranchId !== selected.id;
+  const hasTilesForSelected = branchTiles.length > 0;
+  const [openTab, setOpenTab] = useState<TileTabKey | null>('stays');
+  const selectedBranchSelection = selected
+    ? (branchSelections?.[selected.id] ?? { activities: [] })
+    : { activities: [] };
+  const hasLockedSelection =
+    Boolean(selectedBranchSelection.stay) ||
+    Boolean(selectedBranchSelection.flight) ||
+    (selectedBranchSelection.activities?.length ?? 0) > 0;
+
+  useEffect(() => {
+    if (selected?.id) {
+      setOpenTab('stays');
+    }
+  }, [selected?.id]);
+
+  const tilesByTab = useMemo(() => {
+    return branchTiles.reduce(
+      (acc, tile) => {
+        const tab = resolveTabForTile(tile);
+        acc[tab].push(tile);
+        return acc;
+      },
+      { stays: [], flights: [], activities: [] } as Record<TileTabKey, Tile[]>
+    );
+  }, [branchTiles]);
+
+  const bookingSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (selectedTiles?.stay) parts.push(`Stay locked: ${selectedTiles.stay.title}`);
+    if (selectedTiles?.flight) parts.push(`Flight locked: ${selectedTiles.flight.title}`);
+    if (selectedTiles?.activities?.length) {
+      const first = selectedTiles.activities[0];
+      const extras = selectedTiles.activities.length - 1;
+      parts.push(`Activities: ${first.title}${extras > 0 ? ` +${extras} more` : ''}`);
+    }
+    if (!parts.length && countsForSelected) {
+      const badges = [
+        countsForSelected.stays ? `${countsForSelected.stays} stays` : null,
+        countsForSelected.flights ? `${countsForSelected.flights} flights` : null,
+        countsForSelected.activities
+          ? `${countsForSelected.activities} activities`
+          : null,
+      ].filter(Boolean);
+      if (badges.length) {
+        return `Coverage so far: ${badges.join(' · ')}.`;
+      }
+    }
+    return parts.join(' · ') || 'No picks locked yet. Expand a category to choose.';
+  }, [countsForSelected, selectedTiles]);
+
+  if (!hasBranches) {
     return (
-      <div className="rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-4 text-sm text-muted-foreground shadow-inner">
+      <div className="border-primary/30 bg-primary/5 text-muted-foreground rounded-2xl border border-dashed p-4 text-sm shadow-inner">
         Trip ideas will appear here after you plan a trip.
       </div>
     );
   }
 
-  const selected = branches.find((b) => b.id === selectedBranchId) ?? branches[0];
-  const selectedIndex = Math.max(
-    0,
-    branches.findIndex((branch) => branch.id === selected.id)
-  );
-  const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
-  const countsForSelected = branchTileCounts?.[selected.id];
-  const hasTileCounts =
-    countsForSelected && Object.values(countsForSelected).some((value) => value > 0);
-
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {branches.map((b, idx) => {
-          const isActive = b.id === selected.id;
-          return (
-            <button
-              key={b.id}
-              type="button"
-              onClick={() => onBranchSelect(b.id)}
-              className={
-                'rounded-full border px-3 py-2 text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ' +
-                (isActive
-                  ? 'border-primary/70 bg-primary text-primary-foreground shadow-lg shadow-primary/25'
-                  : 'border-border/40 bg-white/5 text-muted-foreground hover:border-primary/40 hover:text-foreground')
-              }
-            >
-              <span className="mr-1 opacity-70">Suggestion {idx + 1} ·</span> {b.label}
-            </button>
-          );
-        })}
+      <div className="space-y-2">
+        <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+          Trip options
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {branches.map((b, idx) => {
+            const isActive = b.id === selected.id;
+            const preset = DETAIL_PRESETS[idx % DETAIL_PRESETS.length];
+            const selection = branchSelections?.[b.id] ?? { activities: [] };
+            const statusReady =
+              Boolean(selection.stay) ||
+              Boolean(selection.flight) ||
+              (selection.activities?.length ?? 0) > 0;
+            const badgeLabel = statusReady ? 'Ready' : 'Customizing';
+            const badgeColor = statusReady ? 'bg-green-500' : 'bg-orange-500';
+            const badgeTextColor = 'text-white';
+            const priceHint = priceHintFromBudget(preset.budget);
+            const durationShort = preset.duration;
+            return (
+              <button
+                key={b.id}
+                type="button"
+                onClick={() => onBranchSelect(b.id)}
+                className={`focus-visible:outline-primary relative overflow-hidden rounded-2xl border text-left shadow-lg transition hover:translate-y-[-2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+                  isActive
+                    ? 'ring-accent border-accent shadow-accent/20 ring-2'
+                    : 'border-border/40'
+                }`}
+              >
+                <div
+                  className="h-full w-full"
+                  style={{
+                    backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.55) 100%), url(${preset.heroImages[0]})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                  }}
+                >
+                  <div className="flex h-full flex-col justify-between gap-3 p-4">
+                    <div className="flex items-start justify-between">
+                      <span
+                        className={`${badgeColor} ${badgeTextColor} inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
+                      >
+                        {badgeLabel}
+                      </span>
+                      <span className="rounded-full bg-black/30 px-2 py-1 text-[11px] font-semibold text-white">
+                        Suggestion {idx + 1}
+                      </span>
+                    </div>
+                    <div className="space-y-2 text-white">
+                      <p className="text-lg font-bold leading-tight">{b.destination}</p>
+                      <p className="line-clamp-2 text-sm opacity-90">
+                        {b.description ||
+                          preset.highlights[0].replace('{destination}', b.destination)}
+                      </p>
+                      <div className="mt-2 flex items-center justify-between text-sm font-semibold">
+                        <span>{durationShort}</span>
+                        <span>{priceHint}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 via-card/80 to-background shadow-lg backdrop-blur">
-        <div className="pointer-events-none absolute -right-24 -top-12 h-48 w-48 rounded-full bg-primary/20 blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-0 h-36 w-36 rounded-full bg-accent/15 blur-2xl" />
+      <div className="via-card/80 to-background relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 shadow-lg backdrop-blur">
+        <div className="bg-primary/20 pointer-events-none absolute -right-24 -top-12 h-48 w-48 rounded-full blur-3xl" />
+        <div className="bg-accent/15 pointer-events-none absolute bottom-0 left-0 h-36 w-36 rounded-full blur-2xl" />
         <div className="relative space-y-5 p-4 sm:p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+              <p className="text-primary text-xs font-semibold uppercase tracking-wide">
                 Selected suggestion
               </p>
-              <h4 className="text-foreground font-display text-2xl font-bold">
-                {selected.destination}
-              </h4>
+              <div className="flex items-center gap-2">
+                <MapPin className="text-primary h-5 w-5" aria-hidden="true" />
+                <h4 className="text-foreground font-display text-2xl font-bold">
+                  {selected.destination}
+                </h4>
+              </div>
               {selected.description && (
                 <p className="text-muted-foreground text-sm leading-relaxed">
                   {selected.description}
                 </p>
               )}
-              {hasTileCounts && countsForSelected && (
-                <div className="flex flex-wrap gap-2 pt-1 text-[11px] font-semibold uppercase tracking-wide text-foreground">
-                  {(Object.keys(TILE_BADGE_LABELS) as Array<keyof TileCounts>).map((key) => (
-                    <span
-                      key={key}
-                      className="inline-flex items-center gap-1 rounded-full bg-black/15 px-3 py-1 text-white shadow-sm backdrop-blur"
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-                      {TILE_BADGE_LABELS[key]}
-                      <span className="rounded bg-white/10 px-2 py-0.5 text-[10px]">
-                        {countsForSelected[key] ?? 0}
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-black/20 px-3 py-1 text-xs font-semibold text-white shadow-sm backdrop-blur">
-              <Sparkles className="h-4 w-4 text-accent" />
-              {selected.label}
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1 rounded-full bg-black/10 px-3 py-1 font-medium text-foreground/80">
+          <div className="flex flex-wrap items-center gap-4 pb-1">
+            {(Object.keys(TILE_TAB_META) as TileTabKey[]).map((tabKey) => {
+              const isOpen = openTab === tabKey;
+              const count = countsForSelected?.[tabKey] ?? 0;
+              const Icon = TILE_TAB_META[tabKey].icon;
+              return (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => setOpenTab((prev) => (prev === tabKey ? null : tabKey))}
+                  className={`focus-visible:outline-primary group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+                    isOpen
+                      ? 'border-primary text-primary'
+                      : 'text-muted-foreground hover:text-foreground border-transparent'
+                  }`}
+                  aria-pressed={isOpen}
+                >
+                  <span
+                    className={`flex h-8 w-8 items-center justify-center rounded-full border transition ${
+                      isOpen
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-border/70 text-muted-foreground bg-white'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span>{labelize(tabKey)}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      isOpen
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            className={`rounded-2xl ${
+              openTab === null
+                ? 'border-none bg-transparent p-0 shadow-none'
+                : 'to-background border border-white/10 bg-gradient-to-br from-black/30 via-white/5 p-4 shadow-inner'
+            }`}
+          >
+            {openTab === null ? null : isStaleTiles && !hasTilesForSelected ? (
+              <div className="border-primary/30 bg-primary/5 text-muted-foreground rounded-xl border border-dashed p-4 text-sm shadow-inner">
+                Switch to this suggestion to refresh matching options.
+              </div>
+            ) : tilesByTab[openTab]?.length ? (
+              <TilesGrid
+                tiles={branchTiles}
+                activeBranch={selected}
+                tilesRequestId={tilesRequestId}
+                onTabChange={onTilesTabChange}
+                selectedTiles={selectedTiles}
+                onTileToggle={(tile) => onTileToggle?.(tile, openTab)}
+                forcedTab={openTab}
+                hideTabSwitcher
+              />
+            ) : (
+              <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
+                No {TILE_BADGE_LABELS[openTab].toLowerCase()} yet for this suggestion.
+                Check back after options refresh.
+              </div>
+            )}
+          </div>
+
+          <div className="text-muted-foreground flex flex-wrap gap-2 text-xs">
+            <span className="text-foreground/80 inline-flex items-center gap-1 rounded-full bg-black/10 px-3 py-1 font-medium">
               <MapPin className="h-3 w-3" />
               {selected.destination}
             </span>
-            <span className="rounded-full bg-white/5 px-3 py-1 font-medium text-foreground/80">
+            <span className="text-foreground/80 rounded-full bg-white/5 px-3 py-1 font-medium">
               Suggestion {selectedIndex + 1} of {branches.length}
             </span>
-            <span className="rounded-full bg-white/5 px-3 py-1 font-medium text-foreground/80">
+            <span className="text-foreground/80 rounded-full bg-white/5 px-3 py-1 font-medium">
               {detailPreset.vibe}
             </span>
           </div>
 
           <div className="space-y-5">
-            <div className="space-y-3">
+            <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
+              <div className="flex items-center justify-between">
+                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                  Booking summary
+                </p>
+                <span className="text-foreground/80 rounded-full bg-black/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
+                  Live
+                </span>
+              </div>
+              <p className="text-foreground mt-2 text-sm">{bookingSummary}</p>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
               <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
                 <div className="relative aspect-video">
                   <img
@@ -331,10 +538,10 @@ export function BranchPanel({
                     Curated
                   </span>
                 </div>
-                <ul className="mt-2 space-y-2 text-sm text-foreground">
+                <ul className="text-foreground mt-2 space-y-2 text-sm">
                   {detailPreset.highlights.map((item) => (
                     <li key={item} className="flex gap-2">
-                      <span className="mt-1 h-1.5 w-1.5 rounded-full bg-accent" />
+                      <span className="bg-accent mt-1 h-1.5 w-1.5 rounded-full" />
                       <span>{item.replace('{destination}', selected.destination)}</span>
                     </li>
                   ))}
@@ -349,16 +556,16 @@ export function BranchPanel({
                     Day-by-day
                   </span>
                 </div>
-                <ul className="mt-2 space-y-2 text-sm text-foreground">
+                <ul className="text-foreground mt-2 space-y-2 text-sm">
                   {detailPreset.flow.map((item, idx) => (
                     <li
                       key={item}
                       className="rounded-lg border border-white/10 bg-black/10 px-3 py-2"
                     >
-                      <span className="text-xs font-semibold uppercase tracking-wide text-primary">
+                      <span className="text-primary text-xs font-semibold uppercase tracking-wide">
                         Day {idx + 1}
                       </span>
-                      <p className="text-sm text-foreground">{item}</p>
+                      <p className="text-foreground text-sm">{item}</p>
                     </li>
                   ))}
                 </ul>
@@ -370,11 +577,11 @@ export function BranchPanel({
                 <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
                   On-the-ground notes
                 </p>
-                <span className="rounded-full bg-black/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-foreground/80">
+                <span className="text-foreground/80 rounded-full bg-black/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
                   Arrival tips
                 </span>
               </div>
-              <div className="mt-2 space-y-2 text-sm text-foreground">
+              <div className="text-foreground mt-2 space-y-2 text-sm">
                 {detailPreset.notes.map((note) => (
                   <div
                     key={note}
@@ -394,10 +601,12 @@ export function BranchPanel({
           type="button"
           onClick={() => canBookTrip && onBookTrip?.(selected.id)}
           disabled={!canBookTrip}
-          className={`rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
-            canBookTrip
-              ? 'bg-primary text-primary-foreground shadow-lg shadow-primary/40 hover:bg-primary/90'
-              : 'cursor-not-allowed bg-muted text-muted-foreground shadow-inner'
+          className={`focus-visible:outline-primary rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+            !canBookTrip
+              ? 'bg-muted text-muted-foreground cursor-not-allowed shadow-inner'
+              : hasLockedSelection
+                ? 'bg-orange-500 text-white shadow-lg shadow-orange-400/50 hover:bg-orange-600'
+                : 'bg-primary text-primary-foreground shadow-primary/40 hover:bg-primary/90 shadow-lg'
           }`}
         >
           Book Your Trip

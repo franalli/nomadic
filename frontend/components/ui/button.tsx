@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 
-type ButtonVariant = 'primary' | 'outline' | 'ghost';
+type ButtonVariant = 'primary' | 'outline' | 'ghost' | 'secondary';
 type ButtonSize = 'default' | 'sm' | 'lg' | 'icon';
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -16,6 +16,8 @@ const variantClasses: Record<ButtonVariant, string> = {
   outline:
     'border border-border bg-card text-foreground hover:bg-muted/60 focus:ring-ring shadow-sm',
   ghost: 'text-foreground hover:bg-muted/70 focus:ring-ring border border-transparent',
+  secondary:
+    'bg-secondary text-secondary-foreground border border-secondary/70 hover:bg-secondary/90 focus:ring-secondary',
 };
 
 const sizeClasses: Record<ButtonSize, string> = {

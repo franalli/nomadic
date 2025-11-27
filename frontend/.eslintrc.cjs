@@ -1,4 +1,6 @@
 /** @type {import("eslint").Linter.Config} */
+const path = require('path');
+
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -12,63 +14,41 @@ module.exports = {
     node: true,
     es2021: true,
   },
-  settings: {
-    react: {
-      version: 'detect',
-    },
-    'import/resolver': {
-      node: {
-        extensions: ['.js', '.jsx', '.ts', '.tsx'],
-      },
-      typescript: {},
-    },
-  },
-  plugins: ['@typescript-eslint', 'react', 'import', 'tailwindcss', 'simple-import-sort'],
   extends: [
-    'next/core-web-vitals',
     'eslint:recommended',
     'plugin:@typescript-eslint/recommended',
-    'plugin:react/recommended',
     'plugin:import/recommended',
     'plugin:import/typescript',
+    'plugin:react-hooks/recommended',
     'plugin:tailwindcss/recommended',
     'prettier',
   ],
+  plugins: ['simple-import-sort', 'react-hooks'],
   rules: {
-    // General
     'no-console': ['warn', { allow: ['warn', 'error'] }],
     'no-debugger': 'warn',
-
-    // TypeScript
-    '@typescript-eslint/no-unused-vars': [
-      'warn',
-      { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
-    ],
-
-    // React
-    'react/react-in-jsx-scope': 'off', // Next.js handles this
-    'react/prop-types': 'off',
-
-    // Import sorting (simple-import-sort)
     'import/order': 'off',
     'sort-imports': 'off',
     'simple-import-sort/imports': 'error',
     'simple-import-sort/exports': 'error',
-
-    // Tailwind: let plugin validate class names; don't be too strict
-    'tailwindcss/classnames-order': 'off', // Prettier plugin will handle order
-    'tailwindcss/no-custom-classname': 'off', // avoid fighting BEM/custom names
-
-    // Next specific
-    '@next/next/no-img-element': 'off', // you’re using <img>; can flip later
+    'tailwindcss/classnames-order': 'off',
+    'tailwindcss/no-custom-classname': 'off',
+    'tailwindcss/enforces-shorthand': 'off',
+    'react-hooks/set-state-in-effect': 'off',
+    '@next/next/no-img-element': 'off',
   },
-  ignorePatterns: [
-    'node_modules/',
-    '.next/',
-    'out/',
-    'dist/',
-    'coverage/',
-    '*.config.cjs',
-    '*.config.mjs',
-  ],
+  settings: {
+    'import/resolver': {
+      node: {
+        extensions: ['.js', '.jsx', '.ts', '.tsx'],
+        paths: ['.'],
+      },
+      typescript: {
+        // Ensure the resolver picks up our baseUrl/path aliases from the
+        // project tsconfig when the workspace root isn't the Next app folder.
+        project: [path.join(__dirname, 'tsconfig.json')],
+      },
+    },
+  },
+  ignorePatterns: ['node_modules/', '.next/', 'out/', 'dist/', 'coverage/'],
 };

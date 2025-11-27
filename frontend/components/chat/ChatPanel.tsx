@@ -1,9 +1,8 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-
 import { ChevronDown, Compass } from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
@@ -146,10 +145,7 @@ export function ChatPanel(props: ChatPanelProps) {
   useEffect(() => {
     if (!sessionId || typeof window === 'undefined') return;
     try {
-      window.localStorage.setItem(
-        getChatStorageKey(sessionId),
-        JSON.stringify(messages)
-      );
+      window.localStorage.setItem(getChatStorageKey(sessionId), JSON.stringify(messages));
     } catch (error) {
       console.error('Failed to persist chat history', error);
     }
@@ -374,9 +370,13 @@ export function ChatPanel(props: ChatPanelProps) {
           }
         };
 
-        while (true) {
+        let reading = true;
+        while (reading) {
           const { value, done } = await reader.read();
-          if (done) break;
+          if (done) {
+            reading = false;
+            break;
+          }
           buffer += decoder.decode(value, { stream: true });
           let newlineIndex = buffer.indexOf('\n');
           while (newlineIndex >= 0) {

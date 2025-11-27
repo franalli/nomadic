@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ElementType } from 'react';
-
-import { MapPin, Plane, Sparkles, TentTree } from 'lucide-react';
+import { Plane, Sparkles, TentTree } from 'lucide-react';
+import { type ElementType, useEffect, useMemo, useState } from 'react';
 
 import { TileCard } from '@/components/tiles/TileCard';
 import type { PlanBranch } from '@/types/plan';
@@ -31,7 +30,7 @@ const TAB_CONFIG: Record<
   },
 };
 
-const resolveTabForTile = (tile: Tile): TileTabKey => {
+export const resolveTabForTile = (tile: Tile): TileTabKey => {
   const type = (tile.type || '').toLowerCase();
   if (['flight', 'air', 'fare', 'plane'].some((needle) => type.includes(needle))) {
     return 'flights';
@@ -53,6 +52,8 @@ type TilesGridProps = {
   onTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
   selectedTiles?: TileSelection;
   onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
+  forcedTab?: TileTabKey;
+  hideTabSwitcher?: boolean;
 };
 
 export function TilesGrid({
@@ -62,8 +63,11 @@ export function TilesGrid({
   onTabChange,
   selectedTiles,
   onTileToggle,
+  forcedTab,
+  hideTabSwitcher = false,
 }: TilesGridProps) {
-  const [activeTab, setActiveTab] = useState<TileTabKey>('stays');
+  const [activeTab, setActiveTab] = useState<TileTabKey>(forcedTab ?? 'stays');
+  const effectiveTab = forcedTab ?? activeTab;
 
   const tabCounts = useMemo(() => {
     return tiles.reduce(
@@ -77,74 +81,88 @@ export function TilesGrid({
   }, [tiles]);
 
   const filteredTiles = useMemo(() => {
-    return tiles.filter((tile) => resolveTabForTile(tile) === activeTab);
-  }, [activeTab, tiles]);
+    return tiles.filter((tile) => resolveTabForTile(tile) === effectiveTab);
+  }, [effectiveTab, tiles]);
 
   useEffect(() => {
-    onTabChange?.(activeTab, filteredTiles);
-  }, [activeTab, filteredTiles, onTabChange]);
+    onTabChange?.(effectiveTab, filteredTiles);
+  }, [effectiveTab, filteredTiles, onTabChange]);
+
+  const priceSummary = useMemo(() => {
+    const priceValues = tiles
+      .map((tile) => tile.price_estimate)
+      .filter((value): value is number => typeof value === 'number');
+    const currency = tiles.find((tile) => tile.currency)?.currency ?? '';
+    if (!priceValues.length) return null;
+    const min = Math.min(...priceValues);
+    const max = Math.max(...priceValues);
+    const formattedMin = Math.round(min).toLocaleString();
+    const formattedMax = Math.round(max).toLocaleString();
+    if (min === max) return `${formattedMin} ${currency}`.trim();
+    return `${formattedMin} - ${formattedMax} ${currency}`.trim();
+  }, [tiles]);
 
   return (
     <div className="flex flex-col gap-4">
-      {activeBranch && (
-        <div className="relative overflow-hidden rounded-xl border border-primary/30 bg-gradient-to-r from-primary/10 via-card/80 to-background p-4 text-xs shadow-md backdrop-blur">
-          <div className="pointer-events-none absolute -right-14 -top-12 h-28 w-28 rounded-full bg-primary/20 blur-3xl" />
-          <div className="relative flex flex-wrap items-center gap-3 text-foreground">
-            <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-primary">
-              <Sparkles className="h-3 w-3" />
-              Live tiles
-            </span>
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <MapPin className="h-4 w-4 text-primary" />
-              {activeBranch.label} — {activeBranch.destination}
+      {!hideTabSwitcher && (
+        <div className="space-y-2">
+          {priceSummary && (
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 font-semibold text-primary">
+                {priceSummary}
+              </div>
             </div>
-            <span className="text-muted-foreground text-xs">
-              Curated from your chat conversation.
-            </span>
+          )}
+          <div className="flex flex-wrap items-center gap-4 pb-1">
+            {(Object.keys(TAB_CONFIG) as TileTabKey[]).map((tab) => {
+              const Icon = TAB_CONFIG[tab].icon;
+              const isActive = tab === effectiveTab;
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => {
+                    if (forcedTab) return;
+                    setActiveTab(tab);
+                  }}
+                  className={`group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+                    isActive
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                  } ${forcedTab ? 'cursor-default opacity-60' : ''}`}
+                  aria-disabled={Boolean(forcedTab)}
+                  aria-pressed={isActive}
+                >
+                  <span
+                    className={`flex h-8 w-8 items-center justify-center rounded-full border transition ${
+                      isActive
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-border/70 bg-white text-muted-foreground'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span>{TAB_CONFIG[tab].label}</span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      isActive
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {tabCounts[tab]}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-muted/30 p-2">
-        <div className="flex flex-wrap items-center gap-2">
-          {(Object.keys(TAB_CONFIG) as TileTabKey[]).map((tab) => {
-            const Icon = TAB_CONFIG[tab].icon;
-            const isActive = tab === activeTab;
-            return (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setActiveTab(tab)}
-                className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
-                  isActive
-                    ? 'bg-card shadow-sm shadow-primary/10 text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {TAB_CONFIG[tab].label}
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                    isActive
-                      ? 'bg-primary/10 text-primary'
-                      : 'bg-border/60 text-muted-foreground'
-                  }`}
-                >
-                  {tabCounts[tab]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
-          Tabs sync with the branch summary
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filteredTiles.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 p-4 text-sm text-muted-foreground shadow-inner md:col-span-2">
-            {TAB_CONFIG[activeTab].emptyMessage}
+          <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 p-4 text-sm text-muted-foreground shadow-inner sm:col-span-2 xl:col-span-3">
+            {TAB_CONFIG[effectiveTab].emptyMessage}
           </div>
         ) : (
           filteredTiles.map((tile) => (
@@ -154,14 +172,14 @@ export function TilesGrid({
               branchId={activeBranch?.id}
               requestId={tilesRequestId ?? undefined}
               isSelected={
-                activeTab === 'stays'
+                effectiveTab === 'stays'
                   ? selectedTiles?.stay?.id === tile.id
-                  : activeTab === 'flights'
+                  : effectiveTab === 'flights'
                     ? selectedTiles?.flight?.id === tile.id
                     : selectedTiles?.activities.some((activity) => activity.id === tile.id) ??
                       false
               }
-              onToggleSelect={() => onTileToggle?.(tile, activeTab)}
+              onToggleSelect={() => onTileToggle?.(tile, effectiveTab)}
             />
           ))
         )}

@@ -1,28 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import {
-  CalendarRange,
-  Compass,
-  MapPin,
-  Menu,
-  Sparkles,
-  User,
-  Users,
-} from 'lucide-react';
+import { CalendarRange, Compass, MapPin, Menu, User, Users } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
-import { TilesGrid, type TileTabKey } from '@/components/tiles/TilesGrid';
+import type { TileTabKey } from '@/components/tiles/TilesGrid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { API_BASE } from '@/lib/api';
-import { saveTripSummary } from '@/lib/summary';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
+import { saveTripSummary } from '@/lib/summary';
 import type {
   PlanResponse,
   SessionSnapshot,
@@ -30,8 +22,8 @@ import type {
   TilesSearchResponse,
 } from '@/types/api';
 import type { PlanBranch, TripInputs } from '@/types/plan';
-import type { Tile, TileSelection } from '@/types/tile';
 import type { TripSummaryPayload } from '@/types/summary';
+import type { Tile, TileSelection } from '@/types/tile';
 
 type BranchSelectionOverrides = {
   branch?: PlanBranch;
@@ -342,8 +334,6 @@ export function NomadicLanding() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
   const [isResettingSession, setIsResettingSession] = useState(false);
-  const [branchesExpanded, setBranchesExpanded] = useState(false);
-  const [tilesExpanded, setTilesExpanded] = useState(false);
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [chatKey, setChatKey] = useState(0);
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
@@ -419,6 +409,10 @@ export function NomadicLanding() {
       if (branchChanged) {
         setTiles([]);
         setTilesRequestId(null);
+        setBranchSelections((prev) => {
+          if (prev[branchId]) return prev;
+          return { ...prev, [branchId]: { activities: [] } };
+        });
       }
       const branch = overrides?.branch ?? branches.find((b) => b.id === branchId);
       if (!branch) return;
@@ -480,7 +474,6 @@ export function NomadicLanding() {
         setTiles(data.tiles);
         setTilesBranchId(branchId);
         setTilesRequestId(data.tiles_request_id ?? data.request_id ?? null);
-        setTilesExpanded(true);
       } catch (error) {
         if ((error as DOMException).name === 'AbortError') return;
         console.error('Failed to fetch tiles for branch', error);
@@ -535,7 +528,6 @@ export function NomadicLanding() {
         }));
 
         setBranches(hydratedBranches);
-        setBranchesExpanded(true);
 
         const fallbackBranchId =
           data.primary_branch_id != null
@@ -551,10 +543,6 @@ export function NomadicLanding() {
         setTiles(snapshotTiles);
         setTilesBranchId(fallbackBranchId);
         setTilesRequestId(null);
-
-        if (snapshotTiles.length > 0) {
-          setTilesExpanded(true);
-        }
 
         const shouldFetchTiles = snapshotTiles.length === 0 && Boolean(fallbackBranch);
         if (shouldFetchTiles && fallbackBranch) {
@@ -611,8 +599,6 @@ export function NomadicLanding() {
     setBranchSelections({});
     applyIncomingTripInputs(DEFAULT_TRIP_INPUTS, null);
     setLastRegeneratedTripInputs(toTripInputSignature(DEFAULT_TRIP_INPUTS));
-    setBranchesExpanded(false);
-    setTilesExpanded(false);
     setHasTriggeredChat(false);
     setChatKey((prev) => prev + 1);
   }, [abortTilesFetch, applyIncomingTripInputs]);
@@ -748,13 +734,10 @@ export function NomadicLanding() {
         });
         return next;
       });
-      setBranchSelections((prev) => {
-        const allowedIds = new Set(result.branches.map((b) => b.id));
+      setBranchSelections(() => {
         const next: Record<string, TileSelection> = {};
-        allowedIds.forEach((id) => {
-          if (prev[id]) {
-            next[id] = prev[id];
-          }
+        result.branches.forEach((branch) => {
+          next[branch.id] = { activities: [] };
         });
         return next;
       });
@@ -766,13 +749,6 @@ export function NomadicLanding() {
       setLastRegeneratedTripInputs(toTripInputSignature(resolvedTripInputs));
       setSelectedBranchId(result.primaryBranchId);
       setHasTriggeredChat(true);
-
-      if (result.branches.length > 0) {
-        setBranchesExpanded(true);
-      }
-      if (result.tiles.length > 0) {
-        setTilesExpanded(true);
-      }
     },
     [applyIncomingTripInputs]
   );
@@ -903,7 +879,7 @@ export function NomadicLanding() {
   );
 
   const handleTileSelection = useCallback(
-    (tile: Tile, _tab?: TileTabKey) => {
+    (tile: Tile) => {
       const branchId = tilesBranchId ?? selectedBranchId;
       if (!branchId) return;
 
@@ -1317,112 +1293,64 @@ export function NomadicLanding() {
 
       {showResults ? (
         <section className="bg-background pb-14 pt-10">
-          <div className="mx-auto flex max-w-6xl flex-col gap-8 px-4">
-            <>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                    Let's dive right into it
+          <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                  Let's dive right into it
+                </p>
+                <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
+                  Branches stretched wide with tiles nested inside
+                </h2>
+              </div>
+              {branches.length > 0 ? (
+                <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                  {branches.length} suggestion{branches.length === 1 ? '' : 's'} ready
+                </div>
+              ) : null}
+            </div>
+
+            <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
+              <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
+              <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
+              <div className="relative flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+                <div className="space-y-1">
+                  <h3 className="text-foreground font-display text-xl font-bold">
+                    Explore each suggestion and its booking options in one sweep
+                  </h3>
+                  <p className="text-muted-foreground text-sm">
+                    Branch cards now stretch across the page and carry tiles with them.
                   </p>
-                  <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                    Your Destinations and Best Booking Options
-                  </h2>
                 </div>
               </div>
-
-              <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-                <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
-                  <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
-                  <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
-                  <div className="relative flex items-center gap-3 px-5 py-4">
-                    <div className="space-y-1">
-                      <div className="bg-primary/15 text-primary inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
-                        <Sparkles className="h-4 w-4" />
-                        Suggestions for You
-                      </div>
-                      <h3 className="text-foreground font-display text-xl font-bold">
-                        Curated suggestions from the chat
-                      </h3>
-                      <p className="text-muted-foreground text-sm">
-                        Trip ideas show here after your first prompt.
-                      </p>
-                    </div>
-                  </div>
-                  <div
-                    className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-                      branchesExpanded && hasTriggeredChat
-                        ? 'grid-rows-[1fr]'
-                        : 'grid-rows-[0fr]'
-                    }`}
-                  >
-                    <CardContent className="overflow-hidden">
-                      {isHydratingSnapshot && branches.length === 0 ? (
-                        <p className="text-muted-foreground text-sm">
-                          Restoring your last session…
-                        </p>
-                      ) : branches.length === 0 ? (
-                        <p className="text-muted-foreground text-sm">
-                          Start chatting to generate suggestions for you.
-                        </p>
-                      ) : (
-                        <BranchPanel
-                          branches={branchesWithTileNotes}
-                          selectedBranchId={selectedBranchId}
-                          onBranchSelect={handleBranchSelect}
-                          branchTileCounts={branchTileCounts}
-                          onBookTrip={handleBookTrip}
-                          canBookTrip={missingFields.length === 0}
-                        />
-                      )}
-                    </CardContent>
-                  </div>
-                </Card>
-
-                <Card className="from-accent/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
-                  <div className="bg-accent/25 pointer-events-none absolute -left-16 -top-10 h-40 w-40 rounded-full blur-3xl" />
-                  <div className="bg-primary/15 pointer-events-none absolute bottom-0 right-0 h-36 w-36 rounded-full blur-3xl" />
-                  <div className="relative flex items-center gap-3 px-5 py-4">
-                    <div className="space-y-1">
-                      <div className="bg-accent/15 text-accent inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide">
-                        <Sparkles className="h-4 w-4" />
-                        Your Best Options
-                      </div>
-                      <h3 className="text-foreground font-display text-xl font-bold">
-                        Live options tailored to your suggestions
-                      </h3>
-                      <p className="text-muted-foreground text-sm">
-                        Live options refresh after you pick a suggestion.
-                      </p>
-                    </div>
-                  </div>
-                  <div
-                    className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-                      tilesExpanded && hasTriggeredChat
-                        ? 'grid-rows-[1fr]'
-                        : 'grid-rows-[0fr]'
-                    }`}
-                  >
-                    <CardContent className="overflow-hidden">
-                      {tiles.length === 0 ? (
-                        <p className="text-muted-foreground text-sm">
-                          Pick a suggestion to see your best options.
-                        </p>
-                      ) : (
-                        <TilesGrid
-                          key={selectedBranchId ?? 'tiles-default'}
-                          tiles={tiles}
-                          activeBranch={selectedBranch}
-                          tilesRequestId={tilesRequestId}
-                          onTabChange={handleTilesTabChange}
-                          selectedTiles={activeBranchSelection}
-                          onTileToggle={handleTileSelection}
-                        />
-                      )}
-                    </CardContent>
-                  </div>
-                </Card>
-              </div>
-            </>
+              <CardContent className="relative overflow-hidden">
+                {isHydratingSnapshot && branches.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">
+                    Restoring your last session…
+                  </p>
+                ) : branches.length === 0 ? (
+                  <p className="text-muted-foreground text-sm">
+                    Start chatting to generate suggestions for you.
+                  </p>
+                ) : (
+                  <BranchPanel
+                    branches={branchesWithTileNotes}
+                    selectedBranchId={selectedBranchId}
+                    onBranchSelect={handleBranchSelect}
+                    branchTileCounts={branchTileCounts}
+                    branchSelections={branchSelections}
+                    tiles={tiles}
+                    tilesBranchId={tilesBranchId}
+                    tilesRequestId={tilesRequestId}
+                    selectedTiles={activeBranchSelection}
+                    onTileToggle={handleTileSelection}
+                    onTilesTabChange={handleTilesTabChange}
+                    onBookTrip={handleBookTrip}
+                    canBookTrip={missingFields.length === 0}
+                  />
+                )}
+              </CardContent>
+            </Card>
           </div>
         </section>
       ) : null}
