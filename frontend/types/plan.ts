@@ -4,8 +4,9 @@ export type TripInputs = {
   start_date?: string | null;
   end_date?: string | null;
   traveler_count?: number | null;
-  budget?: string | null;
+  budget?: number | null;
   missing_fields?: string[];
+  unchanged_fields?: string[];
 };
 
 export type PlanBranch = {
@@ -17,5 +18,5 @@ export type PlanBranch = {
   start_date?: string | null;
   end_date?: string | null;
   traveler_count?: number | null;
-  budget?: string | null;
+  budget?: number | null;
 };

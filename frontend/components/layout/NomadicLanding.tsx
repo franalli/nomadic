@@ -87,16 +87,18 @@ const parseDisplayDate = (value: string): string | null => {
   return null;
 };
 
-const parseBudgetValue = (value?: string | null): string | null => {
-  if (!value) return null;
-  const numericText = value.replace(/[^\d.]/g, '');
+const parseBudgetValue = (value?: string | number | null): number | null => {
+  if (value === null || value === undefined) return null;
+  const asText = typeof value === 'number' ? value.toString() : value;
+  const numericText = asText.replace(/[^\d.]/g, '');
   if (!numericText) return null;
   const parsed = Number(numericText);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return Math.round(parsed).toString();
+  return Math.round(parsed);
 };
 
-const formatBudgetValue = (value?: string | null): string => {
+const formatBudgetValue = (value?: string | number | null): string => {
+  if (value === null || value === undefined) return '';
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return '';
   return `$${Math.round(parsed).toLocaleString()}`;
@@ -342,7 +344,10 @@ const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature =>
     inputs?.traveler_count != null
       ? Math.min(20, Math.max(1, Number(inputs.traveler_count)))
       : null,
-  budget: inputs?.budget?.trim() || null,
+  budget:
+    inputs?.budget != null
+      ? String(inputs.budget).trim() || null
+      : null,
 });
 
 const tripInputSignaturesEqual = (
@@ -828,9 +833,9 @@ export function NomadicLanding() {
         result.branches[0];
       const mergedTripInputs = result.tripInputs ? { ...result.tripInputs } : undefined;
       if (mergedTripInputs?.budget != null) {
-        mergedTripInputs.budget = String(mergedTripInputs.budget);
+        mergedTripInputs.budget = Number(mergedTripInputs.budget);
       }
-      if (primaryBranch && mergedTripInputs && !mergedTripInputs.budget) {
+      if (primaryBranch && mergedTripInputs && mergedTripInputs.budget == null) {
         mergedTripInputs.budget = primaryBranch.budget ?? null;
       }
       setTripContextId(result.tripContextId);

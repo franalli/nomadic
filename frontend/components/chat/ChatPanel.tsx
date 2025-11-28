@@ -12,6 +12,8 @@ import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile } from '@/types/tile';
 
 const CHAT_HISTORY_KEY = 'chat_history';
+const STREAM_CHUNK_SIZE = 6;
+const STREAM_DELAY_MS = 25;
 const DEFAULT_MESSAGES: ChatMessage[] = [
   {
     id: 'm0',
@@ -71,37 +73,6 @@ interface ChatPanelProps {
   /** When true, branches have been generated */
   hasBranches?: boolean;
 }
-
-type PlanStreamEvent =
-  | {
-      event: 'assistant_message';
-      message_id: string;
-      delta: string;
-      is_final?: boolean;
-      follow_up_question?: string | null;
-    }
-  | {
-      event: 'plan_update';
-      trip_context_id?: number | null;
-      branches: PlanBranch[];
-      primary_branch_id?: string | null;
-      assistant_message_id?: string | null;
-      trip_inputs?: TripInputs | null;
-    }
-  | {
-      event: 'tiles_update';
-      tiles: Tile[];
-      tiles_request_id?: string | null;
-      summary?: Record<string, unknown> | null;
-    }
-  | {
-      event: 'complete';
-      response: PlanResponse;
-    }
-  | {
-      event: 'error';
-      message: string;
-    };
 
 const summariseBranches = (branches: PlanBranch[]): string => {
   if (!branches.length) {
@@ -219,7 +190,7 @@ export function ChatPanel(props: ChatPanelProps) {
         body.trip_inputs = props.tripInputs;
       }
 
-      const res = await fetch(`${API_BASE}/v1/plan?stream=true`, {
+      const res = await fetch(`${API_BASE}/v1/plan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -230,269 +201,75 @@ export function ChatPanel(props: ChatPanelProps) {
         throw new Error(text || `Plan failed: ${res.status}`);
       }
 
-      const handlePlanResult = (data: PlanResponse) => {
+      const data: PlanResponse = await res.json();
+
+      const handlePlanResult = (payload: PlanResponse) => {
         props.onPlanResult({
-          tripContextId: data.trip_context_id ?? null,
-          branches: data.branches,
-          tiles: data.tiles,
+          tripContextId: payload.trip_context_id ?? null,
+          branches: payload.branches,
+          tiles: payload.tiles,
           primaryBranchId:
-            data.primary_branch_id ??
-            data.branches[0]?.id ??
+            payload.primary_branch_id ??
+            payload.branches[0]?.id ??
             props.selectedBranchId ??
             null,
-          tilesRequestId: data.tiles_request_id ?? null,
-          tripInputs: data.trip_inputs ?? null,
+          tilesRequestId: payload.tiles_request_id ?? null,
+          tripInputs: payload.trip_inputs ?? null,
         });
       };
 
-      const consumeStream = async () => {
-        const stream = res.body;
-        if (!stream || typeof stream.getReader !== 'function') {
-          const fallback: PlanResponse = await res.json();
-          handlePlanResult(fallback);
-          const assistantText =
-            fallback.assistant_message || summariseBranches(fallback.branches);
-          const msgId = fallback.assistant_message_id ?? `a_${Date.now()}`;
+      handlePlanResult(data);
 
-          // Split into sentences for separate bubbles
-          const sentences = assistantText
-            .split(/(?<=[.!?])\s+/)
-            .filter((s) => s.trim().length > 0);
-          if (fallback.follow_up_question) {
-            sentences.push(fallback.follow_up_question);
+      const assistantText = data.assistant_message || summariseBranches(data.branches);
+      const msgId = data.assistant_message_id ?? `a_${Date.now()}`;
+
+      const sentences = assistantText
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (data.follow_up_question && data.follow_up_question.trim().length > 0) {
+        sentences.push(data.follow_up_question.trim());
+      }
+
+      const streamTextIntoMessage = (messageId: string, text: string) =>
+        new Promise<void>((resolve) => {
+          if (!text.length) {
+            resolve();
+            return;
           }
-
-          const newMessages: ChatMessage[] = sentences.map((s, idx) => ({
-            id: `${msgId}_s${idx}`,
-            role: 'assistant' as const,
-            content: s,
-          }));
-          setMessages((prev) => [...prev, ...newMessages]);
-          return;
-        }
-
-        const reader = stream.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let sawComplete = false;
-        let activeAssistantId: string | null = null;
-        let latestPlan: Partial<PlanResponse> = {};
-        let sentenceIndex = 0;
-        let baseMessageId: string | null = null;
-
-        const emitPlanSnapshot = () => {
-          const snapshot: PlanResponse = {
-            branches: latestPlan.branches ?? [],
-            tiles: latestPlan.tiles ?? [],
-            trip_context_id: latestPlan.trip_context_id ?? null,
-            primary_branch_id: latestPlan.primary_branch_id ?? null,
-            tiles_request_id: latestPlan.tiles_request_id ?? null,
-            tiles_summary: latestPlan.tiles_summary ?? null,
-            assistant_message: latestPlan.assistant_message ?? null,
-            assistant_message_id: latestPlan.assistant_message_id ?? null,
-            follow_up_question: latestPlan.follow_up_question ?? null,
-            trip_inputs: latestPlan.trip_inputs ?? null,
-          };
-          handlePlanResult(snapshot);
-        };
-
-        const ensureAssistantMessage = (messageId: string) => {
-          if (!baseMessageId) {
-            baseMessageId = messageId;
-          }
-          const currentId = `${baseMessageId}_s${sentenceIndex}`;
-          if (activeAssistantId === currentId) return;
-          activeAssistantId = currentId;
-          setMessages((prev) => {
-            const exists = prev.some((msg) => msg.id === currentId);
-            if (exists) return prev;
-            return [...prev, { id: currentId, role: 'assistant', content: '' }];
-          });
-        };
-
-        const appendAssistantDelta = (
-          _messageId: string,
-          delta: string,
-          followUp?: string | null
-        ) => {
-          // We use activeAssistantId which includes sentence index
-          const currentId = activeAssistantId;
-          if (!currentId) return;
-
-          // Skip empty deltas
-          if (!delta) return;
-
-          setMessages((prev) => {
-            const updated = prev.map((msg) => {
-              if (msg.id !== currentId) return msg;
-              return { ...msg, content: `${msg.content || ''}${delta}` };
-            });
-            return updated;
-          });
-
-          // Check if we completed a sentence and need to start a new bubble
-          setMessages((prev) => {
-            const currentMsg = prev.find((msg) => msg.id === currentId);
-            if (!currentMsg) return prev;
-
-            const content = currentMsg.content;
-            // Match sentence ending followed by space (indicating more content coming)
-            const sentenceEndMatch = content.match(/^(.+?[.!?])\s+(.+)$/s);
-
-            if (sentenceEndMatch) {
-              const completedSentence = sentenceEndMatch[1].trim();
-              const remainder = sentenceEndMatch[2].trim();
-
-              // Only split if both parts are non-empty
-              if (completedSentence && remainder) {
-                sentenceIndex++;
-                const newId = `${baseMessageId}_s${sentenceIndex}`;
-                activeAssistantId = newId;
-
-                return [
-                  ...prev.map((msg) =>
-                    msg.id === currentId ? { ...msg, content: completedSentence } : msg
-                  ),
-                  { id: newId, role: 'assistant' as const, content: remainder },
-                ];
-              }
+          let idx = 0;
+          const interval = setInterval(() => {
+            const nextChunk = text.slice(idx, idx + STREAM_CHUNK_SIZE);
+            idx += STREAM_CHUNK_SIZE;
+            setMessages((prev) =>
+              prev.map((msg) =>
+                msg.id === messageId
+                  ? { ...msg, content: `${msg.content || ''}${nextChunk}` }
+                  : msg
+              )
+            );
+            if (idx >= text.length) {
+              clearInterval(interval);
+              resolve();
             }
-            return prev;
-          });
+          }, STREAM_DELAY_MS);
+        });
 
-          // Handle follow-up question by adding it as a new bubble
-          if (followUp && followUp.trim().length > 0) {
-            sentenceIndex++;
-            const followUpId = `${baseMessageId}_s${sentenceIndex}`;
-            setMessages((prev) => [
-              ...prev,
-              { id: followUpId, role: 'assistant' as const, content: followUp.trim() },
-            ]);
-          }
-        };
+      const streamAssistantSentences = async () => {
+        if (!sentences.length) return;
+        // Remove any existing bubbles for this message ID
+        setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(`${msgId}_s`)));
 
-        const applyCompleteSnapshot = (plan: PlanResponse) => {
-          handlePlanResult(plan);
-          // The streaming already handled creating sentence bubbles,
-          // but we need to ensure the final state is correct.
-          // Split the complete message into sentences and reconcile.
-          if (plan.assistant_message_id && plan.assistant_message) {
-            const msgId = plan.assistant_message_id;
-            // Split by sentence-ending punctuation followed by whitespace
-            // Filter out empty strings and whitespace-only strings
-            const sentences = plan.assistant_message
-              .split(/(?<=[.!?])\s+/)
-              .map((s) => s.trim())
-              .filter((s) => s.length > 0);
-
-            // Only add follow_up_question if it's not empty and not already included
-            if (
-              plan.follow_up_question &&
-              plan.follow_up_question.trim().length > 0 &&
-              !sentences.some((s) => s === plan.follow_up_question?.trim())
-            ) {
-              sentences.push(plan.follow_up_question.trim());
-            }
-
-            // Only update if we have valid sentences
-            if (sentences.length > 0) {
-              setMessages((prev) => {
-                // Remove any existing messages with this base ID (from streaming)
-                const filtered = prev.filter((msg) => !msg.id.startsWith(`${msgId}_s`));
-                // Add the final split sentences
-                const newMessages: ChatMessage[] = sentences.map((s, idx) => ({
-                  id: `${msgId}_s${idx}`,
-                  role: 'assistant' as const,
-                  content: s,
-                }));
-                return [...filtered, ...newMessages];
-              });
-            }
-          }
-        };
-
-        const handleEvent = (payload: PlanStreamEvent) => {
-          switch (payload.event) {
-            case 'assistant_message': {
-              const messageId =
-                payload.message_id || activeAssistantId || `a_${Date.now()}`;
-              ensureAssistantMessage(messageId);
-              appendAssistantDelta(
-                messageId,
-                payload.delta,
-                payload.is_final ? payload.follow_up_question : undefined
-              );
-              break;
-            }
-            case 'plan_update': {
-              latestPlan = {
-                ...latestPlan,
-                trip_context_id: payload.trip_context_id ?? latestPlan.trip_context_id,
-                branches: payload.branches ?? latestPlan.branches ?? [],
-                primary_branch_id:
-                  payload.primary_branch_id ?? latestPlan.primary_branch_id,
-                assistant_message_id:
-                  payload.assistant_message_id ?? latestPlan.assistant_message_id,
-                trip_inputs: payload.trip_inputs ?? latestPlan.trip_inputs ?? null,
-              };
-              if (payload.assistant_message_id) {
-                ensureAssistantMessage(payload.assistant_message_id);
-              }
-              emitPlanSnapshot();
-              break;
-            }
-            case 'tiles_update': {
-              latestPlan = {
-                ...latestPlan,
-                tiles: payload.tiles ?? latestPlan.tiles ?? [],
-                tiles_request_id: payload.tiles_request_id ?? latestPlan.tiles_request_id,
-                tiles_summary: payload.summary ?? latestPlan.tiles_summary,
-              };
-              emitPlanSnapshot();
-              break;
-            }
-            case 'complete':
-              sawComplete = true;
-              applyCompleteSnapshot(payload.response);
-              break;
-            case 'error':
-              throw new Error(payload.message);
-            default:
-              break;
-          }
-        };
-
-        let reading = true;
-        while (reading) {
-          const { value, done } = await reader.read();
-          if (done) {
-            reading = false;
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          let newlineIndex = buffer.indexOf('\n');
-          while (newlineIndex >= 0) {
-            const raw = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
-            if (raw) {
-              const parsed = JSON.parse(raw) as PlanStreamEvent;
-              handleEvent(parsed);
-            }
-            newlineIndex = buffer.indexOf('\n');
-          }
-        }
-
-        if (buffer.trim()) {
-          const parsed = JSON.parse(buffer.trim()) as PlanStreamEvent;
-          handleEvent(parsed);
-        }
-
-        if (!sawComplete) {
-          throw new Error('Plan stream ended before completion.');
+        for (let i = 0; i < sentences.length; i += 1) {
+          const bubbleId = `${msgId}_s${i}`;
+          const text = sentences[i];
+          setMessages((prev) => [...prev, { id: bubbleId, role: 'assistant', content: '' }]);
+          // eslint-disable-next-line no-await-in-loop
+          await streamTextIntoMessage(bubbleId, text);
         }
       };
 
-      await consumeStream();
+      await streamAssistantSentences();
     } catch (error) {
       console.error('Failed to plan trip', error);
       const assistantMessage: ChatMessage = {

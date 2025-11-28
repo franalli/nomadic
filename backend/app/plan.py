@@ -1,8 +1,9 @@
 import json
 import os
 import re
-from datetime import datetime
-from typing import Any, Generator, List, Optional, cast
+import time
+from datetime import datetime, timedelta
+from typing import Any, Iterable, List, Optional, Set, cast
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -46,10 +47,14 @@ class PlannerLLMOutput:
 
 
 _CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "20"))  # messages
-_STREAM_MIN_FLUSH_CHARS = int(os.getenv("PLAN_STREAM_MIN_CHARS", "5"))  # chars
 _MAX_TOKENS = int(os.getenv("OPENAI_PLAN_MAX_TOKENS", "800"))  # enough for JSON response
+_PLAN_TEMPERATURE = float(os.getenv("OPENAI_PLAN_TEMPERATURE", "0.75"))
+_PLAN_TOP_P = float(os.getenv("OPENAI_PLAN_TOP_P", "0.95"))
+_PLAN_MAX_RETRIES = int(os.getenv("OPENAI_PLAN_MAX_RETRIES", "3"))
+_PLAN_SEED = os.getenv("OPENAI_PLAN_SEED")
 
 _openai_client: Optional[OpenAI] = None
+_DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
 _TRIP_INPUT_FIELDS = (
     "destination",
@@ -60,180 +65,45 @@ _TRIP_INPUT_FIELDS = (
     "budget",
 )
 
-# Frontend default values - ignore these unless user explicitly changed them
-# Note: origin can be auto-detected from browser geolocation, so we don't have
-# a fixed default for it - we only ignore it if it matches the hardcoded fallback
-_FRONTEND_DEFAULTS = {
-    "origin": "Oslo",  # Only the fallback, not geo-detected values
-    "traveler_count": 1,
-}
-
 
 def _today_iso() -> str:
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
 def _next_week_iso() -> str:
-    from datetime import timedelta
-
     return (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
 
 
-def _extract_user_edited_inputs(frontend_inputs: dict) -> dict:
+def _extract_user_edited_inputs(frontend_inputs: dict) -> tuple[dict, Set[str]]:
     """
-    Filter frontend inputs to include user-edited values AND geo-detected origin.
+    Keep the frontend-provided values unless they are explicitly marked as unchanged.
 
-    We keep ALL values the frontend sends, EXCEPT for these exact defaults which
-    indicate the user hasn't touched them:
-    - origin="Amsterdam" (the hardcoded fallback - geo-detected values like "Oslo" are kept)
-
-    We DO keep dates and traveler_count even if they match defaults, because:
-    1. The user sees these values in the UI
-    2. We want to use them as starting points (just confirm, don't ask fresh)
+    Returns a tuple of (cleaned_inputs, unchanged_fields) so callers can treat unchanged
+    values as non-overrides while still accepting explicit user edits (including defaults).
     """
     if not frontend_inputs:
-        return {}
+        return {}, set()
 
-    result = {}
+    result: dict[str, Any] = {}
+
+    raw_unchanged = (
+        frontend_inputs.get("unchanged_fields") or frontend_inputs.get("_unchanged_fields") or []
+    )
+    unchanged_fields: Set[str] = set()
+    if isinstance(raw_unchanged, (list, tuple, set)):
+        unchanged_fields = {str(field).strip() for field in raw_unchanged if str(field).strip()}
 
     for field, value in frontend_inputs.items():
-        if field == "missing_fields":
+        if field in ("missing_fields", "unchanged_fields", "_unchanged_fields"):
+            continue
+        if field in unchanged_fields:
             continue
         if value is None:
             continue
 
-        # Only filter out the hardcoded fallback origin "Amsterdam"
-        # Keep everything else including default dates and traveler_count
-        if field == "origin" and value == _FRONTEND_DEFAULTS.get("origin"):
-            continue
-
         result[field] = value
 
-    return result
-
-
-class _AssistantMessageParser:
-    """Incrementally pull the assistant_message string out of a streaming JSON body."""
-
-    def __init__(self) -> None:
-        self._key = '"assistant_message"'
-        self._key_idx = 0
-        self._waiting_colon = False
-        self._waiting_quote = False
-        self._capturing = False
-        self._escape = False
-        self._unicode_buffer: List[str] | None = None
-        self._complete = False
-        self._parts: List[str] = []
-
-    @property
-    def text(self) -> str:
-        return "".join(self._parts)
-
-    @property
-    def complete(self) -> bool:
-        return self._complete
-
-    def _reset_search(self) -> None:
-        self._key_idx = 0
-        self._waiting_colon = False
-        self._waiting_quote = False
-        self._capturing = False
-        self._escape = False
-        self._unicode_buffer = None
-
-    def _decode_escape(self, char: str) -> Optional[str]:
-        if char == "u":
-            self._unicode_buffer = []
-            return None
-
-        mapping = {
-            '"': '"',
-            "\\": "\\",
-            "/": "/",
-            "b": "\b",
-            "f": "\f",
-            "n": "\n",
-            "r": "\r",
-            "t": "\t",
-        }
-        return mapping.get(char, char)
-
-    def feed(self, chunk: str) -> str:
-        new_chars: List[str] = []
-        for char in chunk:
-            if self._complete:
-                continue
-
-            if not self._capturing:
-                if self._key_idx < len(self._key):
-                    if char == self._key[self._key_idx]:
-                        self._key_idx += 1
-                        if self._key_idx == len(self._key):
-                            self._waiting_colon = True
-                    else:
-                        self._key_idx = 1 if char == self._key[0] else 0
-                    continue
-
-                if self._waiting_colon:
-                    if char == ":":
-                        self._waiting_colon = False
-                        self._waiting_quote = True
-                    elif char in " \t\r\n":
-                        continue
-                    else:
-                        self._reset_search()
-                    continue
-
-                if self._waiting_quote:
-                    if char in " \t\r\n":
-                        continue
-                    if char == '"':
-                        self._capturing = True
-                    else:
-                        self._reset_search()
-                    continue
-
-                continue
-
-            if self._unicode_buffer is not None:
-                if char.lower() in "0123456789abcdef":
-                    self._unicode_buffer.append(char)
-                    if len(self._unicode_buffer) == 4:
-                        try:
-                            decoded = chr(int("".join(self._unicode_buffer), 16))
-                        except ValueError:
-                            decoded = ""
-                        self._parts.append(decoded)
-                        new_chars.append(decoded)
-                        self._unicode_buffer = None
-                    continue
-                self._unicode_buffer = None
-                self._escape = False
-                continue
-
-            if self._escape:
-                decoded = self._decode_escape(char)
-                self._escape = False
-                if decoded is None:
-                    continue
-                self._parts.append(decoded)
-                new_chars.append(decoded)
-                continue
-
-            if char == "\\":
-                self._escape = True
-                continue
-
-            if char == '"':
-                self._capturing = False
-                self._complete = True
-                continue
-
-            self._parts.append(char)
-            new_chars.append(char)
-
-        return "".join(new_chars)
+    return result, unchanged_fields
 
 
 def _get_openai_client() -> Optional[OpenAI]:
@@ -318,6 +188,73 @@ def _coerce_delta_content(delta_content: Any) -> str:
     return str(delta_content)
 
 
+def _truncate_to_balanced_json(raw: str) -> Optional[str]:
+    """
+    Trim a raw JSON-like string to the last balanced closing brace while being
+    aware of quoted strings and escape characters.
+    """
+    start_idx = None
+    brace_count = 0
+    in_string = False
+    escape = False
+    last_valid_idx = -1
+
+    for idx, ch in enumerate(raw):
+        if start_idx is None:
+            if ch == "{":
+                start_idx = idx
+                brace_count = 1
+            continue
+
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            brace_count += 1
+        elif ch == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                last_valid_idx = idx
+                break
+
+    if start_idx is not None and last_valid_idx >= start_idx:
+        return raw[start_idx : last_valid_idx + 1]
+    return None
+
+
+def _tolerant_json_loads(raw: str) -> Optional[dict]:
+    if not raw:
+        return None
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        return json.loads(raw, strict=False)
+    except Exception:
+        pass
+
+    trimmed = _truncate_to_balanced_json(raw)
+    if trimmed:
+        try:
+            return json.loads(trimmed, strict=False)
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 def _normalize_str(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -325,10 +262,39 @@ def _normalize_str(value: Any) -> Optional[str]:
     return value_str or None
 
 
+def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+
+    lowered = text.lower().strip()
+    today = datetime.utcnow().date()
+
+    if lowered in {"today", "tonight", "now"}:
+        return today.strftime("%Y-%m-%d")
+    if lowered == "tomorrow":
+        return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    if "next week" in lowered:
+        return (today + timedelta(days=7)).strftime("%Y-%m-%d")
+    if "next month" in lowered:
+        return (today + timedelta(days=30)).strftime("%Y-%m-%d")
+    if "weekend" in lowered:
+        # Map to upcoming Saturday; if already Sat/Sun with "next", skip to following weekend
+        days_until_saturday = (5 - today.weekday()) % 7
+        if "next" in lowered and days_until_saturday <= 0:
+            days_until_saturday += 7
+        return (today + timedelta(days=days_until_saturday)).strftime("%Y-%m-%d")
+
+    return None
+
+
 def _normalize_date(value: Any) -> Optional[str]:
     text = _normalize_str(value)
     if not text:
         return None
+
+    relative = _relative_date_to_iso(text)
+    if relative:
+        return relative
 
     for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
         try:
@@ -339,6 +305,15 @@ def _normalize_date(value: Any) -> Optional[str]:
 
     iso_match = re.match(r"^\d{4}-\d{2}-\d{2}$", text)
     return text if iso_match else None
+
+
+def _parse_iso_date(text: Optional[str]) -> Optional[datetime]:
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return None
 
 
 def _normalize_int(value: Any) -> Optional[int]:
@@ -359,14 +334,20 @@ def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
     return max(1, min(20, value))
 
 
+def _ordered_missing_fields_from_inputs(trip_inputs: dict) -> List[str]:
+    return [field for field in _TRIP_INPUT_FIELDS if trip_inputs.get(field) is None]
+
+
 def _clean_trip_inputs(
     *sources: Any,
     fallback: Optional[dict] = None,
     allow_overwrite: bool = False,
+    overwrite_fields: Optional[Iterable[str]] = None,
 ) -> dict:
     sentinel = object()
     merged: dict[str, Any] = {field: sentinel for field in _TRIP_INPUT_FIELDS}
     noted_missing: set[str] = set()
+    overwrite_set = {str(f) for f in overwrite_fields} if overwrite_fields else set()
 
     def _ingest(source: Any) -> None:
         if not isinstance(source, dict):
@@ -384,12 +365,15 @@ def _clean_trip_inputs(
                 normalizer = _normalize_date
             elif field == "traveler_count":
                 normalizer = _normalize_int
+            elif field == "budget":
+                normalizer = _normalize_int
             else:
                 normalizer = _normalize_str
             value = normalizer(source.get(field))
             current_value = merged[field]
             if value is not None:
-                if current_value in (sentinel, None) or allow_overwrite:
+                can_overwrite = allow_overwrite or (field in overwrite_set)
+                if current_value in (sentinel, None) or can_overwrite:
                     merged[field] = value
             elif current_value is sentinel:
                 merged[field] = None
@@ -398,9 +382,6 @@ def _clean_trip_inputs(
         _ingest(source)
     if fallback is not None:
         _ingest(fallback)
-
-    if merged.get("traveler_count") not in (sentinel, None):
-        merged["traveler_count"] = _clamp_traveler_count(merged.get("traveler_count"))
 
     final_missing: set[str] = set()
     for field in _TRIP_INPUT_FIELDS:
@@ -416,12 +397,55 @@ def _clean_trip_inputs(
             final_missing.add(field)
 
     ordered_missing = [field for field in _TRIP_INPUT_FIELDS if field in final_missing]
-    for field in sorted(final_missing):
-        if field not in ordered_missing:
-            ordered_missing.append(field)
 
     merged["missing_fields"] = ordered_missing
     return merged
+
+
+def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, List[str]]:
+    """
+    Ensure dates and numeric fields are sane. Returns the cleaned inputs and any
+    validation messages that require user confirmation before generating branches.
+    """
+    validation_messages: List[str] = []
+    today_dt = _parse_iso_date(today_iso)
+
+    start_dt = _parse_iso_date(trip_inputs.get("start_date"))
+    end_dt = _parse_iso_date(trip_inputs.get("end_date"))
+
+    if start_dt and end_dt and end_dt < start_dt:
+        earliest = min(start_dt, end_dt)
+        latest = max(start_dt, end_dt)
+        trip_inputs["start_date"] = earliest.strftime("%Y-%m-%d")
+        trip_inputs["end_date"] = latest.strftime("%Y-%m-%d")
+        validation_messages.append(
+            "I reordered your dates so the trip starts before it ends. Does that look right?"
+        )
+        start_dt = earliest
+        end_dt = latest
+
+    if start_dt and today_dt and start_dt < today_dt:
+        validation_messages.append("The start date is in the past. Want to update it?")
+    if end_dt and today_dt and end_dt < today_dt:
+        validation_messages.append("The end date is in the past. Want to update it?")
+
+    traveler_count = trip_inputs.get("traveler_count")
+    if traveler_count is not None:
+        clamped_travelers = _clamp_traveler_count(traveler_count)
+        if traveler_count < 1:
+            validation_messages.append(
+                f"Traveler count must be at least 1. I set it to {clamped_travelers}. Is that okay?"
+            )
+        if traveler_count != clamped_travelers:
+            trip_inputs["traveler_count"] = clamped_travelers
+
+    budget_value = trip_inputs.get("budget")
+    if budget_value is not None and budget_value < 0:
+        trip_inputs["budget"] = None
+        validation_messages.append("Budget must be zero or higher. Please share an updated budget.")
+
+    trip_inputs["missing_fields"] = _ordered_missing_fields_from_inputs(trip_inputs)
+    return trip_inputs, validation_messages
 
 
 def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
@@ -485,49 +509,98 @@ def _call_openai_for_plan(
     *,
     history_rows: List[models.ChatMessage],
     history: List[ChatCompletionMessageParam],
-    message_id: str,
-) -> Generator[dict, None, PlannerLLMOutput]:
+) -> PlannerLLMOutput:
     # Get trip state from conversation history
     prior_trip_inputs_meta, last_follow_up = _latest_trip_state_from_history(history_rows)
-    print(f"[DEBUG] prior_trip_inputs_meta: {prior_trip_inputs_meta}")
-    print(f"[DEBUG] last_follow_up: {last_follow_up}")
+    if _DEBUG_LOG:
+        print(f"[DEBUG] prior_trip_inputs_meta: {prior_trip_inputs_meta}")
+        print(f"[DEBUG] last_follow_up: {last_follow_up}")
 
     # Frontend sends defaults (Amsterdam, today, next week, 1 traveler).
-    # Only use frontend values if they differ from defaults (user edited them).
+    # Treat them as real unless explicitly marked as unchanged.
     frontend_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
-    user_edited_inputs = _extract_user_edited_inputs(frontend_inputs)
-    print(f"[DEBUG] frontend_inputs: {frontend_inputs}")
-    print(f"[DEBUG] user_edited_inputs: {user_edited_inputs}")
+    user_edited_inputs, unchanged_fields = _extract_user_edited_inputs(frontend_inputs)
+    if _DEBUG_LOG:
+        print(f"[DEBUG] frontend_inputs: {frontend_inputs}")
+        print(f"[DEBUG] user_edited_inputs: {user_edited_inputs}")
+        print(f"[DEBUG] unchanged_fields: {unchanged_fields}")
 
     # Merge: conversation history first, then user-edited frontend values on top
     request_trip_inputs = _clean_trip_inputs(
         prior_trip_inputs_meta,
         user_edited_inputs,
-        allow_overwrite=True,
     )
-    print(f"[DEBUG] request_trip_inputs after merge: {request_trip_inputs}")
+    if _DEBUG_LOG:
+        print(f"[DEBUG] request_trip_inputs after merge: {request_trip_inputs}")
 
     today = _today_iso()
     next_week = _next_week_iso()
 
     # Build current state summary for the LLM
     known_fields = []
-    missing_fields = []
+    missing_fields = _ordered_missing_fields_from_inputs(request_trip_inputs)
     for field in _TRIP_INPUT_FIELDS:
         val = request_trip_inputs.get(field)
         if val is not None:
             known_fields.append(f"{field}={val}")
-        else:
-            missing_fields.append(field)
 
-    all_fields_complete = len(missing_fields) == 0
+    all_fields_complete = len(missing_fields) == 0 and all(
+        request_trip_inputs.get(field) is not None for field in _TRIP_INPUT_FIELDS
+    )
 
     # Determine what the next field to collect is
     next_field_to_ask = missing_fields[0] if missing_fields else None
+    current_field_to_collect = next_field_to_ask
 
     # Build a clearer, more structured system prompt
     # If all fields are complete, emphasize branch generation
+    state_lines = []
+    if known_fields:
+        state_lines.append(f"COLLECTED: {', '.join(known_fields)}")
+    if missing_fields:
+        state_lines.append(f"STILL NEED: {', '.join(missing_fields)}")
+    state_summary = "\n".join(state_lines)
+
+    expecting_context = ""
+    if next_field_to_ask == "destination":
+        expecting_context = """
+YOU JUST ASKED: "Where are you headed?" (asking for destination)
+The user's message is their DESTINATION. Extract it and set destination to that value."""
+    elif next_field_to_ask == "origin":
+        origin_val = request_trip_inputs.get("origin")
+        if origin_val:
+            expecting_context = f"""
+YOU JUST ASKED about origin. Current origin from browser: {origin_val}
+If user confirms or says nothing specific, keep origin={origin_val}."""
+        else:
+            expecting_context = """
+YOU JUST ASKED: "Where are you leaving from?" (asking for origin)
+The user's message is their ORIGIN city."""
+    elif next_field_to_ask == "budget":
+        expecting_context = """
+YOU JUST ASKED: "What's your budget?" (asking for budget)
+The user's message is their BUDGET amount. Extract the number."""
+    elif next_field_to_ask in ("start_date", "end_date", "traveler_count"):
+        expecting_context = f"""
+YOU JUST ASKED about {next_field_to_ask}.
+The user's message is their answer. Use defaults if they confirm."""
+
+    if last_follow_up:
+        last_follow_up_block = f"""
+YOUR LAST QUESTION WAS: "{last_follow_up}"
+The user's message "{req.message}" is the ANSWER to that question.
+Extract the relevant value from their response."""
+        expecting_context = f"{expecting_context}\n{last_follow_up_block}".strip()
+
+    # Check if this message will complete all fields (only 1 field left)
+    is_last_field = len(missing_fields) == 1
+
     if all_fields_complete:
+        complete_trip_inputs = {
+            field: request_trip_inputs.get(field) for field in _TRIP_INPUT_FIELDS
+        }
+        complete_trip_inputs["missing_fields"] = []
+        trip_inputs_json = json.dumps(complete_trip_inputs, ensure_ascii=True)
         system_prompt = f"""You are a travel planner. Today is {today}.
 
 ALL TRIP FIELDS ARE COMPLETE:
@@ -539,15 +612,7 @@ Return JSON:
 {{
   "assistant_message": "Great! Here are your trip options.",
   "follow_up_question": null,
-  "trip_inputs": {{
-    "destination": "{request_trip_inputs.get('destination')}",
-    "origin": "{request_trip_inputs.get('origin')}",
-    "start_date": "{request_trip_inputs.get('start_date')}",
-    "end_date": "{request_trip_inputs.get('end_date')}",
-    "traveler_count": {request_trip_inputs.get('traveler_count')},
-    "budget": {request_trip_inputs.get('budget')},
-    "missing_fields": []
-  }},
+  "trip_inputs": {trip_inputs_json},
   "branches": [
     {{
       "label": "Theme",
@@ -561,52 +626,8 @@ Return JSON:
     }}
   ]
 }}"""
-    else:
-        # Build context about what was asked and what we're expecting
-        expecting_context = ""
-        if next_field_to_ask == "destination":
-            expecting_context = """
-YOU JUST ASKED: "Where are you headed?" (asking for destination)
-The user's message is their DESTINATION. Extract it and set destination to that value."""
-        elif next_field_to_ask == "origin":
-            origin_val = request_trip_inputs.get("origin")
-            if origin_val:
-                expecting_context = f"""
-YOU JUST ASKED about origin. Current origin from browser: {origin_val}
-If user confirms or says nothing specific, keep origin={origin_val}."""
-            else:
-                expecting_context = """
-YOU JUST ASKED: "Where are you leaving from?" (asking for origin)
-The user's message is their ORIGIN city."""
-        elif next_field_to_ask == "budget":
-            expecting_context = """
-YOU JUST ASKED: "What's your budget?" (asking for budget)
-The user's message is their BUDGET amount. Extract the number."""
-        elif next_field_to_ask in ("start_date", "end_date", "traveler_count"):
-            expecting_context = f"""
-YOU JUST ASKED about {next_field_to_ask}.
-The user's message is their answer. Use defaults if they confirm."""
-
-        # If there's conversation history, add context about what was last asked
-        if last_follow_up:
-            expecting_context = f"""
-YOUR LAST QUESTION WAS: "{last_follow_up}"
-The user's message "{req.message}" is the ANSWER to that question.
-Extract the relevant value from their response."""
-
-        state_lines = []
-        if known_fields:
-            state_lines.append(f"COLLECTED: {', '.join(known_fields)}")
-        if missing_fields:
-            state_lines.append(f"STILL NEED: {', '.join(missing_fields)}")
-        state_summary = "\n".join(state_lines)
-
-        # Check if this message will complete all fields (only 1 field left)
-        is_last_field = len(missing_fields) == 1
-
-        if is_last_field:
-            # This is the last field - after extracting, generate branches!
-            system_prompt = f"""You are a travel planner. Today is {today}.
+    elif is_last_field:
+        system_prompt = f"""You are a travel planner. Today is {today}.
 
 {state_summary}
 {expecting_context}
@@ -651,8 +672,8 @@ Return JSON:
     }}
   ]
 }}"""
-        else:
-            system_prompt = f"""You are a travel planner collecting trip details. Today is {today}.
+    else:
+        system_prompt = f"""You are a travel planner collecting trip details. Today is {today}.
 
 {state_summary}
 {expecting_context}
@@ -691,25 +712,13 @@ Return JSON only:
 
     history_messages: List[ChatCompletionMessageParam] = list(history)
 
-    # If this is the first message (no history), add a synthetic opening assistant message
-    # This matches the static greeting shown in the frontend
-    if not history_messages:
-        initial_greeting = (
-            "Tell me about your trip: where you're headed, where you're leaving from, "
-            "dates, vibes, and how many travelers are going. Where are you headed?"
-        )
-        history_messages.append(
-            cast(ChatCompletionMessageParam, {"role": "assistant", "content": initial_greeting})
-        )
-
     messages: List[ChatCompletionMessageParam] = [
         cast(ChatCompletionMessageParam, {"role": "system", "content": system_prompt})
     ]
     messages.extend(history_messages)
     messages.append(cast(ChatCompletionMessageParam, {"role": "user", "content": req.message}))
 
-    # Debug: log message structure (can be removed in production)
-    if os.getenv("DEBUG_PLAN_MESSAGES"):
+    if _DEBUG_LOG:
         print(f"[DEBUG] Sending {len(messages)} messages to OpenAI:")
         for i, msg in enumerate(messages):
             role = msg.get("role", "?")
@@ -718,186 +727,204 @@ Return JSON only:
             print(f"  [{i}] {role}: {content}...")
 
     model_name = _plan_model_name()
-    stream = None
-    try:
-        if "gpt-4o" in model_name:
-            stream = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                max_tokens=_MAX_TOKENS,
-                response_format={"type": "json_object"},
-                stream=True,
-            )
-        elif "gpt-5" in model_name:
-            stream = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                max_completion_tokens=_MAX_TOKENS,
-                response_format={"type": "json_object"},
-                stream=True,
-            )
+    seed_value: Optional[int] = None
+    if _PLAN_SEED is not None:
+        try:
+            seed_value = int(_PLAN_SEED)
+        except ValueError:
+            seed_value = None
+
+    def _create_completion_request():
+
+        if "gpt-4" in model_name.lower():
+            params: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "max_tokens": _MAX_TOKENS,
+                "temperature": _PLAN_TEMPERATURE,
+                "top_p": _PLAN_TOP_P,
+                "response_format": {"type": "json_object"},
+                "seed": seed_value,
+            }
+        elif "gpt-5" in model_name.lower():
+            params: dict[str, Any] = {
+                "model": model_name,
+                "messages": messages,
+                "max_completion_tokens": _MAX_TOKENS,
+                "response_format": {"type": "json_object"},
+                "seed": seed_value,
+            }
         else:
-            raise RuntimeError(f"Unsupported planning model: {model_name}")
+            raise RuntimeError(f"Unsupported model for planning: {model_name}")
+
+        result = client.chat.completions.create(**params)
+        return result
+
+    def _invoke_with_retries():
+        nonlocal last_error
+        retry_limit = max(1, _PLAN_MAX_RETRIES)
+        backoff = 0.5
+        for attempt in range(retry_limit):
+            try:
+                result = _create_completion_request()
+                if result is None:
+                    raise RuntimeError("OpenAI completion request returned None")
+                last_error = None
+                return result
+            except Exception as exc:
+                last_error = exc
+                status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] OpenAI planning call attempt {attempt + 1} failed: {exc}")
+                if attempt < _PLAN_MAX_RETRIES - 1 and (
+                    status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
+                ):
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                raise
+        raise RuntimeError("OpenAI planning call exhausted retries")
+
+    completion = None
+    try:
+        completion = _invoke_with_retries()
     except Exception as exc:
         last_error = exc
-        print(f"OpenAI planning call failed with '{model_name}': {exc}")
+        if _DEBUG_LOG:
+            print(f"[DEBUG] OpenAI planning call failed with '{model_name}': {exc}")
 
-    if stream is not None:
-        assistant_parser = _AssistantMessageParser()
-        assistant_stream_buffer = ""
-        has_streamed_any = False
-        raw_response_parts: List[str] = []
-
+    if completion is not None:
+        raw_content = ""
         try:
-            for chunk in stream:
-                delta_content = getattr(chunk.choices[0].delta, "content", None)
-                delta_text = _coerce_delta_content(delta_content)
-                if not delta_text:
+            choice = completion.choices[0] if completion and completion.choices else None
+            if choice is not None:
+                message_obj = getattr(choice, "message", None)
+                if isinstance(message_obj, dict):
+                    raw_content = _coerce_delta_content(message_obj.get("content"))
+                else:
+                    raw_content = _coerce_delta_content(getattr(message_obj, "content", ""))
+        except Exception:
+            raw_content = ""
+
+        if _DEBUG_LOG and raw_content:
+            print(f"[DEBUG] Raw LLM response: {raw_content[:500]}...")
+
+        default_assistant_message = "I'm having trouble processing that. Could you try again?"
+
+        data = _tolerant_json_loads(raw_content or "")
+        if data is None:
+            data = {
+                "branches": [],
+                "assistant_message": default_assistant_message,
+                "follow_up_question": None,
+                "trip_inputs": {},
+            }
+        if not isinstance(data, dict):
+            data = {}
+
+        branches_raw = data.get("branches", []) or []
+        if _DEBUG_LOG:
+            print(f"[DEBUG] Branches from LLM: {len(branches_raw)} branches")
+        assistant_message = str(data.get("assistant_message") or "").strip()
+        follow_up_question = str(data.get("follow_up_question") or "").strip() or None
+
+        trip_inputs_payload = data.get("trip_inputs") or {}
+        overwrite_fields = {current_field_to_collect} if current_field_to_collect else set()
+        trip_inputs = _clean_trip_inputs(
+            request_trip_inputs,
+            trip_inputs_payload,
+            allow_overwrite=False,
+            overwrite_fields=overwrite_fields,
+        )
+        trip_inputs, validation_messages = _validate_trip_inputs(trip_inputs, today_iso=today)
+        parsed_missing_fields = trip_inputs.get("missing_fields") or []
+
+        has_all_fields = len(parsed_missing_fields) == 0 and not validation_messages
+        if _DEBUG_LOG:
+            print(
+                f"[DEBUG] all_fields_complete={all_fields_complete}, "
+                f"has_all_fields={has_all_fields}, response_missing={parsed_missing_fields}, "
+                f"validation={validation_messages}"
+            )
+
+        cleaned: List[dict] = []
+        canonical_inputs = {field: trip_inputs.get(field) for field in _TRIP_INPUT_FIELDS}
+
+        if has_all_fields and branches_raw:
+            for b in branches_raw:
+                if not isinstance(b, dict):
+                    continue
+                if "label" not in b:
+                    continue
+                branch_destination = _normalize_str(b.get("destination")) or canonical_inputs.get(
+                    "destination"
+                )
+                branch_origin = _normalize_str(b.get("origin")) or canonical_inputs.get("origin")
+                branch_start = _normalize_date(b.get("start_date")) or canonical_inputs.get(
+                    "start_date"
+                )
+                branch_end = _normalize_date(b.get("end_date")) or canonical_inputs.get("end_date")
+                branch_travelers = _normalize_int(b.get("traveler_count"))
+                if branch_travelers is None:
+                    branch_travelers = _normalize_int(canonical_inputs.get("traveler_count"))
+                if branch_travelers is not None:
+                    branch_travelers = _clamp_traveler_count(branch_travelers)
+                branch_budget = _normalize_int(b.get("budget"))
+                if branch_budget is None:
+                    branch_budget = _normalize_int(canonical_inputs.get("budget"))
+                if branch_budget is not None and branch_budget < 0:
+                    branch_budget = None
+
+                if not branch_destination:
                     continue
 
-                raw_response_parts.append(delta_text)
-                new_assistant_text = assistant_parser.feed(delta_text)
-                if new_assistant_text:
-                    assistant_stream_buffer += new_assistant_text
-                    while len(assistant_stream_buffer) >= _STREAM_MIN_FLUSH_CHARS:
-                        buffered_delta = assistant_stream_buffer[:_STREAM_MIN_FLUSH_CHARS]
-                        assistant_stream_buffer = assistant_stream_buffer[_STREAM_MIN_FLUSH_CHARS:]
-                        yield {
-                            "event": "assistant_message",
-                            "message_id": message_id,
-                            "delta": buffered_delta,
-                            "is_final": False,
-                            "follow_up_question": None,
-                        }
-                        has_streamed_any = True
-        except Exception as exc:
-            last_error = exc
-            print(f"OpenAI planning stream failed with '{model_name}': {exc}")
-        else:
-            raw_response = "".join(raw_response_parts)
-            print(f"[DEBUG] Raw LLM response: {raw_response[:500]}...")
-            data = None
-            try:
-                data = json.loads(raw_response or '{"branches": []}')
-            except json.JSONDecodeError as exc:
-                print(f"OpenAI planning response parsing failed for '{model_name}': {exc}")
-                # Try to repair common JSON issues
-                repaired = raw_response or ""
-                # Remove trailing incomplete content after last complete structure
-                # Find the last valid closing brace
-                brace_count = 0
-                last_valid_idx = -1
-                for i, ch in enumerate(repaired):
-                    if ch == "{":
-                        brace_count += 1
-                    elif ch == "}":
-                        brace_count -= 1
-                        if brace_count == 0:
-                            last_valid_idx = i
-                if last_valid_idx > 0:
-                    repaired = repaired[: last_valid_idx + 1]
-                try:
-                    data = json.loads(repaired)
-                    print("[DEBUG] JSON repair succeeded")
-                except json.JSONDecodeError:
-                    # Last resort: extract just assistant_message if possible
-                    print("[DEBUG] JSON repair failed, using fallback response")
-                    data = {
-                        "branches": [],
-                        "assistant_message": assistant_parser.text.strip()
-                        or "I'm having trouble processing that. Could you try again?",
-                        "follow_up_question": None,
-                        "trip_inputs": {},
+                cleaned.append(
+                    {
+                        "label": str(b["label"]),
+                        "description": str(b.get("description", "")),
+                        "destination": branch_destination,
+                        "origin": branch_origin,
+                        "start_date": branch_start,
+                        "end_date": branch_end,
+                        "traveler_count": branch_travelers,
+                        "budget": branch_budget,
                     }
-
-            if data is not None:
-                branches_raw = data.get("branches", []) or []
-                print(f"[DEBUG] Branches from LLM: {len(branches_raw)} branches")
-                assistant_message = str(data.get("assistant_message") or "").strip()
-                follow_up_question = str(data.get("follow_up_question") or "").strip() or None
-
-                trip_inputs_payload = data.get("trip_inputs") or {}
-                trip_inputs = _clean_trip_inputs(
-                    request_trip_inputs,
-                    trip_inputs_payload,
-                    allow_overwrite=True,
-                )
-                response_missing_fields = trip_inputs.get("missing_fields") or []
-
-                # Use pre-calculated all_fields_complete if we determined it before LLM call
-                # This prevents LLM's incorrect missing_fields from blocking branch generation
-                has_all_fields = all_fields_complete or len(response_missing_fields) == 0
-                print(
-                    f"[DEBUG] all_fields_complete={all_fields_complete}, "
-                    f"has_all_fields={has_all_fields}, response_missing={response_missing_fields}"
                 )
 
-                cleaned: List[dict] = []
+        if validation_messages:
+            follow_up_question = validation_messages[0]
+        elif not has_all_fields and not follow_up_question:
+            follow_up_question = _default_follow_up_question(parsed_missing_fields)
 
-                # Process branches if we have all fields OR if LLM returned branches anyway
-                if has_all_fields or branches_raw:
-                    for b in branches_raw:
-                        if not isinstance(b, dict):
-                            continue
-                        if not all(k in b for k in ("label", "destination")):
-                            continue
-                        cleaned.append(
-                            {
-                                "label": str(b["label"]),
-                                "description": str(b.get("description", "")),
-                                "destination": str(b["destination"]),
-                                "origin": _normalize_str(b.get("origin")),
-                                "start_date": _normalize_str(b.get("start_date")),
-                                "end_date": _normalize_str(b.get("end_date")),
-                                "traveler_count": _normalize_int(b.get("traveler_count")),
-                                "budget": _normalize_str(b.get("budget")),
-                            }
-                        )
+        if not assistant_message and not follow_up_question:
+            assistant_message = default_assistant_message
+        if has_all_fields:
+            follow_up_question = None
+            trip_inputs["missing_fields"] = []
+            if not assistant_message or re.search(
+                r"\bwhere\b", assistant_message, flags=re.IGNORECASE
+            ):
+                assistant_message = "Generating trip options for you..."
+        if not assistant_message and follow_up_question:
+            assistant_message = follow_up_question
 
-                # If all fields complete, don't ask follow-up questions
-                if has_all_fields:
-                    follow_up_question = None
-                    if not assistant_message or "where" in assistant_message.lower():
-                        assistant_message = "Generating trip options for you..."
-                    trip_inputs["missing_fields"] = []
-                elif not follow_up_question:
-                    follow_up_question = _default_follow_up_question(response_missing_fields)
+        output = PlannerLLMOutput(
+            branches=cleaned,
+            assistant_message=assistant_message,
+            follow_up_question=follow_up_question,
+            trip_inputs=trip_inputs,
+        )
 
-                if not assistant_message:
-                    assistant_message = assistant_parser.text.strip()
-                if not assistant_message and follow_up_question:
-                    assistant_message = follow_up_question
-
-                output = PlannerLLMOutput(
-                    branches=cleaned,
-                    assistant_message=assistant_message,
-                    follow_up_question=follow_up_question,
-                    trip_inputs=trip_inputs,
-                )
-
-                final_delta = assistant_stream_buffer
-                if not final_delta and not has_streamed_any:
-                    final_delta = assistant_message
-
-                yield {
-                    "event": "assistant_message",
-                    "message_id": message_id,
-                    "delta": final_delta,
-                    "is_final": True,
-                    "follow_up_question": follow_up_question,
-                }
-
-                return output
+        return output
 
     if last_error is not None:
-        print(f"OpenAI planning call failed: {last_error}")
+        if _DEBUG_LOG:
+            print(f"OpenAI planning call failed: {last_error}")
         raise RuntimeError(f"OpenAI planning call failed: {last_error}")
-
-    # Fallback: if we reach here without returning, raise an error
-    raise RuntimeError("OpenAI planning call did not produce a valid response")
+    raise RuntimeError("OpenAI planning call returned no completion")
 
 
-def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanResponse]:
+def plan_trip_flow(db: Session, req: PlanRequest) -> PlanResponse:
     if not req.session_id:
         raise ValueError("session_id is required for planning")
 
@@ -945,21 +972,12 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
             metadata=None,
         )
 
-        # 4. Call LLM and stream response
-        openai_stream = _call_openai_for_plan(
+        # 4. Call LLM once (no streaming)
+        planner_output = _call_openai_for_plan(
             req,
             history_rows=history_rows,
             history=history_messages,
-            message_id=str(assistant_chat.id),
         )
-
-        while True:
-            try:
-                stream_event = next(openai_stream)
-            except StopIteration as stop:
-                planner_output = stop.value
-                break
-            yield stream_event
 
         # 5. Process LLM output and update DB
         trip_inputs_model = (
@@ -1002,20 +1020,11 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
                         start_date=_normalize_str(spec_dict.get("start_date")),
                         end_date=_normalize_str(spec_dict.get("end_date")),
                         traveler_count=_normalize_int(spec_dict.get("traveler_count")),
-                        budget=_normalize_str(spec_dict.get("budget")),
+                        budget=_normalize_int(spec_dict.get("budget")),
                     )
                 )
 
             primary_db_branch = db_branches[0] if db_branches else None
-
-        yield {
-            "event": "plan_update",
-            "trip_context_id": trip_ctx.id,
-            "branches": [branch.dict() for branch in plan_branches],
-            "primary_branch_id": str(primary_db_branch.id) if primary_db_branch else None,
-            "assistant_message_id": str(assistant_chat.id),
-            "trip_inputs": trip_inputs_payload,
-        }
 
         tiles_response: TilesSearchResponse | None = None
 
@@ -1044,13 +1053,6 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
                     replace_existing=True,
                 )
 
-            yield {
-                "event": "tiles_update",
-                "tiles": [tile.dict() for tile in tiles_response.tiles],
-                "tiles_request_id": tiles_response.tiles_request_id,
-                "summary": tiles_response.summary,
-            }
-
         # 7. Final response
         response = PlanResponse(
             trip_context_id=trip_ctx.id,
@@ -1073,30 +1075,4 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> Generator[dict, None, PlanR
 
 
 def plan_trip(db: Session, req: PlanRequest) -> PlanResponse:
-    flow = plan_trip_flow(db, req)
-    while True:
-        try:
-            next(flow)
-        except StopIteration as stop:
-            return stop.value
-
-
-def plan_trip_event_stream(db: Session, req: PlanRequest):
-    flow = plan_trip_flow(db, req)
-
-    def iterator():
-        while True:
-            try:
-                event = next(flow)
-            except StopIteration as stop:
-                final_response = stop.value
-                payload = {
-                    "event": "complete",
-                    "response": final_response.dict(),
-                }
-                yield (json.dumps(payload) + "\n").encode("utf-8")
-                break
-
-            yield (json.dumps(event) + "\n").encode("utf-8")
-
-    return iterator()
+    return plan_trip_flow(db, req)

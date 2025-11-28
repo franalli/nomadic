@@ -175,22 +175,30 @@ const resolveDurationForBranch = (
   );
 };
 
-const parseBudgetNumber = (budget?: string | null): number | null => {
-  if (!budget) return null;
-  const numericText = budget.replace(/[^\d.]/g, '');
+const parseBudgetNumber = (budget?: string | number | null): number | null => {
+  if (budget === null || budget === undefined) return null;
+  const budgetText = typeof budget === 'number' ? budget.toString() : budget;
+  const numericText = budgetText.replace(/[^\d.]/g, '');
   if (!numericText) return null;
   const parsed = Number(numericText);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.round(parsed);
 };
 
-const resolveBudgetForBranch = (branch?: PlanBranch | null, inputs?: TripInputs | null) =>
-  branch?.budget?.trim() || inputs?.budget?.trim() || null;
+const normalizeBudgetInput = (budget?: string | number | null): string | null => {
+  if (budget === null || budget === undefined) return null;
+  const text = typeof budget === 'number' ? budget.toString() : budget;
+  const trimmed = text.trim();
+  return trimmed || null;
+};
 
-const formatBudgetDisplay = (budget?: string | null): string | null => {
+const resolveBudgetForBranch = (branch?: PlanBranch | null, inputs?: TripInputs | null) =>
+  normalizeBudgetInput(branch?.budget) ?? normalizeBudgetInput(inputs?.budget);
+
+const formatBudgetDisplay = (budget?: string | number | null): string | null => {
   const numeric = parseBudgetNumber(budget);
   if (numeric) return `$${numeric.toLocaleString()}`;
-  return budget?.trim() || null;
+  return normalizeBudgetInput(budget);
 };
 
 type BranchPanelProps = {
@@ -240,10 +248,10 @@ export function BranchPanel({
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
   const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
-  const priceHintFromBudget = (budget?: string | null) => {
+  const priceHintFromBudget = (budget?: string | number | null) => {
     const numeric = parseBudgetNumber(budget);
     if (numeric) return `~$${numeric.toLocaleString()}`;
-    const normalized = budget?.trim() || '';
+    const normalized = normalizeBudgetInput(budget) || '';
     if (/^\$\s*\$\$?/.test(normalized)) return '$2,000+';
     if (/^\$\$\$/.test(normalized)) return '$3,000+';
     if (/^\$\$/.test(normalized)) return '$2,400+';
