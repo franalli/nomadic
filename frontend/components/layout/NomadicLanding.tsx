@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { CalendarRange, Compass, MapPin, Menu, User, Users } from 'lucide-react';
+import { CalendarRange, Compass, MapPin, Menu, User, Users, Wallet } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -37,6 +37,7 @@ type TripInputsDraft = {
   start_date: string;
   end_date: string;
   traveler_count: string;
+  budget?: string | null;
 };
 
 const getFreshDateDefaults = () => {
@@ -86,6 +87,21 @@ const parseDisplayDate = (value: string): string | null => {
   return null;
 };
 
+const parseBudgetValue = (value?: string | null): string | null => {
+  if (!value) return null;
+  const numericText = value.replace(/[^\d.]/g, '');
+  if (!numericText) return null;
+  const parsed = Number(numericText);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed).toString();
+};
+
+const formatBudgetValue = (value?: string | null): string => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '';
+  return `$${Math.round(parsed).toLocaleString()}`;
+};
+
 const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
   const { todayIso, nextWeekIso } = getFreshDateDefaults();
   return {
@@ -94,6 +110,7 @@ const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
     start_date: formatDateForDisplay(inputs.start_date) || formatDateForDisplay(todayIso),
     end_date: formatDateForDisplay(inputs.end_date) || formatDateForDisplay(nextWeekIso),
     traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : '1',
+    budget: inputs.budget != null ? String(inputs.budget) : null,
   };
 };
 
@@ -109,10 +126,12 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
     Number.isFinite(parsedTravelerCount) && parsedTravelerCount != null
       ? Math.min(20, Math.max(1, parsedTravelerCount))
       : 1;
+  const budget = parseBudgetValue(draft.budget ?? null);
 
   const missingFields: string[] = [];
   if (!destination) missingFields.push('destination');
   if (!origin) missingFields.push('origin');
+  if (!budget) missingFields.push('budget');
 
   return {
     destination,
@@ -120,18 +139,51 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
     start_date: startDate,
     end_date: endDate,
     traveler_count: travelerCount,
+    budget,
     missing_fields: missingFields,
   };
 };
 
+const DEFAULT_ORIGIN_FALLBACK = 'Oslo';
+
 const DEFAULT_TRIP_INPUTS: TripInputs = {
   destination: null,
-  origin: 'Amsterdam',
+  origin: null, // Will be set via geolocation or fallback to Amsterdam
   start_date: INITIAL_TODAY_ISO,
   end_date: INITIAL_NEXT_WEEK_ISO,
   traveler_count: 1,
-  missing_fields: ['destination'],
+  budget: null,
+  missing_fields: ['destination', 'origin', 'budget'],
 };
+
+/**
+ * Reverse geocode coordinates to a city name using OpenStreetMap Nominatim.
+ * Returns null if the request fails or no city is found.
+ */
+async function reverseGeocodeToCity(
+  latitude: number,
+  longitude: number
+): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
+      {
+        headers: {
+          'User-Agent': 'NomadicTravelApp/1.0',
+        },
+      }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    // Prefer city, then town, then village, then municipality
+    const address = data.address;
+    return (
+      address?.city || address?.town || address?.village || address?.municipality || null
+    );
+  } catch {
+    return null;
+  }
+}
 
 const fillTripInputDefaults = (inputs?: TripInputs | null): TripInputs => {
   return normalizeTripInputsDraft(toTripInputsDraft(inputs ?? DEFAULT_TRIP_INPUTS));
@@ -278,6 +330,7 @@ type TripInputSignature = {
   start_date: string | null;
   end_date: string | null;
   traveler_count: number | null;
+  budget: string | null;
 };
 
 const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature => ({
@@ -289,6 +342,7 @@ const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature =>
     inputs?.traveler_count != null
       ? Math.min(20, Math.max(1, Number(inputs.traveler_count)))
       : null,
+  budget: inputs?.budget?.trim() || null,
 });
 
 const tripInputSignaturesEqual = (
@@ -302,7 +356,8 @@ const tripInputSignaturesEqual = (
     a.origin === b.origin &&
     a.start_date === b.start_date &&
     a.end_date === b.end_date &&
-    a.traveler_count === b.traveler_count
+    a.traveler_count === b.traveler_count &&
+    a.budget === b.budget
   );
 };
 
@@ -335,9 +390,14 @@ export function NomadicLanding() {
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
   const [isResettingSession, setIsResettingSession] = useState(false);
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
+  const [hasUserMessages, setHasUserMessages] = useState(false);
   const [chatKey, setChatKey] = useState(0);
+  const [originDetectionStatus, setOriginDetectionStatus] = useState<
+    'pending' | 'detected' | 'fallback' | 'user-edited'
+  >('pending');
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
   const tripInputsPlanControllerRef = useRef<AbortController | null>(null);
+  const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
   const [typedTagline, setTypedTagline] = useState('');
 
   const selectedBranch = useMemo(
@@ -496,6 +556,49 @@ export function NomadicLanding() {
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
+  // Detect user's origin from browser geolocation
+  useEffect(() => {
+    // Only run once on mount
+    if (originDetectionStatus !== 'pending') return;
+    // If origin was restored from session, treat as user-edited
+    if (tripInputs.origin) {
+      setOriginDetectionStatus('user-edited');
+      return;
+    }
+
+    if (!navigator.geolocation) {
+      // Geolocation not supported, fall back to Amsterdam
+      setTripInputsDraft((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
+      setTripInputs((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
+      setOriginDetectionStatus('fallback');
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        const city = await reverseGeocodeToCity(latitude, longitude);
+        if (city) {
+          setTripInputsDraft((prev) => ({ ...prev, origin: city }));
+          setTripInputs((prev) => ({ ...prev, origin: city }));
+          setOriginDetectionStatus('detected');
+        } else {
+          // Reverse geocoding failed, fall back to Amsterdam
+          setTripInputsDraft((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
+          setTripInputs((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
+          setOriginDetectionStatus('fallback');
+        }
+      },
+      () => {
+        // User denied permission or error occurred, fall back to Amsterdam
+        setTripInputsDraft((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
+        setTripInputs((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
+        setOriginDetectionStatus('fallback');
+      },
+      { timeout: 10000, enableHighAccuracy: false }
+    );
+  }, [originDetectionStatus, tripInputs.origin]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -600,6 +703,7 @@ export function NomadicLanding() {
     applyIncomingTripInputs(DEFAULT_TRIP_INPUTS, null);
     setLastRegeneratedTripInputs(toTripInputSignature(DEFAULT_TRIP_INPUTS));
     setHasTriggeredChat(false);
+    setHasUserMessages(false);
     setChatKey((prev) => prev + 1);
   }, [abortTilesFetch, applyIncomingTripInputs]);
 
@@ -630,6 +734,22 @@ export function NomadicLanding() {
       clearSessionId();
       handleClearContext();
       setIsResettingSession(false);
+      // Scroll to chat panel after reset
+      setTimeout(() => {
+        if (chatPanelContainerRef.current) {
+          chatPanelContainerRef.current.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+          });
+          // Focus the input if it exists
+          const input = chatPanelContainerRef.current.querySelector(
+            'input[type="text"]'
+          ) as HTMLInputElement;
+          if (input) {
+            input.focus();
+          }
+        }
+      }, 100);
     }
 
     setToastMessage(
@@ -649,6 +769,10 @@ export function NomadicLanding() {
 
   const handleCommitField = useCallback(
     (field?: keyof TripInputsDraft, value?: string) => {
+      // If user manually edits origin, mark it as user-edited
+      if (field === 'origin') {
+        setOriginDetectionStatus('user-edited');
+      }
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
         const next = field ? { ...base, [field]: value ?? base[field] } : base;
@@ -699,6 +823,16 @@ export function NomadicLanding() {
       tilesRequestId: string | null;
       tripInputs?: TripInputs | null;
     }) => {
+      const primaryBranch =
+        result.branches.find((b) => b.id === result.primaryBranchId) ??
+        result.branches[0];
+      const mergedTripInputs = result.tripInputs ? { ...result.tripInputs } : undefined;
+      if (mergedTripInputs?.budget != null) {
+        mergedTripInputs.budget = String(mergedTripInputs.budget);
+      }
+      if (primaryBranch && mergedTripInputs && !mergedTripInputs.budget) {
+        mergedTripInputs.budget = primaryBranch.budget ?? null;
+      }
       setTripContextId(result.tripContextId);
       setBranches(result.branches);
       setTiles(result.tiles);
@@ -743,7 +877,7 @@ export function NomadicLanding() {
       });
       const destinationHint = result.branches[0]?.destination ?? null;
       const resolvedTripInputs = applyIncomingTripInputs(
-        result.tripInputs ?? undefined,
+        mergedTripInputs,
         destinationHint
       );
       setLastRegeneratedTripInputs(toTripInputSignature(resolvedTripInputs));
@@ -784,6 +918,9 @@ export function NomadicLanding() {
       normalizedInputs.end_date ? `end ${normalizedInputs.end_date}` : null,
       normalizedInputs.traveler_count != null
         ? `${normalizedInputs.traveler_count} traveler${normalizedInputs.traveler_count === 1 ? '' : 's'}`
+        : null,
+      normalizedInputs.budget
+        ? `budget ${formatBudgetValue(normalizedInputs.budget)}`
         : null,
     ].filter(Boolean);
 
@@ -1044,20 +1181,27 @@ export function NomadicLanding() {
     setHasTriggeredChat(true);
   }, []);
 
-  const showResults = hasTriggeredChat || branches.length > 0 || tiles.length > 0;
+  const handleHasUserMessage = useCallback((has: boolean) => {
+    setHasUserMessages(has);
+  }, []);
+
+  const showResults = branches.length > 0;
+  const hasBranchesReady = branches.length > 0;
   const missingFields = tripInputs.missing_fields ?? [];
+  const blockingMissingFields = missingFields.filter((field) => field !== 'budget');
   const isMissingField = (key: string, value?: string | number | null) =>
     !value || missingFields.includes(key);
   const formatTravelers = (value?: number | null) =>
     value != null ? `${value} traveler${value === 1 ? '' : 's'}` : 'Needed';
   const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
   const tripDetailsContent = (
-    <div className="space-y-3">
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {(['origin', 'start_date', 'end_date', 'traveler_count'] as const).map(
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {(['origin', 'start_date', 'end_date', 'traveler_count', 'budget'] as const).map(
           (field) => {
             const isEditing = editingField === field;
-            const draftValue = draftBase ? draftBase[field] : '';
+            const draftValueRaw = draftBase ? draftBase[field] : '';
+            const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
 
             let displayValue = 'Needed';
             if (field === 'traveler_count') {
@@ -1070,36 +1214,50 @@ export function NomadicLanding() {
                 tripInputs[field as keyof TripInputs] as string | null | undefined
               );
               displayValue = formatted || 'Needed';
+            } else if (field === 'budget') {
+              displayValue = formatBudgetValue(tripInputs.budget) || 'Add budget';
+            } else if (field === 'origin') {
+              if (tripInputs.origin) {
+                displayValue = tripInputs.origin;
+              } else if (originDetectionStatus === 'pending') {
+                displayValue = 'Locating...';
+              } else {
+                displayValue = DEFAULT_ORIGIN_FALLBACK;
+              }
             } else {
               displayValue =
                 (tripInputs[field as keyof TripInputs] as string | null | undefined) ||
                 'Needed';
             }
 
+            const inputType =
+              field === 'traveler_count' || field === 'budget' ? 'number' : 'text';
             const icon =
               field === 'origin' ? (
-                <MapPin className="h-4 w-4" />
+                <MapPin className="h-3.5 w-3.5" />
               ) : field === 'traveler_count' ? (
-                <Users className="h-4 w-4" />
+                <Users className="h-3.5 w-3.5" />
+              ) : field === 'budget' ? (
+                <Wallet className="h-3.5 w-3.5" />
               ) : (
-                <CalendarRange className="h-4 w-4" />
+                <CalendarRange className="h-3.5 w-3.5" />
               );
-
-            const label =
-              field === 'origin'
-                ? 'Origin'
-                : field === 'start_date'
-                  ? 'Start'
-                  : field === 'end_date'
-                    ? 'End'
-                    : 'Travelers';
-
-            const inputType = field === 'traveler_count' ? 'number' : 'text';
+            const isFieldMissing = isMissingField(
+              field,
+              field === 'traveler_count'
+                ? tripInputs.traveler_count
+                : field === 'budget'
+                  ? tripInputs.budget
+                  : (tripInputs[field as 'origin' | 'start_date' | 'end_date'] as
+                      | string
+                      | null
+                      | undefined)
+            );
 
             return (
               <div
                 key={field}
-                className="border-border/60 bg-muted/40 rounded-lg border px-3 py-2"
+                className={`border-border/60 bg-muted/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${isEditing ? 'ring-primary ring-1' : ''}`}
                 role="button"
                 tabIndex={0}
                 onClick={() => handleStartEditingField(field)}
@@ -1110,53 +1268,40 @@ export function NomadicLanding() {
                   }
                 }}
               >
-                <div className="text-muted-foreground flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-                  {icon}
-                  {label}
-                </div>
+                <span className="text-muted-foreground shrink-0">{icon}</span>
                 {isEditing ? (
-                  <div className="mt-2 space-y-2">
-                    <input
-                      type={inputType}
-                      value={draftValue}
-                      onChange={(e) => handleFieldChange(field, e.target.value)}
-                      className="border-border/60 bg-card/30 text-foreground placeholder:text-muted-foreground focus:border-primary w-full rounded-md border px-2 py-1 text-sm focus:outline-none"
-                      placeholder={
-                        field === 'traveler_count'
-                          ? 'Number of travelers'
-                          : field === 'origin'
-                            ? 'City or airport'
-                            : DISPLAY_DATE_FORMAT
+                  <input
+                    type={inputType}
+                    value={draftValue}
+                    onChange={(e) => handleFieldChange(field, e.target.value)}
+                    className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
+                    placeholder={
+                      field === 'traveler_count'
+                        ? '#'
+                        : field === 'origin'
+                          ? 'City'
+                          : field === 'budget'
+                            ? '$'
+                            : 'DD-MM-YY'
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => handleCommitField(field, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleCommitField(field, (e.target as HTMLInputElement).value);
                       }
-                      onClick={(e) => e.stopPropagation()}
-                      onBlur={(e) => handleCommitField(field, e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleCommitField(field, (e.target as HTMLInputElement).value);
-                        }
-                      }}
-                      autoFocus
-                    />
-                  </div>
+                    }}
+                    autoFocus
+                  />
                 ) : (
-                  <div
-                    className={`text-sm font-semibold ${
-                      isMissingField(
-                        field,
-                        field === 'traveler_count'
-                          ? tripInputs.traveler_count
-                          : (tripInputs[field as 'origin' | 'start_date' | 'end_date'] as
-                              | string
-                              | null
-                              | undefined)
-                      )
-                        ? 'text-amber-600'
-                        : 'text-foreground'
+                  <span
+                    className={`whitespace-nowrap text-xs font-semibold ${
+                      isFieldMissing ? 'text-amber-600' : 'text-foreground'
                     }`}
                   >
                     {displayValue}
-                  </div>
+                  </span>
                 )}
               </div>
             );
@@ -1164,6 +1309,90 @@ export function NomadicLanding() {
         )}
       </div>
     </div>
+  );
+
+  // Chat panel content that can be reused in both layouts
+  const chatPanelContent = (fullHeight = false) => (
+    <div className={fullHeight ? 'flex h-full min-h-0 flex-col' : ''}>
+      <div className={fullHeight ? 'min-h-0 flex-1' : ''}>
+        <ChatPanel
+          key={chatKey}
+          tripContextId={tripContextId}
+          selectedBranchId={selectedBranchId}
+          tripInputs={tripInputs}
+          onPlanResult={handlePlanResult}
+          onChatTriggered={handleChatTriggered}
+          onHasUserMessage={handleHasUserMessage}
+          tripDetails={{ content: tripDetailsContent, missingFields }}
+          fullHeight={fullHeight}
+          hasBranches={hasBranchesReady}
+        />
+      </div>
+      {hasUserMessages ? (
+        <div
+          className={`flex w-full justify-end px-1 ${fullHeight ? 'shrink-0 pt-2' : 'pt-4'}`}
+        >
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isResettingSession}
+            onClick={handleStartNewSession}
+            className="border-orange-500 bg-white/60 text-orange-500 hover:bg-white/70 hover:text-orange-600"
+          >
+            {isResettingSession ? 'Resetting…' : 'Start fresh'}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  // Branch panel content
+  const branchPanelContent = (
+    <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
+      <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
+      <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
+      <div className="relative flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+        <div className="space-y-1">
+          <h3 className="text-foreground font-display text-xl font-bold">
+            Explore each suggestion and its booking options in one sweep
+          </h3>
+          <p className="text-muted-foreground text-sm">
+            Branch cards now stretch across the page and carry tiles with them.
+          </p>
+        </div>
+        {branches.length > 0 ? (
+          <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+            {branches.length} suggestion{branches.length === 1 ? '' : 's'} ready
+          </div>
+        ) : null}
+      </div>
+      <CardContent className="relative overflow-hidden">
+        {isHydratingSnapshot && branches.length === 0 ? (
+          <p className="text-muted-foreground text-sm">Restoring your last session…</p>
+        ) : branches.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            Start chatting to generate suggestions for you.
+          </p>
+        ) : (
+          <BranchPanel
+            branches={branchesWithTileNotes}
+            selectedBranchId={selectedBranchId}
+            onBranchSelect={handleBranchSelect}
+            branchTileCounts={branchTileCounts}
+            branchSelections={branchSelections}
+            tiles={tiles}
+            tilesBranchId={tilesBranchId}
+            tilesRequestId={tilesRequestId}
+            selectedTiles={activeBranchSelection}
+            onTileToggle={handleTileSelection}
+            onTilesTabChange={handleTilesTabChange}
+            onBookTrip={handleBookTrip}
+            canBookTrip={blockingMissingFields.length === 0}
+            tripInputs={tripInputs}
+          />
+        )}
+      </CardContent>
+    </Card>
   );
 
   return (
@@ -1181,182 +1410,226 @@ export function NomadicLanding() {
         </div>
       )}
 
-      <div className="relative overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="flex h-full w-full">
-            <div className="h-full w-1/2">
-              <img
-                src={HERO_IMAGE}
-                alt="Nomadic hero"
-                className="h-full w-full object-cover"
-              />
-            </div>
-            <div className="h-full w-1/2">
-              <video
-                className="h-full w-full object-cover"
-                src={HERO_VIDEO}
-                poster={HERO_IMAGE}
-                autoPlay
-                loop
-                muted
-                playsInline
-                aria-hidden="true"
-              />
-            </div>
-          </div>
-          <div className="to-background absolute inset-0 bg-gradient-to-b from-black/65 via-black/35" />
-        </div>
-
-        <div className="relative z-10">
-          <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 text-white">
-            <div className="flex items-center gap-2">
-              <Compass className="h-6 w-6" />
-              <span className="font-display text-xl font-bold tracking-tight">
-                Nomadic
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                className="text-white hover:bg-white/10 focus:ring-white"
-              >
-                <User className="h-5 w-5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                type="button"
-                className="text-white hover:bg-white/10 focus:ring-white"
-              >
-                <Menu className="h-5 w-5" />
-              </Button>
-            </div>
-          </header>
-
-          <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pb-12 pt-6">
-            <div className="-mt-8 space-y-6 text-center text-white">
-              <h1
-                className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl"
-                aria-label={`Roam freely. ${HERO_TAGLINE}`}
-              >
-                Roam freely.{' '}
-                <span className="text-accent relative inline-block">
-                  <span className="invisible">{HERO_TAGLINE}</span>
-                  <span
-                    className="absolute left-0 top-0 whitespace-nowrap"
-                    aria-live="polite"
-                  >
-                    {typedTagline}
+      {/* Split layout when branches are ready */}
+      {hasBranchesReady ? (
+        <div className="flex min-h-screen">
+          {/* Left sidebar - Chat Panel (25% width, sticky) */}
+          <motion.div
+            initial={{ x: '-100%', opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ duration: 0.5, ease: 'easeOut' }}
+            className="no-scrollbar fixed left-0 top-0 z-40 h-screen w-1/4 min-w-[320px] overflow-y-auto border-r border-white/10 bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl"
+          >
+            <div className="flex h-full flex-col p-4">
+              {/* Header */}
+              <header className="mb-4 flex items-center justify-between text-white">
+                <div className="flex items-center gap-2">
+                  <Compass className="h-5 w-5" />
+                  <span className="font-display text-lg font-bold tracking-tight">
+                    Nomadic
                   </span>
-                </span>
-              </h1>
-            </div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="mt-8 w-full max-w-2xl"
-            >
-              <Card className="bg-card/95 border-white/20 p-1 shadow-2xl backdrop-blur">
-                <CardContent className="p-3 sm:p-4">
-                  <ChatPanel
-                    key={chatKey}
-                    tripContextId={tripContextId}
-                    selectedBranchId={selectedBranchId}
-                    tripInputs={tripInputs}
-                    onPlanResult={handlePlanResult}
-                    onChatTriggered={handleChatTriggered}
-                    tripDetails={{ content: tripDetailsContent, missingFields }}
-                  />
-                </CardContent>
-              </Card>
-              {hasTriggeredChat ? (
-                <div className="flex w-full justify-end px-1 pt-6">
+                </div>
+                <div className="flex items-center gap-2">
                   <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={isResettingSession}
-                    onClick={handleStartNewSession}
-                    className="border-orange-500 bg-white/60 text-orange-500 hover:bg-white/70 hover:text-orange-600"
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    className="h-8 w-8 text-white hover:bg-white/10"
                   >
-                    {isResettingSession ? 'Resetting…' : 'Start fresh'}
+                    <User className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    className="h-8 w-8 text-white hover:bg-white/10"
+                  >
+                    <Menu className="h-4 w-4" />
                   </Button>
                 </div>
-              ) : null}
-            </motion.div>
-          </div>
-        </div>
-      </div>
-
-      {showResults ? (
-        <section className="bg-background pb-14 pt-10">
-          <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  Let's dive right into it
-                </p>
-                <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                  Branches stretched wide with tiles nested inside
-                </h2>
+              </header>
+              {/* Chat Panel */}
+              <div className="flex-1 overflow-hidden">
+                <Card className="bg-card/95 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
+                  <CardContent className="flex h-full min-h-0 flex-col p-3">
+                    {chatPanelContent(true)}
+                  </CardContent>
+                </Card>
               </div>
-              {branches.length > 0 ? (
-                <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  {branches.length} suggestion{branches.length === 1 ? '' : 's'} ready
+            </div>
+          </motion.div>
+
+          {/* Right content - Branches (75% width, with left margin for fixed sidebar) */}
+          <motion.div
+            initial={{ x: '100%', opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ duration: 0.5, ease: 'easeOut', delay: 0.1 }}
+            className="ml-[25%] min-w-0 flex-1"
+            style={{ marginLeft: 'max(25%, 320px)' }}
+          >
+            <div className="min-h-screen">
+              {/* Hero section (condensed) */}
+              <div className="relative overflow-hidden">
+                <div className="absolute inset-0">
+                  <div className="flex h-full w-full">
+                    <div className="h-full w-1/2">
+                      <img
+                        src={HERO_IMAGE}
+                        alt="Nomadic hero"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="h-full w-1/2">
+                      <video
+                        className="h-full w-full object-cover"
+                        src={HERO_VIDEO}
+                        poster={HERO_IMAGE}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        aria-hidden="true"
+                      />
+                    </div>
+                  </div>
+                  <div className="to-background absolute inset-0 bg-gradient-to-b from-black/65 via-black/35" />
                 </div>
-              ) : null}
+                <div className="relative z-10 px-6 py-8">
+                  <div className="space-y-2 text-white">
+                    <h1
+                      className="font-display text-3xl font-bold leading-tight"
+                      aria-label={`Roam freely. ${HERO_TAGLINE}`}
+                    >
+                      Roam freely. <span className="text-accent">{typedTagline}</span>
+                    </h1>
+                  </div>
+                </div>
+              </div>
+
+              {/* Branch panel section */}
+              <section className="bg-background px-6 pb-14 pt-6">
+                {branchPanelContent}
+              </section>
+
+              <Footer />
+            </div>
+          </motion.div>
+        </div>
+      ) : (
+        /* Original centered layout when no branches */
+        <>
+          <div className="relative overflow-hidden">
+            <div className="absolute inset-0">
+              <div className="flex h-full w-full">
+                <div className="h-full w-1/2">
+                  <img
+                    src={HERO_IMAGE}
+                    alt="Nomadic hero"
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="h-full w-1/2">
+                  <video
+                    className="h-full w-full object-cover"
+                    src={HERO_VIDEO}
+                    poster={HERO_IMAGE}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    aria-hidden="true"
+                  />
+                </div>
+              </div>
+              <div className="to-background absolute inset-0 bg-gradient-to-b from-black/65 via-black/35" />
             </div>
 
-            <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
-              <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
-              <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
-              <div className="relative flex flex-wrap items-start justify-between gap-4 px-5 py-4">
-                <div className="space-y-1">
-                  <h3 className="text-foreground font-display text-xl font-bold">
-                    Explore each suggestion and its booking options in one sweep
-                  </h3>
-                  <p className="text-muted-foreground text-sm">
-                    Branch cards now stretch across the page and carry tiles with them.
-                  </p>
+            <div className="relative z-10">
+              <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 text-white">
+                <div className="flex items-center gap-2">
+                  <Compass className="h-6 w-6" />
+                  <span className="font-display text-xl font-bold tracking-tight">
+                    Nomadic
+                  </span>
                 </div>
-              </div>
-              <CardContent className="relative overflow-hidden">
-                {isHydratingSnapshot && branches.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">
-                    Restoring your last session…
-                  </p>
-                ) : branches.length === 0 ? (
-                  <p className="text-muted-foreground text-sm">
-                    Start chatting to generate suggestions for you.
-                  </p>
-                ) : (
-                  <BranchPanel
-                    branches={branchesWithTileNotes}
-                    selectedBranchId={selectedBranchId}
-                    onBranchSelect={handleBranchSelect}
-                    branchTileCounts={branchTileCounts}
-                    branchSelections={branchSelections}
-                    tiles={tiles}
-                    tilesBranchId={tilesBranchId}
-                    tilesRequestId={tilesRequestId}
-                    selectedTiles={activeBranchSelection}
-                    onTileToggle={handleTileSelection}
-                    onTilesTabChange={handleTilesTabChange}
-                    onBookTrip={handleBookTrip}
-                    canBookTrip={missingFields.length === 0}
-                  />
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-      ) : null}
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    className="text-white hover:bg-white/10 focus:ring-white"
+                  >
+                    <User className="h-5 w-5" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    type="button"
+                    className="text-white hover:bg-white/10 focus:ring-white"
+                  >
+                    <Menu className="h-5 w-5" />
+                  </Button>
+                </div>
+              </header>
 
-      <FeaturesSection />
-      <Footer />
+              <div
+                ref={chatPanelContainerRef}
+                className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pb-12 pt-6"
+              >
+                <div className="-mt-8 space-y-6 text-center text-white">
+                  <h1
+                    className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl"
+                    aria-label={`Roam freely. ${HERO_TAGLINE}`}
+                  >
+                    Roam freely.{' '}
+                    <span className="text-accent relative inline-block">
+                      <span className="invisible">{HERO_TAGLINE}</span>
+                      <span
+                        className="absolute left-0 top-0 whitespace-nowrap"
+                        aria-live="polite"
+                      >
+                        {typedTagline}
+                      </span>
+                    </span>
+                  </h1>
+                </div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, delay: 0.1 }}
+                  className="mt-8 w-full max-w-xl"
+                >
+                  <Card className="bg-card/95 border-white/20 p-1 shadow-2xl backdrop-blur">
+                    <CardContent className="p-3 sm:p-4">
+                      {chatPanelContent(false)}
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              </div>
+            </div>
+          </div>
+
+          {showResults ? (
+            <section className="bg-background pb-14 pt-10">
+              <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
+                      Branches stretched wide with tiles nested inside
+                    </h2>
+                  </div>
+                </div>
+
+                {branchPanelContent}
+              </div>
+            </section>
+          ) : null}
+
+          <FeaturesSection />
+          <Footer />
+        </>
+      )}
     </div>
   );
 }

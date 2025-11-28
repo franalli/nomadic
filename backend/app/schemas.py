@@ -88,6 +88,7 @@ class TripInputs(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     traveler_count: Optional[int] = None
+    budget: Optional[str] = None
     missing_fields: List[str] = Field(default_factory=list)
 
 
@@ -108,6 +109,7 @@ class PlanBranch(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     traveler_count: Optional[int] = None
+    budget: Optional[str] = None
 
 
 class PlanResponse(BaseModel):

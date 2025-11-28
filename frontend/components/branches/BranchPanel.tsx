@@ -1,6 +1,6 @@
 'use client';
 
-import { MapPin, Plane, Sparkles, TentTree, type LucideIcon } from 'lucide-react';
+import { type LucideIcon, MapPin, Plane, Sparkles, TentTree } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import {
@@ -8,7 +8,7 @@ import {
   TilesGrid,
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
-import type { PlanBranch } from '@/types/plan';
+import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile, TileSelection } from '@/types/tile';
 
 type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
@@ -143,6 +143,56 @@ const DETAIL_PRESETS: BranchDetails[] = [
   },
 ];
 
+const DAY_IN_MS = 1000 * 60 * 60 * 24;
+const DATE_RANGE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+});
+
+const formatDuration = (start?: string | null, end?: string | null) => {
+  if (!start || !end) return null;
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+  const diffMs = endDate.getTime() - startDate.getTime();
+  if (diffMs < 0) return null;
+  const days = Math.max(1, Math.round(diffMs / DAY_IN_MS));
+  const startLabel = DATE_RANGE_FORMATTER.format(startDate);
+  const endLabel = DATE_RANGE_FORMATTER.format(endDate);
+  const rangeLabel = startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
+  const summary = `${days} day${days === 1 ? '' : 's'}`;
+  return { summary, rangeLabel };
+};
+
+const resolveDurationForBranch = (
+  branch?: PlanBranch | null,
+  inputs?: TripInputs | null
+) => {
+  if (!branch) return null;
+  return formatDuration(
+    branch.start_date ?? inputs?.start_date ?? null,
+    branch.end_date ?? inputs?.end_date ?? null
+  );
+};
+
+const parseBudgetNumber = (budget?: string | null): number | null => {
+  if (!budget) return null;
+  const numericText = budget.replace(/[^\d.]/g, '');
+  if (!numericText) return null;
+  const parsed = Number(numericText);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed);
+};
+
+const resolveBudgetForBranch = (branch?: PlanBranch | null, inputs?: TripInputs | null) =>
+  branch?.budget?.trim() || inputs?.budget?.trim() || null;
+
+const formatBudgetDisplay = (budget?: string | null): string | null => {
+  const numeric = parseBudgetNumber(budget);
+  if (numeric) return `$${numeric.toLocaleString()}`;
+  return budget?.trim() || null;
+};
+
 type BranchPanelProps = {
   branches: PlanBranch[];
   selectedBranchId: string | null;
@@ -157,6 +207,7 @@ type BranchPanelProps = {
   branchSelections?: Record<string, TileSelection>;
   onBookTrip?: (branchId: string) => void;
   canBookTrip?: boolean;
+  tripInputs?: TripInputs | null;
 };
 
 export function BranchPanel({
@@ -173,6 +224,7 @@ export function BranchPanel({
   branchSelections,
   onBookTrip,
   canBookTrip = true,
+  tripInputs,
 }: BranchPanelProps) {
   const hasBranches = branches.length > 0;
   const selected = hasBranches
@@ -185,11 +237,16 @@ export function BranchPanel({
       )
     : 0;
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
+  const selectedDuration = resolveDurationForBranch(selected, tripInputs);
+  const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
   const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
-  const priceHintFromBudget = (budget: string) => {
-    if (/^\$\s*\$\$?/.test(budget)) return '$2,000+';
-    if (/^\$\$\$/.test(budget)) return '$3,000+';
-    if (/^\$\$/.test(budget)) return '$2,400+';
+  const priceHintFromBudget = (budget?: string | null) => {
+    const numeric = parseBudgetNumber(budget);
+    if (numeric) return `~$${numeric.toLocaleString()}`;
+    const normalized = budget?.trim() || '';
+    if (/^\$\s*\$\$?/.test(normalized)) return '$2,000+';
+    if (/^\$\$\$/.test(normalized)) return '$3,000+';
+    if (/^\$\$/.test(normalized)) return '$2,400+';
     return '$1,500+';
   };
   const branchTiles = useMemo(() => {
@@ -229,28 +286,77 @@ export function BranchPanel({
   }, [branchTiles]);
 
   const bookingSummary = useMemo(() => {
-    const parts: string[] = [];
-    if (selectedTiles?.stay) parts.push(`Stay locked: ${selectedTiles.stay.title}`);
-    if (selectedTiles?.flight) parts.push(`Flight locked: ${selectedTiles.flight.title}`);
-    if (selectedTiles?.activities?.length) {
-      const first = selectedTiles.activities[0];
-      const extras = selectedTiles.activities.length - 1;
-      parts.push(`Activities: ${first.title}${extras > 0 ? ` +${extras} more` : ''}`);
-    }
-    if (!parts.length && countsForSelected) {
-      const badges = [
-        countsForSelected.stays ? `${countsForSelected.stays} stays` : null,
-        countsForSelected.flights ? `${countsForSelected.flights} flights` : null,
-        countsForSelected.activities
-          ? `${countsForSelected.activities} activities`
-          : null,
-      ].filter(Boolean);
-      if (badges.length) {
-        return `Coverage so far: ${badges.join(' · ')}.`;
+    const destination = selected?.destination ?? tripInputs?.destination ?? 'your trip';
+    const origin = selected?.origin ?? tripInputs?.origin ?? null;
+    const travelerCount = selected?.traveler_count ?? tripInputs?.traveler_count ?? null;
+    const travelerLabel =
+      travelerCount != null
+        ? `${travelerCount} traveler${travelerCount === 1 ? '' : 's'}`
+        : null;
+    const dateLabel = selectedDuration?.rangeLabel ?? null;
+    const budgetLabel = formatBudgetDisplay(selectedBudget);
+
+    const framingParts = [
+      origin && destination ? `${origin} → ${destination}` : destination,
+      dateLabel,
+      travelerLabel,
+      budgetLabel ? `budget ${budgetLabel}` : null,
+    ].filter(Boolean);
+    const intro = framingParts.length
+      ? `Based on your latest notes (${framingParts.join(' · ')}), here's where bookings sit.`
+      : "Here's where the booking picks sit.";
+
+    const labelForTab = (tab: TileTabKey) => {
+      if (tab === 'stays') return 'Hotels';
+      if (tab === 'flights') return 'Flights';
+      return 'Activities';
+    };
+
+    const describeCategory = (tab: TileTabKey, selections: Tile[]): string => {
+      const label = labelForTab(tab);
+      const options = tilesByTab[tab];
+      const optionCount = options.length || countsForSelected?.[tab] || 0;
+
+      if (selections.length > 0) {
+        const [first] = selections;
+        const extras = selections.length - 1;
+        const extraText = extras > 0 ? ` +${extras} more` : '';
+        return `${label}: locked ${first.title}${extraText} to match what you asked for.`;
       }
-    }
-    return parts.join(' · ') || 'No picks locked yet. Expand a category to choose.';
-  }, [countsForSelected, selectedTiles]);
+
+      if (optionCount > 0) {
+        const highlight = options[0]?.title;
+        const routeHint =
+          tab === 'flights' && (origin || destination)
+            ? ` for ${origin ? `${origin} → ` : ''}${destination}`
+            : '';
+        const highlightText = highlight ? `; leading pick ${highlight}` : '';
+        return `${label}: ${optionCount} option${optionCount === 1 ? '' : 's'} ready${routeHint}${highlightText}.`;
+      }
+
+      return `${label}: still searching—no matches yet, but I'll refresh this branch as results land.`;
+    };
+
+    const stayLine = describeCategory(
+      'stays',
+      selectedTiles?.stay ? [selectedTiles.stay] : []
+    );
+    const flightLine = describeCategory(
+      'flights',
+      selectedTiles?.flight ? [selectedTiles.flight] : []
+    );
+    const activityLine = describeCategory('activities', selectedTiles?.activities ?? []);
+
+    return [intro, stayLine, flightLine, activityLine].join(' ');
+  }, [
+    countsForSelected,
+    selected,
+    selectedBudget,
+    selectedDuration,
+    selectedTiles,
+    tilesByTab,
+    tripInputs,
+  ]);
 
   if (!hasBranches) {
     return (
@@ -268,7 +374,7 @@ export function BranchPanel({
         </p>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {branches.map((b, idx) => {
-            const isActive = b.id === selected.id;
+            const isActive = selected !== null && b.id === selected.id;
             const preset = DETAIL_PRESETS[idx % DETAIL_PRESETS.length];
             const selection = branchSelections?.[b.id] ?? { activities: [] };
             const statusReady =
@@ -278,8 +384,11 @@ export function BranchPanel({
             const badgeLabel = statusReady ? 'Ready' : 'Customizing';
             const badgeColor = statusReady ? 'bg-green-500' : 'bg-orange-500';
             const badgeTextColor = 'text-white';
-            const priceHint = priceHintFromBudget(preset.budget);
-            const durationShort = preset.duration;
+            const budget = resolveBudgetForBranch(b, tripInputs) ?? preset.budget;
+            const budgetLabel = formatBudgetDisplay(budget) ?? preset.budget;
+            const priceHint = priceHintFromBudget(budget);
+            const duration =
+              resolveDurationForBranch(b, tripInputs)?.summary ?? preset.duration;
             return (
               <button
                 key={b.id}
@@ -300,13 +409,13 @@ export function BranchPanel({
                   }}
                 >
                   <div className="flex h-full flex-col justify-between gap-3 p-4">
-                    <div className="flex items-start justify-between">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
                       <span
-                        className={`${badgeColor} ${badgeTextColor} inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
+                        className={`${badgeColor} ${badgeTextColor} inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
                       >
                         {badgeLabel}
                       </span>
-                      <span className="rounded-full bg-black/30 px-2 py-1 text-[11px] font-semibold text-white">
+                      <span className="shrink-0 rounded-full bg-black/30 px-2 py-1 text-[11px] font-semibold text-white">
                         Suggestion {idx + 1}
                       </span>
                     </div>
@@ -316,9 +425,9 @@ export function BranchPanel({
                         {b.description ||
                           preset.highlights[0].replace('{destination}', b.destination)}
                       </p>
-                      <div className="mt-2 flex items-center justify-between text-sm font-semibold">
-                        <span>{durationShort}</span>
-                        <span>{priceHint}</span>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
+                        <span>{duration}</span>
+                        <span>{budgetLabel}</span>
                       </div>
                     </div>
                   </div>
@@ -341,10 +450,10 @@ export function BranchPanel({
               <div className="flex items-center gap-2">
                 <MapPin className="text-primary h-5 w-5" aria-hidden="true" />
                 <h4 className="text-foreground font-display text-2xl font-bold">
-                  {selected.destination}
+                  {selected?.destination ?? 'Unknown Destination'}
                 </h4>
               </div>
-              {selected.description && (
+              {selected?.description && (
                 <p className="text-muted-foreground text-sm leading-relaxed">
                   {selected.description}
                 </p>
@@ -423,29 +532,11 @@ export function BranchPanel({
             )}
           </div>
 
-          <div className="text-muted-foreground flex flex-wrap gap-2 text-xs">
-            <span className="text-foreground/80 inline-flex items-center gap-1 rounded-full bg-black/10 px-3 py-1 font-medium">
-              <MapPin className="h-3 w-3" />
-              {selected.destination}
-            </span>
-            <span className="text-foreground/80 rounded-full bg-white/5 px-3 py-1 font-medium">
-              Suggestion {selectedIndex + 1} of {branches.length}
-            </span>
-            <span className="text-foreground/80 rounded-full bg-white/5 px-3 py-1 font-medium">
-              {detailPreset.vibe}
-            </span>
-          </div>
-
           <div className="space-y-5">
             <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
-              <div className="flex items-center justify-between">
-                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  Booking summary
-                </p>
-                <span className="text-foreground/80 rounded-full bg-black/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
-                  Live
-                </span>
-              </div>
+              <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+                Booking summary
+              </p>
               <p className="text-foreground mt-2 text-sm">{bookingSummary}</p>
             </div>
 
@@ -454,7 +545,7 @@ export function BranchPanel({
                 <div className="relative aspect-video">
                   <img
                     src={detailPreset.heroImages[0]}
-                    alt={`${selected.destination} overview`}
+                    alt={`${selected?.destination ?? 'Destination'} overview`}
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-tr from-black/30 via-transparent to-black/10" />
@@ -467,7 +558,7 @@ export function BranchPanel({
                 <div className="relative aspect-[16/9]">
                   <img
                     src={detailPreset.heroImages[1]}
-                    alt={`${selected.destination} detail`}
+                    alt={`${selected?.destination ?? 'Destination'} detail`}
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -479,7 +570,7 @@ export function BranchPanel({
                 <div className="relative aspect-[16/9]">
                   <img
                     src={detailPreset.heroImages[2]}
-                    alt={`${selected.destination} night detail`}
+                    alt={`${selected?.destination ?? 'Destination'} night detail`}
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -494,7 +585,11 @@ export function BranchPanel({
                 <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
                   Ideal duration
                 </p>
-                <p className="text-foreground font-semibold">{detailPreset.duration}</p>
+                <p className="text-foreground font-semibold">
+                  {selectedDuration
+                    ? `${selectedDuration.summary} · ${selectedDuration.rangeLabel}`
+                    : detailPreset.duration}
+                </p>
                 <p className="text-muted-foreground text-xs">
                   Enough time to see the best corners without rushing.
                 </p>
@@ -503,7 +598,9 @@ export function BranchPanel({
                 <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
                   Budget feel
                 </p>
-                <p className="text-foreground font-semibold">{detailPreset.budget}</p>
+                <p className="text-foreground font-semibold">
+                  {formatBudgetDisplay(selectedBudget) ?? detailPreset.budget}
+                </p>
                 <p className="text-muted-foreground text-xs">
                   Mix of local eats and a couple splurge moments.
                 </p>
@@ -542,7 +639,12 @@ export function BranchPanel({
                   {detailPreset.highlights.map((item) => (
                     <li key={item} className="flex gap-2">
                       <span className="bg-accent mt-1 h-1.5 w-1.5 rounded-full" />
-                      <span>{item.replace('{destination}', selected.destination)}</span>
+                      <span>
+                        {item.replace(
+                          '{destination}',
+                          selected?.destination ?? 'your destination'
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -599,7 +701,7 @@ export function BranchPanel({
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={() => canBookTrip && onBookTrip?.(selected.id)}
+          onClick={() => canBookTrip && selected && onBookTrip?.(selected.id)}
           disabled={!canBookTrip}
           className={`focus-visible:outline-primary rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             !canBookTrip
