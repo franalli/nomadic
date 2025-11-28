@@ -174,18 +174,70 @@ def _coerce_delta_content(delta_content: Any) -> str:
     if isinstance(delta_content, list):
         parts: List[str] = []
         for entry in delta_content:
-            text_value = getattr(entry, "text", None)
-            if text_value:
-                parts.append(str(text_value))
-            elif isinstance(entry, str):
-                parts.append(entry)
+            parts.append(_coerce_delta_content(entry))
         return "".join(parts)
+
+    if isinstance(delta_content, dict):
+        text_candidate = delta_content.get("text")
+        if isinstance(text_candidate, list):
+            return "".join(_coerce_delta_content(chunk) for chunk in text_candidate)
+        if isinstance(text_candidate, str):
+            return text_candidate
+        json_candidate = delta_content.get("json")
+        if isinstance(json_candidate, dict):
+            return json.dumps(json_candidate, ensure_ascii=True)
+        value_candidate = delta_content.get("value")
+        if isinstance(value_candidate, str):
+            return value_candidate
+        content_candidate = delta_content.get("content")
+        if content_candidate is not None:
+            return _coerce_delta_content(content_candidate)
 
     text_value = getattr(delta_content, "text", None)
     if text_value:
         return str(text_value)
 
     return str(delta_content)
+
+
+def _extract_message_payload(choice: Any) -> tuple[Optional[dict], str]:
+    """Return either structured JSON payload or fallback raw text from a choice."""
+
+    message_obj: Any = getattr(choice, "message", None)
+    if message_obj is None and isinstance(choice, dict):
+        message_obj = choice.get("message") or choice.get("delta")
+
+    if message_obj is None:
+        return None, ""
+
+    parsed_candidate = getattr(message_obj, "parsed", None)
+    if isinstance(message_obj, dict) and parsed_candidate is None:
+        parsed_candidate = message_obj.get("parsed")
+    if isinstance(parsed_candidate, dict):
+        return parsed_candidate, ""
+    if isinstance(parsed_candidate, list):
+        merged: dict[str, Any] = {}
+        for entry in parsed_candidate:
+            if isinstance(entry, dict):
+                merged.update(entry)
+        if merged:
+            return merged, ""
+    if isinstance(parsed_candidate, str):
+        return None, parsed_candidate
+
+    content_obj: Any = getattr(message_obj, "content", None)
+    if content_obj is None and isinstance(message_obj, dict):
+        content_obj = message_obj.get("content")
+
+    if isinstance(content_obj, list):
+        for entry in content_obj:
+            if isinstance(entry, dict):
+                json_payload = entry.get("json")
+                if isinstance(json_payload, dict):
+                    return json_payload, ""
+
+    raw_content = _coerce_delta_content(content_obj)
+    return None, raw_content
 
 
 def _truncate_to_balanced_json(raw: str) -> Optional[str]:
@@ -795,23 +847,22 @@ Return JSON only:
 
     if completion is not None:
         raw_content = ""
+        structured_payload: Optional[dict] = None
         try:
             choice = completion.choices[0] if completion and completion.choices else None
             if choice is not None:
-                message_obj = getattr(choice, "message", None)
-                if isinstance(message_obj, dict):
-                    raw_content = _coerce_delta_content(message_obj.get("content"))
-                else:
-                    raw_content = _coerce_delta_content(getattr(message_obj, "content", ""))
+                structured_payload, raw_content = _extract_message_payload(choice)
         except Exception:
             raw_content = ""
 
         if _DEBUG_LOG and raw_content:
             print(f"[DEBUG] Raw LLM response: {raw_content[:500]}...")
+        elif _DEBUG_LOG and structured_payload:
+            print(f"[DEBUG] Structured LLM response: {json.dumps(structured_payload)[:500]}...")
 
         default_assistant_message = "I'm having trouble processing that. Could you try again?"
 
-        data = _tolerant_json_loads(raw_content or "")
+        data = structured_payload or _tolerant_json_loads(raw_content or "")
         if data is None:
             data = {
                 "branches": [],
