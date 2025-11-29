@@ -1,4 +1,4 @@
-import { Heart, MapPin, Star, Users } from 'lucide-react';
+import { Heart, MapPin, Star } from 'lucide-react';
 import { type KeyboardEvent, type MouseEvent, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,6 @@ type TileCardProps = {
   branchId?: string;
   isSelected?: boolean;
   onToggleSelect?: (tile: Tile) => void;
-  travelerCount?: number | null;
 };
 
 const HOTEL_FEATURE_SETS = [
@@ -76,7 +75,6 @@ export function TileCard({
   branchId,
   isSelected,
   onToggleSelect,
-  travelerCount,
 }: TileCardProps) {
   const [isLiked, setIsLiked] = useState(false);
 
@@ -164,15 +162,6 @@ export function TileCard({
           <div className="text-muted-foreground -mt-1 flex items-center gap-1.5 text-sm">
             <MapPin className="h-4 w-4 shrink-0" />
             <span className="line-clamp-1">{tile.location_label}</span>
-          </div>
-        )}
-
-        {travelerCount != null && travelerCount > 0 && (
-          <div className="text-muted-foreground -mt-1 flex items-center gap-1.5 text-sm">
-            <Users className="h-4 w-4 shrink-0" />
-            <span>
-              {travelerCount} {travelerCount === 1 ? 'traveler' : 'travelers'}
-            </span>
           </div>
         )}
 

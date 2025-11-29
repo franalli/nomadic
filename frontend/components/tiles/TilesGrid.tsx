@@ -168,7 +168,6 @@ export function TilesGrid({
               key={tile.id}
               tile={tile}
               branchId={activeBranch?.id}
-              travelerCount={activeBranch?.traveler_count}
               isSelected={
                 effectiveTab === 'stays'
                   ? selectedTiles?.stay?.id === tile.id

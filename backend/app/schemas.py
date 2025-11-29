@@ -86,7 +86,6 @@ class TileClickEvent(BaseModel):
 class TripInputs(BaseModel):
     """Trip parameters stored in chat message metadata."""
 
-    destination: Optional[str] = None
     destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     start_date: Optional[str] = None
@@ -99,13 +98,13 @@ class TripInputs(BaseModel):
 class PlanRequest(BaseModel):
     """Request to send a chat message to the planner.
 
-    All trip state (inputs, branches, tiles, selections) is read from
-    the centralized PlanDocument. The frontend should PATCH /v1/document
-    to update trip inputs before sending chat messages.
+    The trip_inputs field allows the frontend to pass current UI state
+    which takes precedence over the stored document state.
     """
 
     session_id: str  # Required - identifies the planning session
     message: str  # The user's chat message
+    trip_inputs: Optional[TripInputs] = None  # Optional - override stored inputs
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -135,7 +134,6 @@ class DocumentBranch(BaseModel):
     id: str
     label: str
     description: str
-    destination: str
     destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     start_date: Optional[str] = None
@@ -150,7 +148,6 @@ class DocumentBranch(BaseModel):
 class DocumentTripInputs(BaseModel):
     """Trip parameters extracted/inferred from conversation."""
 
-    destination: Optional[str] = None
     destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     start_date: Optional[str] = None
@@ -173,6 +170,8 @@ class PlanDocumentData(BaseModel):
     # Chat fields (populated when returning from /v1/plan, not persisted)
     assistant_message: Optional[str] = None
     assistant_message_id: Optional[str] = None
+    # Ready to generate flag - when all fields are complete but user hasn't clicked generate yet
+    ready_to_generate: bool = False
 
 
 class PlanDocument(BaseModel):

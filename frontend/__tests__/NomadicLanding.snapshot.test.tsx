@@ -11,7 +11,7 @@ const DOCUMENT_RESPONSE = {
   document: {
     trip_context_id: 99,
     trip_inputs: {
-      destination: 'Nice',
+      destinations: ['Nice'],
       origin: 'Amsterdam',
       start_date: '2025-06-01',
       end_date: '2025-06-07',
@@ -23,7 +23,7 @@ const DOCUMENT_RESPONSE = {
         id: 'branch-1',
         label: 'Beach Escape',
         description: 'Relax on the coast',
-        destination: 'Nice',
+        destinations: ['Nice'],
         origin: 'Amsterdam',
         start_date: '2025-06-01',
         end_date: '2025-06-07',

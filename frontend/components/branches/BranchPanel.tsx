@@ -273,7 +273,7 @@ export function BranchPanel({
   }, [branchTiles]);
 
   const bookingSummary = useMemo(() => {
-    const destination = selected?.destination ?? tripInputs?.destination ?? 'your trip';
+    const destination = selected?.destinations[0] ?? tripInputs?.destinations[0] ?? 'your trip';
     const origin = selected?.origin ?? tripInputs?.origin ?? null;
     const travelerCount = selected?.traveler_count ?? tripInputs?.traveler_count ?? null;
     const travelerLabel =
@@ -406,10 +406,10 @@ export function BranchPanel({
                       </span>
                     </div>
                     <div className="space-y-2 text-white">
-                      <p className="text-lg font-bold leading-tight">{b.destination}</p>
+                      <p className="text-lg font-bold leading-tight">{b.destinations.join(', ') || 'TBD'}</p>
                       <p className="line-clamp-2 text-sm opacity-90">
                         {b.description ||
-                          preset.highlights[0].replace('{destination}', b.destination)}
+                          preset.highlights[0].replace('{destination}', b.destinations[0] || 'your destination')}
                       </p>
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
                         <span>{duration}</span>
@@ -436,7 +436,7 @@ export function BranchPanel({
               <div className="flex items-center gap-2">
                 <MapPin className="text-primary h-5 w-5" aria-hidden="true" />
                 <h4 className="text-foreground font-display text-2xl font-bold">
-                  {selected?.destination ?? 'Unknown Destination'}
+                  {selected?.destinations.join(', ') || 'Unknown Destination'}
                 </h4>
               </div>
               {selected?.description && (
@@ -530,7 +530,7 @@ export function BranchPanel({
                 <div className="relative aspect-video">
                   <img
                     src={detailPreset.heroImages[0]}
-                    alt={`${selected?.destination ?? 'Destination'} overview`}
+                    alt={`${selected?.destinations[0] ?? 'Destination'} overview`}
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-tr from-black/30 via-transparent to-black/10" />
@@ -543,7 +543,7 @@ export function BranchPanel({
                 <div className="relative aspect-[16/9]">
                   <img
                     src={detailPreset.heroImages[1]}
-                    alt={`${selected?.destination ?? 'Destination'} detail`}
+                    alt={`${selected?.destinations[0] ?? 'Destination'} detail`}
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -555,7 +555,7 @@ export function BranchPanel({
                 <div className="relative aspect-[16/9]">
                   <img
                     src={detailPreset.heroImages[2]}
-                    alt={`${selected?.destination ?? 'Destination'} night detail`}
+                    alt={`${selected?.destinations[0] ?? 'Destination'} night detail`}
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -627,7 +627,7 @@ export function BranchPanel({
                       <span>
                         {item.replace(
                           '{destination}',
-                          selected?.destination ?? 'your destination'
+                          selected?.destinations[0] ?? 'your destination'
                         )}
                       </span>
                     </li>

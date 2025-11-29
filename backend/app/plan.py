@@ -81,6 +81,8 @@ class PlannerLLMOutput:
                   start_date, end_date, traveler_count, budget.
         assistant_message: The conversational response to show the user.
         trip_inputs: Dict of collected/updated trip input fields.
+        ready_to_generate: True when all fields are complete but branches haven't
+                           been generated yet (waiting for user to click Generate).
     """
 
     def __init__(
@@ -89,10 +91,12 @@ class PlannerLLMOutput:
         branches: List[dict],
         assistant_message: str,
         trip_inputs: Optional[dict] = None,
+        ready_to_generate: bool = False,
     ) -> None:
         self.branches = branches
         self.assistant_message = assistant_message
         self.trip_inputs = trip_inputs or {}
+        self.ready_to_generate = ready_to_generate
 
 
 # =============================================================================
@@ -113,7 +117,7 @@ _DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))  # Enable verbose debug logg
 # The canonical order for collecting trip input fields.
 # This order is used consistently for prompts, validation, and missing field detection.
 _TRIP_INPUT_FIELDS = (
-    "destination",
+    "destinations",
     "origin",
     "start_date",
     "end_date",
@@ -122,17 +126,7 @@ _TRIP_INPUT_FIELDS = (
 )
 
 # Required fields - all must be filled before branches can be generated
-# Budget is optional
-_REQUIRED_TRIP_INPUT_FIELDS = (
-    "destination",
-    "origin",
-    "start_date",
-    "end_date",
-    "traveler_count",
-)
-
-# Optional fields - not required before branches can be generated
-_OPTIONAL_FIELDS = ("budget",)
+_REQUIRED_TRIP_INPUT_FIELDS = _TRIP_INPUT_FIELDS  # All 6 fields are required
 
 
 # =============================================================================
@@ -231,8 +225,6 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
     # 1. Trip inputs
     ti = doc_data.trip_inputs
     inputs_parts = []
-    if ti.destination:
-        inputs_parts.append(f"destination={ti.destination}")
     if ti.destinations:
         inputs_parts.append(f"destinations={', '.join(ti.destinations)}")
     if ti.origin:
@@ -258,7 +250,8 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
             lines.append(f"\nBranch: {branch.label}{primary_marker}")
             lines.append(f"  ID: {branch.id}")
             lines.append(f"  Description: {branch.description}")
-            lines.append(f"  Destination: {branch.destination}")
+            if branch.destinations:
+                lines.append(f"  Destinations: {', '.join(branch.destinations)}")
             if branch.origin:
                 lines.append(f"  Origin: {branch.origin}")
             if branch.start_date:
@@ -700,6 +693,69 @@ def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
     return None
 
 
+def _extract_duration_days_from_message(message: str) -> Optional[int]:
+    """
+    Extract trip duration in days from user message.
+
+    Looks for patterns like:
+    - "coming back in 5 days"
+    - "returning in 5 days"
+    - "for 5 days"
+    - "5 day trip"
+
+    Args:
+        message: The user's message text.
+
+    Returns:
+        Optional[int]: Number of days if a duration pattern was found, else None.
+    """
+    if not message:
+        return None
+
+    lowered = message.lower()
+
+    # Patterns that indicate duration
+    patterns = [
+        r"coming\s+back\s+in\s+(\d+)\s*days?",
+        r"returning?\s+in\s+(\d+)\s*days?",
+        r"for\s+(\d+)\s*days?",
+        r"(\d+)\s*days?\s+trip",
+        r"(\d+)\s*day\s+trip",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, IndexError):
+                continue
+
+    return None
+
+
+def _compute_end_date_from_duration(start_date: Optional[str], duration_days: int) -> Optional[str]:
+    """
+    Compute end_date from start_date and duration.
+
+    Args:
+        start_date: Start date in ISO format (YYYY-MM-DD).
+        duration_days: Number of days for the trip.
+
+    Returns:
+        Optional[str]: End date in ISO format, or None if computation failed.
+    """
+    if not start_date or duration_days <= 0:
+        return None
+
+    start_dt = _parse_iso_date(start_date)
+    if not start_dt:
+        return None
+
+    end_dt = start_dt + timedelta(days=duration_days)
+    return end_dt.strftime("%Y-%m-%d")
+
+
 def _normalize_date(value: Any) -> Optional[str]:
     """
     Normalize various date formats to ISO format (YYYY-MM-DD).
@@ -791,23 +847,30 @@ def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
 
 
 def _ordered_missing_fields_from_inputs(
-    trip_inputs: dict, include_optional: bool = False
+    trip_inputs: dict,
 ) -> List[str]:
     """
     Get the list of missing trip input fields in canonical order.
 
-    The order matches _REQUIRED_TRIP_INPUT_FIELDS: destination, origin, start_date,
-    end_date, traveler_count. Budget is optional and only included if include_optional=True.
+    The order matches _REQUIRED_TRIP_INPUT_FIELDS: destinations, origin, start_date,
+    end_date, traveler_count, budget.
 
     Args:
         trip_inputs: A dictionary of trip input values.
-        include_optional: If True, include optional fields (budget) in missing list.
 
     Returns:
-        List[str]: Field names that are None, in collection order.
+        List[str]: Field names that are None/empty, in collection order.
     """
-    fields_to_check = _TRIP_INPUT_FIELDS if include_optional else _REQUIRED_TRIP_INPUT_FIELDS
-    return [field for field in fields_to_check if trip_inputs.get(field) is None]
+    missing = []
+    for field in _REQUIRED_TRIP_INPUT_FIELDS:
+        if field == "destinations":
+            # For destinations, check if array is empty
+            val = trip_inputs.get(field, [])
+            if not val or (isinstance(val, list) and len(val) == 0):
+                missing.append(field)
+        elif trip_inputs.get(field) is None:
+            missing.append(field)
+    return missing
 
 
 # =============================================================================
@@ -870,22 +933,71 @@ def _clean_trip_inputs(
                     noted_missing.add(entry_str)
 
         for field in _TRIP_INPUT_FIELDS:
-            if field in ("start_date", "end_date"):
+            if field == "destinations":
+                # Handle destinations as an array - ALWAYS merge, never replace
+                source_destinations = source.get("destinations", [])
+                if not isinstance(source_destinations, list):
+                    source_destinations = [source_destinations] if source_destinations else []
+                source_destinations = [
+                    _normalize_str(d) for d in source_destinations if d and _normalize_str(d)
+                ]
+                current_value = merged[field]
+                if source_destinations:
+                    # For destinations, always merge (union) rather than overwrite
+                    if current_value in (sentinel, None, []):
+                        merged[field] = source_destinations
+                    elif isinstance(current_value, list):
+                        # Merge: add new destinations that aren't already present
+                        existing_set = set(current_value)
+                        for dest in source_destinations:
+                            if dest not in existing_set:
+                                current_value.append(dest)
+                                existing_set.add(dest)
+                        merged[field] = current_value
+                    else:
+                        merged[field] = source_destinations
+                elif current_value is sentinel:
+                    merged[field] = []
+            elif field in ("start_date", "end_date"):
                 normalizer = _normalize_date
+                value = normalizer(source.get(field))
+                current_value = merged[field]
+                if value is not None:
+                    can_overwrite = allow_overwrite or (field in overwrite_set)
+                    if current_value in (sentinel, None) or can_overwrite:
+                        merged[field] = value
+                elif current_value is sentinel:
+                    merged[field] = None
             elif field == "traveler_count":
                 normalizer = _normalize_int
+                value = normalizer(source.get(field))
+                current_value = merged[field]
+                if value is not None:
+                    can_overwrite = allow_overwrite or (field in overwrite_set)
+                    if current_value in (sentinel, None) or can_overwrite:
+                        merged[field] = value
+                elif current_value is sentinel:
+                    merged[field] = None
             elif field == "budget":
                 normalizer = _normalize_int
+                value = normalizer(source.get(field))
+                current_value = merged[field]
+                if value is not None:
+                    can_overwrite = allow_overwrite or (field in overwrite_set)
+                    if current_value in (sentinel, None) or can_overwrite:
+                        merged[field] = value
+                elif current_value is sentinel:
+                    merged[field] = None
             else:
                 normalizer = _normalize_str
-            value = normalizer(source.get(field))
-            current_value = merged[field]
-            if value is not None:
-                can_overwrite = allow_overwrite or (field in overwrite_set)
-                if current_value in (sentinel, None) or can_overwrite:
-                    merged[field] = value
-            elif current_value is sentinel:
-                merged[field] = None
+                value = normalizer(source.get(field))
+                current_value = merged[field]
+                if value is not None:
+                    can_overwrite = allow_overwrite or (field in overwrite_set)
+                    if current_value in (sentinel, None) or can_overwrite:
+                        merged[field] = value
+                elif current_value is sentinel:
+                    merged[field] = None
 
     for source in sources:
         _ingest(source)
@@ -894,43 +1006,29 @@ def _clean_trip_inputs(
 
     final_missing: set[str] = set()
     for field in _TRIP_INPUT_FIELDS:
-        if merged[field] is sentinel:
-            merged[field] = None
-        if merged[field] is None:
-            final_missing.add(field)
+        if field == "destinations":
+            if merged[field] is sentinel:
+                merged[field] = []
+            if not merged[field]:
+                final_missing.add(field)
+        else:
+            if merged[field] is sentinel:
+                merged[field] = None
+            if merged[field] is None:
+                final_missing.add(field)
 
-    # Only add noted_missing fields if they are actually None
+    # Only add noted_missing fields if they are actually None/empty
     # Don't let LLM's incorrect missing_fields override our actual values
     for field in noted_missing:
-        if merged.get(field) is None:
+        if field == "destinations":
+            if not merged.get(field):
+                final_missing.add(field)
+        elif merged.get(field) is None:
             final_missing.add(field)
 
     ordered_missing = [field for field in _TRIP_INPUT_FIELDS if field in final_missing]
 
     merged["missing_fields"] = ordered_missing
-
-    # Handle destinations array separately (not in _TRIP_INPUT_FIELDS)
-    # Merge destinations from all sources
-    destinations_set: set[str] = set()
-    for source in sources:
-        if isinstance(source, dict):
-            source_destinations = source.get("destinations", [])
-            if isinstance(source_destinations, list):
-                for dest in source_destinations:
-                    if isinstance(dest, str) and dest.strip():
-                        destinations_set.add(dest.strip())
-    if fallback and isinstance(fallback, dict):
-        fallback_destinations = fallback.get("destinations", [])
-        if isinstance(fallback_destinations, list):
-            for dest in fallback_destinations:
-                if isinstance(dest, str) and dest.strip():
-                    destinations_set.add(dest.strip())
-
-    # Also add the primary destination to destinations if not already there
-    if merged.get("destination") and merged["destination"] not in destinations_set:
-        destinations_set.add(merged["destination"])
-
-    merged["destinations"] = list(destinations_set)
 
     return merged
 
@@ -1022,12 +1120,12 @@ def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
         return None
 
     prompt_by_field = {
-        "destination": "Where would you like to go?",
+        "destinations": "Where would you like to go?",
         "origin": "Where will you be traveling from?",
         "start_date": "When does your trip start?",
         "end_date": "When does your trip end?",
         "traveler_count": "How many travelers will be going?",
-        # Note: budget is optional, so we don't prompt for it
+        "budget": "What's your budget for this trip?",
     }
 
     for field in _REQUIRED_TRIP_INPUT_FIELDS:
@@ -1109,6 +1207,19 @@ def _resolve_parent_trip_context(
 
 
 # =============================================================================
+# GENERATE PLAN TRIGGER DETECTION
+# =============================================================================
+
+# Special message that the frontend sends when user clicks "Generate Plan"
+_GENERATE_PLAN_TRIGGER = "GENERATE_PLAN_NOW"
+
+
+def _is_generate_plan_trigger(message: str) -> bool:
+    """Check if the user's message is the 'Generate Plan' button trigger."""
+    return message.strip() == _GENERATE_PLAN_TRIGGER
+
+
+# =============================================================================
 # MAIN LLM PLANNING FUNCTION
 # =============================================================================
 
@@ -1123,46 +1234,11 @@ def _call_openai_for_plan(
     """
     Call OpenAI to process a user message and generate planning output.
 
-    This is the core LLM integration function. It:
-    1. Builds the system prompt with current trip state
-    2. Constructs the message history for context
-    3. Calls OpenAI with retry logic
-    4. Parses and validates the LLM response
-    5. Returns structured output (branches, trip_inputs, message)
-
-    ## Why the complex state-aware prompting?
-
-    The current implementation uses explicit state-based prompting (checking
-    `all_fields_complete`, `is_last_field`, etc.) rather than a single unified
-    prompt. This design choice was made for several reasons:
-
-    1. **Token Efficiency**: Different phases need different response structures.
-       When collecting inputs, we don't need branch JSON. When generating branches,
-       we don't need field collection logic. Tailored prompts = smaller context.
-
-    2. **Reliability**: LLMs are more reliable with explicit, constrained instructions.
-       A single "be smart about what to do" prompt often produces inconsistent results.
-       The explicit state machine approach ("you have X, you need Y, do Z") works better.
-
-    3. **Validation Control**: Different phases need different validation. During
-       collection, we validate one field at a time. For branch generation, we
-       validate all fields together. Explicit phases enable explicit validation.
-
-    4. **Debugging**: When something goes wrong, explicit states make it clear
-       which phase failed. A unified prompt makes debugging much harder.
-
-    A simpler unified approach would look like:
-    ```
-    "Here's the conversation and document state. Figure out what to do."
-    ```
-
-    This COULD work with a very capable model (GPT-4+), but in practice it leads to:
-    - Inconsistent JSON structure (sometimes branches, sometimes not)
-    - Missed field extractions (LLM forgets to update trip_inputs)
-    - Confusion about when to generate branches vs. ask questions
-    - Higher token usage due to verbose "decide what to do" instructions
-
-    The explicit state machine trades prompt complexity for output reliability.
+    Uses a single unified prompt that:
+    - Receives full document state and chat history
+    - Extracts all trip fields from user messages
+    - Generates branches when all required fields are complete
+    - Updates trip_inputs on every response
 
     Args:
         req: The plan request containing the user's message.
@@ -1178,257 +1254,163 @@ def _call_openai_for_plan(
     """
     # Get trip state from conversation history (fallback for older sessions)
     prior_trip_inputs_meta = _latest_trip_state_from_history(history_rows)
-    if _DEBUG_LOG:
-        print(f"[DEBUG] prior_trip_inputs_meta: {prior_trip_inputs_meta}")
 
     # Read trip inputs from document (source of truth)
     doc_trip_inputs: dict = {}
     if document_data and document_data.trip_inputs:
         ti = document_data.trip_inputs
         doc_trip_inputs = {
-            "destination": ti.destination,
+            "destinations": ti.destinations,
             "origin": ti.origin,
             "start_date": ti.start_date,
             "end_date": ti.end_date,
             "traveler_count": ti.traveler_count,
             "budget": ti.budget,
         }
-    if _DEBUG_LOG:
-        print(f"[DEBUG] doc_trip_inputs: {doc_trip_inputs}")
 
-    # Merge: document first, then chat history (for migration/fallback)
-    request_trip_inputs = _clean_trip_inputs(
+    # Read trip inputs from request (takes precedence - allows frontend UI state to override)
+    req_trip_inputs: dict = {}
+    if req.trip_inputs:
+        req_trip_inputs = {
+            "destinations": req.trip_inputs.destinations,
+            "origin": req.trip_inputs.origin,
+            "start_date": req.trip_inputs.start_date,
+            "end_date": req.trip_inputs.end_date,
+            "traveler_count": req.trip_inputs.traveler_count,
+            "budget": req.trip_inputs.budget,
+        }
+
+    # Merge: request first (UI state), then document, then chat history (fallback)
+    current_trip_inputs = _clean_trip_inputs(
+        req_trip_inputs,
         doc_trip_inputs,
         prior_trip_inputs_meta,
     )
-    if _DEBUG_LOG:
-        print(f"[DEBUG] request_trip_inputs after merge: {request_trip_inputs}")
 
     today = _today_iso()
 
-    # Build current state summary for the LLM
-    known_fields = []
-    missing_fields = _ordered_missing_fields_from_inputs(request_trip_inputs)
-    for field in _TRIP_INPUT_FIELDS:
-        val = request_trip_inputs.get(field)
-        if val is not None:
-            known_fields.append(f"{field}={val}")
+    # Check if this is a generate plan trigger
+    is_generate_trigger = _is_generate_plan_trigger(req.message)
 
-    # All REQUIRED fields must be complete to generate branches (budget is optional)
-    all_fields_complete = len(missing_fields) == 0 and all(
-        request_trip_inputs.get(field) is not None for field in _REQUIRED_TRIP_INPUT_FIELDS
-    )
+    # Check if we already have branches
+    has_existing_branches = bool(document_data and document_data.branches)
 
-    # Determine what the next field to collect is
-    next_field_to_ask = missing_fields[0] if missing_fields else None
+    # Check if all required fields are complete BEFORE calling LLM
+    pre_check_missing = _ordered_missing_fields_from_inputs(current_trip_inputs)
+    all_fields_already_complete = len(pre_check_missing) == 0
 
-    # Build a clearer, more structured system prompt
-    # If all fields are complete, emphasize branch generation
-    state_lines = []
-    if known_fields:
-        state_lines.append(f"COLLECTED: {', '.join(known_fields)}")
-    if missing_fields:
-        state_lines.append(f"STILL NEED: {', '.join(missing_fields)}")
-    state_summary = "\n".join(state_lines)
-
-    # No longer assume sequential order - LLM should extract ANY field from ANY message
-    # Build context about what the next question should be
-    # (after extracting whatever the user provided)
-    next_question_hint = ""
-    if next_field_to_ask == "destination":
-        next_question_hint = 'Next question should ask: "Where would you like to go?"'
-    elif next_field_to_ask == "origin":
-        next_question_hint = 'Next question should ask: "Where will you be traveling from?"'
-    elif next_field_to_ask == "start_date":
-        next_question_hint = 'Next question should ask: "When does your trip start?"'
-    elif next_field_to_ask == "end_date":
-        next_question_hint = 'Next question should ask: "When does your trip end?"'
-    elif next_field_to_ask == "traveler_count":
-        next_question_hint = 'Next question should ask: "How many travelers?"'
-    elif next_field_to_ask in _OPTIONAL_FIELDS or next_field_to_ask is None:
-        # All required fields collected - ask for optional budget before generating
-        next_question_hint = (
-            'All required fields collected! Ask: "What is your budget '
-            'for this trip?" (optional, can skip)'
+    if _DEBUG_LOG:
+        print(
+            f"[DEBUG] Pre-LLM check: all_fields_complete={all_fields_already_complete}, "
+            f"has_branches={has_existing_branches}, is_generate={is_generate_trigger}"
         )
 
-    # Check if this message will complete all fields (only 1 field left)
-    is_last_field = len(missing_fields) == 1
+    # If all fields complete, no branches yet, and NOT a generate trigger:
+    # Return ready_to_generate=True without calling LLM
+    if all_fields_already_complete and not has_existing_branches and not is_generate_trigger:
+        # Update trip_inputs to clear missing_fields
+        current_trip_inputs["missing_fields"] = []
+        ready_message = (
+            "Awesome, I've got everything I need! Feel free to keep chatting "
+            'if you want to tweak anything, or hit "Generate Plan" when you\'re ready!'
+        )
+        return PlannerLLMOutput(
+            branches=[],
+            assistant_message=ready_message,
+            trip_inputs=current_trip_inputs,
+            ready_to_generate=True,
+        )
 
-    if all_fields_complete:
-        complete_trip_inputs = {
-            field: request_trip_inputs.get(field) for field in _TRIP_INPUT_FIELDS
-        }
-        complete_trip_inputs["missing_fields"] = []
-        # Include destinations array if present
-        destinations_list = request_trip_inputs.get("destinations", [])
-        if destinations_list:
-            complete_trip_inputs["destinations"] = destinations_list
-        trip_inputs_json = json.dumps(complete_trip_inputs, ensure_ascii=True)
+    # Build current state as JSON for the prompt
+    current_state_json = json.dumps(
+        {k: v for k, v in current_trip_inputs.items() if k != "destinations"},
+        indent=2,
+    )
 
-        # Build destinations context for prompt
-        destinations_context = ""
-        if destinations_list and len(destinations_list) > 1:
-            dests_str = ", ".join(destinations_list)
-            destinations_context = (
-                f"\nUser has specified MULTIPLE DESTINATIONS: {dests_str}"
-                f"\nGenerate ONE branch for EACH destination."
-            )
-        elif destinations_list:
-            destinations_context = (
-                f"\nDestination: {destinations_list[0]}"
-                f"\nGenerate exactly ONE branch for this destination."
-            )
-        else:
-            dest = complete_trip_inputs.get("destination", "")
-            destinations_context = (
-                f"\nDestination: {dest}\nGenerate exactly ONE branch for this destination."
-            )
+    # Single unified system prompt
+    system_prompt = f"""You are a helpful travel planner. Today is {today}.
 
-        system_prompt = f"""You are a travel planner. Today is {today}.
+Your personality:
+- Warm but practical
+- Conversational, not overly enthusiastic
+- Keep responses concise and direct
 
-ALL TRIP FIELDS ARE COMPLETE:
-{', '.join(known_fields)}
-{destinations_context}
+CURRENT TRIP STATE:
+{current_state_json}
 
-IMPORTANT: If the user wants to CHANGE any trip detail (e.g., "change destination to Paris",
-"make it 4 travelers", "start on Dec 15 instead"), UPDATE the trip_inputs accordingly
-and regenerate branches with the new values.
+YOUR TASK:
+1. Extract ALL trip details from the user's message:
+   destinations (as array), origin, start_date, end_date, traveler_count, budget
+2. Update trip_inputs with any new or changed values
+3. If ALL 6 required fields are filled → generate exactly 1 branch per destination
+4. If any required field is missing → ask for the next one naturally:
+   - destinations missing: "Where would you like to go?"
+   - origin missing: "Where will you be traveling from?"
+   - start_date missing: "What date are you looking to depart?"
+   - end_date missing: "And when will you be returning?"
+   - traveler_count missing: "How many people are traveling?"
+   - budget missing: "What's your budget for this trip?"
 
-BRANCH GENERATION RULES - CRITICAL:
-- Generate EXACTLY ONE branch total if there is ONE destination
-- Generate EXACTLY ONE branch PER destination if there are MULTIPLE destinations
-- Do NOT generate multiple theme variations - just ONE branch per destination
-- Each branch label should be the destination name
+REQUIRED FIELDS (all 6):
+destinations, origin, start_date, end_date, traveler_count, budget
 
-Return JSON:
-{{
-  "assistant_message": "Your message to the user",
-  "trip_inputs": {trip_inputs_json},
-  "branches": [
-    {{
-      "label": "Destination Name",
-      "description": "Brief description of what to expect",
-      "destination": "The destination city/location",
-      "origin": "...",
-      "start_date": "...",
-      "end_date": "...",
-      "traveler_count": N,
-      "budget": N or null (if not provided)
-    }}
-  ]
-}}
+FIELD EXTRACTION RULES:
+- Dates: Convert ALL relative dates to YYYY-MM-DD format. You MUST calculate the actual date.
+  TODAY'S DATE: {today}
 
-CRITICAL: The branches array must contain EXACTLY 1 element for a single destination trip."""
-    elif is_last_field:
-        # Determine which field is the last one needed
-        last_field = missing_fields[0] if missing_fields else "unknown"
-        system_prompt = f"""You are a travel planner. Today is {today}.
+  Examples (assuming today is {today}):
+  - "today" / "starting today" → start_date = "{today}"
+  - "tomorrow" → the next calendar day after {today}
+  - "in 5 days" / "5 days from now" → add 5 days to {today}
+  - "for 5 days" / "coming back in 5 days" / "returning in 5 days" → end_date = start_date + 5 days
+    CRITICAL: If user says "starting today and coming back in 5 days", you MUST:
+      1. Set start_date = "{today}"
+      2. Calculate end_date = {today} + 5 days (compute the actual YYYY-MM-DD date)
+  - "a week from today" → add 7 days to {today}
+  - "next Monday" → calculate the actual calendar date
 
-{state_summary}
+  IMPORTANT: When a user specifies trip duration (e.g., "for X days", "coming back in X days"),
+  you MUST compute the end_date. Never leave end_date as null if the duration is specified.
+- Travelers: "solo"/"just me" = 1, "couple" = 2, "family of 4" = 4, etc.
+- Budget: Extract numbers like "1000", "$1000", "1000 dollars" as integer 1000
+- Locations: Must be real places. Reject gibberish.
 
-The user's message should contain the LAST missing field: {last_field}
-
-EXTRACTION with VALIDATION:
-- destination/origin: Must be a PLACE name (city, country, region)
-- start_date/end_date: Must be a TIME/DATE reference ("today", "Dec 15", "next week")
-- traveler_count: Must be a NUMBER of people (1-20)
-- budget (OPTIONAL): Must be a MONEY amount, can be null if not provided
-
-Extract the value that matches {last_field}.
-
-After extracting, if budget is still missing, ask: "What is your budget for this trip?"
-(optional, they can skip). Only generate branches if ALL required fields are filled.
-
-BRANCH GENERATION - CRITICAL:
-- Generate EXACTLY ONE branch per destination (not multiple theme variations)
-- If one destination: exactly 1 branch
-- If multiple destinations: exactly 1 branch per destination
+IMPORTANT: If you can extract a value from the user's message, use it.
+NEVER ask for confirmation of a field you just extracted.
 
 Return JSON:
 {{
-  "assistant_message": "Here's your trip plan! What is your budget? (optional)",
+  "assistant_message": "Acknowledge extracted info + ask next question",
   "trip_inputs": {{
-    "destination": "primary destination value",
-    "destinations": ["list", "of", "all", "destinations"],
-    "origin": "value",
-    "start_date": "date value",
-    "end_date": "date value",
-    "traveler_count": number,
-    "budget": number or null,
-    "missing_fields": []
-  }},
-  "branches": [
-    {{
-      "label": "Destination Name",
-      "description": "Brief description of what to expect",
-      "destination": "The destination city",
-      "origin": "...",
-      "start_date": "...",
-      "end_date": "...",
-      "traveler_count": N,
-      "budget": N or null
-    }}
-  ]
-}}
-
-CRITICAL: The branches array must contain EXACTLY 1 element for a single destination trip.
-Do NOT generate multiple theme variations."""
-    else:
-        system_prompt = f"""You are a travel planner collecting trip details. Today is {today}.
-
-{state_summary}
-
-CRITICAL: Extract ANY trip field from the user's message, regardless of what was asked.
-Users can provide information in ANY order and can UPDATE any field at any time.
-
-FIELD TYPES - Map user input to the correct field:
-- destination: A REAL city, country, region, or place name (e.g., "Paris", "Japan", "Bali")
-- origin: A REAL city or place they're traveling FROM (e.g., "from London", "leaving NYC")
-- start_date: ANY date reference for when trip STARTS (e.g., "today", "next Friday", "Dec 15")
-- end_date: ANY date reference for when trip ENDS (e.g., "for a week", "until the 20th")
-- traveler_count: A number of people (e.g., "2 of us", "solo", "family of 4", "just me" = 1)
-- budget: A money amount (OPTIONAL - e.g., "$2000", "around 1500")
-
-VALIDATION - Only extract if value type matches:
-- "today", "tomorrow", "Dec 15" → DATE field (start_date or end_date based on context)
-- "Paris", "Tokyo", "the mountains" → PLACE field (destination or origin based on context)
-- "2 people", "solo", "4 of us" → traveler_count
-- "$500", "2000 euros" → budget
-
-LOCATION VALIDATION (CRITICAL):
-- destination and origin MUST be REAL, recognizable geographic locations
-- Accept: cities (Paris, Tokyo), countries (Japan, Italy), regions (Tuscany, Bali)
-- REJECT: made-up names, gibberish, typos that don't match real places
-- If location is unrecognizable, set field to null and ask for a real destination/origin
-- Example: "Hellskasdasd" is NOT a real place - do NOT accept it
-
-REQUIRED FIELDS (must collect before generating trip plan):
-1. destination
-2. origin
-3. start_date
-4. end_date
-5. traveler_count
-
-OPTIONAL: budget (can skip if user doesn't provide)
-
-After extracting fields, ask for the NEXT REQUIRED missing field.
-{next_question_hint}
-
-Return JSON only:
-{{
-  "assistant_message": "Acknowledge what you extracted + ask for next missing REQUIRED field",
-  "trip_inputs": {{
-    "destination": "REAL place name or null if invalid/unrecognized",
-    "origin": "REAL place name or null if invalid/unrecognized",
-    "start_date": "parsed date or null",
-    "end_date": "parsed date or null",
+    "destinations": ["city/country array"],
+    "origin": "city/country or null",
+    "start_date": "YYYY-MM-DD or null",
+    "end_date": "YYYY-MM-DD or null",
     "traveler_count": number or null,
     "budget": number or null,
-    "missing_fields": ["only", "required", "missing", "fields"]
+    "missing_fields": ["list of missing required fields"]
   }},
   "branches": []
-}}"""
+}}
+
+If ALL 6 required fields are complete, include branches:
+{{
+  "branches": [{{
+    "label": "Destination Name",
+    "description": "Brief trip description",
+    "destinations": ["city"],
+    "origin": "city",
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD",
+    "traveler_count": N,
+    "budget": N
+  }}]
+}}
+
+RULES:
+- branches array: empty [] if required fields missing, exactly 1 branch per destination if complete
+- Always update trip_inputs with extracted values
+- User can change any field at any time - apply updates"""
 
     client = _get_openai_client()
     if client is None:
@@ -1525,9 +1507,6 @@ Return JSON only:
         result = client.chat.completions.create(**params)
         return result
 
-        result = client.chat.completions.create(**params)
-        return result
-
     def _invoke_with_retries():
         """Execute the completion request with exponential backoff retry logic."""
         nonlocal last_error
@@ -1612,18 +1591,34 @@ Return JSON only:
         trip_inputs_payload = data.get("trip_inputs") or {}
         # Allow LLM to overwrite any field - users might correct any previous value
         trip_inputs = _clean_trip_inputs(
-            request_trip_inputs,
+            current_trip_inputs,
             trip_inputs_payload,
             allow_overwrite=True,
         )
+
+        # FALLBACK: If LLM failed to compute end_date from duration, do it ourselves
+        if trip_inputs.get("start_date") and not trip_inputs.get("end_date"):
+            duration_days = _extract_duration_days_from_message(req.message)
+            if duration_days:
+                computed_end = _compute_end_date_from_duration(
+                    trip_inputs["start_date"], duration_days
+                )
+                if computed_end:
+                    trip_inputs["end_date"] = computed_end
+                    if _DEBUG_LOG:
+                        print(
+                            f"[DEBUG] Computed end_date from duration: "
+                            f"{trip_inputs['start_date']} + {duration_days} days = {computed_end}"
+                        )
+
         trip_inputs, validation_messages = _validate_trip_inputs(trip_inputs, today_iso=today)
         parsed_missing_fields = trip_inputs.get("missing_fields") or []
 
         has_all_fields = len(parsed_missing_fields) == 0 and not validation_messages
         if _DEBUG_LOG:
             print(
-                f"[DEBUG] all_fields_complete={all_fields_complete}, "
-                f"has_all_fields={has_all_fields}, response_missing={parsed_missing_fields}, "
+                f"[DEBUG] has_all_fields={has_all_fields}, "
+                f"response_missing={parsed_missing_fields}, "
                 f"validation={validation_messages}"
             )
 
@@ -1636,9 +1631,13 @@ Return JSON only:
                     continue
                 if "label" not in b:
                     continue
-                branch_destination = _normalize_str(b.get("destination")) or canonical_inputs.get(
-                    "destination"
-                )
+                # Handle destinations as array
+                branch_destinations = b.get("destinations", [])
+                if not isinstance(branch_destinations, list):
+                    branch_destinations = [branch_destinations] if branch_destinations else []
+                branch_destinations = [_normalize_str(d) for d in branch_destinations if d]
+                if not branch_destinations:
+                    branch_destinations = canonical_inputs.get("destinations", [])
                 branch_origin = _normalize_str(b.get("origin")) or canonical_inputs.get("origin")
                 branch_start = _normalize_date(b.get("start_date")) or canonical_inputs.get(
                     "start_date"
@@ -1655,14 +1654,14 @@ Return JSON only:
                 if branch_budget is not None and branch_budget < 0:
                     branch_budget = None
 
-                if not branch_destination:
+                if not branch_destinations:
                     continue
 
                 cleaned.append(
                     {
                         "label": str(b["label"]),
                         "description": str(b.get("description", "")),
-                        "destination": branch_destination,
+                        "destinations": branch_destinations,
                         "origin": branch_origin,
                         "start_date": branch_start,
                         "end_date": branch_end,
@@ -1686,12 +1685,33 @@ Return JSON only:
         if not assistant_message:
             assistant_message = default_assistant_message
 
+        # Determine if we should return ready_to_generate instead of branches
+        # This happens when all fields just became complete but we haven't generated branches yet
+        # AND this is NOT a generate trigger
+        should_return_ready = (
+            has_all_fields and not has_existing_branches and not is_generate_trigger
+        )
+
+        if should_return_ready:
+            # All fields just became complete, but user hasn't clicked Generate Plan yet
+            trip_inputs["missing_fields"] = []
+            ready_message = (
+                "Awesome, I've got everything I need! Feel free to keep chatting "
+                'if you want to tweak anything, or hit "Generate Plan" when you\'re ready!'
+            )
+            return PlannerLLMOutput(
+                branches=[],
+                assistant_message=ready_message,
+                trip_inputs=trip_inputs,
+                ready_to_generate=True,
+            )
+
         if has_all_fields:
             trip_inputs["missing_fields"] = []
             if not assistant_message or re.search(
                 r"\bwhere\b", assistant_message, flags=re.IGNORECASE
             ):
-                assistant_message = "Generating trip options for you..."
+                assistant_message = "Exciting! Let me put together some amazing options for you..."
 
         output = PlannerLLMOutput(
             branches=cleaned,
@@ -1843,7 +1863,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
                 id=branch_id,
                 label=str(spec.get("label", "")),
                 description=str(spec.get("description", "")),
-                destination=str(spec.get("destination", "")),
+                destinations=spec.get("destinations", []),
                 origin=_normalize_str(spec.get("origin")),
                 start_date=_normalize_str(spec.get("start_date")),
                 end_date=_normalize_str(spec.get("end_date")),
@@ -1862,12 +1882,15 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
             # Update assistant message to indicate we're creating suggestions
             assistant_chat.content = "Creating trip suggestions for you..."
 
+            # Use first destination for tile search
+            primary_dest = primary_branch.destinations[0] if primary_branch.destinations else None
+
             tiles_request = TilesSearchRequest(
                 user_id=None,  # User ID comes from auth, not request
                 session_id=req.session_id,
                 trip_context_id=trip_ctx.id,
-                destination=primary_branch.destination,
-                destination_hint=primary_branch.destination,
+                destination=primary_dest,
+                destination_hint=primary_dest,
                 origin=trip_inputs_model.origin if trip_inputs_model else None,
                 start_date=trip_inputs_model.start_date if trip_inputs_model else None,
                 end_date=trip_inputs_model.end_date if trip_inputs_model else None,
@@ -1890,7 +1913,6 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         doc_trip_inputs = None
         if trip_inputs_model:
             doc_trip_inputs = DocumentTripInputs(
-                destination=trip_inputs_model.destination,
                 destinations=trip_inputs_model.destinations or [],
                 origin=trip_inputs_model.origin,
                 start_date=trip_inputs_model.start_date,
@@ -1917,6 +1939,8 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         doc_data_dict = doc_data.model_dump()
         doc_data_dict["assistant_message"] = assistant_chat.content
         doc_data_dict["assistant_message_id"] = str(assistant_chat.id)
+        # Pass through the ready_to_generate flag from planner output
+        doc_data_dict["ready_to_generate"] = planner_output.ready_to_generate
 
         # Reconstruct the document data with chat fields
         doc_data_with_chat = PlanDocumentData(**doc_data_dict)

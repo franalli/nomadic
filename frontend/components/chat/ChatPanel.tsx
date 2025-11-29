@@ -26,12 +26,19 @@ import type { Tile } from '@/types/tile';
 const CHAT_HISTORY_KEY = 'chat_history';
 const STREAM_CHUNK_SIZE = 6;
 const STREAM_DELAY_MS = 25;
+// Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
+const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
+// Message to show after plan is generated
+const POST_GENERATE_MESSAGE = 'Keep chatting to tweak and improve your plan!';
+// ID prefix for "ready to generate" messages that should be replaced when branches are created
+const READY_MESSAGE_ID_PREFIX = 'ready_';
+
 const DEFAULT_MESSAGES: ChatMessage[] = [
   {
     id: 'm0',
     role: 'assistant',
     content:
-      "Tell me about your trip: where you're headed, where you're leaving from, dates, vibes, and how many travelers are going.",
+      "Hey there! ✈️ I'm excited to help you plan an amazing trip! Where are you dreaming of going?",
   },
 ];
 
@@ -72,6 +79,7 @@ interface ChatPanelProps {
     tiles: Record<string, Tile>;
     primaryBranchId: string | null;
     tripInputs?: DocumentTripInputs | null;
+    readyToGenerate?: boolean;
   }) => void;
   tripDetails?: {
     content: ReactNode;
@@ -81,6 +89,8 @@ interface ChatPanelProps {
   fullHeight?: boolean;
   /** When true, branches have been generated */
   hasBranches?: boolean;
+  /** When true, all fields are complete and user can generate a plan */
+  readyToGenerate?: boolean;
 }
 
 const summariseBranches = (branches: DocumentBranch[]): string => {
@@ -89,7 +99,8 @@ const summariseBranches = (branches: DocumentBranch[]): string => {
   }
 
   const lines = branches.map((branch, idx) => {
-    const label = `${idx + 1}. ${branch.label} (${branch.destination})`;
+    const destLabel = branch.destinations.join(', ') || 'TBD';
+    const label = `${idx + 1}. ${branch.label} (${destLabel})`;
     return branch.description ? `${label}\n   ${branch.description}` : label;
   });
 
@@ -122,7 +133,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       const node = scrollContainerRef.current;
       if (!node) return;
       node.scrollTop = node.scrollHeight;
-      // Ensure scroll happens after layout updates
       requestAnimationFrame(() => {
         if (node) node.scrollTop = node.scrollHeight;
       });
@@ -157,7 +167,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     }, [messages, sessionId]);
 
     useEffect(() => {
-      // Defer session id creation until after mount to avoid SSR/client mismatches.
       const id = getOrCreateSessionId();
       setSessionId(id);
       const stored = loadStoredMessages(id);
@@ -170,7 +179,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       inputRef.current?.focus();
     }, []);
 
-    // Core message sending logic - used by both form submit and imperative API
     const sendMessageCore = useCallback(
       async (messageText: string) => {
         const trimmed = messageText.trim();
@@ -178,23 +186,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         props.onChatTriggered?.();
 
-        const userMessage: ChatMessage = {
-          id: `u_${Date.now()}`,
-          role: 'user',
-          content: trimmed,
-        };
+        const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER;
 
-        setMessages((prev) => [...prev, userMessage]);
+        if (!isGenerateTrigger) {
+          const userMessage: ChatMessage = {
+            id: `u_${Date.now()}`,
+            role: 'user',
+            content: trimmed,
+          };
+          setMessages((prev) => [...prev, userMessage]);
+        }
         setIsLoading(true);
 
         try {
-          // Get or create session ID
           const activeSessionId = sessionId ?? getOrCreateSessionId();
           if (!sessionId) {
             setSessionId(activeSessionId);
           }
 
-          // All state flows through the document - request only needs session + message
           const body: PlanRequest = {
             session_id: activeSessionId,
             message: trimmed,
@@ -223,14 +232,44 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               tiles: doc.tiles,
               primaryBranchId: primaryBranch?.id ?? props.selectedBranchId ?? null,
               tripInputs: doc.trip_inputs ?? null,
+              readyToGenerate: doc.ready_to_generate ?? false,
             });
           };
 
           handlePlanResultInternal(data);
 
+          const hasBranchesNow = data.document.branches.length > 0;
+          const isReadyToGenerate = data.document.ready_to_generate === true;
+
+          if (hasBranchesNow) {
+            // Branches generated: remove "ready" messages (by ID prefix) and add post-generate message
+            setMessages((prev) => {
+              const filtered = prev.filter((msg) => !msg.id.startsWith(READY_MESSAGE_ID_PREFIX));
+              const newMessages = [
+                ...filtered,
+                { id: `post_${Date.now()}`, role: 'assistant' as const, content: POST_GENERATE_MESSAGE },
+              ];
+              // Persist immediately to survive layout remount
+              try {
+                window.localStorage.setItem(
+                  getChatStorageKey(activeSessionId),
+                  JSON.stringify(newMessages)
+                );
+              } catch (e) {
+                console.error('Failed to persist chat history', e);
+              }
+              return newMessages;
+            });
+            return;
+          }
+
+          // Stream the assistant's response
           const assistantText =
             data.document.assistant_message || summariseBranches(data.document.branches);
           const msgId = data.document.assistant_message_id ?? `a_${Date.now()}`;
+
+          // If this is a "ready to generate" response, use a special ID prefix so we can remove it later
+          const baseId = isReadyToGenerate ? READY_MESSAGE_ID_PREFIX + msgId : msgId;
 
           const sentences = assistantText
             .split(/(?<=[.!?])\s+/)
@@ -263,17 +302,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
           const streamAssistantSentences = async () => {
             if (!sentences.length) return;
-            // Remove any existing bubbles for this message ID
-            setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(`${msgId}_s`)));
+            setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(`${baseId}_s`)));
 
             for (let i = 0; i < sentences.length; i += 1) {
-              const bubbleId = `${msgId}_s${i}`;
+              const bubbleId = `${baseId}_s${i}`;
               const text = sentences[i];
               setMessages((prev) => [
                 ...prev,
                 { id: bubbleId, role: 'assistant', content: '' },
               ]);
-              // eslint-disable-next-line no-await-in-loop
               await streamTextIntoMessage(bubbleId, text);
             }
           };
@@ -295,7 +332,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       [isLoading, props, sessionId]
     );
 
-    // Expose sendMessage method via ref
     useImperativeHandle(
       ref,
       () => ({
@@ -312,6 +348,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setTimeout(() => inputRef.current?.focus(), 0);
       await sendMessageCore(trimmed);
     }
+
+    // Simple render - no content-based filters, just show all non-empty messages
+    const visibleMessages = messages.filter((m) => m.content && m.content.trim().length > 0);
 
     return (
       <div
@@ -353,21 +392,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           ref={scrollContainerRef}
           className="no-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto text-sm"
         >
-          {messages
-            .filter((m) => m.content && m.content.trim().length > 0)
-            .map((m) => (
-              <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
-                <div
-                  className={
-                    m.role === 'user'
-                      ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm'
-                      : 'border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2'
-                  }
-                >
-                  {m.content}
-                </div>
+          {visibleMessages.map((m) => (
+            <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
+              <div
+                className={
+                  m.role === 'user'
+                    ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm text-left'
+                    : 'border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2'
+                }
+              >
+                {m.content}
               </div>
-            ))}
+            </div>
+          ))}
         </div>
 
         <form onSubmit={handleSubmit} className="relative">
@@ -398,6 +435,32 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             )}
           </button>
         </form>
+
+        <div
+          className={`grid transition-all duration-300 ease-out ${
+            props.readyToGenerate && !props.hasBranches
+              ? 'grid-rows-[1fr] opacity-100'
+              : 'grid-rows-[0fr] opacity-0'
+          }`}
+        >
+          <div className="overflow-hidden">
+            <button
+              type="button"
+              onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
+              disabled={isLoading || !props.readyToGenerate}
+              className="bg-primary text-primary-foreground hover:bg-primary/90 mt-2 w-full rounded-xl px-4 py-3 text-sm font-semibold shadow-lg transition-colors disabled:opacity-60"
+            >
+              {isLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Compass className="compass-spin h-4 w-4" />
+                  Generating...
+                </span>
+              ) : (
+                'Generate Plan'
+              )}
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

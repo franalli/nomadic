@@ -23,8 +23,7 @@ export type DocumentBranch = {
   id: string;
   label: string;
   description: string;
-  destination: string;
-  destinations?: string[];
+  destinations: string[];
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -36,8 +35,7 @@ export type DocumentBranch = {
 };
 
 export type DocumentTripInputs = {
-  destination?: string | null;
-  destinations?: string[];
+  destinations: string[];
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -54,6 +52,8 @@ export type PlanDocumentData = {
   // Chat fields (populated when returning from /v1/plan)
   assistant_message?: string | null;
   assistant_message_id?: string | null;
+  // Ready to generate flag - when all fields are complete but user hasn't clicked generate yet
+  ready_to_generate?: boolean;
 };
 
 export type PlanDocumentResponse = {

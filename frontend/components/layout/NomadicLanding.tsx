@@ -43,8 +43,7 @@ type BranchSelectionOverrides = {
 };
 
 type TripInputsDraft = {
-  destination?: string | null;
-  destinations?: string[];
+  destinations: string[];
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -110,7 +109,6 @@ const formatBudgetValue = (value?: string | number | null): string => {
 
 const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
   return {
-    destination: inputs.destination ?? null,
     destinations: inputs.destinations ?? [],
     origin: inputs.origin ?? null,
     start_date: inputs.start_date ?? null,
@@ -121,7 +119,6 @@ const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
 };
 
 const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
-  const destination = draft.destination?.trim() || null;
   const destinations = (draft.destinations ?? [])
     .map((d) => d.trim())
     .filter((d) => d.length > 0);
@@ -138,7 +135,7 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
   const budget = parseBudgetValue(draft.budget ?? null);
 
   const missingFields: string[] = [];
-  if (!destination && destinations.length === 0) missingFields.push('destination');
+  if (destinations.length === 0) missingFields.push('destinations');
   if (!origin) missingFields.push('origin');
   if (!startDate) missingFields.push('start_date');
   if (!endDate) missingFields.push('end_date');
@@ -146,7 +143,6 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
   if (!budget) missingFields.push('budget');
 
   return {
-    destination,
     destinations,
     origin,
     start_date: startDate,
@@ -158,7 +154,6 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
 };
 
 const DEFAULT_TRIP_INPUTS: TripInputs = {
-  destination: null,
   destinations: [],
   origin: null,
   start_date: null,
@@ -166,7 +161,7 @@ const DEFAULT_TRIP_INPUTS: TripInputs = {
   traveler_count: null,
   budget: null,
   missing_fields: [
-    'destination',
+    'destinations',
     'origin',
     'start_date',
     'end_date',
@@ -198,7 +193,10 @@ const resolveTripInputs = (
 ): TripInputs => {
   const filled = fillTripInputDefaults(incoming);
   filled.origin = sanitizeOrigin(filled.origin ?? null, destinationHint);
-  filled.destination = filled.destination ?? destinationHint ?? null;
+  // Add destination hint to destinations if not already present
+  if (destinationHint && !filled.destinations.includes(destinationHint)) {
+    filled.destinations = [destinationHint, ...filled.destinations];
+  }
   return filled;
 };
 
@@ -294,7 +292,6 @@ const summarizeSelections = (selection?: TileSelection): string | null => {
 };
 
 type TripInputSignature = {
-  destination: string | null;
   destinations: string[];
   origin: string | null;
   start_date: string | null;
@@ -304,7 +301,6 @@ type TripInputSignature = {
 };
 
 const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature => ({
-  destination: inputs?.destination?.trim() || null,
   destinations: (inputs?.destinations ?? [])
     .map((d) => d.trim())
     .filter((d) => d.length > 0),
@@ -328,7 +324,6 @@ const tripInputSignaturesEqual = (
     a.destinations.length === b.destinations.length &&
     a.destinations.every((d, i) => d === b.destinations[i]);
   return (
-    a.destination === b.destination &&
     destinationsEqual &&
     a.origin === b.origin &&
     a.start_date === b.start_date &&
@@ -367,6 +362,7 @@ export function NomadicLanding() {
   const [isResettingSession, setIsResettingSession] = useState(false);
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [hasUserMessages, setHasUserMessages] = useState(false);
+  const [readyToGenerate, setReadyToGenerate] = useState(false);
   const [chatKey, setChatKey] = useState(0);
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
   const tripInputsPlanControllerRef = useRef<AbortController | null>(null);
@@ -416,15 +412,16 @@ export function NomadicLanding() {
   const updateFromDraft = useCallback(
     (draft: TripInputsDraft, destinationHint?: string | null) => {
       const normalized = normalizeTripInputsDraft(draft);
+      const hint = destinationHint ?? selectedBranch?.destinations[0];
       normalized.origin = sanitizeOrigin(
         normalized.origin ?? null,
-        destinationHint ?? selectedBranch?.destination
+        hint
       );
       setTripInputs(normalized);
       setTripInputsDraft(draft);
       setEditingField(null);
     },
-    [selectedBranch?.destination]
+    [selectedBranch?.destinations]
   );
 
   const applyIncomingTripInputs = useCallback(
@@ -684,39 +681,77 @@ export function NomadicLanding() {
 
   const handleCommitField = useCallback(
     (field?: keyof TripInputsDraft, value?: string) => {
-      const prevValue = field ? tripInputs[field as keyof TripInputs] : null;
+      setEditingField(null);
+
+      if (!field) return;
+
+      const prevValue = tripInputs[field as keyof TripInputs];
+      const trimmedValue = value?.trim();
+
+      // If the user cleared the field, restore the previous value and don't commit
+      if (!trimmedValue) {
+        setTripInputsDraft((prev) => {
+          if (!prev) return prev;
+          return { ...prev, [field]: prevValue ?? '' };
+        });
+        return;
+      }
+
+      // For numeric fields, validate the value
+      if (field === 'traveler_count') {
+        const count = parseInt(trimmedValue, 10);
+        if (Number.isNaN(count) || count <= 0) {
+          setTripInputsDraft((prev) => {
+            if (!prev) return prev;
+            return { ...prev, [field]: prevValue ?? '' };
+          });
+          return;
+        }
+      } else if (field === 'budget') {
+        const budget = parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
+        if (Number.isNaN(budget) || budget <= 0) {
+          setTripInputsDraft((prev) => {
+            if (!prev) return prev;
+            return { ...prev, [field]: prevValue ?? '' };
+          });
+          return;
+        }
+      }
+
+      // Don't commit if value hasn't changed
+      if (trimmedValue === String(prevValue ?? '')) {
+        return;
+      }
 
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
-        const next = field ? { ...base, [field]: value ?? base[field] } : base;
-        updateFromDraft(next, selectedBranch?.destination);
+        const next = { ...base, [field]: trimmedValue };
+        updateFromDraft(next, selectedBranch?.destinations[0]);
         return next;
       });
 
       // Send chat message for field changes
-      if (field && value && value !== prevValue) {
-        let message: string | null = null;
+      let message: string | null = null;
 
-        if (field === 'origin') {
-          message = `I'm traveling from ${value}`;
-        } else if (field === 'traveler_count') {
-          const count = parseInt(value, 10);
-          if (!Number.isNaN(count)) {
-            message = count === 1 ? "I'm traveling solo" : `We are ${count} travelers`;
-          }
-        } else if (field === 'budget') {
-          const budget = parseInt(value.replace(/[^\d]/g, ''), 10);
-          if (!Number.isNaN(budget) && budget > 0) {
-            message = `My budget is $${budget.toLocaleString()}`;
-          }
+      if (field === 'origin') {
+        message = `I'm traveling from ${trimmedValue}`;
+      } else if (field === 'traveler_count') {
+        const count = parseInt(trimmedValue, 10);
+        if (!Number.isNaN(count)) {
+          message = count === 1 ? "I'm traveling solo" : `We are ${count} travelers`;
         }
-
-        if (message) {
-          chatPanelRef.current?.sendMessage(message);
+      } else if (field === 'budget') {
+        const budget = parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
+        if (!Number.isNaN(budget) && budget > 0) {
+          message = `My budget is $${budget.toLocaleString()}`;
         }
       }
+
+      if (message) {
+        chatPanelRef.current?.sendMessage(message);
+      }
     },
-    [tripInputs, selectedBranch?.destination, updateFromDraft]
+    [tripInputs, selectedBranch?.destinations, updateFromDraft]
   );
 
   const handleDateRangeChange = useCallback(
@@ -737,7 +772,7 @@ export function NomadicLanding() {
         };
         // Commit the changes as the user selects dates
         if (startIso || endIso) {
-          updateFromDraft(next, selectedBranch?.destination);
+          updateFromDraft(next, selectedBranch?.destinations[0]);
         }
         // Only close calendar when both dates are selected
         if (startIso && endIso) {
@@ -768,22 +803,32 @@ export function NomadicLanding() {
         chatPanelRef.current?.sendMessage(message);
       }
     },
-    [tripInputs, selectedBranch?.destination, updateFromDraft]
+    [tripInputs, selectedBranch?.destinations, updateFromDraft]
   );
 
   const handleDestinationsChange = useCallback(
     (destinations: string[], sendChatMessage = false) => {
       const prevDestinations = tripInputs.destinations ?? [];
-      const prevDestination = tripInputs.destination;
+
+      // If the user cleared all destinations, restore the previous value
+      if (destinations.length === 0) {
+        setTripInputsDraft((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            destinations: prevDestinations,
+          };
+        });
+        return;
+      }
 
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
         const next = {
           ...base,
           destinations,
-          destination: destinations[0] ?? base.destination,
         };
-        updateFromDraft(next, selectedBranch?.destination);
+        updateFromDraft(next, selectedBranch?.destinations[0]);
         return next;
       });
 
@@ -791,8 +836,7 @@ export function NomadicLanding() {
       if (sendChatMessage && destinations.length > 0) {
         const destinationsChanged =
           destinations.length !== prevDestinations.length ||
-          destinations.some((d, i) => d !== prevDestinations[i]) ||
-          destinations[0] !== prevDestination;
+          destinations.some((d, i) => d !== prevDestinations[i]);
 
         if (destinationsChanged) {
           const message =
@@ -803,7 +847,7 @@ export function NomadicLanding() {
         }
       }
     },
-    [tripInputs, selectedBranch?.destination, updateFromDraft]
+    [tripInputs, selectedBranch?.destinations, updateFromDraft]
   );
 
   useEffect(
@@ -844,6 +888,7 @@ export function NomadicLanding() {
       tiles: Record<string, Tile>;
       primaryBranchId: string | null;
       tripInputs?: TripInputs | null;
+      readyToGenerate?: boolean;
     }) => {
       const primaryBranch =
         result.branches.find((b) => b.id === result.primaryBranchId) ??
@@ -857,6 +902,8 @@ export function NomadicLanding() {
       }
       setTripContextId(result.tripContextId);
       setBranches(result.branches);
+      // Update readyToGenerate state - reset to false if branches exist
+      setReadyToGenerate(result.branches.length === 0 && (result.readyToGenerate ?? false));
       setTilesMap(result.tiles);
       setTilesBranchId(result.primaryBranchId);
       setBranchTileNotes((prev) => {
@@ -896,7 +943,7 @@ export function NomadicLanding() {
         });
         return next;
       });
-      const destinationHint = result.branches[0]?.destination ?? null;
+      const destinationHint = result.branches[0]?.destinations[0] ?? null;
       const resolvedTripInputs = applyIncomingTripInputs(
         mergedTripInputs,
         destinationHint
@@ -911,7 +958,7 @@ export function NomadicLanding() {
   // Auto-refresh branches and tiles whenever the core trip inputs change.
   useEffect(() => {
     const signature = toTripInputSignature(tripInputs);
-    const destinationHint = selectedBranch?.destination ?? signature.destination;
+    const destinationHint = selectedBranch?.destinations[0] ?? signature.destinations[0];
     const hasPlanContext =
       hasTriggeredChat || branches.length > 0 || tripContextId != null;
     const shouldRefresh =
@@ -1022,7 +1069,7 @@ export function NomadicLanding() {
     isHydratingSnapshot,
     isResettingSession,
     lastRegeneratedTripInputs,
-    selectedBranch?.destination,
+    selectedBranch?.destinations,
     selectedBranchId,
     tripContextId,
     tripInputs,
@@ -1132,11 +1179,15 @@ export function NomadicLanding() {
     if (!tilesBranchId) return;
     const counts = countTilesByTab(tiles);
     setBranchTileCounts((prev) => ({ ...prev, [tilesBranchId]: counts }));
-    setBranchTileNotes((prev) => ({
-      ...prev,
-      [tilesBranchId]: buildBranchNote(tilesBranchId, { countsOverride: counts }),
-    }));
-  }, [buildBranchNote, tiles, tilesBranchId]);
+    setBranchTileNotes((prev) => {
+      const selectionNote = summarizeSelections(branchSelections[tilesBranchId]);
+      const countsNote = summarizeTileCounts(counts);
+      const tabNote = branchTabNotes[tilesBranchId];
+      const note = [selectionNote, countsNote, tabNote].filter(Boolean).join(' ');
+      return { ...prev, [tilesBranchId]: note };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tiles, tilesBranchId]);
 
   const handleTilesTabChange = useCallback(
     (tab: TileTabKey, filteredTiles: Tile[]) => {
@@ -1144,10 +1195,15 @@ export function NomadicLanding() {
       if (!tilesBranchId || tilesBranchId !== selectedBranchId) return;
       const tabNote = describeTileSelection(tab, filteredTiles);
       setBranchTabNotes((prev) => ({ ...prev, [selectedBranchId]: tabNote }));
-      const note = buildBranchNote(selectedBranchId, { tabNote });
-      setBranchTileNotes((prev) => ({ ...prev, [selectedBranchId]: note }));
+      setBranchTileNotes((prev) => {
+        const selectionNote = summarizeSelections(branchSelections[selectedBranchId]);
+        const counts = branchTileCounts[selectedBranchId];
+        const countsNote = counts ? summarizeTileCounts(counts) : null;
+        const note = [selectionNote, countsNote, tabNote].filter(Boolean).join(' ');
+        return { ...prev, [selectedBranchId]: note };
+      });
     },
-    [buildBranchNote, describeTileSelection, selectedBranchId, tilesBranchId]
+    [branchSelections, branchTileCounts, describeTileSelection, selectedBranchId, tilesBranchId]
   );
 
   const handleBookTrip = useCallback(
@@ -1243,7 +1299,7 @@ export function NomadicLanding() {
     Boolean(tripInputs.destination) || (tripInputs.destinations ?? []).length > 0;
   const destinationsDisplay =
     (tripInputs.destinations ?? []).length > 0
-      ? tripInputs.destinations!.join(' → ')
+      ? tripInputs.destinations!.join(', ')
       : (tripInputs.destination ?? '');
 
   // Check if we have dates to show
@@ -1298,6 +1354,13 @@ export function NomadicLanding() {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       handleCommitField('origin', (e.target as HTMLInputElement).value);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      // Restore original value and close
+                      setTripInputsDraft((prev) =>
+                        prev ? { ...prev, origin: tripInputs.origin ?? '' } : prev
+                      );
+                      setEditingField(null);
                     }
                   }}
                   autoFocus
@@ -1331,16 +1394,23 @@ export function NomadicLanding() {
                   type="text"
                   value={
                     (draftBase?.destinations ?? []).length > 0
-                      ? draftBase.destinations!.join(', ')
-                      : (draftBase?.destination ?? '')
+                      ? draftBase.destinations.join(', ')
+                      : ''
                   }
                   onChange={(e) => {
+                    // Only update draft during typing, don't commit
                     const value = e.target.value;
-                    const destinations = value
-                      .split(',')
-                      .map((d) => d.trim())
-                      .filter((d) => d.length > 0);
-                    handleDestinationsChange(destinations, false);
+                    setTripInputsDraft((prev) => {
+                      if (!prev) return prev;
+                      const destinations = value
+                        .split(',')
+                        .map((d) => d.trim())
+                        .filter((d) => d.length > 0);
+                      return {
+                        ...prev,
+                        destinations,
+                      };
+                    });
                   }}
                   className="text-foreground placeholder:text-muted-foreground w-32 bg-transparent text-xs font-semibold focus:outline-none"
                   placeholder="Destinations (comma-separated)"
@@ -1363,6 +1433,18 @@ export function NomadicLanding() {
                         .map((d) => d.trim())
                         .filter((d) => d.length > 0);
                       handleDestinationsChange(destinations, true);
+                      setEditingField(null);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      // Restore original values and close
+                      setTripInputsDraft((prev) => {
+                        if (!prev) return prev;
+                        return {
+                          ...prev,
+                          destinations: tripInputs.destinations ?? [],
+                          destination: tripInputs.destination ?? '',
+                        };
+                      });
                       setEditingField(null);
                     }
                   }}
@@ -1461,6 +1543,14 @@ export function NomadicLanding() {
                       if (e.key === 'Enter') {
                         e.preventDefault();
                         handleCommitField(field, (e.target as HTMLInputElement).value);
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        // Restore original value and close
+                        const originalValue = tripInputs[field as keyof TripInputs];
+                        setTripInputsDraft((prev) =>
+                          prev ? { ...prev, [field]: originalValue ?? '' } : prev
+                        );
+                        setEditingField(null);
                       }
                     }}
                     autoFocus
@@ -1495,9 +1585,10 @@ export function NomadicLanding() {
           }
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
+          readyToGenerate={readyToGenerate}
         />
       </div>
-      {hasUserMessages ? (
+      {(hasUserMessages || hasBranchesReady) ? (
         <div
           className={`flex w-full justify-end px-1 ${fullHeight ? 'shrink-0 pt-2' : 'pt-4'}`}
         >
@@ -1779,19 +1870,35 @@ export function NomadicLanding() {
           </div>
 
           {showResults ? (
-            <section className="bg-background pb-14 pt-10">
+            <motion.section
+              initial={{ opacity: 0, y: 40 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              className="bg-background pb-14 pt-10"
+            >
               <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.1, ease: 'easeOut' }}
+                  className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                >
                   <div>
                     <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
                       Branches stretched wide with tiles nested inside
                     </h2>
                   </div>
-                </div>
+                </motion.div>
 
-                {branchPanelContent}
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.2, ease: 'easeOut' }}
+                >
+                  {branchPanelContent}
+                </motion.div>
               </div>
-            </section>
+            </motion.section>
           ) : null}
 
           <FeaturesSection />

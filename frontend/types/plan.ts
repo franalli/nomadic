@@ -1,6 +1,5 @@
 export type TripInputs = {
-  destination?: string | null;
-  destinations?: string[];
+  destinations: string[];
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;

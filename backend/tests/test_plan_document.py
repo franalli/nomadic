@@ -62,7 +62,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
         document_data = {
             "trip_context_id": trip_ctx.id,
             "trip_inputs": {
-                "destination": "Nice",
+                "destinations": ["Nice"],
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
@@ -75,7 +75,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "id": "branch_1",
                     "label": "Beach Escape",
                     "description": "Relax on the coast",
-                    "destination": "Nice",
+                    "destinations": ["Nice"],
                     "origin": "London",
                     "start_date": "2025-12-01",
                     "end_date": "2025-12-07",
@@ -97,7 +97,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "id": "branch_2",
                     "label": "City Lights",
                     "description": "Explore the city",
-                    "destination": "Paris",
+                    "destinations": ["Paris"],
                     "origin": "London",
                     "start_date": "2025-12-01",
                     "end_date": "2025-12-07",
@@ -192,7 +192,7 @@ def test_get_document_returns_branches_and_tiles():
     assert len(doc["branches"]) == 2
     assert doc["branches"][0]["label"] == "Beach Escape"
     assert doc["branches"][0]["is_primary"] is True
-    assert doc["branches"][1]["destination"] == "Paris"
+    assert doc["branches"][1]["destinations"] == ["Paris"]
 
     assert "tile_1" in doc["tiles"]
     assert doc["tiles"]["tile_1"]["title"] == "Seaside Hotel"

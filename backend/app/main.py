@@ -256,10 +256,11 @@ def fetch_tiles_for_branch(
         )
 
     # Fetch tiles for this branch
+    primary_dest = branch.destinations[0] if branch.destinations else None
     tiles_request = TilesSearchRequest(
         session_id=session_id,
-        destination=branch.destination,
-        destination_hint=branch.destination,
+        destination=primary_dest,
+        destination_hint=primary_dest,
         origin=branch.origin,
         start_date=branch.start_date,
         end_date=branch.end_date,
