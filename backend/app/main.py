@@ -172,12 +172,12 @@ def get_plan_document(
         raise HTTPException(status_code=404, detail="No plan document for this session")
 
     doc_data = get_document_data(doc)
-
     return PlanDocumentResponse(
         version=doc.version,
         updated_by=doc.updated_by,
         document=doc_data,
         updated_at=doc.updated_at.isoformat(),
+        changes_made=False,
     )
 
 
@@ -212,6 +212,7 @@ def patch_plan_document(
         updated_by=updated_doc.updated_by,
         document=doc_data,
         updated_at=updated_doc.updated_at.isoformat(),
+        changes_made=True,
     )
 
 
@@ -251,6 +252,7 @@ def fetch_tiles_for_branch(
             updated_by=doc.updated_by,
             document=doc_data,
             updated_at=doc.updated_at.isoformat(),
+            changes_made=False,
         )
 
     # Fetch tiles for this branch
@@ -284,6 +286,7 @@ def fetch_tiles_for_branch(
             updated_by=updated_doc.updated_by,
             document=doc_data,
             updated_at=updated_doc.updated_at.isoformat(),
+            changes_made=True,
         )
 
     # No tiles found, return current document
@@ -292,6 +295,7 @@ def fetch_tiles_for_branch(
         updated_by=doc.updated_by,
         document=doc_data,
         updated_at=doc.updated_at.isoformat(),
+        changes_made=False,
     )
 
 

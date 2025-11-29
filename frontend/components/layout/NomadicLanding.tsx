@@ -1,12 +1,22 @@
 'use client';
 
+import { format, parse } from 'date-fns';
 import { motion } from 'framer-motion';
-import { CalendarRange, Compass, MapPin, Menu, User, Users, Wallet } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import {
+  ArrowRight,
+  CalendarRange,
+  Compass,
+  MapPin,
+  Menu,
+  User,
+  Users,
+  Wallet,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { DateRange } from 'react-day-picker';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
-import { ChatPanel } from '@/components/chat/ChatPanel';
+import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
 import {
@@ -15,7 +25,9 @@ import {
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
 import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent } from '@/components/ui/card';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { API_BASE } from '@/lib/api';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import { saveTripSummary } from '@/lib/summary';
@@ -32,34 +44,24 @@ type BranchSelectionOverrides = {
 
 type TripInputsDraft = {
   destination?: string | null;
-  origin: string;
-  start_date: string;
-  end_date: string;
-  traveler_count: string;
+  destinations?: string[];
+  origin?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  traveler_count?: string | null;
   budget?: string | null;
 };
-
-const getFreshDateDefaults = () => {
-  const today = new Date();
-  const nextWeek = new Date(today);
-  nextWeek.setDate(today.getDate() + 7);
-
-  const pad = (value: number) => value.toString().padStart(2, '0');
-  const todayIso = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const nextWeekIso = `${nextWeek.getFullYear()}-${pad(nextWeek.getMonth() + 1)}-${pad(nextWeek.getDate())}`;
-
-  return { todayIso, nextWeekIso };
-};
-
-const { todayIso: INITIAL_TODAY_ISO, nextWeekIso: INITIAL_NEXT_WEEK_ISO } =
-  getFreshDateDefaults();
 
 const formatDateForDisplay = (value?: string | null): string => {
   if (!value) return '';
   const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (isoMatch) {
-    const [, year, month, day] = isoMatch;
-    return `${day}-${month}-${year}`;
+    try {
+      const date = new Date(value + 'T00:00:00');
+      return format(date, 'EEE, MMM d');
+    } catch {
+      return value;
+    }
   }
   return value;
 };
@@ -67,20 +69,25 @@ const formatDateForDisplay = (value?: string | null): string => {
 const parseDisplayDate = (value: string): string | null => {
   const trimmed = value.trim();
   if (!trimmed) return null;
+
+  // Try parsing ISO format (this is what we store in draft)
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (isoMatch) {
+    const parsed = new Date(trimmed + 'T00:00:00');
+    if (Number.isNaN(parsed.getTime())) return null;
+    return trimmed;
+  }
+
+  // Try parsing old DD-MM-YYYY format for backwards compatibility
   const displayMatch = /^(\d{2})-(\d{2})-(\d{4})$/.exec(trimmed);
   if (displayMatch) {
     const [, day, month, year] = displayMatch;
     const iso = `${year}-${month}-${day}`;
-    const parsed = new Date(iso);
+    const parsed = new Date(iso + 'T00:00:00');
     if (Number.isNaN(parsed.getTime())) return null;
     return iso;
   }
-  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
-  if (isoMatch) {
-    const parsed = new Date(trimmed);
-    if (Number.isNaN(parsed.getTime())) return null;
-    return trimmed;
-  }
+
   return null;
 };
 
@@ -102,38 +109,45 @@ const formatBudgetValue = (value?: string | number | null): string => {
 };
 
 const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
-  const { todayIso, nextWeekIso } = getFreshDateDefaults();
   return {
     destination: inputs.destination ?? null,
-    origin: inputs.origin ?? '',
-    start_date: formatDateForDisplay(inputs.start_date) || formatDateForDisplay(todayIso),
-    end_date: formatDateForDisplay(inputs.end_date) || formatDateForDisplay(nextWeekIso),
-    traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : '1',
+    destinations: inputs.destinations ?? [],
+    origin: inputs.origin ?? null,
+    start_date: inputs.start_date ?? null,
+    end_date: inputs.end_date ?? null,
+    traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : null,
     budget: inputs.budget != null ? String(inputs.budget) : null,
   };
 };
 
 const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
-  const { todayIso, nextWeekIso } = getFreshDateDefaults();
   const destination = draft.destination?.trim() || null;
-  const origin = draft.origin.trim() || null;
-  const startDate = parseDisplayDate(draft.start_date) ?? todayIso;
-  const endDate = parseDisplayDate(draft.end_date) ?? nextWeekIso;
-  const travelerText = draft.traveler_count.trim();
+  const destinations = (draft.destinations ?? [])
+    .map((d) => d.trim())
+    .filter((d) => d.length > 0);
+  const origin = typeof draft.origin === 'string' ? draft.origin.trim() || null : null;
+  const startDate = draft.start_date ? parseDisplayDate(draft.start_date) : null;
+  const endDate = draft.end_date ? parseDisplayDate(draft.end_date) : null;
+  const travelerText =
+    draft.traveler_count != null ? String(draft.traveler_count).trim() : '';
   const parsedTravelerCount = travelerText === '' ? null : Number(travelerText);
   const travelerCount =
     Number.isFinite(parsedTravelerCount) && parsedTravelerCount != null
       ? Math.min(20, Math.max(1, parsedTravelerCount))
-      : 1;
+      : null;
   const budget = parseBudgetValue(draft.budget ?? null);
 
   const missingFields: string[] = [];
-  if (!destination) missingFields.push('destination');
+  if (!destination && destinations.length === 0) missingFields.push('destination');
   if (!origin) missingFields.push('origin');
+  if (!startDate) missingFields.push('start_date');
+  if (!endDate) missingFields.push('end_date');
+  if (travelerCount == null) missingFields.push('traveler_count');
   if (!budget) missingFields.push('budget');
 
   return {
     destination,
+    destinations,
     origin,
     start_date: startDate,
     end_date: endDate,
@@ -143,46 +157,23 @@ const normalizeTripInputsDraft = (draft: TripInputsDraft): TripInputs => {
   };
 };
 
-const DEFAULT_ORIGIN_FALLBACK = 'Oslo';
-
 const DEFAULT_TRIP_INPUTS: TripInputs = {
   destination: null,
-  origin: null, // Will be set via geolocation or fallback to Amsterdam
-  start_date: INITIAL_TODAY_ISO,
-  end_date: INITIAL_NEXT_WEEK_ISO,
-  traveler_count: 1,
+  destinations: [],
+  origin: null,
+  start_date: null,
+  end_date: null,
+  traveler_count: null,
   budget: null,
-  missing_fields: ['destination', 'origin', 'budget'],
+  missing_fields: [
+    'destination',
+    'origin',
+    'start_date',
+    'end_date',
+    'traveler_count',
+    'budget',
+  ],
 };
-
-/**
- * Reverse geocode coordinates to a city name using OpenStreetMap Nominatim.
- * Returns null if the request fails or no city is found.
- */
-async function reverseGeocodeToCity(
-  latitude: number,
-  longitude: number
-): Promise<string | null> {
-  try {
-    const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&addressdetails=1`,
-      {
-        headers: {
-          'User-Agent': 'NomadicTravelApp/1.0',
-        },
-      }
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
-    // Prefer city, then town, then village, then municipality
-    const address = data.address;
-    return (
-      address?.city || address?.town || address?.village || address?.municipality || null
-    );
-  } catch {
-    return null;
-  }
-}
 
 const fillTripInputDefaults = (inputs?: TripInputs | null): TripInputs => {
   return normalizeTripInputsDraft(toTripInputsDraft(inputs ?? DEFAULT_TRIP_INPUTS));
@@ -304,6 +295,7 @@ const summarizeSelections = (selection?: TileSelection): string | null => {
 
 type TripInputSignature = {
   destination: string | null;
+  destinations: string[];
   origin: string | null;
   start_date: string | null;
   end_date: string | null;
@@ -313,6 +305,9 @@ type TripInputSignature = {
 
 const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature => ({
   destination: inputs?.destination?.trim() || null,
+  destinations: (inputs?.destinations ?? [])
+    .map((d) => d.trim())
+    .filter((d) => d.length > 0),
   origin: inputs?.origin?.trim() || null,
   start_date: inputs?.start_date ?? null,
   end_date: inputs?.end_date ?? null,
@@ -329,8 +324,12 @@ const tripInputSignaturesEqual = (
 ): boolean => {
   if (!a && !b) return true;
   if (!a || !b) return false;
+  const destinationsEqual =
+    a.destinations.length === b.destinations.length &&
+    a.destinations.every((d, i) => d === b.destinations[i]);
   return (
     a.destination === b.destination &&
+    destinationsEqual &&
     a.origin === b.origin &&
     a.start_date === b.start_date &&
     a.end_date === b.end_date &&
@@ -340,7 +339,6 @@ const tripInputSignaturesEqual = (
 };
 
 export function NomadicLanding() {
-  const router = useRouter();
   const [branches, setBranches] = useState<DocumentBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [tilesMap, setTilesMap] = useState<Record<string, Tile>>({});
@@ -363,18 +361,17 @@ export function NomadicLanding() {
   const [lastRegeneratedTripInputs, setLastRegeneratedTripInputs] =
     useState<TripInputSignature>(() => toTripInputSignature(DEFAULT_TRIP_INPUTS));
   const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
   const [isResettingSession, setIsResettingSession] = useState(false);
   const [hasTriggeredChat, setHasTriggeredChat] = useState(false);
   const [hasUserMessages, setHasUserMessages] = useState(false);
   const [chatKey, setChatKey] = useState(0);
-  const [originDetectionStatus, setOriginDetectionStatus] = useState<
-    'pending' | 'detected' | 'fallback' | 'user-edited'
-  >('pending');
   const tilesFetchControllerRef = useRef<AbortController | null>(null);
   const tripInputsPlanControllerRef = useRef<AbortController | null>(null);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
+  const chatPanelRef = useRef<ChatPanelHandle | null>(null);
   const [typedTagline, setTypedTagline] = useState('');
 
   const selectedBranch = useMemo(
@@ -533,49 +530,6 @@ export function NomadicLanding() {
     return () => window.clearTimeout(timer);
   }, [toastMessage]);
 
-  // Detect user's origin from browser geolocation
-  useEffect(() => {
-    // Only run once on mount
-    if (originDetectionStatus !== 'pending') return;
-    // If origin was restored from session, treat as user-edited
-    if (tripInputs.origin) {
-      setOriginDetectionStatus('user-edited');
-      return;
-    }
-
-    if (!navigator.geolocation) {
-      // Geolocation not supported, fall back to Amsterdam
-      setTripInputsDraft((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
-      setTripInputs((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
-      setOriginDetectionStatus('fallback');
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        const city = await reverseGeocodeToCity(latitude, longitude);
-        if (city) {
-          setTripInputsDraft((prev) => ({ ...prev, origin: city }));
-          setTripInputs((prev) => ({ ...prev, origin: city }));
-          setOriginDetectionStatus('detected');
-        } else {
-          // Reverse geocoding failed, fall back to Amsterdam
-          setTripInputsDraft((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
-          setTripInputs((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
-          setOriginDetectionStatus('fallback');
-        }
-      },
-      () => {
-        // User denied permission or error occurred, fall back to Amsterdam
-        setTripInputsDraft((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
-        setTripInputs((prev) => ({ ...prev, origin: DEFAULT_ORIGIN_FALLBACK }));
-        setOriginDetectionStatus('fallback');
-      },
-      { timeout: 10000, enableHighAccuracy: false }
-    );
-  }, [originDetectionStatus, tripInputs.origin]);
-
   useEffect(() => {
     let cancelled = false;
 
@@ -730,16 +684,124 @@ export function NomadicLanding() {
 
   const handleCommitField = useCallback(
     (field?: keyof TripInputsDraft, value?: string) => {
-      // If user manually edits origin, mark it as user-edited
-      if (field === 'origin') {
-        setOriginDetectionStatus('user-edited');
-      }
+      const prevValue = field ? tripInputs[field as keyof TripInputs] : null;
+
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
         const next = field ? { ...base, [field]: value ?? base[field] } : base;
         updateFromDraft(next, selectedBranch?.destination);
         return next;
       });
+
+      // Send chat message for field changes
+      if (field && value && value !== prevValue) {
+        let message: string | null = null;
+
+        if (field === 'origin') {
+          message = `I'm traveling from ${value}`;
+        } else if (field === 'traveler_count') {
+          const count = parseInt(value, 10);
+          if (!Number.isNaN(count)) {
+            message = count === 1 ? "I'm traveling solo" : `We are ${count} travelers`;
+          }
+        } else if (field === 'budget') {
+          const budget = parseInt(value.replace(/[^\d]/g, ''), 10);
+          if (!Number.isNaN(budget) && budget > 0) {
+            message = `My budget is $${budget.toLocaleString()}`;
+          }
+        }
+
+        if (message) {
+          chatPanelRef.current?.sendMessage(message);
+        }
+      }
+    },
+    [tripInputs, selectedBranch?.destination, updateFromDraft]
+  );
+
+  const handleDateRangeChange = useCallback(
+    (range: DateRange | undefined) => {
+      const startIso = range?.from ? format(range.from, 'yyyy-MM-dd') : null;
+      const endIso = range?.to ? format(range.to, 'yyyy-MM-dd') : null;
+
+      // Get previous values to check what changed
+      const prevStartIso = tripInputs.start_date;
+      const prevEndIso = tripInputs.end_date;
+
+      setTripInputsDraft((prev) => {
+        const base = prev ?? toTripInputsDraft(tripInputs);
+        const next = {
+          ...base,
+          start_date: startIso,
+          end_date: endIso,
+        };
+        // Commit the changes as the user selects dates
+        if (startIso || endIso) {
+          updateFromDraft(next, selectedBranch?.destination);
+        }
+        // Only close calendar when both dates are selected
+        if (startIso && endIso) {
+          setCalendarOpen(false);
+        }
+        return next;
+      });
+
+      // Send a chat message when dates are updated
+      const startChanged = startIso !== prevStartIso;
+      const endChanged = endIso !== prevEndIso;
+
+      if (startIso && endIso && (startChanged || endChanged)) {
+        // Both dates selected - send message about the date range
+        const startDisplay = formatDateForDisplay(startIso);
+        const endDisplay = formatDateForDisplay(endIso);
+        const message = `I'll be traveling from ${startDisplay} to ${endDisplay}`;
+        chatPanelRef.current?.sendMessage(message);
+      } else if (startIso && !endIso && startChanged) {
+        // Only start date selected
+        const startDisplay = formatDateForDisplay(startIso);
+        const message = `My trip starts on ${startDisplay}`;
+        chatPanelRef.current?.sendMessage(message);
+      } else if (!startIso && endIso && endChanged) {
+        // Only end date selected
+        const endDisplay = formatDateForDisplay(endIso);
+        const message = `My trip ends on ${endDisplay}`;
+        chatPanelRef.current?.sendMessage(message);
+      }
+    },
+    [tripInputs, selectedBranch?.destination, updateFromDraft]
+  );
+
+  const handleDestinationsChange = useCallback(
+    (destinations: string[], sendChatMessage = false) => {
+      const prevDestinations = tripInputs.destinations ?? [];
+      const prevDestination = tripInputs.destination;
+
+      setTripInputsDraft((prev) => {
+        const base = prev ?? toTripInputsDraft(tripInputs);
+        const next = {
+          ...base,
+          destinations,
+          destination: destinations[0] ?? base.destination,
+        };
+        updateFromDraft(next, selectedBranch?.destination);
+        return next;
+      });
+
+      // Send chat message if destinations changed and sendChatMessage is true
+      if (sendChatMessage && destinations.length > 0) {
+        const destinationsChanged =
+          destinations.length !== prevDestinations.length ||
+          destinations.some((d, i) => d !== prevDestinations[i]) ||
+          destinations[0] !== prevDestination;
+
+        if (destinationsChanged) {
+          const message =
+            destinations.length === 1
+              ? `I want to go to ${destinations[0]}`
+              : `I want to visit ${destinations.join(', ')}`;
+          chatPanelRef.current?.sendMessage(message);
+        }
+      }
     },
     [tripInputs, selectedBranch?.destination, updateFromDraft]
   );
@@ -926,6 +988,7 @@ export function NomadicLanding() {
           tripInputs: doc.trip_inputs
             ? {
                 destination: doc.trip_inputs.destination,
+                destinations: doc.trip_inputs.destinations ?? [],
                 origin: doc.trip_inputs.origin,
                 start_date: doc.trip_inputs.start_date,
                 end_date: doc.trip_inputs.end_date,
@@ -1158,70 +1221,217 @@ export function NomadicLanding() {
   const hasBranchesReady = branches.length > 0;
   const missingFields = tripInputs.missing_fields ?? [];
   const blockingMissingFields = missingFields.filter((field) => field !== 'budget');
-  const isMissingField = (key: string, value?: string | number | null) =>
-    !value || missingFields.includes(key);
   const formatTravelers = (value?: number | null) =>
-    value != null ? `${value} traveler${value === 1 ? '' : 's'}` : 'Needed';
+    value != null ? `${value} traveler${value === 1 ? '' : 's'}` : null;
   const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
-  const tripDetailsContent = (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        {(['origin', 'start_date', 'end_date', 'traveler_count', 'budget'] as const).map(
-          (field) => {
+
+  // Helper to check if a field has a value (non-null)
+  const hasFieldValue = (field: keyof TripInputsDraft): boolean => {
+    if (field === 'traveler_count') return tripInputs.traveler_count != null;
+    if (field === 'budget') return tripInputs.budget != null;
+    if (field === 'destinations') return (tripInputs.destinations ?? []).length > 0;
+    if (field === 'destination')
+      return (
+        Boolean(tripInputs.destination) || (tripInputs.destinations ?? []).length > 0
+      );
+    return Boolean(tripInputs[field as keyof TripInputs]);
+  };
+
+  // Check if we have origin or destination to show route
+  const hasOrigin = Boolean(tripInputs.origin);
+  const hasDestination =
+    Boolean(tripInputs.destination) || (tripInputs.destinations ?? []).length > 0;
+  const destinationsDisplay =
+    (tripInputs.destinations ?? []).length > 0
+      ? tripInputs.destinations!.join(' → ')
+      : (tripInputs.destination ?? '');
+
+  // Check if we have dates to show
+  const hasStartDate = Boolean(tripInputs.start_date);
+  const hasEndDate = Boolean(tripInputs.end_date);
+  const hasDates = hasStartDate || hasEndDate;
+
+  // Parse dates for calendar
+  const calendarStartDate = tripInputs.start_date
+    ? parse(tripInputs.start_date, 'yyyy-MM-dd', new Date())
+    : undefined;
+  const calendarEndDate = tripInputs.end_date
+    ? parse(tripInputs.end_date, 'yyyy-MM-dd', new Date())
+    : undefined;
+  const selectedDateRange: DateRange | undefined =
+    calendarStartDate || calendarEndDate
+      ? { from: calendarStartDate, to: calendarEndDate }
+      : undefined;
+
+  // Only show fields that have been defined via chat or manual input
+  const definedFields = (['traveler_count', 'budget'] as const).filter(hasFieldValue);
+
+  // Route display component (Origin -> Destination)
+  const routeDisplay =
+    hasOrigin || hasDestination ? (
+      <div className="border-border/60 bg-muted/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1">
+        {hasOrigin && (
+          <>
+            <MapPin className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+            <span
+              className="text-foreground cursor-pointer whitespace-nowrap text-xs font-semibold hover:underline"
+              role="button"
+              tabIndex={0}
+              onClick={() => handleStartEditingField('origin')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleStartEditingField('origin');
+                }
+              }}
+            >
+              {editingField === 'origin' ? (
+                <input
+                  type="text"
+                  value={draftBase?.origin ?? ''}
+                  onChange={(e) => handleFieldChange('origin', e.target.value)}
+                  className="text-foreground placeholder:text-muted-foreground w-20 bg-transparent text-xs font-semibold focus:outline-none"
+                  placeholder="City"
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => handleCommitField('origin', e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCommitField('origin', (e.target as HTMLInputElement).value);
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                tripInputs.origin
+              )}
+            </span>
+          </>
+        )}
+        {hasOrigin && hasDestination && (
+          <ArrowRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+        )}
+        {hasDestination && (
+          <>
+            <MapPin className="text-accent h-3.5 w-3.5 shrink-0" />
+            <span
+              className="text-foreground cursor-pointer whitespace-nowrap text-xs font-semibold hover:underline"
+              role="button"
+              tabIndex={0}
+              onClick={() => handleStartEditingField('destination')}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleStartEditingField('destination');
+                }
+              }}
+            >
+              {editingField === 'destination' ? (
+                <input
+                  type="text"
+                  value={
+                    (draftBase?.destinations ?? []).length > 0
+                      ? draftBase.destinations!.join(', ')
+                      : (draftBase?.destination ?? '')
+                  }
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    const destinations = value
+                      .split(',')
+                      .map((d) => d.trim())
+                      .filter((d) => d.length > 0);
+                    handleDestinationsChange(destinations, false);
+                  }}
+                  className="text-foreground placeholder:text-muted-foreground w-32 bg-transparent text-xs font-semibold focus:outline-none"
+                  placeholder="Destinations (comma-separated)"
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => {
+                    const value = e.target.value;
+                    const destinations = value
+                      .split(',')
+                      .map((d) => d.trim())
+                      .filter((d) => d.length > 0);
+                    handleDestinationsChange(destinations, true);
+                    setEditingField(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const value = (e.target as HTMLInputElement).value;
+                      const destinations = value
+                        .split(',')
+                        .map((d) => d.trim())
+                        .filter((d) => d.length > 0);
+                      handleDestinationsChange(destinations, true);
+                      setEditingField(null);
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                destinationsDisplay
+              )}
+            </span>
+          </>
+        )}
+      </div>
+    ) : null;
+
+  // Calendar display component with popover
+  const calendarDisplay = hasDates ? (
+    <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+      <PopoverTrigger asChild>
+        <div
+          className="border-border/60 bg-muted/40 hover:bg-muted/60 inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors"
+          role="button"
+          tabIndex={0}
+        >
+          <CalendarRange className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+          <span className="text-foreground whitespace-nowrap text-xs font-semibold">
+            {hasStartDate && formatDateForDisplay(tripInputs.start_date)}
+            {hasStartDate && hasEndDate && ' – '}
+            {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
+          </span>
+        </div>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start">
+        <Calendar
+          mode="range"
+          defaultMonth={calendarStartDate}
+          selected={selectedDateRange}
+          onSelect={handleDateRangeChange}
+          numberOfMonths={2}
+          disabled={{ before: new Date() }}
+        />
+      </PopoverContent>
+    </Popover>
+  ) : null;
+
+  const tripDetailsContent =
+    !routeDisplay && !calendarDisplay && definedFields.length === 0 ? null : (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {routeDisplay}
+          {calendarDisplay}
+          {definedFields.map((field) => {
             const isEditing = editingField === field;
             const draftValueRaw = draftBase ? draftBase[field] : '';
             const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
 
-            let displayValue = 'Needed';
+            let displayValue = '';
             if (field === 'traveler_count') {
-              displayValue =
-                tripInputs.traveler_count != null
-                  ? formatTravelers(tripInputs.traveler_count)
-                  : '1 traveler';
-            } else if (field === 'start_date' || field === 'end_date') {
-              const formatted = formatDateForDisplay(
-                tripInputs[field as keyof TripInputs] as string | null | undefined
-              );
-              displayValue = formatted || 'Needed';
+              displayValue = formatTravelers(tripInputs.traveler_count) ?? '';
             } else if (field === 'budget') {
-              displayValue = formatBudgetValue(tripInputs.budget) || 'Add budget';
-            } else if (field === 'origin') {
-              if (tripInputs.origin) {
-                displayValue = tripInputs.origin;
-              } else if (originDetectionStatus === 'pending') {
-                displayValue = 'Locating...';
-              } else {
-                displayValue = DEFAULT_ORIGIN_FALLBACK;
-              }
-            } else {
-              displayValue =
-                (tripInputs[field as keyof TripInputs] as string | null | undefined) ||
-                'Needed';
+              displayValue = formatBudgetValue(tripInputs.budget);
             }
 
-            const inputType =
-              field === 'traveler_count' || field === 'budget' ? 'number' : 'text';
+            const inputType = 'number';
             const icon =
-              field === 'origin' ? (
-                <MapPin className="h-3.5 w-3.5" />
-              ) : field === 'traveler_count' ? (
+              field === 'traveler_count' ? (
                 <Users className="h-3.5 w-3.5" />
-              ) : field === 'budget' ? (
-                <Wallet className="h-3.5 w-3.5" />
               ) : (
-                <CalendarRange className="h-3.5 w-3.5" />
+                <Wallet className="h-3.5 w-3.5" />
               );
-            const isFieldMissing = isMissingField(
-              field,
-              field === 'traveler_count'
-                ? tripInputs.traveler_count
-                : field === 'budget'
-                  ? tripInputs.budget
-                  : (tripInputs[field as 'origin' | 'start_date' | 'end_date'] as
-                      | string
-                      | null
-                      | undefined)
-            );
 
             return (
               <div
@@ -1244,15 +1454,7 @@ export function NomadicLanding() {
                     value={draftValue}
                     onChange={(e) => handleFieldChange(field, e.target.value)}
                     className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
-                    placeholder={
-                      field === 'traveler_count'
-                        ? '#'
-                        : field === 'origin'
-                          ? 'City'
-                          : field === 'budget'
-                            ? '$'
-                            : 'DD-MM-YY'
-                    }
+                    placeholder={field === 'traveler_count' ? '#' : '$'}
                     onClick={(e) => e.stopPropagation()}
                     onBlur={(e) => handleCommitField(field, e.target.value)}
                     onKeyDown={(e) => {
@@ -1264,33 +1466,33 @@ export function NomadicLanding() {
                     autoFocus
                   />
                 ) : (
-                  <span
-                    className={`whitespace-nowrap text-xs font-semibold ${
-                      isFieldMissing ? 'text-amber-600' : 'text-foreground'
-                    }`}
-                  >
+                  <span className="text-foreground whitespace-nowrap text-xs font-semibold">
                     {displayValue}
                   </span>
                 )}
               </div>
             );
-          }
-        )}
+          })}
+        </div>
       </div>
-    </div>
-  );
+    );
 
   // Chat panel content that can be reused in both layouts
   const chatPanelContent = (fullHeight = false) => (
     <div className={fullHeight ? 'flex h-full min-h-0 flex-col' : ''}>
       <div className={fullHeight ? 'min-h-0 flex-1' : ''}>
         <ChatPanel
+          ref={chatPanelRef}
           key={chatKey}
           selectedBranchId={selectedBranchId}
           onPlanResult={handlePlanResult}
           onChatTriggered={handleChatTriggered}
           onHasUserMessage={handleHasUserMessage}
-          tripDetails={{ content: tripDetailsContent, missingFields }}
+          tripDetails={
+            tripDetailsContent
+              ? { content: tripDetailsContent, missingFields }
+              : undefined
+          }
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
         />

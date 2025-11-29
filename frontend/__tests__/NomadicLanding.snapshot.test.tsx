@@ -92,8 +92,9 @@ describe('NomadicLanding document hydration', () => {
       expect(fetchMock).toHaveBeenCalled();
     });
 
-    const documentCall = fetchMock.mock.calls.find((call: [string]) =>
-      call[0].includes('/v1/document?session_id=')
+    const documentCall = fetchMock.mock.calls.find(
+      (call: unknown[]) =>
+        typeof call[0] === 'string' && call[0].includes('/v1/document?session_id=')
     );
     expect(documentCall).toBeDefined();
 

@@ -134,6 +134,7 @@ const DETAIL_PRESETS: BranchDetails[] = [
 
 const DAY_IN_MS = 1000 * 60 * 60 * 24;
 const DATE_RANGE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  weekday: 'short',
   month: 'short',
   day: 'numeric',
 });

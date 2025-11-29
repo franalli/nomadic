@@ -121,6 +121,19 @@ _TRIP_INPUT_FIELDS = (
     "budget",
 )
 
+# Required fields - all must be filled before branches can be generated
+# Budget is optional
+_REQUIRED_TRIP_INPUT_FIELDS = (
+    "destination",
+    "origin",
+    "start_date",
+    "end_date",
+    "traveler_count",
+)
+
+# Optional fields - not required before branches can be generated
+_OPTIONAL_FIELDS = ("budget",)
+
 
 # =============================================================================
 # DATE UTILITY FUNCTIONS
@@ -220,6 +233,8 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
     inputs_parts = []
     if ti.destination:
         inputs_parts.append(f"destination={ti.destination}")
+    if ti.destinations:
+        inputs_parts.append(f"destinations={', '.join(ti.destinations)}")
     if ti.origin:
         inputs_parts.append(f"origin={ti.origin}")
     if ti.start_date:
@@ -775,20 +790,24 @@ def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
     return max(1, min(20, value))
 
 
-def _ordered_missing_fields_from_inputs(trip_inputs: dict) -> List[str]:
+def _ordered_missing_fields_from_inputs(
+    trip_inputs: dict, include_optional: bool = False
+) -> List[str]:
     """
     Get the list of missing trip input fields in canonical order.
 
-    The order matches _TRIP_INPUT_FIELDS: destination, origin, start_date,
-    end_date, traveler_count, budget. This ensures consistent prompting order.
+    The order matches _REQUIRED_TRIP_INPUT_FIELDS: destination, origin, start_date,
+    end_date, traveler_count. Budget is optional and only included if include_optional=True.
 
     Args:
         trip_inputs: A dictionary of trip input values.
+        include_optional: If True, include optional fields (budget) in missing list.
 
     Returns:
         List[str]: Field names that are None, in collection order.
     """
-    return [field for field in _TRIP_INPUT_FIELDS if trip_inputs.get(field) is None]
+    fields_to_check = _TRIP_INPUT_FIELDS if include_optional else _REQUIRED_TRIP_INPUT_FIELDS
+    return [field for field in fields_to_check if trip_inputs.get(field) is None]
 
 
 # =============================================================================
@@ -889,6 +908,30 @@ def _clean_trip_inputs(
     ordered_missing = [field for field in _TRIP_INPUT_FIELDS if field in final_missing]
 
     merged["missing_fields"] = ordered_missing
+
+    # Handle destinations array separately (not in _TRIP_INPUT_FIELDS)
+    # Merge destinations from all sources
+    destinations_set: set[str] = set()
+    for source in sources:
+        if isinstance(source, dict):
+            source_destinations = source.get("destinations", [])
+            if isinstance(source_destinations, list):
+                for dest in source_destinations:
+                    if isinstance(dest, str) and dest.strip():
+                        destinations_set.add(dest.strip())
+    if fallback and isinstance(fallback, dict):
+        fallback_destinations = fallback.get("destinations", [])
+        if isinstance(fallback_destinations, list):
+            for dest in fallback_destinations:
+                if isinstance(dest, str) and dest.strip():
+                    destinations_set.add(dest.strip())
+
+    # Also add the primary destination to destinations if not already there
+    if merged.get("destination") and merged["destination"] not in destinations_set:
+        destinations_set.add(merged["destination"])
+
+    merged["destinations"] = list(destinations_set)
+
     return merged
 
 
@@ -979,15 +1022,15 @@ def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
         return None
 
     prompt_by_field = {
-        "destination": "Where are you headed?",
-        "origin": "Which city or airport will you depart from?",
-        "start_date": "When does this trip start? Please share the date in YYYY-MM-DD.",
-        "end_date": "When will you return? Please share the date in YYYY-MM-DD.",
-        "traveler_count": "How many travelers are going?",
-        "budget": "What budget should we target? Please share a rough number (e.g. 1500).",
+        "destination": "Where would you like to go?",
+        "origin": "Where will you be traveling from?",
+        "start_date": "When does your trip start?",
+        "end_date": "When does your trip end?",
+        "traveler_count": "How many travelers will be going?",
+        # Note: budget is optional, so we don't prompt for it
     }
 
-    for field in _TRIP_INPUT_FIELDS:
+    for field in _REQUIRED_TRIP_INPUT_FIELDS:
         if field in missing_fields:
             return prompt_by_field.get(field)
     return None
@@ -1162,7 +1205,6 @@ def _call_openai_for_plan(
         print(f"[DEBUG] request_trip_inputs after merge: {request_trip_inputs}")
 
     today = _today_iso()
-    next_week = _next_week_iso()
 
     # Build current state summary for the LLM
     known_fields = []
@@ -1172,8 +1214,9 @@ def _call_openai_for_plan(
         if val is not None:
             known_fields.append(f"{field}={val}")
 
+    # All REQUIRED fields must be complete to generate branches (budget is optional)
     all_fields_complete = len(missing_fields) == 0 and all(
-        request_trip_inputs.get(field) is not None for field in _TRIP_INPUT_FIELDS
+        request_trip_inputs.get(field) is not None for field in _REQUIRED_TRIP_INPUT_FIELDS
     )
 
     # Determine what the next field to collect is
@@ -1188,29 +1231,26 @@ def _call_openai_for_plan(
         state_lines.append(f"STILL NEED: {', '.join(missing_fields)}")
     state_summary = "\n".join(state_lines)
 
-    expecting_context = ""
+    # No longer assume sequential order - LLM should extract ANY field from ANY message
+    # Build context about what the next question should be
+    # (after extracting whatever the user provided)
+    next_question_hint = ""
     if next_field_to_ask == "destination":
-        expecting_context = """
-YOU JUST ASKED: "Where are you headed?" (asking for destination)
-The user's message is their DESTINATION. Extract it and set destination to that value."""
+        next_question_hint = 'Next question should ask: "Where would you like to go?"'
     elif next_field_to_ask == "origin":
-        origin_val = request_trip_inputs.get("origin")
-        if origin_val:
-            expecting_context = f"""
-YOU JUST ASKED about origin. Current origin from browser: {origin_val}
-If user confirms or says nothing specific, keep origin={origin_val}."""
-        else:
-            expecting_context = """
-YOU JUST ASKED: "Where are you leaving from?" (asking for origin)
-The user's message is their ORIGIN city."""
-    elif next_field_to_ask == "budget":
-        expecting_context = """
-YOU JUST ASKED: "What's your budget?" (asking for budget)
-The user's message is their BUDGET amount. Extract the number."""
-    elif next_field_to_ask in ("start_date", "end_date", "traveler_count"):
-        expecting_context = f"""
-YOU JUST ASKED about {next_field_to_ask}.
-The user's message is their answer. Use defaults if they confirm."""
+        next_question_hint = 'Next question should ask: "Where will you be traveling from?"'
+    elif next_field_to_ask == "start_date":
+        next_question_hint = 'Next question should ask: "When does your trip start?"'
+    elif next_field_to_ask == "end_date":
+        next_question_hint = 'Next question should ask: "When does your trip end?"'
+    elif next_field_to_ask == "traveler_count":
+        next_question_hint = 'Next question should ask: "How many travelers?"'
+    elif next_field_to_ask in _OPTIONAL_FIELDS or next_field_to_ask is None:
+        # All required fields collected - ask for optional budget before generating
+        next_question_hint = (
+            'All required fields collected! Ask: "What is your budget '
+            'for this trip?" (optional, can skip)'
+        )
 
     # Check if this message will complete all fields (only 1 field left)
     is_last_field = len(missing_fields) == 1
@@ -1220,106 +1260,172 @@ The user's message is their answer. Use defaults if they confirm."""
             field: request_trip_inputs.get(field) for field in _TRIP_INPUT_FIELDS
         }
         complete_trip_inputs["missing_fields"] = []
+        # Include destinations array if present
+        destinations_list = request_trip_inputs.get("destinations", [])
+        if destinations_list:
+            complete_trip_inputs["destinations"] = destinations_list
         trip_inputs_json = json.dumps(complete_trip_inputs, ensure_ascii=True)
+
+        # Build destinations context for prompt
+        destinations_context = ""
+        if destinations_list and len(destinations_list) > 1:
+            dests_str = ", ".join(destinations_list)
+            destinations_context = (
+                f"\nUser has specified MULTIPLE DESTINATIONS: {dests_str}"
+                f"\nGenerate ONE branch for EACH destination."
+            )
+        elif destinations_list:
+            destinations_context = (
+                f"\nDestination: {destinations_list[0]}"
+                f"\nGenerate exactly ONE branch for this destination."
+            )
+        else:
+            dest = complete_trip_inputs.get("destination", "")
+            destinations_context = (
+                f"\nDestination: {dest}\nGenerate exactly ONE branch for this destination."
+            )
+
         system_prompt = f"""You are a travel planner. Today is {today}.
 
 ALL TRIP FIELDS ARE COMPLETE:
 {', '.join(known_fields)}
+{destinations_context}
 
-Generate 2-3 trip branches now. Do NOT ask questions.
+IMPORTANT: If the user wants to CHANGE any trip detail (e.g., "change destination to Paris",
+"make it 4 travelers", "start on Dec 15 instead"), UPDATE the trip_inputs accordingly
+and regenerate branches with the new values.
+
+BRANCH GENERATION RULES - CRITICAL:
+- Generate EXACTLY ONE branch total if there is ONE destination
+- Generate EXACTLY ONE branch PER destination if there are MULTIPLE destinations
+- Do NOT generate multiple theme variations - just ONE branch per destination
+- Each branch label should be the destination name
 
 Return JSON:
 {{
-  "assistant_message": "Great! Here are your trip options.",
+  "assistant_message": "Your message to the user",
   "trip_inputs": {trip_inputs_json},
   "branches": [
     {{
-      "label": "Theme",
-      "description": "...",
-      "destination": "...",
+      "label": "Destination Name",
+      "description": "Brief description of what to expect",
+      "destination": "The destination city/location",
       "origin": "...",
       "start_date": "...",
       "end_date": "...",
       "traveler_count": N,
-      "budget": N
+      "budget": N or null (if not provided)
     }}
   ]
-}}"""
+}}
+
+CRITICAL: The branches array must contain EXACTLY 1 element for a single destination trip."""
     elif is_last_field:
+        # Determine which field is the last one needed
+        last_field = missing_fields[0] if missing_fields else "unknown"
         system_prompt = f"""You are a travel planner. Today is {today}.
 
 {state_summary}
-{expecting_context}
 
-CRITICAL: Extract the value from the user's message. This completes all fields!
+The user's message should contain the LAST missing field: {last_field}
 
-After extracting, GENERATE 2-3 TRIP BRANCHES immediately.
+EXTRACTION with VALIDATION:
+- destination/origin: Must be a PLACE name (city, country, region)
+- start_date/end_date: Must be a TIME/DATE reference ("today", "Dec 15", "next week")
+- traveler_count: Must be a NUMBER of people (1-20)
+- budget (OPTIONAL): Must be a MONEY amount, can be null if not provided
+
+Extract the value that matches {last_field}.
+
+After extracting, if budget is still missing, ask: "What is your budget for this trip?"
+(optional, they can skip). Only generate branches if ALL required fields are filled.
+
+BRANCH GENERATION - CRITICAL:
+- Generate EXACTLY ONE branch per destination (not multiple theme variations)
+- If one destination: exactly 1 branch
+- If multiple destinations: exactly 1 branch per destination
 
 Return JSON:
 {{
-  "assistant_message": "Great! Here are your trip options for [destination].",
+  "assistant_message": "Here's your trip plan! What is your budget? (optional)",
   "trip_inputs": {{
-    "destination": "value",
+    "destination": "primary destination value",
+    "destinations": ["list", "of", "all", "destinations"],
     "origin": "value",
-    "start_date": "YYYY-MM-DD",
-    "end_date": "YYYY-MM-DD",
+    "start_date": "date value",
+    "end_date": "date value",
     "traveler_count": number,
-    "budget": number,
+    "budget": number or null,
     "missing_fields": []
   }},
   "branches": [
     {{
-      "label": "Cultural Explorer",
-      "description": "Museums, history, local culture",
-      "destination": "...",
+      "label": "Destination Name",
+      "description": "Brief description of what to expect",
+      "destination": "The destination city",
       "origin": "...",
       "start_date": "...",
       "end_date": "...",
       "traveler_count": N,
-      "budget": N
-    }},
-    {{
-      "label": "Food & Relaxation",
-      "description": "Local cuisine, cafes, leisure",
-      "destination": "...",
-      "origin": "...",
-      "start_date": "...",
-      "end_date": "...",
-      "traveler_count": N,
-      "budget": N
+      "budget": N or null
     }}
   ]
-}}"""
+}}
+
+CRITICAL: The branches array must contain EXACTLY 1 element for a single destination trip.
+Do NOT generate multiple theme variations."""
     else:
         system_prompt = f"""You are a travel planner collecting trip details. Today is {today}.
 
 {state_summary}
-{expecting_context}
 
-CRITICAL: The user's message answers your previous question. Extract the value!
+CRITICAL: Extract ANY trip field from the user's message, regardless of what was asked.
+Users can provide information in ANY order and can UPDATE any field at any time.
 
-After extracting their answer, ask for the NEXT missing field.
-Combine your acknowledgment and question in one message.
+FIELD TYPES - Map user input to the correct field:
+- destination: A REAL city, country, region, or place name (e.g., "Paris", "Japan", "Bali")
+- origin: A REAL city or place they're traveling FROM (e.g., "from London", "leaving NYC")
+- start_date: ANY date reference for when trip STARTS (e.g., "today", "next Friday", "Dec 15")
+- end_date: ANY date reference for when trip ENDS (e.g., "for a week", "until the 20th")
+- traveler_count: A number of people (e.g., "2 of us", "solo", "family of 4", "just me" = 1)
+- budget: A money amount (OPTIONAL - e.g., "$2000", "around 1500")
 
-Field order to collect:
-1. destination - "Where are you headed?"
-2. origin - confirm detected location or ask
-3. start_date - default {today}
-4. end_date - default {next_week}
-5. traveler_count - default 1
-6. budget - "What's your budget?"
+VALIDATION - Only extract if value type matches:
+- "today", "tomorrow", "Dec 15" → DATE field (start_date or end_date based on context)
+- "Paris", "Tokyo", "the mountains" → PLACE field (destination or origin based on context)
+- "2 people", "solo", "4 of us" → traveler_count
+- "$500", "2000 euros" → budget
+
+LOCATION VALIDATION (CRITICAL):
+- destination and origin MUST be REAL, recognizable geographic locations
+- Accept: cities (Paris, Tokyo), countries (Japan, Italy), regions (Tuscany, Bali)
+- REJECT: made-up names, gibberish, typos that don't match real places
+- If location is unrecognizable, set field to null and ask for a real destination/origin
+- Example: "Hellskasdasd" is NOT a real place - do NOT accept it
+
+REQUIRED FIELDS (must collect before generating trip plan):
+1. destination
+2. origin
+3. start_date
+4. end_date
+5. traveler_count
+
+OPTIONAL: budget (can skip if user doesn't provide)
+
+After extracting fields, ask for the NEXT REQUIRED missing field.
+{next_question_hint}
 
 Return JSON only:
 {{
-  "assistant_message": "Acknowledgment + next question (e.g. 'Great choice! When do you travel?')",
+  "assistant_message": "Acknowledge what you extracted + ask for next missing REQUIRED field",
   "trip_inputs": {{
-    "destination": "extracted value or null",
-    "origin": "value or null",
-    "start_date": "YYYY-MM-DD or null",
-    "end_date": "YYYY-MM-DD or null",
+    "destination": "REAL place name or null if invalid/unrecognized",
+    "origin": "REAL place name or null if invalid/unrecognized",
+    "start_date": "parsed date or null",
+    "end_date": "parsed date or null",
     "traveler_count": number or null,
     "budget": number or null,
-    "missing_fields": ["remaining", "fields"]
+    "missing_fields": ["only", "required", "missing", "fields"]
   }},
   "branches": []
 }}"""
@@ -1785,6 +1891,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         if trip_inputs_model:
             doc_trip_inputs = DocumentTripInputs(
                 destination=trip_inputs_model.destination,
+                destinations=trip_inputs_model.destinations or [],
                 origin=trip_inputs_model.origin,
                 start_date=trip_inputs_model.start_date,
                 end_date=trip_inputs_model.end_date,
@@ -1816,9 +1923,10 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
 
         response = PlanDocumentResponse(
             version=plan_doc.version,
-            updated_by=plan_doc.updated_by,  # type: ignore[arg-type]
+            updated_by=plan_doc.updated_by,
             document=doc_data_with_chat,
             updated_at=plan_doc.updated_at.isoformat(),
+            changes_made=True,
         )
 
         db.commit()

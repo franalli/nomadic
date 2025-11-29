@@ -1,6 +1,6 @@
 # backend/app/db_models.py
 from datetime import UTC, datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import (
@@ -10,6 +10,8 @@ from sqlalchemy.orm import (
 )
 
 from app.db import Base
+
+UpdatedBy = Literal["user", "planner"]
 
 
 def _utcnow() -> datetime:
@@ -108,7 +110,7 @@ class PlanDocument(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), unique=True, index=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
-    updated_by: Mapped[str] = mapped_column(String(16))  # "user" | "planner"
+    updated_by: Mapped[UpdatedBy] = mapped_column(String(16))  # "user" | "planner"
 
     # The main JSON document containing branches, tiles, selections, trip_inputs
     document: Mapped[Dict] = mapped_column(JSON, default=dict)

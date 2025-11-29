@@ -87,6 +87,7 @@ class TripInputs(BaseModel):
     """Trip parameters stored in chat message metadata."""
 
     destination: Optional[str] = None
+    destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -135,6 +136,7 @@ class DocumentBranch(BaseModel):
     label: str
     description: str
     destination: str
+    destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -149,6 +151,7 @@ class DocumentTripInputs(BaseModel):
     """Trip parameters extracted/inferred from conversation."""
 
     destination: Optional[str] = None
+    destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -193,6 +196,7 @@ class PlanDocumentResponse(BaseModel):
     updated_by: UpdatedBy
     document: PlanDocumentData
     updated_at: str
+    changes_made: bool = False  # Whether this request modified the document
 
 
 class PlanDocumentPatch(BaseModel):

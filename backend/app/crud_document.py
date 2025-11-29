@@ -86,8 +86,14 @@ def merge_trip_inputs(
     if not incoming:
         return existing
 
+    # Merge destinations arrays
+    existing_destinations = set(existing.destinations or [])
+    incoming_destinations = set(incoming.destinations or [])
+    merged_destinations = list(existing_destinations | incoming_destinations)
+
     return DocumentTripInputs(
         destination=incoming.destination or existing.destination,
+        destinations=merged_destinations if merged_destinations else existing.destinations,
         origin=incoming.origin or existing.origin,
         start_date=incoming.start_date or existing.start_date,
         end_date=incoming.end_date or existing.end_date,

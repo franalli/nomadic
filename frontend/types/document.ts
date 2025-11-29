@@ -24,6 +24,7 @@ export type DocumentBranch = {
   label: string;
   description: string;
   destination: string;
+  destinations?: string[];
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -36,6 +37,7 @@ export type DocumentBranch = {
 
 export type DocumentTripInputs = {
   destination?: string | null;
+  destinations?: string[];
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
