@@ -1,10 +1,11 @@
 'use client';
 
-import { type LucideIcon, MapPin, Plane, Sparkles, TentTree } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import {
   resolveTabForTile,
+  TAB_CONFIG,
   TilesGrid,
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
@@ -12,18 +13,6 @@ import type { PlanBranch, TripInputs } from '@/types/plan';
 import type { Tile, TileSelection } from '@/types/tile';
 
 type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
-
-const TILE_TAB_META: Record<TileTabKey, { label: string; icon: LucideIcon }> = {
-  stays: { label: 'Stays', icon: TentTree },
-  flights: { label: 'Flights', icon: Plane },
-  activities: { label: 'Activities', icon: Sparkles },
-};
-const TILE_BADGE_LABELS: Record<keyof TileCounts, string> = {
-  stays: TILE_TAB_META.stays.label,
-  flights: TILE_TAB_META.flights.label,
-  activities: TILE_TAB_META.activities.label,
-};
-const labelize = (key: TileTabKey) => TILE_BADGE_LABELS[key];
 
 type BranchDetails = {
   vibe: string;
@@ -458,10 +447,10 @@ export function BranchPanel({
           </div>
 
           <div className="flex flex-wrap items-center gap-4 pb-1">
-            {(Object.keys(TILE_TAB_META) as TileTabKey[]).map((tabKey) => {
+            {(Object.keys(TAB_CONFIG) as TileTabKey[]).map((tabKey) => {
               const isOpen = openTab === tabKey;
               const count = countsForSelected?.[tabKey] ?? 0;
-              const Icon = TILE_TAB_META[tabKey].icon;
+              const Icon = TAB_CONFIG[tabKey].icon;
               return (
                 <button
                   key={tabKey}
@@ -483,7 +472,7 @@ export function BranchPanel({
                   >
                     <Icon className="h-4 w-4" aria-hidden="true" />
                   </span>
-                  <span>{labelize(tabKey)}</span>
+                  <span>{TAB_CONFIG[tabKey].label}</span>
                   <span
                     className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                       isOpen
@@ -521,7 +510,7 @@ export function BranchPanel({
               />
             ) : (
               <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
-                No {TILE_BADGE_LABELS[openTab].toLowerCase()} yet for this suggestion.
+                No {TAB_CONFIG[openTab].label.toLowerCase()} yet for this suggestion.
                 Check back after options refresh.
               </div>
             )}
@@ -696,10 +685,14 @@ export function BranchPanel({
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={() => canBookTrip && selected && onBookTrip?.(selected.id)}
-          disabled={!canBookTrip}
+          onClick={() => {
+            if (selected && onBookTrip) {
+              onBookTrip(selected.id);
+            }
+          }}
+          disabled={!canBookTrip || !selected}
           className={`focus-visible:outline-primary rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
-            !canBookTrip
+            !canBookTrip || !selected
               ? 'bg-muted text-muted-foreground cursor-not-allowed shadow-inner'
               : hasLockedSelection
                 ? 'bg-orange-500 text-white shadow-lg shadow-orange-400/50 hover:bg-orange-600'

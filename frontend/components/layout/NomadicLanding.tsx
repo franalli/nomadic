@@ -9,7 +9,11 @@ import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
-import type { TileTabKey } from '@/components/tiles/TilesGrid';
+import {
+  resolveTabForTile,
+  TAB_CONFIG,
+  type TileTabKey,
+} from '@/components/tiles/TilesGrid';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { API_BASE } from '@/lib/api';
@@ -214,33 +218,12 @@ const HERO_TAGLINE = 'We Plan the Rest.';
 const HERO_TYPING_INTERVAL_MS = 200;
 const HERO_TYPING_PAUSE_MS = 8000;
 
-const TILE_TAB_LABELS: Record<TileTabKey, string> = {
-  stays: 'Stays',
-  flights: 'Flights',
-  activities: 'Activities',
-};
-
 type TileCounts = Record<TileTabKey, number>;
-
-const resolveTileTab = (tile: Tile): TileTabKey => {
-  const type = (tile.type || '').toLowerCase();
-  if (['flight', 'air', 'fare', 'plane'].some((needle) => type.includes(needle))) {
-    return 'flights';
-  }
-  if (
-    ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'].some((needle) =>
-      type.includes(needle)
-    )
-  ) {
-    return 'activities';
-  }
-  return 'stays';
-};
 
 const countTilesByTab = (tileList: Tile[]): TileCounts =>
   tileList.reduce(
     (acc, tile) => {
-      const tab = resolveTileTab(tile);
+      const tab = resolveTabForTile(tile);
       acc[tab] += 1;
       return acc;
     },
@@ -264,7 +247,7 @@ const summarizeTileCounts = (counts: TileCounts): string => {
 type SelectionCategory = 'stay' | 'flight' | 'activity';
 
 const resolveSelectionCategory = (tile: Tile): SelectionCategory => {
-  const tab = resolveTileTab(tile);
+  const tab = resolveTabForTile(tile);
   if (tab === 'flights') return 'flight';
   if (tab === 'activities') return 'activity';
   return 'stay';
@@ -1048,7 +1031,7 @@ export function NomadicLanding() {
   );
 
   const describeTileSelection = useCallback((tab: TileTabKey, filteredTiles: Tile[]) => {
-    const label = TILE_TAB_LABELS[tab] ?? 'Options';
+    const label = TAB_CONFIG[tab].label;
     if (!filteredTiles.length) {
       return `${label}: no live options yet for this branch. I will keep it flexible until new results arrive.`;
     }
@@ -1107,7 +1090,10 @@ export function NomadicLanding() {
   const handleBookTrip = useCallback(
     (branchId: string) => {
       const branch = branches.find((b) => b.id === branchId);
-      if (!branch) return;
+      if (!branch) {
+        console.error('handleBookTrip: branch not found', branchId);
+        return;
+      }
       const selection = branchSelections[branchId] ?? { activities: [] };
       const payload: TripSummaryPayload = {
         branch,
@@ -1121,9 +1107,9 @@ export function NomadicLanding() {
         generatedAt: new Date().toISOString(),
       };
       saveTripSummary(payload);
-      router.push('/summary');
+      window.location.href = '/summary';
     },
-    [branchSelections, branchTileNotes, branches, router, tiles, tilesBranchId]
+    [branchSelections, branchTileNotes, branches, tiles, tilesBranchId]
   );
 
   useEffect(() => {

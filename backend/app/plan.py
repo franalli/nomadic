@@ -1,3 +1,31 @@
+"""
+Trip Planning Module
+====================
+
+This module orchestrates the AI-powered trip planning conversation flow. It handles:
+- Multi-turn conversation with the LLM to collect trip details (destination, dates, etc.)
+- State management via PlanDocument (the single source of truth)
+- Branch generation (different trip options/themes) once all inputs are collected
+- Tile search integration (flights, hotels, activities)
+
+Architecture Overview:
+---------------------
+1. User sends a message via PlanRequest
+2. System retrieves session, chat history, and existing document state
+3. LLM is called with conversation context + document state
+4. LLM response is parsed, validated, and merged with existing state
+5. PlanDocument is updated with new trip_inputs, branches, and tiles
+6. Response is returned to the frontend
+
+Key Design Decisions:
+--------------------
+- PlanDocument is the single source of truth for trip state
+- Chat history metadata provides fallback for migration from older sessions
+- Trip inputs are collected in a specific order: destination → origin → dates → travelers → budget
+- Branches are only generated once ALL required fields are collected
+- Robust JSON parsing handles malformed LLM responses
+"""
+
 import json
 import os
 import re
@@ -41,6 +69,20 @@ from app.tile_service import search_tiles
 
 
 class PlannerLLMOutput:
+    """
+    Container for the structured output from the LLM planning call.
+
+    This class holds the parsed response from OpenAI, separating the different
+    components that the planner needs to process.
+
+    Attributes:
+        branches: List of branch specifications (trip options/themes). Each branch
+                  is a dict with keys: label, description, destination, origin,
+                  start_date, end_date, traveler_count, budget.
+        assistant_message: The conversational response to show the user.
+        trip_inputs: Dict of collected/updated trip input fields.
+    """
+
     def __init__(
         self,
         *,
@@ -53,16 +95,23 @@ class PlannerLLMOutput:
         self.trip_inputs = trip_inputs or {}
 
 
-_CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "20"))  # messages
-_MAX_TOKENS = int(os.getenv("OPENAI_PLAN_MAX_TOKENS", "800"))  # enough for JSON response
-_PLAN_TEMPERATURE = float(os.getenv("OPENAI_PLAN_TEMPERATURE", "0.75"))
-_PLAN_TOP_P = float(os.getenv("OPENAI_PLAN_TOP_P", "0.95"))
-_PLAN_MAX_RETRIES = int(os.getenv("OPENAI_PLAN_MAX_RETRIES", "3"))
-_PLAN_SEED = os.getenv("OPENAI_PLAN_SEED")
+# =============================================================================
+# CONFIGURATION CONSTANTS
+# =============================================================================
+# These environment-driven settings control LLM behavior and conversation limits.
 
-_openai_client: Optional[OpenAI] = None
-_DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
+_CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "20"))  # Max messages to include
+_MAX_TOKENS = int(os.getenv("OPENAI_PLAN_MAX_TOKENS", "800"))  # Token limit for LLM response
+_PLAN_TEMPERATURE = float(os.getenv("OPENAI_PLAN_TEMPERATURE", "0.75"))  # Response creativity
+_PLAN_TOP_P = float(os.getenv("OPENAI_PLAN_TOP_P", "0.95"))  # Nucleus sampling threshold
+_PLAN_MAX_RETRIES = int(os.getenv("OPENAI_PLAN_MAX_RETRIES", "3"))  # Retry count for API errors
+_PLAN_SEED = os.getenv("OPENAI_PLAN_SEED")  # Optional seed for reproducibility
 
+_openai_client: Optional[OpenAI] = None  # Singleton OpenAI client instance
+_DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))  # Enable verbose debug logging
+
+# The canonical order for collecting trip input fields.
+# This order is used consistently for prompts, validation, and missing field detection.
 _TRIP_INPUT_FIELDS = (
     "destination",
     "origin",
@@ -73,15 +122,50 @@ _TRIP_INPUT_FIELDS = (
 )
 
 
+# =============================================================================
+# DATE UTILITY FUNCTIONS
+# =============================================================================
+
+
 def _today_iso() -> str:
+    """
+    Get today's date in ISO format (YYYY-MM-DD).
+
+    Uses UTC to ensure consistency across timezones.
+
+    Returns:
+        str: Today's date as "YYYY-MM-DD"
+    """
     return datetime.utcnow().strftime("%Y-%m-%d")
 
 
 def _next_week_iso() -> str:
+    """
+    Get the date one week from today in ISO format.
+
+    Used as a default end_date suggestion when users don't specify dates.
+
+    Returns:
+        str: Date 7 days from now as "YYYY-MM-DD"
+    """
     return (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
 
 
+# =============================================================================
+# OPENAI CLIENT MANAGEMENT
+# =============================================================================
+
+
 def _get_openai_client() -> Optional[OpenAI]:
+    """
+    Get or create the singleton OpenAI client instance.
+
+    Uses lazy initialization to avoid creating the client until needed.
+    The API key is read from settings or environment variable.
+
+    Returns:
+        Optional[OpenAI]: The OpenAI client, or None if no API key is configured.
+    """
     global _openai_client
 
     api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
@@ -96,8 +180,35 @@ def _get_openai_client() -> Optional[OpenAI]:
 
 def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optional[str]:
     """
-    Serialize the full PlanDocumentData into a readable format for the LLM.
-    This includes all branches, tiles, and selections so the LLM has complete context.
+    Serialize the full PlanDocumentData into a human-readable format for the LLM.
+
+    This function converts the structured document state into a text format that
+    the LLM can easily understand. It includes:
+    - Trip inputs (destination, dates, travelers, budget)
+    - All branches with their descriptions and tile assignments
+    - Available tiles with pricing information
+    - User's current selections within each branch
+
+    The output format uses clear section headers and indentation to help the LLM
+    parse the context effectively.
+
+    Args:
+        doc_data: The current plan document data, or None if no document exists.
+
+    Returns:
+        Optional[str]: A formatted text representation of the document state,
+                       or None if doc_data is None.
+
+    Example output:
+        === CURRENT TRIP PLAN STATE ===
+        Trip Inputs: destination=Paris, start_date=2025-01-15
+        Missing Fields: origin, end_date, traveler_count, budget
+
+        === BRANCHES (2) ===
+        Branch: Cultural Explorer (PRIMARY)
+          Description: Museums, history, local culture
+          ...
+        === END TRIP PLAN STATE ===
     """
     if doc_data is None:
         return None
@@ -195,12 +306,37 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
     return "\n".join(lines)
 
 
+# =============================================================================
+# CHAT HISTORY MIGRATION HELPERS
+# =============================================================================
+
+
 def _latest_trip_state_from_history(
     history_rows: List[models.ChatMessage],
 ) -> Optional[dict]:
     """
-    Pull the most recent trip_inputs from assistant metadata
-    for fallback/migration from older sessions.
+    Extract trip_inputs from chat message metadata as a migration fallback.
+
+    This function provides backward compatibility for sessions that existed before
+    the PlanDocument was introduced as the single source of truth. It scans through
+    assistant messages in chronological order and merges any trip_inputs stored
+    in their metadata.
+
+    The function is only used as a fallback when doc_trip_inputs is empty, allowing
+    older sessions to continue working without data loss.
+
+    Args:
+        history_rows: List of ChatMessage objects from the database, ordered
+                      chronologically (oldest first).
+
+    Returns:
+        Optional[dict]: Merged trip_inputs from all assistant messages, or None
+                        if no trip_inputs were found in any message metadata.
+
+    Note:
+        - Only assistant messages are considered (user messages don't have trip_inputs)
+        - Later messages overwrite earlier values (allow_overwrite=True)
+        - This is a migration path and will eventually be deprecated
     """
 
     merged_trip_inputs: Optional[dict] = None
@@ -226,8 +362,28 @@ def _latest_trip_state_from_history(
     return merged_trip_inputs
 
 
+# =============================================================================
+# MODEL CONFIGURATION
+# =============================================================================
+
+
 def _plan_model_name() -> str:
-    """Return the configured OpenAI model name, requiring an explicit env setting."""
+    """
+    Get the OpenAI model name from environment configuration.
+
+    The model name MUST be explicitly set via the OPENAI_PLAN_MODEL environment
+    variable. This is intentional to prevent accidental use of expensive models
+    and to ensure conscious model selection.
+
+    Returns:
+        str: The model name (e.g., "gpt-4-turbo", "gpt-4o")
+
+    Raises:
+        RuntimeError: If OPENAI_PLAN_MODEL is not set or is empty.
+
+    Example:
+        OPENAI_PLAN_MODEL=gpt-4-turbo-preview
+    """
 
     model_name = os.getenv("OPENAI_PLAN_MODEL", "").strip()
     if not model_name:
@@ -235,7 +391,32 @@ def _plan_model_name() -> str:
     return model_name
 
 
+# =============================================================================
+# LLM RESPONSE PARSING UTILITIES
+# =============================================================================
+
+
 def _coerce_delta_content(delta_content: Any) -> str:
+    """
+    Convert various OpenAI response content formats to a plain string.
+
+    OpenAI's API can return content in multiple formats depending on the model,
+    streaming mode, and response_format settings. This function handles all known
+    variations and normalizes them to a simple string.
+
+    Supported formats:
+    - str: Returned as-is
+    - list: Recursively processed and concatenated
+    - dict: Extracts text/json/value/content fields
+    - Objects with .text attribute: Extracts the text value
+
+    Args:
+        delta_content: The content from an OpenAI response choice, which could
+                       be a string, list, dict, or custom object.
+
+    Returns:
+        str: The extracted text content, or str(delta_content) as fallback.
+    """
     if delta_content is None:
         return ""
 
@@ -272,7 +453,27 @@ def _coerce_delta_content(delta_content: Any) -> str:
 
 
 def _extract_message_payload(choice: Any) -> tuple[Optional[dict], str]:
-    """Return either structured JSON payload or fallback raw text from a choice."""
+    """
+    Extract structured or raw content from an OpenAI completion choice.
+
+    When using response_format={"type": "json_object"}, OpenAI may return the
+    parsed JSON directly in .parsed, or as a string in .content that needs
+    parsing. This function tries all known extraction methods.
+
+    Priority order:
+    1. choice.message.parsed (structured output, already a dict)
+    2. choice.message.content (raw JSON string to be parsed later)
+    3. choice.delta.content (streaming format)
+
+    Args:
+        choice: A completion choice from OpenAI's response.
+
+    Returns:
+        tuple[Optional[dict], str]: A tuple of (structured_payload, raw_content).
+            - If structured JSON was found, returns (dict, "")
+            - If only raw content was found, returns (None, raw_string)
+            - If nothing found, returns (None, "")
+    """
 
     message_obj: Any = getattr(choice, "message", None)
     if message_obj is None and isinstance(choice, dict):
@@ -313,8 +514,29 @@ def _extract_message_payload(choice: Any) -> tuple[Optional[dict], str]:
 
 def _truncate_to_balanced_json(raw: str) -> Optional[str]:
     """
-    Trim a raw JSON-like string to the last balanced closing brace while being
-    aware of quoted strings and escape characters.
+    Extract a valid JSON object from a potentially truncated or malformed string.
+
+    LLMs sometimes return incomplete JSON (e.g., if they hit token limits) or
+    include extra text before/after the JSON. This function finds the first
+    complete, balanced JSON object in the string.
+
+    The algorithm:
+    1. Finds the first '{' character to start
+    2. Tracks brace depth, accounting for strings and escapes
+    3. Returns the substring from first '{' to its matching '}'
+
+    Args:
+        raw: A string that may contain a JSON object somewhere within it.
+
+    Returns:
+        Optional[str]: The extracted balanced JSON string, or None if no valid
+                       balanced JSON object could be found.
+
+    Example:
+        >>> _truncate_to_balanced_json('Some text {"key": "value"} more text')
+        '{"key": "value"}'
+        >>> _truncate_to_balanced_json('{"incomplete": "json')
+        None
     """
     start_idx = None
     brace_count = 0
@@ -356,6 +578,23 @@ def _truncate_to_balanced_json(raw: str) -> Optional[str]:
 
 
 def _tolerant_json_loads(raw: str) -> Optional[dict]:
+    """
+    Parse JSON with multiple fallback strategies for malformed input.
+
+    LLMs don't always produce perfectly valid JSON. This function tries
+    progressively more lenient parsing approaches:
+
+    1. Standard json.loads() - works for well-formed JSON
+    2. Non-strict mode - allows some escape sequence issues
+    3. Truncation recovery - extracts balanced JSON from garbage
+
+    Args:
+        raw: A string that should contain JSON, possibly malformed.
+
+    Returns:
+        Optional[dict]: The parsed dictionary, or None if parsing failed
+                        with all strategies.
+    """
     if not raw:
         return None
 
@@ -378,7 +617,22 @@ def _tolerant_json_loads(raw: str) -> Optional[dict]:
     return None
 
 
+# =============================================================================
+# INPUT NORMALIZATION AND VALIDATION
+# =============================================================================
+
+
 def _normalize_str(value: Any) -> Optional[str]:
+    """
+    Convert any value to a trimmed string, returning None for empty values.
+
+    Args:
+        value: Any value to convert.
+
+    Returns:
+        Optional[str]: The trimmed string, or None if the value was None
+                       or became empty after trimming.
+    """
     if value is None:
         return None
     value_str = str(value).strip()
@@ -386,6 +640,27 @@ def _normalize_str(value: Any) -> Optional[str]:
 
 
 def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
+    """
+    Convert relative date expressions to ISO format dates.
+
+    Handles natural language date expressions that users might type:
+    - "today", "tonight", "now" → today's date
+    - "tomorrow" → tomorrow's date
+    - "next week" → 7 days from now
+    - "next month" → 30 days from now
+    - "weekend", "next weekend" → upcoming Saturday
+
+    Args:
+        text: A relative date expression.
+
+    Returns:
+        Optional[str]: The corresponding ISO date (YYYY-MM-DD), or None
+                       if the text wasn't recognized as a relative date.
+
+    Example:
+        >>> _relative_date_to_iso("next week")  # If today is 2025-01-15
+        "2025-01-22"
+    """
     if not text:
         return None
 
@@ -411,6 +686,20 @@ def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
 
 
 def _normalize_date(value: Any) -> Optional[str]:
+    """
+    Normalize various date formats to ISO format (YYYY-MM-DD).
+
+    Handles:
+    - Relative dates ("tomorrow", "next week", etc.)
+    - ISO format: 2025-01-15
+    - European format: 15-01-2025 or 15/01/2025
+
+    Args:
+        value: A date value (string, or any value that can be str()'d).
+
+    Returns:
+        Optional[str]: The normalized ISO date, or None if parsing failed.
+    """
     text = _normalize_str(value)
     if not text:
         return None
@@ -431,6 +720,15 @@ def _normalize_date(value: Any) -> Optional[str]:
 
 
 def _parse_iso_date(text: Optional[str]) -> Optional[datetime]:
+    """
+    Parse an ISO date string to a datetime object.
+
+    Args:
+        text: An ISO format date string (YYYY-MM-DD).
+
+    Returns:
+        Optional[datetime]: The parsed datetime, or None if parsing failed.
+    """
     if not text:
         return None
     try:
@@ -440,6 +738,17 @@ def _parse_iso_date(text: Optional[str]) -> Optional[datetime]:
 
 
 def _normalize_int(value: Any) -> Optional[int]:
+    """
+    Convert any value to an integer.
+
+    Tries direct int() conversion first, then string parsing.
+
+    Args:
+        value: Any value to convert.
+
+    Returns:
+        Optional[int]: The integer value, or None if conversion failed.
+    """
     if value is None:
         return None
     try:
@@ -452,13 +761,39 @@ def _normalize_int(value: Any) -> Optional[int]:
 
 
 def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
+    """
+    Constrain traveler count to a valid range [1, 20].
+
+    Args:
+        value: The traveler count to clamp.
+
+    Returns:
+        Optional[int]: The clamped value (1-20), or None if input was None.
+    """
     if value is None:
         return None
     return max(1, min(20, value))
 
 
 def _ordered_missing_fields_from_inputs(trip_inputs: dict) -> List[str]:
+    """
+    Get the list of missing trip input fields in canonical order.
+
+    The order matches _TRIP_INPUT_FIELDS: destination, origin, start_date,
+    end_date, traveler_count, budget. This ensures consistent prompting order.
+
+    Args:
+        trip_inputs: A dictionary of trip input values.
+
+    Returns:
+        List[str]: Field names that are None, in collection order.
+    """
     return [field for field in _TRIP_INPUT_FIELDS if trip_inputs.get(field) is None]
+
+
+# =============================================================================
+# TRIP INPUTS MERGING AND CLEANING
+# =============================================================================
 
 
 def _clean_trip_inputs(
@@ -467,6 +802,38 @@ def _clean_trip_inputs(
     allow_overwrite: bool = False,
     overwrite_fields: Optional[Iterable[str]] = None,
 ) -> dict:
+    """
+    Merge multiple trip_inputs sources into a single normalized dictionary.
+
+    This function is central to the state management strategy. It handles:
+    - Merging inputs from document, chat history, and LLM response
+    - Normalizing values (dates, integers, strings)
+    - Tracking which fields are still missing
+    - Respecting overwrite semantics (first source wins unless allow_overwrite)
+
+    The merging priority (first source wins by default):
+    1. Earlier sources in *sources take precedence
+    2. fallback is applied last
+    3. With allow_overwrite=True, later sources can overwrite earlier values
+
+    Args:
+        *sources: Variable number of dict-like sources to merge.
+        fallback: Optional final fallback dictionary.
+        allow_overwrite: If True, later sources overwrite earlier values.
+        overwrite_fields: Specific field names that can always be overwritten.
+
+    Returns:
+        dict: Merged trip_inputs with all fields normalized and a
+              "missing_fields" key listing fields that are still None.
+
+    Example:
+        >>> _clean_trip_inputs(
+        ...     {"destination": "Paris"},
+        ...     {"destination": "London", "budget": 1500},
+        ...     allow_overwrite=False
+        ... )
+        {"destination": "Paris", "budget": 1500, "missing_fields": [...]}
+    """
     sentinel = object()
     merged: dict[str, Any] = {field: sentinel for field in _TRIP_INPUT_FIELDS}
     noted_missing: set[str] = set()
@@ -527,8 +894,31 @@ def _clean_trip_inputs(
 
 def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, List[str]]:
     """
-    Ensure dates and numeric fields are sane. Returns the cleaned inputs and any
-    validation messages that require user confirmation before generating branches.
+    Validate trip inputs and generate user-facing messages for issues.
+
+    Performs semantic validation that goes beyond type normalization:
+    - Ensures end_date is after start_date (auto-corrects if needed)
+    - Warns about past dates
+    - Clamps traveler count to valid range (1-20)
+    - Rejects negative budgets
+
+    This function modifies trip_inputs in place and returns validation messages
+    that should be shown to the user. If validation_messages is non-empty,
+    branch generation should be deferred until the user confirms.
+
+    Args:
+        trip_inputs: The trip inputs dictionary (modified in place).
+        today_iso: Today's date in ISO format for past-date detection.
+
+    Returns:
+        tuple[dict, List[str]]: The modified trip_inputs and a list of
+            validation messages to show the user.
+
+    Example:
+        >>> inputs = {"start_date": "2025-01-20", "end_date": "2025-01-15"}
+        >>> _validate_trip_inputs(inputs, today_iso="2025-01-10")
+        ({"start_date": "2025-01-15", "end_date": "2025-01-20", ...},
+         ["I reordered your dates so the trip starts before it ends..."])
     """
     validation_messages: List[str] = []
     today_dt = _parse_iso_date(today_iso)
@@ -572,6 +962,19 @@ def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, L
 
 
 def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
+    """
+    Get the default question to ask for the next missing field.
+
+    Used as a fallback when the LLM doesn't provide an assistant_message.
+    Returns a pre-defined question based on the first missing field in
+    the canonical collection order.
+
+    Args:
+        missing_fields: List of field names that still need to be collected.
+
+    Returns:
+        Optional[str]: A question to ask the user, or None if no fields are missing.
+    """
     if not missing_fields:
         return None
 
@@ -590,7 +993,24 @@ def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
     return None
 
 
+# =============================================================================
+# CHAT HISTORY CONVERSION
+# =============================================================================
+
+
 def _history_to_messages(history: List[models.ChatMessage]) -> List[ChatCompletionMessageParam]:
+    """
+    Convert database ChatMessage objects to OpenAI message format.
+
+    Filters out empty messages (e.g., unfilled assistant placeholders that
+    haven't been updated yet).
+
+    Args:
+        history: List of ChatMessage database objects.
+
+    Returns:
+        List[ChatCompletionMessageParam]: Messages in OpenAI API format.
+    """
     messages: List[ChatCompletionMessageParam] = []
     for entry in history:
         content = entry.content or ""
@@ -601,12 +1021,37 @@ def _history_to_messages(history: List[models.ChatMessage]) -> List[ChatCompleti
     return messages
 
 
+# =============================================================================
+# TRIP CONTEXT RESOLUTION
+# =============================================================================
+
+
 def _resolve_parent_trip_context(
     db: Session,
     *,
     session: models.Session,
     requested_parent_id: Optional[int],
 ) -> Optional[models.TripContext]:
+    """
+    Resolve the parent TripContext for the current planning request.
+
+    TripContext forms a chain of conversation snapshots. This function either:
+    1. Uses a specific parent context (if requested_parent_id is provided)
+    2. Falls back to the most recent context for this session
+
+    The parent context provides continuity between planning turns.
+
+    Args:
+        db: Database session.
+        session: The user's session model.
+        requested_parent_id: Optional specific context ID to use as parent.
+
+    Returns:
+        Optional[models.TripContext]: The parent context, or None for first message.
+
+    Raises:
+        ValueError: If requested_parent_id doesn't exist or belongs to another session.
+    """
     parent_ctx: Optional[models.TripContext] = None
 
     if requested_parent_id is not None:
@@ -620,6 +1065,11 @@ def _resolve_parent_trip_context(
     return get_latest_trip_context_for_session(db, session=session)
 
 
+# =============================================================================
+# MAIN LLM PLANNING FUNCTION
+# =============================================================================
+
+
 def _call_openai_for_plan(
     req: PlanRequest,
     *,
@@ -627,6 +1077,62 @@ def _call_openai_for_plan(
     history: List[ChatCompletionMessageParam],
     document_data: Optional[PlanDocumentData] = None,
 ) -> PlannerLLMOutput:
+    """
+    Call OpenAI to process a user message and generate planning output.
+
+    This is the core LLM integration function. It:
+    1. Builds the system prompt with current trip state
+    2. Constructs the message history for context
+    3. Calls OpenAI with retry logic
+    4. Parses and validates the LLM response
+    5. Returns structured output (branches, trip_inputs, message)
+
+    ## Why the complex state-aware prompting?
+
+    The current implementation uses explicit state-based prompting (checking
+    `all_fields_complete`, `is_last_field`, etc.) rather than a single unified
+    prompt. This design choice was made for several reasons:
+
+    1. **Token Efficiency**: Different phases need different response structures.
+       When collecting inputs, we don't need branch JSON. When generating branches,
+       we don't need field collection logic. Tailored prompts = smaller context.
+
+    2. **Reliability**: LLMs are more reliable with explicit, constrained instructions.
+       A single "be smart about what to do" prompt often produces inconsistent results.
+       The explicit state machine approach ("you have X, you need Y, do Z") works better.
+
+    3. **Validation Control**: Different phases need different validation. During
+       collection, we validate one field at a time. For branch generation, we
+       validate all fields together. Explicit phases enable explicit validation.
+
+    4. **Debugging**: When something goes wrong, explicit states make it clear
+       which phase failed. A unified prompt makes debugging much harder.
+
+    A simpler unified approach would look like:
+    ```
+    "Here's the conversation and document state. Figure out what to do."
+    ```
+
+    This COULD work with a very capable model (GPT-4+), but in practice it leads to:
+    - Inconsistent JSON structure (sometimes branches, sometimes not)
+    - Missed field extractions (LLM forgets to update trip_inputs)
+    - Confusion about when to generate branches vs. ask questions
+    - Higher token usage due to verbose "decide what to do" instructions
+
+    The explicit state machine trades prompt complexity for output reliability.
+
+    Args:
+        req: The plan request containing the user's message.
+        history_rows: Raw ChatMessage database objects (for metadata extraction).
+        history: Processed message history in OpenAI format.
+        document_data: Current PlanDocument state (source of truth).
+
+    Returns:
+        PlannerLLMOutput: Structured output containing branches, message, and trip_inputs.
+
+    Raises:
+        RuntimeError: If OpenAI client is not configured or call fails after retries.
+    """
     # Get trip state from conversation history (fallback for older sessions)
     prior_trip_inputs_meta = _latest_trip_state_from_history(history_rows)
     if _DEBUG_LOG:
@@ -863,32 +1369,61 @@ Return JSON only:
             seed_value = None
 
     def _create_completion_request():
+        """Build and execute the OpenAI completion request with model-specific params."""
+        model_lower = model_name.lower()
 
-        if "gpt-4" in model_name.lower():
-            params: dict[str, Any] = {
-                "model": model_name,
-                "messages": messages,
+        # Base parameters common to all models
+        base_params: dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+
+        if seed_value is not None:
+            base_params["seed"] = seed_value
+
+        # GPT-4 models: use max_tokens, temperature, top_p
+        if "gpt-4" in model_lower:
+            params = {
+                **base_params,
                 "max_tokens": _MAX_TOKENS,
                 "temperature": _PLAN_TEMPERATURE,
                 "top_p": _PLAN_TOP_P,
-                "response_format": {"type": "json_object"},
-                "seed": seed_value,
             }
-        elif "gpt-5" in model_name.lower():
-            params: dict[str, Any] = {
+        # GPT-5 models (including nano/mini)
+        elif "gpt-5" in model_lower:
+            params = {
+                **base_params,
+                "max_completion_tokens": _MAX_TOKENS,
+            }
+        # o1, o3, and other reasoning models (may not support response_format)
+        elif model_lower.startswith("o1") or model_lower.startswith("o3"):
+            params = {
                 "model": model_name,
                 "messages": messages,
                 "max_completion_tokens": _MAX_TOKENS,
-                "response_format": {"type": "json_object"},
-                "seed": seed_value,
             }
+            if seed_value is not None:
+                params["seed"] = seed_value
         else:
-            raise RuntimeError(f"Unsupported model for planning: {model_name}")
+            # Default fallback for other GPT models
+            params = {
+                **base_params,
+                "max_tokens": _MAX_TOKENS,
+            }
+
+        if _DEBUG_LOG:
+            keys_str = list(params.keys())
+            print(f"[DEBUG] OpenAI request params: model={model_name}, keys={keys_str}")
+
+        result = client.chat.completions.create(**params)
+        return result
 
         result = client.chat.completions.create(**params)
         return result
 
     def _invoke_with_retries():
+        """Execute the completion request with exponential backoff retry logic."""
         nonlocal last_error
         retry_limit = max(1, _PLAN_MAX_RETRIES)
         backoff = 0.5
@@ -924,22 +1459,37 @@ Return JSON only:
     if completion is not None:
         raw_content = ""
         structured_payload: Optional[dict] = None
+        choice = None
         try:
             choice = completion.choices[0] if completion and completion.choices else None
             if choice is not None:
                 structured_payload, raw_content = _extract_message_payload(choice)
-        except Exception:
+                if _DEBUG_LOG:
+                    has_struct = structured_payload is not None
+                    print(f"[DEBUG] Extracted: structured={has_struct}, raw_len={len(raw_content)}")
+        except Exception as parse_exc:
+            if _DEBUG_LOG:
+                print(f"[DEBUG] Failed to extract message payload: {parse_exc}")
             raw_content = ""
 
-        if _DEBUG_LOG and raw_content:
-            print(f"[DEBUG] Raw LLM response: {raw_content[:500]}...")
-        elif _DEBUG_LOG and structured_payload:
-            print(f"[DEBUG] Structured LLM response: {json.dumps(structured_payload)[:500]}...")
+        if _DEBUG_LOG:
+            if raw_content:
+                print(f"[DEBUG] Raw LLM response: {raw_content[:500]}...")
+            elif structured_payload:
+                struct_str = json.dumps(structured_payload)[:500]
+                print(f"[DEBUG] Structured LLM response: {struct_str}...")
+            else:
+                print(f"[DEBUG] No content extracted from LLM response. Choice: {choice}")
 
         default_assistant_message = "I'm having trouble processing that. Could you try again?"
 
         data = structured_payload or _tolerant_json_loads(raw_content or "")
+        if _DEBUG_LOG:
+            print(f"[DEBUG] Parsed data: {data}")
         if data is None:
+            if _DEBUG_LOG:
+                snippet = raw_content[:200] if raw_content else "empty"
+                print(f"[DEBUG] Failed to parse JSON. Raw: {snippet}")
             data = {
                 "branches": [],
                 "assistant_message": default_assistant_message,
@@ -1052,10 +1602,48 @@ Return JSON only:
     raise RuntimeError("OpenAI planning call returned no completion")
 
 
+# =============================================================================
+# PUBLIC PLANNING API
+# =============================================================================
+
+
 def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
     """
-    Main planning flow that returns a PlanDocumentResponse.
-    All state is stored in the centralized PlanDocument.
+    Main planning flow that orchestrates the entire trip planning conversation.
+
+    This is the primary entry point for processing a user's planning message.
+    It coordinates all the components: session management, chat history,
+    LLM interaction, document updates, and tile search.
+
+    The flow:
+    1. **Session Setup**: Get or create a session for the user
+    2. **History Retrieval**: Fetch recent chat history for LLM context
+    3. **Document Loading**: Load existing PlanDocument (if any) for state
+    4. **Context Creation**: Create a new TripContext for this conversation turn
+    5. **Message Recording**: Store user message in chat history
+    6. **LLM Processing**: Call OpenAI to process the message
+    7. **Document Update**: Update PlanDocument with new state
+    8. **Tile Search**: Search for tiles if branches were generated
+    9. **Response Building**: Construct and return PlanDocumentResponse
+
+    Error Handling:
+    - Uses try/except with rollback to ensure database consistency
+    - Any exception triggers a rollback before re-raising
+
+    Args:
+        db: SQLAlchemy database session.
+        req: PlanRequest containing session_id and user message.
+
+    Returns:
+        PlanDocumentResponse: The complete response including:
+            - version: Document version for optimistic locking
+            - updated_by: Who made the last update ("planner", "user", etc.)
+            - document: Full PlanDocumentData with trip_inputs, branches, tiles
+            - updated_at: ISO timestamp of the update
+
+    Raises:
+        RuntimeError: If OpenAI is not configured or call fails.
+        ValueError: If trip_context_id validation fails.
     """
     # 1. Setup session and context
     db_session = get_or_create_session(
@@ -1100,6 +1688,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         )
 
         # 3. Prepare placeholder for assistant message
+        # We create this early so it has the correct ordering in chat history
         assistant_chat = record_chat_message(
             db,
             session=db_session,
@@ -1127,6 +1716,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         assistant_chat.content = planner_output.assistant_message
         assistant_meta: dict[str, Any] = {}
         if trip_inputs_payload:
+            # Store trip_inputs in message metadata for migration compatibility
             assistant_meta["trip_inputs"] = trip_inputs_payload
         assistant_chat.meta = assistant_meta or None
 
@@ -1239,4 +1829,21 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
 
 
 def plan_trip(db: Session, req: PlanRequest) -> PlanDocumentResponse:
+    """
+    Public API entry point for trip planning.
+
+    This is a simple wrapper around plan_trip_flow that serves as the
+    stable public interface. Internal implementation details may change,
+    but this function signature remains stable.
+
+    Args:
+        db: SQLAlchemy database session.
+        req: PlanRequest containing session_id and user message.
+
+    Returns:
+        PlanDocumentResponse: Complete planning response with document state.
+
+    See Also:
+        plan_trip_flow: The actual implementation with full documentation.
+    """
     return plan_trip_flow(db, req)

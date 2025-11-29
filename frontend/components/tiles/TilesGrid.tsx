@@ -9,7 +9,7 @@ import type { Tile, TileSelection } from '@/types/tile';
 
 export type TileTabKey = 'stays' | 'flights' | 'activities';
 
-const TAB_CONFIG: Record<
+export const TAB_CONFIG: Record<
   TileTabKey,
   { label: string; icon: ElementType; emptyMessage: string }
 > = {

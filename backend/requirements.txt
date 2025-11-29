@@ -11,4 +11,5 @@ black==25.11.0
 pre-commit==4.4.0
 httpx==0.28.1
 openai==2.8.0
+anthropic==0.75.0
 tiktoken==0.12.0

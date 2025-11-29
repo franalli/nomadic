@@ -15,9 +15,10 @@ backend/.venv
 db-data
 
 # Environment variables
-frontend/.env.local
-backend/.env.
-backend/.env.docker
+.env
+.env.*
+**/.env
+**/.env.*
 
 # Virtual environments
 backend/.venv/
