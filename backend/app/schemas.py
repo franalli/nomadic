@@ -1,9 +1,10 @@
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 TileType = Literal["flight", "hotel", "activity"]
 AvailabilityStatus = Literal["available", "low", "unknown", "not_available"]
+UpdatedBy = Literal["user", "planner"]
 
 
 class Geo(BaseModel):
@@ -45,7 +46,7 @@ class Tile(BaseModel):
 
 class TilesSearchRequest(BaseModel):
     user_id: Optional[str] = None
-    branch_id: Optional[int] = None
+    branch_id: Optional[str] = None  # Now a string since branches are in JSON document
     session_id: Optional[str] = None
     trip_context_id: Optional[int] = None
 
@@ -77,12 +78,14 @@ class TilesSearchResponse(BaseModel):
 class TileClickEvent(BaseModel):
     request_id: Optional[str] = None
     tile_id: str  # the tile identifier coming from the UI
-    user_id: Optional[str] = None  # optional, for later
-    branch_id: Optional[int] = None  # can be None if not using branches yet
-    session_id: Optional[str] = None  # your frontend-generated session id
+    branch_id: Optional[str] = None  # now a string since branches are in JSON document
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class TripInputs(BaseModel):
+    """Trip parameters stored in chat message metadata."""
+
     destination: Optional[str] = None
     origin: Optional[str] = None
     start_date: Optional[str] = None
@@ -90,18 +93,44 @@ class TripInputs(BaseModel):
     traveler_count: Optional[int] = None
     budget: Optional[int] = None
     missing_fields: List[str] = Field(default_factory=list)
-    unchanged_fields: List[str] = Field(default_factory=list)
 
 
 class PlanRequest(BaseModel):
-    user_id: Optional[str] = None
-    session_id: Optional[str] = None
-    message: str
-    trip_context_id: Optional[int] = None
-    trip_inputs: Optional[TripInputs] = None
+    """Request to send a chat message to the planner.
+
+    All trip state (inputs, branches, tiles, selections) is read from
+    the centralized PlanDocument. The frontend should PATCH /v1/document
+    to update trip inputs before sending chat messages.
+    """
+
+    session_id: str  # Required - identifies the planning session
+    message: str  # The user's chat message
 
 
-class PlanBranch(BaseModel):
+# ─────────────────────────────────────────────────────────────────────────────
+# Plan Document: Centralized JSON state for branches & tiles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class BranchTileIds(BaseModel):
+    """Tile IDs grouped by vertical for a branch."""
+
+    stays: List[str] = Field(default_factory=list)
+    flights: List[str] = Field(default_factory=list)
+    activities: List[str] = Field(default_factory=list)
+
+
+class BranchSelections(BaseModel):
+    """User's selected tile IDs for booking within a branch."""
+
+    stay: Optional[str] = None
+    flight: Optional[str] = None
+    activities: List[str] = Field(default_factory=list)
+
+
+class DocumentBranch(BaseModel):
+    """A branch within the plan document."""
+
     id: str
     label: str
     description: str
@@ -111,35 +140,77 @@ class PlanBranch(BaseModel):
     end_date: Optional[str] = None
     traveler_count: Optional[int] = None
     budget: Optional[int] = None
+    is_primary: bool = False
+    tiles: BranchTileIds = Field(default_factory=BranchTileIds)
+    selections: BranchSelections = Field(default_factory=BranchSelections)
 
 
-class PlanResponse(BaseModel):
+class DocumentTripInputs(BaseModel):
+    """Trip parameters extracted/inferred from conversation."""
+
+    destination: Optional[str] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
+    budget: Optional[int] = None
+    missing_fields: List[str] = Field(default_factory=list)
+
+
+class PlanDocumentData(BaseModel):
+    """
+    The JSON structure stored in plan_documents.document column.
+    This is the source of truth for the planning session.
+    """
+
     trip_context_id: Optional[int] = None
-    branches: List[PlanBranch]
-    tiles: List[Tile]  # tiles for the primary branch
-    primary_branch_id: Optional[str] = None
-    tiles_request_id: Optional[str] = None
-    tiles_summary: Optional[dict] = None
+    trip_inputs: DocumentTripInputs = Field(default_factory=DocumentTripInputs)
+    branches: List[DocumentBranch] = Field(default_factory=list)
+    tiles: Dict[str, Tile] = Field(default_factory=dict)  # tile_id -> Tile
+    # Chat fields (populated when returning from /v1/plan, not persisted)
     assistant_message: Optional[str] = None
     assistant_message_id: Optional[str] = None
-    follow_up_question: Optional[str] = None
-    trip_inputs: Optional[TripInputs] = None
 
 
-class SessionTripContext(BaseModel):
+class PlanDocument(BaseModel):
+    """Full plan document including metadata."""
+
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
-    raw_prompt: Optional[str] = None
+    session_id: int
+    version: int
+    updated_by: UpdatedBy
+    document: PlanDocumentData
+    created_at: str
+    updated_at: str
 
 
-class SessionSnapshotBranch(BaseModel):
-    id: int
-    label: str
-    description: str
-    destination: str
+class PlanDocumentResponse(BaseModel):
+    """Response when fetching the plan document."""
+
+    version: int
+    updated_by: UpdatedBy
+    document: PlanDocumentData
+    updated_at: str
 
 
-class SessionSnapshot(BaseModel):
-    branches: List[SessionSnapshotBranch] = Field(default_factory=list)
-    primary_branch_id: Optional[int] = None
-    tiles: List[Tile] = Field(default_factory=list)
-    trip_context: Optional[SessionTripContext] = None
+class PlanDocumentPatch(BaseModel):
+    """
+    Partial update to the plan document from the user.
+    Uses CRDT-style merge: additions win, deletions require explicit flags.
+    """
+
+    version: int  # Client's current version for optimistic locking hint
+    # Branches to add or update (merged by id)
+    branches: Optional[List[DocumentBranch]] = None
+    # Branch IDs to remove
+    remove_branch_ids: Optional[List[str]] = None
+    # Tiles to add or update (merged by id)
+    tiles: Optional[Dict[str, Tile]] = None
+    # Tile IDs to remove
+    remove_tile_ids: Optional[List[str]] = None
+    # Selection updates per branch
+    selections: Optional[Dict[str, BranchSelections]] = None
+    # Trip inputs to merge
+    trip_inputs: Optional[DocumentTripInputs] = None

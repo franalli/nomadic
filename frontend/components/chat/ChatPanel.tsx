@@ -6,9 +6,13 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 
 import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
-import type { PlanRequest, PlanResponse } from '@/types/api';
+import type { PlanRequest } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
-import type { PlanBranch, TripInputs } from '@/types/plan';
+import type {
+  DocumentBranch,
+  DocumentTripInputs,
+  PlanDocumentResponse,
+} from '@/types/document';
 import type { Tile } from '@/types/tile';
 
 const CHAT_HISTORY_KEY = 'chat_history';
@@ -51,18 +55,15 @@ const loadStoredMessages = (sessionId: string): ChatMessage[] | null => {
 };
 
 interface ChatPanelProps {
-  tripContextId: number | null;
   selectedBranchId: string | null;
-  tripInputs?: TripInputs | null;
   onChatTriggered?: () => void;
   onHasUserMessage?: (has: boolean) => void;
   onPlanResult: (result: {
     tripContextId: number | null;
-    branches: PlanBranch[];
-    tiles: Tile[];
+    branches: DocumentBranch[];
+    tiles: Record<string, Tile>;
     primaryBranchId: string | null;
-    tilesRequestId: string | null;
-    tripInputs?: TripInputs | null;
+    tripInputs?: DocumentTripInputs | null;
   }) => void;
   tripDetails?: {
     content: ReactNode;
@@ -74,7 +75,7 @@ interface ChatPanelProps {
   hasBranches?: boolean;
 }
 
-const summariseBranches = (branches: PlanBranch[]): string => {
+const summariseBranches = (branches: DocumentBranch[]): string => {
   if (!branches.length) {
     return 'I could not settle on clear directions yet, but here are some starter booking options.';
   }
@@ -172,23 +173,17 @@ export function ChatPanel(props: ChatPanelProps) {
     setIsLoading(true);
 
     try {
-      const body: PlanRequest = {
-        message: trimmed,
-      };
-
+      // Get or create session ID
       const activeSessionId = sessionId ?? getOrCreateSessionId();
       if (!sessionId) {
         setSessionId(activeSessionId);
       }
-      if (activeSessionId) {
-        body.session_id = activeSessionId;
-      }
-      if (props.tripContextId != null) {
-        body.trip_context_id = props.tripContextId;
-      }
-      if (props.tripInputs) {
-        body.trip_inputs = props.tripInputs;
-      }
+
+      // All state flows through the document - request only needs session + message
+      const body: PlanRequest = {
+        session_id: activeSessionId,
+        message: trimmed,
+      };
 
       const res = await fetch(`${API_BASE}/v1/plan`, {
         method: 'POST',
@@ -201,35 +196,30 @@ export function ChatPanel(props: ChatPanelProps) {
         throw new Error(text || `Plan failed: ${res.status}`);
       }
 
-      const data: PlanResponse = await res.json();
+      const data: PlanDocumentResponse = await res.json();
 
-      const handlePlanResult = (payload: PlanResponse) => {
+      const handlePlanResult = (payload: PlanDocumentResponse) => {
+        const doc = payload.document;
+        const primaryBranch = doc.branches.find((b) => b.is_primary) ?? doc.branches[0];
         props.onPlanResult({
-          tripContextId: payload.trip_context_id ?? null,
-          branches: payload.branches,
-          tiles: payload.tiles,
-          primaryBranchId:
-            payload.primary_branch_id ??
-            payload.branches[0]?.id ??
-            props.selectedBranchId ??
-            null,
-          tilesRequestId: payload.tiles_request_id ?? null,
-          tripInputs: payload.trip_inputs ?? null,
+          tripContextId: doc.trip_context_id ?? null,
+          branches: doc.branches,
+          tiles: doc.tiles,
+          primaryBranchId: primaryBranch?.id ?? props.selectedBranchId ?? null,
+          tripInputs: doc.trip_inputs ?? null,
         });
       };
 
       handlePlanResult(data);
 
-      const assistantText = data.assistant_message || summariseBranches(data.branches);
-      const msgId = data.assistant_message_id ?? `a_${Date.now()}`;
+      const assistantText =
+        data.document.assistant_message || summariseBranches(data.document.branches);
+      const msgId = data.document.assistant_message_id ?? `a_${Date.now()}`;
 
       const sentences = assistantText
         .split(/(?<=[.!?])\s+/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
-      if (data.follow_up_question && data.follow_up_question.trim().length > 0) {
-        sentences.push(data.follow_up_question.trim());
-      }
 
       const streamTextIntoMessage = (messageId: string, text: string) =>
         new Promise<void>((resolve) => {
@@ -263,7 +253,10 @@ export function ChatPanel(props: ChatPanelProps) {
         for (let i = 0; i < sentences.length; i += 1) {
           const bubbleId = `${msgId}_s${i}`;
           const text = sentences[i];
-          setMessages((prev) => [...prev, { id: bubbleId, role: 'assistant', content: '' }]);
+          setMessages((prev) => [
+            ...prev,
+            { id: bubbleId, role: 'assistant', content: '' },
+          ]);
           // eslint-disable-next-line no-await-in-loop
           await streamTextIntoMessage(bubbleId, text);
         }
@@ -355,7 +348,11 @@ export function ChatPanel(props: ChatPanelProps) {
         />
         <button
           type="submit"
-          className="bg-primary text-primary-foreground hover:bg-primary/90 absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-lg px-3 py-1 text-sm font-semibold transition-colors disabled:opacity-60"
+          className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-lg px-3 py-1 text-sm font-semibold transition-colors disabled:opacity-60 ${
+            isLoading
+              ? 'bg-transparent'
+              : 'bg-primary text-primary-foreground hover:bg-primary/90'
+          }`}
           disabled={isLoading}
         >
           {isLoading ? (

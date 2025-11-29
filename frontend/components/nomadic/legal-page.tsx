@@ -1,7 +1,7 @@
 'use client';
 
-import type { ReactNode } from 'react';
 import { motion } from 'framer-motion';
+import type { ReactNode } from 'react';
 
 type LegalSection = {
   title: string;

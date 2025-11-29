@@ -3,7 +3,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Any, Iterable, List, Optional, Set, cast
+from typing import Any, Iterable, List, Optional, cast
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -11,22 +11,31 @@ from sqlalchemy.orm import Session
 
 from app import db_models as models
 from app.config import settings
+from app.crud_document import (
+    apply_planner_update,
+    get_document,
+    get_document_data,
+    get_or_create_document,
+)
 from app.crud_trip import (
-    create_branches_for_context,
     create_trip_context,
     fetch_chat_history,
     get_latest_trip_context_for_session,
     get_or_create_session,
     record_chat_message,
-    snapshot_tiles_for_branch,
 )
 from app.schemas import (
-    PlanBranch,
+    BranchTileIds,
+    DocumentBranch,
+    DocumentTripInputs,
+    PlanDocumentData,
+    PlanDocumentResponse,
     PlanRequest,
-    PlanResponse,
     TilesSearchRequest,
-    TilesSearchResponse,
     TripInputs,
+)
+from app.schemas import (
+    Tile as TileSchema,
 )
 from app.tile_service import search_tiles
 
@@ -37,12 +46,10 @@ class PlannerLLMOutput:
         *,
         branches: List[dict],
         assistant_message: str,
-        follow_up_question: Optional[str] = None,
         trip_inputs: Optional[dict] = None,
     ) -> None:
         self.branches = branches
         self.assistant_message = assistant_message
-        self.follow_up_question = follow_up_question
         self.trip_inputs = trip_inputs or {}
 
 
@@ -74,38 +81,6 @@ def _next_week_iso() -> str:
     return (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
 
 
-def _extract_user_edited_inputs(frontend_inputs: dict) -> tuple[dict, Set[str]]:
-    """
-    Keep the frontend-provided values unless they are explicitly marked as unchanged.
-
-    Returns a tuple of (cleaned_inputs, unchanged_fields) so callers can treat unchanged
-    values as non-overrides while still accepting explicit user edits (including defaults).
-    """
-    if not frontend_inputs:
-        return {}, set()
-
-    result: dict[str, Any] = {}
-
-    raw_unchanged = (
-        frontend_inputs.get("unchanged_fields") or frontend_inputs.get("_unchanged_fields") or []
-    )
-    unchanged_fields: Set[str] = set()
-    if isinstance(raw_unchanged, (list, tuple, set)):
-        unchanged_fields = {str(field).strip() for field in raw_unchanged if str(field).strip()}
-
-    for field, value in frontend_inputs.items():
-        if field in ("missing_fields", "unchanged_fields", "_unchanged_fields"):
-            continue
-        if field in unchanged_fields:
-            continue
-        if value is None:
-            continue
-
-        result[field] = value
-
-    return result, unchanged_fields
-
-
 def _get_openai_client() -> Optional[OpenAI]:
     global _openai_client
 
@@ -119,16 +94,116 @@ def _get_openai_client() -> Optional[OpenAI]:
     return _openai_client
 
 
+def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optional[str]:
+    """
+    Serialize the full PlanDocumentData into a readable format for the LLM.
+    This includes all branches, tiles, and selections so the LLM has complete context.
+    """
+    if doc_data is None:
+        return None
+
+    lines: List[str] = ["=== CURRENT TRIP PLAN STATE ==="]
+
+    # 1. Trip inputs
+    ti = doc_data.trip_inputs
+    inputs_parts = []
+    if ti.destination:
+        inputs_parts.append(f"destination={ti.destination}")
+    if ti.origin:
+        inputs_parts.append(f"origin={ti.origin}")
+    if ti.start_date:
+        inputs_parts.append(f"start_date={ti.start_date}")
+    if ti.end_date:
+        inputs_parts.append(f"end_date={ti.end_date}")
+    if ti.traveler_count is not None:
+        inputs_parts.append(f"traveler_count={ti.traveler_count}")
+    if ti.budget is not None:
+        inputs_parts.append(f"budget={ti.budget}")
+    if inputs_parts:
+        lines.append(f"Trip Inputs: {', '.join(inputs_parts)}")
+    if ti.missing_fields:
+        lines.append(f"Missing Fields: {', '.join(ti.missing_fields)}")
+
+    # 2. Branches with their selections and tile info
+    if doc_data.branches:
+        lines.append(f"\n=== BRANCHES ({len(doc_data.branches)}) ===")
+        for branch in doc_data.branches:
+            primary_marker = " (PRIMARY)" if branch.is_primary else ""
+            lines.append(f"\nBranch: {branch.label}{primary_marker}")
+            lines.append(f"  ID: {branch.id}")
+            lines.append(f"  Description: {branch.description}")
+            lines.append(f"  Destination: {branch.destination}")
+            if branch.origin:
+                lines.append(f"  Origin: {branch.origin}")
+            if branch.start_date:
+                lines.append(f"  Dates: {branch.start_date} to {branch.end_date}")
+            if branch.traveler_count is not None:
+                lines.append(f"  Travelers: {branch.traveler_count}")
+            if branch.budget is not None:
+                lines.append(f"  Budget: {branch.budget}")
+
+            # Tiles assigned to this branch
+            tiles = branch.tiles
+            tile_counts = []
+            if tiles.stays:
+                tile_counts.append(f"{len(tiles.stays)} stays")
+            if tiles.flights:
+                tile_counts.append(f"{len(tiles.flights)} flights")
+            if tiles.activities:
+                tile_counts.append(f"{len(tiles.activities)} activities")
+            if tile_counts:
+                lines.append(f"  Available Tiles: {', '.join(tile_counts)}")
+
+            # User selections
+            sel = branch.selections
+            selected_parts = []
+            if sel.stay:
+                stay_tile = doc_data.tiles.get(sel.stay)
+                stay_info = f"{stay_tile.title}" if stay_tile else sel.stay
+                selected_parts.append(f"Stay: {stay_info}")
+            if sel.flight:
+                flight_tile = doc_data.tiles.get(sel.flight)
+                flight_info = f"{flight_tile.title}" if flight_tile else sel.flight
+                selected_parts.append(f"Flight: {flight_info}")
+            if sel.activities:
+                activity_names = []
+                for act_id in sel.activities:
+                    act_tile = doc_data.tiles.get(act_id)
+                    activity_names.append(act_tile.title if act_tile else act_id)
+                selected_parts.append(f"Activities: {', '.join(activity_names)}")
+            if selected_parts:
+                lines.append(f"  USER SELECTIONS: {'; '.join(selected_parts)}")
+
+    # 3. Available tiles (abbreviated)
+    if doc_data.tiles:
+        lines.append(f"\n=== AVAILABLE TILES ({len(doc_data.tiles)}) ===")
+        by_type: dict[str, List[str]] = {"flight": [], "hotel": [], "activity": []}
+        for _tile_id, tile in doc_data.tiles.items():
+            price_info = ""
+            if tile.live_price is not None:
+                price_info = f" ({tile.live_price} {tile.currency})"
+            elif tile.price_estimate is not None:
+                price_info = f" (~{tile.price_estimate} {tile.currency})"
+            by_type.setdefault(tile.type, []).append(f"{tile.title}{price_info}")
+        for tile_type, tile_list in by_type.items():
+            if tile_list:
+                lines.append(f"{tile_type.upper()}S: {', '.join(tile_list[:5])}")
+                if len(tile_list) > 5:
+                    lines.append(f"  ... and {len(tile_list) - 5} more")
+
+    lines.append("\n=== END TRIP PLAN STATE ===")
+    return "\n".join(lines)
+
+
 def _latest_trip_state_from_history(
     history_rows: List[models.ChatMessage],
-) -> tuple[Optional[dict], Optional[str]]:
+) -> Optional[dict]:
     """
-    Pull the most recent trip_inputs and follow_up_question from assistant metadata
-    so the LLM can stay grounded in prior confirmations.
+    Pull the most recent trip_inputs from assistant metadata
+    for fallback/migration from older sessions.
     """
 
     merged_trip_inputs: Optional[dict] = None
-    last_follow_up_question: Optional[str] = None
 
     for entry in history_rows:
         if getattr(entry, "role", None) != "assistant":
@@ -148,11 +223,7 @@ def _latest_trip_state_from_history(
                     allow_overwrite=True,
                 )
 
-        fu = meta.get("follow_up_question")
-        if isinstance(fu, str) and fu.strip():
-            last_follow_up_question = fu.strip()
-
-    return merged_trip_inputs, last_follow_up_question
+    return merged_trip_inputs
 
 
 def _plan_model_name() -> str:
@@ -523,13 +594,6 @@ def _history_to_messages(history: List[models.ChatMessage]) -> List[ChatCompleti
     messages: List[ChatCompletionMessageParam] = []
     for entry in history:
         content = entry.content or ""
-        # For assistant messages, append follow_up_question from meta if present
-        if entry.role == "assistant":
-            meta = getattr(entry, "meta", None)
-            if isinstance(meta, dict):
-                follow_up = meta.get("follow_up_question")
-                if follow_up and isinstance(follow_up, str):
-                    content = f"{content}\n\n{follow_up}" if content else follow_up
         # Skip empty messages (e.g., unfilled assistant placeholders)
         if not content.strip():
             continue
@@ -561,26 +625,32 @@ def _call_openai_for_plan(
     *,
     history_rows: List[models.ChatMessage],
     history: List[ChatCompletionMessageParam],
+    document_data: Optional[PlanDocumentData] = None,
 ) -> PlannerLLMOutput:
-    # Get trip state from conversation history
-    prior_trip_inputs_meta, last_follow_up = _latest_trip_state_from_history(history_rows)
+    # Get trip state from conversation history (fallback for older sessions)
+    prior_trip_inputs_meta = _latest_trip_state_from_history(history_rows)
     if _DEBUG_LOG:
         print(f"[DEBUG] prior_trip_inputs_meta: {prior_trip_inputs_meta}")
-        print(f"[DEBUG] last_follow_up: {last_follow_up}")
 
-    # Frontend sends defaults (Amsterdam, today, next week, 1 traveler).
-    # Treat them as real unless explicitly marked as unchanged.
-    frontend_inputs = req.trip_inputs.dict() if req.trip_inputs is not None else {}
-    user_edited_inputs, unchanged_fields = _extract_user_edited_inputs(frontend_inputs)
+    # Read trip inputs from document (source of truth)
+    doc_trip_inputs: dict = {}
+    if document_data and document_data.trip_inputs:
+        ti = document_data.trip_inputs
+        doc_trip_inputs = {
+            "destination": ti.destination,
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "traveler_count": ti.traveler_count,
+            "budget": ti.budget,
+        }
     if _DEBUG_LOG:
-        print(f"[DEBUG] frontend_inputs: {frontend_inputs}")
-        print(f"[DEBUG] user_edited_inputs: {user_edited_inputs}")
-        print(f"[DEBUG] unchanged_fields: {unchanged_fields}")
+        print(f"[DEBUG] doc_trip_inputs: {doc_trip_inputs}")
 
-    # Merge: conversation history first, then user-edited frontend values on top
+    # Merge: document first, then chat history (for migration/fallback)
     request_trip_inputs = _clean_trip_inputs(
+        doc_trip_inputs,
         prior_trip_inputs_meta,
-        user_edited_inputs,
     )
     if _DEBUG_LOG:
         print(f"[DEBUG] request_trip_inputs after merge: {request_trip_inputs}")
@@ -602,7 +672,6 @@ def _call_openai_for_plan(
 
     # Determine what the next field to collect is
     next_field_to_ask = missing_fields[0] if missing_fields else None
-    current_field_to_collect = next_field_to_ask
 
     # Build a clearer, more structured system prompt
     # If all fields are complete, emphasize branch generation
@@ -637,13 +706,6 @@ The user's message is their BUDGET amount. Extract the number."""
 YOU JUST ASKED about {next_field_to_ask}.
 The user's message is their answer. Use defaults if they confirm."""
 
-    if last_follow_up:
-        last_follow_up_block = f"""
-YOUR LAST QUESTION WAS: "{last_follow_up}"
-The user's message "{req.message}" is the ANSWER to that question.
-Extract the relevant value from their response."""
-        expecting_context = f"{expecting_context}\n{last_follow_up_block}".strip()
-
     # Check if this message will complete all fields (only 1 field left)
     is_last_field = len(missing_fields) == 1
 
@@ -663,7 +725,6 @@ Generate 2-3 trip branches now. Do NOT ask questions.
 Return JSON:
 {{
   "assistant_message": "Great! Here are your trip options.",
-  "follow_up_question": null,
   "trip_inputs": {trip_inputs_json},
   "branches": [
     {{
@@ -691,7 +752,6 @@ After extracting, GENERATE 2-3 TRIP BRANCHES immediately.
 Return JSON:
 {{
   "assistant_message": "Great! Here are your trip options for [destination].",
-  "follow_up_question": null,
   "trip_inputs": {{
     "destination": "value",
     "origin": "value",
@@ -732,7 +792,10 @@ Return JSON:
 
 CRITICAL: The user's message answers your previous question. Extract the value!
 
-After extracting their answer, ask for the NEXT missing field in this order:
+After extracting their answer, ask for the NEXT missing field.
+Combine your acknowledgment and question in one message.
+
+Field order to collect:
 1. destination - "Where are you headed?"
 2. origin - confirm detected location or ask
 3. start_date - default {today}
@@ -742,8 +805,7 @@ After extracting their answer, ask for the NEXT missing field in this order:
 
 Return JSON only:
 {{
-  "assistant_message": "Acknowledgment of what they said (e.g. 'Rome, great choice!')",
-  "follow_up_question": "Next question or null if all complete",
+  "assistant_message": "Acknowledgment + next question (e.g. 'Great choice! When do you travel?')",
   "trip_inputs": {{
     "destination": "extracted value or null",
     "origin": "value or null",
@@ -764,9 +826,23 @@ Return JSON only:
 
     history_messages: List[ChatCompletionMessageParam] = list(history)
 
+    # Serialize document state for LLM context
+    document_context = _serialize_document_for_llm(document_data)
+
     messages: List[ChatCompletionMessageParam] = [
         cast(ChatCompletionMessageParam, {"role": "system", "content": system_prompt})
     ]
+    # Inject document state as a system-level context message if available
+    if document_context:
+        messages.append(
+            cast(
+                ChatCompletionMessageParam,
+                {
+                    "role": "system",
+                    "content": f"[CONTEXT: Current trip plan state]\n{document_context}",
+                },
+            )
+        )
     messages.extend(history_messages)
     messages.append(cast(ChatCompletionMessageParam, {"role": "user", "content": req.message}))
 
@@ -867,7 +943,6 @@ Return JSON only:
             data = {
                 "branches": [],
                 "assistant_message": default_assistant_message,
-                "follow_up_question": None,
                 "trip_inputs": {},
             }
         if not isinstance(data, dict):
@@ -877,15 +952,13 @@ Return JSON only:
         if _DEBUG_LOG:
             print(f"[DEBUG] Branches from LLM: {len(branches_raw)} branches")
         assistant_message = str(data.get("assistant_message") or "").strip()
-        follow_up_question = str(data.get("follow_up_question") or "").strip() or None
 
         trip_inputs_payload = data.get("trip_inputs") or {}
-        overwrite_fields = {current_field_to_collect} if current_field_to_collect else set()
+        # Allow LLM to overwrite any field - users might correct any previous value
         trip_inputs = _clean_trip_inputs(
             request_trip_inputs,
             trip_inputs_payload,
-            allow_overwrite=False,
-            overwrite_fields=overwrite_fields,
+            allow_overwrite=True,
         )
         trip_inputs, validation_messages = _validate_trip_inputs(trip_inputs, today_iso=today)
         parsed_missing_fields = trip_inputs.get("missing_fields") or []
@@ -942,27 +1015,31 @@ Return JSON only:
                     }
                 )
 
+        # Handle validation messages by appending to assistant message
         if validation_messages:
-            follow_up_question = validation_messages[0]
-        elif not has_all_fields and not follow_up_question:
-            follow_up_question = _default_follow_up_question(parsed_missing_fields)
+            validation_text = " ".join(validation_messages)
+            if assistant_message:
+                assistant_message = f"{assistant_message} {validation_text}"
+            else:
+                assistant_message = validation_text
+        elif not has_all_fields and not assistant_message:
+            # Generate a default question if LLM didn't provide one
+            default_question = _default_follow_up_question(parsed_missing_fields)
+            assistant_message = default_question or default_assistant_message
 
-        if not assistant_message and not follow_up_question:
+        if not assistant_message:
             assistant_message = default_assistant_message
+
         if has_all_fields:
-            follow_up_question = None
             trip_inputs["missing_fields"] = []
             if not assistant_message or re.search(
                 r"\bwhere\b", assistant_message, flags=re.IGNORECASE
             ):
                 assistant_message = "Generating trip options for you..."
-        if not assistant_message and follow_up_question:
-            assistant_message = follow_up_question
 
         output = PlannerLLMOutput(
             branches=cleaned,
             assistant_message=assistant_message,
-            follow_up_question=follow_up_question,
             trip_inputs=trip_inputs,
         )
 
@@ -975,24 +1052,33 @@ Return JSON only:
     raise RuntimeError("OpenAI planning call returned no completion")
 
 
-def plan_trip_flow(db: Session, req: PlanRequest) -> PlanResponse:
-    if not req.session_id:
-        raise ValueError("session_id is required for planning")
-
+def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
+    """
+    Main planning flow that returns a PlanDocumentResponse.
+    All state is stored in the centralized PlanDocument.
+    """
     # 1. Setup session and context
     db_session = get_or_create_session(
         db,
         session_token=req.session_id,
-        user_external_id=req.user_id,
+        user_external_id=None,  # User ID comes from auth, not request
     )
 
     history_rows = fetch_chat_history(db, session=db_session, limit=_CHAT_HISTORY_LIMIT)
     history_messages = _history_to_messages(history_rows)
 
+    # Get parent trip context from document (if exists)
+    existing_doc = get_document(db, session=db_session)
+    existing_doc_data: Optional[PlanDocumentData] = None
+    parent_trip_context_id: Optional[int] = None
+    if existing_doc:
+        existing_doc_data = get_document_data(existing_doc)
+        parent_trip_context_id = existing_doc_data.trip_context_id
+
     parent_ctx = _resolve_parent_trip_context(
         db,
         session=db_session,
-        requested_parent_id=req.trip_context_id,
+        requested_parent_id=parent_trip_context_id,
     )
 
     try:
@@ -1028,66 +1114,64 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanResponse:
             req,
             history_rows=history_rows,
             history=history_messages,
+            document_data=existing_doc_data,
         )
 
-        # 5. Process LLM output and update DB
+        # 5. Process LLM output and update assistant message
         trip_inputs_model = (
             TripInputs(**planner_output.trip_inputs)
             if planner_output.trip_inputs is not None
             else None
         )
-        trip_inputs_payload = trip_inputs_model.dict() if trip_inputs_model else None
+        trip_inputs_payload = trip_inputs_model.model_dump() if trip_inputs_model else None
         assistant_chat.content = planner_output.assistant_message
         assistant_meta: dict[str, Any] = {}
-        if planner_output.follow_up_question:
-            assistant_meta["follow_up_question"] = planner_output.follow_up_question
         if trip_inputs_payload:
             assistant_meta["trip_inputs"] = trip_inputs_payload
         assistant_chat.meta = assistant_meta or None
 
-        plan_branches: List[PlanBranch] = []
+        # 6. Get or create the PlanDocument
+        plan_doc = get_or_create_document(db, session=db_session, updated_by="planner")
+
+        # 7. Build document branches and tiles from LLM output
         branch_specs = planner_output.branches or []
-        db_branches: List[models.Branch] = []
-        primary_db_branch: Optional[models.Branch] = None
+        doc_branches: List[DocumentBranch] = []
+        tiles_dict: dict[str, TileSchema] = {}
+        primary_branch: Optional[DocumentBranch] = None
 
-        if branch_specs:
-            db_branches = create_branches_for_context(
-                db,
-                trip_context=trip_ctx,
-                branch_specs=branch_specs,
-                primary_index=0,
+        for idx, spec in enumerate(branch_specs):
+            # Generate a unique branch ID
+            branch_id = f"branch_{trip_ctx.id}_{idx}"
+
+            doc_branch = DocumentBranch(
+                id=branch_id,
+                label=str(spec.get("label", "")),
+                description=str(spec.get("description", "")),
+                destination=str(spec.get("destination", "")),
+                origin=_normalize_str(spec.get("origin")),
+                start_date=_normalize_str(spec.get("start_date")),
+                end_date=_normalize_str(spec.get("end_date")),
+                traveler_count=_normalize_int(spec.get("traveler_count")),
+                budget=_normalize_int(spec.get("budget")),
+                is_primary=(idx == 0),
+                tiles=BranchTileIds(),
             )
+            doc_branches.append(doc_branch)
 
-            for idx, db_branch in enumerate(db_branches):
-                source_spec = branch_specs[idx] if idx < len(branch_specs) else {}
-                spec_dict = source_spec if isinstance(source_spec, dict) else {}
-                plan_branches.append(
-                    PlanBranch(
-                        id=str(db_branch.id),
-                        label=db_branch.label,
-                        description=db_branch.description or "",
-                        destination=db_branch.destination,
-                        origin=_normalize_str(spec_dict.get("origin")),
-                        start_date=_normalize_str(spec_dict.get("start_date")),
-                        end_date=_normalize_str(spec_dict.get("end_date")),
-                        traveler_count=_normalize_int(spec_dict.get("traveler_count")),
-                        budget=_normalize_int(spec_dict.get("budget")),
-                    )
-                )
+            if idx == 0:
+                primary_branch = doc_branch
 
-            primary_db_branch = db_branches[0] if db_branches else None
+        # 8. Search for tiles for the primary branch
+        if primary_branch:
+            # Update assistant message to indicate we're creating suggestions
+            assistant_chat.content = "Creating trip suggestions for you..."
 
-        tiles_response: TilesSearchResponse | None = None
-
-        if primary_db_branch:
-            # 6. Search for tiles (hotels, activities, etc.) for the primary branch
             tiles_request = TilesSearchRequest(
-                user_id=req.user_id,
-                branch_id=primary_db_branch.id,
+                user_id=None,  # User ID comes from auth, not request
                 session_id=req.session_id,
                 trip_context_id=trip_ctx.id,
-                destination=primary_db_branch.destination,
-                destination_hint=primary_db_branch.destination,
+                destination=primary_branch.destination,
+                destination_hint=primary_branch.destination,
                 origin=trip_inputs_model.origin if trip_inputs_model else None,
                 start_date=trip_inputs_model.start_date if trip_inputs_model else None,
                 end_date=trip_inputs_model.end_date if trip_inputs_model else None,
@@ -1096,26 +1180,55 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanResponse:
 
             tiles_response = search_tiles(tiles_request)
 
-            if tiles_response.tiles:
-                snapshot_tiles_for_branch(
-                    db,
-                    branch=primary_db_branch,
-                    tiles=tiles_response.tiles,
-                    replace_existing=True,
-                )
+            # Add tiles to the primary branch and to the tiles dict
+            for tile in tiles_response.tiles:
+                tiles_dict[tile.id] = tile
+                if tile.type == "hotel":
+                    primary_branch.tiles.stays.append(tile.id)
+                elif tile.type == "flight":
+                    primary_branch.tiles.flights.append(tile.id)
+                elif tile.type == "activity":
+                    primary_branch.tiles.activities.append(tile.id)
 
-        # 7. Final response
-        response = PlanResponse(
+        # 9. Build trip inputs for document
+        doc_trip_inputs = None
+        if trip_inputs_model:
+            doc_trip_inputs = DocumentTripInputs(
+                destination=trip_inputs_model.destination,
+                origin=trip_inputs_model.origin,
+                start_date=trip_inputs_model.start_date,
+                end_date=trip_inputs_model.end_date,
+                traveler_count=trip_inputs_model.traveler_count,
+                budget=trip_inputs_model.budget,
+                missing_fields=trip_inputs_model.missing_fields,
+            )
+
+        # 10. Apply the planner update to the document
+        # Always update trip_inputs (even during collection phase when no branches exist)
+        apply_planner_update(
+            db,
+            doc=plan_doc,
             trip_context_id=trip_ctx.id,
-            branches=plan_branches,
-            tiles=tiles_response.tiles if tiles_response else [],
-            primary_branch_id=str(primary_db_branch.id) if primary_db_branch else None,
-            tiles_request_id=tiles_response.tiles_request_id if tiles_response else None,
-            tiles_summary=tiles_response.summary if tiles_response else None,
-            assistant_message=planner_output.assistant_message,
-            assistant_message_id=str(assistant_chat.id),
-            follow_up_question=planner_output.follow_up_question,
-            trip_inputs=trip_inputs_model,
+            trip_inputs=doc_trip_inputs,
+            branches=doc_branches or None,
+            tiles=tiles_dict or None,
+        )
+
+        doc_data = get_document_data(plan_doc)
+
+        # Add chat metadata to the response (not persisted to document)
+        doc_data_dict = doc_data.model_dump()
+        doc_data_dict["assistant_message"] = assistant_chat.content
+        doc_data_dict["assistant_message_id"] = str(assistant_chat.id)
+
+        # Reconstruct the document data with chat fields
+        doc_data_with_chat = PlanDocumentData(**doc_data_dict)
+
+        response = PlanDocumentResponse(
+            version=plan_doc.version,
+            updated_by=plan_doc.updated_by,  # type: ignore[arg-type]
+            document=doc_data_with_chat,
+            updated_at=plan_doc.updated_at.isoformat(),
         )
 
         db.commit()
@@ -1125,5 +1238,5 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanResponse:
         raise
 
 
-def plan_trip(db: Session, req: PlanRequest) -> PlanResponse:
+def plan_trip(db: Session, req: PlanRequest) -> PlanDocumentResponse:
     return plan_trip_flow(db, req)

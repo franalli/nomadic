@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app import db_models as models
-from app.schemas import Tile as TileSchema
 
 
 def get_or_create_session(
@@ -68,80 +67,6 @@ def get_latest_trip_context_for_session(
         .order_by(models.TripContext.created_at.desc())
         .first()
     )
-
-
-def create_branches_for_context(
-    db: Session,
-    *,
-    trip_context: models.TripContext,
-    branch_specs: Sequence[dict],
-    primary_index: int = 0,
-) -> list[models.Branch]:
-    branches: list[models.Branch] = []
-    for idx, spec in enumerate(branch_specs):
-        label = spec.get("label")
-        destination = spec.get("destination")
-        if not label or not destination:
-            continue
-
-        branch = models.Branch(
-            trip_context_id=trip_context.id,
-            label=str(label),
-            description=str(spec.get("description", "")),
-            destination=str(destination),
-            is_primary=(idx == primary_index),
-        )
-        db.add(branch)
-        branches.append(branch)
-
-    db.flush()
-    return branches
-
-
-def snapshot_tiles_for_branch(
-    db: Session,
-    *,
-    branch: models.Branch,
-    tiles: list[TileSchema],
-    replace_existing: bool = False,
-) -> None:
-    """Persist tiles + branch links for later analytics."""
-
-    if replace_existing:
-        (
-            db.query(models.BranchTile)
-            .filter(models.BranchTile.branch_id == branch.id)
-            .delete(synchronize_session=False)
-        )
-
-    for idx, tile in enumerate(tiles):
-        db_tile = models.Tile(
-            type=tile.type,
-            partner=tile.partner,
-            partner_product_id=tile.partner_product_id,
-            title=tile.title,
-            subtitle=tile.subtitle,
-            image_url=tile.image_url,
-            price_estimate=tile.price_estimate,
-            currency=tile.currency,
-            price_basis=tile.price_basis,
-            is_estimate_only=tile.is_estimate_only,
-            deeplink_url=tile.deeplink_url,
-            rating=tile.rating,
-            review_count=tile.review_count,
-            tags=tile.tags,
-            location_label=tile.location_label,
-            meta=tile.meta,
-        )
-        db.add(db_tile)
-        db.flush()
-
-        link = models.BranchTile(
-            branch_id=branch.id,
-            tile_id=db_tile.id,
-            position=idx,
-        )
-        db.add(link)
 
 
 def record_chat_message(

@@ -9,7 +9,6 @@ import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
   tile: Tile;
-  requestId?: string;
   branchId?: string;
   isSelected?: boolean;
   onToggleSelect?: (tile: Tile) => void;
@@ -71,13 +70,7 @@ const getFeaturesForTile = (tile: Tile): string[] => {
   return sets[hash % sets.length];
 };
 
-export function TileCard({
-  tile,
-  requestId,
-  branchId,
-  isSelected,
-  onToggleSelect,
-}: TileCardProps) {
+export function TileCard({ tile, branchId, isSelected, onToggleSelect }: TileCardProps) {
   const [isLiked, setIsLiked] = useState(false);
 
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
@@ -85,16 +78,13 @@ export function TileCard({
   const handleClick = () => {
     const sessionId = getOrCreateSessionId();
 
-    // 2. Fire-and-forget click tracking
-    const numericBranchId = branchId && /^\d+$/.test(branchId) ? Number(branchId) : null;
-
+    // Fire-and-forget click tracking
     apiFetch('/v1/tiles/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        request_id: requestId ?? null,
         tile_id: tile.id,
-        branch_id: numericBranchId,
+        branch_id: branchId ?? null,
         session_id: sessionId,
         user_id: null,
       }),

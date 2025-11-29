@@ -48,7 +48,6 @@ export const resolveTabForTile = (tile: Tile): TileTabKey => {
 type TilesGridProps = {
   tiles: Tile[];
   activeBranch?: PlanBranch | null;
-  tilesRequestId?: string | null;
   onTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
   selectedTiles?: TileSelection;
   onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
@@ -59,7 +58,6 @@ type TilesGridProps = {
 export function TilesGrid({
   tiles,
   activeBranch,
-  tilesRequestId,
   onTabChange,
   selectedTiles,
   onTileToggle,
@@ -107,8 +105,8 @@ export function TilesGrid({
       {!hideTabSwitcher && (
         <div className="space-y-2">
           {priceSummary && (
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 font-semibold text-primary">
+            <div className="text-muted-foreground flex items-center gap-3 text-sm">
+              <div className="bg-primary/10 text-primary inline-flex items-center gap-2 rounded-full px-3 py-1 font-semibold">
                 {priceSummary}
               </div>
             </div>
@@ -125,10 +123,10 @@ export function TilesGrid({
                     if (forcedTab) return;
                     setActiveTab(tab);
                   }}
-                  className={`group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary ${
+                  className={`focus-visible:outline-primary group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
                     isActive
                       ? 'border-primary text-primary'
-                      : 'border-transparent text-muted-foreground hover:text-foreground'
+                      : 'text-muted-foreground hover:text-foreground border-transparent'
                   } ${forcedTab ? 'cursor-default opacity-60' : ''}`}
                   aria-disabled={Boolean(forcedTab)}
                   aria-pressed={isActive}
@@ -137,7 +135,7 @@ export function TilesGrid({
                     className={`flex h-8 w-8 items-center justify-center rounded-full border transition ${
                       isActive
                         ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-border/70 bg-white text-muted-foreground'
+                        : 'border-border/70 text-muted-foreground bg-white'
                     }`}
                   >
                     <Icon className="h-4 w-4" aria-hidden="true" />
@@ -161,7 +159,7 @@ export function TilesGrid({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {filteredTiles.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 p-4 text-sm text-muted-foreground shadow-inner sm:col-span-2 xl:col-span-3">
+          <div className="border-accent/30 bg-accent/5 text-muted-foreground rounded-xl border border-dashed p-4 text-sm shadow-inner sm:col-span-2 xl:col-span-3">
             {TAB_CONFIG[effectiveTab].emptyMessage}
           </div>
         ) : (
@@ -170,14 +168,14 @@ export function TilesGrid({
               key={tile.id}
               tile={tile}
               branchId={activeBranch?.id}
-              requestId={tilesRequestId ?? undefined}
               isSelected={
                 effectiveTab === 'stays'
                   ? selectedTiles?.stay?.id === tile.id
                   : effectiveTab === 'flights'
                     ? selectedTiles?.flight?.id === tile.id
-                    : selectedTiles?.activities.some((activity) => activity.id === tile.id) ??
-                      false
+                    : (selectedTiles?.activities.some(
+                        (activity) => activity.id === tile.id
+                      ) ?? false)
               }
               onToggleSelect={() => onTileToggle?.(tile, effectiveTab)}
             />

@@ -29,12 +29,3 @@ export const loadTripSummary = (): TripSummaryPayload | null => {
     return null;
   }
 };
-
-export const clearTripSummary = (): void => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.removeItem(SUMMARY_STORAGE_KEY);
-  } catch (error) {
-    console.error('Failed to clear trip summary', error);
-  }
-};

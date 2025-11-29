@@ -6,17 +6,8 @@ export type TripInputs = {
   traveler_count?: number | null;
   budget?: number | null;
   missing_fields?: string[];
-  unchanged_fields?: string[];
 };
 
-export type PlanBranch = {
-  id: string;
-  label: string;
-  description: string;
-  destination: string;
-  origin?: string | null;
-  start_date?: string | null;
-  end_date?: string | null;
-  traveler_count?: number | null;
-  budget?: number | null;
-};
+// PlanBranch is now an alias for DocumentBranch
+// Import DocumentBranch from document.ts for the full type
+export type { DocumentBranch as PlanBranch } from './document';

@@ -9,18 +9,19 @@ from sqlalchemy.orm import Session
 import app.db_models as db_models
 import app.schemas as schemas
 from app.config import settings
-from app.crud_trip import get_or_create_session, snapshot_tiles_for_branch
+from app.crud_document import (
+    add_tiles_to_branch,
+    apply_user_patch,
+    get_document,
+    get_document_data,
+)
 from app.db import get_db
 from app.plan import plan_trip
 from app.schemas import (
+    PlanDocumentPatch,
+    PlanDocumentResponse,
     PlanRequest,
-    PlanResponse,
-    SessionSnapshot,
-    SessionSnapshotBranch,
-    SessionTripContext,
-    Tile,
     TilesSearchRequest,
-    TilesSearchResponse,
 )
 from app.tile_service.service import search_tiles
 
@@ -51,33 +52,6 @@ app.add_middleware(
 )
 
 
-def _tile_from_model(tile: db_models.Tile) -> Tile:
-    return Tile(
-        id=str(tile.id),
-        type=tile.type or "hotel",
-        partner=tile.partner or "nomadic",
-        partner_product_id=tile.partner_product_id or str(tile.id),
-        title=tile.title,
-        subtitle=tile.subtitle,
-        image_url=tile.image_url,
-        price_estimate=tile.price_estimate,
-        live_price=None,
-        currency=tile.currency or "EUR",
-        price_basis=tile.price_basis or "per_trip",
-        is_estimate_only=tile.is_estimate_only,
-        deeplink_url=tile.deeplink_url or "",
-        rating=tile.rating,
-        review_count=tile.review_count,
-        location_label=tile.location_label,
-        geo=None,
-        tags=tile.tags or [],
-        availability_status="unknown",
-        meta=tile.meta or {},
-        score=None,
-        source=None,
-    )
-
-
 @app.get("/health")
 def health():
     return {
@@ -86,84 +60,17 @@ def health():
     }
 
 
-@app.post("/v1/tiles/search", response_model=TilesSearchResponse)
-def tiles_search(req: TilesSearchRequest, db: Session = db_dependency):
-    session = None
-    did_mutate = False
-
-    if req.session_id:
-        session = get_or_create_session(db, session_token=req.session_id)
-        # get_or_create_session flushes when creating a new row
-        did_mutate = True
-
-    branch = None
-    if req.branch_id is not None:
-        branch = db.get(db_models.Branch, req.branch_id)
-        if not branch:
-            raise HTTPException(status_code=404, detail="Branch not found")
-
-        if (
-            session
-            and branch.trip_context is not None
-            and branch.trip_context.session_id != session.id
-        ):
-            raise HTTPException(status_code=403, detail="Branch does not belong to session")
-
-    response = search_tiles(req)
-
-    if branch and response.tiles:
-        snapshot_tiles_for_branch(
-            db,
-            branch=branch,
-            tiles=response.tiles,
-            replace_existing=True,
-        )
-        did_mutate = True
-
-    if did_mutate:
-        db.commit()
-
-    return response
-
-
 @app.post("/v1/tiles/click")
 def track_tile_click(
     event: schemas.TileClickEvent,
     db: Session = db_dependency,
 ):
     """
-    Persist a tile click to tile_clicks and return a simple status.
+    Persist a tile click for analytics.
     """
-
-    # Optional: try to coerce tile_id to int if you’re using integer PKs in tiles;
-    # if that fails, just store click without tile FK and rely on request_id/session_id.
-    tile_id_int = None
-    if event.tile_id is not None:
-        try:
-            candidate_tile_id = int(event.tile_id)
-        except ValueError:
-            # For now do not fail the request; you still get click logs.
-            candidate_tile_id = None
-
-        if candidate_tile_id is not None:
-            tile_exists = db.get(db_models.Tile, candidate_tile_id)
-            tile_id_int = candidate_tile_id if tile_exists else None
-
-    branch_id_int = None
-    if event.branch_id is not None:
-        try:
-            candidate_branch_id = int(event.branch_id)
-        except (TypeError, ValueError):
-            candidate_branch_id = None
-
-        if candidate_branch_id is not None:
-            branch_exists = db.get(db_models.Branch, candidate_branch_id)
-            branch_id_int = candidate_branch_id if branch_exists else None
-
     click = db_models.TileClick(
-        tile_id=tile_id_int,
         tile_identifier=event.tile_id,
-        branch_id=branch_id_int,
+        branch_identifier=event.branch_id,
         session_id=event.session_id,
         user_id=event.user_id,
         request_id=event.request_id,
@@ -175,7 +82,7 @@ def track_tile_click(
     return {"status": "ok"}
 
 
-@app.post("/v1/plan", response_model=PlanResponse)
+@app.post("/v1/plan", response_model=PlanDocumentResponse)
 def plan(
     req: PlanRequest,
     db: Session = db_dependency,
@@ -183,6 +90,7 @@ def plan(
     """
     Chat-like planning endpoint:
     message + preferences -> branches via LLM -> tiles for primary branch.
+    Returns the full plan document with branches, tiles, and chat response.
     """
     try:
         return plan_trip(db, req)
@@ -190,152 +98,201 @@ def plan(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/v1/session/snapshot", response_model=SessionSnapshot)
-def get_session_snapshot(
-    session_id: str = Query(..., description="Frontend session UUID"),
-    db: Session = db_dependency,
-):
-    session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
-    )
-
-    if not session:
-        return SessionSnapshot()
-
-    trip_ctx = (
-        db.query(db_models.TripContext)
-        .filter(db_models.TripContext.session_id == session.id)
-        .order_by(db_models.TripContext.created_at.desc())
-        .first()
-    )
-
-    if not trip_ctx:
-        return SessionSnapshot()
-
-    branches = (
-        db.query(db_models.Branch)
-        .filter(db_models.Branch.trip_context_id == trip_ctx.id)
-        .order_by(db_models.Branch.id.asc())
-        .all()
-    )
-
-    if not branches:
-        return SessionSnapshot()
-
-    primary_branch = next((branch for branch in branches if branch.is_primary), branches[0])
-
-    tile_models = (
-        db.query(db_models.Tile)
-        .join(db_models.BranchTile, db_models.BranchTile.tile_id == db_models.Tile.id)
-        .filter(db_models.BranchTile.branch_id == primary_branch.id)
-        .order_by(db_models.BranchTile.position.asc())
-        .all()
-    )
-    tiles = [_tile_from_model(tile_model) for tile_model in tile_models]
-
-    ctx_payload = SessionTripContext(
-        id=trip_ctx.id,
-        raw_prompt=trip_ctx.raw_prompt,
-    )
-
-    return SessionSnapshot(
-        branches=[
-            SessionSnapshotBranch(
-                id=branch.id,
-                label=branch.label,
-                description=branch.description or "",
-                destination=branch.destination,
-            )
-            for branch in branches
-        ],
-        primary_branch_id=primary_branch.id,
-        tiles=tiles,
-        trip_context=ctx_payload,
-    )
-
-
 @app.delete("/v1/session", status_code=204)
 def reset_session(
     session_id: str = Query(..., description="Frontend session UUID"),
     db: Session = db_dependency,
 ):
+    """
+    Reset/delete a planning session and all associated data.
+    """
     session = (
         db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
     )
     if not session:
         return Response(status_code=204)
 
-    trip_context_ids = [
-        ctx_id
-        for (ctx_id,) in (
-            db.query(db_models.TripContext.id)
-            .filter(db_models.TripContext.session_id == session.id)
-            .all()
-        )
-    ]
+    # Delete PlanDocument for this session
+    (
+        db.query(db_models.PlanDocument)
+        .filter(db_models.PlanDocument.session_id == session.id)
+        .delete(synchronize_session=False)
+    )
 
+    # Delete ChatMessages for this session
     (
         db.query(db_models.ChatMessage)
         .filter(db_models.ChatMessage.session_id == session.id)
         .delete(synchronize_session=False)
     )
 
-    if trip_context_ids:
+    # Delete TripContexts for this session
+    (
+        db.query(db_models.TripContext)
+        .filter(db_models.TripContext.session_id == session.id)
+        .delete(synchronize_session=False)
+    )
 
-        branch_ids = [
-            branch_id
-            for (branch_id,) in (
-                db.query(db_models.Branch.id)
-                .filter(db_models.Branch.trip_context_id.in_(trip_context_ids))
-                .all()
-            )
-        ]
-
-        if branch_ids:
-            tile_ids = [
-                tile_id
-                for (tile_id,) in (
-                    db.query(db_models.BranchTile.tile_id)
-                    .filter(db_models.BranchTile.branch_id.in_(branch_ids))
-                    .all()
-                )
-                if tile_id is not None
-            ]
-
-            (
-                db.query(db_models.BranchTile)
-                .filter(db_models.BranchTile.branch_id.in_(branch_ids))
-                .delete(synchronize_session=False)
-            )
-            (
-                db.query(db_models.Branch)
-                .filter(db_models.Branch.id.in_(branch_ids))
-                .delete(synchronize_session=False)
-            )
-
-            if tile_ids:
-                (
-                    db.query(db_models.Tile)
-                    .filter(db_models.Tile.id.in_(tile_ids))
-                    .delete(synchronize_session=False)
-                )
-
-        (
-            db.query(db_models.TripContext)
-            .filter(db_models.TripContext.id.in_(trip_context_ids))
-            .delete(synchronize_session=False)
-        )
-
+    # Delete TileClicks for this session
     (
         db.query(db_models.TileClick)
         .filter(db_models.TileClick.session_id == session_id)
         .delete(synchronize_session=False)
     )
 
+    # Delete the session itself
     db.delete(session)
     db.commit()
 
     return Response(status_code=204)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Plan Document Endpoints - Centralized source of truth for branches & tiles
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/v1/document", response_model=PlanDocumentResponse)
+def get_plan_document(
+    session_id: str = Query(..., description="Frontend session UUID"),
+    db: Session = db_dependency,
+):
+    """
+    Get the current plan document for a session.
+    Returns the centralized source of truth for branches and tiles.
+    """
+    session = (
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document for this session")
+
+    doc_data = get_document_data(doc)
+
+    return PlanDocumentResponse(
+        version=doc.version,
+        updated_by=doc.updated_by,
+        document=doc_data,
+        updated_at=doc.updated_at.isoformat(),
+    )
+
+
+@app.patch("/v1/document", response_model=PlanDocumentResponse)
+def patch_plan_document(
+    patch: PlanDocumentPatch,
+    session_id: str = Query(..., description="Frontend session UUID"),
+    db: Session = db_dependency,
+):
+    """
+    Apply a partial update to the plan document.
+    Uses CRDT-style merge: additions win, deletions require explicit flags.
+    """
+    session = (
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document for this session")
+
+    # Apply the patch using CRDT merge
+    updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+    db.commit()
+
+    doc_data = get_document_data(updated_doc)
+
+    return PlanDocumentResponse(
+        version=updated_doc.version,
+        updated_by=updated_doc.updated_by,
+        document=doc_data,
+        updated_at=updated_doc.updated_at.isoformat(),
+    )
+
+
+@app.post("/v1/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
+def fetch_tiles_for_branch(
+    branch_id: str,
+    session_id: str = Query(..., description="Frontend session UUID"),
+    db: Session = db_dependency,
+):
+    """
+    Fetch tiles for a specific branch and add them to the document.
+    Used when switching branches to load tiles on demand.
+    """
+    session = (
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document for this session")
+
+    doc_data = get_document_data(doc)
+
+    # Find the branch in the document
+    branch = next((b for b in doc_data.branches if b.id == branch_id), None)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found in document")
+
+    # Check if branch already has tiles
+    has_tiles = bool(branch.tiles.stays or branch.tiles.flights or branch.tiles.activities)
+    if has_tiles:
+        # Return current document without refetching
+        return PlanDocumentResponse(
+            version=doc.version,
+            updated_by=doc.updated_by,
+            document=doc_data,
+            updated_at=doc.updated_at.isoformat(),
+        )
+
+    # Fetch tiles for this branch
+    tiles_request = TilesSearchRequest(
+        session_id=session_id,
+        destination=branch.destination,
+        destination_hint=branch.destination,
+        origin=branch.origin,
+        start_date=branch.start_date,
+        end_date=branch.end_date,
+        traveler_count=branch.traveler_count,
+    )
+
+    tiles_response = search_tiles(tiles_request)
+
+    if tiles_response.tiles:
+        # Add tiles to the document
+        updated_doc = add_tiles_to_branch(
+            db,
+            doc=doc,
+            branch_id=branch_id,
+            tiles=tiles_response.tiles,
+            updated_by="planner",
+        )
+        db.commit()
+
+        doc_data = get_document_data(updated_doc)
+
+        return PlanDocumentResponse(
+            version=updated_doc.version,
+            updated_by=updated_doc.updated_by,
+            document=doc_data,
+            updated_at=updated_doc.updated_at.isoformat(),
+        )
+
+    # No tiles found, return current document
+    return PlanDocumentResponse(
+        version=doc.version,
+        updated_by=doc.updated_by,
+        document=doc_data,
+        updated_at=doc.updated_at.isoformat(),
+    )
 
 
 if __name__ == "__main__":

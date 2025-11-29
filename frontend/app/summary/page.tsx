@@ -1,31 +1,13 @@
 'use client';
 
+import { ArrowLeft, Plane, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-
-import { ArrowLeft, MapPin, Plane, Sparkles } from 'lucide-react';
 
 import { TileCard } from '@/components/tiles/TileCard';
 import { loadTripSummary } from '@/lib/summary';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile } from '@/types/tile';
-
-type TileTabKey = 'stays' | 'flights' | 'activities';
-
-const resolveTileTab = (tile: Tile): TileTabKey => {
-  const type = (tile.type || '').toLowerCase();
-  if (['flight', 'air', 'fare', 'plane'].some((needle) => type.includes(needle))) {
-    return 'flights';
-  }
-  if (
-    ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'].some((needle) =>
-      type.includes(needle)
-    )
-  ) {
-    return 'activities';
-  }
-  return 'stays';
-};
 
 export default function SummaryPage() {
   const [summary, setSummary] = useState<TripSummaryPayload | null>(null);
@@ -228,7 +210,6 @@ export default function SummaryPage() {
                   key={tile.id}
                   tile={tile}
                   branchId={branch.id}
-                  requestId={undefined}
                   isSelected={selectedTileIds.has(tile.id)}
                 />
               ))

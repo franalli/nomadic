@@ -208,7 +208,6 @@ type BranchPanelProps = {
   branchTileCounts?: Record<string, TileCounts>;
   tiles?: Tile[];
   tilesBranchId?: string | null;
-  tilesRequestId?: string | null;
   selectedTiles?: TileSelection;
   onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
   onTilesTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
@@ -225,7 +224,6 @@ export function BranchPanel({
   branchTileCounts,
   tiles,
   tilesBranchId,
-  tilesRequestId,
   selectedTiles,
   onTileToggle,
   onTilesTabChange,
@@ -248,15 +246,6 @@ export function BranchPanel({
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
   const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
-  const priceHintFromBudget = (budget?: string | number | null) => {
-    const numeric = parseBudgetNumber(budget);
-    if (numeric) return `~$${numeric.toLocaleString()}`;
-    const normalized = normalizeBudgetInput(budget) || '';
-    if (/^\$\s*\$\$?/.test(normalized)) return '$2,000+';
-    if (/^\$\$\$/.test(normalized)) return '$3,000+';
-    if (/^\$\$/.test(normalized)) return '$2,400+';
-    return '$1,500+';
-  };
   const branchTiles = useMemo(() => {
     if (!selected) return [];
     if (tilesBranchId == null || tilesBranchId === selected.id) {
@@ -394,7 +383,6 @@ export function BranchPanel({
             const badgeTextColor = 'text-white';
             const budget = resolveBudgetForBranch(b, tripInputs) ?? preset.budget;
             const budgetLabel = formatBudgetDisplay(budget) ?? preset.budget;
-            const priceHint = priceHintFromBudget(budget);
             const duration =
               resolveDurationForBranch(b, tripInputs)?.summary ?? preset.duration;
             return (
@@ -525,7 +513,6 @@ export function BranchPanel({
               <TilesGrid
                 tiles={branchTiles}
                 activeBranch={selected}
-                tilesRequestId={tilesRequestId}
                 onTabChange={onTilesTabChange}
                 selectedTiles={selectedTiles}
                 onTileToggle={(tile) => onTileToggle?.(tile, openTab)}

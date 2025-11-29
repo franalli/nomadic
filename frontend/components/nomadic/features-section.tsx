@@ -1,7 +1,7 @@
 'use client';
 
-import { Globe, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { Globe, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 
 const features = [
   {

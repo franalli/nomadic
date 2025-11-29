@@ -2,7 +2,7 @@
 from datetime import UTC, datetime
 from typing import Dict, List, Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import (
     Mapped,
     mapped_column,
@@ -63,86 +63,23 @@ class TripContext(Base, TimestampMixin):
     parent_trip_context: Mapped[Optional["TripContext"]] = relationship(
         "TripContext", remote_side="TripContext.id"
     )
-    branches: Mapped[List["Branch"]] = relationship("Branch", back_populates="trip_context")
-
-
-class Branch(Base, TimestampMixin):
-    __tablename__ = "branches"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    trip_context_id: Mapped[int] = mapped_column(ForeignKey("trip_contexts.id"))
-
-    label: Mapped[str] = mapped_column(String(128))
-    description: Mapped[Optional[str]] = mapped_column(String)
-    destination: Mapped[str] = mapped_column(String(64))
-    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    trip_context: Mapped[TripContext] = relationship("TripContext", back_populates="branches")
-    branch_tiles: Mapped[List["BranchTile"]] = relationship(
-        "BranchTile", back_populates="branch", cascade="all, delete-orphan"
-    )
-
-
-class Tile(Base, TimestampMixin):
-    __tablename__ = "tiles"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-
-    type: Mapped[str] = mapped_column(String(32))  # "flight" | "hotel" | "activity"
-    partner: Mapped[Optional[str]] = mapped_column(String(64))
-    partner_product_id: Mapped[Optional[str]] = mapped_column(String(128))
-
-    title: Mapped[str] = mapped_column(String)
-    subtitle: Mapped[Optional[str]] = mapped_column(String)
-    image_url: Mapped[Optional[str]] = mapped_column(String)
-
-    price_estimate: Mapped[Optional[float]] = mapped_column(Float)
-    currency: Mapped[Optional[str]] = mapped_column(String(8))
-    price_basis: Mapped[Optional[str]] = mapped_column(String(32))
-    is_estimate_only: Mapped[bool] = mapped_column(Boolean, default=True)
-    deeplink_url: Mapped[Optional[str]] = mapped_column(String)
-
-    rating: Mapped[Optional[float]] = mapped_column(Float)
-    review_count: Mapped[Optional[int]] = mapped_column(Integer)
-
-    tags: Mapped[Optional[List[str]]] = mapped_column(JSON)
-    location_label: Mapped[Optional[str]] = mapped_column(String(128))
-    meta: Mapped[Optional[Dict]] = mapped_column(JSON)
-
-    branch_tiles: Mapped[List["BranchTile"]] = relationship(
-        "BranchTile", back_populates="tile", cascade="all, delete-orphan"
-    )
-    clicks: Mapped[List["TileClick"]] = relationship(
-        "TileClick", back_populates="tile", cascade="all, delete-orphan"
-    )
-
-
-class BranchTile(Base):
-    __tablename__ = "branch_tiles"
-
-    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id"), primary_key=True)
-    tile_id: Mapped[int] = mapped_column(ForeignKey("tiles.id"), primary_key=True)
-    position: Mapped[int] = mapped_column(Integer, default=0)
-
-    branch: Mapped[Branch] = relationship("Branch", back_populates="branch_tiles")
-    tile: Mapped[Tile] = relationship("Tile", back_populates="branch_tiles")
 
 
 class TileClick(Base, TimestampMixin):
+    """
+    Track tile clicks for analytics.
+    Stores identifiers as strings since tiles are now in the JSON document.
+    """
+
     __tablename__ = "tile_clicks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
-    # make nullable=True so you can log clicks even before tiles are in the DB
-    tile_id: Mapped[Optional[int]] = mapped_column(ForeignKey("tiles.id"), nullable=True)
     tile_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    branch_id: Mapped[Optional[int]] = mapped_column(ForeignKey("branches.id"), nullable=True)
+    branch_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-
-    tile: Mapped[Optional["Tile"]] = relationship("Tile", back_populates="clicks")
 
 
 class ChatMessage(Base, TimestampMixin):
@@ -157,3 +94,23 @@ class ChatMessage(Base, TimestampMixin):
 
     session: Mapped[Session] = relationship("Session")
     trip_context: Mapped[Optional[TripContext]] = relationship("TripContext")
+
+
+class PlanDocument(Base, TimestampMixin):
+    """
+    Centralized JSON document storing branches and tiles as source of truth.
+    Updated by both the chat planner and user actions.
+    Uses CRDT-style merge for conflict resolution.
+    """
+
+    __tablename__ = "plan_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), unique=True, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    updated_by: Mapped[str] = mapped_column(String(16))  # "user" | "planner"
+
+    # The main JSON document containing branches, tiles, selections, trip_inputs
+    document: Mapped[Dict] = mapped_column(JSON, default=dict)
+
+    session: Mapped[Session] = relationship("Session")

@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 
-import { vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -30,8 +30,10 @@ if (typeof window.IntersectionObserver === 'undefined') {
     takeRecords = vi.fn((): IntersectionObserverEntry[] => []);
   }
 
-  // @ts-expect-error - attach mock to the test window
-  window.IntersectionObserver = MockIntersectionObserver;
+  // Attach mock to the test window
+  (
+    window as unknown as { IntersectionObserver: typeof IntersectionObserver }
+  ).IntersectionObserver = MockIntersectionObserver;
 }
 
 if (!globalThis.crypto) {

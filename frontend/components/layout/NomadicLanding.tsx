@@ -15,18 +15,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { API_BASE } from '@/lib/api';
 import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
 import { saveTripSummary } from '@/lib/summary';
-import type {
-  PlanResponse,
-  SessionSnapshot,
-  TilesSearchRequest,
-  TilesSearchResponse,
-} from '@/types/api';
-import type { PlanBranch, TripInputs } from '@/types/plan';
+import type { DocumentBranch, PlanDocumentResponse } from '@/types/document';
+import type { TripInputs } from '@/types/plan';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';
 
 type BranchSelectionOverrides = {
-  branch?: PlanBranch;
+  branch?: DocumentBranch;
   tripContextId?: number | null;
   errorMessageOverride?: string;
 };
@@ -54,8 +49,6 @@ const getFreshDateDefaults = () => {
 
 const { todayIso: INITIAL_TODAY_ISO, nextWeekIso: INITIAL_NEXT_WEEK_ISO } =
   getFreshDateDefaults();
-
-const DISPLAY_DATE_FORMAT = 'DD-MM-YYYY';
 
 const formatDateForDisplay = (value?: string | null): string => {
   if (!value) return '';
@@ -344,10 +337,7 @@ const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature =>
     inputs?.traveler_count != null
       ? Math.min(20, Math.max(1, Number(inputs.traveler_count)))
       : null,
-  budget:
-    inputs?.budget != null
-      ? String(inputs.budget).trim() || null
-      : null,
+  budget: inputs?.budget != null ? String(inputs.budget).trim() || null : null,
 });
 
 const tripInputSignaturesEqual = (
@@ -368,10 +358,9 @@ const tripInputSignaturesEqual = (
 
 export function NomadicLanding() {
   const router = useRouter();
-  const [branches, setBranches] = useState<PlanBranch[]>([]);
+  const [branches, setBranches] = useState<DocumentBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
-  const [tiles, setTiles] = useState<Tile[]>([]);
-  const [tilesRequestId, setTilesRequestId] = useState<string | null>(null);
+  const [tilesMap, setTilesMap] = useState<Record<string, Tile>>({});
   const [tilesBranchId, setTilesBranchId] = useState<string | null>(null);
   const [branchTileNotes, setBranchTileNotes] = useState<Record<string, string>>({});
   const [branchTileCounts, setBranchTileCounts] = useState<Record<string, TileCounts>>(
@@ -431,6 +420,19 @@ export function NomadicLanding() {
     [branchTileNotes, branches]
   );
 
+  // Compute tiles array for the selected branch from tilesMap
+  const tiles = useMemo(() => {
+    if (!selectedBranch) return [];
+    const tileIds = [
+      ...selectedBranch.tiles.stays,
+      ...selectedBranch.tiles.flights,
+      ...selectedBranch.tiles.activities,
+    ];
+    return tileIds
+      .map((id) => tilesMap[id])
+      .filter((tile): tile is Tile => tile !== undefined);
+  }, [selectedBranch, tilesMap]);
+
   const updateFromDraft = useCallback(
     (draft: TripInputsDraft, destinationHint?: string | null) => {
       const normalized = normalizeTripInputsDraft(draft);
@@ -472,8 +474,6 @@ export function NomadicLanding() {
       setSelectedBranchId(branchId);
       setTilesBranchId(null);
       if (branchChanged) {
-        setTiles([]);
-        setTilesRequestId(null);
         setBranchSelections((prev) => {
           if (prev[branchId]) return prev;
           return { ...prev, [branchId]: { activities: [] } };
@@ -497,33 +497,17 @@ export function NomadicLanding() {
       });
 
       const sessionId = getOrCreateSessionId();
-      const parsedBranchId = Number(branchId);
-      const branchIdNumber = Number.isFinite(parsedBranchId) ? parsedBranchId : undefined;
-
-      const requestTripContextId = overrides?.tripContextId ?? tripContextId;
       const errorMessageOverride = overrides?.errorMessageOverride;
 
-      const body: TilesSearchRequest = {
-        branch_id: branchIdNumber,
-        session_id: sessionId || undefined,
-        trip_context_id: requestTripContextId ?? undefined,
-        destination: branch.destination,
-        destination_hint: branch.destination,
-        verticals: ['hotel', 'flight', 'activity'],
-        max_results_per_vertical: 3,
-      };
-      if (branch.origin) body.origin = branch.origin;
-      if (branch.start_date) body.start_date = branch.start_date;
-      if (branch.end_date) body.end_date = branch.end_date;
-      if (branch.traveler_count != null) body.traveler_count = branch.traveler_count;
-
       try {
-        const res = await fetch(`${API_BASE}/v1/tiles/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
+        const res = await fetch(
+          `${API_BASE}/v1/document/tiles/${encodeURIComponent(branchId)}?session_id=${encodeURIComponent(sessionId || '')}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: controller.signal,
+          }
+        );
 
         if (!res.ok) {
           console.error('Failed to fetch tiles for branch', res.status);
@@ -534,11 +518,16 @@ export function NomadicLanding() {
           return;
         }
 
-        const data: TilesSearchResponse = await res.json();
+        const data: PlanDocumentResponse = await res.json();
         if (controller.signal.aborted) return;
-        setTiles(data.tiles);
+
+        // Update state from the document response
+        setBranches(data.document.branches);
+        setTilesMap(data.document.tiles);
         setTilesBranchId(branchId);
-        setTilesRequestId(data.tiles_request_id ?? data.request_id ?? null);
+        if (data.document.trip_context_id) {
+          setTripContextId(data.document.trip_context_id);
+        }
       } catch (error) {
         if ((error as DOMException).name === 'AbortError') return;
         console.error('Failed to fetch tiles for branch', error);
@@ -552,7 +541,7 @@ export function NomadicLanding() {
         }
       }
     },
-    [abortTilesFetch, branches, selectedBranchId, tripContextId]
+    [abortTilesFetch, branches, selectedBranchId]
   );
 
   useEffect(() => {
@@ -607,71 +596,56 @@ export function NomadicLanding() {
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateSessionSnapshot() {
+    async function hydrateSessionDocument() {
       try {
         setIsHydratingSnapshot(true);
         const sessionId = getOrCreateSessionId();
         if (!sessionId) return;
 
         const res = await fetch(
-          `${API_BASE}/v1/session/snapshot?session_id=${sessionId}`
+          `${API_BASE}/v1/document?session_id=${encodeURIComponent(sessionId)}`
         );
         if (!res.ok) return;
 
-        const data: SessionSnapshot = await res.json();
+        const data: PlanDocumentResponse = await res.json();
         if (cancelled) return;
 
-        if (data.trip_context) {
-          setTripContextId(data.trip_context.id);
+        const doc = data.document;
+        if (doc.trip_context_id) {
+          setTripContextId(doc.trip_context_id);
           setHasTriggeredChat(true);
         }
 
-        if (!data.branches.length) return;
+        if (!doc.branches.length) return;
 
-        const hydratedBranches: PlanBranch[] = data.branches.map((branch) => ({
-          id: String(branch.id),
-          label: branch.label,
-          description: branch.description,
-          destination: branch.destination,
-        }));
+        setBranches(doc.branches);
+        setTilesMap(doc.tiles);
 
-        setBranches(hydratedBranches);
-
-        const fallbackBranchId =
-          data.primary_branch_id != null
-            ? String(data.primary_branch_id)
-            : hydratedBranches[0].id;
-        const fallbackBranch =
-          hydratedBranches.find((branch) => branch.id === fallbackBranchId) ||
-          hydratedBranches[0];
+        const primaryBranch = doc.branches.find((b) => b.is_primary);
+        const fallbackBranchId = primaryBranch?.id ?? doc.branches[0].id;
 
         setSelectedBranchId(fallbackBranchId);
-
-        const snapshotTiles = data.tiles ?? [];
-        setTiles(snapshotTiles);
         setTilesBranchId(fallbackBranchId);
-        setTilesRequestId(null);
 
-        const shouldFetchTiles = snapshotTiles.length === 0 && Boolean(fallbackBranch);
-        if (shouldFetchTiles && fallbackBranch) {
-          const overrides: BranchSelectionOverrides | undefined = data.trip_context
-            ? {
-                branch: fallbackBranch,
-                tripContextId: data.trip_context.id,
-                errorMessageOverride:
-                  'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.',
-              }
-            : {
-                branch: fallbackBranch,
-                tripContextId: null,
-                errorMessageOverride:
-                  'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.',
-              };
+        // Check if the primary branch has tiles, if not fetch them
+        const hasTilesForBranch =
+          primaryBranch &&
+          (primaryBranch.tiles.stays.length > 0 ||
+            primaryBranch.tiles.flights.length > 0 ||
+            primaryBranch.tiles.activities.length > 0);
+
+        if (!hasTilesForBranch && fallbackBranchId) {
+          const overrides: BranchSelectionOverrides = {
+            branch: primaryBranch ?? doc.branches[0],
+            tripContextId: doc.trip_context_id ?? null,
+            errorMessageOverride:
+              'We restored your suggestions but could not refresh options automatically. Select a suggestion to try again.',
+          };
 
           await handleBranchSelect(fallbackBranchId, overrides);
         }
       } catch (error) {
-        console.error('Failed to hydrate session snapshot', error);
+        console.error('Failed to hydrate session document', error);
         setToastMessage(
           'Unable to reload your previous session. You can still plan a new trip.'
         );
@@ -680,12 +654,12 @@ export function NomadicLanding() {
       }
     }
 
-    hydrateSessionSnapshot();
+    hydrateSessionDocument();
 
     return () => {
       cancelled = true;
     };
-    // We intentionally run this only once on mount to restore the last session snapshot.
+    // We intentionally run this only once on mount to restore the last session document.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -698,9 +672,8 @@ export function NomadicLanding() {
     setTripContextId(null);
     setBranches([]);
     setSelectedBranchId(null);
-    setTiles([]);
+    setTilesMap({});
     setTilesBranchId(null);
-    setTilesRequestId(null);
     setBranchTileNotes({});
     setBranchTileCounts({});
     setBranchTabNotes({});
@@ -822,10 +795,9 @@ export function NomadicLanding() {
   const handlePlanResult = useCallback(
     (result: {
       tripContextId: number | null;
-      branches: PlanBranch[];
-      tiles: Tile[];
+      branches: DocumentBranch[];
+      tiles: Record<string, Tile>;
       primaryBranchId: string | null;
-      tilesRequestId: string | null;
       tripInputs?: TripInputs | null;
     }) => {
       const primaryBranch =
@@ -840,9 +812,8 @@ export function NomadicLanding() {
       }
       setTripContextId(result.tripContextId);
       setBranches(result.branches);
-      setTiles(result.tiles);
+      setTilesMap(result.tiles);
       setTilesBranchId(result.primaryBranchId);
-      setTilesRequestId(result.tilesRequestId);
       setBranchTileNotes((prev) => {
         const allowedIds = new Set(result.branches.map((b) => b.id));
         const next: Record<string, string> = {};
@@ -958,17 +929,28 @@ export function NomadicLanding() {
           return;
         }
 
-        const data: PlanResponse = await res.json();
+        const data: PlanDocumentResponse = await res.json();
         if (controller.signal.aborted) return;
 
+        const doc = data.document;
+        const primaryBranch = doc.branches.find((b) => b.is_primary);
         handlePlanResult({
-          tripContextId: data.trip_context_id ?? null,
-          branches: data.branches,
-          tiles: data.tiles,
+          tripContextId: doc.trip_context_id ?? null,
+          branches: doc.branches,
+          tiles: doc.tiles,
           primaryBranchId:
-            data.primary_branch_id ?? data.branches[0]?.id ?? selectedBranchId ?? null,
-          tilesRequestId: data.tiles_request_id ?? null,
-          tripInputs: data.trip_inputs ?? null,
+            primaryBranch?.id ?? doc.branches[0]?.id ?? selectedBranchId ?? null,
+          tripInputs: doc.trip_inputs
+            ? {
+                destination: doc.trip_inputs.destination,
+                origin: doc.trip_inputs.origin,
+                start_date: doc.trip_inputs.start_date,
+                end_date: doc.trip_inputs.end_date,
+                traveler_count: doc.trip_inputs.traveler_count,
+                budget: doc.trip_inputs.budget,
+                missing_fields: doc.trip_inputs.missing_fields,
+              }
+            : null,
         });
       } catch (error) {
         if ((error as DOMException).name === 'AbortError') return;
@@ -1139,11 +1121,7 @@ export function NomadicLanding() {
         generatedAt: new Date().toISOString(),
       };
       saveTripSummary(payload);
-      if (typeof window !== 'undefined') {
-        window.open('/summary', '_blank', 'noopener,noreferrer');
-      } else {
-        router.push('/summary');
-      }
+      router.push('/summary');
     },
     [branchSelections, branchTileNotes, branches, router, tiles, tilesBranchId]
   );
@@ -1322,9 +1300,7 @@ export function NomadicLanding() {
       <div className={fullHeight ? 'min-h-0 flex-1' : ''}>
         <ChatPanel
           key={chatKey}
-          tripContextId={tripContextId}
           selectedBranchId={selectedBranchId}
-          tripInputs={tripInputs}
           onPlanResult={handlePlanResult}
           onChatTriggered={handleChatTriggered}
           onHasUserMessage={handleHasUserMessage}
@@ -1387,7 +1363,6 @@ export function NomadicLanding() {
             branchSelections={branchSelections}
             tiles={tiles}
             tilesBranchId={tilesBranchId}
-            tilesRequestId={tilesRequestId}
             selectedTiles={activeBranchSelection}
             onTileToggle={handleTileSelection}
             onTilesTabChange={handleTilesTabChange}
