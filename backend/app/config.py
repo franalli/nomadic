@@ -31,5 +31,11 @@ class Settings(BaseSettings):
     # external APIs
     openai_api_key: str | None = None
 
+    # Cross-origin / Cookie configuration
+    # Frontend origin for CORS (e.g., "https://app.nomadic.com")
+    frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+    # Cookie domain for subdomain sharing (e.g., ".nomadic.com"), or None for same-origin
+    cookie_domain: str | None = os.getenv("COOKIE_DOMAIN", None)
+
 
 settings = Settings()

@@ -9,12 +9,33 @@ import { apiFetch } from '@/lib/api';
 import type {
   BranchSelections,
   DocumentBranch,
+  DocumentTripInputs,
   PlanDocumentData,
   PlanDocumentPatch,
   PlanDocumentResponse,
   UpdatedBy,
 } from '@/types/document';
 import type { Tile } from '@/types/tile';
+
+/**
+ * Default trip inputs when no document exists yet.
+ */
+const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
+  destinations: [],
+  origin: null,
+  start_date: null,
+  end_date: null,
+  traveler_count: null,
+  budget: null,
+  missing_fields: [
+    'destinations',
+    'origin',
+    'start_date',
+    'end_date',
+    'traveler_count',
+    'budget',
+  ],
+};
 
 type DocumentState = {
   // Document data
@@ -23,26 +44,38 @@ type DocumentState = {
   updatedAt: string | null;
   document: PlanDocumentData | null;
 
+  // Version tracking for auto-refresh loop prevention
+  // This tracks the version we last received from backend, to distinguish
+  // between user-initiated changes and backend-initiated updates
+  lastConfirmedVersion: number;
+
   // UI state
   selectedBranchId: string | null;
   isLoading: boolean;
   error: string | null;
 
+  // Trip input selectors (computed from document)
+  getTripInputs: () => DocumentTripInputs;
+  getMissingFields: () => string[];
+  isReadyToGenerate: () => boolean;
+  hasAllRequiredFields: () => boolean;
+
+  // Trip input actions
+  commitTripInputs: (updates: Partial<DocumentTripInputs>) => Promise<boolean>;
+
   // Actions
-  fetchDocument: (sessionId: string) => Promise<void>;
-  patchDocument: (sessionId: string, patch: PlanDocumentPatch) => Promise<void>;
-  fetchTilesForBranch: (sessionId: string, branchId: string) => Promise<void>;
+  fetchDocument: () => Promise<void>;
+  patchDocument: (patch: PlanDocumentPatch) => Promise<void>;
+  fetchTilesForBranch: (branchId: string) => Promise<void>;
 
   // Selection actions
   selectBranch: (branchId: string) => void;
   selectTile: (
-    sessionId: string,
     branchId: string,
     tileId: string,
     tileType: 'stay' | 'flight' | 'activity'
   ) => Promise<void>;
   deselectTile: (
-    sessionId: string,
     branchId: string,
     tileType: 'stay' | 'flight' | 'activity',
     tileId?: string
@@ -67,6 +100,7 @@ const initialState = {
   updatedBy: null as UpdatedBy | null,
   updatedAt: null as string | null,
   document: null as PlanDocumentData | null,
+  lastConfirmedVersion: 0,
   selectedBranchId: null as string | null,
   isLoading: false,
   error: null as string | null,
@@ -75,17 +109,176 @@ const initialState = {
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
 
-  fetchDocument: async (sessionId: string) => {
-    set({ isLoading: true, error: null });
+  // Trip input selectors
+  getTripInputs: () => {
+    const { document } = get();
+    return document?.trip_inputs ?? DEFAULT_TRIP_INPUTS;
+  },
+
+  getMissingFields: () => {
+    const { document } = get();
+    return document?.trip_inputs?.missing_fields ?? DEFAULT_TRIP_INPUTS.missing_fields;
+  },
+
+  isReadyToGenerate: () => {
+    const { document } = get();
+    return document?.ready_to_generate ?? false;
+  },
+
+  hasAllRequiredFields: () => {
+    const { document } = get();
+    const missingFields = document?.trip_inputs?.missing_fields ?? DEFAULT_TRIP_INPUTS.missing_fields;
+    return missingFields.length === 0;
+  },
+
+  // Trip input actions
+  commitTripInputs: async (updates: Partial<DocumentTripInputs>): Promise<boolean> => {
+    const { document, version } = get();
+
+    // If no document exists yet, we can't commit trip inputs
+    // The document is created by the backend when the first chat message is sent
+    if (!document) {
+      console.warn('commitTripInputs called but no document exists yet');
+      return false;
+    }
+
+    // Store previous state for rollback
+    const previousTripInputs = document.trip_inputs;
+
+    // Compute updated destinations
+    const newDestinations = updates.destinations ?? document.trip_inputs.destinations;
+
+    // Compute updated missing_fields based on destinations change
+    let updatedMissingFields = [...(document.trip_inputs.missing_fields ?? [])];
+    if (updates.destinations !== undefined) {
+      if (updates.destinations.length === 0) {
+        // Add 'destinations' to missing_fields if not present
+        if (!updatedMissingFields.includes('destinations')) {
+          updatedMissingFields.push('destinations');
+        }
+      } else {
+        // Remove 'destinations' from missing_fields if present
+        updatedMissingFields = updatedMissingFields.filter(f => f !== 'destinations');
+      }
+    }
+
+    const updatedTripInputs: DocumentTripInputs = {
+      ...document.trip_inputs,
+      ...updates,
+      destinations: newDestinations,
+      missing_fields: updatedMissingFields,
+    };
+
+    // Optimistically update the store
+    set({
+      document: {
+        ...document,
+        trip_inputs: updatedTripInputs,
+      },
+    });
+
+    // Helper to attempt PATCH with given version
+    const attemptPatch = async (patchVersion: number): Promise<PlanDocumentResponse> => {
+      const patch: PlanDocumentPatch = {
+        version: patchVersion,
+        trip_inputs: updates,
+      };
+
+      const res = await apiFetch('/v1/document', {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        throw new Error(`${res.status}`);
+      }
+      return res.json();
+    };
+
+    // Send to backend
     try {
-      const response: PlanDocumentResponse = await apiFetch(
-        `/v1/document?session_id=${encodeURIComponent(sessionId)}`
-      );
+      const response = await attemptPatch(version);
+
+      // Update with backend response (authoritative)
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
+        lastConfirmedVersion: response.version,
+        error: null,
+      });
+
+      return true;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '';
+
+      // Handle 409 Conflict (version mismatch) - refetch and retry once
+      if (errorMessage.includes('409')) {
+        try {
+          // Fetch fresh document state
+          const freshRes = await apiFetch('/v1/document');
+          if (!freshRes.ok) {
+            throw new Error('Failed to refresh document');
+          }
+          const freshResponse: PlanDocumentResponse = await freshRes.json();
+
+          // Retry with fresh version
+          const retryResponse = await attemptPatch(freshResponse.version);
+
+          // Update with retry response (authoritative)
+          set({
+            version: retryResponse.version,
+            updatedBy: retryResponse.updated_by,
+            updatedAt: retryResponse.updated_at,
+            document: retryResponse.document,
+            lastConfirmedVersion: retryResponse.version,
+            error: null,
+          });
+
+          return true;
+        } catch (retryErr) {
+          // Retry failed - rollback
+          set({
+            document: {
+              ...document,
+              trip_inputs: previousTripInputs,
+            },
+            error: retryErr instanceof Error ? retryErr.message : 'Failed to update trip inputs',
+          });
+          return false;
+        }
+      }
+
+      // Non-409 error - rollback
+      set({
+        document: {
+          ...document,
+          trip_inputs: previousTripInputs,
+        },
+        error: errorMessage || 'Failed to update trip inputs',
+      });
+      return false;
+    }
+  },
+
+  fetchDocument: async () => {
+    set({ isLoading: true, error: null });
+    try {
+      const res = await apiFetch('/v1/document');
+      if (!res.ok) {
+        if (res.status === 404) {
+          set({ isLoading: false, document: null });
+          return;
+        }
+        throw new Error(`${res.status}`);
+      }
+      const response: PlanDocumentResponse = await res.json();
+      set({
+        version: response.version,
+        updatedBy: response.updated_by,
+        updatedAt: response.updated_at,
+        document: response.document,
+        lastConfirmedVersion: response.version,
         isLoading: false,
         // Auto-select primary branch if none selected
         selectedBranchId:
@@ -96,30 +289,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch document';
-      // 404 is expected for new sessions
-      if (message.includes('404')) {
-        set({ isLoading: false, document: null });
-      } else {
-        set({ isLoading: false, error: message });
-      }
+      set({ isLoading: false, error: message });
     }
   },
 
-  patchDocument: async (sessionId: string, patch: PlanDocumentPatch) => {
+  patchDocument: async (patch: PlanDocumentPatch) => {
     set({ isLoading: true, error: null });
     try {
-      const response: PlanDocumentResponse = await apiFetch(
-        `/v1/document?session_id=${encodeURIComponent(sessionId)}`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify(patch),
-        }
-      );
+      const res = await apiFetch('/v1/document', {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) {
+        throw new Error(`${res.status}`);
+      }
+      const response: PlanDocumentResponse = await res.json();
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
+        lastConfirmedVersion: response.version,
         isLoading: false,
       });
     } catch (err) {
@@ -130,18 +320,23 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  fetchTilesForBranch: async (sessionId: string, branchId: string) => {
+  fetchTilesForBranch: async (branchId: string) => {
     set({ isLoading: true, error: null });
     try {
-      const response: PlanDocumentResponse = await apiFetch(
-        `/v1/document/tiles/${encodeURIComponent(branchId)}?session_id=${encodeURIComponent(sessionId)}`,
+      const res = await apiFetch(
+        `/v1/document/tiles/${encodeURIComponent(branchId)}`,
         { method: 'POST' }
       );
+      if (!res.ok) {
+        throw new Error(`${res.status}`);
+      }
+      const response: PlanDocumentResponse = await res.json();
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
+        lastConfirmedVersion: response.version,
         isLoading: false,
       });
     } catch (err) {
@@ -157,7 +352,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   selectTile: async (
-    sessionId: string,
     branchId: string,
     tileId: string,
     tileType: 'stay' | 'flight' | 'activity'
@@ -185,11 +379,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       selections: { [branchId]: updatedSelections },
     };
 
-    await get().patchDocument(sessionId, patch);
+    await get().patchDocument(patch);
   },
 
   deselectTile: async (
-    sessionId: string,
     branchId: string,
     tileType: 'stay' | 'flight' | 'activity',
     tileId?: string
@@ -217,7 +410,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       selections: { [branchId]: updatedSelections },
     };
 
-    await get().patchDocument(sessionId, patch);
+    await get().patchDocument(patch);
   },
 
   mergeFromPlanResponse: (
@@ -232,7 +425,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({
         document: {
           trip_context_id: tripContextId,
-          trip_inputs: { missing_fields: [] },
+          trip_inputs: { ...DEFAULT_TRIP_INPUTS },
           branches,
           tiles,
         },
@@ -279,6 +472,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedBy: response.updated_by,
       updatedAt: response.updated_at,
       document: response.document,
+      lastConfirmedVersion: response.version,
       selectedBranchId:
         get().selectedBranchId ||
         primaryBranch?.id ||

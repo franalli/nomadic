@@ -68,7 +68,8 @@ export default function SummaryPage() {
 
   const { branch, selection } = summary;
   const mapSrc = (() => {
-    const { origin, destination } = branch;
+    const { origin, destinations } = branch;
+    const destination = destinations?.[0] ?? null;
     if (origin && destination) {
       return `https://maps.google.com/maps?output=embed&f=d&source=embed&saddr=${encodeURIComponent(
         origin

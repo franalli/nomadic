@@ -20,10 +20,10 @@ export default function CookiesPage() {
           body: (
             <ul className="list-disc space-y-2 pl-5">
               <li>
-                <strong>session_id (localStorage)</strong> — essential, created as a random UUID to
-                keep your trip planning, chat, and booking context tied to this browser. Sent to our
-                backend to look up your session and trip context. Cleared when you choose “Start new
-                session” or clear browser storage.
+                <strong>session_id (HttpOnly cookie)</strong> — essential, created as a random UUID to
+                keep your trip planning, chat, and booking context tied to this browser. This secure
+                cookie cannot be accessed by JavaScript, providing enhanced protection against XSS attacks.
+                Cleared when you choose "Start new session" or clear browser cookies.
               </li>
               <li>
                 <strong>Expedia Rapid API identifiers</strong> — when you request live booking
@@ -43,8 +43,8 @@ export default function CookiesPage() {
           body: (
             <ul className="list-disc space-y-2 pl-5">
               <li>
-                Essential storage (session_id) runs without consent because the site cannot function
-                without it.
+                Essential cookies (session_id) run without consent because the site cannot function
+                without them.
               </li>
               <li>
                 Functional, analytics, and marketing categories are off by default. If we ever add
@@ -88,9 +88,9 @@ export default function CookiesPage() {
                 choices.
               </li>
               <li>
-                Clear storage via your browser settings if you want to remove the essential
-                session_id immediately. Using “Start new session” in the app also clears it and
-                deletes the corresponding server-side context when possible.
+                Clear cookies via your browser settings if you want to remove the essential
+                session_id immediately. Using "Start new session" in the app also clears the cookie and
+                securely deletes the corresponding server-side session data.
               </li>
             </ul>
           ),

@@ -220,11 +220,16 @@ def apply_user_patch(
 ) -> models.PlanDocument:
     """
     Apply a user-initiated patch to the document using CRDT merge.
+
+    When trip_inputs change (e.g., user removes a destination), the primary branch
+    is updated to reflect the new values so UI displays updated destinations.
     """
     data = get_document_data(doc)
 
-    # Merge trip inputs
-    data.trip_inputs = merge_trip_inputs(data.trip_inputs, patch.trip_inputs)
+    # Merge trip inputs - use replace_destinations=True so users can remove destinations
+    data.trip_inputs = merge_trip_inputs(
+        data.trip_inputs, patch.trip_inputs, replace_destinations=True
+    )
 
     # Merge branches
     data.branches = merge_branches(data.branches, patch.branches, patch.remove_branch_ids)
@@ -234,6 +239,29 @@ def apply_user_patch(
 
     # Update selections
     data.branches = merge_selections(data.branches, patch.selections)
+
+    # Cascade trip_inputs changes to the primary branch
+    # This ensures destination removals are reflected in the branch
+    if patch.trip_inputs is not None and data.branches:
+        primary_idx = next(
+            (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
+        )
+        if primary_idx is not None:
+            primary = data.branches[primary_idx]
+            # Always sync destinations (including empty list for removals)
+            primary.destinations = data.trip_inputs.destinations
+            # Sync other fields only if they were explicitly provided in the patch
+            if patch.trip_inputs.origin is not None:
+                primary.origin = patch.trip_inputs.origin
+            if patch.trip_inputs.start_date is not None:
+                primary.start_date = patch.trip_inputs.start_date
+            if patch.trip_inputs.end_date is not None:
+                primary.end_date = patch.trip_inputs.end_date
+            if patch.trip_inputs.traveler_count is not None:
+                primary.traveler_count = patch.trip_inputs.traveler_count
+            if patch.trip_inputs.budget is not None:
+                primary.budget = patch.trip_inputs.budget
+            data.branches[primary_idx] = primary
 
     return save_document_data(db, doc=doc, data=data, updated_by="user")
 

@@ -4,7 +4,6 @@ import { type KeyboardEvent, type MouseEvent, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
-import { getOrCreateSessionId } from '@/lib/session';
 import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
@@ -81,21 +80,18 @@ export function TileCard({
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
 
   const handleClick = () => {
-    const sessionId = getOrCreateSessionId();
-
-    // Fire-and-forget click tracking
+    // Fire-and-forget click tracking (session is sent via cookie)
     apiFetch('/v1/tiles/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         tile_id: tile.id,
         branch_id: branchId ?? null,
-        session_id: sessionId,
         user_id: null,
       }),
     }).catch(() => {});
 
-    // 3. Open partner deeplink immediately
+    // Open partner deeplink immediately
     window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
   };
 

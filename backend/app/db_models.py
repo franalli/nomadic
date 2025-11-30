@@ -1,5 +1,5 @@
 # backend/app/db_models.py
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Dict, List, Literal, Optional
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String
@@ -27,6 +27,16 @@ class TimestampMixin:
     )
 
 
+# Session expiration constants
+SESSION_IDLE_TIMEOUT_DAYS = 14  # Expire after 14 days of inactivity
+SESSION_ABSOLUTE_TIMEOUT_DAYS = 90  # Expire after 90 days regardless of activity
+
+
+def _session_expires_at() -> datetime:
+    """Default absolute expiration: 90 days from creation."""
+    return datetime.now(UTC) + timedelta(days=SESSION_ABSOLUTE_TIMEOUT_DAYS)
+
+
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
@@ -37,16 +47,66 @@ class User(Base, TimestampMixin):
 
 
 class Session(Base, TimestampMixin):
+    """
+    User session for tracking planning state.
+
+    Session expiration:
+    - last_activity_at: Updated on each request; session expires after idle timeout
+    - expires_at: Absolute expiration; session expires regardless of activity
+
+    A session is expired if EITHER:
+    - now > expires_at (absolute expiry)
+    - now > last_activity_at + idle_timeout (idle expiry)
+    """
+
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     session_token: Mapped[str] = mapped_column(String, index=True, unique=True)
 
+    # Session expiration tracking
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_session_expires_at, nullable=False
+    )
+
     user: Mapped[Optional[User]] = relationship("User", back_populates="sessions")
     trip_contexts: Mapped[List["TripContext"]] = relationship(
         "TripContext", back_populates="session"
     )
+
+    def is_expired(self) -> bool:
+        """Check if session has expired (either idle or absolute).
+
+        Handles both timezone-aware and naive datetimes (e.g., from SQLite).
+        Naive datetimes are assumed to be UTC.
+        """
+        now = datetime.now(UTC)
+
+        # Handle naive datetimes (e.g., from SQLite) by treating them as UTC
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+
+        last_activity = self.last_activity_at
+        if last_activity.tzinfo is None:
+            last_activity = last_activity.replace(tzinfo=UTC)
+
+        # Absolute expiry
+        if now > expires_at:
+            return True
+        # Idle expiry
+        idle_threshold = last_activity + timedelta(days=SESSION_IDLE_TIMEOUT_DAYS)
+        if now > idle_threshold:
+            return True
+        return False
+
+    def refresh_activity(self) -> None:
+        """Update last_activity_at to current time."""
+        self.last_activity_at = datetime.now(UTC)
 
 
 class TripContext(Base, TimestampMixin):

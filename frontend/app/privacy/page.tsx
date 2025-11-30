@@ -39,9 +39,9 @@ export default function PrivacyPage() {
               <ul className="list-disc space-y-2 pl-5">
                 <li>Trip planning inputs you provide (origins, destinations, dates, traveler counts, preferences).</li>
                 <li>
-                  An essential <code>session_id</code> stored in your browser (localStorage) plus the
+                  An essential <code>session_id</code> stored in a secure HttpOnly cookie plus the
                   same identifier in our backend to keep your trip context and chat history tied to
-                  this session.
+                  this session. The cookie is encrypted and cannot be accessed by JavaScript.
                 </li>
                 <li>
                   Booking context from the Expedia Group Rapid API when you request live rates or
@@ -96,7 +96,7 @@ export default function PrivacyPage() {
           body: (
             <>
               <ul className="list-disc space-y-2 pl-5">
-                <li>session_id persists until you clear storage or start a new session in the app.</li>
+                <li>session_id persists until you clear cookies or start a new session in the app. Sessions automatically expire after 90 days or 14 days of inactivity.</li>
                 <li>Trip contexts, chat history, and tile clicks are retained for active planning and reliability, then deleted when you request removal or after a limited operational window.</li>
                 <li>Expedia itinerary identifiers are kept only as long as needed for booking status or support.</li>
                 <li>Support communications are retained as required for compliance and recordkeeping.</li>
@@ -124,10 +124,11 @@ export default function PrivacyPage() {
           title: 'Cookies and similar technologies',
           body: (
             <p>
-              We store an essential <code>session_id</code> in localStorage to keep your trip context
-              and chat history. Functional, analytics, and marketing categories are disabled by
+              We store an essential <code>session_id</code> in a secure HttpOnly cookie to keep your trip context
+              and chat history. This cookie cannot be accessed by JavaScript, providing enhanced security.
+              Functional, analytics, and marketing categories are disabled by
               default and none are active today. Manage choices anytime via the banner or the
-              “Manage cookies” link in the footer. See the{' '}
+              "Manage cookies" link in the footer. See the{' '}
               <Link href="/cookies" className="text-blue-700 underline">
                 Cookie Policy
               </Link>{' '}

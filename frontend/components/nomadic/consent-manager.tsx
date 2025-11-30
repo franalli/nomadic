@@ -118,8 +118,8 @@ export function ConsentManager() {
         <div className="space-y-1">
           <h2 className="text-xl font-semibold text-slate-900">Cookie & consent settings</h2>
           <p className="text-sm text-slate-600">
-            We only use essential storage today (session ID to keep your trip context). You can
-            choose whether to allow additional categories if we add them later.
+            We use essential cookies to keep your planning session secure. You can choose whether to
+            allow additional categories if we add them later.
           </p>
         </div>
 
@@ -129,8 +129,8 @@ export function ConsentManager() {
             <div>
               <div className="text-sm font-semibold text-slate-900">Essential (required)</div>
               <p className="text-sm text-slate-600">
-                session_id stored in localStorage to keep your trip, chat, and booking context tied
-                to this browser. Cannot be turned off here—use “Start new session” to clear it.
+                Secure session cookie to keep your trip, chat, and booking context tied to this
+                browser. Cannot be turned off—use "Start new session" to clear it.
               </p>
             </div>
           </label>
@@ -207,8 +207,8 @@ export function ConsentManager() {
         <div className="space-y-1">
           <p className="text-sm font-semibold text-slate-900">Your privacy choices</p>
           <p className="text-sm text-slate-600">
-            We use essential storage (session ID) to keep your trip and booking context. Analytics
-            and marketing are off unless you enable them.
+            We use essential cookies to keep your trip and booking context. Analytics and marketing
+            are off unless you enable them.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

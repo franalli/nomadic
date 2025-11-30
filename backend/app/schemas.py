@@ -5,11 +5,34 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 TileType = Literal["flight", "hotel", "activity"]
 AvailabilityStatus = Literal["available", "low", "unknown", "not_available"]
 UpdatedBy = Literal["user", "planner"]
+ChatRole = Literal["user", "assistant"]
 
 
 class Geo(BaseModel):
     lat: float
     lon: float
+
+
+# =============================================================================
+# Chat Messages
+# =============================================================================
+
+
+class ChatMessageResponse(BaseModel):
+    """A single chat message for the frontend."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str  # String ID for frontend compatibility
+    role: ChatRole
+    content: str
+    created_at: str  # ISO timestamp
+
+
+class ChatHistoryResponse(BaseModel):
+    """Response containing chat history for a session."""
+
+    messages: List[ChatMessageResponse]
 
 
 class Tile(BaseModel):
@@ -84,7 +107,12 @@ class TileClickEvent(BaseModel):
 
 
 class TripInputs(BaseModel):
-    """Trip parameters stored in chat message metadata."""
+    """Trip parameters stored in chat message metadata.
+
+    DEPRECATED: This schema is only used for chat message metadata migration.
+    Use DocumentTripInputs for all new code - the PlanDocument is the single
+    source of truth for trip state.
+    """
 
     destinations: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
@@ -98,13 +126,15 @@ class TripInputs(BaseModel):
 class PlanRequest(BaseModel):
     """Request to send a chat message to the planner.
 
-    The trip_inputs field allows the frontend to pass current UI state
-    which takes precedence over the stored document state.
+    Note: Trip inputs are read from the PlanDocument (single source of truth).
+    The frontend should NOT send trip_inputs directly - all state flows through
+    the document.
+
+    Note: session_id is no longer in the request body - it comes from the
+    HttpOnly session cookie, injected by SessionMiddleware.
     """
 
-    session_id: str  # Required - identifies the planning session
     message: str  # The user's chat message
-    trip_inputs: Optional[TripInputs] = None  # Optional - override stored inputs
 
 
 # ─────────────────────────────────────────────────────────────────────────────

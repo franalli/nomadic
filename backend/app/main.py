@@ -1,8 +1,9 @@
 import os
 import sys
 from pathlib import Path
+from typing import List
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -15,9 +16,25 @@ from app.crud_document import (
     get_document,
     get_document_data,
 )
+from app.crud_trip import (
+    fetch_chat_history,
+    get_or_create_session,
+    rotate_session,
+    should_rotate_session,
+)
 from app.db import get_db
+from app.middleware import (
+    CSRFMiddleware,
+    SessionMiddleware,
+    clear_session_cookies,
+    get_session_from_request,
+    set_new_session_cookies,
+)
+from app.middleware.session import _generate_csrf_token
 from app.plan import plan_trip
 from app.schemas import (
+    ChatHistoryResponse,
+    ChatMessageResponse,
     PlanDocumentPatch,
     PlanDocumentResponse,
     PlanRequest,
@@ -37,19 +54,44 @@ app = FastAPI(title=APP_NAME)
 
 db_dependency = Depends(get_db)
 
-origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    # add prod frontend origin later, e.g. "https://app.yourdomain.com"
-]
 
+# Build allowed origins list from config
+# In production, this should be a single explicit origin
+def _get_allowed_origins() -> List[str]:
+    """Get list of allowed CORS origins."""
+    origins = []
+
+    # Add configured frontend origin
+    if settings.frontend_origin:
+        origins.append(settings.frontend_origin)
+
+    # In local/development, also allow common local origins
+    if settings.env in ("local", "development", "test"):
+        origins.extend(
+            [
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+        )
+
+    return list(set(origins))  # Deduplicate
+
+
+# Add CORS middleware first (must be before other middleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_get_allowed_origins(),
+    allow_credentials=True,  # Required for cookies
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-CSRF-Token"],  # Explicitly allow CSRF header
+    expose_headers=["Vary"],
 )
+
+# Add session middleware (issues session_id and csrf cookies)
+app.add_middleware(SessionMiddleware)
+
+# Add CSRF middleware (validates X-CSRF-Token header on unsafe methods)
+app.add_middleware(CSRFMiddleware)
 
 
 @app.get("/health")
@@ -62,16 +104,18 @@ def health():
 
 @app.post("/v1/tiles/click")
 def track_tile_click(
+    request: Request,
     event: schemas.TileClickEvent,
     db: Session = db_dependency,
 ):
     """
     Persist a tile click for analytics.
     """
+    session_id = get_session_from_request(request)
     click = db_models.TileClick(
         tile_identifier=event.tile_id,
         branch_identifier=event.branch_id,
-        session_id=event.session_id,
+        session_id=session_id,
         user_id=event.user_id,
         request_id=event.request_id,
     )
@@ -84,6 +128,8 @@ def track_tile_click(
 
 @app.post("/v1/plan", response_model=PlanDocumentResponse)
 def plan(
+    request: Request,
+    response: Response,
     req: PlanRequest,
     db: Session = db_dependency,
 ):
@@ -91,23 +137,44 @@ def plan(
     Chat-like planning endpoint:
     message + preferences -> branches via LLM -> tiles for primary branch.
     Returns the full plan document with branches, tiles, and chat response.
+
+    Session rotation:
+    After the first trip context is created, the session token is rotated
+    to prevent session fixation attacks. New cookies are set on the response.
     """
+    session_id = get_session_from_request(request)
     try:
-        return plan_trip(db, req)
+        result = plan_trip(db, session_id, req)
+
+        # Check if we should rotate the session (after first trip creation)
+        db_session = get_or_create_session(db, session_id)
+        if should_rotate_session(db, session=db_session):
+            # Rotate the session token
+            rotated_session = rotate_session(db, old_session=db_session)
+            db.commit()
+
+            # Set new cookies with the rotated session token
+            new_csrf = _generate_csrf_token()
+            set_new_session_cookies(response, rotated_session.session_token, new_csrf)
+
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/v1/session", status_code=204)
 def reset_session(
-    session_id: str = Query(..., description="Frontend session UUID"),
+    request: Request,
     db: Session = db_dependency,
 ):
     """
     Reset/delete a planning session and all associated data.
 
     Uses row-level locking to prevent deadlocks with concurrent plan operations.
+    Also clears session cookies from the browser.
     """
+    session_id = get_session_from_request(request)
+
     # Lock the session row first to prevent deadlocks with concurrent operations
     session = (
         db.query(db_models.Session)
@@ -116,7 +183,9 @@ def reset_session(
         .first()
     )
     if not session:
-        return Response(status_code=204)
+        # Clear cookies even if session not found in DB
+        response = Response(status_code=204)
+        return clear_session_cookies(response)
 
     # Delete PlanDocument for this session
     (
@@ -150,7 +219,52 @@ def reset_session(
     db.delete(session)
     db.commit()
 
-    return Response(status_code=204)
+    # Clear cookies from browser
+    response = Response(status_code=204)
+    return clear_session_cookies(response)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chat History Endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/v1/chat", response_model=ChatHistoryResponse)
+def get_chat_history(
+    request: Request,
+    db: Session = db_dependency,
+):
+    """
+    Get chat history for the current session.
+
+    Returns the last 50 messages in chronological order (oldest first).
+    Used by the frontend to restore chat state on page load.
+    """
+    session_id = get_session_from_request(request)
+    session = (
+        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
+    )
+
+    # Return empty history for new sessions (no error)
+    if not session:
+        return ChatHistoryResponse(messages=[])
+
+    # Fetch messages (returns oldest first after reversal)
+    messages = fetch_chat_history(db, session=session, limit=50)
+
+    # Convert to response format, filtering out empty messages
+    response_messages = [
+        ChatMessageResponse(
+            id=str(msg.id),
+            role=msg.role,
+            content=msg.content,
+            created_at=msg.created_at.isoformat(),
+        )
+        for msg in messages
+        if msg.content and msg.content.strip()
+    ]
+
+    return ChatHistoryResponse(messages=response_messages)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -160,13 +274,14 @@ def reset_session(
 
 @app.get("/v1/document", response_model=PlanDocumentResponse)
 def get_plan_document(
-    session_id: str = Query(..., description="Frontend session UUID"),
+    request: Request,
     db: Session = db_dependency,
 ):
     """
     Get the current plan document for a session.
     Returns the centralized source of truth for branches and tiles.
     """
+    session_id = get_session_from_request(request)
     session = (
         db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
     )
@@ -189,14 +304,15 @@ def get_plan_document(
 
 @app.patch("/v1/document", response_model=PlanDocumentResponse)
 def patch_plan_document(
+    request: Request,
     patch: PlanDocumentPatch,
-    session_id: str = Query(..., description="Frontend session UUID"),
     db: Session = db_dependency,
 ):
     """
     Apply a partial update to the plan document.
     Uses CRDT-style merge: additions win, deletions require explicit flags.
     """
+    session_id = get_session_from_request(request)
     session = (
         db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
     )
@@ -224,14 +340,15 @@ def patch_plan_document(
 
 @app.post("/v1/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
 def fetch_tiles_for_branch(
+    request: Request,
     branch_id: str,
-    session_id: str = Query(..., description="Frontend session UUID"),
     db: Session = db_dependency,
 ):
     """
     Fetch tiles for a specific branch and add them to the document.
     Used when switching branches to load tiles on demand.
     """
+    session_id = get_session_from_request(request)
     session = (
         db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
     )

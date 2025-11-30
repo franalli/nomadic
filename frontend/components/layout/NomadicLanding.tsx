@@ -28,10 +28,10 @@ import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Card, CardContent } from '@/components/ui/card';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { API_BASE } from '@/lib/api';
-import { clearSessionId, getOrCreateSessionId } from '@/lib/session';
+import { apiFetch, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
-import type { DocumentBranch, PlanDocumentResponse } from '@/types/document';
+import { useDocumentStore } from '@/state/documentStore';
+import type { DocumentBranch, DocumentTripInputs, PlanDocumentResponse } from '@/types/document';
 import type { TripInputs } from '@/types/plan';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';
@@ -170,34 +170,6 @@ const DEFAULT_TRIP_INPUTS: TripInputs = {
   ],
 };
 
-const fillTripInputDefaults = (inputs?: TripInputs | null): TripInputs => {
-  return normalizeTripInputsDraft(toTripInputsDraft(inputs ?? DEFAULT_TRIP_INPUTS));
-};
-
-const sanitizeOrigin = (
-  origin: string | null,
-  destination?: string | null
-): string | null => {
-  if (!origin || !destination) return origin;
-  const originNorm = origin.trim().toLowerCase();
-  const destinationNorm = destination.trim().toLowerCase();
-  if (originNorm && destinationNorm && originNorm === destinationNorm) {
-    return null;
-  }
-  return origin;
-};
-
-const resolveTripInputs = (
-  incoming?: TripInputs | null,
-  destinationHint?: string | null
-): TripInputs => {
-  const filled = fillTripInputDefaults(incoming);
-  filled.origin = sanitizeOrigin(filled.origin ?? null, destinationHint);
-  // Note: We no longer auto-add destinationHint to destinations
-  // This was causing removed destinations to reappear
-  return filled;
-};
-
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
 const HERO_VIDEO = '/hiking_video.mp4';
@@ -289,49 +261,21 @@ const summarizeSelections = (selection?: TileSelection): string | null => {
   return `Locked choices — ${parts.join(' · ')}`;
 };
 
-type TripInputSignature = {
-  destinations: string[];
-  origin: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  traveler_count: number | null;
-  budget: string | null;
-};
-
-const toTripInputSignature = (inputs?: TripInputs | null): TripInputSignature => ({
-  destinations: (inputs?.destinations ?? [])
-    .map((d) => d.trim())
-    .filter((d) => d.length > 0),
-  origin: inputs?.origin?.trim() || null,
-  start_date: inputs?.start_date ?? null,
-  end_date: inputs?.end_date ?? null,
-  traveler_count:
-    inputs?.traveler_count != null
-      ? Math.min(20, Math.max(1, Number(inputs.traveler_count)))
-      : null,
-  budget: inputs?.budget != null ? String(inputs.budget).trim() || null : null,
-});
-
-const tripInputSignaturesEqual = (
-  a: TripInputSignature | null,
-  b: TripInputSignature | null
-): boolean => {
-  if (!a && !b) return true;
-  if (!a || !b) return false;
-  const destinationsEqual =
-    a.destinations.length === b.destinations.length &&
-    a.destinations.every((d, i) => d === b.destinations[i]);
-  return (
-    destinationsEqual &&
-    a.origin === b.origin &&
-    a.start_date === b.start_date &&
-    a.end_date === b.end_date &&
-    a.traveler_count === b.traveler_count &&
-    a.budget === b.budget
-  );
-};
-
 export function NomadicLanding() {
+  // Document store - single source of truth for trip inputs
+  const documentStore = useDocumentStore();
+  const storeTripInputs = documentStore.document?.trip_inputs;
+
+  // Derive tripInputs from store (with defaults)
+  const tripInputs: TripInputs = useMemo(() => {
+    if (!storeTripInputs) return DEFAULT_TRIP_INPUTS;
+    return {
+      ...storeTripInputs,
+      // Include deprecated destination field for backward compat
+      destination: storeTripInputs.destinations?.[0] ?? null,
+    };
+  }, [storeTripInputs]);
+
   const [branches, setBranches] = useState<DocumentBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [tilesMap, setTilesMap] = useState<Record<string, Tile>>({});
@@ -345,14 +289,15 @@ export function NomadicLanding() {
     {}
   );
   const [tripContextId, setTripContextId] = useState<number | null>(null);
+
+  // Draft state for UI editing (kept local)
   const [tripInputsDraft, setTripInputsDraft] = useState<TripInputsDraft>(() =>
     toTripInputsDraft(DEFAULT_TRIP_INPUTS)
   );
-  const [tripInputs, setTripInputs] = useState<TripInputs>(() =>
-    normalizeTripInputsDraft(toTripInputsDraft(DEFAULT_TRIP_INPUTS))
-  );
-  const [lastRegeneratedTripInputs, setLastRegeneratedTripInputs] =
-    useState<TripInputSignature>(() => toTripInputSignature(DEFAULT_TRIP_INPUTS));
+
+  // Track last confirmed version to prevent auto-refresh loops
+  const lastConfirmedVersionRef = useRef<number>(0);
+
   const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
   const [selectedLocationBadge, setSelectedLocationBadge] = useState<'origin' | number | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -408,29 +353,44 @@ export function NomadicLanding() {
       .filter((tile): tile is Tile => tile !== undefined);
   }, [selectedBranch, tilesMap]);
 
-  const updateFromDraft = useCallback(
-    (draft: TripInputsDraft, destinationHint?: string | null) => {
-      const normalized = normalizeTripInputsDraft(draft);
-      const hint = destinationHint ?? selectedBranch?.destinations[0];
-      normalized.origin = sanitizeOrigin(
-        normalized.origin ?? null,
-        hint
-      );
-      setTripInputs(normalized);
+  // Sync tripInputsDraft when store trip_inputs changes
+  // Always sync destinations (they're modified by bot, not inline editing)
+  // Only skip other fields if user is actively editing them
+  useEffect(() => {
+    if (!storeTripInputs) return;
+
+    setTripInputsDraft((prev) => {
+      // Always update destinations from store (source of truth)
+      // This ensures bot-initiated destination removals are reflected in UI
+      const newDraft: TripInputsDraft = {
+        ...prev,
+        destinations: storeTripInputs.destinations ?? [],
+      };
+
+      // Only update other fields if not actively editing
+      if (editingField === null) {
+        newDraft.origin = storeTripInputs.origin ?? null;
+        newDraft.start_date = storeTripInputs.start_date ?? null;
+        newDraft.end_date = storeTripInputs.end_date ?? null;
+        newDraft.traveler_count = storeTripInputs.traveler_count != null
+          ? String(storeTripInputs.traveler_count)
+          : null;
+        newDraft.budget = storeTripInputs.budget != null
+          ? String(storeTripInputs.budget)
+          : null;
+      }
+
+      return newDraft;
+    });
+  }, [storeTripInputs, editingField]);
+
+  // Update draft and close editing (used when committing field edits)
+  const updateDraftAndCloseEditing = useCallback(
+    (draft: TripInputsDraft) => {
       setTripInputsDraft(draft);
       setEditingField(null);
     },
-    [selectedBranch?.destinations]
-  );
-
-  const applyIncomingTripInputs = useCallback(
-    (incoming?: TripInputs | null, destinationHint?: string | null): TripInputs => {
-      const filled = resolveTripInputs(incoming, destinationHint);
-      const draft = toTripInputsDraft(filled);
-      updateFromDraft(draft, destinationHint);
-      return filled;
-    },
-    [updateFromDraft]
+    []
   );
 
   const abortTilesFetch = useCallback(() => {
@@ -472,15 +432,13 @@ export function NomadicLanding() {
         return next;
       });
 
-      const sessionId = getOrCreateSessionId();
       const errorMessageOverride = overrides?.errorMessageOverride;
 
       try {
-        const res = await fetch(
-          `${API_BASE}/v1/document/tiles/${encodeURIComponent(branchId)}?session_id=${encodeURIComponent(sessionId || '')}`,
+        const res = await apiFetch(
+          `/v1/document/tiles/${encodeURIComponent(branchId)}`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             signal: controller.signal,
           }
         );
@@ -532,22 +490,21 @@ export function NomadicLanding() {
     async function hydrateSessionDocument() {
       try {
         setIsHydratingSnapshot(true);
-        const sessionId = getOrCreateSessionId();
-        if (!sessionId) return;
 
-        const res = await fetch(
-          `${API_BASE}/v1/document?session_id=${encodeURIComponent(sessionId)}`
-        );
-        if (!res.ok) return;
-
-        const data: PlanDocumentResponse = await res.json();
+        // Use the store to fetch and cache the document (single source of truth)
+        await documentStore.fetchDocument();
         if (cancelled) return;
 
-        const doc = data.document;
+        const doc = documentStore.document;
+        if (!doc) return;
+
         if (doc.trip_context_id) {
           setTripContextId(doc.trip_context_id);
           setHasTriggeredChat(true);
         }
+
+        // Update lastConfirmedVersion from the store
+        lastConfirmedVersionRef.current = documentStore.lastConfirmedVersion;
 
         if (!doc.branches.length) return;
 
@@ -611,38 +568,27 @@ export function NomadicLanding() {
     setBranchTileCounts({});
     setBranchTabNotes({});
     setBranchSelections({});
-    applyIncomingTripInputs(DEFAULT_TRIP_INPUTS, null);
-    setLastRegeneratedTripInputs(toTripInputSignature(DEFAULT_TRIP_INPUTS));
+    // Reset the draft to defaults (store will be reset separately)
+    setTripInputsDraft(toTripInputsDraft(DEFAULT_TRIP_INPUTS));
+    // Reset the store
+    documentStore.reset();
+    lastConfirmedVersionRef.current = 0;
     setHasTriggeredChat(false);
     setHasUserMessages(false);
     setChatKey((prev) => prev + 1);
-  }, [abortTilesFetch, applyIncomingTripInputs]);
+  }, [abortTilesFetch, documentStore]);
 
   const handleStartNewSession = useCallback(async () => {
-    const sessionId = getOrCreateSessionId();
     abortTilesFetch();
     setIsResettingSession(true);
     let didResetServerState = false;
 
     try {
-      if (sessionId) {
-        const res = await fetch(
-          `${API_BASE}/v1/session?session_id=${encodeURIComponent(sessionId)}`,
-          {
-            method: 'DELETE',
-          }
-        );
-
-        if (!res.ok) {
-          throw new Error(`Failed to reset session: ${res.status}`);
-        }
-
-        didResetServerState = true;
-      }
+      const res = await resetSession();
+      didResetServerState = res.ok;
     } catch (error) {
       console.error('Failed to reset planning session', error);
     } finally {
-      clearSessionId();
       handleClearContext();
       setIsResettingSession(false);
       // Scroll to chat panel after reset
@@ -697,24 +643,29 @@ export function NomadicLanding() {
       }
 
       // For numeric fields, validate the value
+      let parsedValue: string | number = trimmedValue;
       if (field === 'traveler_count') {
         const count = parseInt(trimmedValue, 10);
         if (Number.isNaN(count) || count <= 0) {
-          setTripInputsDraft((prev) => {
-            if (!prev) return prev;
-            return { ...prev, [field]: prevValue ?? '' };
-          });
+          setTripInputsDraft((prev) => ({
+            ...toTripInputsDraft(tripInputs),
+            ...prev,
+            traveler_count: prevValue != null ? String(prevValue) : '',
+          }));
           return;
         }
+        parsedValue = count;
       } else if (field === 'budget') {
         const budget = parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
         if (Number.isNaN(budget) || budget <= 0) {
-          setTripInputsDraft((prev) => {
-            if (!prev) return prev;
-            return { ...prev, [field]: prevValue ?? '' };
-          });
+          setTripInputsDraft((prev) => ({
+            ...toTripInputsDraft(tripInputs),
+            ...prev,
+            budget: prevValue != null ? String(prevValue) : '',
+          }));
           return;
         }
+        parsedValue = budget;
       }
 
       // Don't commit if value hasn't changed
@@ -722,25 +673,24 @@ export function NomadicLanding() {
         return;
       }
 
+      // Update draft locally
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
-        const next = { ...base, [field]: trimmedValue };
-        updateFromDraft(next, selectedBranch?.destinations[0]);
-        return next;
+        return { ...base, [field]: trimmedValue };
       });
 
-      // Send chat message for field changes
+      // Send chat message for field changes (this will update the store via backend response)
       let message: string | null = null;
 
       if (field === 'origin') {
         message = `I'm traveling from ${trimmedValue}`;
       } else if (field === 'traveler_count') {
-        const count = parseInt(trimmedValue, 10);
+        const count = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue, 10);
         if (!Number.isNaN(count)) {
           message = count === 1 ? "I'm traveling solo" : `We are ${count} travelers`;
         }
       } else if (field === 'budget') {
-        const budget = parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
+        const budget = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
         if (!Number.isNaN(budget) && budget > 0) {
           message = `My budget is $${budget.toLocaleString()}`;
         }
@@ -750,7 +700,7 @@ export function NomadicLanding() {
         chatPanelRef.current?.sendMessage(message);
       }
     },
-    [tripInputs, selectedBranch?.destinations, updateFromDraft]
+    [tripInputs]
   );
 
   const handleDateRangeChange = useCallback(
@@ -762,25 +712,22 @@ export function NomadicLanding() {
       const prevStartIso = tripInputs.start_date;
       const prevEndIso = tripInputs.end_date;
 
+      // Update draft locally
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
-        const next = {
+        return {
           ...base,
           start_date: startIso,
           end_date: endIso,
         };
-        // Commit the changes as the user selects dates
-        if (startIso || endIso) {
-          updateFromDraft(next, selectedBranch?.destinations[0]);
-        }
-        // Only close calendar when both dates are selected
-        if (startIso && endIso) {
-          setCalendarOpen(false);
-        }
-        return next;
       });
 
-      // Send a chat message when dates are updated
+      // Only close calendar when both dates are selected
+      if (startIso && endIso) {
+        setCalendarOpen(false);
+      }
+
+      // Send a chat message when dates are updated (this will update the store via backend response)
       const startChanged = startIso !== prevStartIso;
       const endChanged = endIso !== prevEndIso;
 
@@ -802,32 +749,44 @@ export function NomadicLanding() {
         chatPanelRef.current?.sendMessage(message);
       }
     },
-    [tripInputs, selectedBranch?.destinations, updateFromDraft]
+    [tripInputs]
   );
 
   const handleRemoveOrigin = useCallback(() => {
-    const currentOrigin = tripInputs.origin;
-    if (!currentOrigin) return;
-
-    // Send chat message to backend - let the server response update the state
-    const message = `Remove origin ${currentOrigin}`;
-    chatPanelRef.current?.sendMessage(message);
+    // Origin cannot be removed once set - do nothing
+    // Just deselect the badge if it was selected
     setSelectedLocationBadge(null);
-  }, [tripInputs.origin]);
+  }, []);
 
   const handleRemoveDestination = useCallback(
-    (index: number) => {
+    async (index: number) => {
       const currentDestinations = tripInputs.destinations ?? [];
       if (index < 0 || index >= currentDestinations.length) return;
 
+      // Get the destination being removed for the chat message
       const removedDestination = currentDestinations[index];
 
-      // Send chat message to backend - let the server response update the state
-      const message = `Remove destination ${removedDestination}`;
-      chatPanelRef.current?.sendMessage(message);
+      // Compute new destinations array
+      const newDestinations = currentDestinations.filter((_, i) => i !== index);
+
+      // Optimistically update via documentStore.commitTripInputs
+      // This updates the UI immediately and syncs to backend in background
+      const success = await documentStore.commitTripInputs({ destinations: newDestinations });
+
+      if (!success) {
+        // Show error toast on failure (store already rolled back)
+        setToastMessage('Failed to remove destination. Please try again.');
+        return;
+      }
+
+      // Send a chat message to record the removal so the LLM knows about it
+      if (removedDestination) {
+        chatPanelRef.current?.sendMessage(`Remove ${removedDestination}`);
+      }
+
       setSelectedLocationBadge(null);
     },
-    [tripInputs.destinations]
+    [tripInputs.destinations, documentStore]
   );
 
   const handleDestinationsChange = useCallback(
@@ -846,17 +805,17 @@ export function NomadicLanding() {
         return;
       }
 
+      // Update draft locally
       setTripInputsDraft((prev) => {
         const base = prev ?? toTripInputsDraft(tripInputs);
-        const next = {
+        return {
           ...base,
           destinations,
         };
-        updateFromDraft(next, selectedBranch?.destinations[0]);
-        return next;
       });
 
       // Send chat message if destinations changed and sendChatMessage is true
+      // (this will update the store via backend response)
       if (sendChatMessage && destinations.length > 0) {
         const destinationsChanged =
           destinations.length !== prevDestinations.length ||
@@ -871,7 +830,7 @@ export function NomadicLanding() {
         }
       }
     },
-    [tripInputs, selectedBranch?.destinations, updateFromDraft]
+    [tripInputs]
   );
 
   useEffect(
@@ -913,17 +872,19 @@ export function NomadicLanding() {
       primaryBranchId: string | null;
       tripInputs?: TripInputs | null;
       readyToGenerate?: boolean;
+      // Pass the full response so we can update the store
+      response?: PlanDocumentResponse;
     }) => {
       const primaryBranch =
         result.branches.find((b) => b.id === result.primaryBranchId) ??
         result.branches[0];
-      const mergedTripInputs = result.tripInputs ? { ...result.tripInputs } : undefined;
-      if (mergedTripInputs?.budget != null) {
-        mergedTripInputs.budget = Number(mergedTripInputs.budget);
+
+      // If we have a full response, update the store (single source of truth)
+      if (result.response) {
+        documentStore.setFromPlanResponse(result.response);
+        lastConfirmedVersionRef.current = result.response.version;
       }
-      if (primaryBranch && mergedTripInputs && mergedTripInputs.budget == null) {
-        mergedTripInputs.budget = primaryBranch.budget ?? null;
-      }
+
       setTripContextId(result.tripContextId);
       setBranches(result.branches);
       // Update readyToGenerate state - reset to false if branches exist
@@ -967,139 +928,15 @@ export function NomadicLanding() {
         });
         return next;
       });
-      // Use tripInputs.destinations as fallback when no branches exist yet (during collection phase)
-      const destinationHint =
-        result.branches[0]?.destinations[0] ?? mergedTripInputs?.destinations?.[0] ?? null;
-      const resolvedTripInputs = applyIncomingTripInputs(
-        mergedTripInputs,
-        destinationHint
-      );
-      setLastRegeneratedTripInputs(toTripInputSignature(resolvedTripInputs));
       setSelectedBranchId(result.primaryBranchId);
       setHasTriggeredChat(true);
     },
-    [applyIncomingTripInputs]
+    [documentStore]
   );
 
-  // Auto-refresh branches and tiles whenever the core trip inputs change.
-  useEffect(() => {
-    const signature = toTripInputSignature(tripInputs);
-    const destinationHint = selectedBranch?.destinations[0] ?? signature.destinations[0];
-    const hasPlanContext =
-      hasTriggeredChat || branches.length > 0 || tripContextId != null;
-    const shouldRefresh =
-      hasPlanContext &&
-      destinationHint &&
-      !tripInputSignaturesEqual(signature, lastRegeneratedTripInputs) &&
-      !isHydratingSnapshot &&
-      !isResettingSession;
-
-    if (!shouldRefresh) return undefined;
-
-    if (tripInputsPlanControllerRef.current) {
-      tripInputsPlanControllerRef.current.abort();
-      tripInputsPlanControllerRef.current = null;
-    }
-
-    const controller = new AbortController();
-    tripInputsPlanControllerRef.current = controller;
-    abortTilesFetch();
-
-    const normalizedInputs = resolveTripInputs(tripInputs, destinationHint);
-    const detailParts = [
-      normalizedInputs.origin ? `origin ${normalizedInputs.origin}` : null,
-      normalizedInputs.start_date ? `start ${normalizedInputs.start_date}` : null,
-      normalizedInputs.end_date ? `end ${normalizedInputs.end_date}` : null,
-      normalizedInputs.traveler_count != null
-        ? `${normalizedInputs.traveler_count} traveler${normalizedInputs.traveler_count === 1 ? '' : 's'}`
-        : null,
-      normalizedInputs.budget
-        ? `budget ${formatBudgetValue(normalizedInputs.budget)}`
-        : null,
-    ].filter(Boolean);
-
-    const refreshMessage =
-      detailParts.length > 0
-        ? `Auto-refresh (fields changed): ${detailParts.join(', ')}. Regenerate branches and booking tiles.`
-        : 'Auto-refresh triggered by updated trip details. Regenerate branches and booking tiles.';
-
-    const sessionId = getOrCreateSessionId();
-
-    const regenerate = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/v1/plan`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: refreshMessage,
-            session_id: sessionId || undefined,
-            trip_context_id: tripContextId ?? undefined,
-            trip_inputs: normalizedInputs,
-          }),
-          signal: controller.signal,
-        });
-
-        if (!res.ok) {
-          console.error('Failed to regenerate plan after trip inputs change', res.status);
-          setToastMessage(
-            'Unable to refresh suggestions after updating your trip details. Try again.'
-          );
-          return;
-        }
-
-        const data: PlanDocumentResponse = await res.json();
-        if (controller.signal.aborted) return;
-
-        const doc = data.document;
-        const primaryBranch = doc.branches.find((b) => b.is_primary);
-        handlePlanResult({
-          tripContextId: doc.trip_context_id ?? null,
-          branches: doc.branches,
-          tiles: doc.tiles,
-          primaryBranchId:
-            primaryBranch?.id ?? doc.branches[0]?.id ?? selectedBranchId ?? null,
-          tripInputs: doc.trip_inputs
-            ? {
-                destination: doc.trip_inputs.destination,
-                destinations: doc.trip_inputs.destinations ?? [],
-                origin: doc.trip_inputs.origin,
-                start_date: doc.trip_inputs.start_date,
-                end_date: doc.trip_inputs.end_date,
-                traveler_count: doc.trip_inputs.traveler_count,
-                budget: doc.trip_inputs.budget,
-                missing_fields: doc.trip_inputs.missing_fields,
-              }
-            : null,
-        });
-      } catch (error) {
-        if ((error as DOMException).name === 'AbortError') return;
-        console.error('Failed to regenerate plan after trip inputs change', error);
-        setToastMessage(
-          'Unable to refresh suggestions after updating your trip details. Try again.'
-        );
-      } finally {
-        if (tripInputsPlanControllerRef.current === controller) {
-          tripInputsPlanControllerRef.current = null;
-        }
-      }
-    };
-
-    regenerate();
-
-    return () => controller.abort();
-  }, [
-    abortTilesFetch,
-    branches.length,
-    handlePlanResult,
-    hasTriggeredChat,
-    isHydratingSnapshot,
-    isResettingSession,
-    lastRegeneratedTripInputs,
-    selectedBranch?.destinations,
-    selectedBranchId,
-    tripContextId,
-    tripInputs,
-  ]);
+  // NOTE: Auto-refresh removed - all trip input changes now flow through chat messages
+  // which trigger /v1/plan and update the store via setFromPlanResponse.
+  // The store's lastConfirmedVersion tracks what the backend has confirmed.
 
   const buildBranchNote = useCallback(
     (
@@ -1312,10 +1149,6 @@ export function NomadicLanding() {
     if (field === 'traveler_count') return tripInputs.traveler_count != null;
     if (field === 'budget') return tripInputs.budget != null;
     if (field === 'destinations') return (tripInputs.destinations ?? []).length > 0;
-    if (field === 'destination')
-      return (
-        Boolean(tripInputs.destination) || (tripInputs.destinations ?? []).length > 0
-      );
     return Boolean(tripInputs[field as keyof TripInputs]);
   };
 

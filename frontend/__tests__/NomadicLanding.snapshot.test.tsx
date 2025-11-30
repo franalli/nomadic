@@ -69,7 +69,8 @@ const DOCUMENT_RESPONSE = {
 describe('NomadicLanding document hydration', () => {
   beforeEach(() => {
     process.env.NEXT_PUBLIC_API_URL = 'http://test.local';
-    window.localStorage.setItem('session_id', 'session-abc');
+    // Session is now managed via HttpOnly cookies, not localStorage
+    // The browser handles cookies automatically with credentials: 'include'
   });
 
   // TODO: This test needs proper mocking of all component side effects
@@ -92,9 +93,10 @@ describe('NomadicLanding document hydration', () => {
       expect(fetchMock).toHaveBeenCalled();
     });
 
+    // Session comes from cookies now, not query params
     const documentCall = fetchMock.mock.calls.find(
       (call: unknown[]) =>
-        typeof call[0] === 'string' && call[0].includes('/v1/document?session_id=')
+        typeof call[0] === 'string' && call[0].includes('/v1/document')
     );
     expect(documentCall).toBeDefined();
 

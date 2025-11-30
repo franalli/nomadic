@@ -13,8 +13,7 @@ import {
 } from 'react';
 import Markdown from 'react-markdown';
 
-import { API_BASE } from '@/lib/api';
-import { getOrCreateSessionId } from '@/lib/session';
+import { apiFetch } from '@/lib/api';
 import type { PlanRequest } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
 import type {
@@ -24,7 +23,6 @@ import type {
 } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
-const CHAT_HISTORY_KEY = 'chat_history';
 const STREAM_CHUNK_SIZE = 1; // characters per chunk for smooth typing
 const STREAM_DELAY_MS = 24; // delay between chunks in ms (~55 chars/sec, natural typing speed)
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
@@ -43,33 +41,6 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
   },
 ];
 
-const getChatStorageKey = (sessionId: string) => `${CHAT_HISTORY_KEY}:${sessionId}`;
-
-const parseStoredMessages = (raw: string | null): ChatMessage[] | null => {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    const isValid = parsed.every(
-      (msg) =>
-        msg &&
-        typeof msg.id === 'string' &&
-        (msg.role === 'user' || msg.role === 'assistant') &&
-        typeof msg.content === 'string'
-    );
-    return isValid ? (parsed as ChatMessage[]) : null;
-  } catch (error) {
-    console.error('Failed to parse stored chat history', error);
-    return null;
-  }
-};
-
-const loadStoredMessages = (sessionId: string): ChatMessage[] | null => {
-  if (typeof window === 'undefined' || !sessionId) return null;
-  const raw = window.localStorage.getItem(getChatStorageKey(sessionId));
-  return parseStoredMessages(raw);
-};
-
 interface ChatPanelProps {
   selectedBranchId: string | null;
   onChatTriggered?: () => void;
@@ -81,6 +52,8 @@ interface ChatPanelProps {
     primaryBranchId: string | null;
     tripInputs?: DocumentTripInputs | null;
     readyToGenerate?: boolean;
+    // Full response for store update
+    response?: PlanDocumentResponse;
   }) => void;
   tripDetails?: {
     content: ReactNode;
@@ -115,10 +88,10 @@ export interface ChatPanelHandle {
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(props, ref) {
     const { onHasUserMessage } = props;
-    const [sessionId, setSessionId] = useState<string | null>(null);
     const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_MESSAGES);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [detailsCollapsed, setDetailsCollapsed] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -148,33 +121,32 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       scrollToBottom();
     }, [messages, scrollToBottom]);
 
+    // Load chat history from backend API on mount
     useEffect(() => {
-      if (!sessionId || typeof window === 'undefined') return;
-      const stored = loadStoredMessages(sessionId);
-      if (stored) {
-        setMessages(stored);
-      }
-    }, [sessionId]);
-
-    useEffect(() => {
-      if (!sessionId || typeof window === 'undefined') return;
-      try {
-        window.localStorage.setItem(
-          getChatStorageKey(sessionId),
-          JSON.stringify(messages)
-        );
-      } catch (error) {
-        console.error('Failed to persist chat history', error);
-      }
-    }, [messages, sessionId]);
-
-    useEffect(() => {
-      const id = getOrCreateSessionId();
-      setSessionId(id);
-      const stored = loadStoredMessages(id);
-      if (stored) {
-        setMessages(stored);
-      }
+      const loadChatHistory = async () => {
+        try {
+          const res = await apiFetch('/v1/chat');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.messages && data.messages.length > 0) {
+              const loadedMessages: ChatMessage[] = data.messages.map(
+                (m: { id: string; role: string; content: string }) => ({
+                  id: m.id,
+                  role: m.role as 'user' | 'assistant',
+                  content: m.content,
+                })
+              );
+              setMessages(loadedMessages);
+            }
+          }
+        } catch (error) {
+          console.error('Failed to load chat history', error);
+          // Keep default messages on error
+        } finally {
+          setIsLoadingHistory(false);
+        }
+      };
+      loadChatHistory();
     }, []);
 
     useEffect(() => {
@@ -201,17 +173,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setIsLoading(true);
 
         try {
-          const activeSessionId = sessionId ?? getOrCreateSessionId();
-          if (!sessionId) {
-            setSessionId(activeSessionId);
-          }
-
           const body: PlanRequest = {
-            session_id: activeSessionId,
             message: trimmed,
           };
 
-          const res = await fetch(`${API_BASE}/v1/plan`, {
+          const res = await apiFetch('/v1/plan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -235,6 +201,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               primaryBranchId: primaryBranch?.id ?? props.selectedBranchId ?? null,
               tripInputs: doc.trip_inputs ?? null,
               readyToGenerate: doc.ready_to_generate ?? false,
+              // Pass full response for store update
+              response: payload,
             });
           };
 
@@ -251,15 +219,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 ...filtered,
                 { id: `post_${Date.now()}`, role: 'assistant' as const, content: POST_GENERATE_MESSAGE },
               ];
-              // Persist immediately to survive layout remount
-              try {
-                window.localStorage.setItem(
-                  getChatStorageKey(activeSessionId),
-                  JSON.stringify(newMessages)
-                );
-              } catch (e) {
-                console.error('Failed to persist chat history', e);
-              }
               return newMessages;
             });
             return;
@@ -352,7 +311,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           setIsLoading(false);
         }
       },
-      [isLoading, props, sessionId]
+      [isLoading, props]
     );
 
     useImperativeHandle(
@@ -415,33 +374,39 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           ref={scrollContainerRef}
           className="no-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto text-sm"
         >
-          {visibleMessages.map((m) => (
-            <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
-              <div
-                className={
-                  m.role === 'user'
-                    ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm text-left'
-                    : `border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2 transition-opacity ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
-                }
-              >
-                {m.role === 'assistant' ? (
-                  <Markdown
-                    components={{
-                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                      strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                      ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
-                      ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
-                      li: ({ children }) => <li className="mb-1">{children}</li>,
-                    }}
-                  >
-                    {m.content}
-                  </Markdown>
-                ) : (
-                  m.content
-                )}
-              </div>
+          {isLoadingHistory ? (
+            <div className="flex items-center justify-center py-4">
+              <Compass className="text-muted-foreground compass-spin h-5 w-5" />
             </div>
-          ))}
+          ) : (
+            visibleMessages.map((m) => (
+              <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
+                <div
+                  className={
+                    m.role === 'user'
+                      ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm text-left'
+                      : `border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2 transition-opacity ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
+                  }
+                >
+                  {m.role === 'assistant' ? (
+                    <Markdown
+                      components={{
+                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                        ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
+                        li: ({ children }) => <li className="mb-1">{children}</li>,
+                      }}
+                    >
+                      {m.content}
+                    </Markdown>
+                  ) : (
+                    m.content
+                  )}
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         <form onSubmit={handleSubmit} className="relative">

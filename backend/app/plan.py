@@ -325,13 +325,12 @@ def _latest_trip_state_from_history(
     """
     Extract trip_inputs from chat message metadata as a migration fallback.
 
-    This function provides backward compatibility for sessions that existed before
-    the PlanDocument was introduced as the single source of truth. It scans through
-    assistant messages in chronological order and merges any trip_inputs stored
-    in their metadata.
+    DEPRECATED: This function exists only for backward compatibility with sessions
+    created before PlanDocument became the single source of truth. It will be
+    removed once all old sessions have migrated or expired.
 
-    The function is only used as a fallback when doc_trip_inputs is empty, allowing
-    older sessions to continue working without data loss.
+    The function scans through assistant messages in chronological order and merges
+    any trip_inputs stored in their metadata.
 
     Args:
         history_rows: List of ChatMessage objects from the database, ordered
@@ -344,7 +343,7 @@ def _latest_trip_state_from_history(
     Note:
         - Only assistant messages are considered (user messages don't have trip_inputs)
         - Later messages overwrite earlier values (allow_overwrite=True)
-        - This is a migration path and will eventually be deprecated
+        - Consider removing this once migration period is complete
     """
 
     merged_trip_inputs: Optional[dict] = None
@@ -936,6 +935,8 @@ def _clean_trip_inputs(
             if field == "destinations":
                 # Handle destinations as an array
                 # With allow_overwrite=True, the LLM can replace destinations entirely
+                # Check if destinations key is explicitly present in source (even if empty)
+                destinations_key_present = "destinations" in source
                 source_destinations = source.get("destinations", [])
                 if not isinstance(source_destinations, list):
                     source_destinations = [source_destinations] if source_destinations else []
@@ -961,14 +962,18 @@ def _clean_trip_inputs(
                         merged[field] = current_value
                     else:
                         merged[field] = source_destinations
+                elif can_overwrite and destinations_key_present:
+                    # Explicit empty list when allow_overwrite - delete all destinations
+                    merged[field] = []
                 elif current_value is sentinel:
                     merged[field] = []
             elif field in ("start_date", "end_date"):
                 normalizer = _normalize_date
                 value = normalizer(source.get(field))
                 current_value = merged[field]
+                can_overwrite = allow_overwrite or (field in overwrite_set)
+                # Non-destination fields persist once set - only update with non-null values
                 if value is not None:
-                    can_overwrite = allow_overwrite or (field in overwrite_set)
                     if current_value in (sentinel, None) or can_overwrite:
                         merged[field] = value
                 elif current_value is sentinel:
@@ -977,8 +982,9 @@ def _clean_trip_inputs(
                 normalizer = _normalize_int
                 value = normalizer(source.get(field))
                 current_value = merged[field]
+                can_overwrite = allow_overwrite or (field in overwrite_set)
+                # Non-destination fields persist once set - only update with non-null values
                 if value is not None:
-                    can_overwrite = allow_overwrite or (field in overwrite_set)
                     if current_value in (sentinel, None) or can_overwrite:
                         merged[field] = value
                 elif current_value is sentinel:
@@ -987,18 +993,21 @@ def _clean_trip_inputs(
                 normalizer = _normalize_int
                 value = normalizer(source.get(field))
                 current_value = merged[field]
+                can_overwrite = allow_overwrite or (field in overwrite_set)
+                # Non-destination fields persist once set - only update with non-null values
                 if value is not None:
-                    can_overwrite = allow_overwrite or (field in overwrite_set)
                     if current_value in (sentinel, None) or can_overwrite:
                         merged[field] = value
                 elif current_value is sentinel:
                     merged[field] = None
             else:
+                # Origin and other string fields - persist once set
                 normalizer = _normalize_str
                 value = normalizer(source.get(field))
                 current_value = merged[field]
+                can_overwrite = allow_overwrite or (field in overwrite_set)
+                # Non-destination fields persist once set - only update with non-null values
                 if value is not None:
-                    can_overwrite = allow_overwrite or (field in overwrite_set)
                     if current_value in (sentinel, None) or can_overwrite:
                         merged[field] = value
                 elif current_value is sentinel:
@@ -1260,7 +1269,7 @@ def _call_openai_for_plan(
     # Get trip state from conversation history (fallback for older sessions)
     prior_trip_inputs_meta = _latest_trip_state_from_history(history_rows)
 
-    # Read trip inputs from document (source of truth)
+    # Read trip inputs from document (THE ONLY source of truth)
     doc_trip_inputs: dict = {}
     if document_data and document_data.trip_inputs:
         ti = document_data.trip_inputs
@@ -1273,21 +1282,9 @@ def _call_openai_for_plan(
             "budget": ti.budget,
         }
 
-    # Read trip inputs from request (takes precedence - allows frontend UI state to override)
-    req_trip_inputs: dict = {}
-    if req.trip_inputs:
-        req_trip_inputs = {
-            "destinations": req.trip_inputs.destinations,
-            "origin": req.trip_inputs.origin,
-            "start_date": req.trip_inputs.start_date,
-            "end_date": req.trip_inputs.end_date,
-            "traveler_count": req.trip_inputs.traveler_count,
-            "budget": req.trip_inputs.budget,
-        }
-
-    # Merge: request first (UI state), then document, then chat history (fallback)
+    # Document is the only source of truth for trip inputs.
+    # Chat history metadata is only used as fallback for migration from older sessions.
     current_trip_inputs = _clean_trip_inputs(
-        req_trip_inputs,
         doc_trip_inputs,
         prior_trip_inputs_meta,
     )
@@ -1337,9 +1334,11 @@ EXTRACTION RULES:
 - Travelers: "solo"=1, "couple"=2, "family of 4"=4
 - Budget: "$1000" or "1000 dollars" → 1000
 - Locations: Auto-correct typos (Florene→Florence, Pairs→Paris, Also→Oslo)
-- Destinations: Merge with existing list unless user explicitly replaces
-- REMOVAL: "Remove origin X" → set origin to null
-- REMOVAL: "Remove destination X" → remove X from destinations list
+- Destinations: CURRENT STATE is the source of truth. Only add NEW destinations
+  from current message. Do NOT re-add destinations from chat history if not in CURRENT STATE.
+- REMOVAL: "Remove X" or "Remove destination X" → IMMEDIATELY remove X from destinations list.
+  Do NOT ask for confirmation. Just remove it and acknowledge briefly.
+- IGNORE removal requests for origin, dates, travelers, or budget - these persist once set
 - origin = where user travels FROM. destinations = where they travel TO
 
 BEHAVIOR:
@@ -1730,7 +1729,7 @@ Branch format (when generating):
 # =============================================================================
 
 
-def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
+def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentResponse:
     """
     Main planning flow that orchestrates the entire trip planning conversation.
 
@@ -1755,7 +1754,8 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
 
     Args:
         db: SQLAlchemy database session.
-        req: PlanRequest containing session_id and user message.
+        session_id: Session ID from cookie (injected by middleware).
+        req: PlanRequest containing user message.
 
     Returns:
         PlanDocumentResponse: The complete response including:
@@ -1772,7 +1772,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
     # Use lock_for_update=True to prevent deadlocks with concurrent session deletion
     db_session = get_or_create_session(
         db,
-        session_token=req.session_id,
+        session_token=session_id,
         user_external_id=None,  # User ID comes from auth, not request
         lock_for_update=True,
     )
@@ -1787,6 +1787,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
     if existing_doc:
         existing_doc_data = get_document_data(existing_doc)
         parent_trip_context_id = existing_doc_data.trip_context_id
+    initial_destinations = existing_doc_data.trip_inputs.destinations if existing_doc_data else []
 
     parent_ctx = _resolve_parent_trip_context(
         db,
@@ -1837,16 +1838,43 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
             if planner_output.trip_inputs is not None
             else None
         )
-        trip_inputs_payload = trip_inputs_model.model_dump() if trip_inputs_model else None
         assistant_chat.content = planner_output.assistant_message
         assistant_meta: dict[str, Any] = {}
-        if trip_inputs_payload:
-            # Store trip_inputs in message metadata for migration compatibility
-            assistant_meta["trip_inputs"] = trip_inputs_payload
-        assistant_chat.meta = assistant_meta or None
 
         # 6. Get or create the PlanDocument
         plan_doc = get_or_create_document(db, session=db_session, updated_by="planner")
+
+        # Refresh the document to pick up any user-initiated patches that happened
+        # while the LLM call was in progress (e.g., removing a destination)
+        try:
+            db.refresh(plan_doc)
+        except Exception:
+            # If refresh fails (e.g., brand new document), proceed with current state
+            pass
+
+        current_doc_data = get_document_data(plan_doc)
+        current_destinations = current_doc_data.trip_inputs.destinations or []
+        removed_destinations = {d for d in initial_destinations if d not in current_destinations}
+
+        # Use LLM destinations, but filter out any the user removed during the LLM call
+        # The LLM is instructed to use CURRENT STATE as source of truth, so its output
+        # should already respect user removals made before the call. This filter catches
+        # removals made during the LLM call (race condition protection).
+        if trip_inputs_model:
+            llm_destinations = trip_inputs_model.destinations or []
+            # Filter out destinations the user removed during the LLM call
+            final_destinations = [d for d in llm_destinations if d not in removed_destinations]
+
+            trip_inputs_payload = trip_inputs_model.model_dump()
+            trip_inputs_payload["destinations"] = final_destinations
+            trip_inputs_payload["missing_fields"] = _ordered_missing_fields_from_inputs(
+                trip_inputs_payload
+            )
+            trip_inputs_model = TripInputs(**trip_inputs_payload)
+            # Store merged trip_inputs in message metadata for migration compatibility
+            assistant_meta["trip_inputs"] = trip_inputs_payload
+
+        assistant_chat.meta = assistant_meta or None
 
         # 7. Build document branches and tiles from LLM output
         branch_specs = planner_output.branches or []
@@ -1858,11 +1886,18 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
             # Generate a unique branch ID
             branch_id = f"branch_{trip_ctx.id}_{idx}"
 
+            raw_destinations = spec.get("destinations", []) or []
+            # Filter out destinations the user removed during the LLM call
+            filtered_destinations = [d for d in raw_destinations if d not in removed_destinations]
+            # For primary branch (idx==0), use trip_inputs destinations if available
+            if idx == 0 and trip_inputs_model and trip_inputs_model.destinations:
+                filtered_destinations = trip_inputs_model.destinations
+
             doc_branch = DocumentBranch(
                 id=branch_id,
                 label=str(spec.get("label", "")),
                 description=str(spec.get("description", "")),
-                destinations=spec.get("destinations", []),
+                destinations=filtered_destinations,
                 origin=_normalize_str(spec.get("origin")),
                 start_date=_normalize_str(spec.get("start_date")),
                 end_date=_normalize_str(spec.get("end_date")),
@@ -1886,7 +1921,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
 
             tiles_request = TilesSearchRequest(
                 user_id=None,  # User ID comes from auth, not request
-                session_id=req.session_id,
+                session_id=session_id,
                 trip_context_id=trip_ctx.id,
                 destination=primary_dest,
                 destination_hint=primary_dest,
@@ -1959,7 +1994,7 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         raise
 
 
-def plan_trip(db: Session, req: PlanRequest) -> PlanDocumentResponse:
+def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentResponse:
     """
     Public API entry point for trip planning.
 
@@ -1969,7 +2004,8 @@ def plan_trip(db: Session, req: PlanRequest) -> PlanDocumentResponse:
 
     Args:
         db: SQLAlchemy database session.
-        req: PlanRequest containing session_id and user message.
+        session_id: Session ID from cookie (injected by middleware).
+        req: PlanRequest containing user message.
 
     Returns:
         PlanDocumentResponse: Complete planning response with document state.
@@ -1977,4 +2013,4 @@ def plan_trip(db: Session, req: PlanRequest) -> PlanDocumentResponse:
     See Also:
         plan_trip_flow: The actual implementation with full documentation.
     """
-    return plan_trip_flow(db, req)
+    return plan_trip_flow(db, session_id, req)

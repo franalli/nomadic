@@ -2,8 +2,8 @@ import type { PlanDocumentResponse } from '@/types/document';
 
 // frontend/types/api.ts
 // PlanRequest is simplified - all state flows through the document
+// session_id is now sent via HttpOnly cookie, not in the request body
 export interface PlanRequest {
-  session_id: string; // Required - identifies the planning session
   message: string; // The user's chat message
 }
 

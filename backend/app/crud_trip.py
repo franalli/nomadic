@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import uuid
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app import db_models as models
+
+
+def _generate_session_token() -> str:
+    """Generate a new cryptographically secure session token."""
+    return str(uuid.uuid4())
 
 
 def get_session_for_update(
@@ -36,6 +42,9 @@ def get_or_create_session(
 ) -> models.Session:
     """Get or create a session by token.
 
+    If an existing session is found but has expired, it will be deleted and
+    a new session will be created with the same token.
+
     Args:
         db: Database session.
         session_token: The session token to look up or create.
@@ -43,6 +52,9 @@ def get_or_create_session(
         lock_for_update: If True, acquire a row-level lock on the session.
             Use this when performing operations that could conflict with
             session deletion (e.g., updating plan documents).
+
+    Returns:
+        The session (existing with refreshed activity, or newly created).
     """
     if not session_token:
         raise ValueError("session_token is required")
@@ -52,9 +64,21 @@ def get_or_create_session(
         query = query.with_for_update()
 
     db_session = query.first()
-    if db_session:
-        return db_session
 
+    if db_session:
+        # Check if session has expired
+        if db_session.is_expired():
+            # Delete expired session and create a new one
+            db.delete(db_session)
+            db.flush()
+            db_session = None
+        else:
+            # Refresh activity timestamp
+            db_session.refresh_activity()
+            db.flush()
+            return db_session
+
+    # Create new session
     user: Optional[models.User] = None
     if user_external_id:
         user = db.query(models.User).filter(models.User.external_id == user_external_id).first()
@@ -138,3 +162,52 @@ def fetch_chat_history(
         .all()
     )
     return list(reversed(messages))
+
+
+def rotate_session(
+    db: Session,
+    *,
+    old_session: models.Session,
+) -> models.Session:
+    """
+    Rotate a session by creating a new session token while keeping all data.
+
+    This is a security measure to prevent session fixation attacks. It should
+    be called after sensitive operations like first trip generation.
+
+    The old session_token is replaced with a new one, but the session ID and
+    all associated data (chat messages, trip contexts, documents) remain.
+
+    Args:
+        db: Database session.
+        old_session: The current session to rotate.
+
+    Returns:
+        The same session object with a new session_token.
+    """
+    new_token = _generate_session_token()
+    old_session.session_token = new_token
+    old_session.refresh_activity()
+    db.flush()
+    return old_session
+
+
+def should_rotate_session(
+    db: Session,
+    *,
+    session: models.Session,
+) -> bool:
+    """
+    Determine if a session should be rotated.
+
+    A session should be rotated after the first plan generation (when it
+    transitions from an anonymous browsing session to one with trip data).
+
+    We detect this by checking if this is the first TripContext for the session.
+    """
+    trip_context_count = (
+        db.query(models.TripContext).filter(models.TripContext.session_id == session.id).count()
+    )
+    # Rotate after the first trip context is created (count == 1)
+    # Don't rotate on subsequent operations
+    return trip_context_count == 1
