@@ -105,9 +105,15 @@ def reset_session(
 ):
     """
     Reset/delete a planning session and all associated data.
+
+    Uses row-level locking to prevent deadlocks with concurrent plan operations.
     """
+    # Lock the session row first to prevent deadlocks with concurrent operations
     session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
+        db.query(db_models.Session)
+        .filter(db_models.Session.session_token == session_id)
+        .with_for_update()
+        .first()
     )
     if not session:
         return Response(status_code=204)

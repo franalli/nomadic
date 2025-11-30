@@ -934,7 +934,8 @@ def _clean_trip_inputs(
 
         for field in _TRIP_INPUT_FIELDS:
             if field == "destinations":
-                # Handle destinations as an array - ALWAYS merge, never replace
+                # Handle destinations as an array
+                # With allow_overwrite=True, the LLM can replace destinations entirely
                 source_destinations = source.get("destinations", [])
                 if not isinstance(source_destinations, list):
                     source_destinations = [source_destinations] if source_destinations else []
@@ -942,9 +943,13 @@ def _clean_trip_inputs(
                     _normalize_str(d) for d in source_destinations if d and _normalize_str(d)
                 ]
                 current_value = merged[field]
+                can_overwrite = allow_overwrite or ("destinations" in overwrite_set)
                 if source_destinations:
-                    # For destinations, always merge (union) rather than overwrite
-                    if current_value in (sentinel, None, []):
+                    if can_overwrite:
+                        # When allow_overwrite is True, replace destinations entirely
+                        # This allows users to change/reduce their destination list via chat
+                        merged[field] = source_destinations
+                    elif current_value in (sentinel, None, []):
                         merged[field] = source_destinations
                     elif isinstance(current_value, list):
                         # Merge: add new destinations that aren't already present
@@ -1305,112 +1310,72 @@ def _call_openai_for_plan(
             f"has_branches={has_existing_branches}, is_generate={is_generate_trigger}"
         )
 
-    # If all fields complete, no branches yet, and NOT a generate trigger:
-    # Return ready_to_generate=True without calling LLM
-    if all_fields_already_complete and not has_existing_branches and not is_generate_trigger:
-        # Update trip_inputs to clear missing_fields
-        current_trip_inputs["missing_fields"] = []
-        ready_message = (
-            "Awesome, I've got everything I need! Feel free to keep chatting "
-            'if you want to tweak anything, or hit "Generate Plan" when you\'re ready!'
-        )
-        return PlannerLLMOutput(
-            branches=[],
-            assistant_message=ready_message,
-            trip_inputs=current_trip_inputs,
-            ready_to_generate=True,
-        )
+    # REMOVED: Early return when all fields complete
+    # We ALWAYS call the LLM so users can modify their inputs at any time.
+    # The only exception is the generate trigger which explicitly requests branch generation.
 
-    # Build current state as JSON for the prompt
-    current_state_json = json.dumps(
-        {k: v for k, v in current_trip_inputs.items() if k != "destinations"},
-        indent=2,
-    )
+    # Build current state as JSON for the prompt (include ALL fields including destinations)
+    current_state_json = json.dumps(current_trip_inputs, indent=2)
 
     # Single unified system prompt
-    system_prompt = f"""You are a helpful travel planner. Today is {today}.
+    system_prompt = f"""You are a travel planner. Today is {today}.
 
-Your personality:
-- Warm but practical
-- Conversational, not overly enthusiastic
-- Keep responses concise and direct
+STYLE: Warm, concise. If user mentions a destination, always start with a
+relevant emoji (only if one exists) for example:
+🏛️ Rome (or Athens), 🎭 Florence, 🗼 Paris, 🗽 NYC, 🏯 Tokyo,
+🎰 Vegas, 🌴 Miami, 🏔️ Alps, 🏖️ Bali, 🕌 Dubai
 
-CURRENT TRIP STATE:
+CURRENT STATE:
 {current_state_json}
 
-YOUR TASK:
-1. Extract ALL trip details from the user's message:
-   destinations (as array), origin, start_date, end_date, traveler_count, budget
-2. Update trip_inputs with any new or changed values
-3. If ALL 6 required fields are filled → generate exactly 1 branch per destination
-4. If any required field is missing → ask for the next one naturally:
-   - destinations missing: "Where would you like to go?"
-   - origin missing: "Where will you be traveling from?"
-   - start_date missing: "What date are you looking to depart?"
-   - end_date missing: "And when will you be returning?"
-   - traveler_count missing: "How many people are traveling?"
-   - budget missing: "What's your budget for this trip?"
+TASK: Extract trip details from user message and update trip_inputs.
+Required fields: destinations[], origin, start_date, end_date, traveler_count, budget
 
-REQUIRED FIELDS (all 6):
-destinations, origin, start_date, end_date, traveler_count, budget
+EXTRACTION RULES:
+- Dates: Convert to YYYY-MM-DD. "today"={today}, "tomorrow"=+1 day, "in X days"=+X days
+- If user gives duration ("for 5 days"), compute end_date from start_date
+- Travelers: "solo"=1, "couple"=2, "family of 4"=4
+- Budget: "$1000" or "1000 dollars" → 1000
+- Locations: Auto-correct typos (Florene→Florence, Pairs→Paris, Also→Oslo)
+- Destinations: Merge with existing list unless user explicitly replaces
+- REMOVAL: "Remove origin X" → set origin to null
+- REMOVAL: "Remove destination X" → remove X from destinations list
+- origin = where user travels FROM. destinations = where they travel TO
 
-FIELD EXTRACTION RULES:
-- Dates: Convert ALL relative dates to YYYY-MM-DD format. You MUST calculate the actual date.
-  TODAY'S DATE: {today}
+BEHAVIOR:
+1. Extract values from message, update trip_inputs with ALL fields (existing + new)
+2. Never confirm what you just extracted—ask for next missing field
+3. All 6 fields complete → set ready_to_generate:true, branches:[]
+4. User says "generate" → set ready_to_generate:false, create 1 branch per destination
+5. Missing fields → set ready_to_generate:false, branches:[]
 
-  Examples (assuming today is {today}):
-  - "today" / "starting today" → start_date = "{today}"
-  - "tomorrow" → the next calendar day after {today}
-  - "in 5 days" / "5 days from now" → add 5 days to {today}
-  - "for 5 days" / "coming back in 5 days" / "returning in 5 days" → end_date = start_date + 5 days
-    CRITICAL: If user says "starting today and coming back in 5 days", you MUST:
-      1. Set start_date = "{today}"
-      2. Calculate end_date = {today} + 5 days (compute the actual YYYY-MM-DD date)
-  - "a week from today" → add 7 days to {today}
-  - "next Monday" → calculate the actual calendar date
-
-  IMPORTANT: When a user specifies trip duration (e.g., "for X days", "coming back in X days"),
-  you MUST compute the end_date. Never leave end_date as null if the duration is specified.
-- Travelers: "solo"/"just me" = 1, "couple" = 2, "family of 4" = 4, etc.
-- Budget: Extract numbers like "1000", "$1000", "1000 dollars" as integer 1000
-- Locations: Must be real places. Reject gibberish.
-
-IMPORTANT: If you can extract a value from the user's message, use it.
-NEVER ask for confirmation of a field you just extracted.
-
-Return JSON:
+Return this JSON structure:
 {{
-  "assistant_message": "Acknowledge extracted info + ask next question",
+  "assistant_message": "Your response to user",
   "trip_inputs": {{
-    "destinations": ["city/country array"],
-    "origin": "city/country or null",
-    "start_date": "YYYY-MM-DD or null",
-    "end_date": "YYYY-MM-DD or null",
-    "traveler_count": number or null,
-    "budget": number or null,
-    "missing_fields": ["list of missing required fields"]
+    "destinations": [],
+    "origin": null,
+    "start_date": null,
+    "end_date": null,
+    "traveler_count": null,
+    "budget": null,
+    "missing_fields": []
   }},
+  "ready_to_generate": false,
   "branches": []
 }}
 
-If ALL 6 required fields are complete, include branches:
+Branch format (when generating):
 {{
-  "branches": [{{
-    "label": "Destination Name",
-    "description": "Brief trip description",
-    "destinations": ["city"],
-    "origin": "city",
-    "start_date": "YYYY-MM-DD",
-    "end_date": "YYYY-MM-DD",
-    "traveler_count": N,
-    "budget": N
-  }}]
-}}
-
-RULES:
-- branches array: empty [] if required fields missing, exactly 1 branch per destination if complete
-- Always update trip_inputs with extracted values
-- User can change any field at any time - apply updates"""
+  "label": "Name",
+  "description": "Brief desc",
+  "destinations": ["city"],
+  "origin": "city",
+  "start_date": "YYYY-MM-DD",
+  "end_date": "YYYY-MM-DD",
+  "traveler_count": 1,
+  "budget": 1000
+}}"""
 
     client = _get_openai_client()
     if client is None:
@@ -1559,22 +1524,63 @@ RULES:
 
         if _DEBUG_LOG:
             if raw_content:
-                print(f"[DEBUG] Raw LLM response: {raw_content[:500]}...")
+                print(
+                    f"[DEBUG] Raw LLM response ({len(raw_content)} chars): "
+                    f"{raw_content[:500]}..."
+                )
             elif structured_payload:
                 struct_str = json.dumps(structured_payload)[:500]
                 print(f"[DEBUG] Structured LLM response: {struct_str}...")
             else:
-                print(f"[DEBUG] No content extracted from LLM response. Choice: {choice}")
+                # Enhanced debugging: show full choice object
+                print("[DEBUG] No content extracted from LLM response.")
+                print(f"[DEBUG] Choice object: {choice}")
+                if choice is not None:
+                    message_obj = getattr(choice, "message", None)
+                    if message_obj:
+                        print(f"[DEBUG] Message object: {message_obj}")
+                        content_val = getattr(message_obj, "content", None)
+                        print(f"[DEBUG] Message content type: {type(content_val)}")
+                        print(f"[DEBUG] Message content value: {content_val}")
 
         default_assistant_message = "I'm having trouble processing that. Could you try again?"
 
         data = structured_payload or _tolerant_json_loads(raw_content or "")
         if _DEBUG_LOG:
             print(f"[DEBUG] Parsed data: {data}")
+
+        # Retry logic: if parsing failed and we have a client, try once more
+        if data is None and client is not None:
+            if _DEBUG_LOG:
+                snippet = raw_content[:200] if raw_content else "empty"
+                print(f"[DEBUG] Failed to parse JSON on first attempt. Raw: {snippet}")
+                print("[DEBUG] Retrying LLM call...")
+
+            try:
+                # Retry the completion
+                retry_completion = _invoke_with_retries()
+                if retry_completion and retry_completion.choices:
+                    retry_choice = retry_completion.choices[0]
+                    retry_structured, retry_raw = _extract_message_payload(retry_choice)
+                    if _DEBUG_LOG:
+                        has_struct = retry_structured is not None
+                        print(
+                            f"[DEBUG] Retry extracted: structured={has_struct}, "
+                            f"raw_len={len(retry_raw)}"
+                        )
+                        if retry_raw:
+                            print(f"[DEBUG] Retry raw response: {retry_raw[:500]}...")
+                    data = retry_structured or _tolerant_json_loads(retry_raw or "")
+                    if _DEBUG_LOG:
+                        print(f"[DEBUG] Retry parsed data: {data}")
+            except Exception as retry_exc:
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] Retry failed: {retry_exc}")
+
         if data is None:
             if _DEBUG_LOG:
                 snippet = raw_content[:200] if raw_content else "empty"
-                print(f"[DEBUG] Failed to parse JSON. Raw: {snippet}")
+                print(f"[DEBUG] Failed to parse JSON after retry. Raw: {snippet}")
             data = {
                 "branches": [],
                 "assistant_message": default_assistant_message,
@@ -1685,38 +1691,29 @@ RULES:
         if not assistant_message:
             assistant_message = default_assistant_message
 
-        # Determine if we should return ready_to_generate instead of branches
-        # This happens when all fields just became complete but we haven't generated branches yet
-        # AND this is NOT a generate trigger
-        should_return_ready = (
-            has_all_fields and not has_existing_branches and not is_generate_trigger
+        # Get ready_to_generate from LLM response, or determine it ourselves
+        llm_ready_to_generate = data.get("ready_to_generate", False)
+
+        # If LLM says ready but we have branches, that's inconsistent - prioritize branches
+        if cleaned:
+            llm_ready_to_generate = False
+
+        # If all fields complete, no branches from LLM, and not a generate trigger,
+        # then we're in the "ready to generate" state
+        should_be_ready = (
+            has_all_fields and not cleaned and not has_existing_branches and not is_generate_trigger
         )
 
-        if should_return_ready:
-            # All fields just became complete, but user hasn't clicked Generate Plan yet
-            trip_inputs["missing_fields"] = []
-            ready_message = (
-                "Awesome, I've got everything I need! Feel free to keep chatting "
-                'if you want to tweak anything, or hit "Generate Plan" when you\'re ready!'
-            )
-            return PlannerLLMOutput(
-                branches=[],
-                assistant_message=ready_message,
-                trip_inputs=trip_inputs,
-                ready_to_generate=True,
-            )
+        final_ready_to_generate = llm_ready_to_generate or should_be_ready
 
         if has_all_fields:
             trip_inputs["missing_fields"] = []
-            if not assistant_message or re.search(
-                r"\bwhere\b", assistant_message, flags=re.IGNORECASE
-            ):
-                assistant_message = "Exciting! Let me put together some amazing options for you..."
 
         output = PlannerLLMOutput(
             branches=cleaned,
             assistant_message=assistant_message,
             trip_inputs=trip_inputs,
+            ready_to_generate=final_ready_to_generate,
         )
 
         return output
@@ -1772,10 +1769,12 @@ def plan_trip_flow(db: Session, req: PlanRequest) -> PlanDocumentResponse:
         ValueError: If trip_context_id validation fails.
     """
     # 1. Setup session and context
+    # Use lock_for_update=True to prevent deadlocks with concurrent session deletion
     db_session = get_or_create_session(
         db,
         session_token=req.session_id,
         user_external_id=None,  # User ID comes from auth, not request
+        lock_for_update=True,
     )
 
     history_rows = fetch_chat_history(db, session=db_session, limit=_CHAT_HISTORY_LIMIT)

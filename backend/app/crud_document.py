@@ -81,25 +81,56 @@ def save_document_data(
 def merge_trip_inputs(
     existing: DocumentTripInputs,
     incoming: Optional[DocumentTripInputs],
+    *,
+    replace_destinations: bool = False,
 ) -> DocumentTripInputs:
-    """Merge trip inputs: incoming values override existing non-None values."""
+    """
+    Merge trip inputs: incoming values override existing values when provided.
+
+    Args:
+        existing: The current trip inputs in the document.
+        incoming: New trip inputs to merge in.
+        replace_destinations: If True, incoming destinations replace existing
+                              ones entirely. If False (default), destinations
+                              are merged (union). The planner should set this
+                              to True to allow users to reduce destinations.
+
+    Returns:
+        Merged DocumentTripInputs with incoming values taking precedence.
+    """
     if not incoming:
         return existing
 
-    # Merge destinations arrays
-    existing_destinations = set(existing.destinations or [])
-    incoming_destinations = set(incoming.destinations or [])
-    merged_destinations = list(existing_destinations | incoming_destinations)
+    # Handle destinations - either replace or merge based on flag
+    if replace_destinations:
+        # Replace: use incoming destinations directly (allows reducing the list)
+        # Always use incoming.destinations, even if it's an empty list
+        merged_destinations = incoming.destinations
+    else:
+        # Merge: union of both lists (for user patches that add destinations)
+        existing_destinations = set(existing.destinations or [])
+        incoming_destinations = set(incoming.destinations or [])
+        merged_destinations = list(existing_destinations | incoming_destinations)
+        if not merged_destinations:
+            merged_destinations = existing.destinations
 
+    # For other fields, incoming takes precedence when it's not None
+    # Use explicit None checks so that 0, False, empty string can be set
     return DocumentTripInputs(
-        destinations=merged_destinations if merged_destinations else existing.destinations,
-        origin=incoming.origin or existing.origin,
-        start_date=incoming.start_date or existing.start_date,
-        end_date=incoming.end_date or existing.end_date,
-        traveler_count=incoming.traveler_count or existing.traveler_count,
-        budget=incoming.budget or existing.budget,
+        destinations=merged_destinations,
+        origin=incoming.origin if incoming.origin is not None else existing.origin,
+        start_date=incoming.start_date if incoming.start_date is not None else existing.start_date,
+        end_date=incoming.end_date if incoming.end_date is not None else existing.end_date,
+        traveler_count=(
+            incoming.traveler_count
+            if incoming.traveler_count is not None
+            else existing.traveler_count
+        ),
+        budget=incoming.budget if incoming.budget is not None else existing.budget,
         missing_fields=(
-            incoming.missing_fields if incoming.missing_fields else existing.missing_fields
+            incoming.missing_fields
+            if incoming.missing_fields is not None
+            else existing.missing_fields
         ),
     )
 
@@ -218,20 +249,46 @@ def apply_planner_update(
 ) -> models.PlanDocument:
     """
     Apply planner-generated branches and tiles to the document.
-    Planner updates merge additively with existing data.
+    Planner updates replace destinations to allow users to modify their list.
     Can be called with only trip_inputs during collection phase.
+
+    When trip_inputs change but no new branches are provided, the primary branch
+    is updated to reflect the new trip parameters (destinations, origin, dates, etc).
+    This ensures LLM modifications cascade to the visible branch immediately.
     """
     data = get_document_data(doc)
 
     # Update trip context
     data.trip_context_id = trip_context_id
 
-    # Merge trip inputs
-    data.trip_inputs = merge_trip_inputs(data.trip_inputs, trip_inputs)
+    # Merge trip inputs - planner uses replace_destinations=True so users can modify destinations
+    data.trip_inputs = merge_trip_inputs(data.trip_inputs, trip_inputs, replace_destinations=True)
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:
         data.branches = merge_branches(data.branches, branches)
+    elif trip_inputs is not None and data.branches:
+        # No new branches but trip_inputs changed - update the primary branch
+        # to reflect the new values so UI displays updated destinations/dates/etc
+        primary_idx = next(
+            (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
+        )
+        if primary_idx is not None:
+            primary = data.branches[primary_idx]
+            # Update branch parameters from trip_inputs
+            # Always sync destinations, even if empty (user may have removed all)
+            primary.destinations = trip_inputs.destinations
+            if trip_inputs.origin is not None:
+                primary.origin = trip_inputs.origin
+            if trip_inputs.start_date is not None:
+                primary.start_date = trip_inputs.start_date
+            if trip_inputs.end_date is not None:
+                primary.end_date = trip_inputs.end_date
+            if trip_inputs.traveler_count is not None:
+                primary.traveler_count = trip_inputs.traveler_count
+            if trip_inputs.budget is not None:
+                primary.budget = trip_inputs.budget
+            data.branches[primary_idx] = primary
 
     # Merge tiles - only if provided
     if tiles is not None:

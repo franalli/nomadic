@@ -7,17 +7,51 @@ from sqlalchemy.orm import Session
 from app import db_models as models
 
 
+def get_session_for_update(
+    db: Session,
+    session_token: str,
+) -> Optional[models.Session]:
+    """Get a session with a row-level lock to prevent concurrent modifications.
+
+    Uses SELECT ... FOR UPDATE to acquire an exclusive lock on the session row.
+    This prevents deadlocks between concurrent operations like DELETE session
+    and UPDATE plan_documents.
+    """
+    if not session_token:
+        return None
+
+    return (
+        db.query(models.Session)
+        .filter(models.Session.session_token == session_token)
+        .with_for_update()
+        .first()
+    )
+
+
 def get_or_create_session(
     db: Session,
     session_token: str,
     user_external_id: Optional[str] = None,
+    lock_for_update: bool = False,
 ) -> models.Session:
+    """Get or create a session by token.
+
+    Args:
+        db: Database session.
+        session_token: The session token to look up or create.
+        user_external_id: Optional external user ID.
+        lock_for_update: If True, acquire a row-level lock on the session.
+            Use this when performing operations that could conflict with
+            session deletion (e.g., updating plan documents).
+    """
     if not session_token:
         raise ValueError("session_token is required")
 
-    db_session = (
-        db.query(models.Session).filter(models.Session.session_token == session_token).first()
-    )
+    query = db.query(models.Session).filter(models.Session.session_token == session_token)
+    if lock_for_update:
+        query = query.with_for_update()
+
+    db_session = query.first()
     if db_session:
         return db_session
 

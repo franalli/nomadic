@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import Markdown from 'react-markdown';
 
 import { API_BASE } from '@/lib/api';
 import { getOrCreateSessionId } from '@/lib/session';
@@ -24,8 +25,8 @@ import type {
 import type { Tile } from '@/types/tile';
 
 const CHAT_HISTORY_KEY = 'chat_history';
-const STREAM_CHUNK_SIZE = 6;
-const STREAM_DELAY_MS = 25;
+const STREAM_CHUNK_SIZE = 1; // characters per chunk for smooth typing
+const STREAM_DELAY_MS = 24; // delay between chunks in ms (~55 chars/sec, natural typing speed)
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
 const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 // Message to show after plan is generated
@@ -118,6 +119,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_MESSAGES);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [detailsCollapsed, setDetailsCollapsed] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
@@ -271,10 +273,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           // If this is a "ready to generate" response, use a special ID prefix so we can remove it later
           const baseId = isReadyToGenerate ? READY_MESSAGE_ID_PREFIX + msgId : msgId;
 
-          const sentences = assistantText
-            .split(/(?<=[.!?])\s+/)
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0);
+          // Split into bubbles: by newlines first (preserves list items), then by sentences
+          const splitIntoBubbles = (text: string): string[] => {
+            const bubbles: string[] = [];
+            // Split by double newlines (paragraphs) or single newlines (list items)
+            const blocks = text.split(/\n+/).map((b) => b.trim()).filter((b) => b.length > 0);
+
+            for (const block of blocks) {
+              // If it's a list item (starts with number. or - or *), keep it as one bubble
+              if (/^(\d+\.|[-*])/.test(block)) {
+                bubbles.push(block);
+              } else {
+                // Otherwise split by sentence-ending punctuation
+                const sentences = block
+                  .split(/(?<=[.!?])\s+/)
+                  .map((s) => s.trim())
+                  .filter((s) => s.length > 0);
+                bubbles.push(...sentences);
+              }
+            }
+            return bubbles;
+          };
+
+          const bubbleTexts = splitIntoBubbles(assistantText);
 
           const streamTextIntoMessage = (messageId: string, text: string) =>
             new Promise<void>((resolve) => {
@@ -282,6 +303,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 resolve();
                 return;
               }
+              setStreamingMessageId(messageId);
               let idx = 0;
               const interval = setInterval(() => {
                 const nextChunk = text.slice(idx, idx + STREAM_CHUNK_SIZE);
@@ -295,18 +317,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 );
                 if (idx >= text.length) {
                   clearInterval(interval);
+                  setStreamingMessageId(null);
                   resolve();
                 }
               }, STREAM_DELAY_MS);
             });
 
-          const streamAssistantSentences = async () => {
-            if (!sentences.length) return;
+          const streamAssistantBubbles = async () => {
+            if (!bubbleTexts.length) return;
             setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(`${baseId}_s`)));
 
-            for (let i = 0; i < sentences.length; i += 1) {
+            for (let i = 0; i < bubbleTexts.length; i += 1) {
               const bubbleId = `${baseId}_s${i}`;
-              const text = sentences[i];
+              const text = bubbleTexts[i];
               setMessages((prev) => [
                 ...prev,
                 { id: bubbleId, role: 'assistant', content: '' },
@@ -315,7 +338,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             }
           };
 
-          await streamAssistantSentences();
+          await streamAssistantBubbles();
         } catch (error) {
           console.error('Failed to plan trip', error);
           const assistantMessage: ChatMessage = {
@@ -398,10 +421,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 className={
                   m.role === 'user'
                     ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm text-left'
-                    : 'border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2'
+                    : `border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2 transition-opacity ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
                 }
               >
-                {m.content}
+                {m.role === 'assistant' ? (
+                  <Markdown
+                    components={{
+                      p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                      strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                      ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
+                      ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
+                      li: ({ children }) => <li className="mb-1">{children}</li>,
+                    }}
+                  >
+                    {m.content}
+                  </Markdown>
+                ) : (
+                  m.content
+                )}
               </div>
             </div>
           ))}

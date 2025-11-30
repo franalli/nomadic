@@ -193,10 +193,8 @@ const resolveTripInputs = (
 ): TripInputs => {
   const filled = fillTripInputDefaults(incoming);
   filled.origin = sanitizeOrigin(filled.origin ?? null, destinationHint);
-  // Add destination hint to destinations if not already present
-  if (destinationHint && !filled.destinations.includes(destinationHint)) {
-    filled.destinations = [destinationHint, ...filled.destinations];
-  }
+  // Note: We no longer auto-add destinationHint to destinations
+  // This was causing removed destinations to reappear
   return filled;
 };
 
@@ -356,6 +354,7 @@ export function NomadicLanding() {
   const [lastRegeneratedTripInputs, setLastRegeneratedTripInputs] =
     useState<TripInputSignature>(() => toTripInputSignature(DEFAULT_TRIP_INPUTS));
   const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
+  const [selectedLocationBadge, setSelectedLocationBadge] = useState<'origin' | number | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
@@ -806,6 +805,31 @@ export function NomadicLanding() {
     [tripInputs, selectedBranch?.destinations, updateFromDraft]
   );
 
+  const handleRemoveOrigin = useCallback(() => {
+    const currentOrigin = tripInputs.origin;
+    if (!currentOrigin) return;
+
+    // Send chat message to backend - let the server response update the state
+    const message = `Remove origin ${currentOrigin}`;
+    chatPanelRef.current?.sendMessage(message);
+    setSelectedLocationBadge(null);
+  }, [tripInputs.origin]);
+
+  const handleRemoveDestination = useCallback(
+    (index: number) => {
+      const currentDestinations = tripInputs.destinations ?? [];
+      if (index < 0 || index >= currentDestinations.length) return;
+
+      const removedDestination = currentDestinations[index];
+
+      // Send chat message to backend - let the server response update the state
+      const message = `Remove destination ${removedDestination}`;
+      chatPanelRef.current?.sendMessage(message);
+      setSelectedLocationBadge(null);
+    },
+    [tripInputs.destinations]
+  );
+
   const handleDestinationsChange = useCallback(
     (destinations: string[], sendChatMessage = false) => {
       const prevDestinations = tripInputs.destinations ?? [];
@@ -943,7 +967,9 @@ export function NomadicLanding() {
         });
         return next;
       });
-      const destinationHint = result.branches[0]?.destinations[0] ?? null;
+      // Use tripInputs.destinations as fallback when no branches exist yet (during collection phase)
+      const destinationHint =
+        result.branches[0]?.destinations[0] ?? mergedTripInputs?.destinations?.[0] ?? null;
       const resolvedTripInputs = applyIncomingTripInputs(
         mergedTripInputs,
         destinationHint
@@ -1322,140 +1348,87 @@ export function NomadicLanding() {
   // Only show fields that have been defined via chat or manual input
   const definedFields = (['traveler_count', 'budget'] as const).filter(hasFieldValue);
 
-  // Route display component (Origin -> Destination)
+  // Location badge component for origin and destinations
+  const LocationBadge = ({
+    type,
+    index,
+    value,
+    isOrigin = false,
+  }: {
+    type: 'origin' | 'destination';
+    index?: number;
+    value: string;
+    isOrigin?: boolean;
+  }) => {
+    const badgeKey = type === 'origin' ? 'origin' : index!;
+    const isSelected = selectedLocationBadge === badgeKey;
+    const badgeRef = useRef<HTMLSpanElement>(null);
+
+    // Focus the badge when it becomes selected
+    useEffect(() => {
+      if (isSelected && badgeRef.current) {
+        badgeRef.current.focus();
+      }
+    }, [isSelected]);
+
+    return (
+      <span
+        ref={badgeRef}
+        className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold transition-all outline-none ${
+          isSelected
+            ? 'bg-primary/20 ring-primary ring-2 ring-offset-1'
+            : 'hover:bg-muted/60'
+        }`}
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedLocationBadge(isSelected ? null : badgeKey);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            e.preventDefault();
+            if (type === 'origin') {
+              handleRemoveOrigin();
+            } else if (typeof index === 'number') {
+              handleRemoveDestination(index);
+            }
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setSelectedLocationBadge(null);
+            badgeRef.current?.blur();
+          } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setSelectedLocationBadge(isSelected ? null : badgeKey);
+          }
+        }}
+      >
+        <MapPin
+          className={`h-3 w-3 shrink-0 ${isOrigin ? 'text-muted-foreground' : 'text-accent'}`}
+        />
+        {value}
+      </span>
+    );
+  };
+
+  // Route display component (Origin -> Destinations as separate badges)
   const routeDisplay =
     hasOrigin || hasDestination ? (
-      <div className="border-border/60 bg-muted/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1">
+      <div
+        className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-1.5 py-1"
+        onClick={() => setSelectedLocationBadge(null)}
+        onKeyDown={() => {}}
+        role="presentation"
+      >
         {hasOrigin && (
-          <>
-            <MapPin className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-            <span
-              className="text-foreground cursor-pointer whitespace-nowrap text-xs font-semibold hover:underline"
-              role="button"
-              tabIndex={0}
-              onClick={() => handleStartEditingField('origin')}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleStartEditingField('origin');
-                }
-              }}
-            >
-              {editingField === 'origin' ? (
-                <input
-                  type="text"
-                  value={draftBase?.origin ?? ''}
-                  onChange={(e) => handleFieldChange('origin', e.target.value)}
-                  className="text-foreground placeholder:text-muted-foreground w-20 bg-transparent text-xs font-semibold focus:outline-none"
-                  placeholder="City"
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={(e) => handleCommitField('origin', e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      handleCommitField('origin', (e.target as HTMLInputElement).value);
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault();
-                      // Restore original value and close
-                      setTripInputsDraft((prev) =>
-                        prev ? { ...prev, origin: tripInputs.origin ?? '' } : prev
-                      );
-                      setEditingField(null);
-                    }
-                  }}
-                  autoFocus
-                />
-              ) : (
-                tripInputs.origin
-              )}
-            </span>
-          </>
+          <LocationBadge type="origin" value={tripInputs.origin!} isOrigin />
         )}
         {hasOrigin && hasDestination && (
-          <ArrowRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+          <ArrowRight className="text-muted-foreground mx-0.5 h-3.5 w-3.5 shrink-0" />
         )}
-        {hasDestination && (
-          <>
-            <MapPin className="text-accent h-3.5 w-3.5 shrink-0" />
-            <span
-              className="text-foreground cursor-pointer whitespace-nowrap text-xs font-semibold hover:underline"
-              role="button"
-              tabIndex={0}
-              onClick={() => handleStartEditingField('destination')}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleStartEditingField('destination');
-                }
-              }}
-            >
-              {editingField === 'destination' ? (
-                <input
-                  type="text"
-                  value={
-                    (draftBase?.destinations ?? []).length > 0
-                      ? draftBase.destinations.join(', ')
-                      : ''
-                  }
-                  onChange={(e) => {
-                    // Only update draft during typing, don't commit
-                    const value = e.target.value;
-                    setTripInputsDraft((prev) => {
-                      if (!prev) return prev;
-                      const destinations = value
-                        .split(',')
-                        .map((d) => d.trim())
-                        .filter((d) => d.length > 0);
-                      return {
-                        ...prev,
-                        destinations,
-                      };
-                    });
-                  }}
-                  className="text-foreground placeholder:text-muted-foreground w-32 bg-transparent text-xs font-semibold focus:outline-none"
-                  placeholder="Destinations (comma-separated)"
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={(e) => {
-                    const value = e.target.value;
-                    const destinations = value
-                      .split(',')
-                      .map((d) => d.trim())
-                      .filter((d) => d.length > 0);
-                    handleDestinationsChange(destinations, true);
-                    setEditingField(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      const value = (e.target as HTMLInputElement).value;
-                      const destinations = value
-                        .split(',')
-                        .map((d) => d.trim())
-                        .filter((d) => d.length > 0);
-                      handleDestinationsChange(destinations, true);
-                      setEditingField(null);
-                    } else if (e.key === 'Escape') {
-                      e.preventDefault();
-                      // Restore original values and close
-                      setTripInputsDraft((prev) => {
-                        if (!prev) return prev;
-                        return {
-                          ...prev,
-                          destinations: tripInputs.destinations ?? [],
-                          destination: tripInputs.destination ?? '',
-                        };
-                      });
-                      setEditingField(null);
-                    }
-                  }}
-                  autoFocus
-                />
-              ) : (
-                destinationsDisplay
-              )}
-            </span>
-          </>
-        )}
+        {(tripInputs.destinations ?? []).map((dest, idx) => (
+          <LocationBadge key={`dest-${idx}`} type="destination" index={idx} value={dest} />
+        ))}
       </div>
     ) : null;
 
