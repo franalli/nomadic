@@ -234,14 +234,13 @@ def test_get_document_returns_branches_and_tiles():
 
 
 def test_get_document_handles_missing_session():
-    """Test that GET /v1/document returns 404 for missing session."""
+    """Test that GET /v1/document returns 204 for missing session (no document yet)."""
     response = client.get(
         "/v1/document",
         cookies=get_session_cookies("missing-session"),
     )
 
-    assert response.status_code == 404
-    assert "Session not found" in response.json()["detail"]
+    assert response.status_code == 204
 
 
 def test_patch_document_updates_selections():
@@ -306,9 +305,9 @@ def test_session_delete_wipes_document():
         )
         assert doc_row is None
 
-    # Verify document endpoint returns 404
+    # Verify document endpoint returns 204 (no content, session gone)
     doc_response = client.get("/v1/document", params={"session_id": seed["session_token"]})
-    assert doc_response.status_code == 404
+    assert doc_response.status_code == 204
 
 
 def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
@@ -871,6 +870,35 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
         ), "Primary branch destinations should cascade from trip_inputs"
 
 
+def test_patch_trip_inputs_vibes_preserves_existing_fields():
+    """PATCH /v1/document should not reset destinations when only vibes change."""
+
+    seed = seed_session_with_document(session_token="session-vibes-patch")
+
+    response = client.patch(
+        "/v1/document",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={
+            "version": 1,
+            "trip_inputs": {"vibes": ["adventure", "foodie"]},
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document"]["trip_inputs"]["destinations"] == ["Nice"]
+    assert payload["document"]["trip_inputs"]["vibes"] == ["adventure", "foodie"]
+
+    persisted = client.get(
+        "/v1/document",
+        cookies=get_session_cookies(seed["session_token"]),
+    )
+    assert persisted.status_code == 200
+    persisted_doc = persisted.json()
+    assert persisted_doc["document"]["trip_inputs"]["vibes"] == ["adventure", "foodie"]
+
+
 @pytest.mark.skipif(
     "sqlite" in TEST_DATABASE_URL,
     reason="SQLite does not support concurrent write transactions needed for this test",
@@ -964,3 +992,50 @@ def test_plan_flow_preserves_user_removed_destinations(monkeypatch: object):
     assert persisted_response.status_code == 200
     persisted = persisted_response.json()
     assert persisted["document"]["trip_inputs"]["destinations"] == ["Nice"]
+
+
+def test_plan_flow_persists_llm_vibes(monkeypatch: object):
+    """When the planner returns vibes, they should be saved to the document."""
+
+    from app import plan as plan_module
+
+    seed = seed_session_with_document(session_token="session-plan-vibes")
+
+    def fake_call(req, history_rows, history, document_data):
+        return plan_module.PlannerLLMOutput(
+            branches=[],
+            assistant_message="ready",
+            trip_inputs={
+                "destinations": ["Nice"],
+                "origin": "London",
+                "start_date": "2025-12-01",
+                "end_date": "2025-12-07",
+                "traveler_count": 2,
+                "budget": 2000,
+                "missing_fields": [],
+                "multi_city_intent": None,
+                "vibes": ["adventure", "f1"],
+            },
+            ready_to_generate=True,
+        )
+
+    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
+
+    response = client.post(
+        "/v1/plan",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={"message": "Set vibes"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document"]["trip_inputs"]["vibes"] == ["adventure", "f1"]
+
+    persisted = client.get(
+        "/v1/document",
+        cookies=get_session_cookies(seed["session_token"]),
+    )
+    assert persisted.status_code == 200
+    persisted_doc = persisted.json()
+    assert persisted_doc["document"]["trip_inputs"]["vibes"] == ["adventure", "f1"]

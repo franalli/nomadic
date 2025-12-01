@@ -1,16 +1,22 @@
 'use client';
 
-import { format, parse } from 'date-fns';
+import { addDays, addWeeks, format, isBefore, nextSaturday, parse, startOfDay } from 'date-fns';
 import { motion } from 'framer-motion';
 import {
+  AlertCircle,
   ArrowRight,
   CalendarRange,
+  CheckCircle2,
+  Circle,
   Compass,
   MapPin,
   Menu,
+  Plus,
+  Sparkles,
   User,
   Users,
   Wallet,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
@@ -49,6 +55,7 @@ type TripInputsDraft = {
   end_date?: string | null;
   traveler_count?: string | null;
   budget?: string | null;
+  vibes?: string[];
 };
 
 const formatDateForDisplay = (value?: string | null): string => {
@@ -115,6 +122,7 @@ const toTripInputsDraft = (inputs: TripInputs): TripInputsDraft => {
     end_date: inputs.end_date ?? null,
     traveler_count: inputs.traveler_count != null ? String(inputs.traveler_count) : null,
     budget: inputs.budget != null ? String(inputs.budget) : null,
+    vibes: inputs.vibes ?? [],
   };
 };
 
@@ -178,6 +186,48 @@ const HERO_TYPING_INTERVAL_MS = 200;
 const HERO_TYPING_PAUSE_MS = 8000;
 
 type TileCounts = Record<TileTabKey, number>;
+
+// Field progress indicator - shows which of the 5 fields are complete
+const FIELD_LABELS: Record<string, string> = {
+  origin: 'From',
+  destinations: 'Where to',
+  dates: 'Dates',
+  traveler_count: 'Travelers',
+  budget: 'Budget',
+  vibes: 'Vibes',
+};
+
+const FIELD_ORDER = [
+  'origin',
+  'destinations',
+  'dates',
+  'traveler_count',
+  'budget',
+] as const;
+
+type FieldProgressProps = {
+  tripInputs: TripInputs;
+};
+
+// Helper to check if a field is complete based on actual values
+const isFieldComplete = (field: string, tripInputs: TripInputs): boolean => {
+  switch (field) {
+    case 'origin':
+      return Boolean(tripInputs.origin);
+    case 'destinations':
+      return (tripInputs.destinations ?? []).length > 0;
+    case 'dates':
+      return Boolean(tripInputs.start_date) && Boolean(tripInputs.end_date);
+    case 'traveler_count':
+      return tripInputs.traveler_count != null;
+    case 'budget':
+      return tripInputs.budget != null;
+    case 'vibes':
+      return (tripInputs.vibes ?? []).length > 0;
+    default:
+      return false;
+  }
+};
 
 const countTilesByTab = (tileList: Tile[]): TileCounts =>
   tileList.reduce(
@@ -301,6 +351,8 @@ export function NomadicLanding() {
   const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
   const [selectedLocationBadge, setSelectedLocationBadge] = useState<'origin' | number | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [vibeInput, setVibeInput] = useState('');
+  const [vibeInputExpanded, setVibeInputExpanded] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
   const [isResettingSession, setIsResettingSession] = useState(false);
@@ -354,17 +406,18 @@ export function NomadicLanding() {
   }, [selectedBranch, tilesMap]);
 
   // Sync tripInputsDraft when store trip_inputs changes
-  // Always sync destinations (they're modified by bot, not inline editing)
+  // Always sync destinations and vibes (they're modified by bot, not inline editing)
   // Only skip other fields if user is actively editing them
   useEffect(() => {
     if (!storeTripInputs) return;
 
     setTripInputsDraft((prev) => {
-      // Always update destinations from store (source of truth)
-      // This ensures bot-initiated destination removals are reflected in UI
+      // Always update destinations and vibes from store (source of truth)
+      // This ensures bot-initiated changes are reflected in UI
       const newDraft: TripInputsDraft = {
         ...prev,
         destinations: storeTripInputs.destinations ?? [],
+        vibes: storeTripInputs.vibes ?? [],
       };
 
       // Only update other fields if not actively editing
@@ -704,7 +757,7 @@ export function NomadicLanding() {
   );
 
   const handleDateRangeChange = useCallback(
-    (range: DateRange | undefined) => {
+    async (range: DateRange | undefined) => {
       const startIso = range?.from ? format(range.from, 'yyyy-MM-dd') : null;
       const endIso = range?.to ? format(range.to, 'yyyy-MM-dd') : null;
 
@@ -727,10 +780,19 @@ export function NomadicLanding() {
         setCalendarOpen(false);
       }
 
-      // Send a chat message when dates are updated (this will update the store via backend response)
+      // Check what changed
       const startChanged = startIso !== prevStartIso;
       const endChanged = endIso !== prevEndIso;
 
+      // Commit dates to store directly (don't rely solely on chat message)
+      if (startChanged || endChanged) {
+        const updates: Partial<{ start_date: string | null; end_date: string | null }> = {};
+        if (startChanged) updates.start_date = startIso;
+        if (endChanged) updates.end_date = endIso;
+        await documentStore.commitTripInputs(updates);
+      }
+
+      // Send a chat message when dates are updated (for LLM context)
       if (startIso && endIso && (startChanged || endChanged)) {
         // Both dates selected - send message about the date range
         const startDisplay = formatDateForDisplay(startIso);
@@ -749,7 +811,7 @@ export function NomadicLanding() {
         chatPanelRef.current?.sendMessage(message);
       }
     },
-    [tripInputs]
+    [tripInputs, documentStore]
   );
 
   const handleRemoveOrigin = useCallback(() => {
@@ -769,6 +831,42 @@ export function NomadicLanding() {
       // Compute new destinations array
       const newDestinations = currentDestinations.filter((_, i) => i !== index);
 
+      // If we have branches, immediately prune any that include the removed destination
+      if (branches.length > 0 && removedDestination) {
+        const removedLower = removedDestination.toLowerCase();
+        const prunedBranches = branches.filter((branch) => {
+          // Keep branches that don't include the removed destination
+          const branchDestinations = branch.destinations ?? [];
+          return !branchDestinations.some(
+            (d) => d.toLowerCase() === removedLower
+          );
+        });
+
+        // If branches were pruned, update the UI immediately
+        if (prunedBranches.length !== branches.length) {
+          const removedCount = branches.length - prunedBranches.length;
+          setBranches(prunedBranches);
+
+          // If all branches were removed, reset to "ready to generate" state
+          if (prunedBranches.length === 0) {
+            setReadyToGenerate(true);
+            setSelectedBranchId(null);
+            setToastMessage(
+              `Removed ${removedDestination} — your trip options were reset. Click "Generate Plan" to create new options.`
+            );
+          } else {
+            // Some branches remain - update selection if needed
+            if (selectedBranchId && !prunedBranches.find((b) => b.id === selectedBranchId)) {
+              const newSelectedId = prunedBranches.find((b) => b.is_primary)?.id ?? prunedBranches[0]?.id ?? null;
+              setSelectedBranchId(newSelectedId);
+            }
+            setToastMessage(
+              `Removed ${removedDestination} — ${removedCount} trip option${removedCount > 1 ? 's were' : ' was'} updated.`
+            );
+          }
+        }
+      }
+
       // Optimistically update via documentStore.commitTripInputs
       // This updates the UI immediately and syncs to backend in background
       const success = await documentStore.commitTripInputs({ destinations: newDestinations });
@@ -786,7 +884,7 @@ export function NomadicLanding() {
 
       setSelectedLocationBadge(null);
     },
-    [tripInputs.destinations, documentStore]
+    [tripInputs.destinations, documentStore, branches, selectedBranchId]
   );
 
   const handleDestinationsChange = useCallback(
@@ -831,6 +929,57 @@ export function NomadicLanding() {
       }
     },
     [tripInputs]
+  );
+
+  const handleAddVibe = useCallback(
+    async (vibe: string) => {
+      const trimmedVibe = vibe.trim().toLowerCase();
+      if (!trimmedVibe) return;
+
+      const currentVibes = tripInputs.vibes ?? [];
+      // Don't add duplicates (case-insensitive)
+      if (currentVibes.some((v) => v.toLowerCase() === trimmedVibe)) {
+        setVibeInput('');
+        return;
+      }
+
+      const newVibes = [...currentVibes, trimmedVibe];
+
+      // Optimistically update via documentStore.commitTripInputs (like handleRemoveVibe does)
+      const success = await documentStore.commitTripInputs({ vibes: newVibes });
+
+      if (!success) {
+        setToastMessage('Failed to add vibe. Please try again.');
+        return;
+      }
+
+      setVibeInput('');
+    },
+    [tripInputs.vibes, documentStore]
+  );
+
+  const handleRemoveVibe = useCallback(
+    async (index: number) => {
+      const currentVibes = tripInputs.vibes ?? [];
+      if (index < 0 || index >= currentVibes.length) return;
+
+      const removedVibe = currentVibes[index];
+      const newVibes = currentVibes.filter((_, i) => i !== index);
+
+      // Optimistically update via documentStore.commitTripInputs
+      const success = await documentStore.commitTripInputs({ vibes: newVibes });
+
+      if (!success) {
+        setToastMessage('Failed to remove vibe. Please try again.');
+        return;
+      }
+
+      // Send a chat message to record the removal so the LLM knows about it
+      if (removedVibe) {
+        chatPanelRef.current?.sendMessage(`Removing vibe ${removedVibe}`);
+      }
+    },
+    [tripInputs.vibes, documentStore]
   );
 
   useEffect(
@@ -1178,6 +1327,12 @@ export function NomadicLanding() {
       ? { from: calendarStartDate, to: calendarEndDate }
       : undefined;
 
+  // Validation: check if dates are in the past
+  const today = startOfDay(new Date());
+  const isStartDatePast = calendarStartDate && isBefore(calendarStartDate, today);
+  const isEndDatePast = calendarEndDate && isBefore(calendarEndDate, today);
+  const hasDateValidationWarning = isStartDatePast || isEndDatePast;
+
   // Only show fields that have been defined via chat or manual input
   const definedFields = (['traveler_count', 'budget'] as const).filter(hasFieldValue);
 
@@ -1204,13 +1359,20 @@ export function NomadicLanding() {
       }
     }, [isSelected]);
 
+    const handleRemoveClick = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (typeof index === 'number') {
+        handleRemoveDestination(index);
+      }
+    };
+
     return (
       <span
         ref={badgeRef}
-        className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold transition-all outline-none ${
+        className={`group relative inline-flex cursor-pointer items-center gap-1 text-xs font-semibold transition-all outline-none ${
           isSelected
-            ? 'bg-primary/20 ring-primary ring-2 ring-offset-1'
-            : 'hover:bg-muted/60'
+            ? 'bg-primary/20 rounded-full px-1.5 py-0.5 ring-primary ring-2 ring-offset-1'
+            : 'hover:bg-muted/60 rounded-full px-1 py-0.5'
         }`}
         role="button"
         tabIndex={0}
@@ -1240,138 +1402,421 @@ export function NomadicLanding() {
           className={`h-3 w-3 shrink-0 ${isOrigin ? 'text-muted-foreground' : 'text-accent'}`}
         />
         {value}
+        {!isOrigin && (
+          <button
+            type="button"
+            onClick={handleRemoveClick}
+            className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
+            aria-label={`Remove ${value}`}
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        )}
       </span>
     );
   };
 
-  // Route display component (Origin -> Destinations as separate badges)
-  const routeDisplay =
-    hasOrigin || hasDestination ? (
-      <div
-        className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-1.5 py-1"
-        onClick={() => setSelectedLocationBadge(null)}
-        onKeyDown={() => {}}
-        role="presentation"
-      >
-        {hasOrigin && (
-          <LocationBadge type="origin" value={tripInputs.origin!} isOrigin />
-        )}
-        {hasOrigin && hasDestination && (
-          <ArrowRight className="text-muted-foreground mx-0.5 h-3.5 w-3.5 shrink-0" />
-        )}
-        {(tripInputs.destinations ?? []).map((dest, idx) => (
-          <LocationBadge key={`dest-${idx}`} type="destination" index={idx} value={dest} />
-        ))}
-      </div>
-    ) : null;
-
-  // Calendar display component with popover
-  const calendarDisplay = hasDates ? (
-    <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-      <PopoverTrigger asChild>
-        <div
-          className="border-border/60 bg-muted/40 hover:bg-muted/60 inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors"
-          role="button"
-          tabIndex={0}
-        >
-          <CalendarRange className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-          <span className="text-foreground whitespace-nowrap text-xs font-semibold">
-            {hasStartDate && formatDateForDisplay(tripInputs.start_date)}
-            {hasStartDate && hasEndDate && ' – '}
-            {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
-          </span>
+  // Always show trip details once user has chatted - grid layout with label + input per field
+  const tripDetailsContent = (
+    <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+      {/* From field */}
+      <div className="flex flex-col gap-1">
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('origin', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('origin', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('origin', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.origin}</span>
         </div>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start">
-        <Calendar
-          mode="range"
-          defaultMonth={calendarStartDate}
-          selected={selectedDateRange}
-          onSelect={handleDateRangeChange}
-          numberOfMonths={2}
-          disabled={{ before: new Date() }}
-        />
-      </PopoverContent>
-    </Popover>
-  ) : null;
+        {hasOrigin ? (
+          <div
+            className="border-border/60 bg-muted/40 inline-flex items-center gap-1 rounded-full border px-2.5 py-1.5"
+            onClick={() => setSelectedLocationBadge(null)}
+            onKeyDown={() => {}}
+            role="presentation"
+          >
+            <LocationBadge type="origin" value={tripInputs.origin!} isOrigin />
+          </div>
+        ) : (
+          <div className="border-border/40 bg-muted/20 inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5">
+            <MapPin className="h-3 w-3 text-muted-foreground/40" />
+            <span className="text-xs text-muted-foreground/50">Not set</span>
+          </div>
+        )}
+      </div>
 
-  const tripDetailsContent =
-    !routeDisplay && !calendarDisplay && definedFields.length === 0 ? null : (
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {routeDisplay}
-          {calendarDisplay}
-          {definedFields.map((field) => {
-            const isEditing = editingField === field;
-            const draftValueRaw = draftBase ? draftBase[field] : '';
-            const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
+      {/* Where to field */}
+      <div className="flex flex-col gap-1">
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('destinations', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('destinations', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('destinations', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.destinations}</span>
+        </div>
+        {hasDestination ? (
+          <div
+            className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-2.5 py-1.5"
+            onClick={() => setSelectedLocationBadge(null)}
+            onKeyDown={() => {}}
+            role="presentation"
+          >
+            {(tripInputs.destinations ?? []).map((dest, idx) => (
+              <LocationBadge key={`dest-${idx}`} type="destination" index={idx} value={dest} />
+            ))}
+          </div>
+        ) : (
+          <div className="border-border/40 bg-muted/20 inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5">
+            <MapPin className="h-3 w-3 text-muted-foreground/40" />
+            <span className="text-xs text-muted-foreground/50">Not set</span>
+          </div>
+        )}
+      </div>
 
-            let displayValue = '';
-            if (field === 'traveler_count') {
-              displayValue = formatTravelers(tripInputs.traveler_count) ?? '';
-            } else if (field === 'budget') {
-              displayValue = formatBudgetValue(tripInputs.budget);
-            }
-
-            const inputType = 'number';
-            const icon =
-              field === 'traveler_count' ? (
-                <Users className="h-3.5 w-3.5" />
-              ) : (
-                <Wallet className="h-3.5 w-3.5" />
-              );
-
-            return (
+      {/* Dates field */}
+      <div className="flex flex-col gap-1">
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('dates', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('dates', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('dates', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.dates}</span>
+        </div>
+        {hasDates ? (
+          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+            <PopoverTrigger asChild>
               <div
-                key={field}
-                className={`border-border/60 bg-muted/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${isEditing ? 'ring-primary ring-1' : ''}`}
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1.5 transition-colors ${
+                  hasDateValidationWarning
+                    ? 'border-orange-400/60 bg-orange-50 hover:bg-orange-100'
+                    : 'border-border/60 bg-muted/40 hover:bg-muted/60'
+                }`}
                 role="button"
                 tabIndex={0}
-                onClick={() => handleStartEditingField(field)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    handleStartEditingField(field);
-                  }
-                }}
+                title={hasDateValidationWarning ? 'One or more dates are in the past' : undefined}
               >
-                <span className="text-muted-foreground shrink-0">{icon}</span>
-                {isEditing ? (
-                  <input
-                    type={inputType}
-                    value={draftValue}
-                    onChange={(e) => handleFieldChange(field, e.target.value)}
-                    className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
-                    placeholder={field === 'traveler_count' ? '#' : '$'}
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => handleCommitField(field, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCommitField(field, (e.target as HTMLInputElement).value);
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        // Restore original value and close
-                        const originalValue = tripInputs[field as keyof TripInputs];
-                        setTripInputsDraft((prev) =>
-                          prev ? { ...prev, [field]: originalValue ?? '' } : prev
-                        );
-                        setEditingField(null);
-                      }
-                    }}
-                    autoFocus
-                  />
+                {hasDateValidationWarning ? (
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-orange-500" />
                 ) : (
-                  <span className="text-foreground whitespace-nowrap text-xs font-semibold">
-                    {displayValue}
-                  </span>
+                  <CalendarRange className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
                 )}
+                <span className={`whitespace-nowrap text-xs font-semibold ${hasDateValidationWarning ? 'text-orange-700' : 'text-foreground'}`}>
+                  {hasStartDate && formatDateForDisplay(tripInputs.start_date)}
+                  {hasStartDate && hasEndDate && ' – '}
+                  {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
+                </span>
               </div>
-            );
-          })}
-        </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <div className="flex">
+                {/* Quick preset buttons */}
+                <div className="flex flex-col gap-1 border-r border-border/60 p-2">
+                  <span className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Quick picks
+                  </span>
+                  {[
+                    { label: 'This weekend', getDates: () => {
+                      const sat = nextSaturday(new Date());
+                      return { from: sat, to: addDays(sat, 1) };
+                    }},
+                    { label: 'Next weekend', getDates: () => {
+                      const sat = nextSaturday(addWeeks(new Date(), 1));
+                      return { from: sat, to: addDays(sat, 1) };
+                    }},
+                    { label: '1 week', getDates: () => {
+                      const start = addDays(new Date(), 1);
+                      return { from: start, to: addDays(start, 6) };
+                    }},
+                    { label: '2 weeks', getDates: () => {
+                      const start = addDays(new Date(), 1);
+                      return { from: start, to: addDays(start, 13) };
+                    }},
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => handleDateRangeChange(preset.getDates())}
+                      className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <Calendar
+                  mode="range"
+                  defaultMonth={calendarStartDate}
+                  selected={selectedDateRange}
+                  onSelect={handleDateRangeChange}
+                  numberOfMonths={2}
+                  disabled={{ before: new Date() }}
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+            <PopoverTrigger asChild>
+              <div
+                className="border-border/40 bg-muted/20 hover:bg-muted/40 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5 transition-colors"
+                role="button"
+                tabIndex={0}
+              >
+                <CalendarRange className="h-3.5 w-3.5 text-muted-foreground/40" />
+                <span className="text-xs text-muted-foreground/50">Not set</span>
+              </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="start">
+              <div className="flex">
+                {/* Quick preset buttons */}
+                <div className="flex flex-col gap-1 border-r border-border/60 p-2">
+                  <span className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Quick picks
+                  </span>
+                  {[
+                    { label: 'This weekend', getDates: () => {
+                      const sat = nextSaturday(new Date());
+                      return { from: sat, to: addDays(sat, 1) };
+                    }},
+                    { label: 'Next weekend', getDates: () => {
+                      const sat = nextSaturday(addWeeks(new Date(), 1));
+                      return { from: sat, to: addDays(sat, 1) };
+                    }},
+                    { label: '1 week', getDates: () => {
+                      const start = addDays(new Date(), 1);
+                      return { from: start, to: addDays(start, 6) };
+                    }},
+                    { label: '2 weeks', getDates: () => {
+                      const start = addDays(new Date(), 1);
+                      return { from: start, to: addDays(start, 13) };
+                    }},
+                  ].map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => handleDateRangeChange(preset.getDates())}
+                      className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground hover:bg-muted transition-colors"
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+                <Calendar
+                  mode="range"
+                  defaultMonth={new Date()}
+                  selected={selectedDateRange}
+                  onSelect={handleDateRangeChange}
+                  numberOfMonths={2}
+                  disabled={{ before: new Date() }}
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
-    );
+
+      {/* Travelers field */}
+      <div className="flex flex-col gap-1">
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('traveler_count', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('traveler_count', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('traveler_count', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.traveler_count}</span>
+        </div>
+        {tripInputs.traveler_count != null ? (() => {
+          const field = 'traveler_count' as const;
+          const isEditing = editingField === field;
+          const draftValueRaw = draftBase ? draftBase[field] : '';
+          const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
+          const displayValue = formatTravelers(tripInputs.traveler_count) ?? '';
+          return (
+            <div
+              className={`border-border/60 bg-muted/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 ${isEditing ? 'ring-primary ring-1' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleStartEditingField(field)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleStartEditingField(field);
+                }
+              }}
+            >
+              <span className="text-muted-foreground shrink-0"><Users className="h-3.5 w-3.5" /></span>
+              {isEditing ? (
+                <input
+                  type="number"
+                  value={draftValue}
+                  onChange={(e) => handleFieldChange(field, e.target.value)}
+                  className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
+                  placeholder="#"
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => handleCommitField(field, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCommitField(field, (e.target as HTMLInputElement).value);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      const originalValue = tripInputs[field as keyof TripInputs];
+                      setTripInputsDraft((prev) =>
+                        prev ? { ...prev, [field]: originalValue ?? '' } : prev
+                      );
+                      setEditingField(null);
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <span className="text-foreground whitespace-nowrap text-xs font-semibold">
+                  {displayValue}
+                </span>
+              )}
+            </div>
+          );
+        })() : (
+          <div className="border-border/40 bg-muted/20 inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5">
+            <Users className="h-3.5 w-3.5 text-muted-foreground/40" />
+            <span className="text-xs text-muted-foreground/50">Not set</span>
+          </div>
+        )}
+      </div>
+
+      {/* Budget field */}
+      <div className="flex flex-col gap-1">
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('budget', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('budget', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('budget', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.budget}</span>
+        </div>
+        {tripInputs.budget != null ? (() => {
+          const field = 'budget' as const;
+          const isEditing = editingField === field;
+          const draftValueRaw = draftBase ? draftBase[field] : '';
+          const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
+          const displayValue = formatBudgetValue(tripInputs.budget);
+          return (
+            <div
+              className={`border-border/60 bg-muted/40 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 ${isEditing ? 'ring-primary ring-1' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => handleStartEditingField(field)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleStartEditingField(field);
+                }
+              }}
+            >
+              <span className="text-muted-foreground shrink-0"><Wallet className="h-3.5 w-3.5" /></span>
+              {isEditing ? (
+                <input
+                  type="number"
+                  value={draftValue}
+                  onChange={(e) => handleFieldChange(field, e.target.value)}
+                  className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
+                  placeholder="$"
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={(e) => handleCommitField(field, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCommitField(field, (e.target as HTMLInputElement).value);
+                    } else if (e.key === 'Escape') {
+                      e.preventDefault();
+                      const originalValue = tripInputs[field as keyof TripInputs];
+                      setTripInputsDraft((prev) =>
+                        prev ? { ...prev, [field]: originalValue ?? '' } : prev
+                      );
+                      setEditingField(null);
+                    }
+                  }}
+                  autoFocus
+                />
+              ) : (
+                <span className="text-foreground whitespace-nowrap text-xs font-semibold">
+                  {displayValue}
+                </span>
+              )}
+            </div>
+          );
+        })() : (
+          <div className="border-border/40 bg-muted/20 inline-flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5">
+            <Wallet className="h-3.5 w-3.5 text-muted-foreground/40" />
+            <span className="text-xs text-muted-foreground/50">Not set</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // Vibes section content - separate collapsible
+  const vibesContent = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {(tripInputs.vibes ?? []).map((vibe, idx) => (
+        <span
+          key={`vibe-${idx}`}
+          className="group relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold transition-all hover:bg-accent/20"
+        >
+          <Sparkles className="h-3 w-3 text-accent" />
+          {vibe}
+          <button
+            type="button"
+            onClick={() => handleRemoveVibe(idx)}
+            className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
+            aria-label={`Remove ${vibe}`}
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </span>
+      ))}
+      {/* Plus button or expanded input */}
+      {vibeInputExpanded ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleAddVibe(vibeInput);
+            setVibeInputExpanded(false);
+          }}
+          className="inline-flex items-center"
+        >
+          <input
+            type="text"
+            value={vibeInput}
+            onChange={(e) => setVibeInput(e.target.value)}
+            placeholder="Type a vibe..."
+            className="w-32 rounded-full border border-accent/30 bg-accent/5 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30 transition-all"
+            autoFocus
+            onBlur={() => {
+              // Collapse if empty after a short delay (allows click on submit to work)
+              setTimeout(() => {
+                if (!vibeInput.trim()) {
+                  setVibeInputExpanded(false);
+                }
+              }, 150);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAddVibe(vibeInput);
+                setVibeInputExpanded(false);
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setVibeInput('');
+                setVibeInputExpanded(false);
+              }
+            }}
+          />
+          {vibeInput.trim() && (
+            <button
+              type="submit"
+              className="ml-1 flex h-6 w-6 items-center justify-center rounded-full bg-accent text-white hover:bg-accent/90 transition-colors"
+              aria-label="Add vibe"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </form>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setVibeInputExpanded(true)}
+          className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-accent/40 bg-accent/5 text-accent/60 hover:border-accent/60 hover:bg-accent/10 hover:text-accent transition-all"
+          aria-label="Add vibe"
+          title={(tripInputs.vibes ?? []).length === 0 ? "What's the vibe? Adventure, F1, relaxation..." : "Add another vibe"}
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
 
   // Chat panel content that can be reused in both layouts
   const chatPanelContent = (fullHeight = false) => (
@@ -1389,6 +1834,7 @@ export function NomadicLanding() {
               ? { content: tripDetailsContent, missingFields }
               : undefined
           }
+          vibesSection={vibesContent ? { content: vibesContent } : undefined}
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}

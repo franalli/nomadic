@@ -60,7 +60,6 @@ from app.schemas import (
     PlanDocumentResponse,
     PlanRequest,
     TilesSearchRequest,
-    TripInputs,
 )
 from app.schemas import (
     Tile as TileSchema,
@@ -106,7 +105,9 @@ class PlannerLLMOutput:
 
 _CHAT_HISTORY_LIMIT = int(os.getenv("PLAN_CHAT_HISTORY_LIMIT", "20"))  # Max messages to include
 _MAX_TOKENS = int(os.getenv("OPENAI_PLAN_MAX_TOKENS", "800"))  # Token limit for LLM response
-_PLAN_TEMPERATURE = float(os.getenv("OPENAI_PLAN_TEMPERATURE", "0.75"))  # Response creativity
+_PLAN_TEMPERATURE = float(
+    os.getenv("OPENAI_PLAN_TEMPERATURE", "0.5")
+)  # Response creativity (lower = more consistent)
 _PLAN_TOP_P = float(os.getenv("OPENAI_PLAN_TOP_P", "0.95"))  # Nucleus sampling threshold
 _PLAN_MAX_RETRIES = int(os.getenv("OPENAI_PLAN_MAX_RETRIES", "3"))  # Retry count for API errors
 _PLAN_SEED = os.getenv("OPENAI_PLAN_SEED")  # Optional seed for reproducibility
@@ -123,10 +124,22 @@ _TRIP_INPUT_FIELDS = (
     "end_date",
     "traveler_count",
     "budget",
+    "multi_city_intent",
+    "vibes",
 )
 
-# Required fields - all must be filled before branches can be generated
-_REQUIRED_TRIP_INPUT_FIELDS = _TRIP_INPUT_FIELDS  # All 6 fields are required
+# Required fields - only core 4 must be filled before branches can be generated
+# traveler_count and budget are optional - defaults will be applied during generation
+_REQUIRED_TRIP_INPUT_FIELDS = (
+    "destinations",
+    "origin",
+    "start_date",
+    "end_date",
+)
+
+# Default values for optional fields when generating branches
+_DEFAULT_TRAVELER_COUNT = 2
+_DEFAULT_BUDGET_PER_PERSON_PER_DAY = 150  # Will be multiplied by travelers and days
 
 
 # =============================================================================
@@ -237,6 +250,10 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
         inputs_parts.append(f"traveler_count={ti.traveler_count}")
     if ti.budget is not None:
         inputs_parts.append(f"budget={ti.budget}")
+    if ti.multi_city_intent:
+        inputs_parts.append(f"multi_city_intent={ti.multi_city_intent}")
+    if ti.vibes:
+        inputs_parts.append(f"vibes=[{', '.join(ti.vibes)}]")
     if inputs_parts:
         lines.append(f"Trip Inputs: {', '.join(inputs_parts)}")
     if ti.missing_fields:
@@ -1000,6 +1017,51 @@ def _clean_trip_inputs(
                         merged[field] = value
                 elif current_value is sentinel:
                     merged[field] = None
+            elif field == "multi_city_intent":
+                # multi_city_intent is a literal "multi_city" or "separate" or None
+                value = source.get(field)
+                current_value = merged[field]
+                if value in ("multi_city", "separate"):
+                    can_overwrite = allow_overwrite or (field in overwrite_set)
+                    if current_value in (sentinel, None) or can_overwrite:
+                        merged[field] = value
+                elif current_value is sentinel:
+                    merged[field] = None
+            elif field == "vibes":
+                # vibes is an optional array of trip themes/purposes
+                vibes_key_present = "vibes" in source
+                source_vibes = source.get("vibes", [])
+                if not isinstance(source_vibes, list):
+                    source_vibes = [source_vibes] if source_vibes else []
+                # Normalize: lowercase, strip, keep only non-empty entries
+                source_vibes = [
+                    normalized_v.lower()
+                    for v in source_vibes
+                    if v and (normalized_v := _normalize_str(v))
+                ]
+                current_value = merged[field]
+                can_overwrite = "vibes" in overwrite_set
+                allow_initial_value = current_value in (sentinel, None)
+                if source_vibes:
+                    if allow_initial_value:
+                        merged[field] = source_vibes
+                    elif can_overwrite:
+                        merged[field] = source_vibes
+                    elif isinstance(current_value, list):
+                        # Merge: add new vibes that aren't already present
+                        existing_set = set(current_value)
+                        for vibe in source_vibes:
+                            if vibe not in existing_set:
+                                current_value.append(vibe)
+                                existing_set.add(vibe)
+                        merged[field] = current_value
+                    else:
+                        merged[field] = source_vibes
+                elif can_overwrite and vibes_key_present:
+                    # Explicit empty list when allow_overwrite - clear all vibes
+                    merged[field] = []
+                elif current_value is sentinel:
+                    merged[field] = []
             else:
                 # Origin and other string fields - persist once set
                 normalizer = _normalize_str
@@ -1025,6 +1087,14 @@ def _clean_trip_inputs(
                 merged[field] = []
             if not merged[field]:
                 final_missing.add(field)
+        elif field == "multi_city_intent":
+            # multi_city_intent is optional - don't add to missing_fields
+            if merged[field] is sentinel:
+                merged[field] = None
+        elif field == "vibes":
+            # vibes is optional - don't add to missing_fields
+            if merged[field] is sentinel:
+                merged[field] = []
         else:
             if merged[field] is sentinel:
                 merged[field] = None
@@ -1233,6 +1303,17 @@ def _is_generate_plan_trigger(message: str) -> bool:
     return message.strip() == _GENERATE_PLAN_TRIGGER
 
 
+_VIBE_KEYWORDS = ("vibe", "vibes", "theme", "themes", "mood", "energy")
+
+
+def _message_mentions_vibes(message: str) -> bool:
+    """Return True when the user explicitly talks about vibes/themes in the message."""
+    normalized = message.lower().strip()
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in _VIBE_KEYWORDS)
+
+
 # =============================================================================
 # MAIN LLM PLANNING FUNCTION
 # =============================================================================
@@ -1280,6 +1361,8 @@ def _call_openai_for_plan(
             "end_date": ti.end_date,
             "traveler_count": ti.traveler_count,
             "budget": ti.budget,
+            "multi_city_intent": ti.multi_city_intent,
+            "vibes": ti.vibes,
         }
 
     # Document is the only source of truth for trip inputs.
@@ -1288,6 +1371,9 @@ def _call_openai_for_plan(
         doc_trip_inputs,
         prior_trip_inputs_meta,
     )
+
+    user_mentions_vibes = _message_mentions_vibes(req.message)
+    vibe_overwrite_fields: Optional[tuple[str, ...]] = None
 
     today = _today_iso()
 
@@ -1314,43 +1400,95 @@ def _call_openai_for_plan(
     # Build current state as JSON for the prompt (include ALL fields including destinations)
     current_state_json = json.dumps(current_trip_inputs, indent=2)
 
-    # Single unified system prompt
+    # Single unified system prompt - simplified and powerful
     system_prompt = f"""You are a travel planner. Today is {today}.
 
-STYLE: Warm, concise. If user mentions a destination, always start with a
-relevant emoji (only if one exists) for example:
-🏛️ Rome (or Athens), 🎭 Florence, 🗼 Paris, 🗽 NYC, 🏯 Tokyo,
-🎰 Vegas, 🌴 Miami, 🏔️ Alps, 🏖️ Bali, 🕌 Dubai
+STYLE: Warm, concise. Use a relevant emoji when mentioning destinations
+(🏛️ Rome, 🗼 Paris, 🗽 NYC, 🏯 Tokyo, 🏖️ Bali, etc).
 
 CURRENT STATE:
 {current_state_json}
 
-TASK: Extract trip details from user message and update trip_inputs.
-Required fields: destinations[], origin, start_date, end_date, traveler_count, budget
+TASK: Extract and update trip details from user messages.
+Fields: destinations[], origin, start_date, end_date, traveler_count,
+budget, multi_city_intent, vibes[]
 
-EXTRACTION RULES:
-- Dates: Convert to YYYY-MM-DD. "today"={today}, "tomorrow"=+1 day, "in X days"=+X days
-- If user gives duration ("for 5 days"), compute end_date from start_date
+EXTRACTION:
+- origin = where user travels FROM, destinations = where they go TO
+  Example: "Flying from NYC to Rome" → origin="NYC", destinations=["Rome"]
+- Dates → YYYY-MM-DD. "today"={today}, "tomorrow"=+1 day
+- Duration: "starting tomorrow for 5 days" → start_date=tomorrow, end_date=start+5
 - Travelers: "solo"=1, "couple"=2, "family of 4"=4
-- Budget: "$1000" or "1000 dollars" → 1000
-- Locations: Auto-correct typos (Florene→Florence, Pairs→Paris, Also→Oslo)
-- Destinations: CURRENT STATE is the source of truth. Only add NEW destinations
-  from current message. Do NOT re-add destinations from chat history if not in CURRENT STATE.
-- REMOVAL: "Remove X" or "Remove destination X" → IMMEDIATELY remove X from destinations list.
-  Do NOT ask for confirmation. Just remove it and acknowledge briefly.
-- IGNORE removal requests for origin, dates, travelers, or budget - these persist once set
-- origin = where user travels FROM. destinations = where they travel TO
+- Budget: "$1500" or "1500 dollars" → 1500
+- Auto-correct obvious location typos
 
-BEHAVIOR:
-1. Extract values from message, update trip_inputs with ALL fields (existing + new)
-2. Never confirm what you just extracted—ask for next missing field
-3. All 6 fields complete → set ready_to_generate:true, branches:[]
-4. User says "generate" → set ready_to_generate:false, create 1 branch per destination
-5. Missing fields → set ready_to_generate:false, branches:[]
+MULTI-DESTINATION HANDLING:
+- DEFAULT: Treat multiple destinations as SEPARATE trips (each gets its own branch)
+- Only set multi_city_intent="multi_city" if user EXPLICITLY says: "one trip",
+  "multi-city", "together", "visit all in one trip"
+- "Paris and Rome" with no qualifier → multi_city_intent=null (means SEPARATE)
+- "Paris and Rome in one trip" → multi_city_intent="multi_city"
+- Do NOT ask about intent - just default to separate unless user specifies otherwise
 
-Return this JSON structure:
+VIBES (optional trip themes):
+- Extract trip purposes/themes: "adventure trip" → vibes=["adventure"]
+- "Going for F1 and beach time" → vibes=["F1", "beach"]
+- Normalize to minimal: "Formula 1 Grand Prix" → "F1", "scuba diving" → "diving"
+- "backpacking and hiking trip" → vibes=["backpacking", "hiking"]
+        - Unless the user's latest message explicitly mentions vibes/themes/mood,
+            keep CURRENT STATE vibes exactly as-is.
+    - Examples: "Remove adventure vibe" → drop "adventure". "Add foodie vibe" → include "foodie".
+- "Remove adventure" → remove from vibes array
+- If vibes empty after all 4 required fields set, gently ask:
+    "What's the vibe? Adventure, relaxation, a special event?"
+
+UPDATES (users can change any field):
+- "Actually 3 people" → traveler_count=3
+- "Make it $2000" → budget=2000
+- "Leave from Boston instead" → origin="Boston"
+- "Add Florence" → append to destinations
+- "Remove Rome" → remove from destinations (don't ask confirmation)
+- "I want to visit them all in one trip" → multi_city_intent="multi_city"
+- "Show me options for each separately" → multi_city_intent="separate"
+
+RULES:
+- CURRENT STATE is source of truth—preserve existing values unless user changes them
+- Only destinations can be removed; other fields persist once set (can be updated, not deleted)
+- After extracting, ask for next missing field (don't confirm what was extracted)
+- REQUIRED fields: destinations, origin, start_date, end_date (all 4 must be set)
+- OPTIONAL fields: traveler_count, budget (nice to have but not required)
+- When all 4 REQUIRED fields complete → set ready_to_generate=true,
+    branches=[] (NEVER auto-generate)
+- When ready_to_generate=true: Keep assistant_message SHORT (1 sentence max).
+    Do NOT summarize the trip details. Just say something like
+    "All set! Click Generate to see your options." or acknowledge the last
+    input briefly.
+- ONLY generate branches when user message is EXACTLY "{_GENERATE_PLAN_TRIGGER}" —
+    this is the Generate Plan button
+- Exception: If branches already exist in CONTEXT, you may update/refine them based on user requests
+- When generating branches, use multi_city_intent:
+  - "multi_city": Create exactly 1 branch that visits ALL destinations together in sequence
+  - "separate" or null (DEFAULT): Create SEPARATE branches, one for EACH destination
+    Example: 2 destinations = 2 branches, each branch has exactly 1 destination
+
+CRITICAL BRANCH RULE:
+- DEFAULT BEHAVIOR: Each destination gets its OWN separate branch
+- ONLY combine destinations into one branch if multi_city_intent is EXACTLY "multi_city"
+- If multi_city_intent is null, missing, or "separate": create N branches for N destinations
+- NEVER put multiple destinations in a single branch unless multi_city_intent="multi_city"
+
+BUDGET INFERENCE (when budget not provided):
+- Default traveler_count=2 if not specified
+- Infer reasonable budget based on destination, duration, and travelers:
+  - Budget-friendly destinations (SE Asia, Eastern Europe): ~$100-150/person/day
+  - Mid-range destinations (Western Europe, Japan): ~$150-250/person/day
+  - Premium destinations (Switzerland, Scandinavia, NYC): ~$250-400/person/day
+- Calculate: inferred_daily_rate × travelers × days
+- Show as "Suggested budget: ~$X,XXX" in branch description
+
+OUTPUT JSON:
 {{
-  "assistant_message": "Your response to user",
+  "assistant_message": "Your response",
   "trip_inputs": {{
     "destinations": [],
     "origin": null,
@@ -1358,22 +1496,24 @@ Return this JSON structure:
     "end_date": null,
     "traveler_count": null,
     "budget": null,
-    "missing_fields": []
+    "missing_fields": [],
+    "multi_city_intent": null,
+    "vibes": []
   }},
   "ready_to_generate": false,
   "branches": []
 }}
 
-Branch format (when generating):
+BRANCH FORMAT (only when generating):
 {{
-  "label": "Name",
-  "description": "Brief desc",
-  "destinations": ["city"],
-  "origin": "city",
-  "start_date": "YYYY-MM-DD",
-  "end_date": "YYYY-MM-DD",
-  "traveler_count": 1,
-  "budget": 1000
+    "label": "Trip Name",
+    "description": "Brief desc",
+    "destinations": ["city"],
+    "origin": "city",
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD",
+    "traveler_count": 1,
+    "budget": 1000
 }}"""
 
     client = _get_openai_client()
@@ -1588,17 +1728,53 @@ Branch format (when generating):
         if not isinstance(data, dict):
             data = {}
 
+        # Handle edge case: LLM returned a single branch object at root level
+        # instead of the expected structure with branches array
+        if "label" in data and "branches" not in data:
+            if _DEBUG_LOG:
+                print("[DEBUG] LLM returned single branch at root - wrapping in array")
+            single_branch = {
+                "label": data.get("label"),
+                "description": data.get("description", ""),
+                "destinations": data.get("destinations", []),
+                "origin": data.get("origin"),
+                "start_date": data.get("start_date"),
+                "end_date": data.get("end_date"),
+                "traveler_count": data.get("traveler_count"),
+                "budget": data.get("budget"),
+            }
+            data = {
+                "branches": [single_branch],
+                "assistant_message": data.get("assistant_message", "Here's your trip plan!"),
+                "trip_inputs": data.get("trip_inputs", {}),
+            }
+
         branches_raw = data.get("branches", []) or []
         if _DEBUG_LOG:
             print(f"[DEBUG] Branches from LLM: {len(branches_raw)} branches")
+
+        # CRITICAL SAFEGUARD: Only accept branches from LLM if:
+        # 1. This is an explicit generate trigger (user clicked "Generate Plan"), OR
+        # 2. Branches already exist (user is refining their plan)
+        # This prevents the LLM from auto-generating branches when all fields are complete
+        if branches_raw and not is_generate_trigger and not has_existing_branches:
+            if _DEBUG_LOG:
+                print(
+                    f"[DEBUG] Discarding {len(branches_raw)} branches - "
+                    f"not a generate trigger and no existing branches"
+                )
+            branches_raw = []
+
         assistant_message = str(data.get("assistant_message") or "").strip()
 
         trip_inputs_payload = data.get("trip_inputs") or {}
         # Allow LLM to overwrite any field - users might correct any previous value
+        vibe_overwrite_fields = ("vibes",) if user_mentions_vibes else None
         trip_inputs = _clean_trip_inputs(
             current_trip_inputs,
             trip_inputs_payload,
             allow_overwrite=True,
+            overwrite_fields=vibe_overwrite_fields,
         )
 
         # FALLBACK: If LLM failed to compute end_date from duration, do it ourselves
@@ -1674,6 +1850,32 @@ Branch format (when generating):
                         "budget": branch_budget,
                     }
                 )
+
+            # Post-processing: Split branches with multiple destinations when NOT multi_city
+            # Default behavior (null/missing/"separate"): each destination gets its own branch
+            multi_city_intent = canonical_inputs.get("multi_city_intent")
+            if multi_city_intent != "multi_city" and cleaned:
+                split_branches: List[dict] = []
+                for branch in cleaned:
+                    branch_dests = branch.get("destinations", [])
+                    if len(branch_dests) > 1:
+                        # Split this branch into multiple branches, one per destination
+                        for dest in branch_dests:
+                            split_branches.append(
+                                {
+                                    "label": dest,  # Use destination as label
+                                    "description": branch.get("description", ""),
+                                    "destinations": [dest],
+                                    "origin": branch.get("origin"),
+                                    "start_date": branch.get("start_date"),
+                                    "end_date": branch.get("end_date"),
+                                    "traveler_count": branch.get("traveler_count"),
+                                    "budget": branch.get("budget"),
+                                }
+                            )
+                    else:
+                        split_branches.append(branch)
+                cleaned = split_branches
 
         # Handle validation messages by appending to assistant message
         if validation_messages:
@@ -1782,10 +1984,13 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
 
     # Get parent trip context from document (if exists)
     existing_doc = get_document(db, session=db_session)
+    user_mentions_vibes = _message_mentions_vibes(req.message)
     existing_doc_data: Optional[PlanDocumentData] = None
+    pre_call_trip_inputs: Optional[DocumentTripInputs] = None
     parent_trip_context_id: Optional[int] = None
     if existing_doc:
         existing_doc_data = get_document_data(existing_doc)
+        pre_call_trip_inputs = existing_doc_data.trip_inputs.model_copy(deep=True)
         parent_trip_context_id = existing_doc_data.trip_context_id
     initial_destinations = existing_doc_data.trip_inputs.destinations if existing_doc_data else []
 
@@ -1803,13 +2008,16 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             req_message=req.message,
         )
 
-        # 2. Record user message
+        # 2. Record user message (transform trigger to friendly text for display)
+        user_message_content = (
+            "Generate my trip options" if _is_generate_plan_trigger(req.message) else req.message
+        )
         record_chat_message(
             db,
             session=db_session,
             trip_context=trip_ctx,
             role="user",
-            content=req.message,
+            content=user_message_content,
             metadata=None,
         )
 
@@ -1834,7 +2042,7 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
 
         # 5. Process LLM output and update assistant message
         trip_inputs_model = (
-            TripInputs(**planner_output.trip_inputs)
+            DocumentTripInputs(**planner_output.trip_inputs)
             if planner_output.trip_inputs is not None
             else None
         )
@@ -1853,8 +2061,39 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             pass
 
         current_doc_data = get_document_data(plan_doc)
+        user_preserve_fields: set[str] = set()
+        if pre_call_trip_inputs is not None:
+            if (pre_call_trip_inputs.vibes or []) != (current_doc_data.trip_inputs.vibes or []):
+                user_preserve_fields.add("vibes")
+            if (
+                pre_call_trip_inputs.multi_city_intent
+                != current_doc_data.trip_inputs.multi_city_intent
+            ):
+                user_preserve_fields.add("multi_city_intent")
         current_destinations = current_doc_data.trip_inputs.destinations or []
         removed_destinations = {d for d in initial_destinations if d not in current_destinations}
+
+        # Prune existing branches that include removed destinations
+        # This ensures branches are immediately removed when user removes a destination
+        existing_branches = current_doc_data.branches or []
+        pruned_existing_branches: List[DocumentBranch] = []
+        if removed_destinations and existing_branches:
+            removed_lower = {d.lower() for d in removed_destinations}
+            for branch in existing_branches:
+                branch_destinations = [d.lower() for d in (branch.destinations or [])]
+                # Keep branch only if none of its destinations were removed
+                if not any(d in removed_lower for d in branch_destinations):
+                    pruned_existing_branches.append(branch)
+
+            if _DEBUG_LOG:
+                pruned_count = len(existing_branches) - len(pruned_existing_branches)
+                if pruned_count > 0:
+                    print(
+                        f"[DEBUG] Pruned {pruned_count} branches due to removed destinations: "
+                        f"{removed_destinations}"
+                    )
+        else:
+            pruned_existing_branches = list(existing_branches)
 
         # Use LLM destinations, but filter out any the user removed during the LLM call
         # The LLM is instructed to use CURRENT STATE as source of truth, so its output
@@ -1870,7 +2109,7 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             trip_inputs_payload["missing_fields"] = _ordered_missing_fields_from_inputs(
                 trip_inputs_payload
             )
-            trip_inputs_model = TripInputs(**trip_inputs_payload)
+            trip_inputs_model = DocumentTripInputs(**trip_inputs_payload)
             # Store merged trip_inputs in message metadata for migration compatibility
             assistant_meta["trip_inputs"] = trip_inputs_payload
 
@@ -1889,9 +2128,9 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             raw_destinations = spec.get("destinations", []) or []
             # Filter out destinations the user removed during the LLM call
             filtered_destinations = [d for d in raw_destinations if d not in removed_destinations]
-            # For primary branch (idx==0), use trip_inputs destinations if available
-            if idx == 0 and trip_inputs_model and trip_inputs_model.destinations:
-                filtered_destinations = trip_inputs_model.destinations
+            # NOTE: Do NOT override primary branch destinations with trip_inputs.destinations
+            # Each branch keeps its destinations (enforces 1 branch = 1 destination
+            # when separate)
 
             doc_branch = DocumentBranch(
                 id=branch_id,
@@ -1944,6 +2183,7 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
                     primary_branch.tiles.activities.append(tile.id)
 
         # 9. Build trip inputs for document
+        # LLM output already includes vibes/multi_city_intent – just propagate what it sent
         doc_trip_inputs = None
         if trip_inputs_model:
             doc_trip_inputs = DocumentTripInputs(
@@ -1954,17 +2194,31 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
                 traveler_count=trip_inputs_model.traveler_count,
                 budget=trip_inputs_model.budget,
                 missing_fields=trip_inputs_model.missing_fields,
+                vibes=trip_inputs_model.vibes or [],
+                multi_city_intent=trip_inputs_model.multi_city_intent,
             )
 
         # 10. Apply the planner update to the document
         # Always update trip_inputs (even during collection phase when no branches exist)
+        #
+        # If the LLM generated new branches, use them.
+        # Otherwise, use the pruned existing branches (in case destinations were removed).
+        final_branches = doc_branches if doc_branches else pruned_existing_branches
+        # Only pass branches to apply_planner_update if there are any to update
+        branches_to_apply = final_branches if final_branches else None
+
+        preserve_fields = set(user_preserve_fields)
+        if user_mentions_vibes:
+            preserve_fields.discard("vibes")
+
         apply_planner_update(
             db,
             doc=plan_doc,
             trip_context_id=trip_ctx.id,
             trip_inputs=doc_trip_inputs,
-            branches=doc_branches or None,
+            branches=branches_to_apply,
             tiles=tiles_dict or None,
+            preserve_fields=preserve_fields or None,
         )
 
         doc_data = get_document_data(plan_doc)

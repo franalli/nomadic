@@ -42,7 +42,16 @@ export type DocumentTripInputs = {
   traveler_count?: number | null;
   budget?: number | null;
   missing_fields: string[];
+  // Multi-city intent: "multi_city" = one itinerary visiting all destinations
+  // "separate" = generate separate branch options for each destination
+  // null = not yet clarified (will be asked if 2+ destinations)
+  multi_city_intent?: 'multi_city' | 'separate' | null;
+  // Vibes: trip purposes/themes like "F1", "Backpacking", "Adventure", etc.
+  // Open-ended list that LLM will validate/normalize to actual activities or purposes
+  vibes?: string[];
 };
+
+export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;
 
 export type PlanDocumentData = {
   trip_context_id?: number | null;
@@ -70,5 +79,5 @@ export type PlanDocumentPatch = {
   tiles?: Record<string, Tile>;
   remove_tile_ids?: string[];
   selections?: Record<string, BranchSelections>;
-  trip_inputs?: Partial<DocumentTripInputs>;
+  trip_inputs?: DocumentTripInputsPatch;
 };

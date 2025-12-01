@@ -185,6 +185,27 @@ class DocumentTripInputs(BaseModel):
     traveler_count: Optional[int] = None
     budget: Optional[int] = None
     missing_fields: List[str] = Field(default_factory=list)
+    # Multi-city intent: "multi_city" = one itinerary visiting all destinations
+    # "separate" = generate separate branch options for each destination
+    # null = not yet clarified (will be asked if 2+ destinations)
+    multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
+    # Vibes: trip purposes/themes like "F1", "Backpacking", "Adventure", etc.
+    # Open-ended list that LLM will validate/normalize to actual activities or purposes
+    vibes: List[str] = Field(default_factory=list)
+
+
+class DocumentTripInputsPatch(BaseModel):
+    """Partial trip-input updates coming from the UI or planner merges."""
+
+    destinations: Optional[List[str]] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
+    budget: Optional[int] = None
+    missing_fields: Optional[List[str]] = None
+    multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
+    vibes: Optional[List[str]] = None
 
 
 class PlanDocumentData(BaseModel):
@@ -246,4 +267,4 @@ class PlanDocumentPatch(BaseModel):
     # Selection updates per branch
     selections: Optional[Dict[str, BranchSelections]] = None
     # Trip inputs to merge
-    trip_inputs: Optional[DocumentTripInputs] = None
+    trip_inputs: Optional[DocumentTripInputsPatch | DocumentTripInputs] = None

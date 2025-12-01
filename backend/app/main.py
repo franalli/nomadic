@@ -286,11 +286,12 @@ def get_plan_document(
         db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
     )
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        # No session in DB yet - return 204 (no document)
+        return Response(status_code=204)
 
     doc = get_document(db, session=session)
     if not doc:
-        raise HTTPException(status_code=404, detail="No plan document for this session")
+        return Response(status_code=204)
 
     doc_data = get_document_data(doc)
     return PlanDocumentResponse(

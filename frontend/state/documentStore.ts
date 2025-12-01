@@ -10,6 +10,7 @@ import type {
   BranchSelections,
   DocumentBranch,
   DocumentTripInputs,
+  DocumentTripInputsPatch,
   PlanDocumentData,
   PlanDocumentPatch,
   PlanDocumentResponse,
@@ -35,6 +36,7 @@ const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
     'traveler_count',
     'budget',
   ],
+  vibes: [],
 };
 
 type DocumentState = {
@@ -61,7 +63,7 @@ type DocumentState = {
   hasAllRequiredFields: () => boolean;
 
   // Trip input actions
-  commitTripInputs: (updates: Partial<DocumentTripInputs>) => Promise<boolean>;
+  commitTripInputs: (updates: DocumentTripInputsPatch) => Promise<boolean>;
 
   // Actions
   fetchDocument: () => Promise<void>;
@@ -132,7 +134,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   // Trip input actions
-  commitTripInputs: async (updates: Partial<DocumentTripInputs>): Promise<boolean> => {
+  commitTripInputs: async (updates: DocumentTripInputsPatch): Promise<boolean> => {
     const { document, version } = get();
 
     // If no document exists yet, we can't commit trip inputs
@@ -266,7 +268,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const res = await apiFetch('/v1/document');
       if (!res.ok) {
-        if (res.status === 404) {
+        if (res.status === 204 || res.status === 404) {
+          // 204: No document yet (expected for new sessions)
+          // 404: Legacy handling
           set({ isLoading: false, document: null });
           return;
         }

@@ -5,7 +5,7 @@ Uses CRDT-style merge for conflict resolution.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.schemas import (
     BranchSelections,
     DocumentBranch,
     DocumentTripInputs,
+    DocumentTripInputsPatch,
     PlanDocumentData,
     PlanDocumentPatch,
     UpdatedBy,
@@ -78,60 +79,95 @@ def save_document_data(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _trip_inputs_to_dict(
+    incoming: DocumentTripInputs | DocumentTripInputsPatch | dict | None,
+) -> dict[str, Any]:
+    """Normalize incoming trip input payloads to a plain dict."""
+
+    if incoming is None:
+        return {}
+
+    if isinstance(incoming, DocumentTripInputs):
+        return incoming.model_dump()
+
+    if isinstance(incoming, DocumentTripInputsPatch):
+        return incoming.model_dump(exclude_unset=True)
+
+    if isinstance(incoming, dict):
+        return dict(incoming)
+
+    if hasattr(incoming, "model_dump"):
+        return incoming.model_dump(exclude_unset=True)
+
+    return {}
+
+
 def merge_trip_inputs(
     existing: DocumentTripInputs,
-    incoming: Optional[DocumentTripInputs],
+    incoming: Optional[DocumentTripInputs | DocumentTripInputsPatch | dict],
     *,
     replace_destinations: bool = False,
+    preserve_fields: Optional[set[str]] = None,
 ) -> DocumentTripInputs:
     """
     Merge trip inputs: incoming values override existing values when provided.
 
-    Args:
-        existing: The current trip inputs in the document.
-        incoming: New trip inputs to merge in.
-        replace_destinations: If True, incoming destinations replace existing
-                              ones entirely. If False (default), destinations
-                              are merged (union). The planner should set this
-                              to True to allow users to reduce destinations.
-
-    Returns:
-        Merged DocumentTripInputs with incoming values taking precedence.
+    Works with both full DocumentTripInputs payloads and partial patches.
     """
-    if not incoming:
+
+    incoming_data = _trip_inputs_to_dict(incoming)
+    if not incoming_data:
         return existing
 
-    # Handle destinations - either replace or merge based on flag
-    if replace_destinations:
-        # Replace: use incoming destinations directly (allows reducing the list)
-        # Always use incoming.destinations, even if it's an empty list
-        merged_destinations = incoming.destinations
+    sentinel = object()
+    preserve = preserve_fields or set()
+
+    def _get_value(key: str):
+        return incoming_data.get(key, sentinel)
+
+    dest_value = _get_value("destinations")
+    if "destinations" in preserve:
+        merged_destinations = existing.destinations
+    elif dest_value is sentinel:
+        merged_destinations = existing.destinations
+    elif replace_destinations:
+        merged_destinations = dest_value or []
     else:
-        # Merge: union of both lists (for user patches that add destinations)
         existing_destinations = set(existing.destinations or [])
-        incoming_destinations = set(incoming.destinations or [])
+        incoming_destinations = set(dest_value or [])
         merged_destinations = list(existing_destinations | incoming_destinations)
         if not merged_destinations:
             merged_destinations = existing.destinations
 
-    # For other fields, incoming takes precedence when it's not None
-    # Use explicit None checks so that 0, False, empty string can be set
+    origin = _get_value("origin") if "origin" not in preserve else sentinel
+    start_date = _get_value("start_date") if "start_date" not in preserve else sentinel
+    end_date = _get_value("end_date") if "end_date" not in preserve else sentinel
+    traveler_count = _get_value("traveler_count") if "traveler_count" not in preserve else sentinel
+    budget = _get_value("budget") if "budget" not in preserve else sentinel
+    missing_fields = _get_value("missing_fields") if "missing_fields" not in preserve else sentinel
+    multi_city_intent = (
+        _get_value("multi_city_intent") if "multi_city_intent" not in preserve else sentinel
+    )
+    vibes = _get_value("vibes") if "vibes" not in preserve else sentinel
+
     return DocumentTripInputs(
         destinations=merged_destinations,
-        origin=incoming.origin if incoming.origin is not None else existing.origin,
-        start_date=incoming.start_date if incoming.start_date is not None else existing.start_date,
-        end_date=incoming.end_date if incoming.end_date is not None else existing.end_date,
+        origin=origin if origin is not sentinel else existing.origin,
+        start_date=start_date if start_date is not sentinel else existing.start_date,
+        end_date=end_date if end_date is not sentinel else existing.end_date,
         traveler_count=(
-            incoming.traveler_count
-            if incoming.traveler_count is not None
-            else existing.traveler_count
+            traveler_count if traveler_count is not sentinel else existing.traveler_count
         ),
-        budget=incoming.budget if incoming.budget is not None else existing.budget,
+        budget=budget if budget is not sentinel else existing.budget,
         missing_fields=(
-            incoming.missing_fields
-            if incoming.missing_fields is not None
-            else existing.missing_fields
+            []
+            if missing_fields is None
+            else missing_fields if missing_fields is not sentinel else existing.missing_fields
         ),
+        multi_city_intent=(
+            multi_city_intent if multi_city_intent is not sentinel else existing.multi_city_intent
+        ),
+        vibes=([] if vibes is None else vibes if vibes is not sentinel else existing.vibes),
     )
 
 
@@ -250,17 +286,23 @@ def apply_user_patch(
             primary = data.branches[primary_idx]
             # Always sync destinations (including empty list for removals)
             primary.destinations = data.trip_inputs.destinations
+
             # Sync other fields only if they were explicitly provided in the patch
-            if patch.trip_inputs.origin is not None:
-                primary.origin = patch.trip_inputs.origin
-            if patch.trip_inputs.start_date is not None:
-                primary.start_date = patch.trip_inputs.start_date
-            if patch.trip_inputs.end_date is not None:
-                primary.end_date = patch.trip_inputs.end_date
-            if patch.trip_inputs.traveler_count is not None:
-                primary.traveler_count = patch.trip_inputs.traveler_count
-            if patch.trip_inputs.budget is not None:
-                primary.budget = patch.trip_inputs.budget
+            def _field_was_provided(field_name: str) -> bool:
+                if isinstance(patch.trip_inputs, DocumentTripInputsPatch):
+                    return field_name in patch.trip_inputs.model_fields_set
+                return True  # Full DocumentTripInputs payloads are treated as explicit
+
+            if _field_was_provided("origin"):
+                primary.origin = data.trip_inputs.origin
+            if _field_was_provided("start_date"):
+                primary.start_date = data.trip_inputs.start_date
+            if _field_was_provided("end_date"):
+                primary.end_date = data.trip_inputs.end_date
+            if _field_was_provided("traveler_count"):
+                primary.traveler_count = data.trip_inputs.traveler_count
+            if _field_was_provided("budget"):
+                primary.budget = data.trip_inputs.budget
             data.branches[primary_idx] = primary
 
     return save_document_data(db, doc=doc, data=data, updated_by="user")
@@ -274,6 +316,7 @@ def apply_planner_update(
     trip_inputs: Optional[DocumentTripInputs],
     branches: Optional[list[DocumentBranch]] = None,
     tiles: Optional[dict[str, TileSchema]] = None,
+    preserve_fields: Optional[set[str]] = None,
 ) -> models.PlanDocument:
     """
     Apply planner-generated branches and tiles to the document.
@@ -290,7 +333,12 @@ def apply_planner_update(
     data.trip_context_id = trip_context_id
 
     # Merge trip inputs - planner uses replace_destinations=True so users can modify destinations
-    data.trip_inputs = merge_trip_inputs(data.trip_inputs, trip_inputs, replace_destinations=True)
+    data.trip_inputs = merge_trip_inputs(
+        data.trip_inputs,
+        trip_inputs,
+        replace_destinations=True,
+        preserve_fields=preserve_fields,
+    )
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:

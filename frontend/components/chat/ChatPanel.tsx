@@ -1,7 +1,8 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, ChevronDown, Compass } from 'lucide-react';
+import * as Collapsible from '@radix-ui/react-collapsible';
+import { ArrowUp, ChevronDown, Compass, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -27,8 +28,9 @@ const STREAM_CHUNK_SIZE = 1; // characters per chunk for smooth typing
 const STREAM_DELAY_MS = 24; // delay between chunks in ms (~55 chars/sec, natural typing speed)
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
 const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
-// Message to show after plan is generated
-const POST_GENERATE_MESSAGE = 'Keep chatting to tweak and improve your plan!';
+// Message to show after plan is generated with specific examples
+const POST_GENERATE_MESSAGE =
+  "Your trip options are ready! You can say things like 'increase budget to $3000', 'remove Paris', or 'add a beach day' to refine your plan.";
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
 
@@ -58,6 +60,10 @@ interface ChatPanelProps {
   tripDetails?: {
     content: ReactNode;
     missingFields?: string[];
+  };
+  /** Vibes section - separate collapsible for trip vibes/themes */
+  vibesSection?: {
+    content: ReactNode;
   };
   /** When true, the panel will try to fill available height */
   fullHeight?: boolean;
@@ -93,7 +99,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
-    const [detailsCollapsed, setDetailsCollapsed] = useState(false);
+    const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
+    const [vibesOpen, setVibesOpen] = useState(true);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
@@ -101,7 +108,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const panelHeightClass = props.fullHeight
       ? 'h-full'
       : hasUserMessage
-        ? 'min-h-[360px] max-h-[620px]'
+        ? 'min-h-[420px] max-h-[825px]'
         : 'min-h-[220px] max-h-[320px]';
 
     const scrollToBottom = useCallback(() => {
@@ -133,7 +140,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 (m: { id: string; role: string; content: string }) => ({
                   id: m.id,
                   role: m.role as 'user' | 'assistant',
-                  content: m.content,
+                  // Transform any stored trigger to friendly text (handles legacy data)
+                  content: m.content === GENERATE_PLAN_TRIGGER ? 'Generate my trip options' : m.content,
                 })
               );
               setMessages(loadedMessages);
@@ -162,7 +170,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER;
 
-        if (!isGenerateTrigger) {
+        // For generate trigger, show a friendly user message instead of the raw trigger
+        if (isGenerateTrigger) {
+          const userMessage: ChatMessage = {
+            id: `u_${Date.now()}`,
+            role: 'user',
+            content: 'Generate my trip options',
+          };
+          setMessages((prev) => [...prev, userMessage]);
+        } else {
           const userMessage: ChatMessage = {
             id: `u_${Date.now()}`,
             role: 'user',
@@ -334,133 +350,181 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Simple render - no content-based filters, just show all non-empty messages
     const visibleMessages = messages.filter((m) => m.content && m.content.trim().length > 0);
 
+    // Typing indicator component
+    const TypingIndicator = () => (
+      <div className="text-left message-enter">
+        <div className="border-border/50 bg-gradient-to-br from-muted to-muted/80 text-foreground inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md border px-4 py-3 shadow-sm">
+          <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '0ms' }} />
+          <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '150ms' }} />
+          <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '300ms' }} />
+        </div>
+      </div>
+    );
+
+    // Show typing indicator when loading and no streaming message yet
+    const showTypingIndicator = isLoading && !streamingMessageId;
+
     return (
       <div
-        className={`bg-card/90 text-foreground flex ${panelHeightClass} min-h-0 flex-col gap-3 rounded-2xl border border-white/20 p-4 shadow-xl backdrop-blur transition-[min-height,max-height] duration-300`}
+        className={`bg-card/95 text-foreground flex ${panelHeightClass} min-h-0 flex-col gap-4 rounded-2xl border border-white/30 p-5 shadow-2xl backdrop-blur-md transition-[min-height,max-height] duration-300`}
       >
-        <div className="flex items-center justify-between">
-          <div className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
-            Travel planner
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
+            <Compass className="h-3.5 w-3.5 text-primary" />
+            Travel Planner
           </div>
         </div>
 
         {showTripDetails ? (
-          <div className="rounded-xl bg-white px-2 py-1.5">
-            <button
-              type="button"
-              className="flex w-full items-center justify-start gap-2 text-left"
-              onClick={() => setDetailsCollapsed((prev) => !prev)}
-            >
-              <span className="text-muted-foreground text-[11px] font-semibold uppercase leading-none tracking-wide">
-                Trip details
-              </span>
-              <ChevronDown
-                className={`text-muted-foreground h-4 w-4 transition-transform ${
-                  detailsCollapsed ? '-rotate-90' : ''
-                }`}
-              />
-            </button>
-            <div
-              className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
-                detailsCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'
-              }`}
-            >
-              <div className="overflow-hidden pt-2">{props.tripDetails?.content}</div>
+          <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
+            <div className="rounded-xl bg-gradient-to-br from-muted/50 to-muted/30 border border-border/50 px-4 py-3 shadow-sm">
+              <Collapsible.Trigger asChild>
+                <button className="w-full flex items-center gap-1.5 text-primary/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-primary transition-colors group">
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
+                  Trip Details
+                </button>
+              </Collapsible.Trigger>
+              <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                <div className="text-sm pt-3">{props.tripDetails?.content}</div>
+              </Collapsible.Content>
             </div>
-          </div>
+          </Collapsible.Root>
+        ) : null}
+
+        {props.vibesSection && hasUserMessage ? (
+          <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
+            <div className="rounded-xl bg-gradient-to-br from-accent/10 to-primary/5 border border-accent/20 px-4 py-3 shadow-sm">
+              <Collapsible.Trigger asChild>
+                <button className="w-full flex items-center gap-1.5 text-accent/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-accent transition-colors group">
+                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${vibesOpen ? '' : '-rotate-90'}`} />
+                  <Sparkles className="h-3 w-3" />
+                  Vibes
+                </button>
+              </Collapsible.Trigger>
+              <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                <div className="text-sm pt-3">{props.vibesSection.content}</div>
+              </Collapsible.Content>
+            </div>
+          </Collapsible.Root>
         ) : null}
 
         <div
           ref={scrollContainerRef}
-          className="no-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto text-sm"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm pr-1 scroll-smooth"
+          style={{ scrollbarGutter: 'stable' }}
         >
           {isLoadingHistory ? (
             <div className="flex items-center justify-center py-4">
               <Compass className="text-muted-foreground compass-spin h-5 w-5" />
             </div>
           ) : (
-            visibleMessages.map((m) => (
-              <div key={m.id} className={m.role === 'user' ? 'text-right' : 'text-left'}>
+            <>
+              {visibleMessages.map((m, idx) => (
                 <div
-                  className={
-                    m.role === 'user'
-                      ? 'bg-primary text-primary-foreground inline-block max-w-[80%] rounded-2xl px-3 py-2 shadow-sm text-left'
-                      : `border-border/60 bg-muted text-foreground inline-block max-w-[80%] rounded-2xl border px-3 py-2 transition-opacity ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
-                  }
+                  key={m.id}
+                  className={`${m.role === 'user' ? 'text-right' : 'text-left'} message-enter`}
+                  style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
                 >
-                  {m.role === 'assistant' ? (
-                    <Markdown
-                      components={{
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                        ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
-                        ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
-                        li: ({ children }) => <li className="mb-1">{children}</li>,
-                      }}
-                    >
-                      {m.content}
-                    </Markdown>
-                  ) : (
-                    m.content
-                  )}
+                  <div
+                    className={
+                      m.role === 'user'
+                        ? 'bg-gradient-to-br from-primary to-primary/90 text-primary-foreground inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 shadow-md text-left hover:shadow-lg transition-shadow'
+                        : `border-border/50 bg-gradient-to-br from-muted to-muted/80 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md border px-4 py-2.5 transition-all hover:border-border/70 ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
+                    }
+                  >
+                    {m.role === 'assistant' ? (
+                      <Markdown
+                        components={{
+                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                          ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
+                          ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
+                          li: ({ children }) => <li className="mb-1">{children}</li>,
+                        }}
+                      >
+                        {m.content}
+                      </Markdown>
+                    ) : (
+                      m.content
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+              {showTypingIndicator && <TypingIndicator />}
+            </>
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="relative">
+        <form onSubmit={handleSubmit} className="relative mt-1">
           <input
             ref={inputRef}
-            className="border-input bg-muted/60 text-foreground placeholder:text-muted-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border px-3 py-2 pr-20 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+            className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors"
             placeholder={
               props.hasBranches
-                ? 'Keep chatting to plan'
-                : 'Chat with me to design your perfect trip'
+                ? 'Refine your trip...'
+                : 'Where would you like to go?'
             }
             value={input}
             onChange={(e) => setInput(e.target.value)}
           />
           <button
             type="submit"
-            className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-lg px-3 py-1 text-sm font-semibold transition-colors disabled:opacity-60 ${
+            className={`absolute right-2 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
               isLoading
-                ? 'bg-transparent'
-                : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                ? 'bg-muted'
+                : input.trim()
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
+                  : 'bg-muted/80 text-muted-foreground hover:bg-muted'
             }`}
-            disabled={isLoading}
+            disabled={isLoading || !input.trim()}
+            title="Send message (Enter)"
           >
             {isLoading ? (
-              <Compass className="text-accent compass-spin h-4 w-4" />
+              <Compass className="text-primary compass-spin h-5 w-5" />
             ) : (
-              <ArrowUp className="h-4 w-4" />
+              <ArrowUp className="h-5 w-5" />
             )}
           </button>
         </form>
 
         <div
-          className={`grid transition-all duration-300 ease-out ${
+          className={`grid transition-all duration-500 ease-out ${
             props.readyToGenerate && !props.hasBranches
               ? 'grid-rows-[1fr] opacity-100'
               : 'grid-rows-[0fr] opacity-0'
           }`}
         >
           <div className="overflow-hidden">
-            <button
-              type="button"
-              onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
-              disabled={isLoading || !props.readyToGenerate}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 mt-2 w-full rounded-xl px-4 py-3 text-sm font-semibold shadow-lg transition-colors disabled:opacity-60"
-            >
-              {isLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Compass className="compass-spin h-4 w-4" />
-                  Generating...
+            <div className="mt-3 space-y-3 p-3 rounded-xl bg-gradient-to-br from-accent/10 to-primary/5 border border-accent/20">
+              {/* Ready state indicator */}
+              <div className="flex items-center justify-center gap-2">
+                <span className="flex h-2 w-2 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
                 </span>
-              ) : (
-                'Generate Plan'
-              )}
-            </button>
+                <p className="text-foreground/70 text-xs font-medium">
+                  All details collected — ready to generate!
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
+                disabled={isLoading || !props.readyToGenerate}
+                className="bg-gradient-to-r from-primary to-primary/90 text-primary-foreground hover:from-primary/95 hover:to-primary/85 w-full rounded-xl px-5 py-3.5 text-sm font-bold shadow-lg transition-all duration-200 disabled:opacity-50 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] generate-pulse"
+              >
+                {isLoading ? (
+                  <span className="flex items-center justify-center gap-2.5">
+                    <Compass className="compass-spin h-5 w-5" />
+                    <span>Creating your personalized options...</span>
+                  </span>
+                ) : (
+                  <span className="flex items-center justify-center gap-2.5">
+                    <Sparkles className="h-5 w-5" />
+                    <span>Generate Trip Options</span>
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
