@@ -54,6 +54,15 @@ const TypingIndicator = () => (
   </div>
 );
 
+// Markdown components config - extracted to module level to prevent recreation on each render
+const MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2 last:mb-0">{children}</p>,
+  strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
+  ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
+  ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
+  li: ({ children }: { children?: React.ReactNode }) => <li className="mb-1">{children}</li>,
+};
+
 interface ChatPanelProps {
   selectedBranchId: string | null;
   /** Called when generate plan trigger is sent (before API call) */
@@ -93,8 +102,18 @@ export interface ChatPanelHandle {
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(props, ref) {
-    // Destructure stable props for useCallback dependencies to avoid re-renders
-    const { onPlanResult, onGeneratePlanStart, selectedBranchId } = props;
+    // Destructure all props for consistent access pattern
+    const {
+      onPlanResult,
+      onGeneratePlanStart,
+      selectedBranchId,
+      tripDetails,
+      vibesSection,
+      fullHeight,
+      hasBranches,
+      readyToGenerate,
+      onFreshStart,
+    } = props;
 
     const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_MESSAGES);
     const [input, setInput] = useState('');
@@ -106,8 +125,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
-    const showTripDetails = Boolean(props.tripDetails) && hasUserMessage;
-    const panelHeightClass = props.fullHeight
+    const showTripDetails = Boolean(tripDetails) && hasUserMessage;
+    const panelHeightClass = fullHeight
       ? 'h-full'
       : hasUserMessage
         ? 'min-h-[420px] max-h-[825px]'
@@ -375,12 +394,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <Compass className="h-3.5 w-3.5 text-primary" />
             Travel Planner
           </div>
-          {props.onFreshStart && hasUserMessage && (
+          {onFreshStart && hasUserMessage && (
             <button
               type="button"
               onClick={() => {
                 if (window.confirm('Start fresh? This will clear all your trip details and chat history.')) {
-                  props.onFreshStart?.();
+                  onFreshStart?.();
                 }
               }}
               className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
@@ -402,13 +421,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 </button>
               </Collapsible.Trigger>
               <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                <div className="text-sm pt-3">{props.tripDetails?.content}</div>
+                <div className="text-sm pt-3">{tripDetails?.content}</div>
               </Collapsible.Content>
             </div>
           </Collapsible.Root>
         ) : null}
 
-        {props.vibesSection && hasUserMessage ? (
+        {vibesSection && hasUserMessage ? (
           <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
             <div className="rounded-xl bg-gradient-to-br from-accent/10 to-primary/5 border border-accent/20 px-4 py-3 shadow-sm">
               <Collapsible.Trigger asChild>
@@ -419,7 +438,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 </button>
               </Collapsible.Trigger>
               <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                <div className="text-sm pt-3">{props.vibesSection.content}</div>
+                <div className="text-sm pt-3">{vibesSection.content}</div>
               </Collapsible.Content>
             </div>
           </Collapsible.Root>
@@ -449,15 +468,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     }
                   >
                     {m.role === 'assistant' ? (
-                      <Markdown
-                        components={{
-                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                          ul: ({ children }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
-                          ol: ({ children }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
-                          li: ({ children }) => <li className="mb-1">{children}</li>,
-                        }}
-                      >
+                      <Markdown components={MARKDOWN_COMPONENTS}>
                         {m.content}
                       </Markdown>
                     ) : (
@@ -476,7 +487,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             ref={inputRef}
             className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors"
             placeholder={
-              props.hasBranches
+              hasBranches
                 ? 'Refine your trip...'
                 : 'Where would you like to go?'
             }
@@ -505,7 +516,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <div
           className={`grid transition-all duration-500 ease-out ${
-            props.readyToGenerate && !props.hasBranches
+            readyToGenerate && !hasBranches && !isLoading
               ? 'grid-rows-[1fr] opacity-100'
               : 'grid-rows-[0fr] opacity-0'
           }`}
@@ -525,7 +536,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               <button
                 type="button"
                 onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
-                disabled={isLoading || !props.readyToGenerate}
+                disabled={isLoading || !readyToGenerate}
                 className="bg-gradient-to-r from-primary to-primary/90 text-primary-foreground hover:from-primary/95 hover:to-primary/85 w-full rounded-xl px-5 py-3.5 text-sm font-bold shadow-lg transition-all duration-200 disabled:opacity-50 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] generate-pulse"
               >
                 {isLoading ? (

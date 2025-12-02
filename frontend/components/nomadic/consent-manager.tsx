@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
-export type ConsentPreferences = {
+type ConsentPreferences = {
   essential: true;
   functional: boolean;
   analytics: boolean;

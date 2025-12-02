@@ -16,14 +16,7 @@ export const loadTripSummary = (): TripSummaryPayload | null => {
   try {
     const raw = window.localStorage.getItem(SUMMARY_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as TripSummaryPayload;
-    if (!parsed.selection?.activities) {
-      parsed.selection = {
-        ...parsed.selection,
-        activities: [],
-      };
-    }
-    return parsed;
+    return JSON.parse(raw) as TripSummaryPayload;
   } catch (error) {
     console.error('Failed to load trip summary', error);
     return null;

@@ -25,7 +25,7 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   origin: null,
   start_date: null,
   end_date: null,
-  traveler_count: 2,
+  traveler_count: null,
   budget: null,
   multi_city_intent: null,
   vibes: [],
@@ -38,11 +38,6 @@ type DocumentState = {
   updatedBy: UpdatedBy | null;
   updatedAt: string | null;
   document: PlanDocumentData | null;
-
-  // Version tracking for auto-refresh loop prevention
-  // This tracks the version we last received from backend, to distinguish
-  // between user-initiated changes and backend-initiated updates
-  lastConfirmedVersion: number;
 
   // UI state
   selectedBranchId: string | null;
@@ -83,7 +78,6 @@ const initialState = {
   updatedBy: null as UpdatedBy | null,
   updatedAt: null as string | null,
   document: null as PlanDocumentData | null,
-  lastConfirmedVersion: 0,
   selectedBranchId: null as string | null,
   isLoading: false,
   error: null as string | null,
@@ -172,7 +166,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
-        lastConfirmedVersion: response.version,
         error: null,
       });
 
@@ -199,7 +192,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             updatedBy: retryResponse.updated_by,
             updatedAt: retryResponse.updated_at,
             document: retryResponse.document,
-            lastConfirmedVersion: retryResponse.version,
             error: null,
           });
 
@@ -248,7 +240,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
-        lastConfirmedVersion: response.version,
         isLoading: false,
         // Auto-select primary branch if none selected
         selectedBranchId:
@@ -279,7 +270,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
-        lastConfirmedVersion: response.version,
         isLoading: false,
       });
     } catch (err) {
@@ -359,7 +349,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedBy: response.updated_by,
       updatedAt: response.updated_at,
       document: response.document,
-      lastConfirmedVersion: response.version,
       selectedBranchId:
         get().selectedBranchId ||
         primaryBranch?.id ||

@@ -1107,12 +1107,21 @@ def _call_openai_for_plan(
     # Check if all required fields are complete BEFORE calling LLM
     pre_check_missing = _compute_missing_fields(current_trip_inputs)
 
-    # DEBUG (1/3): Before LLM - current state + missing fields
+    # DEBUG (1/3): Before LLM - current state + missing fields + message history
     if _DEBUG_LOG:
         print("[DEBUG] === BEFORE LLM ===")
         print(f"[DEBUG] Current trip_inputs: {json.dumps(current_trip_inputs, indent=2)}")
         print(f"[DEBUG] Missing fields: {pre_check_missing}")
         print(f"[DEBUG] Has branches: {has_existing_branches}, Is generate: {is_generate_trigger}")
+        print("[DEBUG] === MESSAGE HISTORY ===")
+        for msg in history:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            # Truncate long messages for readability
+            display_content = content[:300] + "..." if len(content) > 300 else content
+            print(f"[DEBUG] [{role.upper()}]: {display_content}")
+        # Show the current user message being sent
+        print(f"[DEBUG] [USER (current)]: {req.message}")
         print("=" * 80)
 
     # REMOVED: Early return when all fields complete
@@ -1139,6 +1148,8 @@ Fields: destinations[], origin, start_date, end_date, traveler_count,
 EXTRACTION:
 - origin=where FROM, destinations=where TO.
   "Flying from NYC to Rome" → origin="NYC", destinations=["Rome"]
+  "from Rome to NYC and Florence" → origin="Rome", destinations=["NYC","Florence"]
+  "to Paris from London" → origin="London", destinations=["Paris"]
 - Dates→YYYY-MM-DD. "today"={today}.
   Duration: "starting tomorrow for 5 days" → set both dates
 - Travelers: "solo"=1, "couple"=2, "family of 4"=4. Budget: "$1500"→1500

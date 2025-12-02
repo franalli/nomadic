@@ -1,10 +1,10 @@
 'use client';
 
 import { Plane, Sparkles, TentTree } from 'lucide-react';
-import { type ElementType, useEffect, useMemo, useState } from 'react';
+import { type ElementType, memo, useEffect, useMemo, useState } from 'react';
 
 import { TileCard } from '@/components/tiles/TileCard';
-import type { PlanBranch } from '@/types/plan';
+import type { DocumentBranch } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
 export type TileTabKey = 'stays' | 'flights' | 'activities';
@@ -47,7 +47,12 @@ export const resolveTabForTile = (tile: Tile): TileTabKey => {
 
 type TilesGridProps = {
   tiles: Tile[];
-  activeBranch?: PlanBranch | null;
+  activeBranch?: DocumentBranch | null;
+  /**
+   * Called whenever the active tab or filtered tiles change.
+   * **Important:** This callback must be wrapped in `useCallback` in the parent
+   * component to avoid triggering infinite re-render loops.
+   */
   onTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
   selectedTiles?: TileSelection;
   onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
@@ -55,7 +60,7 @@ type TilesGridProps = {
   hideTabSwitcher?: boolean;
 };
 
-export function TilesGrid({
+export const TilesGrid = memo(function TilesGrid({
   tiles,
   activeBranch,
   onTabChange,
@@ -184,4 +189,4 @@ export function TilesGrid({
       </div>
     </div>
   );
-}
+});

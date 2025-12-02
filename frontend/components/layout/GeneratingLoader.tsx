@@ -2,13 +2,14 @@
 
 import { motion } from 'framer-motion';
 import { Compass, Sparkles } from 'lucide-react';
+import { memo } from 'react';
 
 interface GeneratingLoaderProps {
   /** Progress value from 0 to 1, or undefined for indeterminate */
   progress?: number;
 }
 
-export function GeneratingLoader({ progress }: GeneratingLoaderProps) {
+export const GeneratingLoader = memo(function GeneratingLoader({ progress }: GeneratingLoaderProps) {
   // Inspirational messages that cycle during generation
   const messages = [
     'Crafting your perfect itinerary...',
@@ -157,4 +158,4 @@ export function GeneratingLoader({ progress }: GeneratingLoaderProps) {
       </motion.div>
     </div>
   );
-}
+});

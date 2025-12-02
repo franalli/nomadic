@@ -1,5 +1,5 @@
 import { Heart, MapPin, Star } from 'lucide-react';
-import { type KeyboardEvent, type MouseEvent, useMemo, useState } from 'react';
+import { type KeyboardEvent, memo, type MouseEvent, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
@@ -13,6 +13,11 @@ type TileCardProps = {
   onToggleSelect?: (tile: Tile) => void;
 };
 
+/**
+ * TODO: Remove mock feature sets once real tile metadata is available from API.
+ * These arrays generate placeholder features using deterministic hashing of tile IDs.
+ * Replace with: tile.meta.features or similar API field when available.
+ */
 const HOTEL_FEATURE_SETS = [
   ['Free WiFi', 'Breakfast Included', 'Rooftop Bar'],
   ['Pool', 'Spa', 'Restaurant'],
@@ -20,12 +25,14 @@ const HOTEL_FEATURE_SETS = [
   ['Gym', 'Room Service', 'Bar'],
 ];
 
+/** TODO: Remove once real flight metadata is available from API */
 const FLIGHT_FEATURE_SETS = [
   ['Carry-on included', 'Meal included', 'USB Power'],
   ['Free cancellation', 'Seat selection', 'Wifi on board'],
   ['Priority boarding', 'Extra legroom', 'Lounge access'],
 ];
 
+/** TODO: Remove once real activity metadata is available from API */
 const ACTIVITY_FEATURE_SETS = [
   ['Small group', 'Guide included', 'Skip the line'],
   ['Private tour', 'Hotel pickup', 'Mobile ticket'],
@@ -69,7 +76,7 @@ const getFeaturesForTile = (tile: Tile): string[] => {
   return sets[hash % sets.length];
 };
 
-export function TileCard({
+export const TileCard = memo(function TileCard({
   tile,
   branchId,
   isSelected,
@@ -203,4 +210,4 @@ export function TileCard({
       </CardBody>
     </Card>
   );
-}
+});

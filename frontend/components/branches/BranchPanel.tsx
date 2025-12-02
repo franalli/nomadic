@@ -1,7 +1,7 @@
 'use client';
 
 import { MapPin } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 
 import {
   resolveTabForTile,
@@ -9,7 +9,7 @@ import {
   TilesGrid,
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
-import type { PlanBranch, TripInputs } from '@/types/plan';
+import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
 type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
@@ -25,6 +25,11 @@ type BranchDetails = {
   notes: string[];
 };
 
+/**
+ * TODO: Replace mock DETAIL_PRESETS with real branch metadata from the API.
+ * These hardcoded presets with stock Unsplash images are placeholders until
+ * the backend provides actual branch details (vibe, highlights, flow, notes).
+ */
 const DETAIL_PRESETS: BranchDetails[] = [
   {
     vibe: 'Coastal hikes + harbor nights',
@@ -155,8 +160,8 @@ const formatDuration = (start?: string | null, end?: string | null) => {
 };
 
 const resolveDurationForBranch = (
-  branch?: PlanBranch | null,
-  inputs?: TripInputs | null
+  branch?: DocumentBranch | null,
+  inputs?: DocumentTripInputs | null
 ) => {
   if (!branch) return null;
   return formatDuration(
@@ -182,7 +187,10 @@ const normalizeBudgetInput = (budget?: string | number | null): string | null =>
   return trimmed || null;
 };
 
-const resolveBudgetForBranch = (branch?: PlanBranch | null, inputs?: TripInputs | null) =>
+const resolveBudgetForBranch = (
+  branch?: DocumentBranch | null,
+  inputs?: DocumentTripInputs | null
+) =>
   normalizeBudgetInput(branch?.budget) ?? normalizeBudgetInput(inputs?.budget);
 
 const formatBudgetDisplay = (budget?: string | number | null): string | null => {
@@ -192,7 +200,7 @@ const formatBudgetDisplay = (budget?: string | number | null): string | null => 
 };
 
 type BranchPanelProps = {
-  branches: PlanBranch[];
+  branches: DocumentBranch[];
   selectedBranchId: string | null;
   onBranchSelect: (branchId: string) => void;
   branchTileCounts?: Record<string, TileCounts>;
@@ -204,10 +212,10 @@ type BranchPanelProps = {
   branchSelections?: Record<string, TileSelection>;
   onBookTrip?: (branchId: string) => void;
   canBookTrip?: boolean;
-  tripInputs?: TripInputs | null;
+  tripInputs?: DocumentTripInputs | null;
 };
 
-export function BranchPanel({
+export const BranchPanel = memo(function BranchPanel({
   branches,
   selectedBranchId,
   onBranchSelect,
@@ -705,4 +713,4 @@ export function BranchPanel({
       </div>
     </div>
   );
-}
+});
