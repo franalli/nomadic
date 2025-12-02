@@ -1,6 +1,6 @@
 import type { TripSummaryPayload } from '@/types/summary';
 
-export const SUMMARY_STORAGE_KEY = 'nomadic_trip_summary';
+const SUMMARY_STORAGE_KEY = 'nomadic_trip_summary';
 
 export const saveTripSummary = (payload: TripSummaryPayload): void => {
   if (typeof window === 'undefined') return;

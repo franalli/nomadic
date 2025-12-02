@@ -479,220 +479,171 @@ def test_merge_trip_inputs_replace_mode_handles_empty_list():
 
 
 # =============================================================================
-# Tests for _clean_trip_inputs field deletion handling
+# Tests for merge_trip_inputs explicit null handling
 # =============================================================================
 
 
-def test_clean_trip_inputs_origin_persists_with_allow_overwrite():
-    """Test that _clean_trip_inputs preserves origin even when allow_overwrite=True.
+def test_merge_trip_inputs_explicit_null_clears_origin():
+    """Test that merge_trip_inputs clears origin when explicit_nulls contains 'origin'.
 
-    Origin and other non-destination fields persist once set. Even if the LLM
-    returns origin: null, the existing value should be preserved.
+    When user clicks X on the origin badge, the field should be cleared.
+    This is different from LLM returning origin=null (which preserves existing value).
     """
-    from app.plan import _clean_trip_inputs
+    from app.crud_document import merge_trip_inputs
+    from app.schemas import DocumentTripInputs
 
     # Existing state with origin set
-    existing = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
+    existing = DocumentTripInputs(
+        destinations=["Paris"],
+        origin="London",
+        start_date="2025-12-01",
+        end_date="2025-12-07",
+        traveler_count=2,
+        budget=2000,
+    )
 
-    # LLM response explicitly sets origin to null (key is present)
-    llm_response = {
-        "destinations": ["Paris"],
-        "origin": None,  # Should be ignored - origin persists
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
+    # Incoming patch with origin=None (simulating user clicking X)
+    # The explicit_nulls set tells merge that this was intentional
+    incoming = {"origin": None}
 
-    result = _clean_trip_inputs(existing, llm_response, allow_overwrite=True)
+    result = merge_trip_inputs(
+        existing,
+        incoming,
+        explicit_nulls={"origin"},
+    )
 
-    assert result["origin"] == "London", "Origin should persist even with allow_overwrite=True"
-    assert result["destinations"] == ["Paris"], "Destinations should remain unchanged"
-    assert "origin" not in result["missing_fields"], "Origin should NOT be in missing_fields"
+    assert result.origin is None, "Origin should be cleared when in explicit_nulls"
+    assert "origin" in result.missing_fields, "Origin should be in missing_fields"
 
 
-def test_clean_trip_inputs_delete_origin_without_allow_overwrite():
-    """Test that _clean_trip_inputs preserves origin when allow_overwrite=False.
+def test_merge_trip_inputs_llm_null_preserves_origin():
+    """Test that merge_trip_inputs preserves origin when LLM returns null.
 
-    When allow_overwrite is False (default), null values should NOT delete existing values.
+    When LLM returns origin=null without explicit_nulls, existing value is preserved.
     """
-    from app.plan import _clean_trip_inputs
+    from app.crud_document import merge_trip_inputs
+    from app.schemas import DocumentTripInputs
 
     # Existing state with origin set
-    existing = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
+    existing = DocumentTripInputs(
+        destinations=["Paris"],
+        origin="London",
+        start_date="2025-12-01",
+        end_date="2025-12-07",
+        traveler_count=2,
+        budget=2000,
+    )
 
-    # Second source with origin null
-    second_source = {
+    # LLM response with origin=None (not intentional deletion)
+    incoming = {
+        "destinations": ["Paris"],
         "origin": None,
     }
 
-    result = _clean_trip_inputs(existing, second_source, allow_overwrite=False)
+    result = merge_trip_inputs(
+        existing,
+        incoming,
+        # No explicit_nulls - null means "not provided"
+    )
 
-    assert result["origin"] == "London", "Origin should be preserved when allow_overwrite=False"
+    assert result.origin == "London", "Origin should be preserved when LLM returns null"
 
 
-def test_clean_trip_inputs_partial_destination_removal():
-    """Test that _clean_trip_inputs properly handles partial destination removal.
+def test_merge_trip_inputs_explicit_null_clears_dates():
+    """Test that explicit_nulls clears date fields."""
+    from app.crud_document import merge_trip_inputs
+    from app.schemas import DocumentTripInputs
 
-    When the LLM returns fewer destinations (e.g., removes one from list),
-    it should update to the new list.
+    existing = DocumentTripInputs(
+        destinations=["Paris"],
+        origin="London",
+        start_date="2025-12-01",
+        end_date="2025-12-07",
+        traveler_count=2,
+        budget=2000,
+    )
+
+    # User clicks X on both date badges
+    incoming = {
+        "start_date": None,
+        "end_date": None,
+    }
+
+    result = merge_trip_inputs(
+        existing,
+        incoming,
+        explicit_nulls={"start_date", "end_date"},
+    )
+
+    assert result.start_date is None, "start_date should be cleared"
+    assert result.end_date is None, "end_date should be cleared"
+    assert "start_date" in result.missing_fields
+    assert "end_date" in result.missing_fields
+
+
+def test_merge_trip_inputs_explicit_null_clears_vibes():
+    """Test that explicit_nulls clears vibes array."""
+    from app.crud_document import merge_trip_inputs
+    from app.schemas import DocumentTripInputs
+
+    existing = DocumentTripInputs(
+        destinations=["Paris"],
+        origin="London",
+        vibes=["adventure", "foodie"],
+    )
+
+    # User clears all vibes
+    incoming = {"vibes": None}
+
+    result = merge_trip_inputs(
+        existing,
+        incoming,
+        explicit_nulls={"vibes"},
+    )
+
+    assert result.vibes == [], "vibes should be empty list after explicit null"
+
+
+def test_apply_user_patch_clears_origin():
+    """Test that apply_user_patch clears origin when user clicks X badge.
+
+    When user clicks X on the origin badge, the frontend sends a patch with
+    origin=null. This should actually clear the origin field.
     """
-    from app.plan import _clean_trip_inputs
+    from app.crud_document import apply_user_patch, get_document_data, save_document_data
+    from app.schemas import DocumentTripInputsPatch, PlanDocumentPatch
 
-    # Existing state with multiple destinations
-    existing = {
-        "destinations": ["Paris", "Nice", "Lyon"],
-        "origin": "London",
-    }
+    seed = seed_session_with_document(session_token="session-clear-origin")
 
-    # LLM response removes Nice from the list
-    llm_response = {
-        "destinations": ["Paris", "Lyon"],  # Nice removed
-        "origin": "London",
-    }
+    with TestingSessionLocal() as db:
+        doc = (
+            db.query(models.PlanDocument)
+            .filter(models.PlanDocument.id == seed["document_id"])
+            .first()
+        )
+        assert doc is not None
 
-    result = _clean_trip_inputs(existing, llm_response, allow_overwrite=True)
+        # First set up a document with origin
+        data = get_document_data(doc)
+        data.trip_inputs.origin = "London"
+        doc = save_document_data(db, doc=doc, data=data, updated_by="user")
 
-    assert result["destinations"] == ["Paris", "Lyon"], "Destinations should match LLM response"
-    assert "Nice" not in result["destinations"], "Nice should be removed"
+        # Verify origin is set
+        data = get_document_data(doc)
+        assert data.trip_inputs.origin == "London"
 
+        # Create a patch that clears origin (user clicked X)
+        # Using DocumentTripInputsPatch which tracks model_fields_set
+        patch = PlanDocumentPatch(
+            version=doc.version,
+            trip_inputs=DocumentTripInputsPatch(origin=None),
+        )
 
-def test_clean_trip_inputs_delete_all_destinations():
-    """Test that _clean_trip_inputs properly deletes all destinations.
+        updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+        data = get_document_data(updated_doc)
 
-    When the LLM returns empty destinations list, all destinations should be removed.
-    """
-    from app.plan import _clean_trip_inputs
-
-    # Existing state with destinations
-    existing = {
-        "destinations": ["Paris", "Nice"],
-        "origin": "London",
-    }
-
-    # LLM response with empty destinations (explicitly present)
-    llm_response = {
-        "destinations": [],  # All destinations removed
-        "origin": "London",
-    }
-
-    result = _clean_trip_inputs(existing, llm_response, allow_overwrite=True)
-
-    assert result["destinations"] == [], "Destinations should be empty"
-    assert "destinations" in result["missing_fields"], "Destinations should be in missing_fields"
-
-
-def test_clean_trip_inputs_field_not_present_preserves_existing():
-    """Test that _clean_trip_inputs preserves values when field is not in source.
-
-    When a field is NOT present in the source (vs explicitly null), existing value is kept.
-    """
-    from app.plan import _clean_trip_inputs
-
-    # Existing state
-    existing = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
-
-    # LLM response doesn't include origin key at all
-    llm_response = {
-        "destinations": ["Paris"],
-        # "origin" key is NOT present - should preserve existing
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
-
-    result = _clean_trip_inputs(existing, llm_response, allow_overwrite=True)
-
-    assert result["origin"] == "London", "Origin should be preserved when key not in source"
-
-
-def test_clean_trip_inputs_date_fields_persist():
-    """Test that _clean_trip_inputs preserves date fields.
-
-    Date fields persist once set. Even if the LLM returns null, existing values are preserved.
-    """
-    from app.plan import _clean_trip_inputs
-
-    existing = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
-
-    llm_response = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": None,  # Should be ignored - dates persist
-        "end_date": None,  # Should be ignored - dates persist
-        "traveler_count": 2,
-        "budget": 2000,
-    }
-
-    result = _clean_trip_inputs(existing, llm_response, allow_overwrite=True)
-
-    assert result["start_date"] == "2025-12-01", "start_date should persist"
-    assert result["end_date"] == "2025-12-07", "end_date should persist"
-    assert "start_date" not in result["missing_fields"]
-    assert "end_date" not in result["missing_fields"]
-
-
-def test_clean_trip_inputs_numeric_fields_persist():
-    """Test that _clean_trip_inputs preserves numeric fields.
-
-    Numeric fields (traveler_count, budget) persist once set.
-    Even if the LLM returns null, existing values are preserved.
-    """
-    from app.plan import _clean_trip_inputs
-
-    existing = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": 2,
-        "budget": 2000,
-    }
-
-    llm_response = {
-        "destinations": ["Paris"],
-        "origin": "London",
-        "start_date": "2025-12-01",
-        "end_date": "2025-12-07",
-        "traveler_count": None,  # Should be ignored - persists
-        "budget": None,  # Should be ignored - persists
-    }
-
-    result = _clean_trip_inputs(existing, llm_response, allow_overwrite=True)
-
-    assert result["traveler_count"] == 2, "traveler_count should persist"
-    assert result["budget"] == 2000, "budget should persist"
-    assert "traveler_count" not in result["missing_fields"]
-    assert "budget" not in result["missing_fields"]
+        assert data.trip_inputs.origin is None, "Origin should be cleared"
+        assert "origin" in data.trip_inputs.missing_fields
 
 
 # =============================================================================
@@ -863,11 +814,9 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
         # Verify trip_inputs updated
         assert data.trip_inputs.destinations == [], "trip_inputs.destinations should be empty"
 
-        # Verify primary branch destinations are also updated
-        primary_branch = next(b for b in data.branches if b.is_primary)
-        assert (
-            primary_branch.destinations == []
-        ), "Primary branch destinations should cascade from trip_inputs"
+        # Branches should be pruned when all destinations are removed
+        # (they referenced "Nice" which is no longer a valid destination)
+        assert data.branches == [], "Branches should be pruned when destinations are cleared"
 
 
 def test_patch_trip_inputs_vibes_preserves_existing_fields():
@@ -926,7 +875,7 @@ def test_plan_flow_preserves_user_removed_destinations(monkeypatch: object):
         doc.document = data.model_dump()
         db.commit()
 
-    def fake_call(req, history_rows, history, document_data):
+    def fake_call(req, history_rows=None, history=None, document_data=None, **kwargs):
         # Simulate the user removing "Rome" while the LLM call is in flight
         # Note: We use the seed session_token since req no longer contains session_id
         with TestingSessionLocal() as db2:
@@ -1001,7 +950,7 @@ def test_plan_flow_persists_llm_vibes(monkeypatch: object):
 
     seed = seed_session_with_document(session_token="session-plan-vibes")
 
-    def fake_call(req, history_rows, history, document_data):
+    def fake_call(req, history=None, document_data=None, **kwargs):
         return plan_module.PlannerLLMOutput(
             branches=[],
             assistant_message="ready",
@@ -1039,3 +988,279 @@ def test_plan_flow_persists_llm_vibes(monkeypatch: object):
     assert persisted.status_code == 200
     persisted_doc = persisted.json()
     assert persisted_doc["document"]["trip_inputs"]["vibes"] == ["adventure", "f1"]
+
+
+# =============================================================================
+# Tests for trip inputs sync - user changes before/during LLM call
+# =============================================================================
+
+
+def test_plan_flow_llm_destinations_overwrite_user_removals(monkeypatch: object):
+    """Plan endpoint applies LLM destinations as most-recent-wins.
+
+    With the simplified merge logic, LLM updates are applied last and win.
+    The LLM is expected to acknowledge any changes in its assistant_message.
+
+    This tests the scenario where:
+    1. User has destinations ["Nice", "Rome"]
+    2. User removes "Rome" via UI (PATCH /v1/document)
+    3. User sends a chat message
+    4. LLM returns destinations ["Nice", "Rome"]
+    5. LLM values are applied (most recent wins)
+    """
+    from app import plan as plan_module
+    from app.crud_document import get_document_data
+
+    seed = seed_session_with_document(session_token="session-sync-before-request")
+
+    # Step 1: Set up initial state with multiple destinations
+    with TestingSessionLocal() as db:
+        doc = (
+            db.query(models.PlanDocument)
+            .filter(models.PlanDocument.id == seed["document_id"])
+            .first()
+        )
+        assert doc is not None
+        data = get_document_data(doc)
+        data.trip_inputs.destinations = ["Nice", "Rome"]
+        data.branches = []
+        data.tiles = {}
+        doc.document = data.model_dump()
+        db.commit()
+
+    # Step 2: User removes "Rome" via PATCH endpoint (before the /plan request)
+    patch_response = client.patch(
+        "/v1/document",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={
+            "version": 1,
+            "trip_inputs": {
+                "destinations": ["Nice"],  # Rome removed
+            },
+        },
+    )
+    assert patch_response.status_code == 200
+    # Verify the patch was applied
+    assert patch_response.json()["document"]["trip_inputs"]["destinations"] == ["Nice"]
+
+    # Step 3: Mock LLM to return destinations including Rome (LLM is most recent, so it wins)
+    def fake_call(req, history=None, document_data=None, **kwargs):
+        # LLM returns its own view of destinations
+        # With most-recent-wins, LLM output will be applied
+        return plan_module.PlannerLLMOutput(
+            branches=[],
+            assistant_message="Here are your options",
+            trip_inputs={
+                "destinations": ["Nice", "Rome"],  # LLM's output (most recent wins)
+                "origin": "London",
+                "start_date": "2025-12-01",
+                "end_date": "2025-12-07",
+                "traveler_count": 2,
+                "budget": 2000,
+                "missing_fields": [],
+            },
+            ready_to_generate=True,
+        )
+
+    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
+
+    # Step 4: User sends chat message
+    response = client.post(
+        "/v1/plan",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={"message": "What should I do in Nice?"},
+    )
+
+    # Step 5: Verify LLM values are applied (most recent wins)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["document"]["trip_inputs"]["destinations"] == [
+        "Nice",
+        "Rome",
+    ], "LLM output should be applied (most recent wins)"
+
+    # Verify persisted state also has the LLM's destinations
+    persisted = client.get(
+        "/v1/document",
+        cookies=get_session_cookies(seed["session_token"]),
+    )
+    assert persisted.status_code == 200
+    assert persisted.json()["document"]["trip_inputs"]["destinations"] == ["Nice", "Rome"]
+
+
+def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
+    """Plan endpoint applies LLM updates as most-recent-wins.
+
+    When a user modifies fields before sending a message, and the LLM returns
+    different values, the LLM values win (most recent update wins).
+    The LLM is expected to acknowledge any changes in its assistant_message.
+    """
+    from app import plan as plan_module
+    from app.crud_document import get_document_data
+
+    seed = seed_session_with_document(session_token="session-sync-all-fields")
+
+    # Step 1: Set up initial state
+    with TestingSessionLocal() as db:
+        doc = (
+            db.query(models.PlanDocument)
+            .filter(models.PlanDocument.id == seed["document_id"])
+            .first()
+        )
+        assert doc is not None
+        data = get_document_data(doc)
+        data.trip_inputs.destinations = ["Nice"]
+        data.trip_inputs.origin = "London"
+        data.trip_inputs.start_date = "2025-12-01"
+        data.trip_inputs.end_date = "2025-12-07"
+        data.trip_inputs.traveler_count = 2
+        data.trip_inputs.budget = 2000
+        data.trip_inputs.vibes = ["beach"]
+        data.branches = []
+        data.tiles = {}
+        doc.document = data.model_dump()
+        db.commit()
+
+    # Step 2: User modifies multiple fields via PATCH
+    patch_response = client.patch(
+        "/v1/document",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={
+            "version": 1,
+            "trip_inputs": {
+                "origin": "Paris",  # Changed from London
+                "start_date": "2025-12-10",  # Changed from 12-01
+                "traveler_count": 4,  # Changed from 2
+                "vibes": ["adventure", "culture"],  # Changed from ["beach"]
+            },
+        },
+    )
+    assert patch_response.status_code == 200
+
+    # Step 3: Mock LLM to return its own values (LLM is most recent, so it wins)
+    def fake_call(req, history=None, document_data=None, **kwargs):
+        return plan_module.PlannerLLMOutput(
+            branches=[],
+            assistant_message=(
+                "I've updated your departure city from Paris to London and your dates."
+            ),
+            trip_inputs={
+                "destinations": ["Nice"],
+                "origin": "London",  # LLM returns London
+                "start_date": "2025-12-01",  # LLM returns 12-01
+                "end_date": "2025-12-07",
+                "traveler_count": 2,  # LLM returns 2
+                "budget": 2000,
+                "missing_fields": [],
+                "vibes": ["beach"],  # LLM returns ["beach"]
+            },
+            ready_to_generate=True,
+        )
+
+    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
+
+    # Step 4: User sends chat message
+    response = client.post(
+        "/v1/plan",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={"message": "Update my trip details"},
+    )
+
+    # Step 5: Verify LLM values win (most recent update)
+    assert response.status_code == 200
+    payload = response.json()
+    trip_inputs = payload["document"]["trip_inputs"]
+
+    # LLM values should be applied (most recent wins)
+    assert trip_inputs["origin"] == "London", "LLM value should win (most recent)"
+    assert trip_inputs["start_date"] == "2025-12-01", "LLM value should win (most recent)"
+    assert trip_inputs["traveler_count"] == 2, "LLM value should win (most recent)"
+    assert trip_inputs["vibes"] == ["beach"], "LLM value should win (most recent)"
+
+
+@pytest.mark.skipif(
+    "sqlite" in TEST_DATABASE_URL,
+    reason="SQLite does not support concurrent write transactions needed for this test",
+)
+def test_plan_flow_preserves_user_additions_during_llm_call(monkeypatch: object):
+    """Plan endpoint should preserve user ADDITIONS made during the LLM call.
+
+    If user adds a destination while the LLM is processing, the addition
+    should be preserved and merged with the LLM's output.
+    """
+    from app import plan as plan_module
+    from app.crud_document import apply_user_patch, get_document, get_document_data
+    from app.schemas import PlanDocumentPatch
+
+    seed = seed_session_with_document(session_token="session-sync-additions")
+
+    # Set up initial state with one destination
+    with TestingSessionLocal() as db:
+        doc = (
+            db.query(models.PlanDocument)
+            .filter(models.PlanDocument.id == seed["document_id"])
+            .first()
+        )
+        assert doc is not None
+        data = get_document_data(doc)
+        data.trip_inputs.destinations = ["Nice"]
+        data.branches = []
+        data.tiles = {}
+        doc.document = data.model_dump()
+        db.commit()
+
+    def fake_call(req, history=None, document_data=None, **kwargs):
+        # Simulate user ADDING "Florence" during the LLM call
+        with TestingSessionLocal() as db2:
+            session = (
+                db2.query(models.Session)
+                .filter(models.Session.session_token == seed["session_token"])
+                .first()
+            )
+            doc = get_document(db2, session=session)
+            apply_user_patch(
+                db2,
+                doc=doc,
+                patch=PlanDocumentPatch(
+                    version=doc.version,
+                    trip_inputs={"destinations": ["Nice", "Florence"]},  # User added Florence
+                ),
+            )
+            db2.commit()
+
+        # LLM returns only Nice (doesn't know about Florence)
+        return plan_module.PlannerLLMOutput(
+            branches=[],
+            assistant_message="Great trip to Nice",
+            trip_inputs={
+                "destinations": ["Nice"],  # Doesn't include user-added Florence
+                "origin": "London",
+                "start_date": "2025-12-01",
+                "end_date": "2025-12-07",
+                "traveler_count": 2,
+                "budget": 2000,
+                "missing_fields": [],
+            },
+            ready_to_generate=True,
+        )
+
+    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
+
+    response = client.post(
+        "/v1/plan",
+        cookies=get_session_cookies(seed["session_token"]),
+        headers=get_csrf_headers(),
+        json={"message": "Plan my trip"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    destinations = payload["document"]["trip_inputs"]["destinations"]
+
+    # Both Nice (from LLM) and Florence (user-added) should be present
+    assert "Nice" in destinations, "LLM destination should be present"
+    assert "Florence" in destinations, "User-added destination should be preserved"

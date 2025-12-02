@@ -1,10 +1,12 @@
 """
 CRUD operations for the centralized PlanDocument.
 Uses CRDT-style merge for conflict resolution.
+Most recent update wins regardless of source (user or LLM).
 """
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -22,6 +24,8 @@ from app.schemas import (
 from app.schemas import (
     Tile as TileSchema,
 )
+
+_DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
 
 def get_document(db: Session, *, session: models.Session) -> Optional[models.PlanDocument]:
@@ -107,68 +111,101 @@ def merge_trip_inputs(
     incoming: Optional[DocumentTripInputs | DocumentTripInputsPatch | dict],
     *,
     replace_destinations: bool = False,
-    preserve_fields: Optional[set[str]] = None,
+    explicit_nulls: Optional[set[str]] = None,
 ) -> DocumentTripInputs:
     """
-    Merge trip inputs: incoming values override existing values when provided.
+    Merge trip inputs with most-recent-wins conflict resolution.
+
+    Rule: The most recent update wins, regardless of whether it's from user or LLM.
+
+    Args:
+        existing: Current trip inputs state
+        incoming: New values to merge
+        replace_destinations: If True, replace destinations entirely (for user patches)
+        explicit_nulls: Set of field names that were explicitly set to null/None.
+                       When a user clicks X on a field badge, the field is in this set.
+                       This allows distinguishing "not provided" from "delete this field".
 
     Works with both full DocumentTripInputs payloads and partial patches.
     """
 
     incoming_data = _trip_inputs_to_dict(incoming)
-    if not incoming_data:
+    if not incoming_data and not explicit_nulls:
         return existing
 
-    sentinel = object()
-    preserve = preserve_fields or set()
+    # Start with a copy of existing
+    result = existing.model_copy(deep=True)
 
-    def _get_value(key: str):
-        return incoming_data.get(key, sentinel)
+    # Fields that can be merged (excluding meta fields)
+    mergeable_fields = [
+        "origin",
+        "start_date",
+        "end_date",
+        "traveler_count",
+        "budget",
+        "multi_city_intent",
+        "vibes",
+        "destinations",
+    ]
 
-    dest_value = _get_value("destinations")
-    if "destinations" in preserve:
-        merged_destinations = existing.destinations
-    elif dest_value is sentinel:
-        merged_destinations = existing.destinations
-    elif replace_destinations:
-        merged_destinations = dest_value or []
-    else:
-        existing_destinations = set(existing.destinations or [])
-        incoming_destinations = set(dest_value or [])
-        merged_destinations = list(existing_destinations | incoming_destinations)
-        if not merged_destinations:
-            merged_destinations = existing.destinations
+    # Ensure explicit_nulls is a set (for membership testing)
+    nulls_set = explicit_nulls or set()
 
-    origin = _get_value("origin") if "origin" not in preserve else sentinel
-    start_date = _get_value("start_date") if "start_date" not in preserve else sentinel
-    end_date = _get_value("end_date") if "end_date" not in preserve else sentinel
-    traveler_count = _get_value("traveler_count") if "traveler_count" not in preserve else sentinel
-    budget = _get_value("budget") if "budget" not in preserve else sentinel
-    missing_fields = _get_value("missing_fields") if "missing_fields" not in preserve else sentinel
-    multi_city_intent = (
-        _get_value("multi_city_intent") if "multi_city_intent" not in preserve else sentinel
-    )
-    vibes = _get_value("vibes") if "vibes" not in preserve else sentinel
+    for field in mergeable_fields:
+        incoming_value = incoming_data.get(field)
+        is_explicit_null = field in nulls_set
 
-    return DocumentTripInputs(
-        destinations=merged_destinations,
-        origin=origin if origin is not sentinel else existing.origin,
-        start_date=start_date if start_date is not sentinel else existing.start_date,
-        end_date=end_date if end_date is not sentinel else existing.end_date,
-        traveler_count=(
-            traveler_count if traveler_count is not sentinel else existing.traveler_count
-        ),
-        budget=budget if budget is not sentinel else existing.budget,
-        missing_fields=(
-            []
-            if missing_fields is None
-            else missing_fields if missing_fields is not sentinel else existing.missing_fields
-        ),
-        multi_city_intent=(
-            multi_city_intent if multi_city_intent is not sentinel else existing.multi_city_intent
-        ),
-        vibes=([] if vibes is None else vibes if vibes is not sentinel else existing.vibes),
-    )
+        # Skip if incoming doesn't have this field AND it's not explicitly nulled
+        if field not in incoming_data and not is_explicit_null:
+            continue
+
+        # Handle destinations specially
+        if field == "destinations":
+            if replace_destinations or is_explicit_null:
+                # Replace entirely (or clear if explicitly nulled)
+                result.destinations = incoming_value if incoming_value else []
+            elif incoming_value:
+                # Merge destinations (union)
+                existing_dest = set(result.destinations or [])
+                incoming_dest = set(incoming_value or [])
+                result.destinations = list(existing_dest | incoming_dest)
+        elif field == "vibes":
+            # Vibes are always replaced, not merged
+            if is_explicit_null:
+                # Explicitly clear vibes
+                result.vibes = []
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] Cleared '{field}' (explicit null)")
+            elif incoming_value is not None:
+                result.vibes = incoming_value
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
+        else:
+            # Scalar fields:
+            # origin, start_date, end_date, traveler_count, budget, multi_city_intent
+            if is_explicit_null:
+                # User explicitly deleted this field
+                setattr(result, field, None)
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] Deleted '{field}' (explicit null)")
+            elif incoming_value is not None:
+                setattr(result, field, incoming_value)
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
+
+    # Handle missing_fields - always recompute based on actual values
+    missing = []
+    if not result.destinations:
+        missing.append("destinations")
+    if result.origin is None:
+        missing.append("origin")
+    if result.start_date is None:
+        missing.append("start_date")
+    if result.end_date is None:
+        missing.append("end_date")
+    result.missing_fields = missing
+
+    return result
 
 
 def merge_branches(
@@ -243,6 +280,71 @@ def merge_selections(
     return result
 
 
+def prune_branches_and_tiles(
+    branches: list[DocumentBranch],
+    tiles: dict[str, TileSchema],
+    current_destinations: list[str],
+) -> tuple[list[DocumentBranch], dict[str, TileSchema]]:
+    """
+    Prune branches that reference destinations no longer in trip_inputs.
+    Also remove orphaned tiles that are no longer referenced by any remaining branch.
+
+    Args:
+        branches: Current list of branches
+        tiles: Current tiles map
+        current_destinations: The current destinations list from trip_inputs
+
+    Returns:
+        Tuple of (pruned_branches, pruned_tiles)
+    """
+    if not branches:
+        return branches, tiles
+
+    # Lowercase current destinations for case-insensitive matching
+    current_lower = {d.lower() for d in current_destinations}
+
+    # Filter branches: keep only those whose destinations are all still valid
+    pruned_branches = []
+    for branch in branches:
+        branch_destinations = branch.destinations or []
+        # Keep branch if all its destinations are in current destinations
+        # (or if branch has no destinations, which shouldn't happen but be safe)
+        if not branch_destinations or all(d.lower() in current_lower for d in branch_destinations):
+            pruned_branches.append(branch)
+        elif _DEBUG_LOG:
+            print(
+                f"[DEBUG] Pruning branch '{branch.id}' - "
+                f"destinations {branch_destinations} not in {current_destinations}"
+            )
+
+    # If no branches were removed, tiles are unchanged
+    if len(pruned_branches) == len(branches):
+        return branches, tiles
+
+    # Collect all tile IDs still referenced by remaining branches
+    referenced_tile_ids: set[str] = set()
+    for branch in pruned_branches:
+        referenced_tile_ids.update(branch.tiles.stays)
+        referenced_tile_ids.update(branch.tiles.flights)
+        referenced_tile_ids.update(branch.tiles.activities)
+        # Also include selections
+        if branch.selections.stay:
+            referenced_tile_ids.add(branch.selections.stay)
+        if branch.selections.flight:
+            referenced_tile_ids.add(branch.selections.flight)
+        referenced_tile_ids.update(branch.selections.activities)
+
+    # Prune orphaned tiles
+    pruned_tiles = {tid: tile for tid, tile in tiles.items() if tid in referenced_tile_ids}
+
+    if _DEBUG_LOG:
+        removed_count = len(tiles) - len(pruned_tiles)
+        if removed_count > 0:
+            print(f"[DEBUG] Pruned {removed_count} orphaned tiles")
+
+    return pruned_branches, pruned_tiles
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # High-Level Operations
 # ─────────────────────────────────────────────────────────────────────────────
@@ -262,9 +364,21 @@ def apply_user_patch(
     """
     data = get_document_data(doc)
 
-    # Merge trip inputs - use replace_destinations=True so users can remove destinations
+    # Detect fields explicitly set to null (user clicked X on field badge)
+    explicit_nulls: set[str] = set()
+    if isinstance(patch.trip_inputs, DocumentTripInputsPatch):
+        for field_name in patch.trip_inputs.model_fields_set:
+            if getattr(patch.trip_inputs, field_name, "NOT_NONE") is None:
+                explicit_nulls.add(field_name)
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] apply_user_patch: Field '{field_name}' explicitly set to null")
+
+    # Merge trip inputs with replace_destinations=True
     data.trip_inputs = merge_trip_inputs(
-        data.trip_inputs, patch.trip_inputs, replace_destinations=True
+        data.trip_inputs,
+        patch.trip_inputs,
+        replace_destinations=True,
+        explicit_nulls=explicit_nulls if explicit_nulls else None,
     )
 
     # Merge branches
@@ -275,6 +389,14 @@ def apply_user_patch(
 
     # Update selections
     data.branches = merge_selections(data.branches, patch.selections)
+
+    # Prune branches referencing removed destinations, and clean up orphaned tiles
+    if patch.trip_inputs is not None and data.branches:
+        data.branches, data.tiles = prune_branches_and_tiles(
+            data.branches,
+            data.tiles,
+            data.trip_inputs.destinations,
+        )
 
     # Cascade trip_inputs changes to the primary branch
     # This ensures destination removals are reflected in the branch
@@ -316,28 +438,31 @@ def apply_planner_update(
     trip_inputs: Optional[DocumentTripInputs],
     branches: Optional[list[DocumentBranch]] = None,
     tiles: Optional[dict[str, TileSchema]] = None,
-    preserve_fields: Optional[set[str]] = None,
 ) -> models.PlanDocument:
     """
     Apply planner-generated branches and tiles to the document.
-    Planner updates replace destinations to allow users to modify their list.
-    Can be called with only trip_inputs during collection phase.
+
+    Most recent update wins - no field protection needed.
 
     When trip_inputs change but no new branches are provided, the primary branch
     is updated to reflect the new trip parameters (destinations, origin, dates, etc).
-    This ensures LLM modifications cascade to the visible branch immediately.
     """
     data = get_document_data(doc)
 
     # Update trip context
     data.trip_context_id = trip_context_id
 
-    # Merge trip inputs - planner uses replace_destinations=True so users can modify destinations
+    if _DEBUG_LOG:
+        if trip_inputs:
+            print(
+                f"[DEBUG] apply_planner_update: Incoming trip_inputs = {trip_inputs.model_dump()}"
+            )
+
+    # Merge trip inputs - most recent update wins
     data.trip_inputs = merge_trip_inputs(
         data.trip_inputs,
         trip_inputs,
         replace_destinations=True,
-        preserve_fields=preserve_fields,
     )
 
     # Merge branches (planner branches are added/updated) - only if provided

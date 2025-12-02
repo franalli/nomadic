@@ -1,3 +1,4 @@
+import os
 import uuid
 from typing import List
 
@@ -14,6 +15,8 @@ from .mock_provider import (
 )
 from .models import SearchContext
 from .provider_base import Provider
+
+_DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
 
 def _build_search_context(req: TilesSearchRequest) -> SearchContext:
@@ -73,9 +76,8 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
         try:
             tiles = provider.search(ctx)
         except Exception as exc:
-            # For now just log/print; later replace with proper logging
-            # and maybe partial failure handling.
-            print(f"Provider {provider.name} failed: {exc}")
+            if _DEBUG_LOG:
+                print(f"Provider {provider.name} failed: {exc}")
             continue
 
         all_tiles.extend(tiles)

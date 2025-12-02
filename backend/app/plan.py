@@ -20,8 +20,8 @@ Architecture Overview:
 Key Design Decisions:
 --------------------
 - PlanDocument is the single source of truth for trip state
-- Chat history metadata provides fallback for migration from older sessions
-- Trip inputs are collected in a specific order: destination → origin → dates → travelers → budget
+- LLM receives document JSON directly and returns updated trip_inputs
+- merge_trip_inputs in crud_document handles merging with most-recent-wins logic
 - Branches are only generated once ALL required fields are collected
 - Robust JSON parsing handles malformed LLM responses
 """
@@ -31,7 +31,8 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Any, Iterable, List, Optional, cast
+from typing import Any, List, Optional, cast
+from zoneinfo import ZoneInfo
 
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
@@ -137,38 +138,38 @@ _REQUIRED_TRIP_INPUT_FIELDS = (
     "end_date",
 )
 
-# Default values for optional fields when generating branches
-_DEFAULT_TRAVELER_COUNT = 2
-_DEFAULT_BUDGET_PER_PERSON_PER_DAY = 150  # Will be multiplied by travelers and days
-
 
 # =============================================================================
 # DATE UTILITY FUNCTIONS
 # =============================================================================
 
 
-def _today_iso() -> str:
+def _today_iso(timezone_name: Optional[str] = None) -> str:
     """
     Get today's date in ISO format (YYYY-MM-DD).
 
-    Uses UTC to ensure consistency across timezones.
+    Uses the provided timezone if valid, otherwise falls back to UTC.
+    This ensures users see "today" and "tomorrow" relative to their
+    local time, not server time.
+
+    Args:
+        timezone_name: Optional IANA timezone name (e.g., "Europe/Rome").
+                       If None or invalid, falls back to UTC.
 
     Returns:
-        str: Today's date as "YYYY-MM-DD"
+        str: Today's date as "YYYY-MM-DD" in the specified timezone.
     """
+    tz = None
+    if timezone_name:
+        try:
+            tz = ZoneInfo(timezone_name)
+        except (KeyError, ValueError):
+            # Invalid timezone - fall back to UTC
+            pass
+
+    if tz:
+        return datetime.now(tz).strftime("%Y-%m-%d")
     return datetime.utcnow().strftime("%Y-%m-%d")
-
-
-def _next_week_iso() -> str:
-    """
-    Get the date one week from today in ISO format.
-
-    Used as a default end_date suggestion when users don't specify dates.
-
-    Returns:
-        str: Date 7 days from now as "YYYY-MM-DD"
-    """
-    return (datetime.utcnow() + timedelta(days=7)).strftime("%Y-%m-%d")
 
 
 # =============================================================================
@@ -200,117 +201,79 @@ def _get_openai_client() -> Optional[OpenAI]:
 
 def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optional[str]:
     """
-    Serialize the full PlanDocumentData into a human-readable format for the LLM.
+    Serialize branches and tiles from PlanDocumentData for LLM context.
 
-    This function converts the structured document state into a text format that
-    the LLM can easily understand. It includes:
-    - Trip inputs (destination, dates, travelers, budget)
-    - All branches with their descriptions and tile assignments
-    - Available tiles with pricing information
-    - User's current selections within each branch
-
-    The output format uses clear section headers and indentation to help the LLM
-    parse the context effectively.
+    This function converts the branches and tiles into a text format that
+    the LLM can understand. It does NOT include trip_inputs since those
+    are already provided in the CURRENT STATE block of the system prompt.
 
     Args:
         doc_data: The current plan document data, or None if no document exists.
 
     Returns:
-        Optional[str]: A formatted text representation of the document state,
-                       or None if doc_data is None.
-
-    Example output:
-        === CURRENT TRIP PLAN STATE ===
-        Trip Inputs: destination=Paris, start_date=2025-01-15
-        Missing Fields: origin, end_date, traveler_count, budget
-
-        === BRANCHES (2) ===
-        Branch: Cultural Explorer (PRIMARY)
-          Description: Museums, history, local culture
-          ...
-        === END TRIP PLAN STATE ===
+        Optional[str]: A formatted text representation of branches/tiles,
+                       or None if doc_data is None or has no branches.
     """
     if doc_data is None:
         return None
 
-    lines: List[str] = ["=== CURRENT TRIP PLAN STATE ==="]
+    # Only include context if there are branches to show
+    if not doc_data.branches:
+        return None
 
-    # 1. Trip inputs
-    ti = doc_data.trip_inputs
-    inputs_parts = []
-    if ti.destinations:
-        inputs_parts.append(f"destinations={', '.join(ti.destinations)}")
-    if ti.origin:
-        inputs_parts.append(f"origin={ti.origin}")
-    if ti.start_date:
-        inputs_parts.append(f"start_date={ti.start_date}")
-    if ti.end_date:
-        inputs_parts.append(f"end_date={ti.end_date}")
-    if ti.traveler_count is not None:
-        inputs_parts.append(f"traveler_count={ti.traveler_count}")
-    if ti.budget is not None:
-        inputs_parts.append(f"budget={ti.budget}")
-    if ti.multi_city_intent:
-        inputs_parts.append(f"multi_city_intent={ti.multi_city_intent}")
-    if ti.vibes:
-        inputs_parts.append(f"vibes=[{', '.join(ti.vibes)}]")
-    if inputs_parts:
-        lines.append(f"Trip Inputs: {', '.join(inputs_parts)}")
-    if ti.missing_fields:
-        lines.append(f"Missing Fields: {', '.join(ti.missing_fields)}")
+    lines: List[str] = []
 
-    # 2. Branches with their selections and tile info
-    if doc_data.branches:
-        lines.append(f"\n=== BRANCHES ({len(doc_data.branches)}) ===")
-        for branch in doc_data.branches:
-            primary_marker = " (PRIMARY)" if branch.is_primary else ""
-            lines.append(f"\nBranch: {branch.label}{primary_marker}")
-            lines.append(f"  ID: {branch.id}")
-            lines.append(f"  Description: {branch.description}")
-            if branch.destinations:
-                lines.append(f"  Destinations: {', '.join(branch.destinations)}")
-            if branch.origin:
-                lines.append(f"  Origin: {branch.origin}")
-            if branch.start_date:
-                lines.append(f"  Dates: {branch.start_date} to {branch.end_date}")
-            if branch.traveler_count is not None:
-                lines.append(f"  Travelers: {branch.traveler_count}")
-            if branch.budget is not None:
-                lines.append(f"  Budget: {branch.budget}")
+    # Branches with their selections and tile info
+    lines.append(f"=== BRANCHES ({len(doc_data.branches)}) ===")
+    for branch in doc_data.branches:
+        primary_marker = " (PRIMARY)" if branch.is_primary else ""
+        lines.append(f"\nBranch: {branch.label}{primary_marker}")
+        lines.append(f"  ID: {branch.id}")
+        lines.append(f"  Description: {branch.description}")
+        if branch.destinations:
+            lines.append(f"  Destinations: {', '.join(branch.destinations)}")
+        if branch.origin:
+            lines.append(f"  Origin: {branch.origin}")
+        if branch.start_date:
+            lines.append(f"  Dates: {branch.start_date} to {branch.end_date}")
+        if branch.traveler_count is not None:
+            lines.append(f"  Travelers: {branch.traveler_count}")
+        if branch.budget is not None:
+            lines.append(f"  Budget: {branch.budget}")
 
-            # Tiles assigned to this branch
-            tiles = branch.tiles
-            tile_counts = []
-            if tiles.stays:
-                tile_counts.append(f"{len(tiles.stays)} stays")
-            if tiles.flights:
-                tile_counts.append(f"{len(tiles.flights)} flights")
-            if tiles.activities:
-                tile_counts.append(f"{len(tiles.activities)} activities")
-            if tile_counts:
-                lines.append(f"  Available Tiles: {', '.join(tile_counts)}")
+        # Tiles assigned to this branch
+        tiles = branch.tiles
+        tile_counts = []
+        if tiles.stays:
+            tile_counts.append(f"{len(tiles.stays)} stays")
+        if tiles.flights:
+            tile_counts.append(f"{len(tiles.flights)} flights")
+        if tiles.activities:
+            tile_counts.append(f"{len(tiles.activities)} activities")
+        if tile_counts:
+            lines.append(f"  Available Tiles: {', '.join(tile_counts)}")
 
-            # User selections
-            sel = branch.selections
-            selected_parts = []
-            if sel.stay:
-                stay_tile = doc_data.tiles.get(sel.stay)
-                stay_info = f"{stay_tile.title}" if stay_tile else sel.stay
-                selected_parts.append(f"Stay: {stay_info}")
-            if sel.flight:
-                flight_tile = doc_data.tiles.get(sel.flight)
-                flight_info = f"{flight_tile.title}" if flight_tile else sel.flight
-                selected_parts.append(f"Flight: {flight_info}")
-            if sel.activities:
-                activity_names = []
-                for act_id in sel.activities:
-                    act_tile = doc_data.tiles.get(act_id)
-                    activity_names.append(act_tile.title if act_tile else act_id)
-                selected_parts.append(f"Activities: {', '.join(activity_names)}")
-            if selected_parts:
-                lines.append(f"  USER SELECTIONS: {'; '.join(selected_parts)}")
+        # User selections
+        sel = branch.selections
+        selected_parts = []
+        if sel.stay:
+            stay_tile = doc_data.tiles.get(sel.stay)
+            stay_info = f"{stay_tile.title}" if stay_tile else sel.stay
+            selected_parts.append(f"Stay: {stay_info}")
+        if sel.flight:
+            flight_tile = doc_data.tiles.get(sel.flight)
+            flight_info = f"{flight_tile.title}" if flight_tile else sel.flight
+            selected_parts.append(f"Flight: {flight_info}")
+        if sel.activities:
+            activity_names = []
+            for act_id in sel.activities:
+                act_tile = doc_data.tiles.get(act_id)
+                activity_names.append(act_tile.title if act_tile else act_id)
+            selected_parts.append(f"Activities: {', '.join(activity_names)}")
+        if selected_parts:
+            lines.append(f"  USER SELECTIONS: {'; '.join(selected_parts)}")
 
-    # 3. Available tiles (abbreviated)
+    # Available tiles (abbreviated)
     if doc_data.tiles:
         lines.append(f"\n=== AVAILABLE TILES ({len(doc_data.tiles)}) ===")
         by_type: dict[str, List[str]] = {"flight": [], "hotel": [], "activity": []}
@@ -327,63 +290,7 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
                 if len(tile_list) > 5:
                     lines.append(f"  ... and {len(tile_list) - 5} more")
 
-    lines.append("\n=== END TRIP PLAN STATE ===")
     return "\n".join(lines)
-
-
-# =============================================================================
-# CHAT HISTORY MIGRATION HELPERS
-# =============================================================================
-
-
-def _latest_trip_state_from_history(
-    history_rows: List[models.ChatMessage],
-) -> Optional[dict]:
-    """
-    Extract trip_inputs from chat message metadata as a migration fallback.
-
-    DEPRECATED: This function exists only for backward compatibility with sessions
-    created before PlanDocument became the single source of truth. It will be
-    removed once all old sessions have migrated or expired.
-
-    The function scans through assistant messages in chronological order and merges
-    any trip_inputs stored in their metadata.
-
-    Args:
-        history_rows: List of ChatMessage objects from the database, ordered
-                      chronologically (oldest first).
-
-    Returns:
-        Optional[dict]: Merged trip_inputs from all assistant messages, or None
-                        if no trip_inputs were found in any message metadata.
-
-    Note:
-        - Only assistant messages are considered (user messages don't have trip_inputs)
-        - Later messages overwrite earlier values (allow_overwrite=True)
-        - Consider removing this once migration period is complete
-    """
-
-    merged_trip_inputs: Optional[dict] = None
-
-    for entry in history_rows:
-        if getattr(entry, "role", None) != "assistant":
-            continue
-        meta = getattr(entry, "meta", None)
-        if not isinstance(meta, dict):
-            continue
-
-        ti = meta.get("trip_inputs")
-        if isinstance(ti, dict):
-            if merged_trip_inputs is None:
-                merged_trip_inputs = _clean_trip_inputs(ti)
-            else:
-                merged_trip_inputs = _clean_trip_inputs(
-                    merged_trip_inputs,
-                    ti,
-                    allow_overwrite=True,
-                )
-
-    return merged_trip_inputs
 
 
 # =============================================================================
@@ -862,14 +769,69 @@ def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
     return max(1, min(20, value))
 
 
-def _ordered_missing_fields_from_inputs(
-    trip_inputs: dict,
-) -> List[str]:
+def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
     """
-    Get the list of missing trip input fields in canonical order.
+    Normalize a branch specification from LLM output.
 
-    The order matches _REQUIRED_TRIP_INPUT_FIELDS: destinations, origin, start_date,
-    end_date, traveler_count, budget.
+    Applies consistent normalization to all branch fields and fills in
+    missing values from fallback_inputs (the canonical trip inputs).
+
+    Args:
+        spec: Raw branch dict from LLM with label, description, destinations, etc.
+        fallback_inputs: Canonical trip inputs to use for missing values.
+
+    Returns:
+        Optional[dict]: Normalized branch dict, or None if branch is invalid
+                        (missing required fields like destinations).
+    """
+    if not isinstance(spec, dict) or "label" not in spec:
+        return None
+
+    # Handle destinations as array
+    branch_destinations = spec.get("destinations", [])
+    if not isinstance(branch_destinations, list):
+        branch_destinations = [branch_destinations] if branch_destinations else []
+    branch_destinations = [_normalize_str(d) for d in branch_destinations if d]
+    if not branch_destinations:
+        branch_destinations = fallback_inputs.get("destinations", [])
+    if not branch_destinations:
+        return None
+
+    # Normalize other fields with fallbacks
+    branch_origin = _normalize_str(spec.get("origin")) or fallback_inputs.get("origin")
+    branch_start = _normalize_date(spec.get("start_date")) or fallback_inputs.get("start_date")
+    branch_end = _normalize_date(spec.get("end_date")) or fallback_inputs.get("end_date")
+
+    branch_travelers = _normalize_int(spec.get("traveler_count"))
+    if branch_travelers is None:
+        branch_travelers = _normalize_int(fallback_inputs.get("traveler_count"))
+    if branch_travelers is not None:
+        branch_travelers = _clamp_traveler_count(branch_travelers)
+
+    branch_budget = _normalize_int(spec.get("budget"))
+    if branch_budget is None:
+        branch_budget = _normalize_int(fallback_inputs.get("budget"))
+    if branch_budget is not None and branch_budget < 0:
+        branch_budget = None
+
+    return {
+        "label": str(spec["label"]),
+        "description": str(spec.get("description", "")),
+        "destinations": branch_destinations,
+        "origin": branch_origin,
+        "start_date": branch_start,
+        "end_date": branch_end,
+        "traveler_count": branch_travelers,
+        "budget": branch_budget,
+    }
+
+
+def _compute_missing_fields(trip_inputs: dict) -> List[str]:
+    """
+    Compute the list of missing REQUIRED trip input fields in canonical order.
+
+    Only checks the 4 required fields: destinations, origin, start_date, end_date.
+    Optional fields (traveler_count, budget, vibes) are not included.
 
     Args:
         trip_inputs: A dictionary of trip input values.
@@ -880,241 +842,12 @@ def _ordered_missing_fields_from_inputs(
     missing = []
     for field in _REQUIRED_TRIP_INPUT_FIELDS:
         if field == "destinations":
-            # For destinations, check if array is empty
             val = trip_inputs.get(field, [])
             if not val or (isinstance(val, list) and len(val) == 0):
                 missing.append(field)
         elif trip_inputs.get(field) is None:
             missing.append(field)
     return missing
-
-
-# =============================================================================
-# TRIP INPUTS MERGING AND CLEANING
-# =============================================================================
-
-
-def _clean_trip_inputs(
-    *sources: Any,
-    fallback: Optional[dict] = None,
-    allow_overwrite: bool = False,
-    overwrite_fields: Optional[Iterable[str]] = None,
-) -> dict:
-    """
-    Merge multiple trip_inputs sources into a single normalized dictionary.
-
-    This function is central to the state management strategy. It handles:
-    - Merging inputs from document, chat history, and LLM response
-    - Normalizing values (dates, integers, strings)
-    - Tracking which fields are still missing
-    - Respecting overwrite semantics (first source wins unless allow_overwrite)
-
-    The merging priority (first source wins by default):
-    1. Earlier sources in *sources take precedence
-    2. fallback is applied last
-    3. With allow_overwrite=True, later sources can overwrite earlier values
-
-    Args:
-        *sources: Variable number of dict-like sources to merge.
-        fallback: Optional final fallback dictionary.
-        allow_overwrite: If True, later sources overwrite earlier values.
-        overwrite_fields: Specific field names that can always be overwritten.
-
-    Returns:
-        dict: Merged trip_inputs with all fields normalized and a
-              "missing_fields" key listing fields that are still None.
-
-    Example:
-        >>> _clean_trip_inputs(
-        ...     {"destination": "Paris"},
-        ...     {"destination": "London", "budget": 1500},
-        ...     allow_overwrite=False
-        ... )
-        {"destination": "Paris", "budget": 1500, "missing_fields": [...]}
-    """
-    sentinel = object()
-    merged: dict[str, Any] = {field: sentinel for field in _TRIP_INPUT_FIELDS}
-    noted_missing: set[str] = set()
-    overwrite_set = {str(f) for f in overwrite_fields} if overwrite_fields else set()
-
-    def _ingest(source: Any) -> None:
-        if not isinstance(source, dict):
-            return
-
-        raw_missing = source.get("missing_fields", [])
-        if isinstance(raw_missing, list):
-            for entry in raw_missing:
-                entry_str = str(entry).strip()
-                if entry_str:
-                    noted_missing.add(entry_str)
-
-        for field in _TRIP_INPUT_FIELDS:
-            if field == "destinations":
-                # Handle destinations as an array
-                # With allow_overwrite=True, the LLM can replace destinations entirely
-                # Check if destinations key is explicitly present in source (even if empty)
-                destinations_key_present = "destinations" in source
-                source_destinations = source.get("destinations", [])
-                if not isinstance(source_destinations, list):
-                    source_destinations = [source_destinations] if source_destinations else []
-                source_destinations = [
-                    _normalize_str(d) for d in source_destinations if d and _normalize_str(d)
-                ]
-                current_value = merged[field]
-                can_overwrite = allow_overwrite or ("destinations" in overwrite_set)
-                if source_destinations:
-                    if can_overwrite:
-                        # When allow_overwrite is True, replace destinations entirely
-                        # This allows users to change/reduce their destination list via chat
-                        merged[field] = source_destinations
-                    elif current_value in (sentinel, None, []):
-                        merged[field] = source_destinations
-                    elif isinstance(current_value, list):
-                        # Merge: add new destinations that aren't already present
-                        existing_set = set(current_value)
-                        for dest in source_destinations:
-                            if dest not in existing_set:
-                                current_value.append(dest)
-                                existing_set.add(dest)
-                        merged[field] = current_value
-                    else:
-                        merged[field] = source_destinations
-                elif can_overwrite and destinations_key_present:
-                    # Explicit empty list when allow_overwrite - delete all destinations
-                    merged[field] = []
-                elif current_value is sentinel:
-                    merged[field] = []
-            elif field in ("start_date", "end_date"):
-                normalizer = _normalize_date
-                value = normalizer(source.get(field))
-                current_value = merged[field]
-                can_overwrite = allow_overwrite or (field in overwrite_set)
-                # Non-destination fields persist once set - only update with non-null values
-                if value is not None:
-                    if current_value in (sentinel, None) or can_overwrite:
-                        merged[field] = value
-                elif current_value is sentinel:
-                    merged[field] = None
-            elif field == "traveler_count":
-                normalizer = _normalize_int
-                value = normalizer(source.get(field))
-                current_value = merged[field]
-                can_overwrite = allow_overwrite or (field in overwrite_set)
-                # Non-destination fields persist once set - only update with non-null values
-                if value is not None:
-                    if current_value in (sentinel, None) or can_overwrite:
-                        merged[field] = value
-                elif current_value is sentinel:
-                    merged[field] = None
-            elif field == "budget":
-                normalizer = _normalize_int
-                value = normalizer(source.get(field))
-                current_value = merged[field]
-                can_overwrite = allow_overwrite or (field in overwrite_set)
-                # Non-destination fields persist once set - only update with non-null values
-                if value is not None:
-                    if current_value in (sentinel, None) or can_overwrite:
-                        merged[field] = value
-                elif current_value is sentinel:
-                    merged[field] = None
-            elif field == "multi_city_intent":
-                # multi_city_intent is a literal "multi_city" or "separate" or None
-                value = source.get(field)
-                current_value = merged[field]
-                if value in ("multi_city", "separate"):
-                    can_overwrite = allow_overwrite or (field in overwrite_set)
-                    if current_value in (sentinel, None) or can_overwrite:
-                        merged[field] = value
-                elif current_value is sentinel:
-                    merged[field] = None
-            elif field == "vibes":
-                # vibes is an optional array of trip themes/purposes
-                vibes_key_present = "vibes" in source
-                source_vibes = source.get("vibes", [])
-                if not isinstance(source_vibes, list):
-                    source_vibes = [source_vibes] if source_vibes else []
-                # Normalize: lowercase, strip, keep only non-empty entries
-                source_vibes = [
-                    normalized_v.lower()
-                    for v in source_vibes
-                    if v and (normalized_v := _normalize_str(v))
-                ]
-                current_value = merged[field]
-                can_overwrite = "vibes" in overwrite_set
-                allow_initial_value = current_value in (sentinel, None)
-                if source_vibes:
-                    if allow_initial_value:
-                        merged[field] = source_vibes
-                    elif can_overwrite:
-                        merged[field] = source_vibes
-                    elif isinstance(current_value, list):
-                        # Merge: add new vibes that aren't already present
-                        existing_set = set(current_value)
-                        for vibe in source_vibes:
-                            if vibe not in existing_set:
-                                current_value.append(vibe)
-                                existing_set.add(vibe)
-                        merged[field] = current_value
-                    else:
-                        merged[field] = source_vibes
-                elif can_overwrite and vibes_key_present:
-                    # Explicit empty list when allow_overwrite - clear all vibes
-                    merged[field] = []
-                elif current_value is sentinel:
-                    merged[field] = []
-            else:
-                # Origin and other string fields - persist once set
-                normalizer = _normalize_str
-                value = normalizer(source.get(field))
-                current_value = merged[field]
-                can_overwrite = allow_overwrite or (field in overwrite_set)
-                # Non-destination fields persist once set - only update with non-null values
-                if value is not None:
-                    if current_value in (sentinel, None) or can_overwrite:
-                        merged[field] = value
-                elif current_value is sentinel:
-                    merged[field] = None
-
-    for source in sources:
-        _ingest(source)
-    if fallback is not None:
-        _ingest(fallback)
-
-    final_missing: set[str] = set()
-    for field in _TRIP_INPUT_FIELDS:
-        if field == "destinations":
-            if merged[field] is sentinel:
-                merged[field] = []
-            if not merged[field]:
-                final_missing.add(field)
-        elif field == "multi_city_intent":
-            # multi_city_intent is optional - don't add to missing_fields
-            if merged[field] is sentinel:
-                merged[field] = None
-        elif field == "vibes":
-            # vibes is optional - don't add to missing_fields
-            if merged[field] is sentinel:
-                merged[field] = []
-        else:
-            if merged[field] is sentinel:
-                merged[field] = None
-            if merged[field] is None:
-                final_missing.add(field)
-
-    # Only add noted_missing fields if they are actually None/empty
-    # Don't let LLM's incorrect missing_fields override our actual values
-    for field in noted_missing:
-        if field == "destinations":
-            if not merged.get(field):
-                final_missing.add(field)
-        elif merged.get(field) is None:
-            final_missing.add(field)
-
-    ordered_missing = [field for field in _TRIP_INPUT_FIELDS if field in final_missing]
-
-    merged["missing_fields"] = ordered_missing
-
-    return merged
 
 
 def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, List[str]]:
@@ -1182,7 +915,7 @@ def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, L
         trip_inputs["budget"] = None
         validation_messages.append("Budget must be zero or higher. Please share an updated budget.")
 
-    trip_inputs["missing_fields"] = _ordered_missing_fields_from_inputs(trip_inputs)
+    trip_inputs["missing_fields"] = _compute_missing_fields(trip_inputs)
     return trip_inputs, validation_messages
 
 
@@ -1303,17 +1036,6 @@ def _is_generate_plan_trigger(message: str) -> bool:
     return message.strip() == _GENERATE_PLAN_TRIGGER
 
 
-_VIBE_KEYWORDS = ("vibe", "vibes", "theme", "themes", "mood", "energy")
-
-
-def _message_mentions_vibes(message: str) -> bool:
-    """Return True when the user explicitly talks about vibes/themes in the message."""
-    normalized = message.lower().strip()
-    if not normalized:
-        return False
-    return any(keyword in normalized for keyword in _VIBE_KEYWORDS)
-
-
 # =============================================================================
 # MAIN LLM PLANNING FUNCTION
 # =============================================================================
@@ -1322,9 +1044,9 @@ def _message_mentions_vibes(message: str) -> bool:
 def _call_openai_for_plan(
     req: PlanRequest,
     *,
-    history_rows: List[models.ChatMessage],
     history: List[ChatCompletionMessageParam],
     document_data: Optional[PlanDocumentData] = None,
+    timezone: Optional[str] = None,
 ) -> PlannerLLMOutput:
     """
     Call OpenAI to process a user message and generate planning output.
@@ -1337,9 +1059,9 @@ def _call_openai_for_plan(
 
     Args:
         req: The plan request containing the user's message.
-        history_rows: Raw ChatMessage database objects (for metadata extraction).
         history: Processed message history in OpenAI format.
         document_data: Current PlanDocument state (source of truth).
+        timezone: Optional IANA timezone name for calculating "today".
 
     Returns:
         PlannerLLMOutput: Structured output containing branches, message, and trip_inputs.
@@ -1347,35 +1069,34 @@ def _call_openai_for_plan(
     Raises:
         RuntimeError: If OpenAI client is not configured or call fails after retries.
     """
-    # Get trip state from conversation history (fallback for older sessions)
-    prior_trip_inputs_meta = _latest_trip_state_from_history(history_rows)
-
-    # Read trip inputs from document (THE ONLY source of truth)
-    doc_trip_inputs: dict = {}
+    # Document is the single source of truth for trip inputs
+    current_trip_inputs: dict = {}
     if document_data and document_data.trip_inputs:
         ti = document_data.trip_inputs
-        doc_trip_inputs = {
-            "destinations": ti.destinations,
+        current_trip_inputs = {
+            "destinations": ti.destinations or [],
             "origin": ti.origin,
             "start_date": ti.start_date,
             "end_date": ti.end_date,
             "traveler_count": ti.traveler_count,
             "budget": ti.budget,
             "multi_city_intent": ti.multi_city_intent,
-            "vibes": ti.vibes,
+            "vibes": ti.vibes or [],
+        }
+    else:
+        # Initialize empty state
+        current_trip_inputs = {
+            "destinations": [],
+            "origin": None,
+            "start_date": None,
+            "end_date": None,
+            "traveler_count": None,
+            "budget": None,
+            "multi_city_intent": None,
+            "vibes": [],
         }
 
-    # Document is the only source of truth for trip inputs.
-    # Chat history metadata is only used as fallback for migration from older sessions.
-    current_trip_inputs = _clean_trip_inputs(
-        doc_trip_inputs,
-        prior_trip_inputs_meta,
-    )
-
-    user_mentions_vibes = _message_mentions_vibes(req.message)
-    vibe_overwrite_fields: Optional[tuple[str, ...]] = None
-
-    today = _today_iso()
+    today = _today_iso(timezone)
 
     # Check if this is a generate plan trigger
     is_generate_trigger = _is_generate_plan_trigger(req.message)
@@ -1384,14 +1105,15 @@ def _call_openai_for_plan(
     has_existing_branches = bool(document_data and document_data.branches)
 
     # Check if all required fields are complete BEFORE calling LLM
-    pre_check_missing = _ordered_missing_fields_from_inputs(current_trip_inputs)
-    all_fields_already_complete = len(pre_check_missing) == 0
+    pre_check_missing = _compute_missing_fields(current_trip_inputs)
 
+    # DEBUG (1/3): Before LLM - current state + missing fields
     if _DEBUG_LOG:
-        print(
-            f"[DEBUG] Pre-LLM check: all_fields_complete={all_fields_already_complete}, "
-            f"has_branches={has_existing_branches}, is_generate={is_generate_trigger}"
-        )
+        print("[DEBUG] === BEFORE LLM ===")
+        print(f"[DEBUG] Current trip_inputs: {json.dumps(current_trip_inputs, indent=2)}")
+        print(f"[DEBUG] Missing fields: {pre_check_missing}")
+        print(f"[DEBUG] Has branches: {has_existing_branches}, Is generate: {is_generate_trigger}")
+        print("=" * 80)
 
     # REMOVED: Early return when all fields complete
     # We ALWAYS call the LLM so users can modify their inputs at any time.
@@ -1400,121 +1122,87 @@ def _call_openai_for_plan(
     # Build current state as JSON for the prompt (include ALL fields including destinations)
     current_state_json = json.dumps(current_trip_inputs, indent=2)
 
-    # Single unified system prompt - simplified and powerful
+    # Single unified system prompt
     system_prompt = f"""You are a travel planner. Today is {today}.
 
-STYLE: Warm, concise. Use a relevant emoji when mentioning destinations
-(🏛️ Rome, 🗼 Paris, 🗽 NYC, 🏯 Tokyo, 🏖️ Bali, etc).
+CRITICAL: You MUST respond with valid JSON only. No plain text outside JSON.
+
+STYLE: Warm, concise. Use emoji for destinations (🏛️ Rome, 🗼 Paris, 🗽 NYC, 🏯 Tokyo, 🏖️ Bali).
 
 CURRENT STATE:
 {current_state_json}
 
-TASK: Extract and update trip details from user messages.
+TASK: Extract trip details.
 Fields: destinations[], origin, start_date, end_date, traveler_count,
-budget, multi_city_intent, vibes[]
+       budget, multi_city_intent, vibes[]
 
 EXTRACTION:
-- origin = where user travels FROM, destinations = where they go TO
-  Example: "Flying from NYC to Rome" → origin="NYC", destinations=["Rome"]
-- Dates → YYYY-MM-DD. "today"={today}, "tomorrow"=+1 day
-- Duration: "starting tomorrow for 5 days" → start_date=tomorrow, end_date=start+5
-- Travelers: "solo"=1, "couple"=2, "family of 4"=4
-- Budget: "$1500" or "1500 dollars" → 1500
+- origin=where FROM, destinations=where TO.
+  "Flying from NYC to Rome" → origin="NYC", destinations=["Rome"]
+- Dates→YYYY-MM-DD. "today"={today}.
+  Duration: "starting tomorrow for 5 days" → set both dates
+- Travelers: "solo"=1, "couple"=2, "family of 4"=4. Budget: "$1500"→1500
 - Auto-correct obvious location typos
 
-MULTI-DESTINATION HANDLING:
-- DEFAULT: Treat multiple destinations as SEPARATE trips (each gets its own branch)
-- Only set multi_city_intent="multi_city" if user EXPLICITLY says: "one trip",
-  "multi-city", "together", "visit all in one trip"
-- "Paris and Rome" with no qualifier → multi_city_intent=null (means SEPARATE)
-- "Paris and Rome in one trip" → multi_city_intent="multi_city"
-- Do NOT ask about intent - just default to separate unless user specifies otherwise
+MULTI-DESTINATION:
+- DEFAULT: Multiple destinations = SEPARATE trips (each gets own branch)
+- Set multi_city_intent="multi_city" ONLY if user EXPLICITLY says
+  "one trip", "multi-city", "together", "single itinerary"
+- "Paris and Rome" → destinations=["Paris","Rome"], multi_city_intent=null (SEPARATE)
+- "Add Dubai" → append to destinations, keep multi_city_intent unchanged
+- NEVER ask about multi-city intent. Just add the destination and move on.
 
-VIBES (optional trip themes):
-- Extract trip purposes/themes: "adventure trip" → vibes=["adventure"]
-- "Going for F1 and beach time" → vibes=["F1", "beach"]
-- Normalize to minimal: "Formula 1 Grand Prix" → "F1", "scuba diving" → "diving"
-- "backpacking and hiking trip" → vibes=["backpacking", "hiking"]
-        - Unless the user's latest message explicitly mentions vibes/themes/mood,
-            keep CURRENT STATE vibes exactly as-is.
-    - Examples: "Remove adventure vibe" → drop "adventure". "Add foodie vibe" → include "foodie".
-- "Remove adventure" → remove from vibes array
-- If vibes empty after all 4 required fields set, gently ask:
-    "What's the vibe? Adventure, relaxation, a special event?"
+VIBES (trip themes/moods/activities):
+- Extract: "adventure trip"→["adventure"], "F1 and beach"→["F1","beach"]
+- Normalize: "Formula 1 Grand Prix"→"F1", "scuba diving"→"diving"
+- Keep existing vibes unless user explicitly changes them
+- If vibes empty after 4 required fields set, ask:
+  "What's the vibe? Adventure, relaxation, a special event?"
 
-UPDATES (users can change any field):
-- "Actually 3 people" → traveler_count=3
-- "Make it $2000" → budget=2000
-- "Leave from Boston instead" → origin="Boston"
-- "Add Florence" → append to destinations
-- "Remove Rome" → remove from destinations (don't ask confirmation)
-- "I want to visit them all in one trip" → multi_city_intent="multi_city"
-- "Show me options for each separately" → multi_city_intent="separate"
+UPDATES:
+- "Actually 3 people"→traveler_count=3. "Make it $2000"→budget=2000
+- "Leave from Boston instead"→origin="Boston"
+- "Add Florence"→append to destinations. "Remove Rome"→remove from destinations
+- "Visit all in one trip"→multi_city_intent="multi_city"
+- ACKNOWLEDGE CHANGES: When you update an existing value, mention it.
+  Example: "Updated your departure from NYC to Boston." or "Changed dates to Dec 5-10."
 
 RULES:
-- CURRENT STATE is source of truth—preserve existing values unless user changes them
-- Only destinations can be removed; other fields persist once set (can be updated, not deleted)
+- CURRENT STATE is truth—preserve values unless user changes them
 - After extracting, ask for next missing field (don't confirm what was extracted)
-- REQUIRED fields: destinations, origin, start_date, end_date (all 4 must be set)
-- OPTIONAL fields: traveler_count, budget (nice to have but not required)
-- When all 4 REQUIRED fields complete → set ready_to_generate=true,
-    branches=[] (NEVER auto-generate)
-- When ready_to_generate=true: Keep assistant_message SHORT (1 sentence max).
-    Do NOT summarize the trip details. Just say something like
-    "All set! Click Generate to see your options." or acknowledge the last
-    input briefly.
-- ONLY generate branches when user message is EXACTLY "{_GENERATE_PLAN_TRIGGER}" —
-    this is the Generate Plan button
-- Exception: If branches already exist in CONTEXT, you may update/refine them based on user requests
-- When generating branches, use multi_city_intent:
-  - "multi_city": Create exactly 1 branch that visits ALL destinations together in sequence
-  - "separate" or null (DEFAULT): Create SEPARATE branches, one for EACH destination
-    Example: 2 destinations = 2 branches, each branch has exactly 1 destination
+- REQUIRED: destinations, origin, start_date, end_date
+- OPTIONAL: traveler_count, budget, vibes, multi_city_intent
+- When all 4 REQUIRED complete → ready_to_generate=true, branches=[]
+- When ready_to_generate=true: Keep message SHORT (1 sentence).
+  Just acknowledge or say "All set! Click Generate."
+- Generate branches ONLY when message is EXACTLY "{_GENERATE_PLAN_TRIGGER}"
+- Exception: May update existing branches based on user requests
 
-CRITICAL BRANCH RULE:
-- DEFAULT BEHAVIOR: Each destination gets its OWN separate branch
-- ONLY combine destinations into one branch if multi_city_intent is EXACTLY "multi_city"
-- If multi_city_intent is null, missing, or "separate": create N branches for N destinations
-- NEVER put multiple destinations in a single branch unless multi_city_intent="multi_city"
+BRANCH GENERATION:
+- multi_city_intent="multi_city" → 1 branch visiting ALL destinations in sequence
+- null/separate → N branches for N destinations (each branch has 1 destination)
 
-BUDGET INFERENCE (when budget not provided):
-- Default traveler_count=2 if not specified
-- Infer reasonable budget based on destination, duration, and travelers:
-  - Budget-friendly destinations (SE Asia, Eastern Europe): ~$100-150/person/day
-  - Mid-range destinations (Western Europe, Japan): ~$150-250/person/day
-  - Premium destinations (Switzerland, Scandinavia, NYC): ~$250-400/person/day
-- Calculate: inferred_daily_rate × travelers × days
-- Show as "Suggested budget: ~$X,XXX" in branch description
+BUDGET INFERENCE (when not provided):
+- Default traveler_count=2 if unspecified
+- Estimate: Budget-friendly ~$100-150/day, Mid-range ~$200/day, Premium ~$300+/day per person
+- Show "Suggested budget: ~$X,XXX" in branch description
 
-OUTPUT JSON:
+OUTPUT FORMAT (MANDATORY - respond with this JSON structure only):
 {{
-  "assistant_message": "Your response",
+  "assistant_message": "Your response here",
   "trip_inputs": {{
-    "destinations": [],
-    "origin": null,
-    "start_date": null,
-    "end_date": null,
-    "traveler_count": null,
-    "budget": null,
-    "missing_fields": [],
-    "multi_city_intent": null,
-    "vibes": []
+    "destinations":[],"origin":null,"start_date":null,"end_date":null,
+    "traveler_count":null,"budget":null,"missing_fields":[],
+    "multi_city_intent":null,"vibes":[]
   }},
   "ready_to_generate": false,
   "branches": []
 }}
 
-BRANCH FORMAT (only when generating):
-{{
-    "label": "Trip Name",
-    "description": "Brief desc",
-    "destinations": ["city"],
-    "origin": "city",
-    "start_date": "YYYY-MM-DD",
-    "end_date": "YYYY-MM-DD",
-    "traveler_count": 1,
-    "budget": 1000
-}}"""
+BRANCH FORMAT:
+{{"label":"Trip Name","description":"Brief desc","destinations":["city"],
+  "origin":"city","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",
+  "traveler_count":1,"budget":1000}}"""
 
     client = _get_openai_client()
     if client is None:
@@ -1524,33 +1212,25 @@ BRANCH FORMAT (only when generating):
 
     history_messages: List[ChatCompletionMessageParam] = list(history)
 
-    # Serialize document state for LLM context
+    # Serialize branches/tiles for LLM context (trip_inputs already in CURRENT STATE)
     document_context = _serialize_document_for_llm(document_data)
 
     messages: List[ChatCompletionMessageParam] = [
         cast(ChatCompletionMessageParam, {"role": "system", "content": system_prompt})
     ]
-    # Inject document state as a system-level context message if available
+    # Inject branches/tiles context if available (for generating/refining branches)
     if document_context:
         messages.append(
             cast(
                 ChatCompletionMessageParam,
                 {
                     "role": "system",
-                    "content": f"[CONTEXT: Current trip plan state]\n{document_context}",
+                    "content": f"[EXISTING BRANCHES AND TILES]\n{document_context}",
                 },
             )
         )
     messages.extend(history_messages)
     messages.append(cast(ChatCompletionMessageParam, {"role": "user", "content": req.message}))
-
-    if _DEBUG_LOG:
-        print(f"[DEBUG] Sending {len(messages)} messages to OpenAI:")
-        for i, msg in enumerate(messages):
-            role = msg.get("role", "?")
-            content_raw = msg.get("content", "")
-            content = str(content_raw)[:100] if content_raw else ""
-            print(f"  [{i}] {role}: {content}...")
 
     model_name = _plan_model_name()
     seed_value: Optional[int] = None
@@ -1564,7 +1244,7 @@ BRANCH FORMAT (only when generating):
         """Build and execute the OpenAI completion request with model-specific params."""
         model_lower = model_name.lower()
 
-        # Base parameters common to all models
+        # Base parameters common to all models - enforce JSON output
         base_params: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
@@ -1582,31 +1262,12 @@ BRANCH FORMAT (only when generating):
                 "temperature": _PLAN_TEMPERATURE,
                 "top_p": _PLAN_TOP_P,
             }
-        # GPT-5 models (including nano/mini)
-        elif "gpt-5" in model_lower:
-            params = {
-                **base_params,
-                "max_completion_tokens": _MAX_TOKENS,
-            }
-        # o1, o3, and other reasoning models (may not support response_format)
-        elif model_lower.startswith("o1") or model_lower.startswith("o3"):
-            params = {
-                "model": model_name,
-                "messages": messages,
-                "max_completion_tokens": _MAX_TOKENS,
-            }
-            if seed_value is not None:
-                params["seed"] = seed_value
         else:
-            # Default fallback for other GPT models
+            # All other models: use max_completion_tokens
             params = {
                 **base_params,
-                "max_tokens": _MAX_TOKENS,
+                "max_completion_tokens": _MAX_TOKENS,
             }
-
-        if _DEBUG_LOG:
-            keys_str = list(params.keys())
-            print(f"[DEBUG] OpenAI request params: model={model_name}, keys={keys_str}")
 
         result = client.chat.completions.create(**params)
         return result
@@ -1626,8 +1287,6 @@ BRANCH FORMAT (only when generating):
             except Exception as exc:
                 last_error = exc
                 status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] OpenAI planning call attempt {attempt + 1} failed: {exc}")
                 if attempt < _PLAN_MAX_RETRIES - 1 and (
                     status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
                 ):
@@ -1642,8 +1301,6 @@ BRANCH FORMAT (only when generating):
         completion = _invoke_with_retries()
     except Exception as exc:
         last_error = exc
-        if _DEBUG_LOG:
-            print(f"[DEBUG] OpenAI planning call failed with '{model_name}': {exc}")
 
     if completion is not None:
         raw_content = ""
@@ -1653,76 +1310,33 @@ BRANCH FORMAT (only when generating):
             choice = completion.choices[0] if completion and completion.choices else None
             if choice is not None:
                 structured_payload, raw_content = _extract_message_payload(choice)
-                if _DEBUG_LOG:
-                    has_struct = structured_payload is not None
-                    print(f"[DEBUG] Extracted: structured={has_struct}, raw_len={len(raw_content)}")
-        except Exception as parse_exc:
-            if _DEBUG_LOG:
-                print(f"[DEBUG] Failed to extract message payload: {parse_exc}")
+        except Exception:
             raw_content = ""
-
-        if _DEBUG_LOG:
-            if raw_content:
-                print(
-                    f"[DEBUG] Raw LLM response ({len(raw_content)} chars): "
-                    f"{raw_content[:500]}..."
-                )
-            elif structured_payload:
-                struct_str = json.dumps(structured_payload)[:500]
-                print(f"[DEBUG] Structured LLM response: {struct_str}...")
-            else:
-                # Enhanced debugging: show full choice object
-                print("[DEBUG] No content extracted from LLM response.")
-                print(f"[DEBUG] Choice object: {choice}")
-                if choice is not None:
-                    message_obj = getattr(choice, "message", None)
-                    if message_obj:
-                        print(f"[DEBUG] Message object: {message_obj}")
-                        content_val = getattr(message_obj, "content", None)
-                        print(f"[DEBUG] Message content type: {type(content_val)}")
-                        print(f"[DEBUG] Message content value: {content_val}")
 
         default_assistant_message = "I'm having trouble processing that. Could you try again?"
 
         data = structured_payload or _tolerant_json_loads(raw_content or "")
+
+        # DEBUG (2/3): After LLM - raw response + parsed data
         if _DEBUG_LOG:
+            print("[DEBUG] === AFTER LLM ===")
+            if raw_content:
+                print(f"[DEBUG] Raw response: {raw_content[:500]}...")
+            elif structured_payload:
+                print(f"[DEBUG] Structured response: {json.dumps(structured_payload)[:500]}...")
             print(f"[DEBUG] Parsed data: {data}")
-
-        # Retry logic: if parsing failed and we have a client, try once more
-        if data is None and client is not None:
-            if _DEBUG_LOG:
-                snippet = raw_content[:200] if raw_content else "empty"
-                print(f"[DEBUG] Failed to parse JSON on first attempt. Raw: {snippet}")
-                print("[DEBUG] Retrying LLM call...")
-
-            try:
-                # Retry the completion
-                retry_completion = _invoke_with_retries()
-                if retry_completion and retry_completion.choices:
-                    retry_choice = retry_completion.choices[0]
-                    retry_structured, retry_raw = _extract_message_payload(retry_choice)
-                    if _DEBUG_LOG:
-                        has_struct = retry_structured is not None
-                        print(
-                            f"[DEBUG] Retry extracted: structured={has_struct}, "
-                            f"raw_len={len(retry_raw)}"
-                        )
-                        if retry_raw:
-                            print(f"[DEBUG] Retry raw response: {retry_raw[:500]}...")
-                    data = retry_structured or _tolerant_json_loads(retry_raw or "")
-                    if _DEBUG_LOG:
-                        print(f"[DEBUG] Retry parsed data: {data}")
-            except Exception as retry_exc:
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] Retry failed: {retry_exc}")
+            print("=" * 80)
 
         if data is None:
-            if _DEBUG_LOG:
-                snippet = raw_content[:200] if raw_content else "empty"
-                print(f"[DEBUG] Failed to parse JSON after retry. Raw: {snippet}")
+            # LLM returned plain text instead of JSON - use the raw text as the message
+            # This is a fallback to at least show the user something meaningful
+            fallback_message = raw_content.strip() if raw_content else default_assistant_message
+            # Truncate if too long
+            if len(fallback_message) > 500:
+                fallback_message = fallback_message[:497] + "..."
             data = {
                 "branches": [],
-                "assistant_message": default_assistant_message,
+                "assistant_message": fallback_message,
                 "trip_inputs": {},
             }
         if not isinstance(data, dict):
@@ -1731,8 +1345,6 @@ BRANCH FORMAT (only when generating):
         # Handle edge case: LLM returned a single branch object at root level
         # instead of the expected structure with branches array
         if "label" in data and "branches" not in data:
-            if _DEBUG_LOG:
-                print("[DEBUG] LLM returned single branch at root - wrapping in array")
             single_branch = {
                 "label": data.get("label"),
                 "description": data.get("description", ""),
@@ -1750,32 +1362,62 @@ BRANCH FORMAT (only when generating):
             }
 
         branches_raw = data.get("branches", []) or []
-        if _DEBUG_LOG:
-            print(f"[DEBUG] Branches from LLM: {len(branches_raw)} branches")
 
         # CRITICAL SAFEGUARD: Only accept branches from LLM if:
         # 1. This is an explicit generate trigger (user clicked "Generate Plan"), OR
         # 2. Branches already exist (user is refining their plan)
         # This prevents the LLM from auto-generating branches when all fields are complete
         if branches_raw and not is_generate_trigger and not has_existing_branches:
-            if _DEBUG_LOG:
-                print(
-                    f"[DEBUG] Discarding {len(branches_raw)} branches - "
-                    f"not a generate trigger and no existing branches"
-                )
             branches_raw = []
 
         assistant_message = str(data.get("assistant_message") or "").strip()
 
         trip_inputs_payload = data.get("trip_inputs") or {}
-        # Allow LLM to overwrite any field - users might correct any previous value
-        vibe_overwrite_fields = ("vibes",) if user_mentions_vibes else None
-        trip_inputs = _clean_trip_inputs(
-            current_trip_inputs,
-            trip_inputs_payload,
-            allow_overwrite=True,
-            overwrite_fields=vibe_overwrite_fields,
-        )
+
+        # Normalize LLM response fields and merge with current state
+        # The LLM can overwrite any field - users can correct values via chat
+        normalized_llm_response: dict = {}
+        for field in _TRIP_INPUT_FIELDS:
+            if field not in trip_inputs_payload:
+                continue
+            raw_value = trip_inputs_payload.get(field)
+            if field == "destinations":
+                dest_list = (
+                    raw_value if isinstance(raw_value, list) else ([raw_value] if raw_value else [])
+                )
+                normalized_llm_response["destinations"] = [
+                    _normalize_str(d) for d in dest_list if d and _normalize_str(d)
+                ]
+            elif field == "vibes":
+                vibe_list = (
+                    raw_value if isinstance(raw_value, list) else ([raw_value] if raw_value else [])
+                )
+                normalized_llm_response["vibes"] = [
+                    v_normalized.lower()
+                    for v in vibe_list
+                    if v and (v_normalized := _normalize_str(v))
+                ]
+            elif field in ("start_date", "end_date"):
+                normalized_llm_response[field] = _normalize_date(raw_value)
+            elif field in ("traveler_count", "budget"):
+                normalized_llm_response[field] = _normalize_int(raw_value)
+            elif field == "multi_city_intent":
+                if raw_value in ("multi_city", "separate"):
+                    normalized_llm_response[field] = raw_value
+            else:
+                normalized_llm_response[field] = _normalize_str(raw_value)
+
+        # Merge LLM response with current state (LLM can overwrite)
+        trip_inputs = dict(current_trip_inputs)
+        for field, value in normalized_llm_response.items():
+            if field in ("destinations", "vibes"):
+                # For arrays, only update if LLM provided non-empty list
+                if value:
+                    trip_inputs[field] = value
+            else:
+                # For scalars, update if LLM provided non-None value
+                if value is not None:
+                    trip_inputs[field] = value
 
         # FALLBACK: If LLM failed to compute end_date from duration, do it ourselves
         if trip_inputs.get("start_date") and not trip_inputs.get("end_date"):
@@ -1786,70 +1428,20 @@ BRANCH FORMAT (only when generating):
                 )
                 if computed_end:
                     trip_inputs["end_date"] = computed_end
-                    if _DEBUG_LOG:
-                        print(
-                            f"[DEBUG] Computed end_date from duration: "
-                            f"{trip_inputs['start_date']} + {duration_days} days = {computed_end}"
-                        )
 
         trip_inputs, validation_messages = _validate_trip_inputs(trip_inputs, today_iso=today)
         parsed_missing_fields = trip_inputs.get("missing_fields") or []
 
         has_all_fields = len(parsed_missing_fields) == 0 and not validation_messages
-        if _DEBUG_LOG:
-            print(
-                f"[DEBUG] has_all_fields={has_all_fields}, "
-                f"response_missing={parsed_missing_fields}, "
-                f"validation={validation_messages}"
-            )
 
         cleaned: List[dict] = []
         canonical_inputs = {field: trip_inputs.get(field) for field in _TRIP_INPUT_FIELDS}
 
         if has_all_fields and branches_raw:
             for b in branches_raw:
-                if not isinstance(b, dict):
-                    continue
-                if "label" not in b:
-                    continue
-                # Handle destinations as array
-                branch_destinations = b.get("destinations", [])
-                if not isinstance(branch_destinations, list):
-                    branch_destinations = [branch_destinations] if branch_destinations else []
-                branch_destinations = [_normalize_str(d) for d in branch_destinations if d]
-                if not branch_destinations:
-                    branch_destinations = canonical_inputs.get("destinations", [])
-                branch_origin = _normalize_str(b.get("origin")) or canonical_inputs.get("origin")
-                branch_start = _normalize_date(b.get("start_date")) or canonical_inputs.get(
-                    "start_date"
-                )
-                branch_end = _normalize_date(b.get("end_date")) or canonical_inputs.get("end_date")
-                branch_travelers = _normalize_int(b.get("traveler_count"))
-                if branch_travelers is None:
-                    branch_travelers = _normalize_int(canonical_inputs.get("traveler_count"))
-                if branch_travelers is not None:
-                    branch_travelers = _clamp_traveler_count(branch_travelers)
-                branch_budget = _normalize_int(b.get("budget"))
-                if branch_budget is None:
-                    branch_budget = _normalize_int(canonical_inputs.get("budget"))
-                if branch_budget is not None and branch_budget < 0:
-                    branch_budget = None
-
-                if not branch_destinations:
-                    continue
-
-                cleaned.append(
-                    {
-                        "label": str(b["label"]),
-                        "description": str(b.get("description", "")),
-                        "destinations": branch_destinations,
-                        "origin": branch_origin,
-                        "start_date": branch_start,
-                        "end_date": branch_end,
-                        "traveler_count": branch_travelers,
-                        "budget": branch_budget,
-                    }
-                )
+                normalized = _normalize_branch_spec(b, canonical_inputs)
+                if normalized:
+                    cleaned.append(normalized)
 
             # Post-processing: Split branches with multiple destinations when NOT multi_city
             # Default behavior (null/missing/"separate"): each destination gets its own branch
@@ -1860,10 +1452,18 @@ BRANCH FORMAT (only when generating):
                     branch_dests = branch.get("destinations", [])
                     if len(branch_dests) > 1:
                         # Split this branch into multiple branches, one per destination
+                        original_label = branch.get("label", "")
                         for dest in branch_dests:
+                            # Preserve label style: "Paris Adventure" -> "Rome Adventure"
+                            # If original has destination in it, replace; otherwise prefix
+                            split_label = f"{dest} Trip"
+                            for orig_dest in branch_dests:
+                                if orig_dest.lower() in original_label.lower():
+                                    split_label = original_label.replace(orig_dest, dest)
+                                    break
                             split_branches.append(
                                 {
-                                    "label": dest,  # Use destination as label
+                                    "label": split_label,
                                     "description": branch.get("description", ""),
                                     "destinations": [dest],
                                     "origin": branch.get("origin"),
@@ -1920,8 +1520,6 @@ BRANCH FORMAT (only when generating):
         return output
 
     if last_error is not None:
-        if _DEBUG_LOG:
-            print(f"OpenAI planning call failed: {last_error}")
         raise RuntimeError(f"OpenAI planning call failed: {last_error}")
     raise RuntimeError("OpenAI planning call returned no completion")
 
@@ -1931,7 +1529,7 @@ BRANCH FORMAT (only when generating):
 # =============================================================================
 
 
-def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentResponse:
+def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentResponse:
     """
     Main planning flow that orchestrates the entire trip planning conversation.
 
@@ -1948,11 +1546,6 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
     6. **LLM Processing**: Call OpenAI to process the message
     7. **Document Update**: Update PlanDocument with new state
     8. **Tile Search**: Search for tiles if branches were generated
-    9. **Response Building**: Construct and return PlanDocumentResponse
-
-    Error Handling:
-    - Uses try/except with rollback to ensure database consistency
-    - Any exception triggers a rollback before re-raising
 
     Args:
         db: SQLAlchemy database session.
@@ -1965,10 +1558,6 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             - updated_by: Who made the last update ("planner", "user", etc.)
             - document: Full PlanDocumentData with trip_inputs, branches, tiles
             - updated_at: ISO timestamp of the update
-
-    Raises:
-        RuntimeError: If OpenAI is not configured or call fails.
-        ValueError: If trip_context_id validation fails.
     """
     # 1. Setup session and context
     # Use lock_for_update=True to prevent deadlocks with concurrent session deletion
@@ -1984,15 +1573,11 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
 
     # Get parent trip context from document (if exists)
     existing_doc = get_document(db, session=db_session)
-    user_mentions_vibes = _message_mentions_vibes(req.message)
     existing_doc_data: Optional[PlanDocumentData] = None
-    pre_call_trip_inputs: Optional[DocumentTripInputs] = None
     parent_trip_context_id: Optional[int] = None
     if existing_doc:
         existing_doc_data = get_document_data(existing_doc)
-        pre_call_trip_inputs = existing_doc_data.trip_inputs.model_copy(deep=True)
         parent_trip_context_id = existing_doc_data.trip_context_id
-    initial_destinations = existing_doc_data.trip_inputs.destinations if existing_doc_data else []
 
     parent_ctx = _resolve_parent_trip_context(
         db,
@@ -2035,9 +1620,9 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
         # 4. Call LLM once (no streaming)
         planner_output = _call_openai_for_plan(
             req,
-            history_rows=history_rows,
             history=history_messages,
             document_data=existing_doc_data,
+            timezone=req.timezone,
         )
 
         # 5. Process LLM output and update assistant message
@@ -2061,57 +1646,6 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             pass
 
         current_doc_data = get_document_data(plan_doc)
-        user_preserve_fields: set[str] = set()
-        if pre_call_trip_inputs is not None:
-            if (pre_call_trip_inputs.vibes or []) != (current_doc_data.trip_inputs.vibes or []):
-                user_preserve_fields.add("vibes")
-            if (
-                pre_call_trip_inputs.multi_city_intent
-                != current_doc_data.trip_inputs.multi_city_intent
-            ):
-                user_preserve_fields.add("multi_city_intent")
-        current_destinations = current_doc_data.trip_inputs.destinations or []
-        removed_destinations = {d for d in initial_destinations if d not in current_destinations}
-
-        # Prune existing branches that include removed destinations
-        # This ensures branches are immediately removed when user removes a destination
-        existing_branches = current_doc_data.branches or []
-        pruned_existing_branches: List[DocumentBranch] = []
-        if removed_destinations and existing_branches:
-            removed_lower = {d.lower() for d in removed_destinations}
-            for branch in existing_branches:
-                branch_destinations = [d.lower() for d in (branch.destinations or [])]
-                # Keep branch only if none of its destinations were removed
-                if not any(d in removed_lower for d in branch_destinations):
-                    pruned_existing_branches.append(branch)
-
-            if _DEBUG_LOG:
-                pruned_count = len(existing_branches) - len(pruned_existing_branches)
-                if pruned_count > 0:
-                    print(
-                        f"[DEBUG] Pruned {pruned_count} branches due to removed destinations: "
-                        f"{removed_destinations}"
-                    )
-        else:
-            pruned_existing_branches = list(existing_branches)
-
-        # Use LLM destinations, but filter out any the user removed during the LLM call
-        # The LLM is instructed to use CURRENT STATE as source of truth, so its output
-        # should already respect user removals made before the call. This filter catches
-        # removals made during the LLM call (race condition protection).
-        if trip_inputs_model:
-            llm_destinations = trip_inputs_model.destinations or []
-            # Filter out destinations the user removed during the LLM call
-            final_destinations = [d for d in llm_destinations if d not in removed_destinations]
-
-            trip_inputs_payload = trip_inputs_model.model_dump()
-            trip_inputs_payload["destinations"] = final_destinations
-            trip_inputs_payload["missing_fields"] = _ordered_missing_fields_from_inputs(
-                trip_inputs_payload
-            )
-            trip_inputs_model = DocumentTripInputs(**trip_inputs_payload)
-            # Store merged trip_inputs in message metadata for migration compatibility
-            assistant_meta["trip_inputs"] = trip_inputs_payload
 
         assistant_chat.meta = assistant_meta or None
 
@@ -2125,21 +1659,18 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             # Generate a unique branch ID
             branch_id = f"branch_{trip_ctx.id}_{idx}"
 
-            raw_destinations = spec.get("destinations", []) or []
-            # Filter out destinations the user removed during the LLM call
-            filtered_destinations = [d for d in raw_destinations if d not in removed_destinations]
-            # NOTE: Do NOT override primary branch destinations with trip_inputs.destinations
-            # Each branch keeps its destinations (enforces 1 branch = 1 destination
-            # when separate)
+            branch_destinations = spec.get("destinations", []) or []
+            if not isinstance(branch_destinations, list):
+                branch_destinations = [branch_destinations] if branch_destinations else []
 
             doc_branch = DocumentBranch(
                 id=branch_id,
                 label=str(spec.get("label", "")),
                 description=str(spec.get("description", "")),
-                destinations=filtered_destinations,
+                destinations=branch_destinations,
                 origin=_normalize_str(spec.get("origin")),
-                start_date=_normalize_str(spec.get("start_date")),
-                end_date=_normalize_str(spec.get("end_date")),
+                start_date=_normalize_date(spec.get("start_date")),
+                end_date=_normalize_date(spec.get("end_date")),
                 traveler_count=_normalize_int(spec.get("traveler_count")),
                 budget=_normalize_int(spec.get("budget")),
                 is_primary=(idx == 0),
@@ -2202,14 +1733,10 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
         # Always update trip_inputs (even during collection phase when no branches exist)
         #
         # If the LLM generated new branches, use them.
-        # Otherwise, use the pruned existing branches (in case destinations were removed).
-        final_branches = doc_branches if doc_branches else pruned_existing_branches
+        # Otherwise, keep existing branches from the document.
+        final_branches = doc_branches if doc_branches else current_doc_data.branches
         # Only pass branches to apply_planner_update if there are any to update
         branches_to_apply = final_branches if final_branches else None
-
-        preserve_fields = set(user_preserve_fields)
-        if user_mentions_vibes:
-            preserve_fields.discard("vibes")
 
         apply_planner_update(
             db,
@@ -2218,7 +1745,6 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
             trip_inputs=doc_trip_inputs,
             branches=branches_to_apply,
             tiles=tiles_dict or None,
-            preserve_fields=preserve_fields or None,
         )
 
         doc_data = get_document_data(plan_doc)
@@ -2229,6 +1755,12 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
         doc_data_dict["assistant_message_id"] = str(assistant_chat.id)
         # Pass through the ready_to_generate flag from planner output
         doc_data_dict["ready_to_generate"] = planner_output.ready_to_generate
+
+        # DEBUG (3/3): After merge - final document state
+        if _DEBUG_LOG:
+            print("[DEBUG] === AFTER MERGE ===")
+            print(json.dumps(doc_data_dict, indent=2, default=str))
+            print("=" * 80)
 
         # Reconstruct the document data with chat fields
         doc_data_with_chat = PlanDocumentData(**doc_data_dict)
@@ -2246,25 +1778,3 @@ def plan_trip_flow(db: Session, session_id: str, req: PlanRequest) -> PlanDocume
     except Exception:
         db.rollback()
         raise
-
-
-def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentResponse:
-    """
-    Public API entry point for trip planning.
-
-    This is a simple wrapper around plan_trip_flow that serves as the
-    stable public interface. Internal implementation details may change,
-    but this function signature remains stable.
-
-    Args:
-        db: SQLAlchemy database session.
-        session_id: Session ID from cookie (injected by middleware).
-        req: PlanRequest containing user message.
-
-    Returns:
-        PlanDocumentResponse: Complete planning response with document state.
-
-    See Also:
-        plan_trip_flow: The actual implementation with full documentation.
-    """
-    return plan_trip_flow(db, session_id, req)

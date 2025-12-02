@@ -18,7 +18,9 @@ from app.crud_document import (
 )
 from app.crud_trip import (
     fetch_chat_history,
+    get_latest_trip_context_for_session,
     get_or_create_session,
+    record_chat_message,
     rotate_session,
     should_rotate_session,
 )
@@ -252,7 +254,8 @@ def get_chat_history(
     # Fetch messages (returns oldest first after reversal)
     messages = fetch_chat_history(db, session=session, limit=50)
 
-    # Convert to response format, filtering out empty messages
+    # Convert to response format, filtering out empty and system messages
+    # System messages are internal audit logs (e.g., UI edit tracking) not meant for display
     response_messages = [
         ChatMessageResponse(
             id=str(msg.id),
@@ -261,7 +264,7 @@ def get_chat_history(
             created_at=msg.created_at.isoformat(),
         )
         for msg in messages
-        if msg.content and msg.content.strip()
+        if msg.content and msg.content.strip() and msg.role in ("user", "assistant")
     ]
 
     return ChatHistoryResponse(messages=response_messages)
@@ -326,6 +329,76 @@ def patch_plan_document(
 
     # Apply the patch using CRDT merge
     updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+
+    # Record a system message describing the user's field changes
+    # so the LLM knows what the user modified via the UI
+    if patch.trip_inputs is not None:
+        changes: list[str] = []
+        trip_patch = patch.trip_inputs
+        # Check which fields were explicitly set in the patch
+        fields_set = getattr(trip_patch, "model_fields_set", set())
+
+        # For each field that was set, describe the change
+        if "destinations" in fields_set:
+            dests = getattr(trip_patch, "destinations", None)
+            if dests is not None:
+                if len(dests) == 0:
+                    changes.append("cleared all destinations")
+                else:
+                    changes.append(f"set destinations to {dests}")
+        if "origin" in fields_set:
+            val = getattr(trip_patch, "origin", None)
+            if val:
+                changes.append(f"set origin to '{val}'")
+            else:
+                changes.append("cleared origin")
+        if "start_date" in fields_set:
+            val = getattr(trip_patch, "start_date", None)
+            if val:
+                changes.append(f"set start date to '{val}'")
+            else:
+                changes.append("cleared start date")
+        if "end_date" in fields_set:
+            val = getattr(trip_patch, "end_date", None)
+            if val:
+                changes.append(f"set end date to '{val}'")
+            else:
+                changes.append("cleared end date")
+        if "traveler_count" in fields_set:
+            val = getattr(trip_patch, "traveler_count", None)
+            if val:
+                changes.append(f"set traveler count to {val}")
+            else:
+                changes.append("cleared traveler count")
+        if "budget" in fields_set:
+            val = getattr(trip_patch, "budget", None)
+            if val:
+                changes.append(f"set budget to ${val}")
+            else:
+                changes.append("cleared budget")
+        if "vibes" in fields_set:
+            val = getattr(trip_patch, "vibes", None)
+            if val:
+                changes.append(f"set vibes to {val}")
+            else:
+                changes.append("cleared vibes")
+
+        if changes:
+            changes_text = ", ".join(changes)
+            system_msg = f"[User edited trip inputs via UI: {changes_text}]"
+
+            # Get the latest trip context for this session
+            latest_ctx = get_latest_trip_context_for_session(db, session=session)
+
+            record_chat_message(
+                db,
+                session=session,
+                trip_context=latest_ctx,
+                role="system",
+                content=system_msg,
+                metadata={"ui_edit": True},
+            )
+
     db.commit()
 
     doc_data = get_document_data(updated_doc)

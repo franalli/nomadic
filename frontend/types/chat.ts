@@ -1,5 +1,5 @@
 // frontend/types/chat.ts
-export type ChatRole = 'user' | 'assistant';
+type ChatRole = 'user' | 'assistant';
 
 export interface ChatMessage {
   id: string;

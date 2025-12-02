@@ -8,7 +8,6 @@ import { create } from 'zustand';
 import { apiFetch } from '@/lib/api';
 import type {
   BranchSelections,
-  DocumentBranch,
   DocumentTripInputs,
   DocumentTripInputsPatch,
   PlanDocumentData,
@@ -16,27 +15,21 @@ import type {
   PlanDocumentResponse,
   UpdatedBy,
 } from '@/types/document';
-import type { Tile } from '@/types/tile';
 
 /**
  * Default trip inputs when no document exists yet.
+ * Exported so components can use the same defaults.
  */
-const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
+export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   destinations: [],
   origin: null,
   start_date: null,
   end_date: null,
-  traveler_count: null,
+  traveler_count: 2,
   budget: null,
-  missing_fields: [
-    'destinations',
-    'origin',
-    'start_date',
-    'end_date',
-    'traveler_count',
-    'budget',
-  ],
+  multi_city_intent: null,
   vibes: [],
+  missing_fields: ['destinations', 'origin', 'start_date', 'end_date'],
 };
 
 type DocumentState = {
@@ -57,9 +50,6 @@ type DocumentState = {
   error: string | null;
 
   // Trip input selectors (computed from document)
-  getTripInputs: () => DocumentTripInputs;
-  getMissingFields: () => string[];
-  isReadyToGenerate: () => boolean;
   hasAllRequiredFields: () => boolean;
 
   // Trip input actions
@@ -68,10 +58,8 @@ type DocumentState = {
   // Actions
   fetchDocument: () => Promise<void>;
   patchDocument: (patch: PlanDocumentPatch) => Promise<void>;
-  fetchTilesForBranch: (branchId: string) => Promise<void>;
 
-  // Selection actions
-  selectBranch: (branchId: string) => void;
+  // Selection actions (use patchDocument internally)
   selectTile: (
     branchId: string,
     tileId: string,
@@ -82,13 +70,6 @@ type DocumentState = {
     tileType: 'stay' | 'flight' | 'activity',
     tileId?: string
   ) => Promise<void>;
-
-  // Merge from plan response (when /v1/plan returns new branches) - legacy
-  mergeFromPlanResponse: (
-    branches: DocumentBranch[],
-    tiles: Record<string, Tile>,
-    tripContextId: number
-  ) => void;
 
   // Set document from plan response (when /v1/plan returns new document)
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
@@ -112,21 +93,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
 
   // Trip input selectors
-  getTripInputs: () => {
-    const { document } = get();
-    return document?.trip_inputs ?? DEFAULT_TRIP_INPUTS;
-  },
-
-  getMissingFields: () => {
-    const { document } = get();
-    return document?.trip_inputs?.missing_fields ?? DEFAULT_TRIP_INPUTS.missing_fields;
-  },
-
-  isReadyToGenerate: () => {
-    const { document } = get();
-    return document?.ready_to_generate ?? false;
-  },
-
   hasAllRequiredFields: () => {
     const { document } = get();
     const missingFields = document?.trip_inputs?.missing_fields ?? DEFAULT_TRIP_INPUTS.missing_fields;
@@ -324,37 +290,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  fetchTilesForBranch: async (branchId: string) => {
-    set({ isLoading: true, error: null });
-    try {
-      const res = await apiFetch(
-        `/v1/document/tiles/${encodeURIComponent(branchId)}`,
-        { method: 'POST' }
-      );
-      if (!res.ok) {
-        throw new Error(`${res.status}`);
-      }
-      const response: PlanDocumentResponse = await res.json();
-      set({
-        version: response.version,
-        updatedBy: response.updated_by,
-        updatedAt: response.updated_at,
-        document: response.document,
-        lastConfirmedVersion: response.version,
-        isLoading: false,
-      });
-    } catch (err) {
-      set({
-        isLoading: false,
-        error: err instanceof Error ? err.message : 'Failed to fetch tiles',
-      });
-    }
-  },
-
-  selectBranch: (branchId: string) => {
-    set({ selectedBranchId: branchId });
-  },
-
   selectTile: async (
     branchId: string,
     tileId: string,
@@ -415,58 +350,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
 
     await get().patchDocument(patch);
-  },
-
-  mergeFromPlanResponse: (
-    branches: DocumentBranch[],
-    tiles: Record<string, Tile>,
-    tripContextId: number
-  ) => {
-    const { document } = get();
-
-    // If no document yet, create one
-    if (!document) {
-      set({
-        document: {
-          trip_context_id: tripContextId,
-          trip_inputs: { ...DEFAULT_TRIP_INPUTS },
-          branches,
-          tiles,
-        },
-        version: 1,
-        updatedBy: 'planner',
-        updatedAt: new Date().toISOString(),
-        selectedBranchId:
-          branches.find((b) => b.is_primary)?.id || branches[0]?.id || null,
-      });
-      return;
-    }
-
-    // Merge branches (CRDT: additions win)
-    const branchMap = new Map(document.branches.map((b) => [b.id, b]));
-    for (const branch of branches) {
-      branchMap.set(branch.id, branch);
-    }
-
-    // Merge tiles
-    const mergedTiles = { ...document.tiles, ...tiles };
-
-    set({
-      document: {
-        ...document,
-        trip_context_id: tripContextId,
-        branches: Array.from(branchMap.values()),
-        tiles: mergedTiles,
-      },
-      version: get().version + 1,
-      updatedBy: 'planner',
-      updatedAt: new Date().toISOString(),
-      selectedBranchId:
-        get().selectedBranchId ||
-        branches.find((b) => b.is_primary)?.id ||
-        branches[0]?.id ||
-        null,
-    });
   },
 
   setFromPlanResponse: (response: PlanDocumentResponse) => {

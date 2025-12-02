@@ -106,23 +106,6 @@ class TileClickEvent(BaseModel):
     session_id: Optional[str] = None
 
 
-class TripInputs(BaseModel):
-    """Trip parameters stored in chat message metadata.
-
-    DEPRECATED: This schema is only used for chat message metadata migration.
-    Use DocumentTripInputs for all new code - the PlanDocument is the single
-    source of truth for trip state.
-    """
-
-    destinations: List[str] = Field(default_factory=list)
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    traveler_count: Optional[int] = None
-    budget: Optional[int] = None
-    missing_fields: List[str] = Field(default_factory=list)
-
-
 class PlanRequest(BaseModel):
     """Request to send a chat message to the planner.
 
@@ -135,6 +118,7 @@ class PlanRequest(BaseModel):
     """
 
     message: str  # The user's chat message
+    timezone: Optional[str] = None  # IANA timezone (e.g., "Europe/Rome") for "today" calculation
 
 
 # ─────────────────────────────────────────────────────────────────────────────

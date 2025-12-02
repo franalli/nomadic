@@ -2,7 +2,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -43,10 +43,23 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
   },
 ];
 
+// Typing indicator component - extracted to module level to prevent recreation
+const TypingIndicator = () => (
+  <div className="text-left message-enter">
+    <div className="border-border/50 bg-gradient-to-br from-muted to-muted/80 text-foreground inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md border px-4 py-3 shadow-sm">
+      <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '0ms' }} />
+      <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '150ms' }} />
+      <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '300ms' }} />
+    </div>
+  </div>
+);
+
 interface ChatPanelProps {
   selectedBranchId: string | null;
-  onChatTriggered?: () => void;
-  onHasUserMessage?: (has: boolean) => void;
+  /** Called when generate plan trigger is sent (before API call) */
+  onGeneratePlanStart?: () => void;
+  /** Called when user clicks Fresh Start to reset the session */
+  onFreshStart?: () => void;
   onPlanResult: (result: {
     tripContextId: number | null;
     branches: DocumentBranch[];
@@ -73,27 +86,16 @@ interface ChatPanelProps {
   readyToGenerate?: boolean;
 }
 
-const summariseBranches = (branches: DocumentBranch[]): string => {
-  if (!branches.length) {
-    return 'I could not settle on clear directions yet, but here are some starter booking options.';
-  }
-
-  const lines = branches.map((branch, idx) => {
-    const destLabel = branch.destinations.join(', ') || 'TBD';
-    const label = `${idx + 1}. ${branch.label} (${destLabel})`;
-    return branch.description ? `${label}\n   ${branch.description}` : label;
-  });
-
-  return ['Here are a few trip directions I would consider:', ...lines].join('\n\n');
-};
-
 export interface ChatPanelHandle {
   sendMessage: (message: string) => Promise<void>;
+  addAssistantMessage: (message: string) => void;
 }
 
 export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
   function ChatPanel(props, ref) {
-    const { onHasUserMessage } = props;
+    // Destructure stable props for useCallback dependencies to avoid re-renders
+    const { onPlanResult, onGeneratePlanStart, selectedBranchId } = props;
+
     const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_MESSAGES);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -119,10 +121,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         if (node) node.scrollTop = node.scrollHeight;
       });
     }, []);
-
-    useEffect(() => {
-      onHasUserMessage?.(hasUserMessage);
-    }, [hasUserMessage, onHasUserMessage]);
 
     useEffect(() => {
       scrollToBottom();
@@ -166,9 +164,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         const trimmed = messageText.trim();
         if (!trimmed || isLoading) return;
 
-        props.onChatTriggered?.();
-
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER;
+
+        // Notify parent that generate plan has started (for loading screen)
+        if (isGenerateTrigger) {
+          onGeneratePlanStart?.();
+        }
 
         // For generate trigger, show a friendly user message instead of the raw trigger
         if (isGenerateTrigger) {
@@ -191,6 +192,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         try {
           const body: PlanRequest = {
             message: trimmed,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           };
 
           const res = await apiFetch('/v1/plan', {
@@ -210,11 +212,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             const doc = payload.document;
             const primaryBranch =
               doc.branches.find((b) => b.is_primary) ?? doc.branches[0];
-            props.onPlanResult({
+            onPlanResult({
               tripContextId: doc.trip_context_id ?? null,
               branches: doc.branches,
               tiles: doc.tiles,
-              primaryBranchId: primaryBranch?.id ?? props.selectedBranchId ?? null,
+              primaryBranchId: primaryBranch?.id ?? selectedBranchId ?? null,
               tripInputs: doc.trip_inputs ?? null,
               readyToGenerate: doc.ready_to_generate ?? false,
               // Pass full response for store update
@@ -241,8 +243,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }
 
           // Stream the assistant's response
+          // Note: Backend always provides assistant_message, fallback is just for safety
           const assistantText =
-            data.document.assistant_message || summariseBranches(data.document.branches);
+            data.document.assistant_message || "Here are your trip options!";
           const msgId = data.document.assistant_message_id ?? `a_${Date.now()}`;
 
           // If this is a "ready to generate" response, use a special ID prefix so we can remove it later
@@ -327,15 +330,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           setIsLoading(false);
         }
       },
-      [isLoading, props]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId]
     );
+
+    const addAssistantMessage = useCallback((message: string) => {
+      const assistantMessage: ChatMessage = {
+        id: `a_ui_${Date.now()}`,
+        role: 'assistant',
+        content: message,
+      };
+      setMessages((prev) => [...prev, assistantMessage]);
+    }, []);
 
     useImperativeHandle(
       ref,
       () => ({
         sendMessage: sendMessageCore,
+        addAssistantMessage,
       }),
-      [sendMessageCore]
+      [sendMessageCore, addAssistantMessage]
     );
 
     async function handleSubmit(e: React.FormEvent) {
@@ -350,17 +363,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Simple render - no content-based filters, just show all non-empty messages
     const visibleMessages = messages.filter((m) => m.content && m.content.trim().length > 0);
 
-    // Typing indicator component
-    const TypingIndicator = () => (
-      <div className="text-left message-enter">
-        <div className="border-border/50 bg-gradient-to-br from-muted to-muted/80 text-foreground inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md border px-4 py-3 shadow-sm">
-          <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '0ms' }} />
-          <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '150ms' }} />
-          <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '300ms' }} />
-        </div>
-      </div>
-    );
-
     // Show typing indicator when loading and no streaming message yet
     const showTypingIndicator = isLoading && !streamingMessageId;
 
@@ -373,6 +375,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <Compass className="h-3.5 w-3.5 text-primary" />
             Travel Planner
           </div>
+          {props.onFreshStart && hasUserMessage && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Start fresh? This will clear all your trip details and chat history.')) {
+                  props.onFreshStart?.();
+                }
+              }}
+              className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
+              title="Start fresh"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Fresh Start</span>
+            </button>
+          )}
         </div>
 
         {showTripDetails ? (
@@ -410,8 +427,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <div
           ref={scrollContainerRef}
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm pr-1 scroll-smooth"
-          style={{ scrollbarGutter: 'stable' }}
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm scroll-smooth no-scrollbar"
         >
           {isLoadingHistory ? (
             <div className="flex items-center justify-center py-4">
