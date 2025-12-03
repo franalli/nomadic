@@ -326,6 +326,7 @@ export function NomadicLanding() {
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}
+          isGenerating={isGenerating}
         />
       </div>
     </div>
@@ -382,20 +383,25 @@ export function NomadicLanding() {
   return (
     <div className="bg-background text-foreground min-h-screen">
       {toastMessage && (
-        <div className="border-border/60 bg-card/95 text-foreground fixed right-4 top-4 z-50 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg">
+        <div
+          role="alert"
+          aria-live="polite"
+          className="border-border/60 bg-card/95 text-foreground fixed right-4 top-4 z-50 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg"
+        >
           <span>{toastMessage}</span>
           <button
             type="button"
             className="text-primary text-xs font-semibold uppercase tracking-wide"
             onClick={() => setToastMessage(null)}
+            aria-label="Dismiss notification"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Split layout when generating or branches are ready */}
-      {(isGenerating || hasBranchesReady) ? (
+      {/* Split layout when generating, hydrating (might have branches to restore), or branches are ready */}
+      {(isGenerating || isHydratingSnapshot || hasBranchesReady) ? (
         <SplitLayoutView
           sidebarContent={chatPanelContent(true)}
           mainContent={branchPanelContent}
@@ -415,10 +421,10 @@ export function NomadicLanding() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
-              className="mt-8 w-full max-w-xl"
+              className="mt-8 w-full sm:max-w-xl"
             >
-              <Card className="bg-card/95 border-white/20 p-1 shadow-2xl backdrop-blur">
-                <CardContent className="p-3 sm:p-4">
+              <Card className="bg-card/95 border-white/20 p-0 sm:p-1 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
+                <CardContent className="p-0 sm:p-4">
                   {chatPanelContent(false)}
                 </CardContent>
               </Card>

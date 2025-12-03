@@ -1,9 +1,7 @@
 'use client';
 
-import { Compass, Menu, User } from 'lucide-react';
+import { Compass } from 'lucide-react';
 import React, { memo } from 'react';
-
-import { Button } from '@/components/ui/button';
 
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
@@ -51,7 +49,7 @@ interface HeroHeaderProps {
 }
 
 /**
- * Header with logo and navigation buttons
+ * Header with logo
  */
 const HeroHeader = memo(function HeroHeader({ variant }: HeroHeaderProps) {
   if (variant === 'compact') {
@@ -65,24 +63,6 @@ const HeroHeader = memo(function HeroHeader({ variant }: HeroHeaderProps) {
         <span className="font-display text-xl font-bold tracking-tight">
           Nomadic
         </span>
-      </div>
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          type="button"
-          className="text-white hover:bg-white/10 focus:ring-white"
-        >
-          <User className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          type="button"
-          className="text-white hover:bg-white/10 focus:ring-white"
-        >
-          <Menu className="h-5 w-5" />
-        </Button>
       </div>
     </header>
   );
@@ -165,7 +145,7 @@ export const HeroSection = memo(function HeroSection({
         <HeroHeader variant="full" />
         <div
           ref={chatPanelContainerRef}
-          className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 pb-12 pt-6"
+          className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-0 sm:px-4 pb-12 pt-6"
         >
           <HeroTitle typedTagline={typedTagline} variant="full" />
           {children}

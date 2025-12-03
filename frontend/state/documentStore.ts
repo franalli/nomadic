@@ -51,7 +51,7 @@ type DocumentState = {
   commitTripInputs: (updates: DocumentTripInputsPatch) => Promise<boolean>;
 
   // Actions
-  fetchDocument: () => Promise<void>;
+  fetchDocument: () => Promise<PlanDocumentData | null>;
   patchDocument: (patch: PlanDocumentPatch) => Promise<void>;
 
   // Selection actions (use patchDocument internally)
@@ -230,7 +230,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           // 204: No document yet (expected for new sessions)
           // 404: Legacy handling
           set({ isLoading: false, document: null });
-          return;
+          return null;
         }
         throw new Error(`${res.status}`);
       }
@@ -248,9 +248,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           response.document.branches[0]?.id ||
           null,
       });
+      return response.document;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to fetch document';
       set({ isLoading: false, error: message });
+      return null;
     }
   },
 

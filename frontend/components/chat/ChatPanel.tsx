@@ -2,7 +2,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -33,6 +33,13 @@ const POST_GENERATE_MESSAGE =
   "Your trip options are ready! You can say things like 'increase budget to $3000', 'remove Paris', or 'add a beach day' to refine your plan.";
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
+
+// Prompt suggestions for new users - compact version
+const PROMPT_SUGGESTIONS = [
+  { label: '🏖️ Beach', prompt: "I want a relaxing beach vacation" },
+  { label: '🏔️ Adventure', prompt: "Plan an adventure trip with hiking" },
+  { label: '🏛️ Culture', prompt: "I'd like to explore historical sites" },
+];
 
 const DEFAULT_MESSAGES: ChatMessage[] = [
   {
@@ -93,6 +100,8 @@ interface ChatPanelProps {
   hasBranches?: boolean;
   /** When true, all fields are complete and user can generate a plan */
   readyToGenerate?: boolean;
+  /** When true, plan generation is in progress */
+  isGenerating?: boolean;
 }
 
 export interface ChatPanelHandle {
@@ -111,6 +120,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       vibesSection,
       fullHeight,
       hasBranches,
+      isGenerating,
       readyToGenerate,
       onFreshStart,
     } = props;
@@ -122,15 +132,19 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
     const [vibesOpen, setVibesOpen] = useState(true);
+    const [lastUserMessageId, setLastUserMessageId] = useState<string | null>(null);
+    const [generateTriggered, setGenerateTriggered] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
+    // Show suggestions only when no user messages yet
+    const showSuggestions = !hasUserMessage && !isLoadingHistory;
     const panelHeightClass = fullHeight
       ? 'h-full'
       : hasUserMessage
         ? 'min-h-[420px] max-h-[825px]'
-        : 'min-h-[220px] max-h-[320px]';
+        : 'min-h-[320px] max-h-[420px]';
 
     const scrollToBottom = useCallback(() => {
       const node = scrollContainerRef.current;
@@ -162,6 +176,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 })
               );
               setMessages(loadedMessages);
+              // Track the last user message from loaded history for undo
+              const lastUserMsg = [...loadedMessages].reverse().find((m) => m.role === 'user');
+              if (lastUserMsg) {
+                setLastUserMessageId(lastUserMsg.id);
+              }
             }
           }
         } catch (error) {
@@ -197,6 +216,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             role: 'user',
             content: 'Generate my trip options',
           };
+          setLastUserMessageId(userMessage.id);
           setMessages((prev) => [...prev, userMessage]);
         } else {
           const userMessage: ChatMessage = {
@@ -204,6 +224,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             role: 'user',
             content: trimmed,
           };
+          setLastUserMessageId(userMessage.id);
           setMessages((prev) => [...prev, userMessage]);
         }
         setIsLoading(true);
@@ -361,6 +382,39 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setMessages((prev) => [...prev, assistantMessage]);
     }, []);
 
+    // Undo last message - removes the last user message and its response
+    const handleUndoLastMessage = useCallback(() => {
+      if (!lastUserMessageId || isLoading) return;
+
+      setMessages((prev) => {
+        // Find the index of the last user message
+        const lastUserIdx = prev.findIndex((m) => m.id === lastUserMessageId);
+        if (lastUserIdx === -1) return prev;
+
+        // Remove everything from that message onwards
+        const newMessages = prev.slice(0, lastUserIdx);
+
+        // If we removed everything, restore default messages
+        if (newMessages.length === 0) {
+          return DEFAULT_MESSAGES;
+        }
+
+        return newMessages;
+      });
+
+      // Find the previous user message ID
+      setLastUserMessageId((prevId) => {
+        const userMessages = messages.filter((m) => m.role === 'user' && m.id !== prevId);
+        return userMessages.length > 0 ? userMessages[userMessages.length - 1].id : null;
+      });
+    }, [lastUserMessageId, isLoading, messages]);
+
+    // Handle clicking a prompt suggestion
+    const handleSuggestionClick = useCallback((prompt: string) => {
+      setInput(prompt);
+      inputRef.current?.focus();
+    }, []);
+
     useImperativeHandle(
       ref,
       () => ({
@@ -387,28 +441,43 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     return (
       <div
-        className={`bg-card/95 text-foreground flex ${panelHeightClass} min-h-0 flex-col gap-4 rounded-2xl border border-white/30 p-5 shadow-2xl backdrop-blur-md transition-[min-height,max-height] duration-300`}
+        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300`}
       >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
             <Compass className="h-3.5 w-3.5 text-primary" />
             Travel Planner
           </div>
-          {onFreshStart && hasUserMessage && (
-            <button
-              type="button"
-              onClick={() => {
-                if (window.confirm('Start fresh? This will clear all your trip details and chat history.')) {
-                  onFreshStart?.();
-                }
-              }}
-              className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
-              title="Start fresh"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Fresh Start</span>
-            </button>
-          )}
+          <div className="flex items-center gap-3">
+            {/* Undo last message button */}
+            {lastUserMessageId && hasUserMessage && !isLoading && (
+              <button
+                type="button"
+                onClick={handleUndoLastMessage}
+                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
+                title="Undo last message"
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Undo</span>
+              </button>
+            )}
+            {/* Fresh Start button */}
+            {onFreshStart && hasUserMessage && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm('Start fresh? This will clear all your trip details and chat history.')) {
+                    onFreshStart?.();
+                  }
+                }}
+                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
+                title="Start fresh"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Fresh Start</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {showTripDetails ? (
@@ -447,10 +516,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         <div
           ref={scrollContainerRef}
           className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm scroll-smooth no-scrollbar"
+          role="log"
+          aria-label="Chat messages"
+          aria-busy={isLoadingHistory || isLoading}
         >
           {isLoadingHistory ? (
-            <div className="flex items-center justify-center py-4">
-              <Compass className="text-muted-foreground compass-spin h-5 w-5" />
+            <div className="flex items-center justify-center py-4" role="status" aria-label="Loading chat history">
+              <Compass className="text-muted-foreground compass-spin h-5 w-5" aria-hidden="true" />
+              <span className="sr-only">Loading chat history...</span>
             </div>
           ) : (
             <>
@@ -482,7 +555,26 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="relative mt-1">
+        {/* Input area with suggestions - grouped together at bottom */}
+        <div className="mt-auto space-y-2">
+          {/* Prompt suggestions for new users - compact inline */}
+          {showSuggestions && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-muted-foreground/70">Try:</span>
+              {PROMPT_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion.label}
+                  type="button"
+                  onClick={() => handleSuggestionClick(suggestion.prompt)}
+                  className="text-[11px] px-2 py-0.5 rounded-full bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {suggestion.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="relative">
           <input
             ref={inputRef}
             className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors"
@@ -513,10 +605,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             )}
           </button>
         </form>
+        </div>
 
+        {/* Hide generate button completely when branches exist, generate was triggered, generating, or loading */}
+        {!hasBranches && !generateTriggered && !isGenerating && !isLoading && (
         <div
           className={`grid transition-all duration-500 ease-out ${
-            readyToGenerate && !hasBranches && !isLoading
+            readyToGenerate
               ? 'grid-rows-[1fr] opacity-100'
               : 'grid-rows-[0fr] opacity-0'
           }`}
@@ -535,7 +630,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               </div>
               <button
                 type="button"
-                onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
+                onClick={() => {
+                  setGenerateTriggered(true);
+                  sendMessageCore(GENERATE_PLAN_TRIGGER);
+                }}
                 disabled={isLoading || !readyToGenerate}
                 className="bg-gradient-to-r from-primary to-primary/90 text-primary-foreground hover:from-primary/95 hover:to-primary/85 w-full rounded-xl px-5 py-3.5 text-sm font-bold shadow-lg transition-all duration-200 disabled:opacity-50 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] generate-pulse"
               >
@@ -554,6 +652,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           </div>
         </div>
+        )}
       </div>
     );
   }

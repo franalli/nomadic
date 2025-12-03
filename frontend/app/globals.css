@@ -37,7 +37,8 @@
   --secondary-foreground: 25 60% 30%;
 
   --muted: 160 20% 92%;
-  --muted-foreground: 160 20% 40%;
+  /* Improved contrast: changed from 40% to 35% for WCAG AA compliance */
+  --muted-foreground: 160 20% 35%;
 
   --accent: 25 90% 60%;
   --accent-foreground: 0 0% 100%;
@@ -270,4 +271,52 @@ body {
 
 .loader-particle {
   animation: float-particle 2s ease-in-out infinite;
+}
+
+/* ===== Accessibility Utilities ===== */
+
+/* Respect user's reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  /* Disable decorative/non-essential animations */
+  .typing-pulse,
+  .generate-pulse,
+  .message-enter,
+  .loader-glow-ring,
+  .loader-orbit,
+  .loader-orbit-delayed,
+  .loader-orbit-slow,
+  .loader-pulse-ring,
+  .loader-pulse-ring-delayed,
+  .loader-particle {
+    animation: none !important;
+  }
+
+  /* Keep functional loading indicators but simplify them */
+  .compass-spin {
+    animation-duration: 2s !important;
+  }
+
+  .typing-dot {
+    animation: none !important;
+    opacity: 0.6;
+  }
+}
+
+/* Screen reader only - visually hidden but accessible */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Focus visible utility for keyboard navigation */
+.focus-visible-ring:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }

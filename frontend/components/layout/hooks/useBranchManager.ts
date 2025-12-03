@@ -226,7 +226,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const [branchTabNotes, setBranchTabNotes] = useState<Record<string, string>>({});
   const [branchSelections, setBranchSelections] = useState<Record<string, TileSelection>>({});
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(false);
+  const [isHydratingSnapshot, setIsHydratingSnapshot] = useState(true);
   const [isResettingSession, setIsResettingSession] = useState(false);
 
   // Refs
@@ -744,10 +744,10 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         setIsHydratingSnapshot(true);
 
         // Use the store to fetch and cache the document (single source of truth)
-        await documentStore.fetchDocument();
+        // fetchDocument returns the document directly so we don't access stale closure state
+        const doc = await documentStore.fetchDocument();
         if (cancelled) return;
 
-        const doc = documentStore.document;
         if (!doc) return;
 
         if (!doc.branches.length) return;

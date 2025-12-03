@@ -48,6 +48,25 @@ const FIELD_LABELS: Record<string, string> = {
   multi_city_intent: 'Trip style',
 };
 
+// Core fields for progress calculation (excludes optional vibes/multi_city)
+const CORE_PROGRESS_FIELDS = ['destinations', 'dates'] as const;
+const OPTIONAL_PROGRESS_FIELDS = ['origin', 'traveler_count', 'budget'] as const;
+
+export const calculateFormProgress = (tripInputs: DocumentTripInputs): { filled: number; total: number; percentage: number } => {
+  const coreFields = CORE_PROGRESS_FIELDS.map(f => isFieldComplete(f, tripInputs));
+  const optionalFields = OPTIONAL_PROGRESS_FIELDS.map(f => isFieldComplete(f, tripInputs));
+
+  // Core fields are required, optional fields add bonus progress
+  const coreComplete = coreFields.filter(Boolean).length;
+  const optionalComplete = optionalFields.filter(Boolean).length;
+
+  const filled = coreComplete + optionalComplete;
+  const total = CORE_PROGRESS_FIELDS.length + OPTIONAL_PROGRESS_FIELDS.length;
+  const percentage = Math.round((filled / total) * 100);
+
+  return { filled, total, percentage };
+};
+
 // Date presets for quick date selection
 export type DatePreset = {
   label: string;
@@ -314,8 +333,30 @@ function TripDetailsFormInner({
   const calendarStartDate = selectedDateRange?.from;
   const calendarEndDate = selectedDateRange?.to;
 
+  // Calculate form progress
+  const progress = calculateFormProgress(tripInputs);
+
   return (
-    <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+    <div className="space-y-3">
+      {/* Progress indicator */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 h-1.5 bg-muted/40 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500 ease-out rounded-full"
+            style={{ width: `${progress.percentage}%` }}
+            role="progressbar"
+            aria-valuenow={progress.percentage}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Trip details ${progress.percentage}% complete`}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+          {progress.filled}/{progress.total} details
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
       {/* From field */}
       <div className="flex flex-col gap-1">
         <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('origin', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
@@ -862,6 +903,7 @@ function TripDetailsFormInner({
             </div>
           );
         })()}
+      </div>
       </div>
     </div>
   );

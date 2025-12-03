@@ -1,8 +1,8 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Compass, Menu, User } from 'lucide-react';
-import React, { memo } from 'react';
+import { Compass, MessageCircle, X } from 'lucide-react';
+import React, { memo, useState } from 'react';
 
 import { GeneratingLoader } from '@/components/layout/GeneratingLoader';
 import { HeroSection } from '@/components/layout/HeroSection';
@@ -15,34 +15,16 @@ interface SidebarHeaderProps {
 }
 
 /**
- * Compact header for the sidebar with logo and nav buttons
+ * Compact header for the sidebar with logo
  */
 const SidebarHeader = memo(function SidebarHeader({ className = '' }: SidebarHeaderProps) {
   return (
-    <header className={`mb-4 flex items-center justify-between text-white ${className}`}>
+    <header className={`mb-4 flex items-center text-white ${className}`}>
       <div className="flex items-center gap-2">
         <Compass className="h-5 w-5" />
         <span className="font-display text-lg font-bold tracking-tight">
           Nomadic
         </span>
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          type="button"
-          className="h-8 w-8 text-white hover:bg-white/10"
-        >
-          <User className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          type="button"
-          className="h-8 w-8 text-white hover:bg-white/10"
-        >
-          <Menu className="h-4 w-4" />
-        </Button>
       </div>
     </header>
   );
@@ -64,6 +46,7 @@ export interface SplitLayoutViewProps {
 /**
  * Split layout view with fixed sidebar on left and scrollable main content on right.
  * Used when generating or when branches are ready.
+ * On mobile, sidebar becomes a drawer that can be toggled.
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
   sidebarContent,
@@ -72,17 +55,55 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   isGenerating,
   hasBranchesReady,
 }: SplitLayoutViewProps) {
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+
   return (
     <div className="flex min-h-screen">
-      {/* Left sidebar - Chat Panel (25% width, sticky) */}
-      <motion.div
-        initial={{ x: '-100%', opacity: 0 }}
-        animate={{ x: 0, opacity: 1 }}
-        transition={{ duration: 0.5, ease: 'easeOut' }}
-        className="no-scrollbar fixed left-0 top-0 z-40 h-screen w-1/4 min-w-[320px] overflow-y-auto border-r border-white/10 bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl"
+      {/* Mobile chat toggle button - fixed at bottom right on mobile */}
+      <Button
+        variant="default"
+        size="icon"
+        type="button"
+        onClick={() => setMobileDrawerOpen(true)}
+        className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg lg:hidden"
+        aria-label="Open chat"
+      >
+        <MessageCircle className="h-6 w-6" />
+      </Button>
+
+      {/* Mobile drawer overlay */}
+      {mobileDrawerOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 lg:hidden"
+          onClick={() => setMobileDrawerOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Left sidebar - Chat Panel */}
+      {/* Desktop: fixed 25% width, Mobile: slide-in drawer */}
+      <aside
+        className={`no-scrollbar fixed left-0 top-0 h-screen overflow-y-auto border-r border-white/10 bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl transition-transform duration-300 ease-out
+          w-[85vw] max-w-[400px] lg:w-1/4 lg:min-w-[320px]
+          z-50 lg:z-40
+          ${mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        aria-label="Trip planning chat"
       >
         <div className="flex h-full flex-col p-4">
-          <SidebarHeader />
+          {/* Header with mobile close button */}
+          <div className="flex items-center justify-between mb-4">
+            <SidebarHeader className="!mb-0" />
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
+              onClick={() => setMobileDrawerOpen(false)}
+              className="h-8 w-8 text-white hover:bg-white/10 lg:hidden"
+              aria-label="Close chat"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
           {/* Chat Panel */}
           <div className="flex-1 overflow-hidden">
             <Card className="bg-card/95 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
@@ -92,22 +113,20 @@ export const SplitLayoutView = memo(function SplitLayoutView({
             </Card>
           </div>
         </div>
-      </motion.div>
+      </aside>
 
-      {/* Right content - Loader or Branches (75% width, with left margin for fixed sidebar) */}
-      <motion.div
-        initial={{ x: '100%', opacity: 0 }}
-        animate={{ x: 0, opacity: 1 }}
-        transition={{ duration: 0.5, ease: 'easeOut', delay: 0.1 }}
-        className="ml-[25%] min-w-0 flex-1"
-        style={{ marginLeft: 'max(25%, 320px)' }}
+      {/* Right content - Loader or Branches */}
+      {/* Desktop: offset by sidebar width, Mobile: full width */}
+      <section
+        className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)]"
+        aria-label="Trip options and results"
       >
         <div className="min-h-screen">
           {/* Hero section (condensed) */}
           <HeroSection typedTagline={typedTagline} variant="compact" />
 
           {/* Show loader when generating, branches when ready */}
-          <section className="bg-background px-6 pb-14 pt-6">
+          <section className="bg-background px-4 pb-14 pt-6 lg:px-6">
             {isGenerating && !hasBranchesReady ? (
               <motion.div
                 key="generating-loader"
@@ -132,7 +151,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
 
           <Footer />
         </div>
-      </motion.div>
+      </section>
     </div>
   );
 });

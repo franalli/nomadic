@@ -1,26 +1,45 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Compass, Sparkles } from 'lucide-react';
-import { memo } from 'react';
+import { CheckCircle2, Compass, Sparkles } from 'lucide-react';
+import { memo, useEffect, useState } from 'react';
 
 interface GeneratingLoaderProps {
   /** Progress value from 0 to 1, or undefined for indeterminate */
   progress?: number;
 }
 
+// Generation stages with estimated timing
+const STAGES = [
+  { label: 'Analyzing your preferences', duration: 2000 },
+  { label: 'Finding destination matches', duration: 3000 },
+  { label: 'Comparing accommodation options', duration: 3000 },
+  { label: 'Curating activities', duration: 2500 },
+  { label: 'Finalizing your itinerary', duration: 2000 },
+] as const;
+
 export const GeneratingLoader = memo(function GeneratingLoader({ progress }: GeneratingLoaderProps) {
-  // Inspirational messages that cycle during generation
-  const messages = [
-    'Crafting your perfect itinerary...',
-    'Exploring hidden gems...',
-    'Comparing the best options...',
-    'Personalizing your adventure...',
-    'Almost there...',
-  ];
+  const [currentStage, setCurrentStage] = useState(0);
+
+  // Cycle through stages automatically
+  useEffect(() => {
+    if (currentStage >= STAGES.length) return;
+
+    const timer = setTimeout(() => {
+      setCurrentStage((prev) => Math.min(prev + 1, STAGES.length - 1));
+    }, STAGES[currentStage].duration);
+
+    return () => clearTimeout(timer);
+  }, [currentStage]);
 
   return (
-    <div className="flex h-full min-h-[60vh] w-full items-center justify-center">
+    <div
+      className="flex h-full min-h-[60vh] w-full items-center justify-center"
+      role="status"
+      aria-busy="true"
+      aria-live="polite"
+      aria-label="Generating your trip options, please wait"
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -91,32 +110,46 @@ export const GeneratingLoader = memo(function GeneratingLoader({ progress }: Gen
             Creating Your Trip Options
           </motion.h2>
 
-          {/* Cycling message */}
-          <div className="h-6 overflow-hidden">
-            <motion.div
-              animate={{
-                y: [0, -24, -48, -72, -96],
-              }}
-              transition={{
-                duration: 12.5,
-                repeat: Infinity,
-                ease: 'linear',
-                times: [0, 0.2, 0.4, 0.6, 0.8],
-                repeatDelay: 0,
-              }}
-              className="text-muted-foreground text-sm"
-            >
-              {messages.map((msg, i) => (
-                <span key={i} className="block h-6 leading-6">
-                  {msg}
-                </span>
-              ))}
-            </motion.div>
+          {/* Stage indicators */}
+          <div className="flex flex-col gap-2 mt-2 text-sm">
+            {STAGES.map((stage, i) => {
+              const isCompleted = i < currentStage;
+              const isActive = i === currentStage;
+
+              return (
+                <motion.div
+                  key={stage.label}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{
+                    opacity: isCompleted || isActive ? 1 : 0.4,
+                    x: 0,
+                  }}
+                  transition={{ delay: i * 0.1, duration: 0.3 }}
+                  className={`flex items-center gap-2 ${
+                    isActive ? 'text-primary font-medium' :
+                    isCompleted ? 'text-accent' : 'text-muted-foreground'
+                  }`}
+                >
+                  {isCompleted ? (
+                    <CheckCircle2 className="h-4 w-4 text-accent shrink-0" />
+                  ) : isActive ? (
+                    <motion.div
+                      animate={{ scale: [1, 1.2, 1] }}
+                      transition={{ duration: 1, repeat: Infinity }}
+                      className="h-4 w-4 rounded-full border-2 border-primary shrink-0"
+                    />
+                  ) : (
+                    <div className="h-4 w-4 rounded-full border border-muted-foreground/30 shrink-0" />
+                  )}
+                  <span>{stage.label}</span>
+                </motion.div>
+              );
+            })}
           </div>
 
           {/* Progress bar (if progress is provided) */}
           {progress !== undefined && (
-            <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+            <div className="mt-4 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
               <motion.div
                 className="h-full bg-gradient-to-r from-primary to-accent"
                 initial={{ width: 0 }}
@@ -128,7 +161,7 @@ export const GeneratingLoader = memo(function GeneratingLoader({ progress }: Gen
 
           {/* Indeterminate progress bar */}
           {progress === undefined && (
-            <div className="mt-2 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
+            <div className="mt-4 h-1.5 w-48 overflow-hidden rounded-full bg-muted">
               <motion.div
                 className="h-full w-1/3 bg-gradient-to-r from-primary to-accent"
                 animate={{

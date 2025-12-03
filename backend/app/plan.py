@@ -1164,8 +1164,14 @@ MULTI-DESTINATION:
 - NEVER ask about multi-city intent. Just add the destination and move on.
 
 VIBES (trip themes/moods/activities):
-- Extract: "adventure trip"→["adventure"], "F1 and beach"→["F1","beach"]
+- Extract ALL relevant vibes from user message
+- "relaxing beach vacation"→["relaxation","beach"]
+- "adventure trip"→["adventure"], "F1 and beach"→["F1","beach"]
+- "romantic getaway"→["romantic"], "family trip"→["family"]
+- "food and wine tour"→["food","wine"], "cultural exploration"→["culture","history"]
+- "hiking adventure"→["hiking","adventure"], "spa retreat"→["spa","relaxation"]
 - Normalize: "Formula 1 Grand Prix"→"F1", "scuba diving"→"diving"
+- Keep vibes short (1-2 words each), lowercase
 - Keep existing vibes unless user explicitly changes them
 - If vibes empty after 4 required fields set, ask:
   "What's the vibe? Adventure, relaxation, a special event?"
