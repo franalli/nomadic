@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { CheckCircle2, Compass, Sparkles } from 'lucide-react';
+import { Briefcase, Bus, Car, CheckCircle2, Compass, Hotel, Mountain, Plane, Sparkles } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 
 interface GeneratingLoaderProps {
@@ -11,11 +11,11 @@ interface GeneratingLoaderProps {
 
 // Generation stages with estimated timing
 const STAGES = [
-  { label: 'Analyzing your preferences', duration: 2000 },
-  { label: 'Finding destination matches', duration: 3000 },
-  { label: 'Comparing accommodation options', duration: 3000 },
-  { label: 'Curating activities', duration: 2500 },
-  { label: 'Finalizing your itinerary', duration: 2000 },
+  { label: 'Analyzing your preferences', duration: 1000 },
+  { label: 'Finding destination matches', duration: 1000 },
+  { label: 'Comparing accommodation options', duration: 1000 },
+  { label: 'Curating activities', duration: 1000 },
+  { label: 'Finalizing your itinerary', duration: 1000 },
 ] as const;
 
 export const GeneratingLoader = memo(function GeneratingLoader({ progress }: GeneratingLoaderProps) {
@@ -52,15 +52,18 @@ export const GeneratingLoader = memo(function GeneratingLoader({ progress }: Gen
           {/* Outer glow ring */}
           <div className="loader-glow-ring absolute inset-0 rounded-full" />
 
-          {/* Orbiting sparkles */}
+          {/* Orbiting travel icons - Outer orbit (3 icons at 120° intervals) */}
           <div className="loader-orbit absolute inset-0">
-            <Sparkles className="absolute left-1/2 top-0 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-accent" />
+            <Car className="absolute h-5 w-5 text-accent" style={{ left: '50%', top: '0%', transform: 'translate(-50%, -50%)' }} />
+            <Plane className="absolute h-5 w-5 text-primary" style={{ left: '93.3%', top: '75%', transform: 'translate(-50%, -50%)' }} />
+            <Mountain className="absolute h-5 w-5 text-accent/80" style={{ left: '6.7%', top: '75%', transform: 'translate(-50%, -50%)' }} />
           </div>
-          <div className="loader-orbit-delayed absolute inset-0">
-            <Sparkles className="absolute bottom-0 left-1/2 h-4 w-4 -translate-x-1/2 translate-y-1/2 text-primary" />
-          </div>
-          <div className="loader-orbit-slow absolute inset-0">
-            <Sparkles className="absolute left-0 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 text-accent/80" />
+
+          {/* Orbiting travel icons - Inner orbit (3 icons at 120° intervals, offset by 60°) */}
+          <div className="loader-orbit-reverse absolute inset-[15%]">
+            <Bus className="absolute h-4 w-4 text-primary/80" style={{ left: '75%', top: '6.7%', transform: 'translate(-50%, -50%)' }} />
+            <Hotel className="absolute h-4 w-4 text-accent/70" style={{ left: '75%', top: '93.3%', transform: 'translate(-50%, -50%)' }} />
+            <Briefcase className="absolute h-4 w-4 text-primary/70" style={{ left: '0%', top: '50%', transform: 'translate(-50%, -50%)' }} />
           </div>
 
           {/* Inner pulsing rings */}

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     # external APIs
     openai_api_key: str | None = None
 
+    # Validation cache settings
+    validation_cache_size: int = 1000
+    validation_cache_ttl: int = 86400  # 24 hours
+    validation_max_tokens: int = 50  # Enough for JSON response
+
     # Cross-origin / Cookie configuration
     # Frontend origin for CORS (e.g., "https://app.nomadic.com")
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")

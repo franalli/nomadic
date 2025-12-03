@@ -2,7 +2,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Undo2 } from 'lucide-react';
+import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -132,10 +132,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
     const [vibesOpen, setVibesOpen] = useState(true);
-    const [lastUserMessageId, setLastUserMessageId] = useState<string | null>(null);
     const [generateTriggered, setGenerateTriggered] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
     // Show suggestions only when no user messages yet
@@ -143,8 +142,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const panelHeightClass = fullHeight
       ? 'h-full'
       : hasUserMessage
-        ? 'min-h-[420px] max-h-[825px]'
-        : 'min-h-[320px] max-h-[420px]';
+        ? 'min-h-[630px] max-h-[1238px]'
+        : 'min-h-[480px] max-h-[630px]';
 
     const scrollToBottom = useCallback(() => {
       const node = scrollContainerRef.current;
@@ -176,11 +175,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 })
               );
               setMessages(loadedMessages);
-              // Track the last user message from loaded history for undo
-              const lastUserMsg = [...loadedMessages].reverse().find((m) => m.role === 'user');
-              if (lastUserMsg) {
-                setLastUserMessageId(lastUserMsg.id);
-              }
             }
           }
         } catch (error) {
@@ -209,24 +203,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onGeneratePlanStart?.();
         }
 
-        // For generate trigger, show a friendly user message instead of the raw trigger
-        if (isGenerateTrigger) {
-          const userMessage: ChatMessage = {
-            id: `u_${Date.now()}`,
-            role: 'user',
-            content: 'Generate my trip options',
-          };
-          setLastUserMessageId(userMessage.id);
-          setMessages((prev) => [...prev, userMessage]);
-        } else {
-          const userMessage: ChatMessage = {
-            id: `u_${Date.now()}`,
-            role: 'user',
-            content: trimmed,
-          };
-          setLastUserMessageId(userMessage.id);
-          setMessages((prev) => [...prev, userMessage]);
-        }
+        // Add user message - show friendly text for generate trigger
+        const userMessage: ChatMessage = {
+          id: `u_${Date.now()}`,
+          role: 'user',
+          content: isGenerateTrigger ? 'Generate my trip options' : trimmed,
+        };
+        setMessages((prev) => [...prev, userMessage]);
         setIsLoading(true);
 
         try {
@@ -382,33 +365,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setMessages((prev) => [...prev, assistantMessage]);
     }, []);
 
-    // Undo last message - removes the last user message and its response
-    const handleUndoLastMessage = useCallback(() => {
-      if (!lastUserMessageId || isLoading) return;
-
-      setMessages((prev) => {
-        // Find the index of the last user message
-        const lastUserIdx = prev.findIndex((m) => m.id === lastUserMessageId);
-        if (lastUserIdx === -1) return prev;
-
-        // Remove everything from that message onwards
-        const newMessages = prev.slice(0, lastUserIdx);
-
-        // If we removed everything, restore default messages
-        if (newMessages.length === 0) {
-          return DEFAULT_MESSAGES;
-        }
-
-        return newMessages;
-      });
-
-      // Find the previous user message ID
-      setLastUserMessageId((prevId) => {
-        const userMessages = messages.filter((m) => m.role === 'user' && m.id !== prevId);
-        return userMessages.length > 0 ? userMessages[userMessages.length - 1].id : null;
-      });
-    }, [lastUserMessageId, isLoading, messages]);
-
     // Handle clicking a prompt suggestion
     const handleSuggestionClick = useCallback((prompt: string) => {
       setInput(prompt);
@@ -429,6 +385,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       const trimmed = input.trim();
       if (!trimmed || isLoading) return;
       setInput('');
+      // Reset textarea height after clearing
+      if (inputRef.current) {
+        inputRef.current.style.height = 'auto';
+      }
       setTimeout(() => inputRef.current?.focus(), 0);
       await sendMessageCore(trimmed);
     }
@@ -449,18 +409,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             Travel Planner
           </div>
           <div className="flex items-center gap-3">
-            {/* Undo last message button */}
-            {lastUserMessageId && hasUserMessage && !isLoading && (
-              <button
-                type="button"
-                onClick={handleUndoLastMessage}
-                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
-                title="Undo last message"
-              >
-                <Undo2 className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Undo</span>
-              </button>
-            )}
             {/* Fresh Start button */}
             {onFreshStart && hasUserMessage && (
               <button
@@ -482,7 +430,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         {showTripDetails ? (
           <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
-            <div className="rounded-xl bg-gradient-to-br from-muted/50 to-muted/30 border border-border/50 px-4 py-3 shadow-sm">
+            <div>
               <Collapsible.Trigger asChild>
                 <button className="w-full flex items-center gap-1.5 text-primary/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-primary transition-colors group">
                   <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
@@ -498,7 +446,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         {vibesSection && hasUserMessage ? (
           <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
-            <div className="rounded-xl bg-gradient-to-br from-accent/10 to-primary/5 border border-accent/20 px-4 py-3 shadow-sm">
+            <div>
               <Collapsible.Trigger asChild>
                 <button className="w-full flex items-center gap-1.5 text-accent/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-accent transition-colors group">
                   <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${vibesOpen ? '' : '-rotate-90'}`} />
@@ -575,16 +523,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
 
           <form onSubmit={handleSubmit} className="relative">
-          <input
+          <textarea
             ref={inputRef}
-            className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors"
+            className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-hidden min-h-[48px] max-h-[200px]"
             placeholder={
               hasBranches
                 ? 'Refine your trip...'
                 : 'Where would you like to go?'
             }
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              // Auto-resize textarea
+              e.target.style.height = 'auto';
+              e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+            }}
+            onKeyDown={(e) => {
+              // Submit on Enter without Shift
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
+            rows={1}
           />
           <button
             type="submit"

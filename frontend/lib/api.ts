@@ -81,3 +81,32 @@ export async function resetSession(): Promise<Response> {
     headers,
   });
 }
+
+/**
+ * Validate a trip input (origin, destination, or vibe) using LLM-based validation.
+ *
+ * @param fieldType - Type of input: 'origin', 'destination', or 'vibe'
+ * @param value - The raw input value to validate
+ * @returns Validation result with corrected values and validity flag
+ */
+export interface ValidationResponse {
+  corrected_values: string[];
+  is_valid: boolean;
+  reason?: string;
+}
+
+export async function validateTripInput(
+  fieldType: 'origin' | 'destination' | 'vibe',
+  value: string
+): Promise<ValidationResponse> {
+  const res = await apiFetch('/v1/validate-trip-input', {
+    method: 'POST',
+    body: JSON.stringify({ field_type: fieldType, value }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Validation failed: ${res.status}`);
+  }
+
+  return res.json();
+}

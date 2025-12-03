@@ -236,6 +236,14 @@ body {
   animation: orbit 7s linear infinite;
 }
 
+.loader-orbit-reverse {
+  animation: orbit 6s linear infinite reverse;
+}
+
+.loader-orbit-fast {
+  animation: orbit 3s linear infinite;
+}
+
 /* Pulsing ring animations */
 @keyframes pulse-ring {
   0%, 100% {
@@ -285,6 +293,8 @@ body {
   .loader-orbit,
   .loader-orbit-delayed,
   .loader-orbit-slow,
+  .loader-orbit-reverse,
+  .loader-orbit-fast,
   .loader-pulse-ring,
   .loader-pulse-ring-delayed,
   .loader-particle {

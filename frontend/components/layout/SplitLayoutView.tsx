@@ -61,7 +61,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
     <div className="flex min-h-screen">
       {/* Mobile chat toggle button - fixed at bottom right on mobile */}
       <Button
-        variant="default"
+        variant="primary"
         size="icon"
         type="button"
         onClick={() => setMobileDrawerOpen(true)}

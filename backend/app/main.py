@@ -41,8 +41,11 @@ from app.schemas import (
     PlanDocumentResponse,
     PlanRequest,
     TilesSearchRequest,
+    TripInputValidationRequest,
+    TripInputValidationResponse,
 )
 from app.tile_service.service import search_tiles
+from app.validation import clear_cache, prewarm_cache, validate_input
 
 APP_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = APP_DIR.parent
@@ -55,6 +58,18 @@ APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 app = FastAPI(title=APP_NAME)
 
 db_dependency = Depends(get_db)
+
+
+# =============================================================================
+# Startup Event - Pre-warm validation cache
+# =============================================================================
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Pre-warm the validation cache with common destinations and vibes."""
+    count = prewarm_cache()
+    print(f"[Validation] Pre-warmed cache with {count} entries")
 
 
 # Build allowed origins list from config
@@ -101,6 +116,47 @@ def health():
     return {
         "status": "ok",
         "env": settings.env,
+    }
+
+
+# =============================================================================
+# Trip Input Validation Endpoint
+# =============================================================================
+
+
+@app.post("/v1/validate-trip-input", response_model=TripInputValidationResponse)
+def validate_trip_input(req: TripInputValidationRequest):
+    """
+    Validate a trip input (origin, destination, or vibe).
+
+    Returns corrected values if the input was valid but had typos/formatting issues.
+    For destinations, may return multiple values if the input contained multiple
+    places (e.g., "Paris and Rome" -> ["Paris", "Rome"]).
+
+    Raises HTTP 503 if validation fails after retries.
+    """
+    try:
+        result = validate_input(req.value, req.field_type)
+        return TripInputValidationResponse(
+            corrected_values=result.corrected_values,
+            is_valid=result.is_valid,
+            reason=result.reason,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/v1/admin/clear-validation-cache")
+def admin_clear_validation_cache():
+    """
+    Clear the validation cache. For development/debugging only.
+    """
+    count = clear_cache()
+    # Re-populate with common values
+    new_count = prewarm_cache()
+    return {
+        "cleared": count,
+        "repopulated": new_count,
     }
 
 

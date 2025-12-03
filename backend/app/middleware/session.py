@@ -163,12 +163,14 @@ def get_csrf_token_from_request(request: Request) -> str:
 # HTTP methods that modify state and require CSRF protection
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# Paths that are exempt from CSRF protection (e.g., health checks)
+# Paths that are exempt from CSRF protection (e.g., health checks, stateless validation)
 CSRF_EXEMPT_PATHS = {
     "/health",
     "/docs",
     "/redoc",
     "/openapi.json",
+    "/v1/validate-trip-input",
+    "/v1/admin/clear-validation-cache",
 }
 
 # Header name for CSRF token

@@ -252,3 +252,23 @@ class PlanDocumentPatch(BaseModel):
     selections: Optional[Dict[str, BranchSelections]] = None
     # Trip inputs to merge
     trip_inputs: Optional[DocumentTripInputsPatch | DocumentTripInputs] = None
+
+
+# =============================================================================
+# Trip Input Validation
+# =============================================================================
+
+
+class TripInputValidationRequest(BaseModel):
+    """Request to validate a trip input (origin, destination, or vibe)."""
+
+    field_type: Literal["origin", "destination", "vibe"]
+    value: str
+
+
+class TripInputValidationResponse(BaseModel):
+    """Response from trip input validation."""
+
+    corrected_values: List[str]  # List to support multi-destination splitting
+    is_valid: bool
+    reason: Optional[str] = None

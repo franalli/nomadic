@@ -6,8 +6,24 @@ import {
   toTripInputsDraft,
   type TripInputsDraft,
 } from '@/components/layout/TripDetailsForm';
+import { validateTripInput, type ValidationResponse } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
+
+export type ToastType = 'info' | 'success' | 'error';
+
+/**
+ * Parse a vibe string that may contain an emoji prefix.
+ * Format: "emoji text" (e.g., "🏖️ beach") or just "text" for legacy vibes.
+ */
+function parseVibeText(vibe: string): string {
+  const parts = vibe.split(' ');
+  // Check if first part looks like an emoji (starts with non-ASCII)
+  if (parts.length > 1 && /^[\p{Emoji}]/u.test(parts[0])) {
+    return parts.slice(1).join(' ').toLowerCase();
+  }
+  return vibe.toLowerCase();
+}
 
 export interface ChatPanelActions {
   addAssistantMessage: (message: string) => void;
@@ -21,7 +37,7 @@ export interface TripInputsEditorOptions {
   chatPanelActions: ChatPanelActions | null;
   onBranchesChange: (branches: DocumentBranch[]) => void;
   onSelectedBranchIdChange: (branchId: string | null) => void;
-  onToast: (message: string) => void;
+  onToast: (message: string, type?: ToastType) => void;
 }
 
 export interface TripInputsEditorState {
@@ -34,6 +50,13 @@ export interface TripInputsEditorState {
   destinationInputExpanded: boolean;
   originInput: string;
   originInputExpanded: boolean;
+  // Validation state
+  validationLoading: 'origin' | 'destination' | 'vibe' | null;
+  validationError: string | null;
+  // Pending values shown during validation (not persisted)
+  pendingOrigin: string | null;
+  pendingDestination: string | null;
+  pendingVibe: string | null;
 }
 
 export interface TripInputsEditorActions {
@@ -59,6 +82,8 @@ export interface TripInputsEditorActions {
   handleAddVibe: (vibe: string) => Promise<void>;
   handleRemoveVibe: (index: number) => Promise<void>;
   resetDraft: () => void;
+  // Validation actions
+  retryValidation: () => Promise<void>;
 }
 
 export type UseTripInputsEditorReturn = TripInputsEditorState & TripInputsEditorActions;
@@ -92,6 +117,19 @@ export function useTripInputsEditor(
   const [destinationInputExpanded, setDestinationInputExpanded] = useState(false);
   const [originInput, setOriginInput] = useState('');
   const [originInputExpanded, setOriginInputExpanded] = useState(false);
+
+  // Validation state
+  const [validationLoading, setValidationLoading] = useState<'origin' | 'destination' | 'vibe' | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  // Store last validation attempt for retry
+  const [lastValidationAttempt, setLastValidationAttempt] = useState<{
+    fieldType: 'origin' | 'destination' | 'vibe';
+    value: string;
+  } | null>(null);
+  // Pending values shown during validation (not persisted, discarded on rejection)
+  const [pendingOrigin, setPendingOrigin] = useState<string | null>(null);
+  const [pendingDestination, setPendingDestination] = useState<string | null>(null);
+  const [pendingVibe, setPendingVibe] = useState<string | null>(null);
 
   // Sync tripInputsDraft when store trip_inputs changes
   // Always sync destinations and vibes (they're modified by bot, not inline editing)
@@ -201,7 +239,7 @@ export function useTripInputsEditor(
       const success = await documentStore.commitTripInputs(updates);
 
       if (!success) {
-        onToast(`Failed to update ${field.replace('_', ' ')}. Please try again.`);
+        onToast(`Failed to update ${field.replace('_', ' ')}. Please try again.`, 'error');
         return;
       }
 
@@ -236,18 +274,51 @@ export function useTripInputsEditor(
       const trimmedOrigin = origin.trim();
       if (!trimmedOrigin) return;
 
-      // Optimistically update via documentStore.commitTripInputs
-      const success = await documentStore.commitTripInputs({ origin: trimmedOrigin });
-
-      if (!success) {
-        onToast('Failed to set origin. Please try again.');
-        return;
-      }
-
+      // Show pending value immediately (not stored anywhere)
+      setPendingOrigin(trimmedOrigin);
       setOriginInput('');
 
-      // Add assistant message to acknowledge
-      chatPanelActions?.addAssistantMessage(`Set "${trimmedOrigin}" as your departure city! ✈️`);
+      // Start validation
+      setValidationLoading('origin');
+      setValidationError(null);
+      setLastValidationAttempt({ fieldType: 'origin', value: trimmedOrigin });
+
+      try {
+        const result = await validateTripInput('origin', trimmedOrigin);
+
+        if (!result.is_valid) {
+          // Invalid origin - discard pending value and show error toast
+          setPendingOrigin(null);
+          const errorMsg = result.reason || 'This doesn\'t appear to be a valid location.';
+          setValidationError(errorMsg);
+          onToast(`Invalid origin: ${errorMsg}`, 'error');
+          setValidationLoading(null);
+          return;
+        }
+
+        // Auto-apply correction if provided
+        const correctedValue = result.corrected_values[0];
+        const valueToCommit = correctedValue || trimmedOrigin;
+        const success = await documentStore.commitTripInputs({ origin: valueToCommit });
+
+        if (!success) {
+          setPendingOrigin(null);
+          onToast('Failed to set origin. Please try again.', 'error');
+          setValidationLoading(null);
+          return;
+        }
+
+        // Clear pending value (now stored in document)
+        setPendingOrigin(null);
+        setValidationLoading(null);
+
+        chatPanelActions?.addAssistantMessage(`Set "${valueToCommit}" as your departure city! ✈️`);
+      } catch (err) {
+        setPendingOrigin(null);
+        setValidationError('Validation failed. Please try again.');
+        onToast('Validation failed. Please try again.', 'error');
+        setValidationLoading(null);
+      }
     },
     [documentStore, onToast, chatPanelActions]
   );
@@ -263,7 +334,7 @@ export function useTripInputsEditor(
     const success = await documentStore.commitTripInputs({ origin: null });
 
     if (!success) {
-      onToast('Failed to remove origin. Please try again.');
+      onToast('Failed to remove origin. Please try again.', 'error');
       return;
     }
 
@@ -279,7 +350,7 @@ export function useTripInputsEditor(
     const success = await documentStore.commitTripInputs({ traveler_count: null });
 
     if (!success) {
-      onToast('Failed to clear traveler count. Please try again.');
+      onToast('Failed to clear traveler count. Please try again.', 'error');
       return;
     }
 
@@ -292,7 +363,7 @@ export function useTripInputsEditor(
     const success = await documentStore.commitTripInputs({ budget: null });
 
     if (!success) {
-      onToast('Failed to clear budget. Please try again.');
+      onToast('Failed to clear budget. Please try again.', 'error');
       return;
     }
 
@@ -307,7 +378,7 @@ export function useTripInputsEditor(
     const success = await documentStore.commitTripInputs({ multi_city_intent: newIntent });
 
     if (!success) {
-      onToast('Failed to update trip style. Please try again.');
+      onToast('Failed to update trip style. Please try again.', 'error');
       return;
     }
 
@@ -323,26 +394,73 @@ export function useTripInputsEditor(
       if (!trimmedDestination) return;
 
       const currentDestinations = tripInputs.destinations ?? [];
-      // Don't add duplicates (case-insensitive)
-      if (currentDestinations.some((d) => d.toLowerCase() === trimmedDestination.toLowerCase())) {
-        setDestinationInput('');
-        return;
-      }
 
-      const newDestinations = [...currentDestinations, trimmedDestination];
-
-      // Optimistically update via documentStore.commitTripInputs
-      const success = await documentStore.commitTripInputs({ destinations: newDestinations });
-
-      if (!success) {
-        onToast('Failed to add destination. Please try again.');
-        return;
-      }
-
+      // Show pending value immediately (not stored anywhere)
+      setPendingDestination(trimmedDestination);
       setDestinationInput('');
 
-      // Add assistant message to acknowledge the addition
-      chatPanelActions?.addAssistantMessage(`Added "${trimmedDestination}" to your destinations! 📍`);
+      // Start validation
+      setValidationLoading('destination');
+      setValidationError(null);
+      setLastValidationAttempt({ fieldType: 'destination', value: trimmedDestination });
+
+      try {
+        const result = await validateTripInput('destination', trimmedDestination);
+
+        if (!result.is_valid) {
+          // Invalid destination - discard pending value and show error toast
+          setPendingDestination(null);
+          const errorMsg = result.reason || 'This doesn\'t appear to be a valid destination.';
+          setValidationError(errorMsg);
+          onToast(`Invalid destination: ${errorMsg}`, 'error');
+          setValidationLoading(null);
+          return;
+        }
+
+        // Auto-apply corrections (including multi-destination splits)
+        const correctedValues = result.corrected_values;
+        const wasSplit = correctedValues.length > 1;
+
+        // Filter out duplicates and add all corrected values
+        const newDestinations = [...currentDestinations];
+        const addedDestinations: string[] = [];
+        for (const dest of correctedValues) {
+          if (!newDestinations.some((d) => d.toLowerCase() === dest.toLowerCase())) {
+            newDestinations.push(dest);
+            addedDestinations.push(dest);
+          }
+        }
+
+        if (addedDestinations.length === 0) {
+          setPendingDestination(null);
+          setValidationLoading(null);
+          return;
+        }
+        const success = await documentStore.commitTripInputs({ destinations: newDestinations });
+
+        if (!success) {
+          setPendingDestination(null);
+          onToast('Failed to add destination. Please try again.', 'error');
+          setValidationLoading(null);
+          return;
+        }
+
+        // Clear pending value (now stored in document)
+        setPendingDestination(null);
+        setValidationLoading(null);
+
+        // Show chat message for added destinations
+        if (wasSplit) {
+          chatPanelActions?.addAssistantMessage(`Added ${addedDestinations.join(', ')} to your destinations! 📍`);
+        } else {
+          chatPanelActions?.addAssistantMessage(`Added "${addedDestinations[0]}" to your destinations! 📍`);
+        }
+      } catch (err) {
+        setPendingDestination(null);
+        setValidationError('Validation failed. Please try again.');
+        onToast('Validation failed. Please try again.', 'error');
+        setValidationLoading(null);
+      }
     },
     [tripInputs.destinations, documentStore, onToast, chatPanelActions]
   );
@@ -378,7 +496,8 @@ export function useTripInputsEditor(
           if (prunedBranches.length === 0) {
             onSelectedBranchIdChange(null);
             onToast(
-              `Removed ${removedDestination} — your trip options were reset. Click "Generate Plan" to create new options.`
+              `Removed ${removedDestination} — your trip options were reset. Click "Generate Plan" to create new options.`,
+              'info'
             );
           } else {
             // Some branches remain - update selection if needed
@@ -387,7 +506,8 @@ export function useTripInputsEditor(
               onSelectedBranchIdChange(newSelectedId);
             }
             onToast(
-              `Removed ${removedDestination} — ${removedCount} trip option${removedCount > 1 ? 's were' : ' was'} updated.`
+              `Removed ${removedDestination} — ${removedCount} trip option${removedCount > 1 ? 's were' : ' was'} updated.`,
+              'info'
             );
           }
         }
@@ -399,7 +519,7 @@ export function useTripInputsEditor(
 
       if (!success) {
         // Show error toast on failure (store already rolled back)
-        onToast('Failed to remove destination. Please try again.');
+        onToast('Failed to remove destination. Please try again.', 'error');
         return;
       }
 
@@ -428,26 +548,75 @@ export function useTripInputsEditor(
       if (!trimmedVibe) return;
 
       const currentVibes = tripInputs.vibes ?? [];
-      // Don't add duplicates (case-insensitive)
-      if (currentVibes.some((v) => v.toLowerCase() === trimmedVibe)) {
-        setVibeInput('');
-        return;
-      }
 
-      const newVibes = [...currentVibes, trimmedVibe];
-
-      // Optimistically update via documentStore.commitTripInputs (like handleRemoveVibe does)
-      const success = await documentStore.commitTripInputs({ vibes: newVibes });
-
-      if (!success) {
-        onToast('Failed to add vibe. Please try again.');
-        return;
-      }
-
+      // Show pending value immediately (not stored anywhere)
+      setPendingVibe(trimmedVibe);
       setVibeInput('');
 
-      // Add an assistant message to confirm the vibe was added
-      chatPanelActions?.addAssistantMessage(`Added "${trimmedVibe}" to your trip vibes! ✨`);
+      // Start validation
+      setValidationLoading('vibe');
+      setValidationError(null);
+      setLastValidationAttempt({ fieldType: 'vibe', value: trimmedVibe });
+
+      try {
+        const result = await validateTripInput('vibe', trimmedVibe);
+
+        if (!result.is_valid) {
+          // Invalid vibe - discard pending value and show error toast
+          setPendingVibe(null);
+          const errorMsg = result.reason || 'This doesn\'t appear to be a valid trip vibe.';
+          setValidationError(errorMsg);
+          onToast(`Invalid vibe: ${errorMsg}`, 'error');
+          setValidationLoading(null);
+          return;
+        }
+
+        // Auto-apply corrections (including multi-vibe splits)
+        const correctedValues = result.corrected_values.map(v => v.toLowerCase());
+        const wasSplit = correctedValues.length > 1;
+
+        // Filter out duplicates (by text only, ignoring emoji) and add all corrected values
+        const newVibes = [...currentVibes];
+        const addedVibes: string[] = [];
+        for (const vibe of correctedValues) {
+          const vibeText = parseVibeText(vibe);
+          if (!newVibes.some((v) => parseVibeText(v) === vibeText)) {
+            newVibes.push(vibe);
+            addedVibes.push(vibe);
+          }
+        }
+
+        if (addedVibes.length === 0) {
+          setPendingVibe(null);
+          setValidationLoading(null);
+          return;
+        }
+
+        const success = await documentStore.commitTripInputs({ vibes: newVibes });
+
+        if (!success) {
+          setPendingVibe(null);
+          onToast('Failed to add vibe. Please try again.', 'error');
+          setValidationLoading(null);
+          return;
+        }
+
+        // Clear pending value (now stored in document)
+        setPendingVibe(null);
+        setValidationLoading(null);
+
+        // Show chat message for added vibes
+        if (wasSplit) {
+          chatPanelActions?.addAssistantMessage(`Added ${addedVibes.join(', ')} to your trip vibes! ✨`);
+        } else {
+          chatPanelActions?.addAssistantMessage(`Added "${addedVibes[0]}" to your trip vibes! ✨`);
+        }
+      } catch (err) {
+        setPendingVibe(null);
+        setValidationError('Validation failed. Please try again.');
+        onToast('Validation failed. Please try again.', 'error');
+        setValidationLoading(null);
+      }
     },
     [tripInputs.vibes, documentStore, onToast, chatPanelActions]
   );
@@ -464,7 +633,7 @@ export function useTripInputsEditor(
       const success = await documentStore.commitTripInputs({ vibes: newVibes });
 
       if (!success) {
-        onToast('Failed to remove vibe. Please try again.');
+        onToast('Failed to remove vibe. Please try again.', 'error');
         return;
       }
 
@@ -486,7 +655,31 @@ export function useTripInputsEditor(
     setDestinationInputExpanded(false);
     setOriginInput('');
     setOriginInputExpanded(false);
+    // Reset validation state
+    setValidationLoading(null);
+    setValidationError(null);
+    setLastValidationAttempt(null);
+    // Reset pending values
+    setPendingOrigin(null);
+    setPendingDestination(null);
+    setPendingVibe(null);
   }, []);
+
+  // Retry the last failed validation
+  const retryValidation = useCallback(async () => {
+    if (!lastValidationAttempt) return;
+
+    const { fieldType, value } = lastValidationAttempt;
+    setValidationError(null);
+
+    if (fieldType === 'origin') {
+      await handleSetOrigin(value);
+    } else if (fieldType === 'destination') {
+      await handleAddDestination(value);
+    } else if (fieldType === 'vibe') {
+      await handleAddVibe(value);
+    }
+  }, [lastValidationAttempt, handleSetOrigin, handleAddDestination, handleAddVibe]);
 
   return {
     // State
@@ -499,6 +692,13 @@ export function useTripInputsEditor(
     destinationInputExpanded,
     originInput,
     originInputExpanded,
+    // Validation state
+    validationLoading,
+    validationError,
+    // Pending values (shown during validation)
+    pendingOrigin,
+    pendingDestination,
+    pendingVibe,
     // State setters
     setTripInputsDraft,
     setEditingField,
@@ -523,5 +723,7 @@ export function useTripInputsEditor(
     handleAddVibe,
     handleRemoveVibe,
     resetDraft,
+    // Validation actions
+    retryValidation,
   };
 }

@@ -1,7 +1,29 @@
 'use client';
 
-import { Plus, Sparkles, X } from 'lucide-react';
+import { Loader2, Plus, X } from 'lucide-react';
 import { memo } from 'react';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Extract emoji and text from a vibe string.
+ * Vibes are stored as "emoji text" (e.g., "🏖️ beach").
+ * Falls back to ✨ for legacy vibes without emoji prefix.
+ */
+function parseVibe(vibe: string): { emoji: string; text: string } {
+  // Check if first character(s) form an emoji (emoji can be 1-2 chars due to variation selectors)
+  const match = vibe.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u);
+  if (match) {
+    return {
+      emoji: match[1],
+      text: vibe.slice(match[0].length),
+    };
+  }
+  // Legacy vibe without emoji
+  return { emoji: '✨', text: vibe };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props
@@ -11,6 +33,7 @@ export interface VibesSectionProps {
   vibes: string[];
   vibeInput: string;
   vibeInputExpanded: boolean;
+  pendingVibe: string | null;
   onAddVibe: (vibe: string) => void;
   onRemoveVibe: (index: number) => void;
   setVibeInput: (value: string) => void;
@@ -25,6 +48,7 @@ function VibesSectionInner({
   vibes,
   vibeInput,
   vibeInputExpanded,
+  pendingVibe,
   onAddVibe,
   onRemoveVibe,
   setVibeInput,
@@ -32,23 +56,33 @@ function VibesSectionInner({
 }: VibesSectionProps) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {vibes.map((vibe, idx) => (
-        <span
-          key={`vibe-${idx}`}
-          className="group relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold transition-all hover:bg-accent/20"
-        >
-          <Sparkles className="h-3 w-3 text-accent" />
-          {vibe}
-          <button
-            type="button"
-            onClick={() => onRemoveVibe(idx)}
-            className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
-            aria-label={`Remove ${vibe}`}
+      {vibes.map((vibe, idx) => {
+        const { emoji, text } = parseVibe(vibe);
+        return (
+          <span
+            key={`vibe-${idx}`}
+            className="group relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold transition-all hover:bg-accent/20"
           >
-            <X className="h-2.5 w-2.5" />
-          </button>
+            <span className="text-sm">{emoji}</span>
+            {text}
+            <button
+              type="button"
+              onClick={() => onRemoveVibe(idx)}
+              className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
+              aria-label={`Remove ${text}`}
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </span>
+        );
+      })}
+      {/* Show pending vibe with loading spinner */}
+      {pendingVibe && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold animate-pulse">
+          <Loader2 className="h-3 w-3 text-accent animate-spin" />
+          <span className="text-accent/80">{pendingVibe}</span>
         </span>
-      ))}
+      )}
       {/* Plus button or expanded input */}
       {vibeInputExpanded ? (
         <form

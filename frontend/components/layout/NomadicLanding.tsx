@@ -1,7 +1,7 @@
 'use client';
 
 import { addDays, addWeeks, nextSaturday } from 'date-fns';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
@@ -24,6 +24,21 @@ import type { DocumentTripInputs } from '@/types/document';
 
 const HERO_TYPING_INTERVAL_MS = 200;
 const HERO_TYPING_PAUSE_MS = 8000;
+
+// Toast notification system
+const MAX_TOASTS = 3;
+const TOAST_DISMISS_MS = 4000;
+const TOAST_DISMISS_FAST_MS = 2000;
+const TOAST_DISMISS_ERROR_MS = 5000;
+
+export type ToastType = 'info' | 'success' | 'error';
+
+export interface Toast {
+  id: string;
+  message: string;
+  type: ToastType;
+  createdAt: number;
+}
 
 // Date presets for quick date selection - extracted to avoid duplication
 const DATE_PRESETS = [
@@ -68,7 +83,27 @@ export function NomadicLanding() {
     return { ...storeTripInputs };
   }, [storeTripInputs]);
 
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Toast notification state - supports multiple stacked toasts
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastIdRef = useRef(0);
+
+  // Add a toast with optional type (defaults to 'info')
+  const addToast = useCallback((message: string, type: ToastType = 'info') => {
+    const id = `toast-${++toastIdRef.current}`;
+    const newToast: Toast = { id, message, type, createdAt: Date.now() };
+
+    setToasts((prev) => {
+      // If at max, remove oldest toast
+      const updated = prev.length >= MAX_TOASTS ? prev.slice(1) : prev;
+      return [...updated, newToast];
+    });
+  }, []);
+
+  // Remove a specific toast by ID
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
@@ -89,7 +124,7 @@ export function NomadicLanding() {
   const branchManager = useBranchManager({
     tripInputs,
     chatPanelContainerRef,
-    onToast: setToastMessage,
+    onToast: addToast,
     onChatKeyIncrement: useCallback(() => setChatKey((prev) => prev + 1), []),
     resetDraft: () => tripInputsEditorRef.current?.resetDraft(),
   });
@@ -102,14 +137,11 @@ export function NomadicLanding() {
     branches,
     selectedBranchId,
     tilesBranchId,
-    branchTileNotes,
-    branchTileCounts,
     branchSelections,
     isGenerating,
     isHydratingSnapshot,
     selectedBranch,
     activeBranchSelection,
-    branchesWithTileNotes,
     tiles,
     readyToGenerate,
     hasBranchesReady,
@@ -119,7 +151,6 @@ export function NomadicLanding() {
     handleStartNewSession,
     handlePlanResult,
     handleTileSelection,
-    handleTilesTabChange,
     handleBookTrip,
     handleGeneratePlanStart,
   } = branchManager;
@@ -133,7 +164,7 @@ export function NomadicLanding() {
     chatPanelActions,
     onBranchesChange: setBranches,
     onSelectedBranchIdChange: setSelectedBranchId,
-    onToast: setToastMessage,
+    onToast: addToast,
   });
 
   // Update ref after tripInputsEditor is created
@@ -151,6 +182,10 @@ export function NomadicLanding() {
     destinationInputExpanded,
     originInput,
     originInputExpanded,
+    validationLoading,
+    pendingOrigin,
+    pendingDestination,
+    pendingVibe,
     setTripInputsDraft,
     setEditingField,
     setSelectedLocationBadge,
@@ -180,7 +215,7 @@ export function NomadicLanding() {
     tripInputsDraft,
     setTripInputsDraft,
     chatPanelActions,
-    onToast: setToastMessage,
+    onToast: addToast,
   });
 
   // Destructure commonly used values from the date range hook
@@ -197,12 +232,35 @@ export function NomadicLanding() {
     handleResetDates,
   } = dateRangeSelector;
 
-  // Toast auto-dismiss effect
+  // Toast auto-dismiss effect - handles multiple toasts with different timings
   useEffect(() => {
-    if (!toastMessage) return undefined;
-    const timer = window.setTimeout(() => setToastMessage(null), 4000);
-    return () => window.clearTimeout(timer);
-  }, [toastMessage]);
+    if (toasts.length === 0) return undefined;
+
+    const timers: NodeJS.Timeout[] = [];
+
+    toasts.forEach((toast, index) => {
+      // Calculate dismiss time based on type and queue position
+      let dismissTime = TOAST_DISMISS_MS;
+      if (toast.type === 'error') {
+        dismissTime = TOAST_DISMISS_ERROR_MS;
+      } else if (toasts.length >= MAX_TOASTS && index === 0) {
+        // Oldest toast when queue is full dismisses faster
+        dismissTime = TOAST_DISMISS_FAST_MS;
+      }
+
+      const elapsed = Date.now() - toast.createdAt;
+      const remaining = Math.max(0, dismissTime - elapsed);
+
+      const timer = setTimeout(() => {
+        removeToast(toast.id);
+      }, remaining);
+      timers.push(timer);
+    });
+
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+    };
+  }, [toasts, removeToast]);
 
   // Typing animation effect
   useEffect(() => {
@@ -257,6 +315,9 @@ export function NomadicLanding() {
       originInputExpanded={originInputExpanded}
       destinationInput={destinationInput}
       destinationInputExpanded={destinationInputExpanded}
+      pendingOrigin={pendingOrigin}
+      pendingDestination={pendingDestination}
+      validationLoading={validationLoading}
       onStartEditingField={handleStartEditingField}
       onFieldChange={handleFieldChange}
       onCommitField={handleCommitField}
@@ -289,6 +350,7 @@ export function NomadicLanding() {
       vibes={tripInputs.vibes ?? []}
       vibeInput={vibeInput}
       vibeInputExpanded={vibeInputExpanded}
+      pendingVibe={pendingVibe}
       onAddVibe={handleAddVibe}
       onRemoveVibe={handleRemoveVibe}
       setVibeInput={setVibeInput}
@@ -361,16 +423,14 @@ export function NomadicLanding() {
           </p>
         ) : (
           <BranchPanel
-            branches={branchesWithTileNotes}
+            branches={branches}
             selectedBranchId={selectedBranchId}
             onBranchSelect={handleBranchSelect}
-            branchTileCounts={branchTileCounts}
             branchSelections={branchSelections}
             tiles={tiles}
             tilesBranchId={tilesBranchId}
             selectedTiles={activeBranchSelection}
             onTileToggle={handleTileSelection}
-            onTilesTabChange={handleTilesTabChange}
             onBookTrip={handleBookTrip}
             canBookTrip={missingFields.length === 0}
             tripInputs={tripInputs}
@@ -382,26 +442,57 @@ export function NomadicLanding() {
 
   return (
     <div className="bg-background text-foreground min-h-screen">
-      {toastMessage && (
-        <div
-          role="alert"
-          aria-live="polite"
-          className="border-border/60 bg-card/95 text-foreground fixed right-4 top-4 z-50 flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg"
-        >
-          <span>{toastMessage}</span>
-          <button
-            type="button"
-            className="text-primary text-xs font-semibold uppercase tracking-wide"
-            onClick={() => setToastMessage(null)}
-            aria-label="Dismiss notification"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
+      {/* Animated Toast Notifications - Stacked */}
+      <div className="fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2 sm:right-4 sm:left-auto sm:translate-x-0 sm:items-end">
+        <AnimatePresence mode="popLayout">
+          {toasts.map((toast, index) => {
+            // Determine colors based on toast type
+            const typeStyles = {
+              error: 'border-destructive/40 bg-destructive/5 text-destructive/70',
+              success: 'border-green-500/40 bg-green-500/5 text-green-600/70',
+              info: 'border-green-500/40 bg-green-500/5 text-green-600/70',
+            };
+            const buttonStyles = {
+              error: 'text-destructive/60 hover:text-destructive/50',
+              success: 'text-green-600/60 hover:text-green-600/50',
+              info: 'text-green-600/60 hover:text-green-600/50',
+            };
 
-      {/* Split layout when generating, hydrating (might have branches to restore), or branches are ready */}
-      {(isGenerating || isHydratingSnapshot || hasBranchesReady) ? (
+            return (
+              <motion.div
+                key={toast.id}
+                layout
+                initial={{ opacity: 0, y: -50, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9, y: -20 }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 500,
+                  damping: 35,
+                  layout: { type: 'spring', stiffness: 500, damping: 35 },
+                }}
+                role="alert"
+                aria-live="polite"
+                className={`flex items-center gap-3 rounded-full border px-4 py-2.5 text-sm shadow-lg backdrop-blur-sm sm:rounded-lg sm:py-3 ${typeStyles[toast.type]}`}
+              >
+                <span className="max-w-[260px] truncate sm:max-w-[320px]">{toast.message}</span>
+                <button
+                  type="button"
+                  className={`text-xs font-semibold transition-colors ${buttonStyles[toast.type]}`}
+                  onClick={() => removeToast(toast.id)}
+                  aria-label="Dismiss notification"
+                >
+                  ✕
+                </button>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </div>
+
+      {/* Split layout when generating or branches are ready. Don't show split layout just for hydration
+          unless we already have branches - otherwise we flash the branch view before knowing if there's a session. */}
+      {(isGenerating || hasBranchesReady) ? (
         <SplitLayoutView
           sidebarContent={chatPanelContent(true)}
           mainContent={branchPanelContent}

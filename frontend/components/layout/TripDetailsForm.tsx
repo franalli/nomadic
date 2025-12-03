@@ -6,6 +6,7 @@ import {
   CalendarRange,
   CheckCircle2,
   Circle,
+  Loader2,
   MapPin,
   Plus,
   Route,
@@ -19,6 +20,8 @@ import type { DateRange } from 'react-day-picker';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { DocumentTripInputs } from '@/types/document';
+
+import { EditableField } from './EditableField';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -244,6 +247,11 @@ export interface TripDetailsFormProps {
   destinationInput: string;
   destinationInputExpanded: boolean;
 
+  // Pending validation state
+  pendingOrigin: string | null;
+  pendingDestination: string | null;
+  validationLoading: 'origin' | 'destination' | 'vibe' | null;
+
   // Callbacks for editing
   onStartEditingField: (field: keyof TripInputsDraft) => void;
   onFieldChange: (field: keyof TripInputsDraft, value: string) => void;
@@ -303,6 +311,9 @@ function TripDetailsFormInner({
   originInputExpanded,
   destinationInput,
   destinationInputExpanded,
+  pendingOrigin,
+  pendingDestination,
+  validationLoading,
   onStartEditingField,
   onFieldChange,
   onCommitField,
@@ -359,9 +370,9 @@ function TripDetailsFormInner({
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
       {/* From field */}
       <div className="flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('origin', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
-          {isFieldComplete('origin', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
-          <span className={isFieldComplete('origin', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.origin}</span>
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('origin', tripInputs) || pendingOrigin ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('origin', tripInputs) || pendingOrigin ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('origin', tripInputs) || pendingOrigin ? 'font-medium' : ''}>{FIELD_LABELS.origin}</span>
         </div>
         {hasOrigin ? (
           <div
@@ -378,6 +389,14 @@ function TripDetailsFormInner({
               onSelect={onSelectLocationBadge}
               onRemove={onRemoveOrigin}
             />
+          </div>
+        ) : pendingOrigin ? (
+          /* Show pending origin with loading spinner */
+          <div
+            className="border-primary/40 bg-primary/10 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 animate-pulse"
+          >
+            <Loader2 className="h-3 w-3 text-primary animate-spin" />
+            <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
           </div>
         ) : originInputExpanded ? (
           <form
@@ -438,18 +457,18 @@ function TripDetailsFormInner({
             tabIndex={0}
           >
             <MapPin className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-xs text-muted-foreground/60 italic">Click to set</span>
+            <span className="text-xs text-muted-foreground/60 italic">e.g. New York</span>
           </div>
         )}
       </div>
 
       {/* Where to field */}
       <div className="group flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('destinations', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
-          {isFieldComplete('destinations', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
-          <span className={isFieldComplete('destinations', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.destinations}</span>
+        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('destinations', tripInputs) || pendingDestination ? 'text-accent' : 'text-muted-foreground/60'}`}>
+          {isFieldComplete('destinations', tripInputs) || pendingDestination ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+          <span className={isFieldComplete('destinations', tripInputs) || pendingDestination ? 'font-medium' : ''}>{FIELD_LABELS.destinations}</span>
         </div>
-        {hasDestination ? (
+        {hasDestination || pendingDestination ? (
           <div className="inline-flex items-center">
             <div
               className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-2.5 py-1.5"
@@ -468,6 +487,13 @@ function TripDetailsFormInner({
                   onRemove={() => onRemoveDestination(idx)}
                 />
               ))}
+              {/* Show pending destination with loading spinner */}
+              {pendingDestination && (
+                <span className="inline-flex items-center gap-1 rounded-full px-1 py-0.5 animate-pulse">
+                  <Loader2 className="h-3 w-3 text-accent animate-spin" />
+                  <span className="text-xs font-semibold text-accent/80">{pendingDestination}</span>
+                </span>
+              )}
             </div>
             {/* Add destination button / input */}
             {destinationInputExpanded ? (
@@ -586,7 +612,7 @@ function TripDetailsFormInner({
             tabIndex={0}
           >
             <MapPin className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-xs text-muted-foreground/60 italic">Click to set</span>
+            <span className="text-xs text-muted-foreground/60 italic">e.g. Paris</span>
           </div>
         )}
       </div>
@@ -704,7 +730,7 @@ function TripDetailsFormInner({
                 tabIndex={0}
               >
                 <CalendarRange className="h-3.5 w-3.5 text-muted-foreground/40" />
-                <span className="text-xs text-muted-foreground/60 italic">Click to set</span>
+                <span className="text-xs text-muted-foreground/60 italic">e.g. Dec 15-22</span>
               </div>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
@@ -746,164 +772,52 @@ function TripDetailsFormInner({
       </div>
 
       {/* Travelers field (optional) */}
-      <div className="flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('traveler_count', tripInputs) ? 'text-accent' : 'text-muted-foreground/40'}`}>
-          {isFieldComplete('traveler_count', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3 opacity-60" strokeDasharray="2 2" />}
-          <span className={isFieldComplete('traveler_count', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.traveler_count}</span>
-          {!isFieldComplete('traveler_count', tripInputs) && <span className="text-[10px] text-muted-foreground/40">(optional)</span>}
-        </div>
-        {(() => {
-          const field = 'traveler_count' as const;
-          const isEditing = editingField === field;
-          const draftValueRaw = draftBase ? draftBase[field] : '';
-          const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
-          const displayValue = tripInputs.traveler_count != null ? (formatTravelers(tripInputs.traveler_count) ?? '') : '';
-          const hasValue = tripInputs.traveler_count != null;
-          return (
-            <div className="group relative inline-flex">
-              <div
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 cursor-pointer transition-colors ${
-                  hasValue
-                    ? `border-border/60 bg-muted/40 ${isEditing ? 'ring-primary ring-1' : ''}`
-                    : 'border-border/40 bg-muted/20 border-dashed hover:border-primary/40 hover:bg-primary/5'
-                }`}
-                role="button"
-                tabIndex={0}
-                onClick={() => onStartEditingField(field)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onStartEditingField(field);
-                  }
-                }}
-              >
-                <span className={hasValue ? 'text-muted-foreground shrink-0' : 'shrink-0'}><Users className={`h-3.5 w-3.5 ${hasValue ? '' : 'text-muted-foreground/40'}`} /></span>
-                {isEditing ? (
-                  <input
-                    type="number"
-                    value={draftValue}
-                    onChange={(e) => onFieldChange(field, e.target.value)}
-                    className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
-                    placeholder="#"
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => onCommitField(field, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        onCommitField(field, (e.target as HTMLInputElement).value);
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        const originalValue = tripInputs.traveler_count;
-                        setTripInputsDraft((prev) =>
-                          prev ? { ...prev, traveler_count: originalValue != null ? String(originalValue) : null } : prev
-                        );
-                        setEditingField(null);
-                      }
-                    }}
-                    autoFocus
-                  />
-                ) : hasValue ? (
-                  <span className="text-foreground whitespace-nowrap text-xs font-semibold">
-                    {displayValue}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground/60 italic">Click to set</span>
-                )}
-              </div>
-              {hasValue && !isEditing && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onRemoveTravelerCount(); }}
-                  className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
-                  aria-label="Clear traveler count"
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              )}
-            </div>
+      <EditableField
+        label={FIELD_LABELS.traveler_count}
+        icon={Users}
+        placeholder="#"
+        emptyPlaceholder="e.g. 2"
+        isComplete={isFieldComplete('traveler_count', tripInputs)}
+        isEditing={editingField === 'traveler_count'}
+        draftValue={draftBase.traveler_count == null ? '' : String(draftBase.traveler_count)}
+        displayValue={tripInputs.traveler_count != null ? (formatTravelers(tripInputs.traveler_count) ?? '') : ''}
+        hasValue={tripInputs.traveler_count != null}
+        onStartEditing={() => onStartEditingField('traveler_count')}
+        onValueChange={(value) => onFieldChange('traveler_count', value)}
+        onCommit={(value) => onCommitField('traveler_count', value)}
+        onCancel={() => {
+          const originalValue = tripInputs.traveler_count;
+          setTripInputsDraft((prev) =>
+            prev ? { ...prev, traveler_count: originalValue != null ? String(originalValue) : null } : prev
           );
-        })()}
-      </div>
+          setEditingField(null);
+        }}
+        onRemove={onRemoveTravelerCount}
+      />
 
       {/* Budget field (optional) */}
-      <div className="flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('budget', tripInputs) ? 'text-accent' : 'text-muted-foreground/40'}`}>
-          {isFieldComplete('budget', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3 opacity-60" strokeDasharray="2 2" />}
-          <span className={isFieldComplete('budget', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.budget}</span>
-          {!isFieldComplete('budget', tripInputs) && <span className="text-[10px] text-muted-foreground/40">(optional)</span>}
-        </div>
-        {(() => {
-          const field = 'budget' as const;
-          const isEditing = editingField === field;
-          const draftValueRaw = draftBase ? draftBase[field] : '';
-          const draftValue = draftValueRaw == null ? '' : String(draftValueRaw);
-          const displayValue = tripInputs.budget != null ? formatBudgetValue(tripInputs.budget) : '';
-          const hasValue = tripInputs.budget != null;
-          return (
-            <div className="group relative inline-flex">
-              <div
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 cursor-pointer transition-colors ${
-                  hasValue
-                    ? `border-border/60 bg-muted/40 ${isEditing ? 'ring-primary ring-1' : ''}`
-                    : 'border-border/40 bg-muted/20 border-dashed hover:border-primary/40 hover:bg-primary/5'
-                }`}
-                role="button"
-                tabIndex={0}
-                onClick={() => onStartEditingField(field)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    onStartEditingField(field);
-                  }
-                }}
-              >
-                <span className={hasValue ? 'text-muted-foreground shrink-0' : 'shrink-0'}><Wallet className={`h-3.5 w-3.5 ${hasValue ? '' : 'text-muted-foreground/40'}`} /></span>
-                {isEditing ? (
-                  <input
-                    type="number"
-                    value={draftValue}
-                    onChange={(e) => onFieldChange(field, e.target.value)}
-                    className="text-foreground placeholder:text-muted-foreground w-16 bg-transparent text-xs font-semibold focus:outline-none"
-                    placeholder="$"
-                    onClick={(e) => e.stopPropagation()}
-                    onBlur={(e) => onCommitField(field, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        onCommitField(field, (e.target as HTMLInputElement).value);
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        const originalValue = tripInputs.budget;
-                        setTripInputsDraft((prev) =>
-                          prev ? { ...prev, budget: originalValue != null ? String(originalValue) : null } : prev
-                        );
-                        setEditingField(null);
-                      }
-                    }}
-                    autoFocus
-                  />
-                ) : hasValue ? (
-                  <span className="text-foreground whitespace-nowrap text-xs font-semibold">
-                    {displayValue}
-                  </span>
-                ) : (
-                  <span className="text-xs text-muted-foreground/60 italic">Click to set</span>
-                )}
-              </div>
-              {hasValue && !isEditing && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onRemoveBudget(); }}
-                  className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
-                  aria-label="Clear budget"
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              )}
-            </div>
+      <EditableField
+        label={FIELD_LABELS.budget}
+        icon={Wallet}
+        placeholder="$"
+        emptyPlaceholder="e.g. $3000"
+        isComplete={isFieldComplete('budget', tripInputs)}
+        isEditing={editingField === 'budget'}
+        draftValue={draftBase.budget == null ? '' : String(draftBase.budget)}
+        displayValue={tripInputs.budget != null ? formatBudgetValue(tripInputs.budget) : ''}
+        hasValue={tripInputs.budget != null}
+        onStartEditing={() => onStartEditingField('budget')}
+        onValueChange={(value) => onFieldChange('budget', value)}
+        onCommit={(value) => onCommitField('budget', value)}
+        onCancel={() => {
+          const originalValue = tripInputs.budget;
+          setTripInputsDraft((prev) =>
+            prev ? { ...prev, budget: originalValue != null ? String(originalValue) : null } : prev
           );
-        })()}
-      </div>
+          setEditingField(null);
+        }}
+        onRemove={onRemoveBudget}
+      />
       </div>
     </div>
   );

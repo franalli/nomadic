@@ -16,31 +16,27 @@ export interface ChatPanelActions {
   addAssistantMessage: (message: string) => void;
 }
 
+export type ToastType = 'info' | 'success' | 'error';
+
 export interface DateRangeSelectorOptions {
   tripInputs: DocumentTripInputs;
   tripInputsDraft: TripInputsDraft;
   setTripInputsDraft: React.Dispatch<React.SetStateAction<TripInputsDraft>>;
   chatPanelActions: ChatPanelActions | null;
-  onToast: (message: string) => void;
+  onToast: (message: string, type?: ToastType) => void;
 }
 
 export interface DateRangeSelectorState {
   calendarOpen: boolean;
-  hoveredDate: Date | null;
-  isResettingDateRange: boolean;
 }
 
 export interface DateRangeSelectorComputed {
-  calendarStartDate: Date | undefined;
-  calendarEndDate: Date | undefined;
   selectedDateRange: DateRange | undefined;
   previewDays: Date[];
   hasDateValidationWarning: boolean;
 }
 
 export interface DateRangeSelectorActions {
-  setCalendarOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setHoveredDate: React.Dispatch<React.SetStateAction<Date | null>>;
   handleCalendarDayClick: (day: Date) => Promise<void>;
   handleCalendarDayMouseEnter: (day: Date) => void;
   handleCalendarMouseLeave: () => void;
@@ -174,7 +170,7 @@ export function useDateRangeSelector(
           });
 
           if (!success) {
-            onToast('Failed to update dates. Please try again.');
+            onToast('Failed to update dates. Please try again.', 'error');
             return;
           }
 
@@ -284,7 +280,7 @@ export function useDateRangeSelector(
         const success = await documentStore.commitTripInputs(updates);
 
         if (!success) {
-          onToast('Failed to update dates. Please try again.');
+          onToast('Failed to update dates. Please try again.', 'error');
           return;
         }
 
@@ -320,23 +316,11 @@ export function useDateRangeSelector(
   return {
     // State
     calendarOpen,
-    /** @internal Kept for debugging and potential future use */
-    hoveredDate,
-    /** @internal Kept for debugging and potential future use */
-    isResettingDateRange,
     // Computed
-    /** @internal Kept for debugging and potential future use */
-    calendarStartDate,
-    /** @internal Kept for debugging and potential future use */
-    calendarEndDate,
     selectedDateRange,
     previewDays,
     hasDateValidationWarning,
     // Actions
-    /** @internal Kept for API completeness */
-    setCalendarOpen,
-    /** @internal Kept for API completeness */
-    setHoveredDate,
     handleCalendarDayClick,
     handleCalendarDayMouseEnter,
     handleCalendarMouseLeave,
