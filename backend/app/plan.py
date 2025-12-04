@@ -34,12 +34,11 @@ from datetime import datetime, timedelta
 from typing import Any, List, Optional, cast
 from zoneinfo import ZoneInfo
 
-from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from sqlalchemy.orm import Session
 
 from app import db_models as models
-from app.config import settings
+from app.config import get_openai_client
 from app.crud_document import (
     apply_planner_update,
     get_document,
@@ -113,7 +112,6 @@ _PLAN_TOP_P = float(os.getenv("OPENAI_PLAN_TOP_P", "0.95"))  # Nucleus sampling 
 _PLAN_MAX_RETRIES = int(os.getenv("OPENAI_PLAN_MAX_RETRIES", "3"))  # Retry count for API errors
 _PLAN_SEED = os.getenv("OPENAI_PLAN_SEED")  # Optional seed for reproducibility
 
-_openai_client: Optional[OpenAI] = None  # Singleton OpenAI client instance
 _DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))  # Enable verbose debug logging
 
 # The canonical order for collecting trip input fields.
@@ -175,28 +173,6 @@ def _today_iso(timezone_name: Optional[str] = None) -> str:
 # =============================================================================
 # OPENAI CLIENT MANAGEMENT
 # =============================================================================
-
-
-def _get_openai_client() -> Optional[OpenAI]:
-    """
-    Get or create the singleton OpenAI client instance.
-
-    Uses lazy initialization to avoid creating the client until needed.
-    The API key is read from settings or environment variable.
-
-    Returns:
-        Optional[OpenAI]: The OpenAI client, or None if no API key is configured.
-    """
-    global _openai_client
-
-    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=api_key)
-
-    return _openai_client
 
 
 def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optional[str]:
@@ -1221,7 +1197,7 @@ BRANCH FORMAT:
   "origin":"city","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",
   "traveler_count":1,"budget":1000}}"""
 
-    client = _get_openai_client()
+    client = get_openai_client()
     if client is None:
         raise RuntimeError("OpenAI client is not configured")
 
@@ -1581,7 +1557,6 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
     db_session = get_or_create_session(
         db,
         session_token=session_id,
-        user_external_id=None,  # User ID comes from auth, not request
         lock_for_update=True,
     )
 
@@ -1707,7 +1682,6 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
             primary_dest = primary_branch.destinations[0] if primary_branch.destinations else None
 
             tiles_request = TilesSearchRequest(
-                user_id=None,  # User ID comes from auth, not request
                 session_id=session_id,
                 trip_context_id=trip_ctx.id,
                 destination=primary_dest,

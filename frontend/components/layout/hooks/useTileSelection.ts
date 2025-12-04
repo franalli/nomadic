@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo } from 'react';
 
-import { resolveTabForTile } from '@/components/tiles/TilesGrid';
 import type { Tile, TileSelection } from '@/types/tile';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,6 +13,13 @@ import type { Tile, TileSelection } from '@/types/tile';
  * Used as a default value when no selection exists for a branch.
  */
 export const EMPTY_TILE_SELECTION: TileSelection = { activities: [] };
+
+/**
+ * Type keywords used to classify tiles.
+ * Keep in sync with TilesGrid.tsx resolveTabForTile.
+ */
+const FLIGHT_KEYWORDS = ['flight', 'air', 'fare', 'plane'];
+const ACTIVITY_KEYWORDS = ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -109,22 +115,15 @@ export interface UseTileSelectionReturn {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Determines the selection category for a tile based on its display tab.
+ * Determines the selection category for a tile based on its type.
  *
  * @param tile - The tile to categorize
  * @returns The selection category ('stay', 'flight', or 'activity')
- *
- * @remarks
- * Uses resolveTabForTile from TilesGrid to ensure consistency with UI display.
- * The mapping is:
- * - 'flights' tab → 'flight' category
- * - 'activities' tab → 'activity' category
- * - All other tabs (including 'stays') → 'stay' category
  */
 export const resolveSelectionCategory = (tile: Tile): SelectionCategory => {
-  const tab = resolveTabForTile(tile);
-  if (tab === 'flights') return 'flight';
-  if (tab === 'activities') return 'activity';
+  const type = (tile.type || '').toLowerCase();
+  if (FLIGHT_KEYWORDS.some((keyword) => type.includes(keyword))) return 'flight';
+  if (ACTIVITY_KEYWORDS.some((keyword) => type.includes(keyword))) return 'activity';
   return 'stay';
 };
 

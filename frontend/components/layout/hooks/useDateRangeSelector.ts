@@ -5,18 +5,13 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
 import {
-  formatDateForDisplay,
   toTripInputsDraft,
   type TripInputsDraft,
 } from '@/components/layout/TripDetailsForm';
+import { formatDateForDisplay } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
-
-export interface ChatPanelActions {
-  addAssistantMessage: (message: string) => void;
-}
-
-export type ToastType = 'info' | 'success' | 'error';
+import type { ChatPanelActions, ToastType } from '@/types/hooks';
 
 export interface DateRangeSelectorOptions {
   tripInputs: DocumentTripInputs;

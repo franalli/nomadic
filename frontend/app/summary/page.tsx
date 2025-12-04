@@ -79,10 +79,7 @@ export default function SummaryPage() {
     return `https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=&ie=UTF8&iwloc=&output=embed`;
   })();
 
-  const selectedTileIds = new Set<string>();
-  if (selection.stay) selectedTileIds.add(selection.stay.id);
-  if (selection.flight) selectedTileIds.add(selection.flight.id);
-  selection.activities.forEach((activity) => selectedTileIds.add(activity.id));
+  // selectedTiles already contains only the selected items
 
   return (
     <div className="bg-background text-foreground min-h-screen">
@@ -211,7 +208,7 @@ export default function SummaryPage() {
                   key={tile.id}
                   tile={tile}
                   branchId={branch.id}
-                  isSelected={selectedTileIds.has(tile.id)}
+                  isSelected={true}
                 />
               ))
             )}

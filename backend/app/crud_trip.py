@@ -13,31 +13,9 @@ def _generate_session_token() -> str:
     return str(uuid.uuid4())
 
 
-def get_session_for_update(
-    db: Session,
-    session_token: str,
-) -> Optional[models.Session]:
-    """Get a session with a row-level lock to prevent concurrent modifications.
-
-    Uses SELECT ... FOR UPDATE to acquire an exclusive lock on the session row.
-    This prevents deadlocks between concurrent operations like DELETE session
-    and UPDATE plan_documents.
-    """
-    if not session_token:
-        return None
-
-    return (
-        db.query(models.Session)
-        .filter(models.Session.session_token == session_token)
-        .with_for_update()
-        .first()
-    )
-
-
 def get_or_create_session(
     db: Session,
     session_token: str,
-    user_external_id: Optional[str] = None,
     lock_for_update: bool = False,
 ) -> models.Session:
     """Get or create a session by token.
@@ -48,7 +26,6 @@ def get_or_create_session(
     Args:
         db: Database session.
         session_token: The session token to look up or create.
-        user_external_id: Optional external user ID.
         lock_for_update: If True, acquire a row-level lock on the session.
             Use this when performing operations that could conflict with
             session deletion (e.g., updating plan documents).
@@ -79,18 +56,7 @@ def get_or_create_session(
             return db_session
 
     # Create new session
-    user: Optional[models.User] = None
-    if user_external_id:
-        user = db.query(models.User).filter(models.User.external_id == user_external_id).first()
-        if not user:
-            user = models.User(external_id=user_external_id)
-            db.add(user)
-            db.flush()
-
-    db_session = models.Session(
-        session_token=session_token,
-        user_id=user.id if user else None,
-    )
+    db_session = models.Session(session_token=session_token)
     db.add(db_session)
     db.flush()
     return db_session
@@ -105,7 +71,6 @@ def create_trip_context(
 ) -> models.TripContext:
     ctx = models.TripContext(
         session_id=session.id,
-        user_id=session.user_id,
         parent_trip_context_id=parent_trip_context.id if parent_trip_context else None,
         raw_prompt=req_message,
     )

@@ -1,9 +1,10 @@
 'use client';
 
 import { Plane, Sparkles, TentTree } from 'lucide-react';
-import { type ElementType, memo, useEffect, useMemo, useState } from 'react';
+import { type ElementType, memo, useMemo, useState } from 'react';
 
 import { TileCard } from '@/components/tiles/TileCard';
+import { isActivityType, isFlightType } from '@/lib/utils';
 import type { DocumentBranch } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -31,29 +32,15 @@ export const TAB_CONFIG: Record<
 };
 
 export const resolveTabForTile = (tile: Tile): TileTabKey => {
-  const type = (tile.type || '').toLowerCase();
-  if (['flight', 'air', 'fare', 'plane'].some((needle) => type.includes(needle))) {
-    return 'flights';
-  }
-  if (
-    ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'].some((needle) =>
-      type.includes(needle)
-    )
-  ) {
-    return 'activities';
-  }
+  const type = tile.type || '';
+  if (isFlightType(type)) return 'flights';
+  if (isActivityType(type)) return 'activities';
   return 'stays';
 };
 
 type TilesGridProps = {
   tiles: Tile[];
   activeBranch?: DocumentBranch | null;
-  /**
-   * Called whenever the active tab or filtered tiles change.
-   * **Important:** This callback must be wrapped in `useCallback` in the parent
-   * component to avoid triggering infinite re-render loops.
-   */
-  onTabChange?: (tab: TileTabKey, filteredTiles: Tile[]) => void;
   selectedTiles?: TileSelection;
   onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
   forcedTab?: TileTabKey;
@@ -63,7 +50,6 @@ type TilesGridProps = {
 export const TilesGrid = memo(function TilesGrid({
   tiles,
   activeBranch,
-  onTabChange,
   selectedTiles,
   onTileToggle,
   forcedTab,
@@ -86,10 +72,6 @@ export const TilesGrid = memo(function TilesGrid({
   const filteredTiles = useMemo(() => {
     return tiles.filter((tile) => resolveTabForTile(tile) === effectiveTab);
   }, [effectiveTab, tiles]);
-
-  useEffect(() => {
-    onTabChange?.(effectiveTab, filteredTiles);
-  }, [effectiveTab, filteredTiles, onTabChange]);
 
   const priceSummary = useMemo(() => {
     const priceValues = tiles

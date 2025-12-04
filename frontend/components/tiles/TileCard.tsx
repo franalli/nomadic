@@ -1,9 +1,15 @@
 import { Heart, MapPin, Star } from 'lucide-react';
-import { type KeyboardEvent, memo, type MouseEvent, useMemo, useState } from 'react';
+import { type KeyboardEvent, memo, type MouseEvent, useCallback, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { apiFetch } from '@/lib/api';
+import {
+  ACTIVITY_FEATURE_SETS,
+  FLIGHT_FEATURE_SETS,
+  HOTEL_FEATURE_SETS,
+} from '@/lib/mocks';
+import { isActivityType, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
@@ -13,37 +19,11 @@ type TileCardProps = {
   onToggleSelect?: (tile: Tile) => void;
 };
 
-/**
- * TODO: Remove mock feature sets once real tile metadata is available from API.
- * These arrays generate placeholder features using deterministic hashing of tile IDs.
- * Replace with: tile.meta.features or similar API field when available.
- */
-const HOTEL_FEATURE_SETS = [
-  ['Free WiFi', 'Breakfast Included', 'Rooftop Bar'],
-  ['Pool', 'Spa', 'Restaurant'],
-  ['Historic Building', 'City Views', 'Concierge'],
-  ['Gym', 'Room Service', 'Bar'],
-];
-
-/** TODO: Remove once real flight metadata is available from API */
-const FLIGHT_FEATURE_SETS = [
-  ['Carry-on included', 'Meal included', 'USB Power'],
-  ['Free cancellation', 'Seat selection', 'Wifi on board'],
-  ['Priority boarding', 'Extra legroom', 'Lounge access'],
-];
-
-/** TODO: Remove once real activity metadata is available from API */
-const ACTIVITY_FEATURE_SETS = [
-  ['Small group', 'Guide included', 'Skip the line'],
-  ['Private tour', 'Hotel pickup', 'Mobile ticket'],
-  ['Instant confirmation', 'Free cancellation', 'English guide'],
-];
-
 const getFeaturesForTile = (tile: Tile): string[] => {
-  const type = (tile.type || '').toLowerCase();
+  const type = tile.type || '';
   let sets = HOTEL_FEATURE_SETS;
 
-  if (['flight', 'air', 'fare', 'plane'].some((t) => type.includes(t))) {
+  if (isFlightType(type)) {
     sets = FLIGHT_FEATURE_SETS;
     // Try to use real meta if available
     const meta = tile.meta as Record<string, unknown> | undefined;
@@ -60,15 +40,8 @@ const getFeaturesForTile = (tile: Tile): string[] => {
         return realFeatures;
       }
     }
-  } else if (
-    ['activity', 'experience', 'tour', 'excursion'].some((t) => type.includes(t))
-  ) {
+  } else if (isActivityType(type)) {
     sets = ACTIVITY_FEATURE_SETS;
-    const meta = tile.meta as Record<string, unknown> | undefined;
-    if (meta && typeof meta.duration === 'string') {
-      // If we have duration, maybe use it as a feature or just stick to the sets
-      // The design shows tags like "Pool", "Spa". Duration is usually in subtitle.
-    }
   }
 
   // Deterministic selection based on tile ID
@@ -86,8 +59,8 @@ export const TileCard = memo(function TileCard({
 
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
 
-  const handleClick = () => {
-    // Fire-and-forget click tracking (session is sent via cookie)
+  // Memoize click tracking payload to avoid recreating on each render
+  const trackClick = useCallback(() => {
     apiFetch('/v1/tiles/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -96,17 +69,49 @@ export const TileCard = memo(function TileCard({
         branch_id: branchId ?? null,
         user_id: null,
       }),
-    }).catch(() => {});
+    }).catch((error) => {
+      console.warn('Click tracking failed:', error);
+    });
+  }, [tile.id, branchId]);
 
+  const handleClick = useCallback(() => {
+    // Fire-and-forget click tracking (session is sent via cookie)
+    trackClick();
     // Open partner deeplink immediately
     window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
-  };
+  }, [trackClick, tile.deeplink_url]);
 
-  const handleToggleSelect = (event: MouseEvent | KeyboardEvent<HTMLDivElement>) => {
+  const handleToggleSelect = useCallback(
+    (event: MouseEvent | KeyboardEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onToggleSelect?.(tile);
+    },
+    [onToggleSelect, tile]
+  );
+
+  const handleLikeToggle = useCallback((event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    onToggleSelect?.(tile);
-  };
+    setIsLiked((prev) => !prev);
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        handleToggleSelect(event);
+      }
+    },
+    [handleToggleSelect]
+  );
+
+  const handleViewDetailsClick = useCallback(
+    (event: MouseEvent) => {
+      event.stopPropagation();
+      handleClick();
+    },
+    [handleClick]
+  );
 
   return (
     <Card
@@ -116,11 +121,7 @@ export const TileCard = memo(function TileCard({
       }`}
       role="button"
       tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          handleToggleSelect(event);
-        }
-      }}
+      onKeyDown={handleKeyDown}
     >
       <div className="relative aspect-[4/3] w-full overflow-hidden">
         {tile.image_url ? (
@@ -137,11 +138,7 @@ export const TileCard = memo(function TileCard({
         <button
           type="button"
           className="text-muted-foreground absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 shadow-sm transition hover:bg-white hover:text-red-500"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setIsLiked((prev) => !prev);
-          }}
+          onClick={handleLikeToggle}
           aria-label={isLiked ? 'Unlike option' : 'Like option'}
         >
           <Heart className={`h-4 w-4 ${isLiked ? 'fill-red-500 text-red-500' : ''}`} />
@@ -199,10 +196,7 @@ export const TileCard = memo(function TileCard({
             variant="primary"
             size="sm"
             className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-sm"
-            onClick={(event) => {
-              event.stopPropagation();
-              handleClick();
-            }}
+            onClick={handleViewDetailsClick}
           >
             View Details
           </Button>

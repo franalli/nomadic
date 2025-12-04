@@ -139,11 +139,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
     // Show suggestions only when no user messages yet
     const showSuggestions = !hasUserMessage && !isLoadingHistory;
+    // Use consistent height - no jump on first message
     const panelHeightClass = fullHeight
       ? 'h-full'
-      : hasUserMessage
-        ? 'min-h-[630px] max-h-[1238px]'
-        : 'min-h-[480px] max-h-[630px]';
+      : 'min-h-[480px] max-h-[1238px]';
 
     const scrollToBottom = useCallback(() => {
       const node = scrollContainerRef.current;

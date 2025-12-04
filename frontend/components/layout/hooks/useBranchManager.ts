@@ -6,6 +6,7 @@ import { resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs, PlanDocumentResponse } from '@/types/document';
+import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -32,12 +33,6 @@ import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } fro
  * TODO: Consider A/B testing different minimum durations for user satisfaction.
  */
 const GENERATING_MIN_DURATION_MS = 6000;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type ToastType = 'info' | 'success' | 'error';
 
 /**
  * Options for the useBranchManager hook.
@@ -101,12 +96,10 @@ export interface PlanResultPayload {
 export interface BranchManagerState {
   branches: DocumentBranch[];
   selectedBranchId: string | null;
-  tilesMap: Record<string, Tile>;
   tilesBranchId: string | null;
   branchSelections: Record<string, TileSelection>;
   isGenerating: boolean;
   isHydratingSnapshot: boolean;
-  isResettingSession: boolean;
 }
 
 /**
@@ -127,7 +120,6 @@ export interface BranchManagerActions {
   setBranches: React.Dispatch<React.SetStateAction<DocumentBranch[]>>;
   setSelectedBranchId: React.Dispatch<React.SetStateAction<string | null>>;
   handleBranchSelect: (branchId: string) => Promise<void>;
-  handleClearContext: () => void;
   handleStartNewSession: () => Promise<void>;
   handlePlanResult: (result: PlanResultPayload) => void;
   handleTileSelection: (tile: Tile) => void;
@@ -254,14 +246,6 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const [isGenerating, setIsGenerating] = useState(false);
 
-  /**
-   * Whether a session reset is in progress.
-   * Used to show loading state during reset.
-   *
-   * @internal Kept for debugging and potential future use.
-   */
-  const [isResettingSession, setIsResettingSession] = useState(false);
-
   // ─────────────────────────────────────────────────────────────────────────
   // Refs
   // ─────────────────────────────────────────────────────────────────────────
@@ -294,12 +278,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
   /**
    * Clears all local state and resets to initial state.
-   *
-   * Used when:
-   * - Starting a new session
-   * - Clearing context to start fresh
-   *
-   * @internal Exposed for debugging but primarily called internally.
+   * Used internally when starting a new session or clearing context.
    */
   const handleClearContext = useCallback(() => {
     branchState.abortTilesFetch();
@@ -342,7 +321,6 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const handleStartNewSession = useCallback(async () => {
     branchState.abortTilesFetch();
-    setIsResettingSession(true);
     let didResetServerState = false;
 
     try {
@@ -352,7 +330,6 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       console.error('Failed to reset planning session', error);
     } finally {
       handleClearContext();
-      setIsResettingSession(false);
 
       // Scroll to chat panel and focus input after reset
       setTimeout(() => {
@@ -553,16 +530,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // State (from branchState)
     branches: branchState.branches,
     selectedBranchId: branchState.selectedBranchId,
-    /** @internal Kept for debugging and potential future use */
-    tilesMap: branchState.tilesMap,
     tilesBranchId: branchState.tilesBranchId,
     branchSelections: branchState.branchSelections,
 
     // State (local)
     isGenerating,
     isHydratingSnapshot,
-    /** @internal Kept for debugging and potential future use */
-    isResettingSession,
 
     // Computed (from branchState)
     selectedBranch: branchState.selectedBranch,
@@ -584,8 +557,6 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     handleTileSelection,
 
     // Actions (local)
-    /** @internal Kept for API completeness - called internally but may be useful for debugging */
-    handleClearContext,
     handleStartNewSession,
     handlePlanResult,
     handleBookTrip,

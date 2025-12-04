@@ -1,7 +1,9 @@
 import os
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
+from openai import OpenAI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -44,3 +46,32 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# =============================================================================
+# OpenAI Client Singleton
+# =============================================================================
+
+_openai_client: Optional[OpenAI] = None
+
+
+def get_openai_client() -> Optional[OpenAI]:
+    """
+    Get or create the singleton OpenAI client instance.
+
+    Uses lazy initialization to avoid creating the client until needed.
+    The API key is read from settings or environment variable.
+
+    Returns:
+        Optional[OpenAI]: The OpenAI client, or None if no API key is configured.
+    """
+    global _openai_client
+
+    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    if _openai_client is None:
+        _openai_client = OpenAI(api_key=api_key)
+
+    return _openai_client

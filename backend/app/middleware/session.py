@@ -148,14 +148,6 @@ def get_session_from_request(request: Request) -> str:
     return session_id
 
 
-def get_csrf_token_from_request(request: Request) -> str:
-    """Get the CSRF token from the request state."""
-    csrf_token = getattr(request.state, "csrf_token", None)
-    if not csrf_token:
-        raise ValueError("Session middleware not configured or CSRF token missing")
-    return csrf_token
-
-
 # =============================================================================
 # CSRF Protection Middleware
 # =============================================================================

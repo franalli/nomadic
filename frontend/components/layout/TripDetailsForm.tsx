@@ -1,6 +1,5 @@
 'use client';
 
-import { format } from 'date-fns';
 import {
   AlertCircle,
   CalendarRange,
@@ -19,6 +18,7 @@ import type { DateRange } from 'react-day-picker';
 
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { formatBudgetValue, formatDateForDisplay } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
 
 import { EditableField } from './EditableField';
@@ -99,27 +99,6 @@ const isFieldComplete = (field: string, tripInputs: DocumentTripInputs): boolean
     default:
       return false;
   }
-};
-
-export const formatDateForDisplay = (value?: string | null): string => {
-  if (!value) return '';
-  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (isoMatch) {
-    try {
-      const date = new Date(value + 'T00:00:00');
-      return format(date, 'EEE, MMM d');
-    } catch {
-      return value;
-    }
-  }
-  return value;
-};
-
-const formatBudgetValue = (value?: string | number | null): string => {
-  if (value === null || value === undefined) return '';
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return '';
-  return `$${Math.round(parsed).toLocaleString()}`;
 };
 
 const formatTravelers = (value?: number | null) =>
@@ -250,7 +229,6 @@ export interface TripDetailsFormProps {
   // Pending validation state
   pendingOrigin: string | null;
   pendingDestination: string | null;
-  validationLoading: 'origin' | 'destination' | 'vibe' | null;
 
   // Callbacks for editing
   onStartEditingField: (field: keyof TripInputsDraft) => void;
@@ -313,7 +291,6 @@ function TripDetailsFormInner({
   destinationInputExpanded,
   pendingOrigin,
   pendingDestination,
-  validationLoading,
   onStartEditingField,
   onFieldChange,
   onCommitField,

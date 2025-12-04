@@ -1,6 +1,4 @@
 import os
-import sys
-from pathlib import Path
 from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -46,12 +44,6 @@ from app.schemas import (
 )
 from app.tile_service.service import search_tiles
 from app.validation import clear_cache, prewarm_cache, validate_input
-
-APP_DIR = Path(__file__).resolve().parent
-BACKEND_DIR = APP_DIR.parent
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
 
 APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 
@@ -174,7 +166,6 @@ def track_tile_click(
         tile_identifier=event.tile_id,
         branch_identifier=event.branch_id,
         session_id=session_id,
-        user_id=event.user_id,
         request_id=event.request_id,
     )
 

@@ -18,9 +18,8 @@ import time
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
-from openai import OpenAI
 
-from app.config import settings
+from app.config import get_openai_client, settings
 
 # =============================================================================
 # CACHE INITIALIZATION
@@ -31,23 +30,6 @@ _validation_cache: TTLCache = TTLCache(
     maxsize=settings.validation_cache_size,
     ttl=settings.validation_cache_ttl,
 )
-
-# OpenAI client singleton (reused from plan.py pattern)
-_openai_client: Optional[OpenAI] = None
-
-
-def _get_openai_client() -> Optional[OpenAI]:
-    """Get or create the singleton OpenAI client instance."""
-    global _openai_client
-
-    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=api_key)
-
-    return _openai_client
 
 
 def _get_model_name() -> str:
@@ -118,15 +100,18 @@ Correct misspellings to real places (Sydny->Sydney, vinna -> Vienna, Barselonaa-
 Expand abbreviations (NYC->New York City, SF->San Francisco, LA->Los Angeles).
 Reject fictional or non-existent places."""
 
-_VIBE_PROMPT = """Validate "{value}" as trip interest(s)/activity/purpose/feature. Return JSON only.
+_VIBE_PROMPT = """Validate "{value}" as trip interest(s)/activities/purpose/features.
+Return JSON only.
 Single vibe: {{"v":["the normalized value"],"e":"relevant emoji","ok":true}}
 Multiple vibes: {{"v":["vibe1","vibe2"],"e":["emoji1","emoji2"],"ok":true}}
 Invalid: {{"v":[],"ok":false,"r":"reason"}}
 If input contains multiple vibes (e.g. "beach and hiking", "food, culture"), split them.
 Accept any real activity: backpacking, sports, events, cuisine, culture, music, shows, nature.
+Accept any real interests: christianity, history, art, architecture, wildlife, relaxation,
+nightlife, harry potter, disney.
 Normalize abbreviations: f1->Formula 1, foodie->food.
 Always include "e" with relevant emoji(s) (e.g. 🏖️ for beach, 🎒 for backpacking, 🏎️ for Formula 1).
-Reject: offensive content, fictional/impossible activities, random nonsense words."""
+Reject: offensive content, criminal activities, impossible activities, random nonsense words."""
 
 
 def _call_llm_validation(
@@ -146,7 +131,7 @@ def _call_llm_validation(
     Returns:
         Parsed JSON dict from LLM, or None if all retries failed.
     """
-    client = _get_openai_client()
+    client = get_openai_client()
     if client is None:
         return None
 
@@ -414,12 +399,3 @@ def clear_cache() -> int:
     count = len(_validation_cache)
     _validation_cache.clear()
     return count
-
-
-def get_cache_stats() -> dict[str, Any]:
-    """Get cache statistics for debugging."""
-    return {
-        "size": len(_validation_cache),
-        "maxsize": _validation_cache.maxsize,
-        "ttl": _validation_cache.ttl,
-    }

@@ -68,7 +68,6 @@ class Tile(BaseModel):
 
 
 class TilesSearchRequest(BaseModel):
-    user_id: Optional[str] = None
     branch_id: Optional[str] = None  # Now a string since branches are in JSON document
     session_id: Optional[str] = None
     trip_context_id: Optional[int] = None
@@ -102,7 +101,6 @@ class TileClickEvent(BaseModel):
     request_id: Optional[str] = None
     tile_id: str  # the tile identifier coming from the UI
     branch_id: Optional[str] = None  # now a string since branches are in JSON document
-    user_id: Optional[str] = None
     session_id: Optional[str] = None
 
 
@@ -207,20 +205,6 @@ class PlanDocumentData(BaseModel):
     assistant_message_id: Optional[str] = None
     # Ready to generate flag - when all fields are complete but user hasn't clicked generate yet
     ready_to_generate: bool = False
-
-
-class PlanDocument(BaseModel):
-    """Full plan document including metadata."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    session_id: int
-    version: int
-    updated_by: UpdatedBy
-    document: PlanDocumentData
-    created_at: str
-    updated_at: str
 
 
 class PlanDocumentResponse(BaseModel):

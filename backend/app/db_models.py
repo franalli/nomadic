@@ -37,15 +37,6 @@ def _session_expires_at() -> datetime:
     return datetime.now(UTC) + timedelta(days=SESSION_ABSOLUTE_TIMEOUT_DAYS)
 
 
-class User(Base, TimestampMixin):
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    external_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-
-    sessions: Mapped[List["Session"]] = relationship("Session", back_populates="user")
-
-
 class Session(Base, TimestampMixin):
     """
     User session for tracking planning state.
@@ -62,7 +53,6 @@ class Session(Base, TimestampMixin):
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     session_token: Mapped[str] = mapped_column(String, index=True, unique=True)
 
     # Session expiration tracking
@@ -73,7 +63,6 @@ class Session(Base, TimestampMixin):
         DateTime(timezone=True), default=_session_expires_at, nullable=False
     )
 
-    user: Mapped[Optional[User]] = relationship("User", back_populates="sessions")
     trip_contexts: Mapped[List["TripContext"]] = relationship(
         "TripContext", back_populates="session"
     )
@@ -114,7 +103,6 @@ class TripContext(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
 
-    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
     session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("sessions.id"))
     parent_trip_context_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("trip_contexts.id"), nullable=True
@@ -140,7 +128,6 @@ class TileClick(Base, TimestampMixin):
     tile_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     branch_identifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 

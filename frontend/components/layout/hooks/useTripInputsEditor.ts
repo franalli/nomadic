@@ -6,11 +6,10 @@ import {
   toTripInputsDraft,
   type TripInputsDraft,
 } from '@/components/layout/TripDetailsForm';
-import { validateTripInput, type ValidationResponse } from '@/lib/api';
+import { validateTripInput } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
-
-export type ToastType = 'info' | 'success' | 'error';
+import type { ChatPanelActions, ToastType } from '@/types/hooks';
 
 /**
  * Parse a vibe string that may contain an emoji prefix.
@@ -23,10 +22,6 @@ function parseVibeText(vibe: string): string {
     return parts.slice(1).join(' ').toLowerCase();
   }
   return vibe.toLowerCase();
-}
-
-export interface ChatPanelActions {
-  addAssistantMessage: (message: string) => void;
 }
 
 export interface TripInputsEditorOptions {
@@ -52,7 +47,6 @@ export interface TripInputsEditorState {
   originInputExpanded: boolean;
   // Validation state
   validationLoading: 'origin' | 'destination' | 'vibe' | null;
-  validationError: string | null;
   // Pending values shown during validation (not persisted)
   pendingOrigin: string | null;
   pendingDestination: string | null;
@@ -82,8 +76,6 @@ export interface TripInputsEditorActions {
   handleAddVibe: (vibe: string) => Promise<void>;
   handleRemoveVibe: (index: number) => Promise<void>;
   resetDraft: () => void;
-  // Validation actions
-  retryValidation: () => Promise<void>;
 }
 
 export type UseTripInputsEditorReturn = TripInputsEditorState & TripInputsEditorActions;
@@ -120,12 +112,6 @@ export function useTripInputsEditor(
 
   // Validation state
   const [validationLoading, setValidationLoading] = useState<'origin' | 'destination' | 'vibe' | null>(null);
-  const [validationError, setValidationError] = useState<string | null>(null);
-  // Store last validation attempt for retry
-  const [lastValidationAttempt, setLastValidationAttempt] = useState<{
-    fieldType: 'origin' | 'destination' | 'vibe';
-    value: string;
-  } | null>(null);
   // Pending values shown during validation (not persisted, discarded on rejection)
   const [pendingOrigin, setPendingOrigin] = useState<string | null>(null);
   const [pendingDestination, setPendingDestination] = useState<string | null>(null);
@@ -280,8 +266,6 @@ export function useTripInputsEditor(
 
       // Start validation
       setValidationLoading('origin');
-      setValidationError(null);
-      setLastValidationAttempt({ fieldType: 'origin', value: trimmedOrigin });
 
       try {
         const result = await validateTripInput('origin', trimmedOrigin);
@@ -290,7 +274,6 @@ export function useTripInputsEditor(
           // Invalid origin - discard pending value and show error toast
           setPendingOrigin(null);
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid location.';
-          setValidationError(errorMsg);
           onToast(`Invalid origin: ${errorMsg}`, 'error');
           setValidationLoading(null);
           return;
@@ -313,9 +296,8 @@ export function useTripInputsEditor(
         setValidationLoading(null);
 
         chatPanelActions?.addAssistantMessage(`Set "${valueToCommit}" as your departure city! ✈️`);
-      } catch (err) {
+      } catch {
         setPendingOrigin(null);
-        setValidationError('Validation failed. Please try again.');
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }
@@ -401,8 +383,6 @@ export function useTripInputsEditor(
 
       // Start validation
       setValidationLoading('destination');
-      setValidationError(null);
-      setLastValidationAttempt({ fieldType: 'destination', value: trimmedDestination });
 
       try {
         const result = await validateTripInput('destination', trimmedDestination);
@@ -411,7 +391,6 @@ export function useTripInputsEditor(
           // Invalid destination - discard pending value and show error toast
           setPendingDestination(null);
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid destination.';
-          setValidationError(errorMsg);
           onToast(`Invalid destination: ${errorMsg}`, 'error');
           setValidationLoading(null);
           return;
@@ -455,9 +434,8 @@ export function useTripInputsEditor(
         } else {
           chatPanelActions?.addAssistantMessage(`Added "${addedDestinations[0]}" to your destinations! 📍`);
         }
-      } catch (err) {
+      } catch {
         setPendingDestination(null);
-        setValidationError('Validation failed. Please try again.');
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }
@@ -555,8 +533,6 @@ export function useTripInputsEditor(
 
       // Start validation
       setValidationLoading('vibe');
-      setValidationError(null);
-      setLastValidationAttempt({ fieldType: 'vibe', value: trimmedVibe });
 
       try {
         const result = await validateTripInput('vibe', trimmedVibe);
@@ -565,7 +541,6 @@ export function useTripInputsEditor(
           // Invalid vibe - discard pending value and show error toast
           setPendingVibe(null);
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid trip vibe.';
-          setValidationError(errorMsg);
           onToast(`Invalid vibe: ${errorMsg}`, 'error');
           setValidationLoading(null);
           return;
@@ -611,9 +586,8 @@ export function useTripInputsEditor(
         } else {
           chatPanelActions?.addAssistantMessage(`Added "${addedVibes[0]}" to your trip vibes! ✨`);
         }
-      } catch (err) {
+      } catch {
         setPendingVibe(null);
-        setValidationError('Validation failed. Please try again.');
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }
@@ -657,29 +631,11 @@ export function useTripInputsEditor(
     setOriginInputExpanded(false);
     // Reset validation state
     setValidationLoading(null);
-    setValidationError(null);
-    setLastValidationAttempt(null);
     // Reset pending values
     setPendingOrigin(null);
     setPendingDestination(null);
     setPendingVibe(null);
   }, []);
-
-  // Retry the last failed validation
-  const retryValidation = useCallback(async () => {
-    if (!lastValidationAttempt) return;
-
-    const { fieldType, value } = lastValidationAttempt;
-    setValidationError(null);
-
-    if (fieldType === 'origin') {
-      await handleSetOrigin(value);
-    } else if (fieldType === 'destination') {
-      await handleAddDestination(value);
-    } else if (fieldType === 'vibe') {
-      await handleAddVibe(value);
-    }
-  }, [lastValidationAttempt, handleSetOrigin, handleAddDestination, handleAddVibe]);
 
   return {
     // State
@@ -694,7 +650,6 @@ export function useTripInputsEditor(
     originInputExpanded,
     // Validation state
     validationLoading,
-    validationError,
     // Pending values (shown during validation)
     pendingOrigin,
     pendingDestination,
@@ -723,7 +678,5 @@ export function useTripInputsEditor(
     handleAddVibe,
     handleRemoveVibe,
     resetDraft,
-    // Validation actions
-    retryValidation,
   };
 }

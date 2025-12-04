@@ -6,21 +6,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
-import { HeroSection, HERO_TAGLINE } from '@/components/layout/HeroSection';
+import { HERO_TAGLINE,HeroSection } from '@/components/layout/HeroSection';
 import { useBranchManager } from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
-import { useTripInputsEditor, type ChatPanelActions } from '@/components/layout/hooks/useTripInputsEditor';
+import { type ChatPanelActions,useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
-import {
-  TripDetailsForm,
-  type TripInputsDraft,
-} from '@/components/layout/TripDetailsForm';
+import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
 import { VibesSection } from '@/components/layout/VibesSection';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
 import { Card, CardContent } from '@/components/ui/card';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
+import type { ToastType } from '@/types/hooks';
 
 const HERO_TYPING_INTERVAL_MS = 200;
 const HERO_TYPING_PAUSE_MS = 8000;
@@ -30,8 +28,6 @@ const MAX_TOASTS = 3;
 const TOAST_DISMISS_MS = 4000;
 const TOAST_DISMISS_FAST_MS = 2000;
 const TOAST_DISMISS_ERROR_MS = 5000;
-
-export type ToastType = 'info' | 'success' | 'error';
 
 export interface Toast {
   id: string;
@@ -140,7 +136,6 @@ export function NomadicLanding() {
     branchSelections,
     isGenerating,
     isHydratingSnapshot,
-    selectedBranch,
     activeBranchSelection,
     tiles,
     readyToGenerate,
@@ -182,7 +177,6 @@ export function NomadicLanding() {
     destinationInputExpanded,
     originInput,
     originInputExpanded,
-    validationLoading,
     pendingOrigin,
     pendingDestination,
     pendingVibe,
@@ -294,83 +288,73 @@ export function NomadicLanding() {
   const hasEndDate = Boolean(tripInputs.end_date);
   const hasDates = hasStartDate || hasEndDate;
 
-  // Always show trip details once user has chatted - grid layout with label + input per field
-  const tripDetailsContent = (
-    <TripDetailsForm
-      tripInputs={tripInputs}
-      tripInputsDraft={tripInputsDraft}
-      editingField={editingField}
-      hasOrigin={hasOrigin}
-      hasDestination={hasDestination}
-      hasDates={hasDates}
-      hasStartDate={hasStartDate}
-      hasEndDate={hasEndDate}
-      calendarOpen={calendarOpen}
-      selectedDateRange={selectedDateRange}
-      previewDays={previewDays}
-      hasDateValidationWarning={hasDateValidationWarning}
-      selectedLocationBadge={selectedLocationBadge}
-      datePresets={DATE_PRESETS}
-      originInput={originInput}
-      originInputExpanded={originInputExpanded}
-      destinationInput={destinationInput}
-      destinationInputExpanded={destinationInputExpanded}
-      pendingOrigin={pendingOrigin}
-      pendingDestination={pendingDestination}
-      validationLoading={validationLoading}
-      onStartEditingField={handleStartEditingField}
-      onFieldChange={handleFieldChange}
-      onCommitField={handleCommitField}
-      setTripInputsDraft={setTripInputsDraft}
-      setEditingField={setEditingField}
-      onSetOrigin={handleSetOrigin}
-      onRemoveOrigin={handleRemoveOrigin}
-      setOriginInput={setOriginInput}
-      setOriginInputExpanded={setOriginInputExpanded}
-      onAddDestination={handleAddDestination}
-      onRemoveDestination={handleRemoveDestination}
-      setDestinationInput={setDestinationInput}
-      setDestinationInputExpanded={setDestinationInputExpanded}
-      onToggleMultiCity={handleToggleMultiCity}
-      onCalendarOpenChange={handleCalendarOpenChange}
-      onCalendarDayClick={handleCalendarDayClick}
-      onCalendarDayMouseEnter={handleCalendarDayMouseEnter}
-      onCalendarMouseLeave={handleCalendarMouseLeave}
-      onDatePresetClick={handleDatePresetClick}
-      onResetDates={handleResetDates}
-      onRemoveTravelerCount={handleRemoveTravelerCount}
-      onRemoveBudget={handleRemoveBudget}
-      onSelectLocationBadge={setSelectedLocationBadge}
-    />
-  );
+  // Trip details section content - passed to ChatPanel
+  const tripDetailsSection = {
+    content: (
+      <TripDetailsForm
+        tripInputs={tripInputs}
+        tripInputsDraft={tripInputsDraft}
+        editingField={editingField}
+        hasOrigin={hasOrigin}
+        hasDestination={hasDestination}
+        hasDates={hasDates}
+        hasStartDate={hasStartDate}
+        hasEndDate={hasEndDate}
+        calendarOpen={calendarOpen}
+        selectedDateRange={selectedDateRange}
+        previewDays={previewDays}
+        hasDateValidationWarning={hasDateValidationWarning}
+        selectedLocationBadge={selectedLocationBadge}
+        datePresets={DATE_PRESETS}
+        originInput={originInput}
+        originInputExpanded={originInputExpanded}
+        destinationInput={destinationInput}
+        destinationInputExpanded={destinationInputExpanded}
+        pendingOrigin={pendingOrigin}
+        pendingDestination={pendingDestination}
+        onStartEditingField={handleStartEditingField}
+        onFieldChange={handleFieldChange}
+        onCommitField={handleCommitField}
+        setTripInputsDraft={setTripInputsDraft}
+        setEditingField={setEditingField}
+        onSetOrigin={handleSetOrigin}
+        onRemoveOrigin={handleRemoveOrigin}
+        setOriginInput={setOriginInput}
+        setOriginInputExpanded={setOriginInputExpanded}
+        onAddDestination={handleAddDestination}
+        onRemoveDestination={handleRemoveDestination}
+        setDestinationInput={setDestinationInput}
+        setDestinationInputExpanded={setDestinationInputExpanded}
+        onToggleMultiCity={handleToggleMultiCity}
+        onCalendarOpenChange={handleCalendarOpenChange}
+        onCalendarDayClick={handleCalendarDayClick}
+        onCalendarDayMouseEnter={handleCalendarDayMouseEnter}
+        onCalendarMouseLeave={handleCalendarMouseLeave}
+        onDatePresetClick={handleDatePresetClick}
+        onResetDates={handleResetDates}
+        onRemoveTravelerCount={handleRemoveTravelerCount}
+        onRemoveBudget={handleRemoveBudget}
+        onSelectLocationBadge={setSelectedLocationBadge}
+      />
+    ),
+    missingFields,
+  };
 
-  // Vibes section content - separate collapsible
-  const vibesContent = (
-    <VibesSection
-      vibes={tripInputs.vibes ?? []}
-      vibeInput={vibeInput}
-      vibeInputExpanded={vibeInputExpanded}
-      pendingVibe={pendingVibe}
-      onAddVibe={handleAddVibe}
-      onRemoveVibe={handleRemoveVibe}
-      setVibeInput={setVibeInput}
-      setVibeInputExpanded={setVibeInputExpanded}
-    />
-  );
-
-  // Memoize prop objects to prevent unnecessary ChatPanel re-renders
-  const tripDetailsSection = useMemo(
-    () =>
-      tripDetailsContent
-        ? { content: tripDetailsContent, missingFields }
-        : undefined,
-    [tripDetailsContent, missingFields]
-  );
-
-  const vibesSectionMemo = useMemo(
-    () => (vibesContent ? { content: vibesContent } : undefined),
-    [vibesContent]
-  );
+  // Vibes section content - passed to ChatPanel
+  const vibesSection = {
+    content: (
+      <VibesSection
+        vibes={tripInputs.vibes ?? []}
+        vibeInput={vibeInput}
+        vibeInputExpanded={vibeInputExpanded}
+        pendingVibe={pendingVibe}
+        onAddVibe={handleAddVibe}
+        onRemoveVibe={handleRemoveVibe}
+        setVibeInput={setVibeInput}
+        setVibeInputExpanded={setVibeInputExpanded}
+      />
+    ),
+  };
 
   // Chat panel content that can be reused in both layouts
   const chatPanelContent = (fullHeight = false) => (
@@ -384,7 +368,7 @@ export function NomadicLanding() {
           onGeneratePlanStart={handleGeneratePlanStart}
           onFreshStart={handleStartNewSession}
           tripDetails={tripDetailsSection}
-          vibesSection={vibesSectionMemo}
+          vibesSection={vibesSection}
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}
@@ -445,7 +429,7 @@ export function NomadicLanding() {
       {/* Animated Toast Notifications - Stacked */}
       <div className="fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2 sm:right-4 sm:left-auto sm:translate-x-0 sm:items-end">
         <AnimatePresence mode="popLayout">
-          {toasts.map((toast, index) => {
+          {toasts.map((toast) => {
             // Determine colors based on toast type
             const typeStyles = {
               error: 'border-destructive/40 bg-destructive/5 text-destructive/70',
