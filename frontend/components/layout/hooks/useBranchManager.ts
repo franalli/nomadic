@@ -338,10 +338,10 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
             behavior: 'smooth',
             block: 'start',
           });
-          // Focus the input if it exists
+          // Focus the textarea input if it exists
           const input = chatPanelContainerRef.current.querySelector(
-            'input[type="text"]'
-          ) as HTMLInputElement;
+            'textarea'
+          ) as HTMLTextAreaElement;
           if (input) {
             input.focus();
           }

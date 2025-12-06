@@ -61,7 +61,7 @@ function VibesSectionInner({
         return (
           <span
             key={`vibe-${idx}`}
-            className="group relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold transition-all hover:bg-accent/20"
+            className="group relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-semibold transition-all hover:bg-accent/20"
           >
             <span className="text-sm">{emoji}</span>
             {text}
@@ -78,7 +78,7 @@ function VibesSectionInner({
       })}
       {/* Show pending vibe with loading spinner */}
       {pendingVibe && (
-        <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1.5 text-xs font-semibold animate-pulse">
+        <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-semibold animate-pulse">
           <Loader2 className="h-3 w-3 text-accent animate-spin" />
           <span className="text-accent/80">{pendingVibe}</span>
         </span>
@@ -98,7 +98,7 @@ function VibesSectionInner({
             value={vibeInput}
             onChange={(e) => setVibeInput(e.target.value)}
             placeholder="Type a vibe..."
-            className="w-32 rounded-full border border-accent/30 bg-accent/5 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30 transition-all"
+            className="w-32 rounded-full border border-accent/30 bg-accent/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30 transition-all"
             autoFocus
             onBlur={() => {
               // Collapse if empty after a short delay (allows click on submit to work)

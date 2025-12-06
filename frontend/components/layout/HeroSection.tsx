@@ -44,29 +44,7 @@ const HeroBackground = memo(function HeroBackground({ className = '' }: HeroBack
   );
 });
 
-interface HeroHeaderProps {
-  variant: 'compact' | 'full';
-}
 
-/**
- * Header with logo
- */
-const HeroHeader = memo(function HeroHeader({ variant }: HeroHeaderProps) {
-  if (variant === 'compact') {
-    return null; // Compact variant doesn't have header in hero section
-  }
-
-  return (
-    <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 text-white">
-      <div className="flex items-center gap-2">
-        <Compass className="h-6 w-6" />
-        <span className="font-display text-xl font-bold tracking-tight">
-          Nomadic
-        </span>
-      </div>
-    </header>
-  );
-});
 
 interface HeroTitleProps {
   typedTagline: string;
@@ -93,18 +71,21 @@ const HeroTitle = memo(function HeroTitle({ typedTagline, variant }: HeroTitlePr
   }
 
   return (
-    <div className="-mt-8 space-y-6 text-center text-white">
+    <div className="py-4 text-white sm:py-6">
       <h1
-        className="font-display text-4xl font-bold leading-tight sm:text-5xl lg:text-6xl"
+        className="flex items-baseline font-display text-3xl font-bold leading-tight sm:text-4xl lg:text-5xl"
         aria-label={`Roam freely. ${HERO_TAGLINE}`}
       >
-        Roam freely.{' '}
-        <span className="text-accent relative inline-block">
-          <span className="invisible">{HERO_TAGLINE}</span>
-          <span
-            className="absolute left-0 top-0 whitespace-nowrap"
-            aria-live="polite"
-          >
+        <span className="flex w-1/2 items-baseline justify-end gap-2 whitespace-nowrap pr-2 sm:gap-3 sm:pr-4">
+          <span className="flex items-center gap-2">
+            <Compass className="h-6 w-6 sm:h-8 sm:w-8 lg:h-10 lg:w-10" />
+            <span className="tracking-tight">Nomadic</span>
+          </span>
+          <span className="text-white/40">|</span>
+          <span>Roam freely.</span>
+        </span>
+        <span className="w-1/2 pl-2 sm:pl-4">
+          <span className="text-accent whitespace-nowrap">
             {typedTagline}
           </span>
         </span>
@@ -139,13 +120,12 @@ export const HeroSection = memo(function HeroSection({
   }
 
   return (
-    <div className="relative overflow-hidden">
+    <div className="relative min-h-screen overflow-hidden">
       <HeroBackground />
-      <div className="relative z-10">
-        <HeroHeader variant="full" />
+      <div className="relative z-10 flex min-h-screen flex-col">
         <div
           ref={chatPanelContainerRef}
-          className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-0 sm:px-4 pb-12 pt-6"
+          className="mx-auto flex max-w-6xl flex-1 flex-col items-center justify-start gap-4 px-0 sm:px-4 pb-4 pt-8 sm:pt-10"
         >
           <HeroTitle typedTagline={typedTagline} variant="full" />
           {children}

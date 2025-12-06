@@ -11,6 +11,7 @@ import {
   DEFAULT_BOOKING_TYPES,
   DEFAULT_FLIGHT_SETTINGS,
   DEFAULT_HOTEL_SETTINGS,
+  DEFAULT_TRANSPORT_SETTINGS,
 } from '@/lib/preferences';
 import type {
   BranchSelections,
@@ -40,6 +41,7 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   flight_settings: DEFAULT_FLIGHT_SETTINGS,
   hotel_settings: DEFAULT_HOTEL_SETTINGS,
   activity_settings: DEFAULT_ACTIVITY_SETTINGS,
+  transport_settings: DEFAULT_TRANSPORT_SETTINGS,
 };
 
 type DocumentState = {

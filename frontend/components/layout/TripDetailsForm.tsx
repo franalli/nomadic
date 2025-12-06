@@ -3,7 +3,9 @@
 import * as Collapsible from '@radix-ui/react-collapsible';
 import {
   AlertCircle,
+  Bus,
   CalendarRange,
+  Car,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -14,6 +16,7 @@ import {
   Plus,
   Route,
   Ticket,
+  Train,
   Users,
   Wallet,
   X,
@@ -29,6 +32,7 @@ import type {
   DocumentTripInputs,
   FlightSettings,
   HotelSettings,
+  TransportSettings,
 } from '@/types/document';
 
 import { EditableField } from './EditableField';
@@ -59,25 +63,6 @@ const FIELD_LABELS: Record<string, string> = {
   budget: 'Budget',
   vibes: 'Vibes',
   multi_city_intent: 'How to visit',
-};
-
-// Core fields for progress calculation (excludes optional vibes/multi_city)
-const CORE_PROGRESS_FIELDS = ['destinations', 'dates'] as const;
-const OPTIONAL_PROGRESS_FIELDS = ['origin', 'traveler_count', 'budget'] as const;
-
-export const calculateFormProgress = (tripInputs: DocumentTripInputs): { filled: number; total: number; percentage: number } => {
-  const coreFields = CORE_PROGRESS_FIELDS.map(f => isFieldComplete(f, tripInputs));
-  const optionalFields = OPTIONAL_PROGRESS_FIELDS.map(f => isFieldComplete(f, tripInputs));
-
-  // Core fields are required, optional fields add bonus progress
-  const coreComplete = coreFields.filter(Boolean).length;
-  const optionalComplete = optionalFields.filter(Boolean).length;
-
-  const filled = coreComplete + optionalComplete;
-  const total = CORE_PROGRESS_FIELDS.length + OPTIONAL_PROGRESS_FIELDS.length;
-  const percentage = Math.round((filled / total) * 100);
-
-  return { filled, total, percentage };
 };
 
 // Date presets for quick date selection
@@ -112,7 +97,7 @@ const isFieldComplete = (field: string, tripInputs: DocumentTripInputs): boolean
 };
 
 const formatTravelers = (value?: number | null) =>
-  value != null ? `${value} traveler${value === 1 ? '' : 's'}` : null;
+  value != null ? String(value) : null;
 
 export const toTripInputsDraft = (inputs: DocumentTripInputs): TripInputsDraft => {
   return {
@@ -279,9 +264,11 @@ export interface TripDetailsFormProps {
   bookingTypes: BookingTypes;
   flightSettings: FlightSettings;
   hotelSettings: HotelSettings;
+  transportSettings: TransportSettings;
   onToggleBookingType: (type: keyof BookingTypes) => void;
   onUpdateFlightSettings: (settings: Partial<FlightSettings>) => void;
   onUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
+  onUpdateTransportSettings: (settings: Partial<TransportSettings>) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,9 +322,11 @@ function TripDetailsFormInner({
   bookingTypes,
   flightSettings,
   hotelSettings,
+  transportSettings,
   onToggleBookingType,
   onUpdateFlightSettings,
   onUpdateHotelSettings,
+  onUpdateTransportSettings,
 }: TripDetailsFormProps) {
   const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
 
@@ -345,12 +334,10 @@ function TripDetailsFormInner({
   const calendarStartDate = selectedDateRange?.from;
   const calendarEndDate = selectedDateRange?.to;
 
-  // Calculate form progress
-  const progress = calculateFormProgress(tripInputs);
-
   // Collapsible open states for booking type settings
   const [flightsSettingsOpen, setFlightsSettingsOpen] = useState(false);
   const [hotelsSettingsOpen, setHotelsSettingsOpen] = useState(false);
+  const [transportSettingsOpen, setTransportSettingsOpen] = useState(false);
 
   // Close settings when booking type is deselected
   useEffect(() => {
@@ -360,6 +347,10 @@ function TripDetailsFormInner({
   useEffect(() => {
     if (!bookingTypes.hotels) setHotelsSettingsOpen(false);
   }, [bookingTypes.hotels]);
+
+  useEffect(() => {
+    if (!bookingTypes.ground_transport) setTransportSettingsOpen(false);
+  }, [bookingTypes.ground_transport]);
 
   return (
     <div className="space-y-3">
@@ -379,7 +370,7 @@ function TripDetailsFormInner({
               <button
                 type="button"
                 onClick={() => onToggleBookingType('flights')}
-                className={`inline-flex items-center gap-1.5 border px-2.5 py-1.5 transition-colors ${
+                className={`inline-flex items-center gap-1.5 border px-2.5 py-1 transition-colors ${
                   bookingTypes.flights
                     ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
                     : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
@@ -392,7 +383,7 @@ function TripDetailsFormInner({
                 <Collapsible.Trigger asChild>
                   <button
                     type="button"
-                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 text-accent hover:bg-accent/20 transition-colors"
+                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 transition-colors"
                     aria-label="Flight settings"
                   >
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform ${flightsSettingsOpen ? 'rotate-180' : ''}`} />
@@ -438,6 +429,79 @@ function TripDetailsFormInner({
             </Collapsible.Content>
           </Collapsible.Root>
 
+          {/* Ground Transport toggle with settings */}
+          <Collapsible.Root
+            className="flex flex-col"
+            open={transportSettingsOpen}
+            onOpenChange={setTransportSettingsOpen}
+          >
+            <div className="flex items-stretch">
+              <button
+                type="button"
+                onClick={() => onToggleBookingType('ground_transport')}
+                className={`inline-flex items-center gap-1.5 border px-2.5 py-1 transition-colors ${
+                  bookingTypes.ground_transport
+                    ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
+                    : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                <Car className="h-3.5 w-3.5" />
+                <span className="text-xs font-semibold">Transport</span>
+              </button>
+              {bookingTypes.ground_transport && (
+                <Collapsible.Trigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 transition-colors"
+                    aria-label="Transport settings"
+                  >
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${transportSettingsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                </Collapsible.Trigger>
+              )}
+            </div>
+            <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+              <div className="pt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onUpdateTransportSettings({ car: !transportSettings.car })}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                    transportSettings.car
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  <Car className="h-3 w-3" />
+                  Car
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateTransportSettings({ train: !transportSettings.train })}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                    transportSettings.train
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  <Train className="h-3 w-3" />
+                  Train
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateTransportSettings({ bus: !transportSettings.bus })}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                    transportSettings.bus
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  <Bus className="h-3 w-3" />
+                  Bus
+                </button>
+              </div>
+            </Collapsible.Content>
+          </Collapsible.Root>
+
           {/* Hotels toggle with settings */}
           <Collapsible.Root
             className="flex flex-col"
@@ -448,7 +512,7 @@ function TripDetailsFormInner({
               <button
                 type="button"
                 onClick={() => onToggleBookingType('hotels')}
-                className={`inline-flex items-center gap-1.5 border px-2.5 py-1.5 transition-colors ${
+                className={`inline-flex items-center gap-1.5 border px-2.5 py-1 transition-colors ${
                   bookingTypes.hotels
                     ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
                     : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
@@ -461,7 +525,7 @@ function TripDetailsFormInner({
                 <Collapsible.Trigger asChild>
                   <button
                     type="button"
-                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 text-accent hover:bg-accent/20 transition-colors"
+                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 transition-colors"
                     aria-label="Hotel settings"
                   >
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform ${hotelsSettingsOpen ? 'rotate-180' : ''}`} />
@@ -496,7 +560,7 @@ function TripDetailsFormInner({
           <button
             type="button"
             onClick={() => onToggleBookingType('activities')}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${
               bookingTypes.activities
                 ? 'border-accent/40 bg-accent/10 text-accent'
                 : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
@@ -508,24 +572,6 @@ function TripDetailsFormInner({
         </div>
       </div>
 
-      {/* Progress indicator */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1 h-1.5 bg-muted/40 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-primary to-accent transition-all duration-500 ease-out rounded-full"
-            style={{ width: `${progress.percentage}%` }}
-            role="progressbar"
-            aria-valuenow={progress.percentage}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`Trip details ${progress.percentage}% complete`}
-          />
-        </div>
-        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-          {progress.filled}/{progress.total} details
-        </span>
-      </div>
-
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
       {/* From field */}
       <div className="flex flex-col gap-1">
@@ -535,7 +581,7 @@ function TripDetailsFormInner({
         </div>
         {hasOrigin ? (
           <div
-            className="border-border/60 bg-muted/40 inline-flex items-center gap-1 rounded-full border px-2.5 py-1.5"
+            className="border-border/60 bg-muted/40 inline-flex items-center gap-1 rounded-full border px-2.5 py-1"
             onClick={() => onSelectLocationBadge(null)}
             onKeyDown={() => {}}
             role="presentation"
@@ -552,7 +598,7 @@ function TripDetailsFormInner({
         ) : pendingOrigin ? (
           /* Show pending origin with loading spinner */
           <div
-            className="border-primary/40 bg-primary/10 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 animate-pulse"
+            className="border-primary/40 bg-primary/10 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 animate-pulse"
           >
             <Loader2 className="h-3 w-3 text-primary animate-spin" />
             <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
@@ -571,7 +617,7 @@ function TripDetailsFormInner({
               value={originInput}
               onChange={(e) => setOriginInput(e.target.value)}
               placeholder="Enter city..."
-              className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
+              className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
               autoFocus
               onBlur={() => {
                 setTimeout(() => {
@@ -604,7 +650,7 @@ function TripDetailsFormInner({
           </form>
         ) : (
           <div
-            className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5 transition-colors"
+            className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 transition-colors"
             onClick={() => setOriginInputExpanded(true)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -616,7 +662,7 @@ function TripDetailsFormInner({
             tabIndex={0}
           >
             <MapPin className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-xs text-muted-foreground/60 italic">e.g. New York</span>
+            <span className="text-xs text-muted-foreground/60 italic">New York</span>
           </div>
         )}
       </div>
@@ -630,7 +676,7 @@ function TripDetailsFormInner({
         {hasDestination || pendingDestination ? (
           <div className="inline-flex items-center">
             <div
-              className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-2.5 py-1.5"
+              className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-2.5 py-1"
               onClick={() => onSelectLocationBadge(null)}
               onKeyDown={() => {}}
               role="presentation"
@@ -669,7 +715,7 @@ function TripDetailsFormInner({
                   value={destinationInput}
                   onChange={(e) => setDestinationInput(e.target.value)}
                   placeholder="Add destination..."
-                  className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
+                  className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
                   autoFocus
                   onBlur={() => {
                     setTimeout(() => {
@@ -726,7 +772,7 @@ function TripDetailsFormInner({
               value={destinationInput}
               onChange={(e) => setDestinationInput(e.target.value)}
               placeholder="Enter destination..."
-              className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
+              className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
               autoFocus
               onBlur={() => {
                 setTimeout(() => {
@@ -759,7 +805,7 @@ function TripDetailsFormInner({
           </form>
         ) : (
           <div
-            className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5 transition-colors"
+            className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 transition-colors"
             onClick={() => setDestinationInputExpanded(true)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -771,7 +817,7 @@ function TripDetailsFormInner({
             tabIndex={0}
           >
             <MapPin className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-xs text-muted-foreground/60 italic">e.g. Paris</span>
+            <span className="text-xs text-muted-foreground/60 italic">Paris</span>
           </div>
         )}
       </div>
@@ -782,12 +828,11 @@ function TripDetailsFormInner({
           <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('multi_city_intent', tripInputs) ? 'text-accent' : 'text-muted-foreground/40'}`}>
             {isFieldComplete('multi_city_intent', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3 opacity-60" strokeDasharray="2 2" />}
             <span className={isFieldComplete('multi_city_intent', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.multi_city_intent}</span>
-            {!isFieldComplete('multi_city_intent', tripInputs) && <span className="text-[10px] text-muted-foreground/40">(optional)</span>}
           </div>
           <button
             type="button"
             onClick={onToggleMultiCity}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 cursor-pointer transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer transition-colors ${
               tripInputs.multi_city_intent === 'multi_city'
                 ? 'border-accent/40 bg-accent/10 text-accent'
                 : 'border-border/60 bg-muted/40 text-foreground'
@@ -811,7 +856,7 @@ function TripDetailsFormInner({
           <Popover open={calendarOpen} onOpenChange={onCalendarOpenChange}>
             <PopoverTrigger asChild>
               <div
-                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1.5 transition-colors ${
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${
                   hasDateValidationWarning
                     ? 'border-orange-400/60 bg-orange-50 hover:bg-orange-100'
                     : 'border-border/60 bg-muted/40 hover:bg-muted/60'
@@ -884,12 +929,12 @@ function TripDetailsFormInner({
           <Popover open={calendarOpen} onOpenChange={onCalendarOpenChange}>
             <PopoverTrigger asChild>
               <div
-                className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1.5 transition-colors"
+                className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 transition-colors"
                 role="button"
                 tabIndex={0}
               >
                 <CalendarRange className="h-3.5 w-3.5 text-muted-foreground/40" />
-                <span className="text-xs text-muted-foreground/60 italic">e.g. Dec 15-22</span>
+                <span className="text-xs text-muted-foreground/60 italic">Dec 15-22</span>
               </div>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
@@ -930,12 +975,12 @@ function TripDetailsFormInner({
         )}
       </div>
 
-      {/* Travelers field (optional) */}
+      {/* Travelers field */}
       <EditableField
         label={FIELD_LABELS.traveler_count}
         icon={Users}
         placeholder="#"
-        emptyPlaceholder="e.g. 2"
+        emptyPlaceholder="2"
         isComplete={isFieldComplete('traveler_count', tripInputs)}
         isEditing={editingField === 'traveler_count'}
         draftValue={draftBase.traveler_count == null ? '' : String(draftBase.traveler_count)}
@@ -954,12 +999,12 @@ function TripDetailsFormInner({
         onRemove={onRemoveTravelerCount}
       />
 
-      {/* Budget field (optional) */}
+      {/* Budget field */}
       <EditableField
         label={FIELD_LABELS.budget}
         icon={Wallet}
         placeholder="$"
-        emptyPlaceholder="e.g. $3000"
+        emptyPlaceholder="$3000"
         isComplete={isFieldComplete('budget', tripInputs)}
         isEditing={editingField === 'budget'}
         draftValue={draftBase.budget == null ? '' : String(draftBase.budget)}

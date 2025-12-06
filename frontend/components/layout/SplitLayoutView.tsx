@@ -89,7 +89,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
           ${mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
         aria-label="Trip planning chat"
       >
-        <div className="flex h-full flex-col p-4">
+        <div className="flex h-full flex-col p-4 pb-2">
           {/* Header with mobile close button */}
           <div className="flex items-center justify-between mb-4">
             <SidebarHeader className="!mb-0" />
@@ -107,7 +107,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
           {/* Chat Panel */}
           <div className="flex-1 overflow-hidden">
             <Card className="bg-card/95 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
-              <CardContent className="flex h-full min-h-0 flex-col p-3">
+              <CardContent className="flex h-full min-h-0 flex-col p-4 pb-3">
                 {sidebarContent}
               </CardContent>
             </Card>

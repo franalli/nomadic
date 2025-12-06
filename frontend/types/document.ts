@@ -38,6 +38,7 @@ export type DocumentBranch = {
 export type BookingTypes = {
   hotels: boolean;
   flights: boolean;
+  ground_transport: boolean;
   activities: boolean;
 };
 
@@ -60,6 +61,13 @@ export type ActivitySettings = {
   max_duration_hours: number | null; // null = no limit
 };
 
+// Ground transport settings - which modes to include
+export type TransportSettings = {
+  car: boolean;
+  train: boolean;
+  bus: boolean;
+};
+
 export type DocumentTripInputs = {
   destinations: string[];
   origin?: string | null;
@@ -80,6 +88,7 @@ export type DocumentTripInputs = {
   flight_settings?: FlightSettings;
   hotel_settings?: HotelSettings;
   activity_settings?: ActivitySettings;
+  transport_settings?: TransportSettings;
 };
 
 export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;

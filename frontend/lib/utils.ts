@@ -41,7 +41,7 @@ export const formatDateForDisplay = (value?: string | null): string => {
   if (isoMatch) {
     try {
       const date = new Date(value + 'T00:00:00');
-      return format(date, 'EEE, MMM d');
+      return format(date, 'MMM d');
     } catch {
       return value;
     }

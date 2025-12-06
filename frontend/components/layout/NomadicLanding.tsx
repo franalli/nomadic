@@ -22,6 +22,7 @@ import type {
   DocumentTripInputs,
   FlightSettings,
   HotelSettings,
+  TransportSettings,
 } from '@/types/document';
 import type { ChatPanelActions, ToastType } from '@/types/hooks';
 
@@ -97,6 +98,10 @@ export function NomadicLanding() {
     return tripInputs.hotel_settings ?? DEFAULT_TRIP_INPUTS.hotel_settings!;
   }, [tripInputs.hotel_settings]);
 
+  const transportSettings: TransportSettings = useMemo(() => {
+    return tripInputs.transport_settings ?? DEFAULT_TRIP_INPUTS.transport_settings!;
+  }, [tripInputs.transport_settings]);
+
   // Booking type toggle handler
   const handleToggleBookingType = useCallback(
     (type: keyof BookingTypes) => {
@@ -122,6 +127,15 @@ export function NomadicLanding() {
       documentStore.commitTripInputs({ hotel_settings: newSettings });
     },
     [hotelSettings, documentStore]
+  );
+
+  // Transport settings update handler
+  const handleUpdateTransportSettings = useCallback(
+    (settings: Partial<TransportSettings>) => {
+      const newSettings = { ...transportSettings, ...settings };
+      documentStore.commitTripInputs({ transport_settings: newSettings });
+    },
+    [transportSettings, documentStore]
   );
 
   // Toast notification state - supports multiple stacked toasts
@@ -383,9 +397,11 @@ export function NomadicLanding() {
         bookingTypes={bookingTypes}
         flightSettings={flightSettings}
         hotelSettings={hotelSettings}
+        transportSettings={transportSettings}
         onToggleBookingType={handleToggleBookingType}
         onUpdateFlightSettings={handleUpdateFlightSettings}
         onUpdateHotelSettings={handleUpdateHotelSettings}
+        onUpdateTransportSettings={handleUpdateTransportSettings}
       />
     ),
     missingFields,
@@ -547,10 +563,10 @@ export function NomadicLanding() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: 0.1 }}
-              className="mt-8 w-full sm:max-w-xl"
+              className="mt-2 w-full sm:max-w-[605px]"
             >
-              <Card className="bg-card/95 border-white/20 p-0 sm:p-1 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
-                <CardContent className="p-0 sm:p-4">
+              <Card className="bg-card/95 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
+                <CardContent className="p-0 sm:p-3 sm:pb-0">
                   {chatPanelContent(false)}
                 </CardContent>
               </Card>

@@ -1121,11 +1121,14 @@ TASK: Extract trip details.
 Fields: destinations[], origin, start_date, end_date, traveler_count,
        budget, multi_city_intent, vibes[]
 
-EXTRACTION:
+EXTRACTION (CRITICAL - always set trip_inputs for ANY location you mention):
 - origin=where FROM, destinations=where TO.
+  "from rome to florence" → origin="Rome", destinations=["Florence"]
   "Flying from NYC to Rome" → origin="NYC", destinations=["Rome"]
   "from Rome to NYC and Florence" → origin="Rome", destinations=["NYC","Florence"]
   "to Paris from London" → origin="London", destinations=["Paris"]
+- IMPORTANT: If you mention a city in your response, it MUST be in trip_inputs.
+  Never say "from Rome" without setting origin="Rome".
 - Dates→YYYY-MM-DD. "today"={today}.
   Duration: "starting tomorrow for 5 days" → set both dates
 - Travelers: "solo"=1, "couple"=2, "family of 4"=4. Budget: "$1500"→1500

@@ -50,6 +50,10 @@
   --ring: 160 45% 25%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   @apply bg-bg text-text font-body;
 }
@@ -285,6 +289,11 @@ body {
 
 /* Respect user's reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
+  /* Disable smooth scrolling for users who prefer reduced motion */
+  html {
+    scroll-behavior: auto !important;
+  }
+
   /* Disable decorative/non-essential animations */
   .typing-pulse,
   .generate-pulse,

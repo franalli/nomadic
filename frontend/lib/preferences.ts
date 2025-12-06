@@ -8,6 +8,7 @@ import type {
   BookingTypes,
   FlightSettings,
   HotelSettings,
+  TransportSettings,
 } from '@/types/document';
 
 const PREFERENCES_STORAGE_KEY = 'nomadic_booking_prefs_v1';
@@ -17,13 +18,15 @@ export type BookingPreferences = {
   flight_settings: FlightSettings;
   hotel_settings: HotelSettings;
   activity_settings: ActivitySettings;
+  transport_settings: TransportSettings;
   updatedAt: string;
 };
 
 export const DEFAULT_BOOKING_TYPES: BookingTypes = {
-  hotels: true,
-  flights: true,
-  activities: true,
+  hotels: false,
+  flights: false,
+  ground_transport: false,
+  activities: false,
 };
 
 export const DEFAULT_FLIGHT_SETTINGS: FlightSettings = {
@@ -42,11 +45,18 @@ export const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
   max_duration_hours: null,
 };
 
+export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
+  car: true,
+  train: true,
+  bus: true,
+};
+
 export const DEFAULT_BOOKING_PREFERENCES: BookingPreferences = {
   booking_types: DEFAULT_BOOKING_TYPES,
   flight_settings: DEFAULT_FLIGHT_SETTINGS,
   hotel_settings: DEFAULT_HOTEL_SETTINGS,
   activity_settings: DEFAULT_ACTIVITY_SETTINGS,
+  transport_settings: DEFAULT_TRANSPORT_SETTINGS,
   updatedAt: new Date().toISOString(),
 };
 
@@ -66,6 +76,7 @@ export const loadBookingPreferences = (): BookingPreferences => {
       flight_settings: { ...DEFAULT_FLIGHT_SETTINGS, ...parsed.flight_settings },
       hotel_settings: { ...DEFAULT_HOTEL_SETTINGS, ...parsed.hotel_settings },
       activity_settings: { ...DEFAULT_ACTIVITY_SETTINGS, ...parsed.activity_settings },
+      transport_settings: { ...DEFAULT_TRANSPORT_SETTINGS, ...parsed.transport_settings },
       updatedAt: parsed.updatedAt ?? new Date().toISOString(),
     };
   } catch (error) {

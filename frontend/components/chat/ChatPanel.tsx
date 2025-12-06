@@ -34,11 +34,12 @@ const POST_GENERATE_MESSAGE =
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
 
-// Prompt suggestions for new users - compact version
+// Prompt suggestions for new users - quick start options
 const PROMPT_SUGGESTIONS = [
-  { label: '🏖️ Beach', prompt: "I want a relaxing beach vacation" },
-  { label: '🏔️ Adventure', prompt: "Plan an adventure trip with hiking" },
-  { label: '🏛️ Culture', prompt: "I'd like to explore historical sites" },
+  { label: '🏖️ Beach getaway', prompt: "I want a relaxing beach vacation" },
+  { label: '🏔️ Adventure trip', prompt: "Plan an adventure trip with hiking and outdoor activities" },
+  { label: '🏛️ City break', prompt: "I'd like to explore a vibrant city with culture and nightlife" },
+  { label: '👨‍👩‍👧 Family trip', prompt: "Plan a family-friendly vacation with activities for kids" },
 ];
 
 const DEFAULT_MESSAGES: ChatMessage[] = [
@@ -130,32 +131,61 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+    // Mobile detection for responsive collapsed defaults
+    const [isMobile, setIsMobile] = useState(false);
     const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
     const [vibesOpen, setVibesOpen] = useState(true);
     const [generateTriggered, setGenerateTriggered] = useState(false);
+    const [hasShownHint, setHasShownHint] = useState(false);
+    const [readyMessageShown, setReadyMessageShown] = useState(false);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const tripInputsRef = useRef<HTMLDivElement | null>(null);
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    const prevIsLoadingRef = useRef(false);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
     // Show suggestions only when no user messages yet
     const showSuggestions = !hasUserMessage && !isLoadingHistory;
-    // Use consistent height - no jump on first message
+    // Dynamic height - grows with content naturally
     const panelHeightClass = fullHeight
       ? 'h-full'
-      : 'min-h-[480px] max-h-[1238px]';
+      : 'min-h-[300px]';
 
     const scrollToBottom = useCallback(() => {
       const node = scrollContainerRef.current;
       if (!node) return;
-      node.scrollTop = node.scrollHeight;
+      // Double-RAF ensures scroll happens after React DOM update and browser paint
+      // Use instant scroll to avoid competing with message-enter animation
       requestAnimationFrame(() => {
-        if (node) node.scrollTop = node.scrollHeight;
+        requestAnimationFrame(() => {
+          node.scrollTop = node.scrollHeight;
+        });
       });
     }, []);
 
+    // Scroll the page to bring chat panel into view (used after send/receive)
+    const scrollPanelIntoView = useCallback(() => {
+      requestAnimationFrame(() => {
+        panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      });
+    }, []);
+
+    // Scroll to bottom when messages change
     useEffect(() => {
       scrollToBottom();
     }, [messages, scrollToBottom]);
+
+    // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
+    useEffect(() => {
+      if (prevIsLoadingRef.current && !isLoading) {
+        scrollPanelIntoView();
+        requestAnimationFrame(() => {
+          inputRef.current?.focus();
+        });
+      }
+      prevIsLoadingRef.current = isLoading;
+    }, [isLoading, scrollPanelIntoView]);
 
     // Load chat history from backend API on mount
     useEffect(() => {
@@ -189,6 +219,49 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       inputRef.current?.focus();
     }, []);
+
+    // Detect mobile viewport and set responsive collapsed defaults
+    useEffect(() => {
+      const checkMobile = () => {
+        const mobile = window.innerWidth < 640; // sm breakpoint
+        setIsMobile(mobile);
+      };
+      checkMobile();
+      window.addEventListener('resize', checkMobile);
+      return () => window.removeEventListener('resize', checkMobile);
+    }, []);
+
+    // Set collapsed defaults on mobile when trip inputs first appear
+    useEffect(() => {
+      if (hasUserMessage && isMobile && !hasShownHint) {
+        setTripDetailsOpen(false);
+        setVibesOpen(false);
+      }
+    }, [hasUserMessage, isMobile, hasShownHint]);
+
+    // Track when hint animation should show (first time trip details appear)
+    useEffect(() => {
+      if (hasUserMessage && !hasShownHint) {
+        // Mark hint as shown after animation duration
+        const timer = setTimeout(() => setHasShownHint(true), 2000);
+        return () => clearTimeout(timer);
+      }
+    }, [hasUserMessage, hasShownHint]);
+
+    // Show ready to generate message when all details are collected
+    useEffect(() => {
+      if (readyToGenerate && !readyMessageShown && !hasBranches && !generateTriggered) {
+        setReadyMessageShown(true);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `${READY_MESSAGE_ID_PREFIX}${Date.now()}`,
+            role: 'assistant' as const,
+            content: "✨ All details collected — ready to generate your trip options!",
+          },
+        ]);
+      }
+    }, [readyToGenerate, readyMessageShown, hasBranches, generateTriggered]);
 
     const sendMessageCore = useCallback(
       async (messageText: string) => {
@@ -362,6 +435,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         content: message,
       };
       setMessages((prev) => [...prev, assistantMessage]);
+      // Focus input after message is added (RAF ensures DOM is updated)
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+      });
     }, []);
 
     // Handle clicking a prompt suggestion
@@ -389,6 +466,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         inputRef.current.style.height = 'auto';
       }
       setTimeout(() => inputRef.current?.focus(), 0);
+      // Scroll page to show chat panel when user sends a message
+      scrollPanelIntoView();
       await sendMessageCore(trimmed);
     }
 
@@ -400,6 +479,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     return (
       <div
+        ref={panelRef}
         className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300`}
       >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
@@ -427,42 +507,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           </div>
         </div>
 
-        {showTripDetails ? (
-          <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
-            <div>
-              <Collapsible.Trigger asChild>
-                <button className="w-full flex items-center gap-1.5 text-primary/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-primary transition-colors group">
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
-                  Trip Details
-                </button>
-              </Collapsible.Trigger>
-              <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                <div className="text-sm pt-3">{tripDetails?.content}</div>
-              </Collapsible.Content>
-            </div>
-          </Collapsible.Root>
-        ) : null}
-
-        {vibesSection && hasUserMessage ? (
-          <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
-            <div>
-              <Collapsible.Trigger asChild>
-                <button className="w-full flex items-center gap-1.5 text-accent/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-accent transition-colors group">
-                  <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${vibesOpen ? '' : '-rotate-90'}`} />
-                  <Sparkles className="h-3 w-3" />
-                  Vibes
-                </button>
-              </Collapsible.Trigger>
-              <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                <div className="text-sm pt-3">{vibesSection.content}</div>
-              </Collapsible.Content>
-            </div>
-          </Collapsible.Root>
-        ) : null}
-
         <div
           ref={scrollContainerRef}
           className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm scroll-smooth no-scrollbar"
+          style={{ overflowAnchor: 'none' }}
           role="log"
           aria-label="Chat messages"
           aria-busy={isLoadingHistory || isLoading}
@@ -503,17 +551,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         </div>
 
         {/* Input area with suggestions - grouped together at bottom */}
-        <div className="mt-auto space-y-2">
-          {/* Prompt suggestions for new users - compact inline */}
+        <div className="mt-auto space-y-2 pb-0">
+          {/* Prompt suggestions for new users - quick start options */}
           {showSuggestions && (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] text-muted-foreground/70">Try:</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground/70 font-medium">Quick start:</span>
               {PROMPT_SUGGESTIONS.map((suggestion) => (
                 <button
                   key={suggestion.label}
                   type="button"
                   onClick={() => handleSuggestionClick(suggestion.prompt)}
-                  className="text-[11px] px-2 py-0.5 rounded-full bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                  className="text-xs px-3 py-1.5 rounded-full border border-border/60 bg-card hover:bg-muted/50 hover:border-border text-foreground/80 hover:text-foreground transition-all"
                 >
                   {suggestion.label}
                 </button>
@@ -524,7 +572,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           <form onSubmit={handleSubmit} className="relative">
           <textarea
             ref={inputRef}
-            className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-hidden min-h-[48px] max-h-[200px]"
+            className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-hidden min-h-[48px] max-h-[200px] scroll-mb-4"
             placeholder={
               hasBranches
                 ? 'Refine your trip...'
@@ -564,30 +612,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               <ArrowUp className="h-5 w-5" />
             )}
           </button>
-        </form>
-        </div>
+          </form>
 
-        {/* Hide generate button completely when branches exist, generate was triggered, generating, or loading */}
-        {!hasBranches && !generateTriggered && !isGenerating && !isLoading && (
-        <div
-          className={`grid transition-all duration-500 ease-out ${
-            readyToGenerate
-              ? 'grid-rows-[1fr] opacity-100'
-              : 'grid-rows-[0fr] opacity-0'
-          }`}
-        >
-          <div className="overflow-hidden">
-            <div className="mt-3 space-y-3 p-3 rounded-xl bg-gradient-to-br from-accent/10 to-primary/5 border border-accent/20">
-              {/* Ready state indicator */}
-              <div className="flex items-center justify-center gap-2">
-                <span className="flex h-2 w-2 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
-                </span>
-                <p className="text-foreground/70 text-xs font-medium">
-                  All details collected — ready to generate!
-                </p>
-              </div>
+          {/* Generate button - directly under input */}
+          <div
+            className={`grid transition-all duration-300 ease-out ${
+              !hasBranches && !generateTriggered && !isGenerating && readyToGenerate
+                ? 'grid-rows-[1fr] opacity-100'
+                : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+            }`}
+          >
+            <div className="overflow-hidden">
               <button
                 type="button"
                 onClick={() => {
@@ -595,24 +630,53 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   sendMessageCore(GENERATE_PLAN_TRIGGER);
                 }}
                 disabled={isLoading || !readyToGenerate}
-                className="bg-gradient-to-r from-primary to-primary/90 text-primary-foreground hover:from-primary/95 hover:to-primary/85 w-full rounded-xl px-5 py-3.5 text-sm font-bold shadow-lg transition-all duration-200 disabled:opacity-50 hover:scale-[1.02] hover:shadow-xl active:scale-[0.98] generate-pulse"
+                className="group w-full flex items-center justify-center gap-2 pt-1 text-sm font-semibold text-primary hover:text-primary/80 transition-all disabled:opacity-50"
               >
-                {isLoading ? (
-                  <span className="flex items-center justify-center gap-2.5">
-                    <Compass className="compass-spin h-5 w-5" />
-                    <span>Creating your personalized options...</span>
-                  </span>
-                ) : (
-                  <span className="flex items-center justify-center gap-2.5">
-                    <Sparkles className="h-5 w-5" />
-                    <span>Generate Trip Options</span>
-                  </span>
-                )}
+                <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
+                <span>Generate Trip Options</span>
               </button>
             </div>
           </div>
         </div>
+
+        {/* Trip inputs section - positioned below chat input */}
+        {(showTripDetails || (vibesSection && hasUserMessage)) && (
+          <div ref={tripInputsRef} className="mt-1.5 pt-1.5 pb-3 border-t border-border/50 space-y-4">
+            {showTripDetails ? (
+              <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
+                <div>
+                  <Collapsible.Trigger asChild>
+                    <button className={`w-full flex items-center gap-1.5 text-primary/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-primary transition-colors group ${!hasShownHint ? 'animate-pulse' : ''}`}>
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
+                      Trip Details
+                    </button>
+                  </Collapsible.Trigger>
+                  <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                    <div className="text-sm pt-3">{tripDetails?.content}</div>
+                  </Collapsible.Content>
+                </div>
+              </Collapsible.Root>
+            ) : null}
+
+            {vibesSection && hasUserMessage ? (
+              <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
+                <div>
+                  <Collapsible.Trigger asChild>
+                    <button className={`w-full flex items-center gap-1.5 text-accent/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-accent transition-colors group ${!hasShownHint ? 'animate-pulse' : ''}`}>
+                      <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${vibesOpen ? '' : '-rotate-90'}`} />
+                      <Sparkles className="h-3 w-3" />
+                      Vibes
+                    </button>
+                  </Collapsible.Trigger>
+                  <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                    <div className="text-sm pt-3">{vibesSection.content}</div>
+                  </Collapsible.Content>
+                </div>
+              </Collapsible.Root>
+            ) : null}
+          </div>
         )}
+
       </div>
     );
   }

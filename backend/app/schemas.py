@@ -178,9 +178,10 @@ class DocumentTripInputsPatch(BaseModel):
 class BookingTypes(BaseModel):
     """Which booking categories to search for."""
 
-    hotels: bool = True
-    flights: bool = True
-    activities: bool = True
+    hotels: bool = False
+    flights: bool = False
+    ground_transport: bool = False
+    activities: bool = False
 
 
 class FlightSettings(BaseModel):
@@ -205,6 +206,14 @@ class ActivitySettings(BaseModel):
     max_duration_hours: Optional[int] = None  # null = no limit
 
 
+class TransportSettings(BaseModel):
+    """Ground transport settings - which modes to include."""
+
+    car: bool = True
+    train: bool = True
+    bus: bool = True
+
+
 class DocumentTripInputs(BaseModel):
     """Trip parameters extracted/inferred from conversation."""
 
@@ -227,6 +236,7 @@ class DocumentTripInputs(BaseModel):
     flight_settings: FlightSettings = Field(default_factory=FlightSettings)
     hotel_settings: HotelSettings = Field(default_factory=HotelSettings)
     activity_settings: ActivitySettings = Field(default_factory=ActivitySettings)
+    transport_settings: TransportSettings = Field(default_factory=TransportSettings)
 
 
 class PlanDocumentData(BaseModel):

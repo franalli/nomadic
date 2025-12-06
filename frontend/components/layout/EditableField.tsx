@@ -73,15 +73,12 @@ function EditableFieldInner({
           <Circle className="h-3 w-3 opacity-60" strokeDasharray="2 2" />
         )}
         <span className={isComplete ? 'font-medium' : ''}>{label}</span>
-        {!isComplete && (
-          <span className="text-[10px] text-muted-foreground/40">(optional)</span>
-        )}
       </div>
 
       {/* Field input/display */}
       <div className="group relative inline-flex">
         <div
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 cursor-pointer transition-colors ${
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer transition-colors ${
             hasValue
               ? `border-border/60 bg-muted/40 ${isEditing ? 'ring-primary ring-1' : ''}`
               : 'border-border/40 bg-muted/20 border-dashed hover:border-primary/40 hover:bg-primary/5'
