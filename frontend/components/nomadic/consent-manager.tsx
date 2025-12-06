@@ -37,7 +37,9 @@ const safeParsePreferences = (): ConsentPreferences | null => {
       updatedAt: parsed.updatedAt || new Date().toISOString(),
     };
   } catch (error) {
-    console.warn('Failed to parse consent preferences', error);
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('Failed to parse consent preferences', error);
+    }
     return null;
   }
 };

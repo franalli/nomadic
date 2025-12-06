@@ -146,6 +146,11 @@ def merge_trip_inputs(
         "multi_city_intent",
         "vibes",
         "destinations",
+        # Booking preferences (nested objects - replace entirely)
+        "booking_types",
+        "flight_settings",
+        "hotel_settings",
+        "activity_settings",
     ]
 
     # Ensure explicit_nulls is a set (for membership testing)

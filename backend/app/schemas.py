@@ -157,6 +157,54 @@ class DocumentBranch(BaseModel):
     selections: BranchSelections = Field(default_factory=BranchSelections)
 
 
+class DocumentTripInputsPatch(BaseModel):
+    """Partial trip-input updates coming from the UI or planner merges."""
+
+    destinations: Optional[List[str]] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    traveler_count: Optional[int] = None
+    budget: Optional[int] = None
+    missing_fields: Optional[List[str]] = None
+    multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
+    vibes: Optional[List[str]] = None
+    booking_types: Optional["BookingTypes"] = None
+    flight_settings: Optional["FlightSettings"] = None
+    hotel_settings: Optional["HotelSettings"] = None
+    activity_settings: Optional["ActivitySettings"] = None
+
+
+class BookingTypes(BaseModel):
+    """Which booking categories to search for."""
+
+    hotels: bool = True
+    flights: bool = True
+    activities: bool = True
+
+
+class FlightSettings(BaseModel):
+    """Flight-specific search settings."""
+
+    round_trip: bool = True
+    cabin_class: Literal["economy", "premium_economy", "business", "first"] = "economy"
+    direct_only: bool = False
+
+
+class HotelSettings(BaseModel):
+    """Hotel-specific search settings."""
+
+    min_stars: int = Field(default=3, ge=0, le=5)  # 0 = no minimum
+    amenities: List[str] = Field(default_factory=list)
+
+
+class ActivitySettings(BaseModel):
+    """Activity-specific search settings."""
+
+    categories: List[str] = Field(default_factory=list)  # empty = all categories
+    max_duration_hours: Optional[int] = None  # null = no limit
+
+
 class DocumentTripInputs(BaseModel):
     """Trip parameters extracted/inferred from conversation."""
 
@@ -174,20 +222,11 @@ class DocumentTripInputs(BaseModel):
     # Vibes: trip purposes/themes like "F1", "Backpacking", "Adventure", etc.
     # Open-ended list that LLM will validate/normalize to actual activities or purposes
     vibes: List[str] = Field(default_factory=list)
-
-
-class DocumentTripInputsPatch(BaseModel):
-    """Partial trip-input updates coming from the UI or planner merges."""
-
-    destinations: Optional[List[str]] = None
-    origin: Optional[str] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    traveler_count: Optional[int] = None
-    budget: Optional[int] = None
-    missing_fields: Optional[List[str]] = None
-    multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
-    vibes: Optional[List[str]] = None
+    # Booking preferences - what to search for and category-specific settings
+    booking_types: BookingTypes = Field(default_factory=BookingTypes)
+    flight_settings: FlightSettings = Field(default_factory=FlightSettings)
+    hotel_settings: HotelSettings = Field(default_factory=HotelSettings)
+    activity_settings: ActivitySettings = Field(default_factory=ActivitySettings)
 
 
 class PlanDocumentData(BaseModel):

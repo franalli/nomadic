@@ -1,25 +1,35 @@
 'use client';
 
+import * as Collapsible from '@radix-ui/react-collapsible';
 import {
   AlertCircle,
   CalendarRange,
   CheckCircle2,
+  ChevronDown,
   Circle,
+  Hotel,
   Loader2,
   MapPin,
+  Plane,
   Plus,
   Route,
+  Ticket,
   Users,
   Wallet,
   X,
 } from 'lucide-react';
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { formatBudgetValue, formatDateForDisplay } from '@/lib/utils';
-import type { DocumentTripInputs } from '@/types/document';
+import type {
+  BookingTypes,
+  DocumentTripInputs,
+  FlightSettings,
+  HotelSettings,
+} from '@/types/document';
 
 import { EditableField } from './EditableField';
 
@@ -48,7 +58,7 @@ const FIELD_LABELS: Record<string, string> = {
   traveler_count: 'Travelers',
   budget: 'Budget',
   vibes: 'Vibes',
-  multi_city_intent: 'Trip style',
+  multi_city_intent: 'How to visit',
 };
 
 // Core fields for progress calculation (excludes optional vibes/multi_city)
@@ -264,6 +274,14 @@ export interface TripDetailsFormProps {
   onRemoveTravelerCount: () => void;
   onRemoveBudget: () => void;
   onSelectLocationBadge: (key: 'origin' | number | null) => void;
+
+  // Booking type toggles
+  bookingTypes: BookingTypes;
+  flightSettings: FlightSettings;
+  hotelSettings: HotelSettings;
+  onToggleBookingType: (type: keyof BookingTypes) => void;
+  onUpdateFlightSettings: (settings: Partial<FlightSettings>) => void;
+  onUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -314,6 +332,12 @@ function TripDetailsFormInner({
   onRemoveTravelerCount,
   onRemoveBudget,
   onSelectLocationBadge,
+  bookingTypes,
+  flightSettings,
+  hotelSettings,
+  onToggleBookingType,
+  onUpdateFlightSettings,
+  onUpdateHotelSettings,
 }: TripDetailsFormProps) {
   const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
 
@@ -324,8 +348,166 @@ function TripDetailsFormInner({
   // Calculate form progress
   const progress = calculateFormProgress(tripInputs);
 
+  // Collapsible open states for booking type settings
+  const [flightsSettingsOpen, setFlightsSettingsOpen] = useState(false);
+  const [hotelsSettingsOpen, setHotelsSettingsOpen] = useState(false);
+
+  // Close settings when booking type is deselected
+  useEffect(() => {
+    if (!bookingTypes.flights) setFlightsSettingsOpen(false);
+  }, [bookingTypes.flights]);
+
+  useEffect(() => {
+    if (!bookingTypes.hotels) setHotelsSettingsOpen(false);
+  }, [bookingTypes.hotels]);
+
   return (
     <div className="space-y-3">
+      {/* What to book section - booking type toggles with expandable settings */}
+      <div className="pb-2 border-b border-border/30">
+        <div className="flex items-center gap-1 text-xs text-muted-foreground/60 mb-2">
+          <span className="font-medium">What to book</span>
+        </div>
+        <div className="flex flex-wrap items-start gap-3">
+          {/* Flights toggle with settings */}
+          <Collapsible.Root
+            className="flex flex-col"
+            open={flightsSettingsOpen}
+            onOpenChange={setFlightsSettingsOpen}
+          >
+            <div className="flex items-stretch">
+              <button
+                type="button"
+                onClick={() => onToggleBookingType('flights')}
+                className={`inline-flex items-center gap-1.5 border px-2.5 py-1.5 transition-colors ${
+                  bookingTypes.flights
+                    ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
+                    : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                <Plane className="h-3.5 w-3.5" />
+                <span className="text-xs font-semibold">Flights</span>
+              </button>
+              {bookingTypes.flights && (
+                <Collapsible.Trigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 text-accent hover:bg-accent/20 transition-colors"
+                    aria-label="Flight settings"
+                  >
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${flightsSettingsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                </Collapsible.Trigger>
+              )}
+            </div>
+            <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+              <div className="pt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => onUpdateFlightSettings({ round_trip: !flightSettings.round_trip })}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                    flightSettings.round_trip
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  {flightSettings.round_trip ? 'Round trip' : 'One way'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateFlightSettings({ direct_only: !flightSettings.direct_only })}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                    flightSettings.direct_only
+                      ? 'border-primary/40 bg-primary/10 text-primary'
+                      : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                  }`}
+                >
+                  {flightSettings.direct_only ? 'Direct only' : 'Any stops'}
+                </button>
+                <select
+                  value={flightSettings.cabin_class}
+                  onChange={(e) => onUpdateFlightSettings({ cabin_class: e.target.value as FlightSettings['cabin_class'] })}
+                  className="rounded-full border border-border/40 bg-muted/20 px-2 py-1 text-[11px] text-foreground focus:border-primary/40 focus:outline-none"
+                >
+                  <option value="economy">Economy</option>
+                  <option value="premium_economy">Premium</option>
+                  <option value="business">Business</option>
+                  <option value="first">First</option>
+                </select>
+              </div>
+            </Collapsible.Content>
+          </Collapsible.Root>
+
+          {/* Hotels toggle with settings */}
+          <Collapsible.Root
+            className="flex flex-col"
+            open={hotelsSettingsOpen}
+            onOpenChange={setHotelsSettingsOpen}
+          >
+            <div className="flex items-stretch">
+              <button
+                type="button"
+                onClick={() => onToggleBookingType('hotels')}
+                className={`inline-flex items-center gap-1.5 border px-2.5 py-1.5 transition-colors ${
+                  bookingTypes.hotels
+                    ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
+                    : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                <Hotel className="h-3.5 w-3.5" />
+                <span className="text-xs font-semibold">Hotels</span>
+              </button>
+              {bookingTypes.hotels && (
+                <Collapsible.Trigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 text-accent hover:bg-accent/20 transition-colors"
+                    aria-label="Hotel settings"
+                  >
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${hotelsSettingsOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                </Collapsible.Trigger>
+              )}
+            </div>
+            <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+              <div className="pt-2 flex items-center gap-2">
+                <span className="text-[11px] text-muted-foreground">Min stars:</span>
+                <div className="flex gap-0.5">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => onUpdateHotelSettings({ min_stars: hotelSettings.min_stars === star ? 0 : star })}
+                      className={`w-6 h-6 rounded text-[11px] font-medium transition-colors ${
+                        star <= hotelSettings.min_stars
+                          ? 'bg-primary/20 text-primary border border-primary/40'
+                          : 'bg-muted/20 text-muted-foreground border border-border/40 hover:bg-muted/40'
+                      }`}
+                    >
+                      {star}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Collapsible.Content>
+          </Collapsible.Root>
+
+          {/* Activities toggle (no settings for simplicity) */}
+          <button
+            type="button"
+            onClick={() => onToggleBookingType('activities')}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 transition-colors ${
+              bookingTypes.activities
+                ? 'border-accent/40 bg-accent/10 text-accent'
+                : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+            }`}
+          >
+            <Ticket className="h-3.5 w-3.5" />
+            <span className="text-xs font-semibold">Activities</span>
+          </button>
+        </div>
+      </div>
+
       {/* Progress indicator */}
       <div className="flex items-center gap-3">
         <div className="flex-1 h-1.5 bg-muted/40 rounded-full overflow-hidden">
@@ -613,7 +795,7 @@ function TripDetailsFormInner({
           >
             <Route className="h-3.5 w-3.5" />
             <span className="text-xs font-semibold">
-              {tripInputs.multi_city_intent === 'multi_city' ? 'One itinerary' : 'Separate options'}
+              {tripInputs.multi_city_intent === 'multi_city' ? 'Visit both' : 'Compare destinations'}
             </span>
           </button>
         </div>

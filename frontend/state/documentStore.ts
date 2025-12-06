@@ -6,6 +6,12 @@
 import { create } from 'zustand';
 
 import { apiFetch } from '@/lib/api';
+import {
+  DEFAULT_ACTIVITY_SETTINGS,
+  DEFAULT_BOOKING_TYPES,
+  DEFAULT_FLIGHT_SETTINGS,
+  DEFAULT_HOTEL_SETTINGS,
+} from '@/lib/preferences';
 import type {
   BranchSelections,
   DocumentTripInputs,
@@ -30,6 +36,10 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   multi_city_intent: null,
   vibes: [],
   missing_fields: ['destinations', 'origin', 'start_date', 'end_date'],
+  booking_types: DEFAULT_BOOKING_TYPES,
+  flight_settings: DEFAULT_FLIGHT_SETTINGS,
+  hotel_settings: DEFAULT_HOTEL_SETTINGS,
+  activity_settings: DEFAULT_ACTIVITY_SETTINGS,
 };
 
 type DocumentState = {
@@ -42,6 +52,7 @@ type DocumentState = {
   // UI state
   selectedBranchId: string | null;
   isLoading: boolean;
+  isCommitting: boolean;
   error: string | null;
 
   // Trip input selectors (computed from document)
@@ -80,6 +91,7 @@ const initialState = {
   document: null as PlanDocumentData | null,
   selectedBranchId: null as string | null,
   isLoading: false,
+  isCommitting: false,
   error: null as string | null,
 };
 
@@ -95,14 +107,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // Trip input actions
   commitTripInputs: async (updates: DocumentTripInputsPatch): Promise<boolean> => {
-    const { document, version } = get();
+    const { document, version, isCommitting } = get();
+
+    // Prevent concurrent commits - if already committing, skip this request
+    if (isCommitting) {
+      return false;
+    }
 
     // If no document exists yet, we can't commit trip inputs
     // The document is created by the backend when the first chat message is sent
     if (!document) {
-      console.warn('commitTripInputs called but no document exists yet');
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('commitTripInputs called but no document exists yet');
+      }
       return false;
     }
+
+    // Mark as committing to prevent concurrent requests
+    set({ isCommitting: true });
 
     // Store previous state for rollback
     const previousTripInputs = document.trip_inputs;
@@ -166,6 +188,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
         document: response.document,
+        isCommitting: false,
         error: null,
       });
 
@@ -192,6 +215,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             updatedBy: retryResponse.updated_by,
             updatedAt: retryResponse.updated_at,
             document: retryResponse.document,
+            isCommitting: false,
             error: null,
           });
 
@@ -203,6 +227,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               ...document,
               trip_inputs: previousTripInputs,
             },
+            isCommitting: false,
             error: retryErr instanceof Error ? retryErr.message : 'Failed to update trip inputs',
           });
           return false;
@@ -215,6 +240,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           ...document,
           trip_inputs: previousTripInputs,
         },
+        isCommitting: false,
         error: errorMessage || 'Failed to update trip inputs',
       });
       return false;

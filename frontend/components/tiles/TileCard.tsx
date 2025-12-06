@@ -70,7 +70,9 @@ export const TileCard = memo(function TileCard({
         user_id: null,
       }),
     }).catch((error) => {
-      console.warn('Click tracking failed:', error);
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn('Click tracking failed:', error);
+      }
     });
   }, [tile.id, branchId]);
 

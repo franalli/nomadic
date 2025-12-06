@@ -224,34 +224,28 @@ export const selectionsToTileSelection = (
   if (!selections) return EMPTY_TILE_SELECTION;
   const result: TileSelection = { activities: [] };
 
-  if (selections.stay) {
-    const stayTile = tilesMap[selections.stay];
-    if (stayTile) {
-      result.stay = stayTile;
-    } else {
-      console.warn(`selectionsToTileSelection: stay tile "${selections.stay}" not found in tilesMap`);
-    }
-  }
-
-  if (selections.flight) {
-    const flightTile = tilesMap[selections.flight];
-    if (flightTile) {
-      result.flight = flightTile;
-    } else {
-      console.warn(`selectionsToTileSelection: flight tile "${selections.flight}" not found in tilesMap`);
-    }
-  }
-
-  for (const activityId of selections.activities) {
-    const activityTile = tilesMap[activityId];
-    if (activityTile) {
-      result.activities.push(activityTile);
-    } else {
-      console.warn(`selectionsToTileSelection: activity tile "${activityId}" not found in tilesMap`);
-    }
-  }
-
-  return result;
+    if (selections.stay) {
+      const stayTile = tilesMap[selections.stay];
+      if (stayTile) {
+        result.stay = stayTile;
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.warn(`selectionsToTileSelection: stay tile "${selections.stay}" not found in tilesMap`);
+      }
+    }    if (selections.flight) {
+      const flightTile = tilesMap[selections.flight];
+      if (flightTile) {
+        result.flight = flightTile;
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.warn(`selectionsToTileSelection: flight tile "${selections.flight}" not found in tilesMap`);
+      }
+    }    for (const activityId of selections.activities) {
+      const activityTile = tilesMap[activityId];
+      if (activityTile) {
+        result.activities.push(activityTile);
+      } else if (process.env.NODE_ENV !== 'production') {
+        console.warn(`selectionsToTileSelection: activity tile "${activityId}" not found in tilesMap`);
+      }
+    }  return result;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

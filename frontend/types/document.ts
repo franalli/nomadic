@@ -34,6 +34,32 @@ export type DocumentBranch = {
   selections: BranchSelections;
 };
 
+// Booking type toggles - which categories to search for
+export type BookingTypes = {
+  hotels: boolean;
+  flights: boolean;
+  activities: boolean;
+};
+
+// Flight-specific search settings
+export type FlightSettings = {
+  round_trip: boolean;
+  cabin_class: 'economy' | 'premium_economy' | 'business' | 'first';
+  direct_only: boolean;
+};
+
+// Hotel-specific search settings
+export type HotelSettings = {
+  min_stars: number; // 1-5, 0 = no minimum
+  amenities: string[]; // e.g., ['wifi', 'pool', 'parking']
+};
+
+// Activity-specific search settings
+export type ActivitySettings = {
+  categories: string[]; // e.g., ['tours', 'experiences', 'outdoor']
+  max_duration_hours: number | null; // null = no limit
+};
+
 export type DocumentTripInputs = {
   destinations: string[];
   origin?: string | null;
@@ -49,6 +75,11 @@ export type DocumentTripInputs = {
   // Vibes: trip purposes/themes like "F1", "Backpacking", "Adventure", etc.
   // Open-ended list that LLM will validate/normalize to actual activities or purposes
   vibes?: string[];
+  // Booking preferences - what to search for and category-specific settings
+  booking_types?: BookingTypes;
+  flight_settings?: FlightSettings;
+  hotel_settings?: HotelSettings;
+  activity_settings?: ActivitySettings;
 };
 
 export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;

@@ -117,6 +117,32 @@ export const BranchPanel = memo(function BranchPanel({
     Boolean(selectedBranchSelection.flight) ||
     (selectedBranchSelection.activities?.length ?? 0) > 0;
 
+  // Calculate estimated total for selected tiles
+  const selectedTotal = useMemo(() => {
+    const selection = selectedTiles ?? { activities: [] };
+    const prices: number[] = [];
+    let currency = '';
+
+    if (selection.stay?.price_estimate != null) {
+      prices.push(selection.stay.price_estimate);
+      currency = currency || selection.stay.currency;
+    }
+    if (selection.flight?.price_estimate != null) {
+      prices.push(selection.flight.price_estimate);
+      currency = currency || selection.flight.currency;
+    }
+    for (const activity of selection.activities ?? []) {
+      if (activity.price_estimate != null) {
+        prices.push(activity.price_estimate);
+        currency = currency || activity.currency;
+      }
+    }
+
+    if (prices.length === 0) return null;
+    const total = prices.reduce((sum, p) => sum + p, 0);
+    return { total, currency, count: prices.length };
+  }, [selectedTiles]);
+
   useEffect(() => {
     if (selected?.id) {
       setOpenTab('stays');
@@ -544,7 +570,18 @@ export const BranchPanel = memo(function BranchPanel({
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-4">
+        {selectedTotal && (
+          <div className="text-sm">
+            <span className="text-muted-foreground">Estimated total: </span>
+            <span className="font-semibold text-foreground">
+              {Math.round(selectedTotal.total).toLocaleString()} {selectedTotal.currency}
+            </span>
+            <span className="text-muted-foreground text-xs ml-1">
+              ({selectedTotal.count} item{selectedTotal.count === 1 ? '' : 's'})
+            </span>
+          </div>
+        )}
         <button
           type="button"
           onClick={() => {

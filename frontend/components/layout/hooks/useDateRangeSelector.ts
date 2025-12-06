@@ -1,7 +1,7 @@
 'use client';
 
 import { eachDayOfInterval, format, isBefore, parse, startOfDay } from 'date-fns';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
 import {
@@ -12,6 +12,18 @@ import { formatDateForDisplay } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ChatPanelActions, ToastType } from '@/types/hooks';
+
+/**
+ * State machine for date range selection.
+ * Replaces multiple refs with a single state object for clearer control flow.
+ */
+type SelectionPhase = 'idle' | 'selecting';
+
+interface SelectionState {
+  phase: SelectionPhase;
+  pendingStartDate: string | null;
+  hadCompleteRange: boolean;
+}
 
 export interface DateRangeSelectorOptions {
   tripInputs: DocumentTripInputs;
@@ -62,13 +74,12 @@ export function useDateRangeSelector(
   const [hoveredDate, setHoveredDate] = useState<Date | null>(null);
   const [isResettingDateRange, setIsResettingDateRange] = useState(false);
 
-  // Track if we're waiting for the second click (end date)
-  // This is needed because React state updates are async and onSelect may fire multiple times
-  const isSelectingEndDateRef = useRef<boolean>(false);
-  const pendingStartDateRef = useRef<string | null>(null);
-
-  // Track if we had a complete range when selection started (for reset detection)
-  const hadCompleteRangeRef = useRef<boolean>(false);
+  // State machine for tracking selection phase
+  const [selection, setSelection] = useState<SelectionState>({
+    phase: 'idle',
+    pendingStartDate: null,
+    hadCompleteRange: false,
+  });
 
   // Parse dates for calendar - use draft state when calendar is open for smoother selection
   const calendarStartDate = useMemo(() => {
@@ -123,10 +134,9 @@ export function useDateRangeSelector(
       const clickedIso = format(day, 'yyyy-MM-dd');
 
       // Check if we're waiting for the end date selection
-      // If isSelectingEndDateRef is false, this is either the first click or we're resetting
-      if (isSelectingEndDateRef.current && pendingStartDateRef.current) {
+      if (selection.phase === 'selecting' && selection.pendingStartDate) {
         // This is the second click - set end date
-        const startIso = pendingStartDateRef.current;
+        const startIso = selection.pendingStartDate;
         const startDate = parse(startIso, 'yyyy-MM-dd', new Date());
 
         let newStartIso: string;
@@ -142,9 +152,8 @@ export function useDateRangeSelector(
           newEndIso = clickedIso;
         }
 
-        // Reset the refs
-        isSelectingEndDateRef.current = false;
-        pendingStartDateRef.current = null;
+        // Reset selection state
+        setSelection({ phase: 'idle', pendingStartDate: null, hadCompleteRange: false });
         setHoveredDate(null);
 
         // Update draft
@@ -179,16 +188,18 @@ export function useDateRangeSelector(
         // This is the first click (or resetting from complete range) - set start date, wait for end
 
         // If we had a complete range when we started, show brief visual feedback that we're resetting
-        if (hadCompleteRangeRef.current) {
+        if (selection.hadCompleteRange) {
           setIsResettingDateRange(true);
           // Brief flash effect, then clear
           setTimeout(() => setIsResettingDateRange(false), 150);
         }
 
-        // Now we're selecting - no longer have a complete range
-        hadCompleteRangeRef.current = false;
-        isSelectingEndDateRef.current = true;
-        pendingStartDateRef.current = clickedIso;
+        // Transition to selecting phase
+        setSelection({
+          phase: 'selecting',
+          pendingStartDate: clickedIso,
+          hadCompleteRange: false,
+        });
         setHoveredDate(null);
 
         // Update draft to show only start date selected - explicitly clear end_date
@@ -198,17 +209,16 @@ export function useDateRangeSelector(
         });
       }
     },
-    [tripInputs, documentStore, setTripInputsDraft, onToast, chatPanelActions]
+    [tripInputs, documentStore, setTripInputsDraft, onToast, chatPanelActions, selection]
   );
 
   // Handler for mouse enter on calendar days - shows preview of range
-  // Use refs to check state since React state may be stale in callbacks
   const handleCalendarDayMouseEnter = useCallback((day: Date) => {
     // Only show preview when we're waiting for the end date
-    if (isSelectingEndDateRef.current && pendingStartDateRef.current) {
+    if (selection.phase === 'selecting' && selection.pendingStartDate) {
       setHoveredDate(day);
     }
-  }, []);
+  }, [selection]);
 
   // Clear hover when mouse leaves the calendar
   const handleCalendarMouseLeave = useCallback(() => {
@@ -226,15 +236,15 @@ export function useDateRangeSelector(
           end_date: tripInputs.end_date ?? null,
         }));
         setHoveredDate(null);
-        // Track if we have a complete range when opening - used for reset detection
-        hadCompleteRangeRef.current = Boolean(tripInputs.start_date && tripInputs.end_date);
-        // Reset selection refs - any click will start fresh selection
-        isSelectingEndDateRef.current = false;
-        pendingStartDateRef.current = null;
+        // Reset selection state - track if we have a complete range for reset detection
+        setSelection({
+          phase: 'idle',
+          pendingStartDate: null,
+          hadCompleteRange: Boolean(tripInputs.start_date && tripInputs.end_date),
+        });
       } else {
-        // Calendar closed - reset refs
-        isSelectingEndDateRef.current = false;
-        pendingStartDateRef.current = null;
+        // Calendar closed - reset selection state
+        setSelection({ phase: 'idle', pendingStartDate: null, hadCompleteRange: false });
       }
       setCalendarOpen(open);
     },

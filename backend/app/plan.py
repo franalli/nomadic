@@ -1157,6 +1157,7 @@ UPDATES:
 - "Leave from Boston instead"→origin="Boston"
 - "Add Florence"→append to destinations. "Remove Rome"→remove from destinations
 - "Visit all in one trip"→multi_city_intent="multi_city"
+- "Compare them", "separate options", "not both"→multi_city_intent="separate"
 - ACKNOWLEDGE CHANGES: When you update an existing value, mention it.
   Example: "Updated your departure from NYC to Boston." or "Changed dates to Dec 5-10."
 
