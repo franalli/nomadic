@@ -127,6 +127,15 @@ _TRIP_INPUT_FIELDS = (
     "vibes",
 )
 
+# Booking preference fields - these are nested objects extracted from conversation
+_BOOKING_PREFERENCE_FIELDS = (
+    "booking_types",
+    "flight_settings",
+    "hotel_settings",
+    "activity_settings",
+    "transport_settings",
+)
+
 # Required fields - only core 4 must be filled before branches can be generated
 # traveler_count and budget are optional - defaults will be applied during generation
 _REQUIRED_TRIP_INPUT_FIELDS = (
@@ -745,6 +754,85 @@ def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
     return max(1, min(20, value))
 
 
+def _normalize_booking_field(field: str, raw_value: dict) -> Optional[dict]:
+    """
+    Normalize a booking preference field from LLM output.
+
+    Validates and normalizes the structure of booking preference objects,
+    ensuring types and values are correct.
+
+    Args:
+        field: The field name (booking_types, flight_settings, etc.)
+        raw_value: The raw dict from LLM response.
+
+    Returns:
+        Optional[dict]: Normalized dict with valid fields only, or None if invalid.
+    """
+    if not isinstance(raw_value, dict):
+        return None
+
+    if field == "booking_types":
+        # BookingTypes: hotels, flights, ground_transport, activities (all bool)
+        result = {}
+        for key in ("hotels", "flights", "ground_transport", "activities"):
+            if key in raw_value and isinstance(raw_value[key], bool):
+                result[key] = raw_value[key]
+        return result if result else None
+
+    if field == "flight_settings":
+        # FlightSettings: round_trip (bool), cabin_class (str), direct_only (bool)
+        result = {}
+        if "round_trip" in raw_value and isinstance(raw_value["round_trip"], bool):
+            result["round_trip"] = raw_value["round_trip"]
+        if "cabin_class" in raw_value:
+            cabin = str(raw_value["cabin_class"]).lower().replace(" ", "_")
+            if cabin in ("economy", "premium_economy", "business", "first"):
+                result["cabin_class"] = cabin
+        if "direct_only" in raw_value and isinstance(raw_value["direct_only"], bool):
+            result["direct_only"] = raw_value["direct_only"]
+        return result if result else None
+
+    if field == "hotel_settings":
+        # HotelSettings: min_stars (int 0-5), amenities (list of str)
+        result = {}
+        if "min_stars" in raw_value:
+            stars = _normalize_int(raw_value["min_stars"])
+            if stars is not None:
+                result["min_stars"] = max(0, min(5, stars))
+        if "amenities" in raw_value:
+            amenities = raw_value["amenities"]
+            if isinstance(amenities, list):
+                result["amenities"] = [
+                    _normalize_str(a).lower() for a in amenities if a and _normalize_str(a)
+                ]
+        return result if result else None
+
+    if field == "activity_settings":
+        # ActivitySettings: categories (list of str), max_duration_hours (int or null)
+        result = {}
+        if "categories" in raw_value:
+            categories = raw_value["categories"]
+            if isinstance(categories, list):
+                result["categories"] = [
+                    _normalize_str(c).lower() for c in categories if c and _normalize_str(c)
+                ]
+        if "max_duration_hours" in raw_value:
+            hours = _normalize_int(raw_value["max_duration_hours"])
+            if hours is not None and hours > 0:
+                result["max_duration_hours"] = hours
+        return result if result else None
+
+    if field == "transport_settings":
+        # TransportSettings: car, train, bus (all bool)
+        result = {}
+        for key in ("car", "train", "bus"):
+            if key in raw_value and isinstance(raw_value[key], bool):
+                result[key] = raw_value[key]
+        return result if result else None
+
+    return None
+
+
 def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
     """
     Normalize a branch specification from LLM output.
@@ -1058,6 +1146,16 @@ def _call_openai_for_plan(
             "budget": ti.budget,
             "multi_city_intent": ti.multi_city_intent,
             "vibes": ti.vibes or [],
+            # Booking preferences
+            "booking_types": ti.booking_types.model_dump() if ti.booking_types else None,
+            "flight_settings": ti.flight_settings.model_dump() if ti.flight_settings else None,
+            "hotel_settings": ti.hotel_settings.model_dump() if ti.hotel_settings else None,
+            "activity_settings": (
+                ti.activity_settings.model_dump() if ti.activity_settings else None
+            ),
+            "transport_settings": (
+                ti.transport_settings.model_dump() if ti.transport_settings else None
+            ),
         }
     else:
         # Initialize empty state
@@ -1070,6 +1168,12 @@ def _call_openai_for_plan(
             "budget": None,
             "multi_city_intent": None,
             "vibes": [],
+            # Booking preferences - initialize as None (will use schema defaults)
+            "booking_types": None,
+            "flight_settings": None,
+            "hotel_settings": None,
+            "activity_settings": None,
+            "transport_settings": None,
         }
 
     today = _today_iso(timezone)
@@ -1155,6 +1259,30 @@ VIBES (trip themes/moods/activities):
 - If vibes empty after 4 required fields set, ask:
   "What's the vibe? Adventure, relaxation, a special event?"
 
+BOOKING PREFERENCES (extract when user mentions):
+- booking_types: which categories to search
+  "need flights and hotel"→{{"hotels":true,"flights":true}}
+  "just activities"→{{"activities":true}}
+  "skip flights, I'll drive"→{{"flights":false,"ground_transport":true}}
+- flight_settings: flight preferences
+  "business class"→{{"cabin_class":"business"}}
+  "first class"→{{"cabin_class":"first"}}
+  "direct flights only"→{{"direct_only":true}}
+  "one-way"→{{"round_trip":false}}
+- hotel_settings: hotel preferences
+  "5-star hotels"→{{"min_stars":5}}
+  "4+ stars"→{{"min_stars":4}}
+  "need a pool"→{{"amenities":["pool"]}}
+  "gym and spa"→{{"amenities":["gym","spa"]}}
+- activity_settings: activity preferences
+  "tours under 3 hours"→{{"max_duration_hours":3}}
+  "museum tours"→{{"categories":["museum"]}}
+- transport_settings: ground transport modes
+  "rent a car"→{{"car":true}}
+  "train only"→{{"train":true,"car":false,"bus":false}}
+- Preserve existing booking preferences unless user explicitly changes them
+- Only include fields that user mentions (partial updates are fine)
+
 UPDATES:
 - "Actually 3 people"→traveler_count=3. "Make it $2000"→budget=2000
 - "Leave from Boston instead"→origin="Boston"
@@ -1190,11 +1318,20 @@ OUTPUT FORMAT (MANDATORY - respond with this JSON structure only):
   "trip_inputs": {{
     "destinations":[],"origin":null,"start_date":null,"end_date":null,
     "traveler_count":null,"budget":null,"missing_fields":[],
-    "multi_city_intent":null,"vibes":[]
+    "multi_city_intent":null,"vibes":[],
+    "booking_types":null,"flight_settings":null,"hotel_settings":null,
+    "activity_settings":null,"transport_settings":null
   }},
   "ready_to_generate": false,
   "branches": []
 }}
+
+BOOKING SETTINGS FORMATS (only include if user mentions):
+- booking_types: {{"hotels":bool,"flights":bool,"ground_transport":bool,"activities":bool}}
+- flight_settings: {{"round_trip":bool,"cabin_class":"economy|...|first","direct_only":bool}}
+- hotel_settings: {{"min_stars":0-5,"amenities":["pool","gym","spa",...]}}
+- activity_settings: {{"categories":["museum","tour",...],"max_duration_hours":int|null}}
+- transport_settings: {{"car":bool,"train":bool,"bus":bool}}
 
 BRANCH FORMAT:
 {{"label":"Trip Name","description":"Brief desc","destinations":["city"],
@@ -1404,6 +1541,15 @@ BRANCH FORMAT:
             else:
                 normalized_llm_response[field] = _normalize_str(raw_value)
 
+        # Normalize booking preference fields (nested objects)
+        for field in _BOOKING_PREFERENCE_FIELDS:
+            if field not in trip_inputs_payload:
+                continue
+            raw_value = trip_inputs_payload.get(field)
+            if not isinstance(raw_value, dict):
+                continue
+            normalized_llm_response[field] = _normalize_booking_field(field, raw_value)
+
         # Merge LLM response with current state (LLM can overwrite)
         trip_inputs = dict(current_trip_inputs)
         for field, value in normalized_llm_response.items():
@@ -1411,6 +1557,15 @@ BRANCH FORMAT:
                 # For arrays, only update if LLM provided non-empty list
                 if value:
                     trip_inputs[field] = value
+            elif field in _BOOKING_PREFERENCE_FIELDS:
+                # For booking preferences, merge nested dicts to support partial updates
+                if value:
+                    existing = trip_inputs.get(field)
+                    if isinstance(existing, dict):
+                        # Merge: new values override existing
+                        trip_inputs[field] = {**existing, **value}
+                    else:
+                        trip_inputs[field] = value
             else:
                 # For scalars, update if LLM provided non-None value
                 if value is not None:
@@ -1622,11 +1777,16 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
         )
 
         # 5. Process LLM output and update assistant message
-        trip_inputs_model = (
-            DocumentTripInputs(**planner_output.trip_inputs)
-            if planner_output.trip_inputs is not None
-            else None
-        )
+        # Filter out None booking preference fields - they have default_factory in schema
+        if planner_output.trip_inputs is not None:
+            filtered_inputs = {
+                k: v
+                for k, v in planner_output.trip_inputs.items()
+                if v is not None or k not in _BOOKING_PREFERENCE_FIELDS
+            }
+            trip_inputs_model = DocumentTripInputs(**filtered_inputs)
+        else:
+            trip_inputs_model = None
         assistant_chat.content = planner_output.assistant_message
         assistant_meta: dict[str, Any] = {}
 

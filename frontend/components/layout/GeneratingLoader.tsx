@@ -13,6 +13,12 @@ const STAGES = [
   { label: 'Finalizing your itinerary', duration: 1000 },
 ] as const;
 
+// Particle indices for floating animation (extracted to avoid array recreation)
+const PARTICLE_INDICES = [0, 1, 2, 3, 4, 5] as const;
+
+// Shared transform for centering positioned elements
+const CENTER_TRANSFORM = { transform: 'translate(-50%, -50%)' } as const;
+
 export const GeneratingLoader = memo(function GeneratingLoader() {
   const [currentStage, setCurrentStage] = useState(0);
 
@@ -49,16 +55,16 @@ export const GeneratingLoader = memo(function GeneratingLoader() {
 
           {/* Orbiting travel icons - Outer orbit (3 icons at 120° intervals) */}
           <div className="loader-orbit absolute inset-0">
-            <Car className="absolute h-5 w-5 text-accent" style={{ left: '50%', top: '0%', transform: 'translate(-50%, -50%)' }} />
-            <Plane className="absolute h-5 w-5 text-primary" style={{ left: '93.3%', top: '75%', transform: 'translate(-50%, -50%)' }} />
-            <Mountain className="absolute h-5 w-5 text-accent/80" style={{ left: '6.7%', top: '75%', transform: 'translate(-50%, -50%)' }} />
+            <Car className="absolute h-5 w-5 text-accent" style={{ left: '50%', top: '0%', ...CENTER_TRANSFORM }} />
+            <Plane className="absolute h-5 w-5 text-primary" style={{ left: '93.3%', top: '75%', ...CENTER_TRANSFORM }} />
+            <Mountain className="absolute h-5 w-5 text-accent/80" style={{ left: '6.7%', top: '75%', ...CENTER_TRANSFORM }} />
           </div>
 
           {/* Orbiting travel icons - Inner orbit (3 icons at 120° intervals, offset by 60°) */}
           <div className="loader-orbit-reverse absolute inset-[15%]">
-            <Bus className="absolute h-4 w-4 text-primary/80" style={{ left: '75%', top: '6.7%', transform: 'translate(-50%, -50%)' }} />
-            <Hotel className="absolute h-4 w-4 text-accent/70" style={{ left: '75%', top: '93.3%', transform: 'translate(-50%, -50%)' }} />
-            <Briefcase className="absolute h-4 w-4 text-primary/70" style={{ left: '0%', top: '50%', transform: 'translate(-50%, -50%)' }} />
+            <Bus className="absolute h-4 w-4 text-primary/80" style={{ left: '75%', top: '6.7%', ...CENTER_TRANSFORM }} />
+            <Hotel className="absolute h-4 w-4 text-accent/70" style={{ left: '75%', top: '93.3%', ...CENTER_TRANSFORM }} />
+            <Briefcase className="absolute h-4 w-4 text-primary/70" style={{ left: '0%', top: '50%', ...CENTER_TRANSFORM }} />
           </div>
 
           {/* Inner pulsing rings */}
@@ -75,7 +81,7 @@ export const GeneratingLoader = memo(function GeneratingLoader() {
           </motion.div>
 
           {/* Floating particles */}
-          {[...Array(6)].map((_, i) => (
+          {PARTICLE_INDICES.map((i) => (
             <motion.div
               key={i}
               className="loader-particle absolute h-2 w-2 rounded-full bg-accent/60"

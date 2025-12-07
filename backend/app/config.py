@@ -1,4 +1,5 @@
 import os
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -75,3 +76,8 @@ def get_openai_client() -> Optional[OpenAI]:
         _openai_client = OpenAI(api_key=api_key)
 
     return _openai_client
+
+
+def generate_session_token() -> str:
+    """Generate a new cryptographically secure session token (UUID4)."""
+    return str(uuid.uuid4())

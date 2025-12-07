@@ -18,6 +18,7 @@ from app.crud_trip import (
     fetch_chat_history,
     get_latest_trip_context_for_session,
     get_or_create_session,
+    get_session_by_token,
     record_chat_message,
     rotate_session,
     should_rotate_session,
@@ -225,12 +226,7 @@ def reset_session(
     session_id = get_session_from_request(request)
 
     # Lock the session row first to prevent deadlocks with concurrent operations
-    session = (
-        db.query(db_models.Session)
-        .filter(db_models.Session.session_token == session_id)
-        .with_for_update()
-        .first()
-    )
+    session = get_session_by_token(db, session_id, lock_for_update=True)
     if not session:
         # Clear cookies even if session not found in DB
         response = Response(status_code=204)
@@ -290,9 +286,7 @@ def get_chat_history(
     Used by the frontend to restore chat state on page load.
     """
     session_id = get_session_from_request(request)
-    session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
-    )
+    session = get_session_by_token(db, session_id)
 
     # Return empty history for new sessions (no error)
     if not session:
@@ -332,9 +326,7 @@ def get_plan_document(
     Returns the centralized source of truth for branches and tiles.
     """
     session_id = get_session_from_request(request)
-    session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
-    )
+    session = get_session_by_token(db, session_id)
     if not session:
         # No session in DB yet - return 204 (no document)
         return Response(status_code=204)
@@ -364,9 +356,7 @@ def patch_plan_document(
     Uses CRDT-style merge: additions win, deletions require explicit flags.
     """
     session_id = get_session_from_request(request)
-    session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
-    )
+    session = get_session_by_token(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -470,9 +460,7 @@ def fetch_tiles_for_branch(
     Used when switching branches to load tiles on demand.
     """
     session_id = get_session_from_request(request)
-    session = (
-        db.query(db_models.Session).filter(db_models.Session.session_token == session_id).first()
-    )
+    session = get_session_by_token(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 

@@ -1,16 +1,32 @@
 from __future__ import annotations
 
-import uuid
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app import db_models as models
+from app.config import generate_session_token
 
 
-def _generate_session_token() -> str:
-    """Generate a new cryptographically secure session token."""
-    return str(uuid.uuid4())
+def get_session_by_token(
+    db: Session,
+    session_token: str,
+    lock_for_update: bool = False,
+) -> Optional[models.Session]:
+    """Look up a session by token without creating one if missing.
+
+    Args:
+        db: Database session.
+        session_token: The session token to look up.
+        lock_for_update: If True, acquire a row-level lock on the session.
+
+    Returns:
+        The session if found, otherwise None.
+    """
+    query = db.query(models.Session).filter(models.Session.session_token == session_token)
+    if lock_for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def get_or_create_session(
@@ -150,7 +166,7 @@ def rotate_session(
     Returns:
         The same session object with a new session_token.
     """
-    new_token = _generate_session_token()
+    new_token = generate_session_token()
     old_session.session_token = new_token
     old_session.refresh_activity()
     db.flush()

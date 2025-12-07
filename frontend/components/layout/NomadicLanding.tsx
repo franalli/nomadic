@@ -9,6 +9,7 @@ import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { HERO_TAGLINE,HeroSection } from '@/components/layout/HeroSection';
 import { useBranchManager } from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
+import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
@@ -20,9 +21,6 @@ import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type {
   BookingTypes,
   DocumentTripInputs,
-  FlightSettings,
-  HotelSettings,
-  TransportSettings,
 } from '@/types/document';
 import type { ChatPanelActions, ToastType } from '@/types/hooks';
 
@@ -90,54 +88,6 @@ export function NomadicLanding() {
     return tripInputs.booking_types ?? DEFAULT_TRIP_INPUTS.booking_types!;
   }, [tripInputs.booking_types]);
 
-  const flightSettings: FlightSettings = useMemo(() => {
-    return tripInputs.flight_settings ?? DEFAULT_TRIP_INPUTS.flight_settings!;
-  }, [tripInputs.flight_settings]);
-
-  const hotelSettings: HotelSettings = useMemo(() => {
-    return tripInputs.hotel_settings ?? DEFAULT_TRIP_INPUTS.hotel_settings!;
-  }, [tripInputs.hotel_settings]);
-
-  const transportSettings: TransportSettings = useMemo(() => {
-    return tripInputs.transport_settings ?? DEFAULT_TRIP_INPUTS.transport_settings!;
-  }, [tripInputs.transport_settings]);
-
-  // Booking type toggle handler
-  const handleToggleBookingType = useCallback(
-    (type: keyof BookingTypes) => {
-      const newBookingTypes = { ...bookingTypes, [type]: !bookingTypes[type] };
-      documentStore.commitTripInputs({ booking_types: newBookingTypes });
-    },
-    [bookingTypes, documentStore]
-  );
-
-  // Flight settings update handler
-  const handleUpdateFlightSettings = useCallback(
-    (settings: Partial<FlightSettings>) => {
-      const newSettings = { ...flightSettings, ...settings };
-      documentStore.commitTripInputs({ flight_settings: newSettings });
-    },
-    [flightSettings, documentStore]
-  );
-
-  // Hotel settings update handler
-  const handleUpdateHotelSettings = useCallback(
-    (settings: Partial<HotelSettings>) => {
-      const newSettings = { ...hotelSettings, ...settings };
-      documentStore.commitTripInputs({ hotel_settings: newSettings });
-    },
-    [hotelSettings, documentStore]
-  );
-
-  // Transport settings update handler
-  const handleUpdateTransportSettings = useCallback(
-    (settings: Partial<TransportSettings>) => {
-      const newSettings = { ...transportSettings, ...settings };
-      documentStore.commitTripInputs({ transport_settings: newSettings });
-    },
-    [transportSettings, documentStore]
-  );
-
   // Toast notification state - supports multiple stacked toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
@@ -163,6 +113,18 @@ export function NomadicLanding() {
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
   const [typedTagline, setTypedTagline] = useState('');
+
+  // Use hook for local booking settings state management
+  const {
+    flightSettings,
+    hotelSettings,
+    transportSettings,
+    activitySettings,
+    handleUpdateFlightSettings,
+    handleUpdateHotelSettings,
+    handleUpdateTransportSettings,
+    handleUpdateActivitySettings,
+  } = useLocalBookingSettings(storeTripInputs, chatPanelRef);
 
   // Create chat panel actions wrapper for the hook
   const chatPanelActions: ChatPanelActions | null = useMemo(
@@ -397,10 +359,11 @@ export function NomadicLanding() {
         bookingTypes={bookingTypes}
         flightSettings={flightSettings}
         hotelSettings={hotelSettings}
+        activitySettings={activitySettings}
         transportSettings={transportSettings}
-        onToggleBookingType={handleToggleBookingType}
         onUpdateFlightSettings={handleUpdateFlightSettings}
         onUpdateHotelSettings={handleUpdateHotelSettings}
+        onUpdateActivitySettings={handleUpdateActivitySettings}
         onUpdateTransportSettings={handleUpdateTransportSettings}
       />
     ),

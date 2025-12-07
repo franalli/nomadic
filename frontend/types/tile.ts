@@ -1,3 +1,10 @@
+/**
+ * Tile types for the frontend.
+ *
+ * Note: Generated types are available in './generated.ts' via `npm run types:generate`.
+ * This manual definition uses a looser `type: string` for flexibility in tile classification.
+ */
+
 export type Tile = {
   id: string;
   type: string;

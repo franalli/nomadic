@@ -1,13 +1,11 @@
 'use client';
 
-import * as Collapsible from '@radix-ui/react-collapsible';
 import {
   AlertCircle,
   Bus,
   CalendarRange,
   Car,
   CheckCircle2,
-  ChevronDown,
   Circle,
   Hotel,
   Loader2,
@@ -26,8 +24,10 @@ import type { DateRange } from 'react-day-picker';
 
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ExpandablePill } from '@/components/pill/ExpandablePill';
 import { formatBudgetValue, formatDateForDisplay } from '@/lib/utils';
 import type {
+  ActivitySettings,
   BookingTypes,
   DocumentTripInputs,
   FlightSettings,
@@ -35,7 +35,27 @@ import type {
   TransportSettings,
 } from '@/types/document';
 
-import { EditableField } from './EditableField';
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants for pill sub-inputs
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HOTEL_AMENITIES = [
+  { value: 'wifi', label: 'WiFi' },
+  { value: 'pool', label: 'Pool' },
+  { value: 'parking', label: 'Parking' },
+  { value: 'gym', label: 'Gym' },
+  { value: 'spa', label: 'Spa' },
+  { value: 'breakfast', label: 'Breakfast' },
+  { value: 'pet_friendly', label: 'Pet friendly' },
+] as const;
+
+const ACTIVITY_CATEGORIES = [
+  { value: 'tours', label: 'Tours' },
+  { value: 'experiences', label: 'Experiences' },
+  { value: 'outdoor', label: 'Outdoor' },
+  { value: 'cultural', label: 'Cultural' },
+  { value: 'food_drink', label: 'Food & Drink' },
+] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -264,10 +284,11 @@ export interface TripDetailsFormProps {
   bookingTypes: BookingTypes;
   flightSettings: FlightSettings;
   hotelSettings: HotelSettings;
+  activitySettings: ActivitySettings;
   transportSettings: TransportSettings;
-  onToggleBookingType: (type: keyof BookingTypes) => void;
   onUpdateFlightSettings: (settings: Partial<FlightSettings>) => void;
   onUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
+  onUpdateActivitySettings: (settings: Partial<ActivitySettings>) => void;
   onUpdateTransportSettings: (settings: Partial<TransportSettings>) => void;
 }
 
@@ -322,10 +343,11 @@ function TripDetailsFormInner({
   bookingTypes,
   flightSettings,
   hotelSettings,
+  activitySettings,
   transportSettings,
-  onToggleBookingType,
   onUpdateFlightSettings,
   onUpdateHotelSettings,
+  onUpdateActivitySettings,
   onUpdateTransportSettings,
 }: TripDetailsFormProps) {
   const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
@@ -334,65 +356,45 @@ function TripDetailsFormInner({
   const calendarStartDate = selectedDateRange?.from;
   const calendarEndDate = selectedDateRange?.to;
 
+  // Collapsible open states for trip input pills
+  const [originPillOpen, setOriginPillOpen] = useState(false);
+  const [destinationPillOpen, setDestinationPillOpen] = useState(false);
+  const [multiCityPillOpen, setMultiCityPillOpen] = useState(false);
+  const [datesPillOpen, setDatesPillOpen] = useState(false);
+  const [travelersPillOpen, setTravelersPillOpen] = useState(false);
+  const [budgetPillOpen, setBudgetPillOpen] = useState(false);
+
   // Collapsible open states for booking type settings
   const [flightsSettingsOpen, setFlightsSettingsOpen] = useState(false);
   const [hotelsSettingsOpen, setHotelsSettingsOpen] = useState(false);
   const [transportSettingsOpen, setTransportSettingsOpen] = useState(false);
+  const [activitiesSettingsOpen, setActivitiesSettingsOpen] = useState(false);
 
-  // Close settings when booking type is deselected
-  useEffect(() => {
-    if (!bookingTypes.flights) setFlightsSettingsOpen(false);
-  }, [bookingTypes.flights]);
-
-  useEffect(() => {
-    if (!bookingTypes.hotels) setHotelsSettingsOpen(false);
-  }, [bookingTypes.hotels]);
-
-  useEffect(() => {
-    if (!bookingTypes.ground_transport) setTransportSettingsOpen(false);
-  }, [bookingTypes.ground_transport]);
+  // Handler for origin pill open change - populate input with current value
+  const handleOriginPillOpenChange = (open: boolean) => {
+    if (open && tripInputs.origin) {
+      setOriginInput(tripInputs.origin);
+    }
+    setOriginPillOpen(open);
+  };
 
   return (
     <div className="space-y-3">
-      {/* What to book section - booking type toggles with expandable settings */}
+      {/* What to book section - booking type expandable pills */}
       <div className="pb-2 border-b border-border/30">
         <div className="flex items-center gap-1 text-xs text-muted-foreground/60 mb-2">
           <span className="font-medium">What to book</span>
         </div>
         <div className="flex flex-wrap items-start gap-3">
-          {/* Flights toggle with settings */}
-          <Collapsible.Root
-            className="flex flex-col"
-            open={flightsSettingsOpen}
+          {/* Flights pill */}
+          <ExpandablePill
+            label="Flights"
+            icon={Plane}
+
+            isOpen={flightsSettingsOpen}
             onOpenChange={setFlightsSettingsOpen}
-          >
-            <div className="flex items-stretch">
-              <button
-                type="button"
-                onClick={() => onToggleBookingType('flights')}
-                className={`inline-flex items-center gap-1.5 border px-2.5 py-1 transition-colors ${
-                  bookingTypes.flights
-                    ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
-                    : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
-                }`}
-              >
-                <Plane className="h-3.5 w-3.5" />
-                <span className="text-xs font-semibold">Flights</span>
-              </button>
-              {bookingTypes.flights && (
-                <Collapsible.Trigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 transition-colors"
-                    aria-label="Flight settings"
-                  >
-                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${flightsSettingsOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                </Collapsible.Trigger>
-              )}
-            </div>
-            <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-              <div className="pt-2 flex flex-wrap gap-2">
+            expandedContent={
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => onUpdateFlightSettings({ round_trip: !flightSettings.round_trip })}
@@ -426,42 +428,18 @@ function TripDetailsFormInner({
                   <option value="first">First</option>
                 </select>
               </div>
-            </Collapsible.Content>
-          </Collapsible.Root>
+            }
+          />
 
-          {/* Ground Transport toggle with settings */}
-          <Collapsible.Root
-            className="flex flex-col"
-            open={transportSettingsOpen}
+          {/* Transport pill */}
+          <ExpandablePill
+            label="Transport"
+            icon={Car}
+
+            isOpen={transportSettingsOpen}
             onOpenChange={setTransportSettingsOpen}
-          >
-            <div className="flex items-stretch">
-              <button
-                type="button"
-                onClick={() => onToggleBookingType('ground_transport')}
-                className={`inline-flex items-center gap-1.5 border px-2.5 py-1 transition-colors ${
-                  bookingTypes.ground_transport
-                    ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
-                    : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
-                }`}
-              >
-                <Car className="h-3.5 w-3.5" />
-                <span className="text-xs font-semibold">Transport</span>
-              </button>
-              {bookingTypes.ground_transport && (
-                <Collapsible.Trigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 transition-colors"
-                    aria-label="Transport settings"
-                  >
-                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${transportSettingsOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                </Collapsible.Trigger>
-              )}
-            </div>
-            <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-              <div className="pt-2 flex flex-wrap gap-2">
+            expandedContent={
+              <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
                   onClick={() => onUpdateTransportSettings({ car: !transportSettings.car })}
@@ -499,191 +477,213 @@ function TripDetailsFormInner({
                   Bus
                 </button>
               </div>
-            </Collapsible.Content>
-          </Collapsible.Root>
+            }
+          />
 
-          {/* Hotels toggle with settings */}
-          <Collapsible.Root
-            className="flex flex-col"
-            open={hotelsSettingsOpen}
+          {/* Hotels pill */}
+          <ExpandablePill
+            label="Hotels"
+            icon={Hotel}
+
+            isOpen={hotelsSettingsOpen}
             onOpenChange={setHotelsSettingsOpen}
-          >
-            <div className="flex items-stretch">
-              <button
-                type="button"
-                onClick={() => onToggleBookingType('hotels')}
-                className={`inline-flex items-center gap-1.5 border px-2.5 py-1 transition-colors ${
-                  bookingTypes.hotels
-                    ? 'rounded-l-full border-r-0 border-accent/40 bg-accent/10 text-accent'
-                    : 'rounded-full border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
-                }`}
-              >
-                <Hotel className="h-3.5 w-3.5" />
-                <span className="text-xs font-semibold">Hotels</span>
-              </button>
-              {bookingTypes.hotels && (
-                <Collapsible.Trigger asChild>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center rounded-r-full border border-l-0 border-accent/40 bg-accent/10 px-2 py-1 text-accent hover:bg-accent/20 transition-colors"
-                    aria-label="Hotel settings"
-                  >
-                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${hotelsSettingsOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                </Collapsible.Trigger>
-              )}
-            </div>
-            <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-              <div className="pt-2 flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground">Min stars:</span>
-                <div className="flex gap-0.5">
-                  {[1, 2, 3, 4, 5].map((star) => (
-                    <button
-                      key={star}
-                      type="button"
-                      onClick={() => onUpdateHotelSettings({ min_stars: hotelSettings.min_stars === star ? 0 : star })}
-                      className={`w-6 h-6 rounded text-[11px] font-medium transition-colors ${
-                        star <= hotelSettings.min_stars
-                          ? 'bg-primary/20 text-primary border border-primary/40'
-                          : 'bg-muted/20 text-muted-foreground border border-border/40 hover:bg-muted/40'
-                      }`}
-                    >
-                      {star}
-                    </button>
-                  ))}
+            expandedContent={
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">Min stars:</span>
+                  <div className="flex gap-0.5">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <button
+                        key={star}
+                        type="button"
+                        onClick={() => onUpdateHotelSettings({ min_stars: hotelSettings.min_stars === star ? 0 : star })}
+                        className={`w-6 h-6 rounded text-[11px] font-medium transition-colors ${
+                          star <= hotelSettings.min_stars
+                            ? 'bg-primary/20 text-primary border border-primary/40'
+                            : 'bg-muted/20 text-muted-foreground border border-border/40 hover:bg-muted/40'
+                        }`}
+                      >
+                        {star}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {HOTEL_AMENITIES.map((amenity) => {
+                    const isSelected = hotelSettings.amenities.includes(amenity.value);
+                    return (
+                      <button
+                        key={amenity.value}
+                        type="button"
+                        onClick={() => {
+                          const newAmenities = isSelected
+                            ? hotelSettings.amenities.filter((a) => a !== amenity.value)
+                            : [...hotelSettings.amenities, amenity.value];
+                          onUpdateHotelSettings({ amenities: newAmenities });
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                          isSelected
+                            ? 'border-primary/40 bg-primary/10 text-primary'
+                            : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                        }`}
+                      >
+                        {amenity.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            </Collapsible.Content>
-          </Collapsible.Root>
+            }
+          />
 
-          {/* Activities toggle (no settings for simplicity) */}
-          <button
-            type="button"
-            onClick={() => onToggleBookingType('activities')}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${
-              bookingTypes.activities
-                ? 'border-accent/40 bg-accent/10 text-accent'
-                : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
-            }`}
-          >
-            <Ticket className="h-3.5 w-3.5" />
-            <span className="text-xs font-semibold">Activities</span>
-          </button>
+          {/* Activities pill */}
+          <ExpandablePill
+            label="Activities"
+            icon={Ticket}
+
+            isOpen={activitiesSettingsOpen}
+            onOpenChange={setActivitiesSettingsOpen}
+            expandedContent={
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {ACTIVITY_CATEGORIES.map((category) => {
+                    const isSelected = activitySettings.categories.includes(category.value);
+                    return (
+                      <button
+                        key={category.value}
+                        type="button"
+                        onClick={() => {
+                          const newCategories = isSelected
+                            ? activitySettings.categories.filter((c) => c !== category.value)
+                            : [...activitySettings.categories, category.value];
+                          onUpdateActivitySettings({ categories: newCategories });
+                        }}
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                          isSelected
+                            ? 'border-primary/40 bg-primary/10 text-primary'
+                            : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                        }`}
+                      >
+                        {category.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-muted-foreground">Max duration:</span>
+                  <select
+                    value={activitySettings.max_duration_hours ?? ''}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      onUpdateActivitySettings({
+                        max_duration_hours: value === '' ? null : parseInt(value, 10)
+                      });
+                    }}
+                    className="rounded-full border border-border/40 bg-muted/20 px-2 py-0.5 text-[10px] text-foreground focus:border-primary/40 focus:outline-none"
+                  >
+                    <option value="">No limit</option>
+                    <option value="1">1 hour</option>
+                    <option value="2">2 hours</option>
+                    <option value="3">3 hours</option>
+                    <option value="4">Half day (4h)</option>
+                    <option value="8">Full day (8h)</option>
+                  </select>
+                </div>
+              </div>
+            }
+          />
         </div>
       </div>
 
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
       {/* From field */}
-      <div className="flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('origin', tripInputs) || pendingOrigin ? 'text-accent' : 'text-muted-foreground/60'}`}>
-          {isFieldComplete('origin', tripInputs) || pendingOrigin ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
-          <span className={isFieldComplete('origin', tripInputs) || pendingOrigin ? 'font-medium' : ''}>{FIELD_LABELS.origin}</span>
-        </div>
-        {hasOrigin ? (
-          <div
-            className="border-border/60 bg-muted/40 inline-flex items-center gap-1 rounded-full border px-2.5 py-1"
-            onClick={() => onSelectLocationBadge(null)}
-            onKeyDown={() => {}}
-            role="presentation"
-          >
-            <LocationBadge
-              type="origin"
-              value={tripInputs.origin!}
-              isOrigin
-              isSelected={selectedLocationBadge === 'origin'}
-              onSelect={onSelectLocationBadge}
-              onRemove={onRemoveOrigin}
-            />
-          </div>
-        ) : pendingOrigin ? (
-          /* Show pending origin with loading spinner */
-          <div
-            className="border-primary/40 bg-primary/10 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 animate-pulse"
-          >
-            <Loader2 className="h-3 w-3 text-primary animate-spin" />
-            <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
-          </div>
-        ) : originInputExpanded ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSetOrigin(originInput);
-              setOriginInputExpanded(false);
-            }}
-            className="inline-flex items-center"
-          >
-            <input
-              type="text"
-              value={originInput}
-              onChange={(e) => setOriginInput(e.target.value)}
-              placeholder="Enter city..."
-              className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
-              autoFocus
-              onBlur={() => {
-                setTimeout(() => {
-                  if (!originInput.trim()) {
-                    setOriginInputExpanded(false);
-                  }
-                }, 150);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  onSetOrigin(originInput);
-                  setOriginInputExpanded(false);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setOriginInput('');
-                  setOriginInputExpanded(false);
-                }
-              }}
-            />
-            {originInput.trim() && (
-              <button
-                type="submit"
-                className="ml-1 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white hover:bg-primary/90 transition-colors"
-                aria-label="Set origin"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
+      <ExpandablePill
+        label={FIELD_LABELS.origin}
+        icon={MapPin}
+
+        isOpen={originPillOpen}
+        onOpenChange={handleOriginPillOpenChange}
+        expandedContent={
+          <>
+            {/* Current origin display */}
+            {hasOrigin && !pendingOrigin && (
+              <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
+                <LocationBadge
+                  type="origin"
+                  value={tripInputs.origin!}
+                  isOrigin
+                  isSelected={selectedLocationBadge === 'origin'}
+                  onSelect={onSelectLocationBadge}
+                  onRemove={onRemoveOrigin}
+                />
+              </div>
             )}
-          </form>
-        ) : (
-          <div
-            className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 transition-colors"
-            onClick={() => setOriginInputExpanded(true)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setOriginInputExpanded(true);
-              }
-            }}
-            role="button"
-            tabIndex={0}
-          >
-            <MapPin className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-xs text-muted-foreground/60 italic">New York</span>
-          </div>
-        )}
-      </div>
+            {pendingOrigin && (
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 animate-pulse">
+                <Loader2 className="h-3 w-3 text-primary animate-spin" />
+                <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
+              </div>
+            )}
+            {/* Input to set/change origin */}
+            {!hasOrigin && !pendingOrigin && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (originInput.trim()) {
+                    onSetOrigin(originInput);
+                    setOriginInput('');
+                  }
+                }}
+                className="inline-flex items-center"
+              >
+                <div className="relative inline-flex items-center">
+                  <input
+                    type="text"
+                    value={originInput}
+                    onChange={(e) => setOriginInput(e.target.value)}
+                    placeholder="Enter city..."
+                    className="w-28 rounded-full border border-primary/30 bg-primary/5 pl-3 pr-7 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (originInput.trim()) {
+                          onSetOrigin(originInput);
+                          setOriginInput('');
+                        }
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setOriginPillOpen(false);
+                      }
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!originInput.trim()}
+                    className="absolute right-1 flex h-5 w-5 items-center justify-center rounded-full text-primary/60 hover:text-primary hover:bg-primary/10 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-primary/60 transition-colors"
+                    aria-label="Set origin"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </form>
+            )}
+          </>
+        }
+      />
 
       {/* Where to field */}
-      <div className="group flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('destinations', tripInputs) || pendingDestination ? 'text-accent' : 'text-muted-foreground/60'}`}>
-          {isFieldComplete('destinations', tripInputs) || pendingDestination ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
-          <span className={isFieldComplete('destinations', tripInputs) || pendingDestination ? 'font-medium' : ''}>{FIELD_LABELS.destinations}</span>
-        </div>
-        {hasDestination || pendingDestination ? (
-          <div className="inline-flex items-center">
-            <div
-              className="border-border/60 bg-muted/40 inline-flex flex-wrap items-center gap-1 rounded-full border px-2.5 py-1"
-              onClick={() => onSelectLocationBadge(null)}
-              onKeyDown={() => {}}
-              role="presentation"
-            >
-              {(tripInputs.destinations ?? []).map((dest, idx) => (
+      <ExpandablePill
+        label={FIELD_LABELS.destinations}
+        icon={MapPin}
+
+        isOpen={destinationPillOpen}
+        onOpenChange={setDestinationPillOpen}
+        expandedContent={
+          <>
+            {/* Current destinations display */}
+            {(tripInputs.destinations ?? []).map((dest, idx) => (
+              <div key={`dest-${idx}`} className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
                 <LocationBadge
-                  key={`dest-${idx}`}
                   type="destination"
                   index={idx}
                   value={dest}
@@ -691,191 +691,153 @@ function TripDetailsFormInner({
                   onSelect={onSelectLocationBadge}
                   onRemove={() => onRemoveDestination(idx)}
                 />
-              ))}
-              {/* Show pending destination with loading spinner */}
-              {pendingDestination && (
-                <span className="inline-flex items-center gap-1 rounded-full px-1 py-0.5 animate-pulse">
-                  <Loader2 className="h-3 w-3 text-accent animate-spin" />
-                  <span className="text-xs font-semibold text-accent/80">{pendingDestination}</span>
-                </span>
-              )}
-            </div>
-            {/* Add destination button / input */}
-            {destinationInputExpanded ? (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
+              </div>
+            ))}
+            {pendingDestination && (
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-1 animate-pulse">
+                <Loader2 className="h-3 w-3 text-accent animate-spin" />
+                <span className="text-xs font-semibold text-accent/80">{pendingDestination}</span>
+              </div>
+            )}
+            {/* Input to add destination */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (destinationInput.trim()) {
                   onAddDestination(destinationInput);
-                  setDestinationInputExpanded(false);
-                }}
-                className="inline-flex items-center ml-1.5"
-              >
+                  setDestinationInput('');
+                }
+              }}
+              className="inline-flex items-center"
+            >
+              <div className="relative inline-flex items-center">
                 <input
                   type="text"
                   value={destinationInput}
                   onChange={(e) => setDestinationInput(e.target.value)}
-                  placeholder="Add destination..."
-                  className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
-                  autoFocus
-                  onBlur={() => {
-                    setTimeout(() => {
-                      if (!destinationInput.trim()) {
-                        setDestinationInputExpanded(false);
-                      }
-                    }, 150);
-                  }}
+                  placeholder={hasDestination ? "Add city..." : "Enter city..."}
+                  className="w-28 rounded-full border border-primary/30 bg-primary/5 pl-3 pr-7 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
-                      onAddDestination(destinationInput);
-                      setDestinationInputExpanded(false);
+                      if (destinationInput.trim()) {
+                        onAddDestination(destinationInput);
+                        setDestinationInput('');
+                      }
                     } else if (e.key === 'Escape') {
                       e.preventDefault();
                       setDestinationInput('');
-                      setDestinationInputExpanded(false);
+                      setDestinationPillOpen(false);
                     }
                   }}
                 />
-                {destinationInput.trim() && (
-                  <button
-                    type="submit"
-                    className="ml-1 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white hover:bg-primary/90 transition-colors"
-                    aria-label="Add destination"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </form>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setDestinationInputExpanded(true)}
-                className="-ml-2 flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-primary/40 bg-card text-primary/60 hover:border-primary/60 hover:bg-primary/10 hover:text-primary transition-all opacity-0 group-hover:opacity-100 shadow-sm"
-                aria-label="Add destination"
-                title="Add another destination"
-              >
-                <Plus className="h-3 w-3" />
-              </button>
-            )}
-          </div>
-        ) : destinationInputExpanded ? (
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              onAddDestination(destinationInput);
-              setDestinationInputExpanded(false);
-            }}
-            className="inline-flex items-center"
-          >
-            <input
-              type="text"
-              value={destinationInput}
-              onChange={(e) => setDestinationInput(e.target.value)}
-              placeholder="Enter destination..."
-              className="w-28 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
-              autoFocus
-              onBlur={() => {
-                setTimeout(() => {
-                  if (!destinationInput.trim()) {
-                    setDestinationInputExpanded(false);
-                  }
-                }, 150);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  onAddDestination(destinationInput);
-                  setDestinationInputExpanded(false);
-                } else if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setDestinationInput('');
-                  setDestinationInputExpanded(false);
-                }
-              }}
-            />
-            {destinationInput.trim() && (
-              <button
-                type="submit"
-                className="ml-1 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white hover:bg-primary/90 transition-colors"
-                aria-label="Add destination"
-              >
-                <Plus className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </form>
-        ) : (
-          <div
-            className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 transition-colors"
-            onClick={() => setDestinationInputExpanded(true)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                setDestinationInputExpanded(true);
-              }
-            }}
-            role="button"
-            tabIndex={0}
-          >
-            <MapPin className="h-3 w-3 text-muted-foreground/40" />
-            <span className="text-xs text-muted-foreground/60 italic">Paris</span>
-          </div>
-        )}
-      </div>
+                <button
+                  type="submit"
+                  disabled={!destinationInput.trim()}
+                  className="absolute right-1 flex h-5 w-5 items-center justify-center rounded-full text-primary/60 hover:text-primary hover:bg-primary/10 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-primary/60 transition-colors"
+                  aria-label="Add destination"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </form>
+          </>
+        }
+      />
 
       {/* Multi-city toggle (only shown when 2+ destinations) */}
       {(tripInputs.destinations ?? []).length >= 2 && (
-        <div className="flex flex-col gap-1">
-          <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('multi_city_intent', tripInputs) ? 'text-accent' : 'text-muted-foreground/40'}`}>
-            {isFieldComplete('multi_city_intent', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3 opacity-60" strokeDasharray="2 2" />}
-            <span className={isFieldComplete('multi_city_intent', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.multi_city_intent}</span>
-          </div>
-          <button
-            type="button"
-            onClick={onToggleMultiCity}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer transition-colors ${
-              tripInputs.multi_city_intent === 'multi_city'
-                ? 'border-accent/40 bg-accent/10 text-accent'
-                : 'border-border/60 bg-muted/40 text-foreground'
-            }`}
-          >
-            <Route className="h-3.5 w-3.5" />
-            <span className="text-xs font-semibold">
-              {tripInputs.multi_city_intent === 'multi_city' ? 'Visit both' : 'Compare destinations'}
-            </span>
-          </button>
-        </div>
+        <ExpandablePill
+          label={FIELD_LABELS.multi_city_intent}
+          icon={Route}
+
+          isOpen={multiCityPillOpen}
+          onOpenChange={setMultiCityPillOpen}
+          expandedContent={
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  if (tripInputs.multi_city_intent !== 'multi_city') onToggleMultiCity();
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  tripInputs.multi_city_intent === 'multi_city'
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                Visit both
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (tripInputs.multi_city_intent === 'multi_city') onToggleMultiCity();
+                }}
+                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  tripInputs.multi_city_intent !== 'multi_city'
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'border-border/40 bg-muted/20 text-muted-foreground hover:bg-muted/40'
+                }`}
+              >
+                Compare destinations
+              </button>
+            </>
+          }
+        />
       )}
 
       {/* Dates field */}
-      <div className="flex flex-col gap-1">
-        <div className={`flex items-center gap-1 text-xs transition-colors ${isFieldComplete('dates', tripInputs) ? 'text-accent' : 'text-muted-foreground/60'}`}>
-          {isFieldComplete('dates', tripInputs) ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
-          <span className={isFieldComplete('dates', tripInputs) ? 'font-medium' : ''}>{FIELD_LABELS.dates}</span>
-        </div>
-        {hasDates ? (
+      <ExpandablePill
+        label={FIELD_LABELS.dates}
+        icon={hasDateValidationWarning ? AlertCircle : CalendarRange}
+
+        isOpen={datesPillOpen}
+        onOpenChange={setDatesPillOpen}
+        expandedContent={
           <Popover open={calendarOpen} onOpenChange={onCalendarOpenChange}>
             <PopoverTrigger asChild>
-              <div
-                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 transition-colors ${
-                  hasDateValidationWarning
-                    ? 'border-orange-400/60 bg-orange-50 hover:bg-orange-100'
-                    : 'border-border/60 bg-muted/40 hover:bg-muted/60'
-                }`}
-                role="button"
-                tabIndex={0}
-                title={hasDateValidationWarning ? 'One or more dates are in the past' : undefined}
-              >
-                {hasDateValidationWarning ? (
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0 text-orange-500" />
-                ) : (
-                  <CalendarRange className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-                )}
-                <span className={`whitespace-nowrap text-xs font-semibold ${hasDateValidationWarning ? 'text-orange-700' : 'text-foreground'}`}>
-                  {hasStartDate && formatDateForDisplay(tripInputs.start_date)}
-                  {hasStartDate && hasEndDate && ' – '}
-                  {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
-                </span>
-              </div>
+              {hasDates ? (
+                <button
+                  type="button"
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 cursor-pointer transition-colors ${
+                    hasDateValidationWarning
+                      ? 'border-orange-400/60 bg-orange-50 hover:bg-orange-100'
+                      : 'border-border/60 bg-muted/40 hover:bg-muted/60'
+                  }`}
+                >
+                  <span className={`whitespace-nowrap text-xs font-semibold ${hasDateValidationWarning ? 'text-orange-700' : 'text-foreground'}`}>
+                    {hasStartDate && formatDateForDisplay(tripInputs.start_date)}
+                    {hasStartDate && hasEndDate && ' – '}
+                    {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
+                  </span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onResetDates();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.stopPropagation();
+                        onResetDates();
+                      }
+                    }}
+                    className="flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    aria-label="Clear dates"
+                  >
+                    <X className="h-3 w-3" />
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs text-muted-foreground hover:border-primary/50 hover:bg-primary/10 transition-colors"
+                >
+                  <CalendarRange className="h-3.5 w-3.5" />
+                  <span>Select dates</span>
+                </button>
+              )}
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
               <div className="flex">
@@ -894,19 +856,6 @@ function TripDetailsFormInner({
                       {preset.label}
                     </button>
                   ))}
-                  {/* Reset button to clear dates and allow re-selection */}
-                  {(calendarStartDate || calendarEndDate) && (
-                    <>
-                      <div className="my-1 border-t border-border/40" />
-                      <button
-                        type="button"
-                        onClick={onResetDates}
-                        className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      >
-                        Reset dates
-                      </button>
-                    </>
-                  )}
                 </div>
                 <div onMouseLeave={onCalendarMouseLeave}>
                   <Calendar
@@ -925,102 +874,116 @@ function TripDetailsFormInner({
               </div>
             </PopoverContent>
           </Popover>
-        ) : (
-          <Popover open={calendarOpen} onOpenChange={onCalendarOpenChange}>
-            <PopoverTrigger asChild>
-              <div
-                className="border-border/40 bg-muted/20 hover:border-primary/40 hover:bg-primary/5 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 transition-colors"
-                role="button"
-                tabIndex={0}
-              >
-                <CalendarRange className="h-3.5 w-3.5 text-muted-foreground/40" />
-                <span className="text-xs text-muted-foreground/60 italic">Dec 15-22</span>
-              </div>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <div className="flex">
-                {/* Quick preset buttons */}
-                <div className="flex flex-col gap-1 border-r border-border/60 p-2">
-                  <span className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Quick picks
-                  </span>
-                  {datePresets.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => onDatePresetClick(preset.getDates())}
-                      className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground hover:bg-muted transition-colors"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-                <div onMouseLeave={onCalendarMouseLeave}>
-                  <Calendar
-                    mode="range"
-                    defaultMonth={new Date()}
-                    selected={selectedDateRange}
-                    onSelect={() => {}}
-                    onDayClick={onCalendarDayClick}
-                    onDayMouseEnter={onCalendarDayMouseEnter}
-                    numberOfMonths={2}
-                    disabled={{ before: new Date() }}
-                    modifiers={{ preview: previewDays }}
-                    modifiersClassNames={{ preview: 'bg-muted/50' }}
-                  />
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
-      </div>
+        }
+      />
 
       {/* Travelers field */}
-      <EditableField
+      <ExpandablePill
         label={FIELD_LABELS.traveler_count}
         icon={Users}
-        placeholder="#"
-        emptyPlaceholder="2"
-        isComplete={isFieldComplete('traveler_count', tripInputs)}
-        isEditing={editingField === 'traveler_count'}
-        draftValue={draftBase.traveler_count == null ? '' : String(draftBase.traveler_count)}
-        displayValue={tripInputs.traveler_count != null ? (formatTravelers(tripInputs.traveler_count) ?? '') : ''}
-        hasValue={tripInputs.traveler_count != null}
-        onStartEditing={() => onStartEditingField('traveler_count')}
-        onValueChange={(value) => onFieldChange('traveler_count', value)}
-        onCommit={(value) => onCommitField('traveler_count', value)}
-        onCancel={() => {
-          const originalValue = tripInputs.traveler_count;
-          setTripInputsDraft((prev) =>
-            prev ? { ...prev, traveler_count: originalValue != null ? String(originalValue) : null } : prev
-          );
-          setEditingField(null);
-        }}
-        onRemove={onRemoveTravelerCount}
+
+        isOpen={travelersPillOpen}
+        onOpenChange={setTravelersPillOpen}
+        expandedContent={
+          <>
+            {/* Current value display */}
+            {tripInputs.traveler_count != null && (
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
+                <span className="text-xs font-semibold text-foreground">
+                  {formatTravelers(tripInputs.traveler_count)}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveTravelerCount();
+                  }}
+                  className="flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  aria-label="Clear travelers"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+            {/* Input to set/change travelers */}
+            <input
+              type="number"
+              value={draftBase.traveler_count ?? ''}
+              onChange={(e) => onFieldChange('traveler_count', e.target.value)}
+              placeholder="# travelers"
+              min={1}
+              className="w-24 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  onCommitField('traveler_count', (e.target as HTMLInputElement).value);
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setTravelersPillOpen(false);
+                }
+              }}
+              onBlur={(e) => {
+                onCommitField('traveler_count', e.target.value);
+              }}
+            />
+          </>
+        }
       />
 
       {/* Budget field */}
-      <EditableField
+      <ExpandablePill
         label={FIELD_LABELS.budget}
         icon={Wallet}
-        placeholder="$"
-        emptyPlaceholder="$3000"
-        isComplete={isFieldComplete('budget', tripInputs)}
-        isEditing={editingField === 'budget'}
-        draftValue={draftBase.budget == null ? '' : String(draftBase.budget)}
-        displayValue={tripInputs.budget != null ? formatBudgetValue(tripInputs.budget) : ''}
-        hasValue={tripInputs.budget != null}
-        onStartEditing={() => onStartEditingField('budget')}
-        onValueChange={(value) => onFieldChange('budget', value)}
-        onCommit={(value) => onCommitField('budget', value)}
-        onCancel={() => {
-          const originalValue = tripInputs.budget;
-          setTripInputsDraft((prev) =>
-            prev ? { ...prev, budget: originalValue != null ? String(originalValue) : null } : prev
-          );
-          setEditingField(null);
-        }}
-        onRemove={onRemoveBudget}
+
+        isOpen={budgetPillOpen}
+        onOpenChange={setBudgetPillOpen}
+        expandedContent={
+          <>
+            {/* Current value display */}
+            {tripInputs.budget != null && (
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-1">
+                <span className="text-xs font-semibold text-foreground">
+                  {formatBudgetValue(tripInputs.budget)}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemoveBudget();
+                  }}
+                  className="flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  aria-label="Clear budget"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+            {/* Input to set/change budget */}
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+              <input
+                type="number"
+                value={draftBase.budget ?? ''}
+                onChange={(e) => onFieldChange('budget', e.target.value)}
+                placeholder="Budget"
+                min={0}
+                className="w-28 rounded-full border border-primary/30 bg-primary/5 pl-6 pr-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30 transition-all"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onCommitField('budget', (e.target as HTMLInputElement).value);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setBudgetPillOpen(false);
+                  }
+                }}
+                onBlur={(e) => {
+                  onCommitField('budget', e.target.value);
+                }}
+              />
+            </div>
+          </>
+        }
       />
       </div>
     </div>

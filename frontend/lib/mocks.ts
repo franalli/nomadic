@@ -1,10 +1,34 @@
 /**
  * Mock data for branch and tile display.
  *
- * TODO: Remove this file once real branch metadata is available from the API.
+ * @deprecated This entire file should be removed once real metadata is available from the API.
+ *
+ * ## Migration Plan
+ *
+ * ### Backend Changes Required
+ * 1. Add to Branch schema: `vibe: str`, `highlights: list[str]`, `flow: list[str]`, `notes: list[str]`
+ * 2. Add to Tile schema: `meta.features: list[str]`
+ * 3. Populate these fields in the plan generation endpoint
+ *
+ * ### Frontend Migration Steps
+ * 1. Update components to check for API data first: `branch.vibe ?? DETAIL_PRESETS[index].vibe`
+ * 2. Once backend provides data consistently, remove fallback to mocks
+ * 3. Delete this file and update imports
+ *
+ * ### Removal Triggers
+ * - DETAIL_PRESETS: Remove when API provides Branch.vibe, Branch.highlights, Branch.flow, Branch.notes
+ * - HOTEL/FLIGHT/ACTIVITY_FEATURE_SETS: Remove when API provides Tile.meta.features: string[]
+ *
  * These hardcoded presets with stock Unsplash images are placeholders until
  * the backend provides actual branch details (vibe, highlights, flow, notes).
  */
+
+// Development warning - helps track when this deprecated code is still in use
+if (process.env.NODE_ENV === 'development') {
+  console.warn(
+    '[DEPRECATED] lib/mocks.ts is loaded. See file header for migration plan to remove mock data.'
+  );
+}
 
 export type BranchDetails = {
   vibe: string;
@@ -130,7 +154,9 @@ export const DETAIL_PRESETS: BranchDetails[] = [
 
 /**
  * Mock feature sets for tiles when real metadata isn't available.
- * TODO: Remove once real tile metadata is available from API.
+ *
+ * @deprecated Remove these exports when API provides `Tile.meta.features: string[]`.
+ * Check TileCard.tsx getFeaturesForTile() which consumes these.
  */
 export const HOTEL_FEATURE_SETS = [
   ['Free WiFi', 'Breakfast Included', 'Rooftop Bar'],

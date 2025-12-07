@@ -1,9 +1,13 @@
 /**
  * Types for the centralized PlanDocument.
  * This is the source of truth for branches and tiles.
+ *
+ * Note: Generated types are available in './generated.ts' via `npm run types:generate`.
+ * These manual definitions include stricter non-optional fields that the frontend
+ * expects (with defaults applied), while the OpenAPI schema marks them as optional.
  */
 
-import { Tile } from './tile';
+import type { Tile } from './tile';
 
 export type UpdatedBy = 'user' | 'planner';
 
@@ -76,14 +80,8 @@ export type DocumentTripInputs = {
   traveler_count?: number | null;
   budget?: number | null;
   missing_fields: string[];
-  // Multi-city intent: "multi_city" = one itinerary visiting all destinations
-  // "separate" = generate separate branch options for each destination
-  // null = not yet clarified (will be asked if 2+ destinations)
   multi_city_intent?: 'multi_city' | 'separate' | null;
-  // Vibes: trip purposes/themes like "F1", "Backpacking", "Adventure", etc.
-  // Open-ended list that LLM will validate/normalize to actual activities or purposes
   vibes?: string[];
-  // Booking preferences - what to search for and category-specific settings
   booking_types?: BookingTypes;
   flight_settings?: FlightSettings;
   hotel_settings?: HotelSettings;
@@ -98,10 +96,8 @@ export type PlanDocumentData = {
   trip_inputs: DocumentTripInputs;
   branches: DocumentBranch[];
   tiles: Record<string, Tile>;
-  // Chat fields (populated when returning from /v1/plan)
   assistant_message?: string | null;
   assistant_message_id?: string | null;
-  // Ready to generate flag - when all fields are complete but user hasn't clicked generate yet
   ready_to_generate?: boolean;
 };
 

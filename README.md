@@ -26,6 +26,22 @@ npm run dev  # http://localhost:3000
 
 ```
 
+## Type Generation
+
+Frontend TypeScript types can be auto-generated from backend Pydantic schemas via FastAPI's OpenAPI spec for reference.
+
+```bash
+# 1. Start backend first (must be running on localhost:8000)
+cd backend && uvicorn app.main:app --reload
+
+# 2. Generate types from OpenAPI schema
+cd frontend && npm run types:generate
+```
+
+- Generated types are saved to `frontend/types/generated.ts`
+- Manual types in `types/document.ts` and `types/tile.ts` remain the source of truth (they include stricter non-optional fields the frontend expects)
+- Use generated types as a reference when adding new backend schemas
+
 ## Alembic migrations
 
 - Alembic reads the `DATABASE_URL` value from `backend/.env` (local) or `backend/.env.docker` (compose). Make sure it points at the Postgres instance you want to migrate.

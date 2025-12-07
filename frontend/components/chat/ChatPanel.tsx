@@ -435,11 +435,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         content: message,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      // Focus input after message is added (RAF ensures DOM is updated)
+      // Scroll panel into view and focus input after message is added (matches LLM response behavior)
+      scrollPanelIntoView();
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
-    }, []);
+    }, [scrollPanelIntoView]);
 
     // Handle clicking a prompt suggestion
     const handleSuggestionClick = useCallback((prompt: string) => {

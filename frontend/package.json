@@ -10,7 +10,8 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "types:generate": "openapi-typescript http://localhost:8000/openapi.json -o ./types/generated.ts"
   },
   "dependencies": {
     "@radix-ui/react-collapsible": "^1.1.12",
@@ -47,6 +48,7 @@
     "eslint-plugin-tailwindcss": "^3.18.2",
     "globals": "^16.5.0",
     "jsdom": "^27.2.0",
+    "openapi-typescript": "^7.10.1",
     "postcss": "^8.4.0",
     "prettier": "^3.6.2",
     "prettier-plugin-tailwindcss": "^0.7.1",

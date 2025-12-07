@@ -21,7 +21,6 @@ CSRF Protection:
 """
 
 import secrets
-import uuid
 from typing import Callable
 
 from fastapi import Request, Response
@@ -29,7 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
 
-from app.config import settings
+from app.config import generate_session_token, settings
 
 # Cookie configuration
 SESSION_COOKIE_NAME = "session_id"
@@ -57,11 +56,6 @@ def _get_cookie_kwargs() -> dict:
         base_kwargs["domain"] = cookie_domain
 
     return base_kwargs
-
-
-def _generate_session_id() -> str:
-    """Generate a cryptographically secure session ID."""
-    return str(uuid.uuid4())
 
 
 def _generate_csrf_token() -> str:
@@ -97,7 +91,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         new_csrf = csrf_token is None
 
         if new_session:
-            session_id = _generate_session_id()
+            session_id = generate_session_token()
         if new_csrf:
             csrf_token = _generate_csrf_token()
 

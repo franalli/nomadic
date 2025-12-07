@@ -6,26 +6,62 @@
 import { create } from 'zustand';
 
 import { apiFetch } from '@/lib/api';
-import {
-  DEFAULT_ACTIVITY_SETTINGS,
-  DEFAULT_BOOKING_TYPES,
-  DEFAULT_FLIGHT_SETTINGS,
-  DEFAULT_HOTEL_SETTINGS,
-  DEFAULT_TRANSPORT_SETTINGS,
-} from '@/lib/preferences';
 import type {
+  ActivitySettings,
+  BookingTypes,
   BranchSelections,
   DocumentTripInputs,
   DocumentTripInputsPatch,
+  FlightSettings,
+  HotelSettings,
   PlanDocumentData,
   PlanDocumentPatch,
   PlanDocumentResponse,
+  TransportSettings,
   UpdatedBy,
 } from '@/types/document';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default Settings
+// NOTE: These values MUST match backend/app/schemas.py defaults.
+// When adding/removing trip inputs, update backend first, then here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DEFAULT_BOOKING_TYPES: BookingTypes = {
+  hotels: false,
+  flights: false,
+  ground_transport: false,
+  activities: false,
+};
+
+export const DEFAULT_FLIGHT_SETTINGS: FlightSettings = {
+  round_trip: true,
+  cabin_class: 'economy',
+  direct_only: false,
+};
+
+export const DEFAULT_HOTEL_SETTINGS: HotelSettings = {
+  min_stars: 0,
+  amenities: [],
+};
+
+export const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
+  categories: [],
+  max_duration_hours: null,
+};
+
+export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
+  car: false,
+  train: false,
+  bus: false,
+};
 
 /**
  * Default trip inputs when no document exists yet.
  * Exported so components can use the same defaults.
+ *
+ * Note: missing_fields is pre-populated because the backend dynamically
+ * recomputes it based on actual values during merge operations.
  */
 export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   destinations: [],

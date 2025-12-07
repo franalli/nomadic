@@ -1,6 +1,6 @@
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field
 
 TileType = Literal["flight", "hotel", "activity"]
 AvailabilityStatus = Literal["available", "low", "unknown", "not_available"]
@@ -91,17 +91,11 @@ class TilesSearchResponse(BaseModel):
     tiles: List[Tile]
     summary: dict
 
-    @computed_field
-    @property
-    def request_id(self) -> str:
-        return self.tiles_request_id
-
 
 class TileClickEvent(BaseModel):
     request_id: Optional[str] = None
     tile_id: str  # the tile identifier coming from the UI
     branch_id: Optional[str] = None  # now a string since branches are in JSON document
-    session_id: Optional[str] = None
 
 
 class PlanRequest(BaseModel):
@@ -195,7 +189,7 @@ class FlightSettings(BaseModel):
 class HotelSettings(BaseModel):
     """Hotel-specific search settings."""
 
-    min_stars: int = Field(default=3, ge=0, le=5)  # 0 = no minimum
+    min_stars: int = Field(default=0, ge=0, le=5)  # 0 = no minimum
     amenities: List[str] = Field(default_factory=list)
 
 
@@ -209,9 +203,9 @@ class ActivitySettings(BaseModel):
 class TransportSettings(BaseModel):
     """Ground transport settings - which modes to include."""
 
-    car: bool = True
-    train: bool = True
-    bus: bool = True
+    car: bool = False
+    train: bool = False
+    bus: bool = False
 
 
 class DocumentTripInputs(BaseModel):
