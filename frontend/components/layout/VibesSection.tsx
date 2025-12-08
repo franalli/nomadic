@@ -3,6 +3,8 @@
 import { Loader2, Plus, X } from 'lucide-react';
 import { memo } from 'react';
 
+import { cn } from '@/lib/utils';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +40,10 @@ export interface VibesSectionProps {
   onRemoveVibe: (index: number) => void;
   setVibeInput: (value: string) => void;
   setVibeInputExpanded: (expanded: boolean) => void;
+  /** Whether vibes were recently updated by the LLM (shows sparkle animation) */
+  isLLMUpdated?: boolean;
+  /** Called when user interacts with vibes to acknowledge the LLM update */
+  onAcknowledge?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,22 +59,37 @@ function VibesSectionInner({
   onRemoveVibe,
   setVibeInput,
   setVibeInputExpanded,
+  isLLMUpdated = false,
+  onAcknowledge,
 }: VibesSectionProps) {
+  const handleVibeClick = () => {
+    if (isLLMUpdated && onAcknowledge) {
+      onAcknowledge();
+    }
+  };
+
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-2.5">
       {vibes.map((vibe, idx) => {
         const { emoji, text } = parseVibe(vibe);
         return (
           <span
             key={`vibe-${idx}`}
-            className="group relative inline-flex cursor-pointer items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-semibold transition-all hover:bg-accent/20"
+            onClick={handleVibeClick}
+            className={cn(
+              'group relative inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-accent/40 bg-gradient-to-b from-accent/15 to-accent/10 px-3 py-1.5 text-xs font-semibold shadow-pill-accent transition-all duration-200 ease-out hover:from-accent/25 hover:to-accent/15 hover:border-accent/50 hover:shadow-md hover:shadow-accent/10 hover:-translate-y-0.5',
+              isLLMUpdated && 'border-accent/60 shadow-md shadow-accent/15'
+            )}
           >
-            <span className="text-sm">{emoji}</span>
+            <span className={cn('text-xs', isLLMUpdated && 'sparkle-icon')}>{emoji}</span>
             {text}
             <button
               type="button"
-              onClick={() => onRemoveVibe(idx)}
-              className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-500 text-white opacity-0 transition-opacity hover:bg-gray-600 group-hover:opacity-70"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemoveVibe(idx);
+              }}
+              className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-muted-foreground/80 text-background opacity-0 shadow-sm transition-all duration-150 hover:bg-destructive hover:scale-110 group-hover:opacity-80"
               aria-label={`Remove ${text}`}
             >
               <X className="h-2.5 w-2.5" />
@@ -78,8 +99,8 @@ function VibesSectionInner({
       })}
       {/* Show pending vibe with loading spinner */}
       {pendingVibe && (
-        <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-xs font-semibold animate-pulse">
-          <Loader2 className="h-3 w-3 text-accent animate-spin" />
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-gradient-to-b from-accent/20 to-accent/15 px-3 py-1.5 text-xs font-semibold shadow-pill-accent animate-pulse">
+          <Loader2 className="h-3.5 w-3.5 text-accent animate-spin" />
           <span className="text-accent/80">{pendingVibe}</span>
         </span>
       )}
@@ -98,7 +119,7 @@ function VibesSectionInner({
             value={vibeInput}
             onChange={(e) => setVibeInput(e.target.value)}
             placeholder="Type a vibe..."
-            className="w-32 rounded-full border border-accent/30 bg-accent/5 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-accent/50 focus:outline-none focus:ring-1 focus:ring-accent/30 transition-all"
+            className="w-32 rounded-full border border-accent/40 bg-gradient-to-b from-accent/5 to-accent/10 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 focus:ring-offset-1 focus:shadow-pill-accent"
             autoFocus
             onBlur={() => {
               // Collapse if empty after a short delay (allows click on submit to work)
@@ -134,11 +155,11 @@ function VibesSectionInner({
         <button
           type="button"
           onClick={() => setVibeInputExpanded(true)}
-          className="flex h-7 w-7 items-center justify-center rounded-full border border-dashed border-accent/40 bg-accent/5 text-accent/60 hover:border-accent/60 hover:bg-accent/10 hover:text-accent transition-all"
+          className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed border-accent/30 bg-gradient-to-b from-accent/5 to-accent/10 text-accent/50 shadow-sm transition-all duration-200 ease-out hover:border-accent/50 hover:border-solid hover:from-accent/15 hover:to-accent/20 hover:text-accent hover:shadow-pill-accent hover:scale-105 active:scale-95"
           aria-label="Add vibe"
           title={vibes.length === 0 ? "What's the vibe? Adventure, F1, relaxation..." : "Add another vibe"}
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-3.5 w-3.5" />
         </button>
       )}
     </div>

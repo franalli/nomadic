@@ -11,7 +11,7 @@ import {
 import { formatDateForDisplay } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
-import type { ChatPanelActions, ToastType } from '@/types/hooks';
+import type { ToastType } from '@/types/hooks';
 
 /**
  * State machine for date range selection.
@@ -29,7 +29,6 @@ export interface DateRangeSelectorOptions {
   tripInputs: DocumentTripInputs;
   tripInputsDraft: TripInputsDraft;
   setTripInputsDraft: React.Dispatch<React.SetStateAction<TripInputsDraft>>;
-  chatPanelActions: ChatPanelActions | null;
   onToast: (message: string, type?: ToastType) => void;
 }
 
@@ -63,7 +62,6 @@ export function useDateRangeSelector(
     tripInputs,
     tripInputsDraft,
     setTripInputsDraft,
-    chatPanelActions,
     onToast,
   } = options;
 
@@ -180,9 +178,7 @@ export function useDateRangeSelector(
 
           const startDisplay = formatDateForDisplay(newStartIso);
           const endDisplay = formatDateForDisplay(newEndIso);
-          chatPanelActions?.addAssistantMessage(
-            `Perfect! Travel dates set: ${startDisplay} – ${endDisplay}. 📅`
-          );
+          onToast(`Travel dates set: ${startDisplay} – ${endDisplay}. 📅`, 'confirmation');
         }
       } else {
         // This is the first click (or resetting from complete range) - set start date, wait for end
@@ -209,7 +205,7 @@ export function useDateRangeSelector(
         });
       }
     },
-    [tripInputs, documentStore, setTripInputsDraft, onToast, chatPanelActions, selection]
+    [tripInputs, documentStore, setTripInputsDraft, onToast, selection]
   );
 
   // Handler for mouse enter on calendar days - shows preview of range
@@ -291,11 +287,10 @@ export function useDateRangeSelector(
 
         const startDisplay = formatDateForDisplay(startIso);
         const endDisplay = formatDateForDisplay(endIso);
-        const message = `Perfect! Travel dates set: ${startDisplay} – ${endDisplay}. 📅`;
-        chatPanelActions?.addAssistantMessage(message);
+        onToast(`Travel dates set: ${startDisplay} – ${endDisplay}. 📅`, 'confirmation');
       }
     },
-    [tripInputs, documentStore, setTripInputsDraft, onToast, chatPanelActions]
+    [tripInputs, documentStore, setTripInputsDraft, onToast]
   );
 
   // Handler to reset dates

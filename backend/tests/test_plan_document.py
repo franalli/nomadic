@@ -75,7 +75,9 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
-                "traveler_count": 2,
+                "adults": 2,
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
             },
@@ -88,7 +90,9 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "origin": "London",
                     "start_date": "2025-12-01",
                     "end_date": "2025-12-07",
-                    "traveler_count": 2,
+                    "adults": 2,
+                    "children": 0,
+                    "requires_assistance": False,
                     "budget": 2000,
                     "is_primary": True,
                     "tiles": {
@@ -110,7 +114,9 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "origin": "London",
                     "start_date": "2025-12-01",
                     "end_date": "2025-12-07",
-                    "traveler_count": 2,
+                    "adults": 2,
+                    "children": 0,
+                    "requires_assistance": False,
                     "budget": 2000,
                     "is_primary": False,
                     "tiles": {
@@ -343,7 +349,9 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
             origin="Oslo",  # User changed origin
             start_date="2025-12-10",
             end_date="2025-12-20",
-            traveler_count=4,
+            adults=4,
+            children=0,
+            requires_assistance=False,
             budget=5000,
             missing_fields=[],
         )
@@ -373,7 +381,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
         ), "Primary branch origin should cascade from trip_inputs"
         assert primary_branch.start_date == "2025-12-10"
         assert primary_branch.end_date == "2025-12-20"
-        assert primary_branch.traveler_count == 4
+        assert primary_branch.adults == 4
         assert primary_branch.budget == 5000
 
         # Verify NON-PRIMARY branch was NOT updated (stays with its own values)
@@ -418,9 +426,11 @@ def test_apply_planner_update_handles_empty_destinations():
             origin="London",
             start_date=None,
             end_date=None,
-            traveler_count=None,
+            adults=None,
+            children=None,
+            requires_assistance=None,
             budget=None,
-            missing_fields=["destinations", "start_date", "end_date", "traveler_count", "budget"],
+            missing_fields=["destinations", "start_date", "end_date", "adults", "budget"],
         )
 
         doc = apply_planner_update(
@@ -457,7 +467,9 @@ def test_merge_trip_inputs_replace_mode_handles_empty_list():
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
-        traveler_count=2,
+        adults=2,
+        children=0,
+        requires_assistance=False,
         budget=2000,
         missing_fields=[],
     )
@@ -467,7 +479,9 @@ def test_merge_trip_inputs_replace_mode_handles_empty_list():
         origin=None,  # Keep existing
         start_date=None,
         end_date=None,
-        traveler_count=None,
+        adults=None,
+        children=None,
+        requires_assistance=None,
         budget=None,
         missing_fields=["destinations"],
     )
@@ -498,7 +512,9 @@ def test_merge_trip_inputs_explicit_null_clears_origin():
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
-        traveler_count=2,
+        adults=2,
+        children=0,
+        requires_assistance=False,
         budget=2000,
     )
 
@@ -530,7 +546,9 @@ def test_merge_trip_inputs_llm_null_preserves_origin():
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
-        traveler_count=2,
+        adults=2,
+        children=0,
+        requires_assistance=False,
         budget=2000,
     )
 
@@ -559,7 +577,9 @@ def test_merge_trip_inputs_explicit_null_clears_dates():
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
-        traveler_count=2,
+        adults=2,
+        children=0,
+        requires_assistance=False,
         budget=2000,
     )
 
@@ -682,7 +702,9 @@ def test_apply_user_patch_removes_destination():
                 origin="London",
                 start_date="2025-12-01",
                 end_date="2025-12-07",
-                traveler_count=2,
+                adults=2,
+                children=0,
+                requires_assistance=False,
                 budget=2000,
                 missing_fields=["destinations"],
             ),
@@ -721,7 +743,9 @@ def test_apply_user_patch_removes_one_destination_from_multiple():
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
-                "traveler_count": 2,
+                "adults": 2,
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
             },
@@ -756,7 +780,9 @@ def test_apply_user_patch_removes_one_destination_from_multiple():
                 origin="London",
                 start_date="2025-12-01",
                 end_date="2025-12-07",
-                traveler_count=2,
+                adults=2,
+                children=0,
+                requires_assistance=False,
                 budget=2000,
                 missing_fields=[],
             ),
@@ -802,7 +828,9 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
                 origin="London",
                 start_date="2025-12-01",
                 end_date="2025-12-07",
-                traveler_count=2,
+                adults=2,
+                children=0,
+                requires_assistance=False,
                 budget=2000,
                 missing_fields=["destinations"],
             ),
@@ -895,7 +923,9 @@ def test_plan_flow_preserves_user_removed_destinations(monkeypatch: object):
                         origin="London",
                         start_date="2025-12-01",
                         end_date="2025-12-07",
-                        traveler_count=2,
+                        adults=2,
+                        children=0,
+                        requires_assistance=False,
                         budget=2000,
                         missing_fields=["destinations"],
                     ),
@@ -911,7 +941,9 @@ def test_plan_flow_preserves_user_removed_destinations(monkeypatch: object):
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
-                "traveler_count": 2,
+                "adults": 2,
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
             },
@@ -959,7 +991,9 @@ def test_plan_flow_persists_llm_vibes(monkeypatch: object):
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
-                "traveler_count": 2,
+                "adults": 2,
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
                 "multi_city_intent": None,
@@ -1056,7 +1090,9 @@ def test_plan_flow_llm_destinations_overwrite_user_removals(monkeypatch: object)
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
-                "traveler_count": 2,
+                "adults": 2,
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
             },
@@ -1115,7 +1151,9 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
         data.trip_inputs.origin = "London"
         data.trip_inputs.start_date = "2025-12-01"
         data.trip_inputs.end_date = "2025-12-07"
-        data.trip_inputs.traveler_count = 2
+        data.trip_inputs.adults = 2
+        data.trip_inputs.children = 0
+        data.trip_inputs.requires_assistance = False
         data.trip_inputs.budget = 2000
         data.trip_inputs.vibes = ["beach"]
         data.branches = []
@@ -1133,7 +1171,7 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
             "trip_inputs": {
                 "origin": "Paris",  # Changed from London
                 "start_date": "2025-12-10",  # Changed from 12-01
-                "traveler_count": 4,  # Changed from 2
+                "adults": 4,  # Changed from 2
                 "vibes": ["adventure", "culture"],  # Changed from ["beach"]
             },
         },
@@ -1152,7 +1190,9 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
                 "origin": "London",  # LLM returns London
                 "start_date": "2025-12-01",  # LLM returns 12-01
                 "end_date": "2025-12-07",
-                "traveler_count": 2,  # LLM returns 2
+                "adults": 2,  # LLM returns 2
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
                 "vibes": ["beach"],  # LLM returns ["beach"]
@@ -1178,7 +1218,7 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
     # LLM values should be applied (most recent wins)
     assert trip_inputs["origin"] == "London", "LLM value should win (most recent)"
     assert trip_inputs["start_date"] == "2025-12-01", "LLM value should win (most recent)"
-    assert trip_inputs["traveler_count"] == 2, "LLM value should win (most recent)"
+    assert trip_inputs["adults"] == 2, "LLM value should win (most recent)"
     assert trip_inputs["vibes"] == ["beach"], "LLM value should win (most recent)"
 
 
@@ -1241,7 +1281,9 @@ def test_plan_flow_preserves_user_additions_during_llm_call(monkeypatch: object)
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
-                "traveler_count": 2,
+                "adults": 2,
+                "children": 0,
+                "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
             },

@@ -141,7 +141,9 @@ def merge_trip_inputs(
         "origin",
         "start_date",
         "end_date",
-        "traveler_count",
+        "adults",
+        "children",
+        "requires_assistance",
         "budget",
         "multi_city_intent",
         "vibes",
@@ -151,6 +153,7 @@ def merge_trip_inputs(
         "flight_settings",
         "hotel_settings",
         "activity_settings",
+        "transport_settings",
     ]
 
     # Ensure explicit_nulls is a set (for membership testing)
@@ -186,8 +189,8 @@ def merge_trip_inputs(
                 if _DEBUG_LOG:
                     print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
         else:
-            # Scalar fields:
-            # origin, start_date, end_date, traveler_count, budget, multi_city_intent
+            # Scalar fields: origin, start_date, end_date, adults, children,
+            # requires_assistance, budget, multi_city_intent
             if is_explicit_null:
                 # User explicitly deleted this field
                 setattr(result, field, None)
@@ -426,8 +429,12 @@ def apply_user_patch(
                 primary.start_date = data.trip_inputs.start_date
             if _field_was_provided("end_date"):
                 primary.end_date = data.trip_inputs.end_date
-            if _field_was_provided("traveler_count"):
-                primary.traveler_count = data.trip_inputs.traveler_count
+            if _field_was_provided("adults"):
+                primary.adults = data.trip_inputs.adults
+            if _field_was_provided("children"):
+                primary.children = data.trip_inputs.children
+            if _field_was_provided("requires_assistance"):
+                primary.requires_assistance = data.trip_inputs.requires_assistance
             if _field_was_provided("budget"):
                 primary.budget = data.trip_inputs.budget
             data.branches[primary_idx] = primary
@@ -490,8 +497,12 @@ def apply_planner_update(
                 primary.start_date = trip_inputs.start_date
             if trip_inputs.end_date is not None:
                 primary.end_date = trip_inputs.end_date
-            if trip_inputs.traveler_count is not None:
-                primary.traveler_count = trip_inputs.traveler_count
+            if trip_inputs.adults is not None:
+                primary.adults = trip_inputs.adults
+            if trip_inputs.children is not None:
+                primary.children = trip_inputs.children
+            if trip_inputs.requires_assistance is not None:
+                primary.requires_assistance = trip_inputs.requires_assistance
             if trip_inputs.budget is not None:
                 primary.budget = trip_inputs.budget
             data.branches[primary_idx] = primary

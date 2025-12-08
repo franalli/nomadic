@@ -314,8 +314,12 @@ export interface components {
             start_date?: string | null;
             /** End Date */
             end_date?: string | null;
-            /** Traveler Count */
-            traveler_count?: number | null;
+            /** Adults */
+            adults?: number | null;
+            /** Children */
+            children?: number | null;
+            /** Requires Assistance */
+            requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
             /**
@@ -339,8 +343,12 @@ export interface components {
             start_date?: string | null;
             /** End Date */
             end_date?: string | null;
-            /** Traveler Count */
-            traveler_count?: number | null;
+            /** Adults */
+            adults?: number | null;
+            /** Children */
+            children?: number | null;
+            /** Requires Assistance */
+            requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
             /** Missing Fields */
@@ -368,8 +376,12 @@ export interface components {
             start_date?: string | null;
             /** End Date */
             end_date?: string | null;
-            /** Traveler Count */
-            traveler_count?: number | null;
+            /** Adults */
+            adults?: number | null;
+            /** Children */
+            children?: number | null;
+            /** Requires Assistance */
+            requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
             /** Missing Fields */
@@ -590,8 +602,6 @@ export interface components {
             tile_id: string;
             /** Branch Id */
             branch_id?: string | null;
-            /** Session Id */
-            session_id?: string | null;
         };
         /**
          * TransportSettings

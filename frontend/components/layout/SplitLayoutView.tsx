@@ -106,7 +106,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
           </div>
           {/* Chat Panel */}
           <div className="flex-1 overflow-hidden">
-            <Card className="bg-card/95 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
+            <Card className="bg-card/75 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
               <CardContent className="flex h-full min-h-0 flex-col p-4 pb-3">
                 {sidebarContent}
               </CardContent>

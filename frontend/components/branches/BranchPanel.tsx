@@ -163,11 +163,12 @@ export const BranchPanel = memo(function BranchPanel({
   const bookingSummary = useMemo(() => {
     const destination = selected?.destinations[0] ?? tripInputs?.destinations[0] ?? 'your trip';
     const origin = selected?.origin ?? tripInputs?.origin ?? null;
-    const travelerCount = selected?.traveler_count ?? tripInputs?.traveler_count ?? null;
-    const travelerLabel =
-      travelerCount != null
-        ? `${travelerCount} traveler${travelerCount === 1 ? '' : 's'}`
-        : null;
+    const adults = selected?.adults ?? tripInputs?.adults ?? null;
+    const children = selected?.children ?? tripInputs?.children ?? null;
+    const travelerParts: string[] = [];
+    if (adults != null && adults > 0) travelerParts.push(`${adults} adult${adults === 1 ? '' : 's'}`);
+    if (children != null && children > 0) travelerParts.push(`${children} child${children === 1 ? '' : 'ren'}`);
+    const travelerLabel = travelerParts.length > 0 ? travelerParts.join(', ') : null;
     const dateLabel = selectedDuration?.rangeLabel ?? null;
     const budgetLabel = formatBudgetDisplay(selectedBudget);
 

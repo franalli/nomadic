@@ -31,7 +31,9 @@ export type DocumentBranch = {
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
-  traveler_count?: number | null;
+  adults?: number | null;
+  children?: number | null;
+  requires_assistance?: boolean | null;
   budget?: number | null;
   is_primary: boolean;
   tiles: BranchTileIds;
@@ -77,7 +79,9 @@ export type DocumentTripInputs = {
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
-  traveler_count?: number | null;
+  adults?: number | null;
+  children?: number | null;
+  requires_assistance?: boolean | null;
   budget?: number | null;
   missing_fields: string[];
   multi_city_intent?: 'multi_city' | 'separate' | null;

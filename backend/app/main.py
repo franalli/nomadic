@@ -401,12 +401,24 @@ def patch_plan_document(
                 changes.append(f"set end date to '{val}'")
             else:
                 changes.append("cleared end date")
-        if "traveler_count" in fields_set:
-            val = getattr(trip_patch, "traveler_count", None)
+        if "adults" in fields_set:
+            val = getattr(trip_patch, "adults", None)
             if val:
-                changes.append(f"set traveler count to {val}")
+                changes.append(f"set adults to {val}")
             else:
-                changes.append("cleared traveler count")
+                changes.append("cleared adults")
+        if "children" in fields_set:
+            val = getattr(trip_patch, "children", None)
+            if val is not None:
+                changes.append(f"set children to {val}")
+            else:
+                changes.append("cleared children")
+        if "requires_assistance" in fields_set:
+            val = getattr(trip_patch, "requires_assistance", None)
+            if val:
+                changes.append("enabled requires assistance")
+            else:
+                changes.append("disabled requires assistance")
         if "budget" in fields_set:
             val = getattr(trip_patch, "budget", None)
             if val:
@@ -496,7 +508,9 @@ def fetch_tiles_for_branch(
         origin=branch.origin,
         start_date=branch.start_date,
         end_date=branch.end_date,
-        traveler_count=branch.traveler_count,
+        adults=branch.adults,
+        children=branch.children,
+        requires_assistance=branch.requires_assistance,
     )
 
     tiles_response = search_tiles(tiles_request)

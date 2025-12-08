@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type { ChatPanelHandle } from '@/components/chat/ChatPanel';
 import {
   DEFAULT_TRIP_INPUTS,
   useDocumentStore,
@@ -15,6 +14,7 @@ import type {
   HotelSettings,
   TransportSettings,
 } from '@/types/document';
+import type { ToastType } from '@/types/hooks';
 
 export interface UseLocalBookingSettingsReturn {
   flightSettings: FlightSettings;
@@ -42,7 +42,7 @@ const COMMIT_DEBOUNCE_MS = 300;
  */
 export function useLocalBookingSettings(
   storeTripInputs: DocumentTripInputs | null | undefined,
-  chatPanelRef: React.RefObject<ChatPanelHandle | null>
+  onToast: (message: string, type?: ToastType) => void
 ): UseLocalBookingSettingsReturn {
   const documentStore = useDocumentStore();
   const document = useDocumentStore((state) => state.document);
@@ -220,10 +220,10 @@ export function useLocalBookingSettings(
         messages.push(classLabels[settings.cabin_class!] ?? settings.cabin_class!);
       }
       if (messages.length > 0) {
-        chatPanelRef.current?.addAssistantMessage(`Updated flight settings: ${messages.join(', ')}! ✈️`);
+        onToast(`Updated flight settings: ${messages.join(', ')}! ✈️`, 'confirmation');
       }
     },
-    [commitWithDebounce, chatPanelRef]
+    [commitWithDebounce, onToast]
   );
 
   // Hotel settings update handler
@@ -242,13 +242,13 @@ export function useLocalBookingSettings(
         hasPendingHotelChanges
       );
 
-      // Generate assistant message based on what actually changed
+      // Generate confirmation toast based on what actually changed
       if ('min_stars' in settings && currentSettings.min_stars !== settings.min_stars) {
         const stars = settings.min_stars!;
         const message = stars === 0
           ? 'Removed minimum star rating requirement! 🏨'
           : `Set minimum ${stars}-star hotels! ${'⭐'.repeat(stars)}`;
-        chatPanelRef.current?.addAssistantMessage(message);
+        onToast(message, 'confirmation');
       }
       if ('amenities' in settings) {
         // For arrays, check if content changed (simple length + stringify comparison)
@@ -256,15 +256,15 @@ export function useLocalBookingSettings(
         const newAmenities = settings.amenities!;
         if (JSON.stringify(oldAmenities) !== JSON.stringify(newAmenities)) {
           if (newAmenities.length === 0) {
-            chatPanelRef.current?.addAssistantMessage('Cleared hotel amenity requirements! 🏨');
+            onToast('Cleared hotel amenity requirements! 🏨', 'confirmation');
           } else {
             const formatted = newAmenities.map(a => a.replace('_', ' ')).join(', ');
-            chatPanelRef.current?.addAssistantMessage(`Looking for hotels with: ${formatted}! 🏨`);
+            onToast(`Looking for hotels with: ${formatted}! 🏨`, 'confirmation');
           }
         }
       }
     },
-    [commitWithDebounce, chatPanelRef]
+    [commitWithDebounce, onToast]
   );
 
   // Transport settings update handler
@@ -283,7 +283,7 @@ export function useLocalBookingSettings(
         hasPendingTransportChanges
       );
 
-      // Generate assistant message based on what actually changed
+      // Generate confirmation toast based on what actually changed
       const modeLabels: Record<string, string> = { car: 'car rental', train: 'trains', bus: 'buses' };
       for (const [mode, enabled] of Object.entries(settings)) {
         if (mode in modeLabels) {
@@ -291,14 +291,15 @@ export function useLocalBookingSettings(
           const oldValue = currentSettings[mode as keyof TransportSettings];
           if (oldValue !== enabled) {
             const label = modeLabels[mode];
-            chatPanelRef.current?.addAssistantMessage(
-              enabled ? `Added ${label} to transport options! 🚗` : `Removed ${label} from transport options.`
+            onToast(
+              enabled ? `Added ${label} to transport options! 🚗` : `Removed ${label} from transport options.`,
+              'confirmation'
             );
           }
         }
       }
     },
-    [commitWithDebounce, chatPanelRef]
+    [commitWithDebounce, onToast]
   );
 
   // Activity settings update handler
@@ -317,16 +318,16 @@ export function useLocalBookingSettings(
         hasPendingActivityChanges
       );
 
-      // Generate assistant message based on what actually changed
+      // Generate confirmation toast based on what actually changed
       if ('categories' in settings) {
         const newCategories = settings.categories!;
         // For arrays, check if content changed
         if (JSON.stringify(currentSettings.categories) !== JSON.stringify(newCategories)) {
           if (newCategories.length === 0) {
-            chatPanelRef.current?.addAssistantMessage('Showing all activity categories! 🎭');
+            onToast('Showing all activity categories! 🎭', 'confirmation');
           } else {
             const formatted = newCategories.map(c => c.replace('_', ' & ')).join(', ');
-            chatPanelRef.current?.addAssistantMessage(`Filtering activities: ${formatted}! 🎭`);
+            onToast(`Filtering activities: ${formatted}! 🎭`, 'confirmation');
           }
         }
       }
@@ -335,10 +336,10 @@ export function useLocalBookingSettings(
         const message = hours === null
           ? 'Removed activity duration limit! 🎭'
           : `Set max activity duration to ${hours} hour${hours === 1 ? '' : 's'}! 🎭`;
-        chatPanelRef.current?.addAssistantMessage(message);
+        onToast(message, 'confirmation');
       }
     },
-    [commitWithDebounce, chatPanelRef]
+    [commitWithDebounce, onToast]
   );
 
   return {

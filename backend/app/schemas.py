@@ -77,7 +77,9 @@ class TilesSearchRequest(BaseModel):
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    traveler_count: Optional[int] = None
+    adults: Optional[int] = None
+    children: Optional[int] = None
+    requires_assistance: Optional[bool] = None
 
     verticals: List[TileType] = Field(default_factory=lambda: ["hotel", "flight", "activity"])
     max_results_per_vertical: int = 5
@@ -144,7 +146,9 @@ class DocumentBranch(BaseModel):
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    traveler_count: Optional[int] = None
+    adults: Optional[int] = None
+    children: Optional[int] = None
+    requires_assistance: Optional[bool] = None
     budget: Optional[int] = None
     is_primary: bool = False
     tiles: BranchTileIds = Field(default_factory=BranchTileIds)
@@ -158,7 +162,9 @@ class DocumentTripInputsPatch(BaseModel):
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    traveler_count: Optional[int] = None
+    adults: Optional[int] = None
+    children: Optional[int] = None
+    requires_assistance: Optional[bool] = None
     budget: Optional[int] = None
     missing_fields: Optional[List[str]] = None
     multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
@@ -215,7 +221,9 @@ class DocumentTripInputs(BaseModel):
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    traveler_count: Optional[int] = None
+    adults: Optional[int] = None
+    children: Optional[int] = None
+    requires_assistance: Optional[bool] = None
     budget: Optional[int] = None
     missing_fields: List[str] = Field(default_factory=list)
     # Multi-city intent: "multi_city" = one itinerary visiting all destinations

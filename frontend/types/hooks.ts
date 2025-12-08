@@ -6,13 +6,9 @@
 /**
  * Toast notification type.
  * Used across multiple hooks and components for consistent toast styling.
+ * - 'confirmation': Subtle feedback for UI setting changes (bottom-center, fast dismiss)
+ * - 'info': General information (bottom-center)
+ * - 'success': Positive feedback (bottom-center)
+ * - 'error': Important errors requiring attention (top-right)
  */
-export type ToastType = 'info' | 'success' | 'error';
-
-/**
- * Interface for chat panel actions exposed to other components.
- * Used to programmatically add messages from hooks.
- */
-export interface ChatPanelActions {
-  addAssistantMessage: (message: string) => void;
-}
+export type ToastType = 'info' | 'success' | 'error' | 'confirmation';

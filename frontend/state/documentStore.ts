@@ -68,7 +68,9 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   origin: null,
   start_date: null,
   end_date: null,
-  traveler_count: null,
+  adults: null,
+  children: null,
+  requires_assistance: null,
   budget: null,
   multi_city_intent: null,
   vibes: [],
@@ -79,6 +81,40 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   activity_settings: DEFAULT_ACTIVITY_SETTINGS,
   transport_settings: DEFAULT_TRANSPORT_SETTINGS,
 };
+
+/**
+ * Fields that can be tracked for LLM updates.
+ * Used to show sparkle animation when LLM modifies trip inputs.
+ */
+export type LLMUpdatableField =
+  // Core trip inputs
+  | 'origin'
+  | 'destinations'
+  | 'start_date'
+  | 'end_date'
+  | 'adults'
+  | 'children'
+  | 'budget'
+  | 'vibes'
+  // Settings objects (parent level)
+  | 'flight_settings'
+  | 'hotel_settings'
+  | 'activity_settings'
+  | 'transport_settings'
+  // Flight settings sub-fields
+  | 'flight_settings.round_trip'
+  | 'flight_settings.direct_only'
+  | 'flight_settings.cabin_class'
+  // Hotel settings sub-fields
+  | 'hotel_settings.min_stars'
+  | 'hotel_settings.amenities'
+  // Activity settings sub-fields
+  | 'activity_settings.categories'
+  | 'activity_settings.max_duration_hours'
+  // Transport settings sub-fields
+  | 'transport_settings.car'
+  | 'transport_settings.train'
+  | 'transport_settings.bus';
 
 type DocumentState = {
   // Document data
@@ -92,6 +128,9 @@ type DocumentState = {
   isLoading: boolean;
   isCommitting: boolean;
   error: string | null;
+
+  // LLM update tracking - fields that were recently updated by the planner
+  llmUpdatedFields: Set<LLMUpdatableField>;
 
   // Trip input selectors (computed from document)
   hasAllRequiredFields: () => boolean;
@@ -118,6 +157,9 @@ type DocumentState = {
   // Set document from plan response (when /v1/plan returns new document)
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
+  // Clear sparkle for a field when user interacts with it
+  acknowledgeLLMUpdate: (field: LLMUpdatableField) => void;
+
   // Reset
   reset: () => void;
 };
@@ -131,7 +173,116 @@ const initialState = {
   isLoading: false,
   isCommitting: false,
   error: null as string | null,
+  llmUpdatedFields: new Set<LLMUpdatableField>(),
 };
+
+/**
+ * Compare two trip inputs and return which fields changed.
+ */
+function detectChangedFields(
+  oldInputs: DocumentTripInputs | undefined,
+  newInputs: DocumentTripInputs
+): LLMUpdatableField[] {
+  const changed: LLMUpdatableField[] = [];
+
+  if (!oldInputs) {
+    // If no old inputs, check which fields have values (differ from defaults)
+    if (newInputs.origin) changed.push('origin');
+    if (newInputs.destinations?.length) changed.push('destinations');
+    if (newInputs.start_date) changed.push('start_date');
+    if (newInputs.end_date) changed.push('end_date');
+    if (newInputs.adults != null) changed.push('adults');
+    if (newInputs.children != null) changed.push('children');
+    if (newInputs.budget != null) changed.push('budget');
+    if (newInputs.vibes?.length) changed.push('vibes');
+    // Check settings against defaults (parent + sub-fields)
+    const newFlight = newInputs.flight_settings;
+    const defFlight = DEFAULT_FLIGHT_SETTINGS;
+    if (JSON.stringify(newFlight) !== JSON.stringify(defFlight)) {
+      changed.push('flight_settings');
+      if (newFlight?.round_trip !== defFlight.round_trip) changed.push('flight_settings.round_trip');
+      if (newFlight?.direct_only !== defFlight.direct_only) changed.push('flight_settings.direct_only');
+      if (newFlight?.cabin_class !== defFlight.cabin_class) changed.push('flight_settings.cabin_class');
+    }
+
+    const newHotel = newInputs.hotel_settings;
+    const defHotel = DEFAULT_HOTEL_SETTINGS;
+    if (JSON.stringify(newHotel) !== JSON.stringify(defHotel)) {
+      changed.push('hotel_settings');
+      if (newHotel?.min_stars !== defHotel.min_stars) changed.push('hotel_settings.min_stars');
+      if (JSON.stringify(newHotel?.amenities) !== JSON.stringify(defHotel.amenities)) changed.push('hotel_settings.amenities');
+    }
+
+    const newActivity = newInputs.activity_settings;
+    const defActivity = DEFAULT_ACTIVITY_SETTINGS;
+    if (JSON.stringify(newActivity) !== JSON.stringify(defActivity)) {
+      changed.push('activity_settings');
+      if (JSON.stringify(newActivity?.categories) !== JSON.stringify(defActivity.categories)) changed.push('activity_settings.categories');
+      if (newActivity?.max_duration_hours !== defActivity.max_duration_hours) changed.push('activity_settings.max_duration_hours');
+    }
+
+    const newTransport = newInputs.transport_settings;
+    const defTransport = DEFAULT_TRANSPORT_SETTINGS;
+    if (JSON.stringify(newTransport) !== JSON.stringify(defTransport)) {
+      changed.push('transport_settings');
+      if (newTransport?.car !== defTransport.car) changed.push('transport_settings.car');
+      if (newTransport?.train !== defTransport.train) changed.push('transport_settings.train');
+      if (newTransport?.bus !== defTransport.bus) changed.push('transport_settings.bus');
+    }
+
+    return changed;
+  }
+
+  // Compare each field
+  if (oldInputs.origin !== newInputs.origin) changed.push('origin');
+  if (JSON.stringify(oldInputs.destinations) !== JSON.stringify(newInputs.destinations)) {
+    changed.push('destinations');
+  }
+  if (oldInputs.start_date !== newInputs.start_date) changed.push('start_date');
+  if (oldInputs.end_date !== newInputs.end_date) changed.push('end_date');
+  if (oldInputs.adults !== newInputs.adults) changed.push('adults');
+  if (oldInputs.children !== newInputs.children) changed.push('children');
+  if (oldInputs.budget !== newInputs.budget) changed.push('budget');
+  if (JSON.stringify(oldInputs.vibes) !== JSON.stringify(newInputs.vibes)) {
+    changed.push('vibes');
+  }
+  // Compare settings objects (parent + sub-fields)
+  const oldFlight = oldInputs.flight_settings;
+  const newFlight = newInputs.flight_settings;
+  if (JSON.stringify(oldFlight) !== JSON.stringify(newFlight)) {
+    changed.push('flight_settings');
+    if (oldFlight?.round_trip !== newFlight?.round_trip) changed.push('flight_settings.round_trip');
+    if (oldFlight?.direct_only !== newFlight?.direct_only) changed.push('flight_settings.direct_only');
+    if (oldFlight?.cabin_class !== newFlight?.cabin_class) changed.push('flight_settings.cabin_class');
+  }
+
+  const oldHotel = oldInputs.hotel_settings;
+  const newHotel = newInputs.hotel_settings;
+  if (JSON.stringify(oldHotel) !== JSON.stringify(newHotel)) {
+    changed.push('hotel_settings');
+    if (oldHotel?.min_stars !== newHotel?.min_stars) changed.push('hotel_settings.min_stars');
+    if (JSON.stringify(oldHotel?.amenities) !== JSON.stringify(newHotel?.amenities)) changed.push('hotel_settings.amenities');
+  }
+
+  const oldActivity = oldInputs.activity_settings;
+  const newActivity = newInputs.activity_settings;
+  if (JSON.stringify(oldActivity) !== JSON.stringify(newActivity)) {
+    changed.push('activity_settings');
+    if (JSON.stringify(oldActivity?.categories) !== JSON.stringify(newActivity?.categories)) changed.push('activity_settings.categories');
+    if (oldActivity?.max_duration_hours !== newActivity?.max_duration_hours) changed.push('activity_settings.max_duration_hours');
+  }
+
+  const oldTransport = oldInputs.transport_settings;
+  const newTransport = newInputs.transport_settings;
+  if (JSON.stringify(oldTransport) !== JSON.stringify(newTransport)) {
+    changed.push('transport_settings');
+    if (oldTransport?.car !== newTransport?.car) changed.push('transport_settings.car');
+    if (oldTransport?.train !== newTransport?.train) changed.push('transport_settings.train');
+    if (oldTransport?.bus !== newTransport?.bus) changed.push('transport_settings.bus');
+  }
+
+  return changed;
+}
 
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
@@ -409,7 +560,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   setFromPlanResponse: (response: PlanDocumentResponse) => {
+    const { document: currentDoc, llmUpdatedFields } = get();
     const primaryBranch = response.document.branches.find((b) => b.is_primary);
+
+    // If update is from planner, detect which fields changed
+    let newLLMUpdatedFields = llmUpdatedFields;
+    if (response.updated_by === 'planner') {
+      const changedFields = detectChangedFields(
+        currentDoc?.trip_inputs,
+        response.document.trip_inputs
+      );
+      if (changedFields.length > 0) {
+        // Add newly changed fields to the existing set
+        newLLMUpdatedFields = new Set([...llmUpdatedFields, ...changedFields]);
+      }
+    }
+
     set({
       version: response.version,
       updatedBy: response.updated_by,
@@ -420,10 +586,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         primaryBranch?.id ||
         response.document.branches[0]?.id ||
         null,
+      llmUpdatedFields: newLLMUpdatedFields,
     });
   },
 
+  acknowledgeLLMUpdate: (field: LLMUpdatableField) => {
+    const { llmUpdatedFields } = get();
+    if (llmUpdatedFields.has(field)) {
+      const newSet = new Set(llmUpdatedFields);
+      newSet.delete(field);
+      set({ llmUpdatedFields: newSet });
+    }
+  },
+
   reset: () => {
-    set(initialState);
+    set({ ...initialState, llmUpdatedFields: new Set() });
   },
 }));

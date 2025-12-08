@@ -77,7 +77,7 @@ class PlannerLLMOutput:
     Attributes:
         branches: List of branch specifications (trip options/themes). Each branch
                   is a dict with keys: label, description, destination, origin,
-                  start_date, end_date, traveler_count, budget.
+                  start_date, end_date, adults, children, requires_assistance, budget.
         assistant_message: The conversational response to show the user.
         trip_inputs: Dict of collected/updated trip input fields.
         ready_to_generate: True when all fields are complete but branches haven't
@@ -121,7 +121,9 @@ _TRIP_INPUT_FIELDS = (
     "origin",
     "start_date",
     "end_date",
-    "traveler_count",
+    "adults",
+    "children",
+    "requires_assistance",
     "budget",
     "multi_city_intent",
     "vibes",
@@ -137,7 +139,7 @@ _BOOKING_PREFERENCE_FIELDS = (
 )
 
 # Required fields - only core 4 must be filled before branches can be generated
-# traveler_count and budget are optional - defaults will be applied during generation
+# adults/children and budget are optional - defaults will be applied during generation
 _REQUIRED_TRIP_INPUT_FIELDS = (
     "destinations",
     "origin",
@@ -221,8 +223,15 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
             lines.append(f"  Origin: {branch.origin}")
         if branch.start_date:
             lines.append(f"  Dates: {branch.start_date} to {branch.end_date}")
-        if branch.traveler_count is not None:
-            lines.append(f"  Travelers: {branch.traveler_count}")
+        if branch.adults is not None or branch.children is not None:
+            traveler_parts = []
+            if branch.adults:
+                traveler_parts.append(f"{branch.adults} adult(s)")
+            if branch.children:
+                traveler_parts.append(f"{branch.children} child(ren)")
+            lines.append(f"  Travelers: {', '.join(traveler_parts)}")
+            if branch.requires_assistance:
+                lines.append("  Requires assistance: Yes")
         if branch.budget is not None:
             lines.append(f"  Budget: {branch.budget}")
 
@@ -739,19 +748,19 @@ def _normalize_int(value: Any) -> Optional[int]:
             return None
 
 
-def _clamp_traveler_count(value: Optional[int]) -> Optional[int]:
+def _clamp_traveler_value(value: Optional[int]) -> Optional[int]:
     """
-    Constrain traveler count to a valid range [1, 20].
+    Constrain a traveler count (adults or children) to a valid range [0, 20].
 
     Args:
         value: The traveler count to clamp.
 
     Returns:
-        Optional[int]: The clamped value (1-20), or None if input was None.
+        Optional[int]: The clamped value (0-20), or None if input was None.
     """
     if value is None:
         return None
-    return max(1, min(20, value))
+    return max(0, min(20, value))
 
 
 def _normalize_booking_field(field: str, raw_value: dict) -> Optional[dict]:
@@ -866,11 +875,23 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
     branch_start = _normalize_date(spec.get("start_date")) or fallback_inputs.get("start_date")
     branch_end = _normalize_date(spec.get("end_date")) or fallback_inputs.get("end_date")
 
-    branch_travelers = _normalize_int(spec.get("traveler_count"))
-    if branch_travelers is None:
-        branch_travelers = _normalize_int(fallback_inputs.get("traveler_count"))
-    if branch_travelers is not None:
-        branch_travelers = _clamp_traveler_count(branch_travelers)
+    branch_adults = _normalize_int(spec.get("adults"))
+    if branch_adults is None:
+        branch_adults = _normalize_int(fallback_inputs.get("adults"))
+    if branch_adults is not None:
+        branch_adults = _clamp_traveler_value(branch_adults)
+
+    branch_children = _normalize_int(spec.get("children"))
+    if branch_children is None:
+        branch_children = _normalize_int(fallback_inputs.get("children"))
+    if branch_children is not None:
+        branch_children = _clamp_traveler_value(branch_children)
+
+    branch_requires_assistance = spec.get("requires_assistance")
+    if branch_requires_assistance is None:
+        branch_requires_assistance = fallback_inputs.get("requires_assistance")
+    if branch_requires_assistance is not None and not isinstance(branch_requires_assistance, bool):
+        branch_requires_assistance = None
 
     branch_budget = _normalize_int(spec.get("budget"))
     if branch_budget is None:
@@ -885,7 +906,9 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
         "origin": branch_origin,
         "start_date": branch_start,
         "end_date": branch_end,
-        "traveler_count": branch_travelers,
+        "adults": branch_adults,
+        "children": branch_children,
+        "requires_assistance": branch_requires_assistance,
         "budget": branch_budget,
     }
 
@@ -895,7 +918,7 @@ def _compute_missing_fields(trip_inputs: dict) -> List[str]:
     Compute the list of missing REQUIRED trip input fields in canonical order.
 
     Only checks the 4 required fields: destinations, origin, start_date, end_date.
-    Optional fields (traveler_count, budget, vibes) are not included.
+    Optional fields (adults, children, requires_assistance, budget, vibes) are not included.
 
     Args:
         trip_inputs: A dictionary of trip input values.
@@ -964,20 +987,42 @@ def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, L
     if end_dt and today_dt and end_dt < today_dt:
         validation_messages.append("The end date is in the past. Want to update it?")
 
-    traveler_count = trip_inputs.get("traveler_count")
-    if traveler_count is not None:
-        clamped_travelers = _clamp_traveler_count(traveler_count)
-        if traveler_count < 1:
+    # Validate adults and children counts
+    adults = _normalize_int(trip_inputs.get("adults"))
+    if adults is not None:
+        trip_inputs["adults"] = adults  # Ensure it's stored as int
+        clamped_adults = _clamp_traveler_value(adults)
+        if adults < 0:
             validation_messages.append(
-                f"Traveler count must be at least 1. I set it to {clamped_travelers}. Is that okay?"
+                f"Adults count cannot be negative. I set it to {clamped_adults}."
             )
-        if traveler_count != clamped_travelers:
-            trip_inputs["traveler_count"] = clamped_travelers
+        if adults != clamped_adults:
+            trip_inputs["adults"] = clamped_adults
 
-    budget_value = trip_inputs.get("budget")
-    if budget_value is not None and budget_value < 0:
-        trip_inputs["budget"] = None
-        validation_messages.append("Budget must be zero or higher. Please share an updated budget.")
+    children = _normalize_int(trip_inputs.get("children"))
+    if children is not None:
+        trip_inputs["children"] = children  # Ensure it's stored as int
+        clamped_children = _clamp_traveler_value(children)
+        if children < 0:
+            validation_messages.append(
+                f"Children count cannot be negative. I set it to {clamped_children}."
+            )
+        if children != clamped_children:
+            trip_inputs["children"] = clamped_children
+
+    # Ensure requires_assistance is a boolean if present
+    requires_assistance = trip_inputs.get("requires_assistance")
+    if requires_assistance is not None and not isinstance(requires_assistance, bool):
+        trip_inputs["requires_assistance"] = None
+
+    budget_value = _normalize_int(trip_inputs.get("budget"))
+    if budget_value is not None:
+        trip_inputs["budget"] = budget_value  # Ensure it's stored as int
+        if budget_value < 0:
+            trip_inputs["budget"] = None
+            validation_messages.append(
+                "Budget must be zero or higher. Please share an updated budget."
+            )
 
     trip_inputs["missing_fields"] = _compute_missing_fields(trip_inputs)
     return trip_inputs, validation_messages
@@ -1005,7 +1050,7 @@ def _default_follow_up_question(missing_fields: List[str]) -> Optional[str]:
         "origin": "Where will you be traveling from?",
         "start_date": "When does your trip start?",
         "end_date": "When does your trip end?",
-        "traveler_count": "How many travelers will be going?",
+        "adults": "How many adults will be going?",
         "budget": "What's your budget for this trip?",
     }
 
@@ -1142,7 +1187,9 @@ def _call_openai_for_plan(
             "origin": ti.origin,
             "start_date": ti.start_date,
             "end_date": ti.end_date,
-            "traveler_count": ti.traveler_count,
+            "adults": ti.adults,
+            "children": ti.children,
+            "requires_assistance": ti.requires_assistance,
             "budget": ti.budget,
             "multi_city_intent": ti.multi_city_intent,
             "vibes": ti.vibes or [],
@@ -1164,7 +1211,9 @@ def _call_openai_for_plan(
             "origin": None,
             "start_date": None,
             "end_date": None,
-            "traveler_count": None,
+            "adults": None,
+            "children": None,
+            "requires_assistance": None,
             "budget": None,
             "multi_city_intent": None,
             "vibes": [],
@@ -1222,8 +1271,8 @@ CURRENT STATE:
 {current_state_json}
 
 TASK: Extract trip details.
-Fields: destinations[], origin, start_date, end_date, traveler_count,
-       budget, multi_city_intent, vibes[]
+Fields: destinations[], origin, start_date, end_date, adults, children,
+       requires_assistance, budget, multi_city_intent, vibes[]
 
 EXTRACTION (CRITICAL - always set trip_inputs for ANY location you mention):
 - origin=where FROM, destinations=where TO.
@@ -1235,7 +1284,13 @@ EXTRACTION (CRITICAL - always set trip_inputs for ANY location you mention):
   Never say "from Rome" without setting origin="Rome".
 - Dates→YYYY-MM-DD. "today"={today}.
   Duration: "starting tomorrow for 5 days" → set both dates
-- Travelers: "solo"=1, "couple"=2, "family of 4"=4. Budget: "$1500"→1500
+- Travelers: Extract adults and children counts separately.
+  "solo"→adults=1, "couple"→adults=2, "family of 4"→adults=2,children=2
+  "3 adults and 2 kids"→adults=3,children=2
+  "just me"→adults=1, "me and my wife"→adults=2
+  "traveling with elderly parent who needs wheelchair"→requires_assistance=true
+  "accessibility needs"→requires_assistance=true
+- Budget: "$1500"→1500
 - Auto-correct obvious location typos
 
 MULTI-DESTINATION:
@@ -1284,11 +1339,13 @@ BOOKING PREFERENCES (extract when user mentions):
 - Only include fields that user mentions (partial updates are fine)
 
 UPDATES:
-- "Actually 3 people"→traveler_count=3. "Make it $2000"→budget=2000
+- "Actually 3 adults"→adults=3. "Add a child"→increment children.
+- "Make it $2000"→budget=2000
 - "Leave from Boston instead"→origin="Boston"
 - "Add Florence"→append to destinations. "Remove Rome"→remove from destinations
 - "Visit all in one trip"→multi_city_intent="multi_city"
 - "Compare them", "separate options", "not both"→multi_city_intent="separate"
+- "Need wheelchair access"→requires_assistance=true
 - ACKNOWLEDGE CHANGES: When you update an existing value, mention it.
   Example: "Updated your departure from NYC to Boston." or "Changed dates to Dec 5-10."
 
@@ -1296,7 +1353,7 @@ RULES:
 - CURRENT STATE is truth—preserve values unless user changes them
 - After extracting, ask for next missing field (don't confirm what was extracted)
 - REQUIRED: destinations, origin, start_date, end_date
-- OPTIONAL: traveler_count, budget, vibes, multi_city_intent
+- OPTIONAL: adults, children, requires_assistance, budget, vibes, multi_city_intent
 - When all 4 REQUIRED complete → ready_to_generate=true, branches=[]
 - When ready_to_generate=true: Keep message SHORT (1 sentence).
   Just acknowledge or say "All set! Click Generate."
@@ -1308,7 +1365,7 @@ BRANCH GENERATION:
 - null/separate → N branches for N destinations (each branch has 1 destination)
 
 BUDGET INFERENCE (when not provided):
-- Default traveler_count=2 if unspecified
+- Default adults=2 if unspecified
 - Estimate: Budget-friendly ~$100-150/day, Mid-range ~$200/day, Premium ~$300+/day per person
 - Show "Suggested budget: ~$X,XXX" in branch description
 
@@ -1317,8 +1374,8 @@ OUTPUT FORMAT (MANDATORY - respond with this JSON structure only):
   "assistant_message": "Your response here",
   "trip_inputs": {{
     "destinations":[],"origin":null,"start_date":null,"end_date":null,
-    "traveler_count":null,"budget":null,"missing_fields":[],
-    "multi_city_intent":null,"vibes":[],
+    "adults":null,"children":null,"requires_assistance":null,"budget":null,
+    "missing_fields":[],"multi_city_intent":null,"vibes":[],
     "booking_types":null,"flight_settings":null,"hotel_settings":null,
     "activity_settings":null,"transport_settings":null
   }},
@@ -1336,7 +1393,7 @@ BOOKING SETTINGS FORMATS (only include if user mentions):
 BRANCH FORMAT:
 {{"label":"Trip Name","description":"Brief desc","destinations":["city"],
   "origin":"city","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",
-  "traveler_count":1,"budget":1000}}"""
+  "adults":2,"children":0,"requires_assistance":false,"budget":1000}}"""
 
     client = get_openai_client()
     if client is None:
@@ -1486,7 +1543,9 @@ BRANCH FORMAT:
                 "origin": data.get("origin"),
                 "start_date": data.get("start_date"),
                 "end_date": data.get("end_date"),
-                "traveler_count": data.get("traveler_count"),
+                "adults": data.get("adults"),
+                "children": data.get("children"),
+                "requires_assistance": data.get("requires_assistance"),
                 "budget": data.get("budget"),
             }
             data = {
@@ -1533,8 +1592,13 @@ BRANCH FORMAT:
                 ]
             elif field in ("start_date", "end_date"):
                 normalized_llm_response[field] = _normalize_date(raw_value)
-            elif field in ("traveler_count", "budget"):
+            elif field in ("adults", "children", "budget"):
                 normalized_llm_response[field] = _normalize_int(raw_value)
+            elif field == "requires_assistance":
+                if isinstance(raw_value, bool):
+                    normalized_llm_response[field] = raw_value
+                elif isinstance(raw_value, str):
+                    normalized_llm_response[field] = raw_value.lower() in ("true", "yes", "1")
             elif field == "multi_city_intent":
                 if raw_value in ("multi_city", "separate"):
                     normalized_llm_response[field] = raw_value
@@ -1621,7 +1685,9 @@ BRANCH FORMAT:
                                     "origin": branch.get("origin"),
                                     "start_date": branch.get("start_date"),
                                     "end_date": branch.get("end_date"),
-                                    "traveler_count": branch.get("traveler_count"),
+                                    "adults": branch.get("adults"),
+                                    "children": branch.get("children"),
+                                    "requires_assistance": branch.get("requires_assistance"),
                                     "budget": branch.get("budget"),
                                 }
                             )
@@ -1827,7 +1893,9 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 origin=_normalize_str(spec.get("origin")),
                 start_date=_normalize_date(spec.get("start_date")),
                 end_date=_normalize_date(spec.get("end_date")),
-                traveler_count=_normalize_int(spec.get("traveler_count")),
+                adults=_normalize_int(spec.get("adults")),
+                children=_normalize_int(spec.get("children")),
+                requires_assistance=spec.get("requires_assistance"),
                 budget=_normalize_int(spec.get("budget")),
                 is_primary=(idx == 0),
                 tiles=BranchTileIds(),
@@ -1853,7 +1921,8 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 origin=trip_inputs_model.origin if trip_inputs_model else None,
                 start_date=trip_inputs_model.start_date if trip_inputs_model else None,
                 end_date=trip_inputs_model.end_date if trip_inputs_model else None,
-                traveler_count=trip_inputs_model.traveler_count if trip_inputs_model else None,
+                adults=trip_inputs_model.adults if trip_inputs_model else None,
+                children=trip_inputs_model.children if trip_inputs_model else None,
             )
 
             tiles_response = search_tiles(tiles_request)
@@ -1870,6 +1939,7 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
 
         # 9. Build trip inputs for document
         # LLM output already includes vibes/multi_city_intent – just propagate what it sent
+        # Include ALL fields including booking preferences so LLM can update them
         doc_trip_inputs = None
         if trip_inputs_model:
             doc_trip_inputs = DocumentTripInputs(
@@ -1877,11 +1947,19 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 origin=trip_inputs_model.origin,
                 start_date=trip_inputs_model.start_date,
                 end_date=trip_inputs_model.end_date,
-                traveler_count=trip_inputs_model.traveler_count,
+                adults=trip_inputs_model.adults,
+                children=trip_inputs_model.children,
+                requires_assistance=trip_inputs_model.requires_assistance,
                 budget=trip_inputs_model.budget,
                 missing_fields=trip_inputs_model.missing_fields,
                 vibes=trip_inputs_model.vibes or [],
                 multi_city_intent=trip_inputs_model.multi_city_intent,
+                # Booking preferences - propagate LLM updates
+                booking_types=trip_inputs_model.booking_types,
+                flight_settings=trip_inputs_model.flight_settings,
+                hotel_settings=trip_inputs_model.hotel_settings,
+                activity_settings=trip_inputs_model.activity_settings,
+                transport_settings=trip_inputs_model.transport_settings,
             )
 
         # 10. Apply the planner update to the document

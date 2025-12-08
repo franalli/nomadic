@@ -9,7 +9,7 @@ import {
 import { validateTripInput } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
-import type { ChatPanelActions, ToastType } from '@/types/hooks';
+import type { ToastType } from '@/types/hooks';
 
 /**
  * Parse a vibe string that may contain an emoji prefix.
@@ -29,7 +29,6 @@ export interface TripInputsEditorOptions {
   storeTripInputs: DocumentTripInputs | null | undefined;
   branches: DocumentBranch[];
   selectedBranchId: string | null;
-  chatPanelActions: ChatPanelActions | null;
   onBranchesChange: (branches: DocumentBranch[]) => void;
   onSelectedBranchIdChange: (branchId: string | null) => void;
   onToast: (message: string, type?: ToastType) => void;
@@ -68,7 +67,10 @@ export interface TripInputsEditorActions {
   handleCommitField: (field?: keyof TripInputsDraft, value?: string) => Promise<void>;
   handleSetOrigin: (origin: string) => Promise<void>;
   handleRemoveOrigin: () => Promise<void>;
-  handleRemoveTravelerCount: () => Promise<void>;
+  handleRemoveTravelers: () => Promise<void>;
+  handleUpdateAdults: (value: number | null) => Promise<void>;
+  handleUpdateChildren: (value: number | null) => Promise<void>;
+  handleToggleRequiresAssistance: () => Promise<void>;
   handleRemoveBudget: () => Promise<void>;
   handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
@@ -88,7 +90,6 @@ export function useTripInputsEditor(
     storeTripInputs,
     branches,
     selectedBranchId,
-    chatPanelActions,
     onBranchesChange,
     onSelectedBranchIdChange,
     onToast,
@@ -137,9 +138,13 @@ export function useTripInputsEditor(
         newDraft.origin = storeTripInputs.origin ?? null;
         newDraft.start_date = storeTripInputs.start_date ?? null;
         newDraft.end_date = storeTripInputs.end_date ?? null;
-        newDraft.traveler_count = storeTripInputs.traveler_count != null
-          ? String(storeTripInputs.traveler_count)
+        newDraft.adults = storeTripInputs.adults != null
+          ? String(storeTripInputs.adults)
           : null;
+        newDraft.children = storeTripInputs.children != null
+          ? String(storeTripInputs.children)
+          : null;
+        newDraft.requires_assistance = storeTripInputs.requires_assistance ?? null;
         newDraft.budget = storeTripInputs.budget != null
           ? String(storeTripInputs.budget)
           : null;
@@ -177,13 +182,13 @@ export function useTripInputsEditor(
 
       // For numeric fields, validate the value
       let parsedValue: string | number = trimmedValue;
-      if (field === 'traveler_count') {
+      if (field === 'adults' || field === 'children') {
         const count = parseInt(trimmedValue, 10);
-        if (Number.isNaN(count) || count <= 0) {
+        if (Number.isNaN(count) || count < 0) {
           setTripInputsDraft((prev) => ({
             ...toTripInputsDraft(tripInputs),
             ...prev,
-            traveler_count: prevValue != null ? String(prevValue) : '',
+            [field]: prevValue != null ? String(prevValue) : '',
           }));
           return;
         }
@@ -216,8 +221,10 @@ export function useTripInputsEditor(
       const updates: Record<string, string | number | null> = {};
       if (field === 'origin') {
         updates.origin = trimmedValue;
-      } else if (field === 'traveler_count') {
-        updates.traveler_count = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue, 10);
+      } else if (field === 'adults') {
+        updates.adults = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue, 10);
+      } else if (field === 'children') {
+        updates.children = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue, 10);
       } else if (field === 'budget') {
         updates.budget = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
       }
@@ -234,13 +241,6 @@ export function useTripInputsEditor(
 
       if (field === 'origin') {
         message = `Got it! Departing from ${trimmedValue}. ✈️`;
-      } else if (field === 'traveler_count') {
-        const count = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue, 10);
-        if (!Number.isNaN(count)) {
-          message = count === 1
-            ? 'Noted! Planning for a solo adventure. 🎒'
-            : `Noted! Planning for ${count} travelers. 👥`;
-        }
       } else if (field === 'budget') {
         const budget = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
         if (!Number.isNaN(budget) && budget > 0) {
@@ -249,10 +249,10 @@ export function useTripInputsEditor(
       }
 
       if (message) {
-        chatPanelActions?.addAssistantMessage(message);
+        onToast(message, 'confirmation');
       }
     },
-    [tripInputs, documentStore, onToast, chatPanelActions]
+    [tripInputs, documentStore, onToast]
   );
 
   const handleSetOrigin = useCallback(
@@ -295,14 +295,14 @@ export function useTripInputsEditor(
         setPendingOrigin(null);
         setValidationLoading(null);
 
-        chatPanelActions?.addAssistantMessage(`Set "${valueToCommit}" as your departure city! ✈️`);
+        onToast(`Set "${valueToCommit}" as your departure city! ✈️`, 'confirmation');
       } catch {
         setPendingOrigin(null);
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }
     },
-    [documentStore, onToast, chatPanelActions]
+    [documentStore, onToast]
   );
 
   const handleRemoveOrigin = useCallback(async () => {
@@ -320,24 +320,55 @@ export function useTripInputsEditor(
       return;
     }
 
-    // Add assistant message to acknowledge the removal
-    chatPanelActions?.addAssistantMessage(`Removed "${removedOrigin}" as your departure city. 📍`);
+    // Add confirmation toast to acknowledge the removal
+    onToast(`Removed "${removedOrigin}" as your departure city. 📍`, 'confirmation');
 
     setSelectedLocationBadge(null);
-  }, [tripInputs.origin, documentStore, onToast, chatPanelActions]);
+  }, [tripInputs.origin, documentStore, onToast]);
 
-  const handleRemoveTravelerCount = useCallback(async () => {
-    if (tripInputs.traveler_count == null) return;
+  const handleRemoveTravelers = useCallback(async () => {
+    if (tripInputs.adults == null && tripInputs.children == null && tripInputs.requires_assistance == null) return;
 
-    const success = await documentStore.commitTripInputs({ traveler_count: null });
+    const success = await documentStore.commitTripInputs({
+      adults: null,
+      children: null,
+      requires_assistance: null,
+    });
 
     if (!success) {
-      onToast('Failed to clear traveler count. Please try again.', 'error');
+      onToast('Failed to clear travelers. Please try again.', 'error');
       return;
     }
 
-    chatPanelActions?.addAssistantMessage('Cleared the traveler count. 👥');
-  }, [tripInputs.traveler_count, documentStore, onToast, chatPanelActions]);
+    onToast('Cleared the travelers info. 👥', 'confirmation');
+  }, [tripInputs.adults, tripInputs.children, tripInputs.requires_assistance, documentStore, onToast]);
+
+  const handleUpdateAdults = useCallback(async (value: number | null) => {
+    const success = await documentStore.commitTripInputs({ adults: value });
+    if (!success) {
+      onToast('Failed to update adults. Please try again.', 'error');
+    }
+  }, [documentStore, onToast]);
+
+  const handleUpdateChildren = useCallback(async (value: number | null) => {
+    const success = await documentStore.commitTripInputs({ children: value });
+    if (!success) {
+      onToast('Failed to update children. Please try again.', 'error');
+    }
+  }, [documentStore, onToast]);
+
+  const handleToggleRequiresAssistance = useCallback(async () => {
+    const newValue = !tripInputs.requires_assistance;
+    const success = await documentStore.commitTripInputs({ requires_assistance: newValue });
+    if (!success) {
+      onToast('Failed to update assistance setting. Please try again.', 'error');
+      return;
+    }
+    const message = newValue
+      ? 'Noted! Will look for accessibility options. ♿'
+      : 'Removed accessibility requirement.';
+    onToast(message, 'confirmation');
+  }, [tripInputs.requires_assistance, documentStore, onToast]);
 
   const handleRemoveBudget = useCallback(async () => {
     if (tripInputs.budget == null) return;
@@ -349,8 +380,8 @@ export function useTripInputsEditor(
       return;
     }
 
-    chatPanelActions?.addAssistantMessage('Cleared the budget. 💰');
-  }, [tripInputs.budget, documentStore, onToast, chatPanelActions]);
+    onToast('Cleared the budget. 💰', 'confirmation');
+  }, [tripInputs.budget, documentStore, onToast]);
 
   const handleToggleMultiCity = useCallback(async () => {
     const currentIntent = tripInputs.multi_city_intent;
@@ -367,8 +398,8 @@ export function useTripInputsEditor(
     const message = newIntent === 'multi_city'
       ? 'Switched to one combined itinerary visiting all destinations! 🗺️'
       : 'Switched to separate trip options for each destination! 📍';
-    chatPanelActions?.addAssistantMessage(message);
-  }, [tripInputs.multi_city_intent, documentStore, onToast, chatPanelActions]);
+    onToast(message, 'confirmation');
+  }, [tripInputs.multi_city_intent, documentStore, onToast]);
 
   const handleAddDestination = useCallback(
     async (destination: string) => {
@@ -428,11 +459,11 @@ export function useTripInputsEditor(
         setPendingDestination(null);
         setValidationLoading(null);
 
-        // Show chat message for added destinations
+        // Show confirmation toast for added destinations
         if (wasSplit) {
-          chatPanelActions?.addAssistantMessage(`Added ${addedDestinations.join(', ')} to your destinations! 📍`);
+          onToast(`Added ${addedDestinations.join(', ')} to your destinations! 📍`, 'confirmation');
         } else {
-          chatPanelActions?.addAssistantMessage(`Added "${addedDestinations[0]}" to your destinations! 📍`);
+          onToast(`Added "${addedDestinations[0]}" to your destinations! 📍`, 'confirmation');
         }
       } catch {
         setPendingDestination(null);
@@ -440,7 +471,7 @@ export function useTripInputsEditor(
         setValidationLoading(null);
       }
     },
-    [tripInputs.destinations, documentStore, onToast, chatPanelActions]
+    [tripInputs.destinations, documentStore, onToast]
   );
 
   const handleRemoveDestination = useCallback(
@@ -501,9 +532,9 @@ export function useTripInputsEditor(
         return;
       }
 
-      // Add assistant message to acknowledge the removal
+      // Add confirmation toast to acknowledge the removal
       if (removedDestination) {
-        chatPanelActions?.addAssistantMessage(`Removed "${removedDestination}" from your destinations. 📍`);
+        onToast(`Removed "${removedDestination}" from your destinations. 📍`, 'confirmation');
       }
 
       setSelectedLocationBadge(null);
@@ -516,7 +547,6 @@ export function useTripInputsEditor(
       onBranchesChange,
       onSelectedBranchIdChange,
       onToast,
-      chatPanelActions,
     ]
   );
 
@@ -580,11 +610,11 @@ export function useTripInputsEditor(
         setPendingVibe(null);
         setValidationLoading(null);
 
-        // Show chat message for added vibes
+        // Show confirmation toast for added vibes
         if (wasSplit) {
-          chatPanelActions?.addAssistantMessage(`Added ${addedVibes.join(', ')} to your trip vibes! ✨`);
+          onToast(`Added ${addedVibes.join(', ')} to your trip vibes! ✨`, 'confirmation');
         } else {
-          chatPanelActions?.addAssistantMessage(`Added "${addedVibes[0]}" to your trip vibes! ✨`);
+          onToast(`Added "${addedVibes[0]}" to your trip vibes! ✨`, 'confirmation');
         }
       } catch {
         setPendingVibe(null);
@@ -592,7 +622,7 @@ export function useTripInputsEditor(
         setValidationLoading(null);
       }
     },
-    [tripInputs.vibes, documentStore, onToast, chatPanelActions]
+    [tripInputs.vibes, documentStore, onToast]
   );
 
   const handleRemoveVibe = useCallback(
@@ -611,12 +641,12 @@ export function useTripInputsEditor(
         return;
       }
 
-      // Add an assistant message to confirm the vibe was removed
+      // Add confirmation toast to confirm the vibe was removed
       if (removedVibe) {
-        chatPanelActions?.addAssistantMessage(`Removed "${removedVibe}" from your trip vibes.`);
+        onToast(`Removed "${removedVibe}" from your trip vibes.`, 'confirmation');
       }
     },
-    [tripInputs.vibes, documentStore, onToast, chatPanelActions]
+    [tripInputs.vibes, documentStore, onToast]
   );
 
   const resetDraft = useCallback(() => {
@@ -670,7 +700,10 @@ export function useTripInputsEditor(
     handleCommitField,
     handleSetOrigin,
     handleRemoveOrigin,
-    handleRemoveTravelerCount,
+    handleRemoveTravelers,
+    handleUpdateAdults,
+    handleUpdateChildren,
+    handleToggleRequiresAssistance,
     handleRemoveBudget,
     handleToggleMultiCity,
     handleAddDestination,

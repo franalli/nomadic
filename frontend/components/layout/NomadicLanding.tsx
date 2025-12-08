@@ -22,7 +22,7 @@ import type {
   BookingTypes,
   DocumentTripInputs,
 } from '@/types/document';
-import type { ChatPanelActions, ToastType } from '@/types/hooks';
+import type { ToastType } from '@/types/hooks';
 
 const HERO_TYPING_INTERVAL_MS = 200;
 const HERO_TYPING_PAUSE_MS = 8000;
@@ -32,6 +32,7 @@ const MAX_TOASTS = 3;
 const TOAST_DISMISS_MS = 4000;
 const TOAST_DISMISS_FAST_MS = 2000;
 const TOAST_DISMISS_ERROR_MS = 5000;
+const TOAST_DISMISS_CONFIRMATION_MS = 2500;
 
 export interface Toast {
   id: string;
@@ -76,6 +77,8 @@ export function NomadicLanding() {
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
   const storeTripInputs = documentStore.document?.trip_inputs;
+  const llmUpdatedFields = documentStore.llmUpdatedFields;
+  const acknowledgeLLMUpdate = documentStore.acknowledgeLLMUpdate;
 
   // Derive tripInputs from store (with defaults)
   const tripInputs: DocumentTripInputs = useMemo(() => {
@@ -93,12 +96,18 @@ export function NomadicLanding() {
   const toastIdRef = useRef(0);
 
   // Add a toast with optional type (defaults to 'info')
+  // Confirmation toasts coalesce (replace existing confirmations) to avoid stacking rapid changes
   const addToast = useCallback((message: string, type: ToastType = 'info') => {
     const id = `toast-${++toastIdRef.current}`;
     const newToast: Toast = { id, message, type, createdAt: Date.now() };
 
     setToasts((prev) => {
-      // If at max, remove oldest toast
+      // For confirmation toasts, replace any existing confirmation instead of stacking
+      if (type === 'confirmation') {
+        const withoutConfirmations = prev.filter((t) => t.type !== 'confirmation');
+        return [...withoutConfirmations, newToast];
+      }
+      // For other types, apply max limit
       const updated = prev.length >= MAX_TOASTS ? prev.slice(1) : prev;
       return [...updated, newToast];
     });
@@ -124,18 +133,7 @@ export function NomadicLanding() {
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
     handleUpdateActivitySettings,
-  } = useLocalBookingSettings(storeTripInputs, chatPanelRef);
-
-  // Create chat panel actions wrapper for the hook
-  const chatPanelActions: ChatPanelActions | null = useMemo(
-    () =>
-      chatPanelRef.current
-        ? { addAssistantMessage: chatPanelRef.current.addAssistantMessage }
-        : null,
-    // We need chatKey to re-create when panel resets
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [chatKey]
-  );
+  } = useLocalBookingSettings(storeTripInputs, addToast);
 
   // Branch manager hook - manages branches, tiles, and generating state
   const branchManager = useBranchManager({
@@ -177,7 +175,6 @@ export function NomadicLanding() {
     storeTripInputs,
     branches,
     selectedBranchId,
-    chatPanelActions,
     onBranchesChange: setBranches,
     onSelectedBranchIdChange: setSelectedBranchId,
     onToast: addToast,
@@ -215,7 +212,10 @@ export function NomadicLanding() {
     handleCommitField,
     handleSetOrigin,
     handleRemoveOrigin,
-    handleRemoveTravelerCount,
+    handleRemoveTravelers,
+    handleUpdateAdults,
+    handleUpdateChildren,
+    handleToggleRequiresAssistance,
     handleRemoveBudget,
     handleToggleMultiCity,
     handleAddDestination,
@@ -229,7 +229,6 @@ export function NomadicLanding() {
     tripInputs,
     tripInputsDraft,
     setTripInputsDraft,
-    chatPanelActions,
     onToast: addToast,
   });
 
@@ -258,6 +257,8 @@ export function NomadicLanding() {
       let dismissTime = TOAST_DISMISS_MS;
       if (toast.type === 'error') {
         dismissTime = TOAST_DISMISS_ERROR_MS;
+      } else if (toast.type === 'confirmation') {
+        dismissTime = TOAST_DISMISS_CONFIRMATION_MS;
       } else if (toasts.length >= MAX_TOASTS && index === 0) {
         // Oldest toast when queue is full dismisses faster
         dismissTime = TOAST_DISMISS_FAST_MS;
@@ -353,7 +354,10 @@ export function NomadicLanding() {
         onCalendarMouseLeave={handleCalendarMouseLeave}
         onDatePresetClick={handleDatePresetClick}
         onResetDates={handleResetDates}
-        onRemoveTravelerCount={handleRemoveTravelerCount}
+        onRemoveTravelers={handleRemoveTravelers}
+        onUpdateAdults={handleUpdateAdults}
+        onUpdateChildren={handleUpdateChildren}
+        onToggleRequiresAssistance={handleToggleRequiresAssistance}
         onRemoveBudget={handleRemoveBudget}
         onSelectLocationBadge={setSelectedLocationBadge}
         bookingTypes={bookingTypes}
@@ -365,6 +369,8 @@ export function NomadicLanding() {
         onUpdateHotelSettings={handleUpdateHotelSettings}
         onUpdateActivitySettings={handleUpdateActivitySettings}
         onUpdateTransportSettings={handleUpdateTransportSettings}
+        llmUpdatedFields={llmUpdatedFields}
+        onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       />
     ),
     missingFields,
@@ -382,6 +388,8 @@ export function NomadicLanding() {
         onRemoveVibe={handleRemoveVibe}
         setVibeInput={setVibeInput}
         setVibeInputExpanded={setVibeInputExpanded}
+        isLLMUpdated={llmUpdatedFields.has('vibes')}
+        onAcknowledge={() => acknowledgeLLMUpdate('vibes')}
       />
     ),
   };
@@ -456,23 +464,12 @@ export function NomadicLanding() {
 
   return (
     <div className="bg-background text-foreground min-h-screen">
-      {/* Animated Toast Notifications - Stacked */}
-      <div className="fixed left-1/2 top-4 z-50 flex -translate-x-1/2 flex-col items-center gap-2 sm:right-4 sm:left-auto sm:translate-x-0 sm:items-end">
+      {/* Error Toasts - Top Right (demands attention) */}
+      <div className="fixed right-4 top-4 z-50 flex flex-col items-end gap-2">
         <AnimatePresence mode="popLayout">
-          {toasts.map((toast) => {
-            // Determine colors based on toast type
-            const typeStyles = {
-              error: 'border-destructive/40 bg-destructive/5 text-destructive/70',
-              success: 'border-green-500/40 bg-green-500/5 text-green-600/70',
-              info: 'border-green-500/40 bg-green-500/5 text-green-600/70',
-            };
-            const buttonStyles = {
-              error: 'text-destructive/60 hover:text-destructive/50',
-              success: 'text-green-600/60 hover:text-green-600/50',
-              info: 'text-green-600/60 hover:text-green-600/50',
-            };
-
-            return (
+          {toasts
+            .filter((t) => t.type === 'error')
+            .map((toast) => (
               <motion.div
                 key={toast.id}
                 layout
@@ -486,21 +483,70 @@ export function NomadicLanding() {
                   layout: { type: 'spring', stiffness: 500, damping: 35 },
                 }}
                 role="alert"
-                aria-live="polite"
-                className={`flex items-center gap-3 rounded-full border px-4 py-2.5 text-sm shadow-lg backdrop-blur-sm sm:rounded-lg sm:py-3 ${typeStyles[toast.type]}`}
+                aria-live="assertive"
+                className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive/70 shadow-lg backdrop-blur-sm"
               >
                 <span className="max-w-[260px] truncate sm:max-w-[320px]">{toast.message}</span>
                 <button
                   type="button"
-                  className={`text-xs font-semibold transition-colors ${buttonStyles[toast.type]}`}
+                  className="text-xs font-semibold text-destructive/60 transition-colors hover:text-destructive/50"
                   onClick={() => removeToast(toast.id)}
                   aria-label="Dismiss notification"
                 >
                   ✕
                 </button>
               </motion.div>
-            );
-          })}
+            ))}
+        </AnimatePresence>
+      </div>
+
+      {/* Confirmation/Info/Success Toasts - Bottom Center (non-intrusive) */}
+      <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2 pb-safe">
+        <AnimatePresence mode="popLayout">
+          {toasts
+            .filter((t) => t.type !== 'error')
+            .map((toast) => {
+              // Determine colors based on toast type
+              const typeStyles: Record<string, string> = {
+                success: 'border-primary/30 bg-primary/5 text-primary',
+                info: 'border-primary/30 bg-primary/5 text-primary',
+                confirmation: 'border-primary/20 bg-primary/5 text-primary/80',
+              };
+              const buttonStyles: Record<string, string> = {
+                success: 'text-primary/50 hover:text-primary/70',
+                info: 'text-primary/50 hover:text-primary/70',
+                confirmation: 'text-primary/40 hover:text-primary/60',
+              };
+
+              return (
+                <motion.div
+                  key={toast.id}
+                  layout
+                  initial={{ opacity: 0, y: 50, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                  transition={{
+                    type: 'spring',
+                    stiffness: 500,
+                    damping: 35,
+                    layout: { type: 'spring', stiffness: 500, damping: 35 },
+                  }}
+                  role="status"
+                  aria-live="polite"
+                  className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-md backdrop-blur-sm ${typeStyles[toast.type] || typeStyles.info}`}
+                >
+                  <span className="max-w-[280px] truncate sm:max-w-[360px]">{toast.message}</span>
+                  <button
+                    type="button"
+                    className={`text-xs font-medium transition-colors ${buttonStyles[toast.type] || buttonStyles.info}`}
+                    onClick={() => removeToast(toast.id)}
+                    aria-label="Dismiss notification"
+                  >
+                    ✕
+                  </button>
+                </motion.div>
+              );
+            })}
         </AnimatePresence>
       </div>
 
@@ -528,7 +574,7 @@ export function NomadicLanding() {
               transition={{ duration: 0.5, delay: 0.1 }}
               className="mt-2 w-full sm:max-w-[605px]"
             >
-              <Card className="bg-card/95 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
+              <Card className="bg-card/75 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
                 <CardContent className="p-0 sm:p-3 sm:pb-0">
                   {chatPanelContent(false)}
                 </CardContent>

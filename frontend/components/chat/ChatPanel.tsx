@@ -156,10 +156,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       const node = scrollContainerRef.current;
       if (!node) return;
       // Double-RAF ensures scroll happens after React DOM update and browser paint
-      // Use instant scroll to avoid competing with message-enter animation
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          node.scrollTop = node.scrollHeight;
+          node.scrollTo({
+            top: node.scrollHeight,
+            behavior: 'smooth',
+          });
         });
       });
     }, []);
@@ -171,21 +173,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       });
     }, []);
 
-    // Scroll to bottom when messages change
-    useEffect(() => {
-      scrollToBottom();
-    }, [messages, scrollToBottom]);
-
     // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
     useEffect(() => {
       if (prevIsLoadingRef.current && !isLoading) {
+        scrollToBottom();
         scrollPanelIntoView();
         requestAnimationFrame(() => {
           inputRef.current?.focus();
         });
       }
       prevIsLoadingRef.current = isLoading;
-    }, [isLoading, scrollPanelIntoView]);
+    }, [isLoading, scrollToBottom, scrollPanelIntoView]);
 
     // Load chat history from backend API on mount
     useEffect(() => {
@@ -467,8 +465,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         inputRef.current.style.height = 'auto';
       }
       setTimeout(() => inputRef.current?.focus(), 0);
-      // Scroll page to show chat panel when user sends a message
-      scrollPanelIntoView();
       await sendMessageCore(trimmed);
     }
 
@@ -481,7 +477,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     return (
       <div
         ref={panelRef}
-        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300`}
+        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-card/30 rounded-xl p-4`}
       >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
@@ -555,16 +551,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         <div className="mt-auto space-y-2 pb-0">
           {/* Prompt suggestions for new users - quick start options */}
           {showSuggestions && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground/70 font-medium">Quick start:</span>
-              {PROMPT_SUGGESTIONS.map((suggestion) => (
+            <div className="flex flex-wrap justify-center gap-2 py-1">
+              {PROMPT_SUGGESTIONS.map((suggestion, idx) => (
                 <button
                   key={suggestion.label}
                   type="button"
                   onClick={() => handleSuggestionClick(suggestion.prompt)}
-                  className="text-xs px-3 py-1.5 rounded-full border border-border/60 bg-card hover:bg-muted/50 hover:border-border text-foreground/80 hover:text-foreground transition-all"
+                  className="group text-xs px-3.5 py-2 rounded-lg bg-muted/30 hover:bg-primary/10 border border-transparent hover:border-primary/20 text-foreground/70 hover:text-primary transition-all duration-200 hover:shadow-sm hover:-translate-y-0.5"
+                  style={{ animationDelay: `${idx * 75}ms` }}
                 >
-                  {suggestion.label}
+                  <span className="inline-block transition-transform duration-200 group-hover:scale-110 mr-1.5">{suggestion.label.split(' ')[0]}</span>
+                  <span className="font-medium">{suggestion.label.split(' ').slice(1).join(' ')}</span>
                 </button>
               ))}
             </div>
@@ -631,7 +628,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   sendMessageCore(GENERATE_PLAN_TRIGGER);
                 }}
                 disabled={isLoading || !readyToGenerate}
-                className="group w-full flex items-center justify-center gap-2 pt-1 text-sm font-semibold text-primary hover:text-primary/80 transition-all disabled:opacity-50"
+                className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 generate-shimmer"
               >
                 <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
                 <span>Generate Trip Options</span>
@@ -647,7 +644,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
                 <div>
                   <Collapsible.Trigger asChild>
-                    <button className={`w-full flex items-center gap-1.5 text-primary/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-primary transition-colors group ${!hasShownHint ? 'animate-pulse' : ''}`}>
+                    <button className={`w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
                       <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
                       Trip Details
                     </button>
@@ -663,7 +660,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
                 <div>
                   <Collapsible.Trigger asChild>
-                    <button className={`w-full flex items-center gap-1.5 text-accent/80 text-[10px] font-bold uppercase leading-none tracking-wider mb-0 hover:text-accent transition-colors group ${!hasShownHint ? 'animate-pulse' : ''}`}>
+                    <button className={`w-full flex items-center gap-2 text-accent text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-accent/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
                       <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${vibesOpen ? '' : '-rotate-90'}`} />
                       <Sparkles className="h-3 w-3" />
                       Vibes

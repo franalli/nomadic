@@ -44,13 +44,15 @@ class MockHotelProvider(Provider):
         tiles: List[Tile] = []
 
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
-        travelers = ctx.traveler_count or 2
+        total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 2
         nights = self._estimate_nights(ctx)
 
         base_count = ctx.max_results_per_vertical
         for i in range(1, base_count + 1):
             nightly_rate = 120 + 18 * i
-            price = round(nightly_rate * max(nights, 1) * (1 + 0.08 * max(travelers - 1, 0)), 2)
+            price = round(
+                nightly_rate * max(nights, 1) * (1 + 0.08 * max(total_travelers - 1, 0)), 2
+            )
             tiles.append(
                 Tile(
                     id=f"tile_mock_hotel_{i}",
@@ -58,7 +60,7 @@ class MockHotelProvider(Provider):
                     partner=self.name,
                     partner_product_id=f"mock_prop_{i}",
                     title=f"Mock Hotel {i} in {dest}",
-                    subtitle=self._subtitle(ctx, nights, travelers),
+                    subtitle=self._subtitle(ctx, nights, total_travelers),
                     image_url="https://picsum.photos/400/250",
                     price_estimate=round(price, 2),
                     live_price=None if source_mode == "cache" else round(price * 1.05, 2),
@@ -78,7 +80,8 @@ class MockHotelProvider(Provider):
                         "origin": ctx.origin,
                         "start_date": ctx.start_date,
                         "end_date": ctx.end_date,
-                        "traveler_count": travelers,
+                        "adults": ctx.adults,
+                        "children": ctx.children,
                         "nights": nights,
                     },
                     score=0.7 + 0.05 * i,
@@ -99,7 +102,7 @@ class MockFlightProvider(Provider):
         tiles: List[Tile] = []
 
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
-        traveler_count = ctx.traveler_count or 1
+        total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 1
         max_results = max(1, min(ctx.max_results_per_vertical, 3))
 
         options = [
@@ -131,7 +134,7 @@ class MockFlightProvider(Provider):
 
         for idx, option in enumerate(options[:max_results]):
             base_price = option["price"]
-            price = round(base_price * traveler_count, 2)
+            price = round(base_price * total_travelers, 2)
             tiles.append(
                 Tile(
                     id=f"tile_mock_flight_{idx + 1}",
@@ -160,7 +163,8 @@ class MockFlightProvider(Provider):
                         "fare_class": "Main cabin",
                         "destination": dest,
                         "origin": origin,
-                        "traveler_count": traveler_count,
+                        "adults": ctx.adults,
+                        "children": ctx.children,
                     },
                     score=0.65 + 0.05 * idx,
                     source=source_mode,
@@ -179,7 +183,7 @@ class MockActivityProvider(Provider):
         tiles: List[Tile] = []
 
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
-        traveler_count = ctx.traveler_count or 2
+        total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 2
         max_results = max(1, min(ctx.max_results_per_vertical, 3))
 
         activities = [
@@ -214,7 +218,7 @@ class MockActivityProvider(Provider):
 
         for idx, activity in enumerate(activities[:max_results]):
             per_person = round(activity["price"], 2)
-            total = round(per_person * traveler_count, 2)
+            total = round(per_person * total_travelers, 2)
             tiles.append(
                 Tile(
                     id=f"tile_mock_activity_{idx + 1}",
@@ -238,7 +242,8 @@ class MockActivityProvider(Provider):
                     meta={
                         "duration": activity["duration"],
                         "destination": dest,
-                        "traveler_count": traveler_count,
+                        "adults": ctx.adults,
+                        "children": ctx.children,
                     },
                     score=0.6 + 0.05 * idx,
                     source=source_mode,
