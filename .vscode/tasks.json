@@ -75,6 +75,15 @@
             },
             "isBackground": true,
             "problemMatcher": []
+        },
+        {
+            "label": "Start All",
+            "dependsOn": [
+                "Docker: Compose DB",
+                "Backend: Uvicorn",
+                "Frontend: Next Dev"
+            ],
+            "problemMatcher": []
         }
     ]
 }
