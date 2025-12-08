@@ -18,10 +18,7 @@ import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
 import { Card, CardContent } from '@/components/ui/card';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
-import type {
-  BookingTypes,
-  DocumentTripInputs,
-} from '@/types/document';
+import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 
 const HERO_TYPING_INTERVAL_MS = 200;
@@ -83,13 +80,9 @@ export function NomadicLanding() {
   // Derive tripInputs from store (with defaults)
   const tripInputs: DocumentTripInputs = useMemo(() => {
     if (!storeTripInputs) return DEFAULT_TRIP_INPUTS;
-    return { ...storeTripInputs };
+    return { ...DEFAULT_TRIP_INPUTS, ...storeTripInputs };
   }, [storeTripInputs]);
 
-  // Derive booking preferences from tripInputs (with defaults)
-  const bookingTypes: BookingTypes = useMemo(() => {
-    return tripInputs.booking_types ?? DEFAULT_TRIP_INPUTS.booking_types!;
-  }, [tripInputs.booking_types]);
 
   // Toast notification state - supports multiple stacked toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -125,10 +118,12 @@ export function NomadicLanding() {
 
   // Use hook for local booking settings state management
   const {
+    bookingTypes,
     flightSettings,
     hotelSettings,
     transportSettings,
     activitySettings,
+    handleUpdateBookingTypes,
     handleUpdateFlightSettings,
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
@@ -217,6 +212,7 @@ export function NomadicLanding() {
     handleUpdateChildren,
     handleToggleRequiresAssistance,
     handleRemoveBudget,
+    handleUpdateCurrency,
     handleToggleMultiCity,
     handleAddDestination,
     handleRemoveDestination,
@@ -359,12 +355,14 @@ export function NomadicLanding() {
         onUpdateChildren={handleUpdateChildren}
         onToggleRequiresAssistance={handleToggleRequiresAssistance}
         onRemoveBudget={handleRemoveBudget}
+        onUpdateCurrency={handleUpdateCurrency}
         onSelectLocationBadge={setSelectedLocationBadge}
         bookingTypes={bookingTypes}
         flightSettings={flightSettings}
         hotelSettings={hotelSettings}
         activitySettings={activitySettings}
         transportSettings={transportSettings}
+        onUpdateBookingTypes={handleUpdateBookingTypes}
         onUpdateFlightSettings={handleUpdateFlightSettings}
         onUpdateHotelSettings={handleUpdateHotelSettings}
         onUpdateActivitySettings={handleUpdateActivitySettings}
@@ -388,8 +386,8 @@ export function NomadicLanding() {
         onRemoveVibe={handleRemoveVibe}
         setVibeInput={setVibeInput}
         setVibeInputExpanded={setVibeInputExpanded}
-        isLLMUpdated={llmUpdatedFields.has('vibes')}
-        onAcknowledge={() => acknowledgeLLMUpdate('vibes')}
+        isLLMUpdated={false}
+        onAcknowledge={undefined}
       />
     ),
   };

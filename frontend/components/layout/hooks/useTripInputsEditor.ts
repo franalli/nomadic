@@ -11,6 +11,9 @@ import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 
+const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY'] as const;
+type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
+
 /**
  * Parse a vibe string that may contain an emoji prefix.
  * Format: "emoji text" (e.g., "🏖️ beach") or just "text" for legacy vibes.
@@ -72,6 +75,7 @@ export interface TripInputsEditorActions {
   handleUpdateChildren: (value: number | null) => Promise<void>;
   handleToggleRequiresAssistance: () => Promise<void>;
   handleRemoveBudget: () => Promise<void>;
+  handleUpdateCurrency: (currency: string) => Promise<void>;
   handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
   handleRemoveDestination: (index: number) => Promise<void>;
@@ -148,6 +152,7 @@ export function useTripInputsEditor(
         newDraft.budget = storeTripInputs.budget != null
           ? String(storeTripInputs.budget)
           : null;
+        newDraft.currency = storeTripInputs.currency ?? newDraft.currency ?? 'USD';
       }
 
       return newDraft;
@@ -204,6 +209,18 @@ export function useTripInputsEditor(
           return;
         }
         parsedValue = budget;
+      } else if (field === 'currency') {
+        const currency = trimmedValue.toUpperCase();
+        if (!SUPPORTED_CURRENCIES.includes(currency as SupportedCurrency)) {
+          setTripInputsDraft((prev) => ({
+            ...toTripInputsDraft(tripInputs),
+            ...prev,
+            currency: prevValue != null ? String(prevValue) : '',
+          }));
+          onToast('Unsupported currency. Please pick another option.', 'error');
+          return;
+        }
+        parsedValue = currency;
       }
 
       // Don't commit if value hasn't changed
@@ -227,6 +244,8 @@ export function useTripInputsEditor(
         updates.children = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue, 10);
       } else if (field === 'budget') {
         updates.budget = typeof parsedValue === 'number' ? parsedValue : parseInt(trimmedValue.replace(/[^\d]/g, ''), 10);
+      } else if (field === 'currency') {
+        updates.currency = typeof parsedValue === 'string' ? parsedValue.toUpperCase() : trimmedValue.toUpperCase();
       }
 
       const success = await documentStore.commitTripInputs(updates);
@@ -246,6 +265,8 @@ export function useTripInputsEditor(
         if (!Number.isNaN(budget) && budget > 0) {
           message = `Got it! Budget set to $${budget.toLocaleString()}. 💰`;
         }
+      } else if (field === 'currency' && typeof parsedValue === 'string') {
+        message = `Updated currency to ${parsedValue}. 💱`;
       }
 
       if (message) {
@@ -382,6 +403,22 @@ export function useTripInputsEditor(
 
     onToast('Cleared the budget. 💰', 'confirmation');
   }, [tripInputs.budget, documentStore, onToast]);
+
+  const handleUpdateCurrency = useCallback(async (currency: string) => {
+    const normalized = currency.toUpperCase();
+    if (!SUPPORTED_CURRENCIES.includes(normalized as SupportedCurrency)) {
+      onToast('Unsupported currency. Please pick another option.', 'error');
+      return;
+    }
+
+    // Optimistically update draft
+    setTripInputsDraft((prev) => ({ ...prev, currency: normalized }));
+
+    const success = await documentStore.commitTripInputs({ currency: normalized });
+    if (!success) {
+      onToast('Failed to update currency. Please try again.', 'error');
+    }
+  }, [documentStore, onToast]);
 
   const handleToggleMultiCity = useCallback(async () => {
     const currentIntent = tripInputs.multi_city_intent;
@@ -705,6 +742,7 @@ export function useTripInputsEditor(
     handleUpdateChildren,
     handleToggleRequiresAssistance,
     handleRemoveBudget,
+    handleUpdateCurrency,
     handleToggleMultiCity,
     handleAddDestination,
     handleRemoveDestination,

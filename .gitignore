@@ -10,6 +10,7 @@ backend/.venv
 
 # OS
 .DS_Store
+nul
 
 # Docker
 db-data

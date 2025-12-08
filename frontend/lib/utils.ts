@@ -59,7 +59,7 @@ export const formatDateForDisplay = (value?: string | null): string => {
 export const parseBudgetNumber = (budget?: string | number | null): number | null => {
   if (budget === null || budget === undefined) return null;
   const text = typeof budget === 'number' ? budget.toString() : budget;
-  const cleaned = text.replace(/[$,\s]/g, '');
+  const cleaned = text.replace(/[^0-9.]/g, '');
   const parsed = parseFloat(cleaned);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.round(parsed);
@@ -79,10 +79,33 @@ export const normalizeBudgetInput = (budget?: string | number | null): string | 
  * Format a budget value for display (e.g., "$3,000").
  * Returns the numeric formatted value if parseable, otherwise the normalized string.
  */
-export const formatBudgetDisplay = (budget?: string | number | null): string | null => {
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  CAD: 'CA$',
+  AUD: 'A$',
+  JPY: '¥',
+};
+
+export const formatBudgetDisplay = (
+  budget?: string | number | null,
+  currency?: string | null
+): string | null => {
   const numeric = parseBudgetNumber(budget);
-  if (numeric) return `$${numeric.toLocaleString()}`;
-  return normalizeBudgetInput(budget);
+  const symbol = currency ? CURRENCY_SYMBOLS[currency] ?? currency : null;
+
+  if (numeric) {
+    if (symbol) {
+      const prefixSymbols = ['$', '€', '£', '¥'];
+      const usePrefix = prefixSymbols.some((s) => symbol.startsWith(s));
+      return usePrefix ? `${symbol}${numeric.toLocaleString()}` : `${numeric.toLocaleString()} ${symbol}`;
+    }
+    return `$${numeric.toLocaleString()}`;
+  }
+  const normalized = normalizeBudgetInput(budget);
+  if (normalized && symbol) return `${normalized} ${symbol}`;
+  return normalized;
 };
 
 /**

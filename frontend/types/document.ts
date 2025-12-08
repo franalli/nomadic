@@ -35,6 +35,7 @@ export type DocumentBranch = {
   children?: number | null;
   requires_assistance?: boolean | null;
   budget?: number | null;
+  currency?: string | null;
   is_primary: boolean;
   tiles: BranchTileIds;
   selections: BranchSelections;
@@ -83,6 +84,7 @@ export type DocumentTripInputs = {
   children?: number | null;
   requires_assistance?: boolean | null;
   budget?: number | null;
+  currency?: string | null;
   missing_fields: string[];
   multi_city_intent?: 'multi_city' | 'separate' | null;
   vibes?: string[];

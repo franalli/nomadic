@@ -103,6 +103,7 @@ def search_tiles(req: TilesSearchRequest) -> TilesSearchResponse:
         "adults": ctx.adults,
         "children": ctx.children,
         "requires_assistance": ctx.requires_assistance,
+        "currency": ctx.currency,
     }
 
     return TilesSearchResponse(

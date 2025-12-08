@@ -10,7 +10,7 @@ import {
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
 import { DETAIL_PRESETS } from '@/lib/mocks';
-import { formatBudgetDisplay, normalizeBudgetInput } from '@/lib/utils';
+import { formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -52,8 +52,10 @@ const resolveDurationForBranch = (
 const resolveBudgetForBranch = (
   branch?: DocumentBranch | null,
   inputs?: DocumentTripInputs | null
-) =>
-  normalizeBudgetInput(branch?.budget) ?? normalizeBudgetInput(inputs?.budget);
+) => ({
+  amount: branch?.budget ?? inputs?.budget ?? null,
+  currency: branch?.currency ?? inputs?.currency ?? 'USD',
+});
 
 type BranchPanelProps = {
   branches: DocumentBranch[];
@@ -170,7 +172,7 @@ export const BranchPanel = memo(function BranchPanel({
     if (children != null && children > 0) travelerParts.push(`${children} child${children === 1 ? '' : 'ren'}`);
     const travelerLabel = travelerParts.length > 0 ? travelerParts.join(', ') : null;
     const dateLabel = selectedDuration?.rangeLabel ?? null;
-    const budgetLabel = formatBudgetDisplay(selectedBudget);
+    const budgetLabel = formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency);
 
     const framingParts = [
       origin && destination ? `${origin} → ${destination}` : destination,
@@ -260,8 +262,9 @@ export const BranchPanel = memo(function BranchPanel({
             const badgeLabel = statusReady ? 'Ready' : 'Customizing';
             const badgeColor = statusReady ? 'bg-green-500' : 'bg-orange-500';
             const badgeTextColor = 'text-white';
-            const budget = resolveBudgetForBranch(b, tripInputs) ?? preset.budget;
-            const budgetLabel = formatBudgetDisplay(budget) ?? preset.budget;
+            const branchBudget = resolveBudgetForBranch(b, tripInputs);
+            const budgetLabel =
+              formatBudgetDisplay(branchBudget.amount, branchBudget.currency) ?? preset.budget;
             const duration =
               resolveDurationForBranch(b, tripInputs)?.summary ?? preset.duration;
             return (
@@ -472,7 +475,7 @@ export const BranchPanel = memo(function BranchPanel({
                   Budget feel
                 </p>
                 <p className="text-foreground font-semibold">
-                  {formatBudgetDisplay(selectedBudget) ?? detailPreset.budget}
+                  {formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency) ?? detailPreset.budget}
                 </p>
                 <p className="text-muted-foreground text-xs">
                   Mix of local eats and a couple splurge moments.

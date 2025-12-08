@@ -72,6 +72,7 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   children: null,
   requires_assistance: null,
   budget: null,
+  currency: 'USD',
   multi_city_intent: null,
   vibes: [],
   missing_fields: ['destinations', 'origin', 'start_date', 'end_date'],
@@ -95,12 +96,19 @@ export type LLMUpdatableField =
   | 'adults'
   | 'children'
   | 'budget'
+  | 'currency'
   | 'vibes'
   // Settings objects (parent level)
+  | 'booking_types'
   | 'flight_settings'
   | 'hotel_settings'
   | 'activity_settings'
   | 'transport_settings'
+  // Booking types sub-fields
+  | 'booking_types.flights'
+  | 'booking_types.hotels'
+  | 'booking_types.ground_transport'
+  | 'booking_types.activities'
   // Flight settings sub-fields
   | 'flight_settings.round_trip'
   | 'flight_settings.direct_only'
@@ -194,6 +202,7 @@ function detectChangedFields(
     if (newInputs.adults != null) changed.push('adults');
     if (newInputs.children != null) changed.push('children');
     if (newInputs.budget != null) changed.push('budget');
+    if (newInputs.currency && newInputs.currency !== DEFAULT_TRIP_INPUTS.currency) changed.push('currency');
     if (newInputs.vibes?.length) changed.push('vibes');
     // Check settings against defaults (parent + sub-fields)
     const newFlight = newInputs.flight_settings;
@@ -243,6 +252,7 @@ function detectChangedFields(
   if (oldInputs.adults !== newInputs.adults) changed.push('adults');
   if (oldInputs.children !== newInputs.children) changed.push('children');
   if (oldInputs.budget !== newInputs.budget) changed.push('budget');
+  if (oldInputs.currency !== newInputs.currency) changed.push('currency');
   if (JSON.stringify(oldInputs.vibes) !== JSON.stringify(newInputs.vibes)) {
     changed.push('vibes');
   }

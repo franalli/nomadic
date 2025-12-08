@@ -8,6 +8,7 @@ import {
 } from '@/state/documentStore';
 import type {
   ActivitySettings,
+  BookingTypes,
   DocumentTripInputs,
   DocumentTripInputsPatch,
   FlightSettings,
@@ -17,10 +18,12 @@ import type {
 import type { ToastType } from '@/types/hooks';
 
 export interface UseLocalBookingSettingsReturn {
+  bookingTypes: BookingTypes;
   flightSettings: FlightSettings;
   hotelSettings: HotelSettings;
   transportSettings: TransportSettings;
   activitySettings: ActivitySettings;
+  handleUpdateBookingTypes: (settings: Partial<BookingTypes>) => void;
   handleUpdateFlightSettings: (settings: Partial<FlightSettings>) => void;
   handleUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
   handleUpdateTransportSettings: (settings: Partial<TransportSettings>) => void;
@@ -48,6 +51,9 @@ export function useLocalBookingSettings(
   const document = useDocumentStore((state) => state.document);
 
   // Local state for booking settings - initialize from store if available, else defaults
+  const [localBookingTypes, setLocalBookingTypes] = useState<BookingTypes>(
+    () => storeTripInputs?.booking_types ?? DEFAULT_TRIP_INPUTS.booking_types!
+  );
   const [localFlightSettings, setLocalFlightSettings] = useState<FlightSettings>(
     () => storeTripInputs?.flight_settings ?? DEFAULT_TRIP_INPUTS.flight_settings!
   );
@@ -62,18 +68,21 @@ export function useLocalBookingSettings(
   );
 
   // Refs to track latest settings values for use in callbacks
+  const bookingTypesRef = useRef(localBookingTypes);
   const flightSettingsRef = useRef(localFlightSettings);
   const hotelSettingsRef = useRef(localHotelSettings);
   const transportSettingsRef = useRef(localTransportSettings);
   const activitySettingsRef = useRef(localActivitySettings);
 
   // Refs to track if we have pending local changes that shouldn't be overwritten by store sync
+  const hasPendingBookingTypesChanges = useRef(false);
   const hasPendingFlightChanges = useRef(false);
   const hasPendingHotelChanges = useRef(false);
   const hasPendingTransportChanges = useRef(false);
   const hasPendingActivityChanges = useRef(false);
 
   // Debounce timers for each settings type
+  const bookingTypesCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flightCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hotelCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transportCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -83,6 +92,7 @@ export function useLocalBookingSettings(
   const pendingCommitsQueue = useRef<DocumentTripInputsPatch | null>(null);
 
   // Keep refs in sync with state
+  useEffect(() => { bookingTypesRef.current = localBookingTypes; }, [localBookingTypes]);
   useEffect(() => { flightSettingsRef.current = localFlightSettings; }, [localFlightSettings]);
   useEffect(() => { hotelSettingsRef.current = localHotelSettings; }, [localHotelSettings]);
   useEffect(() => { transportSettingsRef.current = localTransportSettings; }, [localTransportSettings]);
@@ -90,10 +100,18 @@ export function useLocalBookingSettings(
 
   // Sync local state from store when store values change (only if no pending local changes)
   // Using JSON.stringify for deep comparison to avoid unnecessary updates from reference changes
+  const storeBookingTypesJson = JSON.stringify(storeTripInputs?.booking_types);
   const storeFlightSettingsJson = JSON.stringify(storeTripInputs?.flight_settings);
   const storeHotelSettingsJson = JSON.stringify(storeTripInputs?.hotel_settings);
   const storeTransportSettingsJson = JSON.stringify(storeTripInputs?.transport_settings);
   const storeActivitySettingsJson = JSON.stringify(storeTripInputs?.activity_settings);
+
+  useEffect(() => {
+    if (storeTripInputs?.booking_types && !hasPendingBookingTypesChanges.current) {
+      setLocalBookingTypes(storeTripInputs.booking_types);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeBookingTypesJson]);
 
   useEffect(() => {
     if (storeTripInputs?.flight_settings && !hasPendingFlightChanges.current) {
@@ -131,6 +149,7 @@ export function useLocalBookingSettings(
       // Commit all queued changes in a single batched request
       documentStore.commitTripInputs(queuedCommits).then(() => {
         // Clear all pending flags after successful commit
+        hasPendingBookingTypesChanges.current = false;
         hasPendingFlightChanges.current = false;
         hasPendingHotelChanges.current = false;
         hasPendingTransportChanges.current = false;
@@ -142,6 +161,7 @@ export function useLocalBookingSettings(
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
+      if (bookingTypesCommitTimer.current) clearTimeout(bookingTypesCommitTimer.current);
       if (flightCommitTimer.current) clearTimeout(flightCommitTimer.current);
       if (hotelCommitTimer.current) clearTimeout(hotelCommitTimer.current);
       if (transportCommitTimer.current) clearTimeout(transportCommitTimer.current);
@@ -184,6 +204,45 @@ export function useLocalBookingSettings(
       }, COMMIT_DEBOUNCE_MS);
     },
     [document, documentStore]
+  );
+
+  // Booking types update handler
+  const handleUpdateBookingTypes = useCallback(
+    (settings: Partial<BookingTypes>) => {
+      const currentSettings = bookingTypesRef.current;
+      const newSettings = { ...currentSettings, ...settings };
+      // Update ref and state synchronously so rapid clicks work correctly
+      bookingTypesRef.current = newSettings;
+      setLocalBookingTypes(newSettings);
+
+      // Commit with debounce (handles queue for pre-document state)
+      commitWithDebounce(
+        { booking_types: newSettings },
+        bookingTypesCommitTimer,
+        hasPendingBookingTypesChanges
+      );
+
+      // Generate confirmation toast based on what actually changed
+      const typeLabels: Record<keyof BookingTypes, string> = {
+        flights: 'flights',
+        hotels: 'hotels',
+        ground_transport: 'ground transport',
+        activities: 'activities',
+      };
+      for (const [type, enabled] of Object.entries(settings) as [keyof BookingTypes, boolean][]) {
+        if (type in typeLabels) {
+          const oldValue = currentSettings[type];
+          if (oldValue !== enabled) {
+            const label = typeLabels[type];
+            onToast(
+              enabled ? `Added ${label} to search!` : `Removed ${label} from search.`,
+              'confirmation'
+            );
+          }
+        }
+      }
+    },
+    [commitWithDebounce, onToast]
   );
 
   // Flight settings update handler
@@ -343,10 +402,12 @@ export function useLocalBookingSettings(
   );
 
   return {
+    bookingTypes: localBookingTypes,
     flightSettings: localFlightSettings,
     hotelSettings: localHotelSettings,
     transportSettings: localTransportSettings,
     activitySettings: localActivitySettings,
+    handleUpdateBookingTypes,
     handleUpdateFlightSettings,
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,

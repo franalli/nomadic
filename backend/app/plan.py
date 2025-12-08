@@ -30,6 +30,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, List, Optional, cast
 from zoneinfo import ZoneInfo
@@ -77,7 +78,8 @@ class PlannerLLMOutput:
     Attributes:
         branches: List of branch specifications (trip options/themes). Each branch
                   is a dict with keys: label, description, destination, origin,
-                  start_date, end_date, adults, children, requires_assistance, budget.
+                  start_date, end_date, adults, children, requires_assistance,
+                  budget, currency.
         assistant_message: The conversational response to show the user.
         trip_inputs: Dict of collected/updated trip input fields.
         ready_to_generate: True when all fields are complete but branches haven't
@@ -125,6 +127,7 @@ _TRIP_INPUT_FIELDS = (
     "children",
     "requires_assistance",
     "budget",
+    "currency",
     "multi_city_intent",
     "vibes",
 )
@@ -146,6 +149,9 @@ _REQUIRED_TRIP_INPUT_FIELDS = (
     "start_date",
     "end_date",
 )
+
+DEFAULT_CURRENCY = os.getenv("DEFAULT_TRIP_CURRENCY", "USD")
+SUPPORTED_CURRENCIES = {"USD", "EUR", "GBP", "CAD", "AUD", "JPY"}
 
 
 # =============================================================================
@@ -233,7 +239,9 @@ def _serialize_document_for_llm(doc_data: Optional[PlanDocumentData]) -> Optiona
             if branch.requires_assistance:
                 lines.append("  Requires assistance: Yes")
         if branch.budget is not None:
-            lines.append(f"  Budget: {branch.budget}")
+            currency = branch.currency or getattr(doc_data.trip_inputs, "currency", None)
+            currency_part = f" {currency}" if currency else ""
+            lines.append(f"  Budget: {branch.budget}{currency_part}")
 
         # Tiles assigned to this branch
         tiles = branch.tiles
@@ -748,6 +756,32 @@ def _normalize_int(value: Any) -> Optional[int]:
             return None
 
 
+def _normalize_currency(value: Any, *, default: Optional[str] = None) -> Optional[str]:
+    """
+    Normalize a currency value to a supported 3-letter code.
+
+    Maps common symbols and uppercases valid codes. Returns the provided
+    default when the value cannot be normalized.
+    """
+    if value is None:
+        return default
+
+    symbol_map = {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}
+
+    text = _normalize_str(value)
+    if not text:
+        return default
+
+    if text in symbol_map:
+        text = symbol_map[text]
+
+    code = text.upper()
+    if code in SUPPORTED_CURRENCIES:
+        return code
+
+    return default
+
+
 def _clamp_traveler_value(value: Optional[int]) -> Optional[int]:
     """
     Constrain a traveler count (adults or children) to a valid range [0, 20].
@@ -899,6 +933,12 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
     if branch_budget is not None and branch_budget < 0:
         branch_budget = None
 
+    branch_currency = _normalize_currency(
+        spec.get("currency"), default=_normalize_currency(fallback_inputs.get("currency"))
+    )
+    if branch_currency is None:
+        branch_currency = DEFAULT_CURRENCY
+
     return {
         "label": str(spec["label"]),
         "description": str(spec.get("description", "")),
@@ -910,6 +950,7 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
         "children": branch_children,
         "requires_assistance": branch_requires_assistance,
         "budget": branch_budget,
+        "currency": branch_currency,
     }
 
 
@@ -1023,6 +1064,14 @@ def _validate_trip_inputs(trip_inputs: dict, *, today_iso: str) -> tuple[dict, L
             validation_messages.append(
                 "Budget must be zero or higher. Please share an updated budget."
             )
+
+    raw_currency = trip_inputs.get("currency")
+    normalized_currency = _normalize_currency(raw_currency)
+    if normalized_currency is None:
+        normalized_currency = DEFAULT_CURRENCY
+        if raw_currency not in (None, "", DEFAULT_CURRENCY):
+            validation_messages.append(f"I set the currency to {normalized_currency}.")
+    trip_inputs["currency"] = normalized_currency
 
     trip_inputs["missing_fields"] = _compute_missing_fields(trip_inputs)
     return trip_inputs, validation_messages
@@ -1191,6 +1240,7 @@ def _call_openai_for_plan(
             "children": ti.children,
             "requires_assistance": ti.requires_assistance,
             "budget": ti.budget,
+            "currency": ti.currency,
             "multi_city_intent": ti.multi_city_intent,
             "vibes": ti.vibes or [],
             # Booking preferences
@@ -1215,6 +1265,7 @@ def _call_openai_for_plan(
             "children": None,
             "requires_assistance": None,
             "budget": None,
+            "currency": DEFAULT_CURRENCY,
             "multi_city_intent": None,
             "vibes": [],
             # Booking preferences - initialize as None (will use schema defaults)
@@ -1260,140 +1311,111 @@ def _call_openai_for_plan(
     # Build current state as JSON for the prompt (include ALL fields including destinations)
     current_state_json = json.dumps(current_trip_inputs, indent=2)
 
-    # Single unified system prompt
-    system_prompt = f"""You are a travel planner. Today is {today}.
+    # Single unified system prompt - optimized for token efficiency and conversational UX
+    system_prompt = f"""You are a friendly, knowledgeable travel agent. Today is {today}.
+Respond with valid JSON only. Be warm but concise.
+Start assistant_message with a context-appropriate emoji:
+    🏛️ history/culture, 🏖️ beach, 🗼 landmarks,
+    ✈️ flights, 🏨 hotels, 📅 dates, 👨‍👩‍👧 travelers,
+    💰 budget, 🎉 ready state. Default ✨ only if nothing fits.
 
-CRITICAL: You MUST respond with valid JSON only. No plain text outside JSON.
+STATE: {current_state_json}
 
-STYLE: Warm, concise. Use emoji for destinations (🏛️ Rome, 🗼 Paris, 🗽 NYC, 🏯 Tokyo, 🏖️ Bali).
+PERSONA:
+- Enthusiastic about travel, patient with questions
+- Greetings → respond warmly, ask where they'd like to go
+- Thanks/appreciation → "Happy to help! [next step]"
+- Off-topic → gently redirect: "I'd love to help plan your trip! Where to?"
+- Confusion → clarify: "Just to make sure I understand..."
+- Celebrate exciting destinations briefly: "Barcelona—great choice!"
 
-CURRENT STATE:
-{current_state_json}
+EXTRACTION (set trip_inputs for ANY location mentioned):
+| Pattern | Fields |
+|---------|--------|
+| "from X to Y" | origin=X, destinations=[Y] |
+| "to Y from X" | origin=X, destinations=[Y] |
+| "X and Y" (no from) | destinations=[X,Y] |
+| solo/just me | adults=1 |
+| couple/me and partner | adults=2 |
+| family of N | adults=2, children=N-2 |
+| N adults, M kids | adults=N, children=M |
+| wheelchair/accessibility | requires_assistance=true |
+| $N / €N / £N | budget=N, currency=USD/EUR/GBP |
+| "for N days" + start | compute end_date |
+| "romantic"/"adventure"/"relaxing" | vibes=[theme] |
+| "food trip"/"beach vacation" | vibes=[themes mentioned] |
+| "want tours"/"outdoor activities" | activity_settings:{{categories:[type]}} |
 
-TASK: Extract trip details.
-Fields: destinations[], origin, start_date, end_date, adults, children,
-       requires_assistance, budget, multi_city_intent, vibes[]
-
-EXTRACTION (CRITICAL - always set trip_inputs for ANY location you mention):
-- origin=where FROM, destinations=where TO.
-  "from rome to florence" → origin="Rome", destinations=["Florence"]
-  "Flying from NYC to Rome" → origin="NYC", destinations=["Rome"]
-  "from Rome to NYC and Florence" → origin="Rome", destinations=["NYC","Florence"]
-  "to Paris from London" → origin="London", destinations=["Paris"]
-- IMPORTANT: If you mention a city in your response, it MUST be in trip_inputs.
-  Never say "from Rome" without setting origin="Rome".
-- Dates→YYYY-MM-DD. "today"={today}.
-  Duration: "starting tomorrow for 5 days" → set both dates
-- Travelers: Extract adults and children counts separately.
-  "solo"→adults=1, "couple"→adults=2, "family of 4"→adults=2,children=2
-  "3 adults and 2 kids"→adults=3,children=2
-  "just me"→adults=1, "me and my wife"→adults=2
-  "traveling with elderly parent who needs wheelchair"→requires_assistance=true
-  "accessibility needs"→requires_assistance=true
-- Budget: "$1500"→1500
-- Auto-correct obvious location typos
+Dates→YYYY-MM-DD. "today"={today}. Auto-correct typos.
 
 MULTI-DESTINATION:
-- DEFAULT: Multiple destinations = SEPARATE trips (each gets own branch)
-- Set multi_city_intent="multi_city" ONLY if user EXPLICITLY says
-  "one trip", "multi-city", "together", "single itinerary"
-- "Paris and Rome" → destinations=["Paris","Rome"], multi_city_intent=null (SEPARATE)
-- "Add Dubai" → append to destinations, keep multi_city_intent unchanged
-- NEVER ask about multi-city intent. Just add the destination and move on.
+- Default: separate trips (each destination gets own branch)
+- multi_city_intent="multi_city" ONLY if user says "one trip"/"multi-city"/"together"
+- Never ask about this—just add destinations and move on
 
-VIBES (trip themes/moods/activities):
-- Extract ALL relevant vibes from user message
-- "relaxing beach vacation"→["relaxation","beach"]
-- "adventure trip"→["adventure"], "F1 and beach"→["F1","beach"]
-- "romantic getaway"→["romantic"], "family trip"→["family"]
-- "food and wine tour"→["food","wine"], "cultural exploration"→["culture","history"]
-- "hiking adventure"→["hiking","adventure"], "spa retreat"→["spa","relaxation"]
-- Normalize: "Formula 1 Grand Prix"→"F1", "scuba diving"→"diving"
-- Keep vibes short (1-2 words each), lowercase
-- Keep existing vibes unless user explicitly changes them
-- If vibes empty after 4 required fields set, ask:
-  "What's the vibe? Adventure, relaxation, a special event?"
+VIBES (extract themes/moods—ALWAYS prefix with relevant emoji):
+"romantic getaway"→vibes:["💕 romantic"],
+"adventure"→vibes:["🧗 adventure"],
+"beach trip"→vibes:["🏖️ beach"]
+Emoji map: 🏖️ beach, 💕 romantic, 🧗 adventure, 👨‍👩‍👧 family,
+🍝 food, 🍷 wine, 🏛️ culture, 📜 history, 💆 spa, 😌 relaxation,
+🥾 hiking, 🏎️ F1, 🤿 diving, ⛷️ skiing, 🎭 nightlife.
+Default ✨ if unsure.
+Extract vibes when user mentions trip themes.
+ADD to existing vibes.
+If empty after required fields: "What's the vibe?"
 
-BOOKING PREFERENCES (extract when user mentions):
-- booking_types: which categories to search
-  "need flights and hotel"→{{"hotels":true,"flights":true}}
-  "just activities"→{{"activities":true}}
-  "skip flights, I'll drive"→{{"flights":false,"ground_transport":true}}
-- flight_settings: flight preferences
-  "business class"→{{"cabin_class":"business"}}
-  "first class"→{{"cabin_class":"first"}}
-  "direct flights only"→{{"direct_only":true}}
-  "one-way"→{{"round_trip":false}}
-- hotel_settings: hotel preferences
-  "5-star hotels"→{{"min_stars":5}}
-  "4+ stars"→{{"min_stars":4}}
-  "need a pool"→{{"amenities":["pool"]}}
-  "gym and spa"→{{"amenities":["gym","spa"]}}
-- activity_settings: activity preferences
-  "tours under 3 hours"→{{"max_duration_hours":3}}
-  "museum tours"→{{"categories":["museum"]}}
-- transport_settings: ground transport modes
-  "rent a car"→{{"car":true}}
-  "train only"→{{"train":true,"car":false,"bus":false}}
-- Preserve existing booking preferences unless user explicitly changes them
-- Only include fields that user mentions (partial updates are fine)
+BOOKING PREFS (extract only when mentioned):
+| Type | Examples |
+|------|----------|
+| booking_types | "need flights"→flights:true, "I'll drive"→flights:false,ground_transport:true |
+| flight_settings | "business class"→cabin_class:"business",
+  "direct only"→direct_only:true |
+| hotel_settings | "5-star"→min_stars:5,
+  "need pool"→amenities:["pool"] |
+| activity_settings | "tours"→categories:["tours"],
+  "outdoor"→categories:["outdoor"],
+  "cultural"→categories:["cultural"],
+  "food experiences"→categories:["food_drink"],
+  "under 3hrs"→max_duration_hours:3 |
+| transport_settings | "rent car"→car:true |
 
-UPDATES:
-- "Actually 3 adults"→adults=3. "Add a child"→increment children.
-- "Make it $2000"→budget=2000
-- "Leave from Boston instead"→origin="Boston"
-- "Add Florence"→append to destinations. "Remove Rome"→remove from destinations
-- "Visit all in one trip"→multi_city_intent="multi_city"
-- "Compare them", "separate options", "not both"→multi_city_intent="separate"
-- "Need wheelchair access"→requires_assistance=true
-- ACKNOWLEDGE CHANGES: When you update an existing value, mention it.
-  Example: "Updated your departure from NYC to Boston." or "Changed dates to Dec 5-10."
+UPDATES: Acknowledge changes briefly ("Got it—Boston instead of NYC").
+- "Add X"→append to destinations. "Remove X"→remove from destinations.
+- "Actually N adults"→update adults. "Make it $X"→update budget.
 
-RULES:
-- CURRENT STATE is truth—preserve values unless user changes them
-- After extracting, ask for next missing field (don't confirm what was extracted)
-- REQUIRED: destinations, origin, start_date, end_date
-- OPTIONAL: adults, children, requires_assistance, budget, vibes, multi_city_intent
-- When all 4 REQUIRED complete → ready_to_generate=true, branches=[]
-- When ready_to_generate=true: Keep message SHORT (1 sentence).
-  Just acknowledge or say "All set! Click Generate."
-- Generate branches ONLY when message is EXACTLY "{_GENERATE_PLAN_TRIGGER}"
-- Exception: May update existing branches based on user requests
+CONVERSATION FLOW:
+1. Extract what user provides
+2. Briefly acknowledge if updating existing values
+3. Ask for next missing REQUIRED field (destinations→origin→dates)
+4. Priority: be helpful, not robotic—vary your questions contextually
+   Instead of "Where will you be traveling from?" try "Flying out of...?"
 
-BRANCH GENERATION:
-- multi_city_intent="multi_city" → 1 branch visiting ALL destinations in sequence
-- null/separate → N branches for N destinations (each branch has 1 destination)
+CONFLICT RESOLUTION:
+- New dates after dates set → update and confirm: "Changed to Dec 5-10"
+- Contradictory info → ask: "Earlier you said X—should I update that?"
 
-BUDGET INFERENCE (when not provided):
-- Default adults=2 if unspecified
-- Estimate: Budget-friendly ~$100-150/day, Mid-range ~$200/day, Premium ~$300+/day per person
-- Show "Suggested budget: ~$X,XXX" in branch description
+READY STATE:
+- All 4 REQUIRED complete (destinations, origin, start_date, end_date) → ready_to_generate=true
+- Keep response SHORT and excited: "🎉 All set for Rome! Hit Generate when ready."
+- Generate branches ONLY on "{_GENERATE_PLAN_TRIGGER}"
 
-OUTPUT FORMAT (MANDATORY - respond with this JSON structure only):
-{{
-  "assistant_message": "Your response here",
-  "trip_inputs": {{
-    "destinations":[],"origin":null,"start_date":null,"end_date":null,
-    "adults":null,"children":null,"requires_assistance":null,"budget":null,
-    "missing_fields":[],"multi_city_intent":null,"vibes":[],
-    "booking_types":null,"flight_settings":null,"hotel_settings":null,
-    "activity_settings":null,"transport_settings":null
-  }},
-  "ready_to_generate": false,
-  "branches": []
-}}
+BRANCHES (only on generate trigger):
+- multi_city → 1 branch with all destinations
+- separate/null → N branches for N destinations
+- If no budget: estimate ~$200/day/person mid-range, note in description
 
-BOOKING SETTINGS FORMATS (only include if user mentions):
-- booking_types: {{"hotels":bool,"flights":bool,"ground_transport":bool,"activities":bool}}
-- flight_settings: {{"round_trip":bool,"cabin_class":"economy|...|first","direct_only":bool}}
-- hotel_settings: {{"min_stars":0-5,"amenities":["pool","gym","spa",...]}}
-- activity_settings: {{"categories":["museum","tour",...],"max_duration_hours":int|null}}
-- transport_settings: {{"car":bool,"train":bool,"bus":bool}}
+OUTPUT (JSON only):
+{{"assistant_message":"...","trip_inputs":{{fields}},"ready_to_generate":false,"branches":[]}}
 
-BRANCH FORMAT:
-{{"label":"Trip Name","description":"Brief desc","destinations":["city"],
-  "origin":"city","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD",
-  "adults":2,"children":0,"requires_assistance":false,"budget":1000}}"""
+trip_inputs fields: destinations[], origin, start_date, end_date, adults, children,
+requires_assistance, budget, currency, multi_city_intent, vibes[],
+booking_types, flight_settings, hotel_settings, activity_settings, transport_settings
+
+Omit unchanged fields. Backend computes missing_fields—don't include it.
+
+branch format: {{label, description, destinations[], origin, start_date, end_date,
+adults, children, requires_assistance, budget, currency}}"""
 
     client = get_openai_client()
     if client is None:
@@ -1547,6 +1569,7 @@ BRANCH FORMAT:
                 "children": data.get("children"),
                 "requires_assistance": data.get("requires_assistance"),
                 "budget": data.get("budget"),
+                "currency": data.get("currency"),
             }
             data = {
                 "branches": [single_branch],
@@ -1585,15 +1608,33 @@ BRANCH FORMAT:
                 vibe_list = (
                     raw_value if isinstance(raw_value, list) else ([raw_value] if raw_value else [])
                 )
-                normalized_llm_response["vibes"] = [
-                    v_normalized.lower()
-                    for v in vibe_list
-                    if v and (v_normalized := _normalize_str(v))
-                ]
+                # Preserve emoji prefix if present, otherwise add default
+                normalized_vibes = []
+                for v in vibe_list:
+                    v_str = _normalize_str(v)
+                    if not v_str:
+                        continue
+                    # Check if starts with emoji (emoji can be 1-2 chars)
+                    first_char = v_str[0]
+                    is_emoji = unicodedata.category(first_char) in ("So", "Sm")
+                    is_emoji = is_emoji or ord(first_char) > 0x1F000
+                    if is_emoji:
+                        # Already has emoji, keep as-is (lowercase the text part)
+                        parts = v_str.split(" ", 1)
+                        if len(parts) == 2:
+                            normalized_vibes.append(f"{parts[0]} {parts[1].lower()}")
+                        else:
+                            normalized_vibes.append(v_str.lower())
+                    else:
+                        # No emoji, add default sparkle
+                        normalized_vibes.append(f"✨ {v_str.lower()}")
+                normalized_llm_response["vibes"] = normalized_vibes
             elif field in ("start_date", "end_date"):
                 normalized_llm_response[field] = _normalize_date(raw_value)
             elif field in ("adults", "children", "budget"):
                 normalized_llm_response[field] = _normalize_int(raw_value)
+            elif field == "currency":
+                normalized_llm_response[field] = _normalize_currency(raw_value)
             elif field == "requires_assistance":
                 if isinstance(raw_value, bool):
                     normalized_llm_response[field] = raw_value
@@ -1689,6 +1730,7 @@ BRANCH FORMAT:
                                     "children": branch.get("children"),
                                     "requires_assistance": branch.get("requires_assistance"),
                                     "budget": branch.get("budget"),
+                                    "currency": branch.get("currency"),
                                 }
                             )
                     else:
@@ -1897,6 +1939,7 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 children=_normalize_int(spec.get("children")),
                 requires_assistance=spec.get("requires_assistance"),
                 budget=_normalize_int(spec.get("budget")),
+                currency=_normalize_currency(spec.get("currency"), default=DEFAULT_CURRENCY),
                 is_primary=(idx == 0),
                 tiles=BranchTileIds(),
             )
@@ -1923,6 +1966,7 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 end_date=trip_inputs_model.end_date if trip_inputs_model else None,
                 adults=trip_inputs_model.adults if trip_inputs_model else None,
                 children=trip_inputs_model.children if trip_inputs_model else None,
+                currency=trip_inputs_model.currency if trip_inputs_model else DEFAULT_CURRENCY,
             )
 
             tiles_response = search_tiles(tiles_request)
@@ -1951,6 +1995,7 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 children=trip_inputs_model.children,
                 requires_assistance=trip_inputs_model.requires_assistance,
                 budget=trip_inputs_model.budget,
+                currency=trip_inputs_model.currency,
                 missing_fields=trip_inputs_model.missing_fields,
                 vibes=trip_inputs_model.vibes or [],
                 multi_city_intent=trip_inputs_model.multi_city_intent,

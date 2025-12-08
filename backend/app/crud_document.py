@@ -145,6 +145,7 @@ def merge_trip_inputs(
         "children",
         "requires_assistance",
         "budget",
+        "currency",
         "multi_city_intent",
         "vibes",
         "destinations",
@@ -437,6 +438,8 @@ def apply_user_patch(
                 primary.requires_assistance = data.trip_inputs.requires_assistance
             if _field_was_provided("budget"):
                 primary.budget = data.trip_inputs.budget
+            if _field_was_provided("currency"):
+                primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
 
     return save_document_data(db, doc=doc, data=data, updated_by="user")
@@ -505,6 +508,8 @@ def apply_planner_update(
                 primary.requires_assistance = trip_inputs.requires_assistance
             if trip_inputs.budget is not None:
                 primary.budget = trip_inputs.budget
+            if trip_inputs.currency is not None:
+                primary.currency = trip_inputs.currency
             data.branches[primary_idx] = primary
 
     # Merge tiles - only if provided

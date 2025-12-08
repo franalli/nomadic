@@ -47,7 +47,7 @@ class Tile(BaseModel):
 
     price_estimate: Optional[float] = None
     live_price: Optional[float] = None
-    currency: str = "EUR"
+    currency: str = "USD"
     price_basis: str = "per_trip"
     is_estimate_only: bool = True
 
@@ -84,7 +84,7 @@ class TilesSearchRequest(BaseModel):
     verticals: List[TileType] = Field(default_factory=lambda: ["hotel", "flight", "activity"])
     max_results_per_vertical: int = 5
 
-    currency: str = "EUR"
+    currency: str = "USD"
     response_mode: str = "estimate_first"
 
 
@@ -150,6 +150,7 @@ class DocumentBranch(BaseModel):
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
     budget: Optional[int] = None
+    currency: str = "USD"
     is_primary: bool = False
     tiles: BranchTileIds = Field(default_factory=BranchTileIds)
     selections: BranchSelections = Field(default_factory=BranchSelections)
@@ -166,6 +167,7 @@ class DocumentTripInputsPatch(BaseModel):
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
     budget: Optional[int] = None
+    currency: Optional[str] = None
     missing_fields: Optional[List[str]] = None
     multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
     vibes: Optional[List[str]] = None
@@ -225,6 +227,7 @@ class DocumentTripInputs(BaseModel):
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
     budget: Optional[int] = None
+    currency: str = "USD"
     missing_fields: List[str] = Field(default_factory=list)
     # Multi-city intent: "multi_city" = one itinerary visiting all destinations
     # "separate" = generate separate branch options for each destination

@@ -23,5 +23,5 @@ class SearchContext(BaseModel):
     verticals: List[TileType] = Field(default_factory=list)
     max_results_per_vertical: int = 5
 
-    currency: str = "EUR"
+    currency: str = "USD"
     response_mode: Optional[str] = None

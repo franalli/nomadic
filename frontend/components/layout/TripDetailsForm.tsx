@@ -21,11 +21,12 @@ import type { DateRange } from 'react-day-picker';
 
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Switch } from '@/components/ui/switch';
 import { ExpandablePill } from '@/components/pill/ExpandablePill';
 import { InlineEditPill } from '@/components/pill/InlineEditPill';
 import { LocationBadge } from '@/components/pill/LocationBadge';
 import { TruncatedDestinationList } from '@/components/pill/TruncatedDestinationList';
-import { formatBudgetValue, formatDateForDisplay } from '@/lib/utils';
+import { formatDateForDisplay } from '@/lib/utils';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import type {
   ActivitySettings,
@@ -58,6 +59,15 @@ const ACTIVITY_CATEGORIES = [
   { value: 'food_drink', label: 'Food & Drink' },
 ] as const;
 
+const CURRENCY_OPTIONS = [
+  { value: 'USD', label: 'USD ($)' },
+  { value: 'EUR', label: 'EUR (€)' },
+  { value: 'GBP', label: 'GBP (£)' },
+  { value: 'CAD', label: 'CAD (CA$)' },
+  { value: 'AUD', label: 'AUD (A$)' },
+  { value: 'JPY', label: 'JPY (¥)' },
+] as const;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,6 +81,7 @@ export type TripInputsDraft = {
   children?: string | null;
   requires_assistance?: boolean | null;
   budget?: string | null;
+  currency?: string | null;
   vibes?: string[];
 };
 
@@ -108,6 +119,7 @@ export const toTripInputsDraft = (inputs: DocumentTripInputs): TripInputsDraft =
     children: inputs.children != null ? String(inputs.children) : null,
     requires_assistance: inputs.requires_assistance ?? null,
     budget: inputs.budget != null ? String(inputs.budget) : null,
+    currency: inputs.currency ?? 'USD',
     vibes: inputs.vibes ?? [],
   };
 };
@@ -183,6 +195,7 @@ export interface TripDetailsFormProps {
 
   // Other field callbacks
   onRemoveBudget: () => void;
+  onUpdateCurrency: (value: string) => void;
   onSelectLocationBadge: (key: 'origin' | number | null) => void;
 
   // Booking type toggles
@@ -191,6 +204,7 @@ export interface TripDetailsFormProps {
   hotelSettings: HotelSettings;
   activitySettings: ActivitySettings;
   transportSettings: TransportSettings;
+  onUpdateBookingTypes: (settings: Partial<BookingTypes>) => void;
   onUpdateFlightSettings: (settings: Partial<FlightSettings>) => void;
   onUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
   onUpdateActivitySettings: (settings: Partial<ActivitySettings>) => void;
@@ -250,13 +264,15 @@ function TripDetailsFormInner({
   onUpdateAdults,
   onUpdateChildren,
   onToggleRequiresAssistance,
-  onRemoveBudget,
+  onRemoveBudget: _onRemoveBudget,
+  onUpdateCurrency,
   onSelectLocationBadge,
-  bookingTypes: _bookingTypes,
+  bookingTypes,
   flightSettings,
   hotelSettings,
   activitySettings,
   transportSettings,
+  onUpdateBookingTypes,
   onUpdateFlightSettings,
   onUpdateHotelSettings,
   onUpdateActivitySettings,
@@ -284,6 +300,11 @@ function TripDetailsFormInner({
   const acknowledgeDates = () => {
     acknowledgeField('start_date');
     acknowledgeField('end_date');
+  };
+  const isBudgetLLMUpdated = isFieldLLMUpdated('budget') || isFieldLLMUpdated('currency');
+  const acknowledgeBudget = () => {
+    acknowledgeField('budget');
+    acknowledgeField('currency');
   };
 
   // Parse calendar dates for defaultMonth
@@ -461,48 +482,57 @@ function TripDetailsFormInner({
           isLLMUpdated={isFieldLLMUpdated('flight_settings')}
           onAcknowledge={() => acknowledgeField('flight_settings')}
           expandedContent={
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateFlightSettings({ round_trip: !flightSettings.round_trip });
-                    acknowledgeField('flight_settings.round_trip' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
-                    flightSettings.round_trip
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${isSubFieldUpdated('flight_settings.round_trip') ? 'sparkle-control' : ''}`}
-                >
-                  {flightSettings.round_trip ? 'Round trip' : 'One way'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateFlightSettings({ direct_only: !flightSettings.direct_only });
-                    acknowledgeField('flight_settings.direct_only' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
-                    flightSettings.direct_only
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${isSubFieldUpdated('flight_settings.direct_only') ? 'sparkle-control' : ''}`}
-                >
-                  {flightSettings.direct_only ? 'Direct only' : 'Any stops'}
-                </button>
-                <select
-                  value={flightSettings.cabin_class}
-                  onChange={(e) => {
-                    onUpdateFlightSettings({ cabin_class: e.target.value as FlightSettings['cabin_class'] });
-                    acknowledgeField('flight_settings.cabin_class' as LLMUpdatableField);
-                  }}
-                  className={`rounded-full border border-border/40 bg-muted/20 px-2 py-1 text-[11px] text-foreground focus:border-primary/40 focus:outline-none ${isSubFieldUpdated('flight_settings.cabin_class') ? 'sparkle-control' : ''}`}
-                >
-                  <option value="economy">Economy</option>
-                  <option value="premium_economy">Premium</option>
-                  <option value="business">Business</option>
-                  <option value="first">First</option>
-                </select>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2">
+                  <Switch
+                    checked={bookingTypes.flights}
+                    onCheckedChange={(checked) => onUpdateBookingTypes({ flights: checked })}
+                  />
+                  <span className="text-[11px] text-muted-foreground">Include flights</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateFlightSettings({ round_trip: !flightSettings.round_trip });
+                      acknowledgeField('flight_settings.round_trip' as LLMUpdatableField);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
+                      flightSettings.round_trip
+                        ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
+                        : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
+                    } ${isSubFieldUpdated('flight_settings.round_trip') ? 'sparkle-control' : ''}`}
+                  >
+                    {flightSettings.round_trip ? 'Round trip' : 'One way'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateFlightSettings({ direct_only: !flightSettings.direct_only });
+                      acknowledgeField('flight_settings.direct_only' as LLMUpdatableField);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
+                      flightSettings.direct_only
+                        ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
+                        : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
+                    } ${isSubFieldUpdated('flight_settings.direct_only') ? 'sparkle-control' : ''}`}
+                  >
+                    {flightSettings.direct_only ? 'Direct only' : 'Any stops'}
+                  </button>
+                  <select
+                    value={flightSettings.cabin_class}
+                    onChange={(e) => {
+                      onUpdateFlightSettings({ cabin_class: e.target.value as FlightSettings['cabin_class'] });
+                      acknowledgeField('flight_settings.cabin_class' as LLMUpdatableField);
+                    }}
+                    className={`rounded-full border border-border/40 bg-muted/20 px-2 py-1 text-[11px] text-foreground focus:border-primary/40 focus:outline-none ${isSubFieldUpdated('flight_settings.cabin_class') ? 'sparkle-control' : ''}`}
+                  >
+                    <option value="economy">Economy</option>
+                    <option value="premium_economy">Premium</option>
+                    <option value="business">Business</option>
+                    <option value="first">First</option>
+                  </select>
+                </div>
               </div>
             }
           />
@@ -516,52 +546,61 @@ function TripDetailsFormInner({
             isLLMUpdated={isFieldLLMUpdated('transport_settings')}
             onAcknowledge={() => acknowledgeField('transport_settings')}
             expandedContent={
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateTransportSettings({ car: !transportSettings.car });
-                    acknowledgeField('transport_settings.car' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
-                    transportSettings.car
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${isSubFieldUpdated('transport_settings.car') ? 'sparkle-control' : ''}`}
-                >
-                  <Car className="h-3 w-3" />
-                  Car
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateTransportSettings({ train: !transportSettings.train });
-                    acknowledgeField('transport_settings.train' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
-                    transportSettings.train
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${isSubFieldUpdated('transport_settings.train') ? 'sparkle-control' : ''}`}
-                >
-                  <Train className="h-3 w-3" />
-                  Train
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onUpdateTransportSettings({ bus: !transportSettings.bus });
-                    acknowledgeField('transport_settings.bus' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
-                    transportSettings.bus
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${isSubFieldUpdated('transport_settings.bus') ? 'sparkle-control' : ''}`}
-                >
-                  <Bus className="h-3 w-3" />
-                  Bus
-                </button>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-center gap-2">
+                  <Switch
+                    checked={bookingTypes.ground_transport}
+                    onCheckedChange={(checked) => onUpdateBookingTypes({ ground_transport: checked })}
+                  />
+                  <span className="text-[11px] text-muted-foreground">Include transport</span>
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateTransportSettings({ car: !transportSettings.car });
+                      acknowledgeField('transport_settings.car' as LLMUpdatableField);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
+                      transportSettings.car
+                        ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
+                        : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
+                    } ${isSubFieldUpdated('transport_settings.car') ? 'sparkle-control' : ''}`}
+                  >
+                    <Car className="h-3 w-3" />
+                    Car
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateTransportSettings({ train: !transportSettings.train });
+                      acknowledgeField('transport_settings.train' as LLMUpdatableField);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
+                      transportSettings.train
+                        ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
+                        : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
+                    } ${isSubFieldUpdated('transport_settings.train') ? 'sparkle-control' : ''}`}
+                  >
+                    <Train className="h-3 w-3" />
+                    Train
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUpdateTransportSettings({ bus: !transportSettings.bus });
+                      acknowledgeField('transport_settings.bus' as LLMUpdatableField);
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] transition-all duration-200 ${
+                      transportSettings.bus
+                        ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
+                        : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
+                    } ${isSubFieldUpdated('transport_settings.bus') ? 'sparkle-control' : ''}`}
+                  >
+                    <Bus className="h-3 w-3" />
+                    Bus
+                  </button>
+                </div>
               </div>
             }
           />
@@ -576,6 +615,13 @@ function TripDetailsFormInner({
             onAcknowledge={() => acknowledgeField('hotel_settings')}
             expandedContent={
               <div className="flex flex-col gap-3">
+                <label className="flex items-center gap-2">
+                  <Switch
+                    checked={bookingTypes.hotels}
+                    onCheckedChange={(checked) => onUpdateBookingTypes({ hotels: checked })}
+                  />
+                  <span className="text-[11px] text-muted-foreground">Include hotels</span>
+                </label>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-muted-foreground">Min stars:</span>
                   <div className={`flex gap-0.5 rounded-lg p-0.5 ${isSubFieldUpdated('hotel_settings.min_stars') ? 'sparkle-control' : ''}`}>
@@ -637,6 +683,13 @@ function TripDetailsFormInner({
             onAcknowledge={() => acknowledgeField('activity_settings')}
             expandedContent={
               <div className="flex flex-col gap-3">
+                <label className="flex items-center gap-2">
+                  <Switch
+                    checked={bookingTypes.activities}
+                    onCheckedChange={(checked) => onUpdateBookingTypes({ activities: checked })}
+                  />
+                  <span className="text-[11px] text-muted-foreground">Include activities</span>
+                </label>
                 <div className={`flex flex-wrap gap-1.5 rounded-lg p-0.5 ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}>
                   {ACTIVITY_CATEGORIES.map((category) => {
                     const isSelected = activitySettings.categories.includes(category.value);
@@ -813,11 +866,24 @@ function TripDetailsFormInner({
           compact
           isOpen={budgetPillOpen}
           onOpenChange={setBudgetPillOpen}
-          isLLMUpdated={isFieldLLMUpdated('budget')}
-          onAcknowledge={() => acknowledgeField('budget')}
+          isLLMUpdated={isBudgetLLMUpdated}
+          onAcknowledge={acknowledgeBudget}
           expandedContent={
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+            <div className="flex items-center gap-2">
+              <select
+                value={draftBase.currency ?? 'USD'}
+                onChange={(e) => {
+                  onFieldChange('currency', e.target.value);
+                  onUpdateCurrency(e.target.value);
+                }}
+                className="h-8 w-24 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+              >
+                {CURRENCY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
               <input
                 type="number"
                 value={draftBase.budget ?? ''}
@@ -825,7 +891,7 @@ function TripDetailsFormInner({
                 placeholder="Budget"
                 min={0}
                 step={100}
-                className="w-32 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 pl-6 pr-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                className="w-24 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();

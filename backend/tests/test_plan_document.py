@@ -79,6 +79,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                 "children": 0,
                 "requires_assistance": False,
                 "budget": 2000,
+                "currency": "USD",
                 "missing_fields": [],
             },
             "branches": [
@@ -94,6 +95,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "children": 0,
                     "requires_assistance": False,
                     "budget": 2000,
+                    "currency": "USD",
                     "is_primary": True,
                     "tiles": {
                         "stays": ["tile_1"],
@@ -118,6 +120,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "children": 0,
                     "requires_assistance": False,
                     "budget": 2000,
+                    "currency": "USD",
                     "is_primary": False,
                     "tiles": {
                         "stays": [],
@@ -141,7 +144,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "subtitle": "Cozy stay",
                     "image_url": None,
                     "price_estimate": 120.0,
-                    "currency": "EUR",
+                    "currency": "USD",
                     "price_basis": "per_night",
                     "is_estimate_only": True,
                     "deeplink_url": "https://example.com/hotel",
@@ -353,6 +356,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
             children=0,
             requires_assistance=False,
             budget=5000,
+            currency="EUR",
             missing_fields=[],
         )
 
@@ -369,6 +373,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
         data = get_document_data(doc)
         assert data.trip_inputs.destinations == ["Nice", "Florence"]
         assert data.trip_inputs.origin == "Oslo"
+        assert data.trip_inputs.currency == "EUR"
 
         # Verify PRIMARY branch was updated to match trip_inputs
         primary_branch = next(b for b in data.branches if b.is_primary)
@@ -383,6 +388,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
         assert primary_branch.end_date == "2025-12-20"
         assert primary_branch.adults == 4
         assert primary_branch.budget == 5000
+        assert primary_branch.currency == "EUR"
 
         # Verify NON-PRIMARY branch was NOT updated (stays with its own values)
         non_primary_branch = next(b for b in data.branches if not b.is_primary)
@@ -392,6 +398,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
         assert (
             non_primary_branch.origin == "London"
         ), "Non-primary branch should retain its own origin"
+        assert non_primary_branch.currency == "USD"
 
 
 def test_apply_planner_update_handles_empty_destinations():

@@ -322,6 +322,8 @@ export interface components {
             requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
+            /** Currency */
+            currency?: string | null;
             /**
              * Is Primary
              * @default false
@@ -351,6 +353,8 @@ export interface components {
             requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
+            /** Currency */
+            currency?: string | null;
             /** Missing Fields */
             missing_fields?: string[];
             /** Multi City Intent */
@@ -384,6 +388,8 @@ export interface components {
             requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
+            /** Currency */
+            currency?: string | null;
             /** Missing Fields */
             missing_fields?: string[] | null;
             /** Multi City Intent */
