@@ -65,7 +65,6 @@ export type HotelSettings = {
 // Activity-specific search settings
 export type ActivitySettings = {
   categories: string[]; // e.g., ['tours', 'experiences', 'outdoor']
-  max_duration_hours: number | null; // null = no limit
 };
 
 // Ground transport settings - which modes to include

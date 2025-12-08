@@ -390,13 +390,6 @@ export function useLocalBookingSettings(
           }
         }
       }
-      if ('max_duration_hours' in settings && currentSettings.max_duration_hours !== settings.max_duration_hours) {
-        const hours = settings.max_duration_hours;
-        const message = hours === null
-          ? 'Removed activity duration limit! 🎭'
-          : `Set max activity duration to ${hours} hour${hours === 1 ? '' : 's'}! 🎭`;
-        onToast(message, 'confirmation');
-      }
     },
     [commitWithDebounce, onToast]
   );

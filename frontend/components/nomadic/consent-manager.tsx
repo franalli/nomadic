@@ -115,29 +115,29 @@ export function ConsentManager() {
   };
 
   const renderPanel = () => (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg-strong/40 p-4 backdrop-blur-sm">
       <Card className="max-w-lg space-y-4 p-6">
         <div className="space-y-1">
-          <h2 className="text-xl font-semibold text-slate-900">Cookie & consent settings</h2>
-          <p className="text-sm text-slate-600">
+          <h2 className="text-xl font-semibold text-foreground">Cookie & consent settings</h2>
+          <p className="text-sm text-muted-foreground">
             We use essential cookies to keep your planning session secure. You can choose whether to
             allow additional categories if we add them later.
           </p>
         </div>
 
         <div className="space-y-3">
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <label className="flex items-start gap-3 rounded-lg border border-border bg-muted p-3">
             <input type="checkbox" checked readOnly className="mt-1 cursor-not-allowed" />
             <div>
-              <div className="text-sm font-semibold text-slate-900">Essential (required)</div>
-              <p className="text-sm text-slate-600">
+              <div className="text-sm font-semibold text-foreground">Essential (required)</div>
+              <p className="text-sm text-muted-foreground">
                 Secure session cookie to keep your trip, chat, and booking context tied to this
                 browser. Cannot be turned off—use "Start new session" to clear it.
               </p>
             </div>
           </label>
 
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3">
+          <label className="flex items-start gap-3 rounded-lg border border-border p-3">
             <input
               type="checkbox"
               checked={draft.functional}
@@ -145,14 +145,14 @@ export function ConsentManager() {
               className="mt-1"
             />
             <div>
-              <div className="text-sm font-semibold text-slate-900">Functional (optional)</div>
-              <p className="text-sm text-slate-600">
+              <div className="text-sm font-semibold text-foreground">Functional (optional)</div>
+              <p className="text-sm text-muted-foreground">
                 Remembering UI preferences if we add them (none set today). Stored only if enabled.
               </p>
             </div>
           </label>
 
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3">
+          <label className="flex items-start gap-3 rounded-lg border border-border p-3">
             <input
               type="checkbox"
               checked={draft.analytics}
@@ -160,15 +160,15 @@ export function ConsentManager() {
               className="mt-1"
             />
             <div>
-              <div className="text-sm font-semibold text-slate-900">Analytics (optional)</div>
-              <p className="text-sm text-slate-600">
+              <div className="text-sm font-semibold text-foreground">Analytics (optional)</div>
+              <p className="text-sm text-muted-foreground">
                 Measuring product usage without selling data. Disabled by default; no analytics are
                 loaded unless you opt in.
               </p>
             </div>
           </label>
 
-          <label className="flex items-start gap-3 rounded-lg border border-slate-200 p-3">
+          <label className="flex items-start gap-3 rounded-lg border border-border p-3">
             <input
               type="checkbox"
               checked={draft.marketing}
@@ -176,8 +176,8 @@ export function ConsentManager() {
               className="mt-1"
             />
             <div>
-              <div className="text-sm font-semibold text-slate-900">Marketing (optional)</div>
-              <p className="text-sm text-slate-600">
+              <div className="text-sm font-semibold text-foreground">Marketing (optional)</div>
+              <p className="text-sm text-muted-foreground">
                 Campaign measurement or remarketing if introduced later. Disabled by default; none
                 are active today.
               </p>
@@ -204,11 +204,11 @@ export function ConsentManager() {
   );
 
   const renderBanner = () => (
-    <div className="fixed inset-x-0 bottom-0 z-30 bg-white/95 shadow-lg ring-1 ring-slate-200">
+    <div className="fixed inset-x-0 bottom-0 z-30 bg-card/95 shadow-lg ring-1 ring-border">
       <div className="container mx-auto flex flex-col gap-3 px-4 py-4 md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
-          <p className="text-sm font-semibold text-slate-900">Your privacy choices</p>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm font-semibold text-foreground">Your privacy choices</p>
+          <p className="text-sm text-muted-foreground">
             We use essential cookies to keep your trip and booking context. Analytics and marketing
             are off unless you enable them.
           </p>

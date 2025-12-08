@@ -72,7 +72,7 @@ export default function CookiesPage() {
                   Marketing: campaign measurement or remarketing. None are active.
                 </li>
               </ul>
-              <p className="mt-2 text-sm text-slate-600">
+              <p className="mt-2 text-sm text-muted-foreground">
                 If we enable any of these, we will update this policy, request consent, and keep them
                 disabled unless you opt in.
               </p>
@@ -102,7 +102,7 @@ export default function CookiesPage() {
               The session_id persists until you clear it. Expedia itinerary identifiers are retained
               only as long as needed to show booking status or provide support. For more on how we
               handle data, see our{' '}
-              <Link href="/privacy" className="text-blue-700 underline">
+              <Link href="/privacy" className="text-primary underline">
                 Privacy Policy
               </Link>
               .
@@ -113,11 +113,11 @@ export default function CookiesPage() {
       cta={
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Questions about cookies?</h3>
-          <p className="text-slate-700">
+          <p className="text-text-soft">
             We are happy to help. Reach out and let us know which device and browser you are using
             plus, if applicable, your Expedia itinerary ID so we can troubleshoot booking flows.
           </p>
-          <Link href="/contact" className="text-blue-700 underline">
+          <Link href="/contact" className="text-primary underline">
             Go to /contact
           </Link>
         </div>

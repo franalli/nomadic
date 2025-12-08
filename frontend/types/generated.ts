@@ -217,8 +217,6 @@ export interface components {
         ActivitySettings: {
             /** Categories */
             categories?: string[];
-            /** Max Duration Hours */
-            max_duration_hours?: number | null;
         };
         /**
          * BookingTypes

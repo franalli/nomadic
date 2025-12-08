@@ -21,9 +21,9 @@ export default function PrivacyPage() {
             <>
               <p>Nomadic Inc. is the controller for personal data processed through this site.</p>
               <p>
-                Contact: <a href="mailto:privacy@nomadic.travel" className="text-blue-700 underline">privacy@nomadic.travel</a>. You
+                Contact: <a href="mailto:privacy@nomadic.travel" className="text-primary underline">privacy@nomadic.travel</a>. You
                 can also use the{' '}
-                <Link href="/contact" className="text-blue-700 underline">
+                <Link href="/contact" className="text-primary underline">
                   contact page
                 </Link>{' '}
                 for data requests.
@@ -85,7 +85,7 @@ export default function PrivacyPage() {
                 <li>Infrastructure providers (hosting, databases, monitoring) under confidentiality and data processing terms.</li>
                 <li>Service providers for support or compliance (only as needed and under contract).</li>
               </ul>
-              <p className="text-sm text-slate-600">
+              <p className="text-sm text-muted-foreground">
                 Where data is transferred outside your region, we rely on appropriate safeguards (e.g., DPAs and standard contractual clauses).
               </p>
             </>
@@ -129,7 +129,7 @@ export default function PrivacyPage() {
               Functional, analytics, and marketing categories are disabled by
               default and none are active today. Manage choices anytime via the banner or the
               "Manage cookies" link in the footer. See the{' '}
-              <Link href="/cookies" className="text-blue-700 underline">
+              <Link href="/cookies" className="text-primary underline">
                 Cookie Policy
               </Link>{' '}
               for details.
@@ -155,12 +155,12 @@ export default function PrivacyPage() {
       cta={
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Questions or data requests?</h3>
-          <p className="text-slate-700">
+          <p className="text-text-soft">
             Email us or submit a request on the contact page. For booking-specific questions, please
             include the Expedia itinerary or confirmation ID so we can coordinate with their Rapid
             API support channels.
           </p>
-          <Link href="/contact" className="text-blue-700 underline">
+          <Link href="/contact" className="text-primary underline">
             Go to /contact
           </Link>
         </div>

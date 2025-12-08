@@ -21,7 +21,7 @@ export default function ContactPage() {
             <>
               <p>
                 For general questions or help using Nomadic, email us at{' '}
-                <a href="mailto:support@nomadic.travel" className="text-blue-700 underline">
+                <a href="mailto:support@nomadic.travel" className="text-primary underline">
                   support@nomadic.travel
                 </a>
                 . Please include a brief description of the issue and any relevant screenshots.
@@ -38,12 +38,12 @@ export default function ContactPage() {
           body: (
             <p>
               To request access, correction, or deletion of your data, email{' '}
-              <a href="mailto:privacy@nomadic.travel" className="text-blue-700 underline">
+              <a href="mailto:privacy@nomadic.travel" className="text-primary underline">
                 privacy@nomadic.travel
               </a>{' '}
               with the email associated with your account. We will confirm your identity before
               completing the request. See our{' '}
-              <Link href="/privacy" className="text-blue-700 underline">
+              <Link href="/privacy" className="text-primary underline">
                 Privacy Policy
               </Link>{' '}
               for details.
@@ -84,8 +84,8 @@ export default function ContactPage() {
       cta={
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Need to report an urgent issue?</h3>
-          <p className="text-slate-700">
-            Flag the message subject with “Urgent” and include your Expedia itinerary ID so we can
+          <p className="text-text-soft">
+            Flag the message subject with "Urgent" and include your Expedia itinerary ID so we can
             escalate with their Rapid API support channels immediately.
           </p>
         </div>

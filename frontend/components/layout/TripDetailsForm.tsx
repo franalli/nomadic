@@ -488,7 +488,7 @@ function TripDetailsFormInner({
                     checked={bookingTypes.flights}
                     onCheckedChange={(checked) => onUpdateBookingTypes({ flights: checked })}
                   />
-                  <span className="text-[11px] text-muted-foreground">Include flights</span>
+                  <span className="text-[11px] text-muted-foreground">Book flights</span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -552,7 +552,7 @@ function TripDetailsFormInner({
                     checked={bookingTypes.ground_transport}
                     onCheckedChange={(checked) => onUpdateBookingTypes({ ground_transport: checked })}
                   />
-                  <span className="text-[11px] text-muted-foreground">Include transport</span>
+                  <span className="text-[11px] text-muted-foreground">Book transport</span>
                 </label>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -620,7 +620,7 @@ function TripDetailsFormInner({
                     checked={bookingTypes.hotels}
                     onCheckedChange={(checked) => onUpdateBookingTypes({ hotels: checked })}
                   />
-                  <span className="text-[11px] text-muted-foreground">Include hotels</span>
+                  <span className="text-[11px] text-muted-foreground">Book hotels</span>
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-muted-foreground">Min stars:</span>
@@ -688,7 +688,7 @@ function TripDetailsFormInner({
                     checked={bookingTypes.activities}
                     onCheckedChange={(checked) => onUpdateBookingTypes({ activities: checked })}
                   />
-                  <span className="text-[11px] text-muted-foreground">Include activities</span>
+                  <span className="text-[11px] text-muted-foreground">Book activities</span>
                 </label>
                 <div className={`flex flex-wrap gap-1.5 rounded-lg p-0.5 ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}>
                   {ACTIVITY_CATEGORIES.map((category) => {
@@ -714,27 +714,6 @@ function TripDetailsFormInner({
                       </button>
                     );
                   })}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-muted-foreground">Max duration:</span>
-                  <select
-                    value={activitySettings.max_duration_hours ?? ''}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      onUpdateActivitySettings({
-                        max_duration_hours: value === '' ? null : parseInt(value, 10)
-                      });
-                      acknowledgeField('activity_settings.max_duration_hours' as LLMUpdatableField);
-                    }}
-                    className={`rounded-full border border-border/40 bg-muted/20 px-2 py-0.5 text-[10px] text-foreground focus:border-primary/40 focus:outline-none ${isSubFieldUpdated('activity_settings.max_duration_hours') ? 'sparkle-control' : ''}`}
-                  >
-                    <option value="">No limit</option>
-                    <option value="1">1 hour</option>
-                    <option value="2">2 hours</option>
-                    <option value="3">3 hours</option>
-                    <option value="4">Half day (4h)</option>
-                    <option value="8">Full day (8h)</option>
-                  </select>
                 </div>
               </div>
             }
@@ -817,7 +796,7 @@ function TripDetailsFormInner({
                   }}
                   placeholder="0"
                   min={0}
-                  className="w-16 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                  className="w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
                 />
               </div>
               {/* Children input */}
@@ -840,21 +819,17 @@ function TripDetailsFormInner({
                   }}
                   placeholder="0"
                   min={0}
-                  className="w-16 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                  className="w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
                 />
               </div>
               {/* Requires assistance toggle */}
-              <button
-                type="button"
-                onClick={() => onToggleRequiresAssistance()}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-all duration-200 self-start ${
-                  tripInputs.requires_assistance
-                    ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                    : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                }`}
-              >
-                Requires assistance
-              </button>
+              <label className="flex items-center gap-2">
+                <Switch
+                  checked={tripInputs.requires_assistance ?? false}
+                  onCheckedChange={() => onToggleRequiresAssistance()}
+                />
+                <span className="text-[11px] text-muted-foreground">Requires assistance</span>
+              </label>
             </div>
           }
         />
@@ -876,7 +851,7 @@ function TripDetailsFormInner({
                   onFieldChange('currency', e.target.value);
                   onUpdateCurrency(e.target.value);
                 }}
-                className="h-8 w-24 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                className="h-8 w-24 rounded-full border border-primary/30 bg-card px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
               >
                 {CURRENCY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -891,7 +866,7 @@ function TripDetailsFormInner({
                 placeholder="Budget"
                 min={0}
                 step={100}
-                className="w-24 rounded-full border border-primary/30 bg-gradient-to-b from-primary/5 to-primary/10 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                className="w-24 rounded-full border border-primary/30 bg-card text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();

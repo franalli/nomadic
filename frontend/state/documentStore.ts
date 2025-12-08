@@ -47,7 +47,6 @@ export const DEFAULT_HOTEL_SETTINGS: HotelSettings = {
 
 export const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
   categories: [],
-  max_duration_hours: null,
 };
 
 export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
@@ -118,7 +117,6 @@ export type LLMUpdatableField =
   | 'hotel_settings.amenities'
   // Activity settings sub-fields
   | 'activity_settings.categories'
-  | 'activity_settings.max_duration_hours'
   // Transport settings sub-fields
   | 'transport_settings.car'
   | 'transport_settings.train'
@@ -227,7 +225,6 @@ function detectChangedFields(
     if (JSON.stringify(newActivity) !== JSON.stringify(defActivity)) {
       changed.push('activity_settings');
       if (JSON.stringify(newActivity?.categories) !== JSON.stringify(defActivity.categories)) changed.push('activity_settings.categories');
-      if (newActivity?.max_duration_hours !== defActivity.max_duration_hours) changed.push('activity_settings.max_duration_hours');
     }
 
     const newTransport = newInputs.transport_settings;
@@ -279,7 +276,6 @@ function detectChangedFields(
   if (JSON.stringify(oldActivity) !== JSON.stringify(newActivity)) {
     changed.push('activity_settings');
     if (JSON.stringify(oldActivity?.categories) !== JSON.stringify(newActivity?.categories)) changed.push('activity_settings.categories');
-    if (oldActivity?.max_duration_hours !== newActivity?.max_duration_hours) changed.push('activity_settings.max_duration_hours');
   }
 
   const oldTransport = oldInputs.transport_settings;

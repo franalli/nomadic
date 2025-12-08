@@ -122,7 +122,7 @@ export const TilesGrid = memo(function TilesGrid({
                     className={`flex h-8 w-8 items-center justify-center rounded-full border transition ${
                       isActive
                         ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-border/70 text-muted-foreground bg-white'
+                        : 'border-border/70 text-muted-foreground bg-card'
                     }`}
                   >
                     <Icon className="h-4 w-4" aria-hidden="true" />

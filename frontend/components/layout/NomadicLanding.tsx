@@ -482,12 +482,12 @@ export function NomadicLanding() {
                 }}
                 role="alert"
                 aria-live="assertive"
-                className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive/70 shadow-lg backdrop-blur-sm"
+                className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 dark:bg-destructive/20 px-4 py-3 text-sm text-destructive/70 dark:text-red-200 shadow-lg backdrop-blur-sm"
               >
                 <span className="max-w-[260px] truncate sm:max-w-[320px]">{toast.message}</span>
                 <button
                   type="button"
-                  className="text-xs font-semibold text-destructive/60 transition-colors hover:text-destructive/50"
+                  className="text-xs font-semibold text-destructive/60 dark:text-red-300/70 transition-colors hover:text-destructive/50 dark:hover:text-red-300"
                   onClick={() => removeToast(toast.id)}
                   aria-label="Dismiss notification"
                 >
@@ -506,14 +506,14 @@ export function NomadicLanding() {
             .map((toast) => {
               // Determine colors based on toast type
               const typeStyles: Record<string, string> = {
-                success: 'border-primary/30 bg-primary/5 text-primary',
-                info: 'border-primary/30 bg-primary/5 text-primary',
-                confirmation: 'border-primary/20 bg-primary/5 text-primary/80',
+                success: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
+                info: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
+                confirmation: 'border-primary/20 bg-primary/5 dark:bg-primary/20 text-primary/80 dark:text-primary-foreground/90',
               };
               const buttonStyles: Record<string, string> = {
-                success: 'text-primary/50 hover:text-primary/70',
-                info: 'text-primary/50 hover:text-primary/70',
-                confirmation: 'text-primary/40 hover:text-primary/60',
+                success: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
+                info: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
+                confirmation: 'text-primary/40 hover:text-primary/60 dark:text-primary-foreground/50 dark:hover:text-primary-foreground/80',
               };
 
               return (

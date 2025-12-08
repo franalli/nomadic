@@ -139,7 +139,7 @@ export const TileCard = memo(function TileCard({
 
         <button
           type="button"
-          className="text-muted-foreground absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 shadow-sm transition hover:bg-white hover:text-red-500"
+          className="text-muted-foreground absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-card/90 shadow-sm transition hover:bg-card hover:text-red-500"
           onClick={handleLikeToggle}
           aria-label={isLiked ? 'Unlike option' : 'Like option'}
         >

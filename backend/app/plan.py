@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 from typing import Any, List, Optional, cast
 from zoneinfo import ZoneInfo
 
+import tiktoken
 from openai.types.chat import ChatCompletionMessageParam
 from sqlalchemy.orm import Session
 
@@ -84,6 +85,7 @@ class PlannerLLMOutput:
         trip_inputs: Dict of collected/updated trip input fields.
         ready_to_generate: True when all fields are complete but branches haven't
                            been generated yet (waiting for user to click Generate).
+        token_estimate: Estimated total tokens used so far for debugging purposes.
     """
 
     def __init__(
@@ -93,11 +95,13 @@ class PlannerLLMOutput:
         assistant_message: str,
         trip_inputs: Optional[dict] = None,
         ready_to_generate: bool = False,
+        token_estimate: Optional[int] = None,
     ) -> None:
         self.branches = branches
         self.assistant_message = assistant_message
         self.trip_inputs = trip_inputs or {}
         self.ready_to_generate = ready_to_generate
+        self.token_estimate = token_estimate
 
 
 # =============================================================================
@@ -152,6 +156,55 @@ _REQUIRED_TRIP_INPUT_FIELDS = (
 
 DEFAULT_CURRENCY = os.getenv("DEFAULT_TRIP_CURRENCY", "USD")
 SUPPORTED_CURRENCIES = {"USD", "EUR", "GBP", "CAD", "AUD", "JPY"}
+
+
+# =============================================================================
+# TOKEN ESTIMATION
+# =============================================================================
+
+
+def _count_tokens(text: str) -> int:
+    """Estimate token count for a text block using tiktoken, with safe fallbacks."""
+    safe_text = text or ""
+    try:
+        return len(tiktoken.encode(safe_text))
+    except Exception:
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(safe_text))
+        except Exception:
+            # Fallback to character length if tiktoken fails entirely
+            return len(safe_text)
+
+
+def _estimate_total_tokens(
+    *,
+    system_messages: List[str],
+    history: List[ChatCompletionMessageParam],
+    user_message: str,
+    llm_output: str,
+) -> int:
+    """
+    Approximate total tokens consumed so far by summing system, history, user, and LLM output.
+    """
+    token_counter = 0
+
+    for content in system_messages:
+        if content:
+            token_counter += _count_tokens(str(content))
+
+    for msg in history:
+        content = ""
+        if isinstance(msg, dict):
+            content = str(msg.get("content", ""))
+        else:
+            content = str(getattr(msg, "content", ""))
+        token_counter += _count_tokens(content)
+
+    token_counter += _count_tokens(user_message)
+    token_counter += _count_tokens(llm_output)
+
+    return token_counter
 
 
 # =============================================================================
@@ -851,7 +904,7 @@ def _normalize_booking_field(field: str, raw_value: dict) -> Optional[dict]:
         return result if result else None
 
     if field == "activity_settings":
-        # ActivitySettings: categories (list of str), max_duration_hours (int or null)
+        # ActivitySettings: categories (list of str)
         result = {}
         if "categories" in raw_value:
             categories = raw_value["categories"]
@@ -859,10 +912,6 @@ def _normalize_booking_field(field: str, raw_value: dict) -> Optional[dict]:
                 result["categories"] = [
                     _normalize_str(c).lower() for c in categories if c and _normalize_str(c)
                 ]
-        if "max_duration_hours" in raw_value:
-            hours = _normalize_int(raw_value["max_duration_hours"])
-            if hours is not None and hours > 0:
-                result["max_duration_hours"] = hours
         return result if result else None
 
     if field == "transport_settings":
@@ -1376,8 +1425,7 @@ BOOKING PREFS (extract only when mentioned):
 | activity_settings | "tours"→categories:["tours"],
   "outdoor"→categories:["outdoor"],
   "cultural"→categories:["cultural"],
-  "food experiences"→categories:["food_drink"],
-  "under 3hrs"→max_duration_hours:3 |
+  "food experiences"→categories:["food_drink"] |
 | transport_settings | "rent car"→car:true |
 
 UPDATES: Acknowledge changes briefly ("Got it—Boston instead of NYC").
@@ -1770,11 +1818,33 @@ adults, children, requires_assistance, budget, currency}}"""
         if has_all_fields:
             trip_inputs["missing_fields"] = []
 
+        token_estimate = None
+        try:
+            llm_output_text = (raw_content or "").strip()
+            if not llm_output_text:
+                llm_output_text = json.dumps(data, ensure_ascii=True, default=str) if data else ""
+            if not llm_output_text:
+                llm_output_text = assistant_message
+
+            system_token_sources = [system_prompt]
+            if document_context:
+                system_token_sources.append(document_context)
+
+            token_estimate = _estimate_total_tokens(
+                system_messages=system_token_sources,
+                history=history_messages,
+                user_message=req.message,
+                llm_output=llm_output_text,
+            )
+        except Exception:
+            token_estimate = None
+
         output = PlannerLLMOutput(
             branches=cleaned,
             assistant_message=assistant_message,
             trip_inputs=trip_inputs,
             ready_to_generate=final_ready_to_generate,
+            token_estimate=token_estimate,
         )
 
         return output
@@ -2042,6 +2112,11 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
 
         # Reconstruct the document data with chat fields
         doc_data_with_chat = PlanDocumentData(**doc_data_dict)
+
+        if _DEBUG_LOG and planner_output.token_estimate is not None:
+            print(
+                f"[DEBUG] Estimated total LLM tokens used so far: {planner_output.token_estimate}"
+            )
 
         response = PlanDocumentResponse(
             version=plan_doc.version,

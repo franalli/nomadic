@@ -12,7 +12,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-slate-50 text-slate-800">
+      <body className="min-h-screen bg-bg text-text">
         {/* Skip link for keyboard navigation */}
         <a
           href="#main-content"

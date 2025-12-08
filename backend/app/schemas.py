@@ -205,7 +205,6 @@ class ActivitySettings(BaseModel):
     """Activity-specific search settings."""
 
     categories: List[str] = Field(default_factory=list)  # empty = all categories
-    max_duration_hours: Optional[int] = None  # null = no limit
 
 
 class TransportSettings(BaseModel):

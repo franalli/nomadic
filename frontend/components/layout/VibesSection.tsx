@@ -119,7 +119,7 @@ function VibesSectionInner({
             value={vibeInput}
             onChange={(e) => setVibeInput(e.target.value)}
             placeholder="Type a vibe..."
-            className="w-32 rounded-full border border-accent/40 bg-gradient-to-b from-accent/5 to-accent/10 px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 focus:ring-offset-1 focus:shadow-pill-accent"
+            className="w-32 rounded-full border border-accent/40 bg-card text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/25 focus:ring-offset-1 focus:shadow-pill-accent"
             autoFocus
             onBlur={() => {
               // Collapse if empty after a short delay (allows click on submit to work)

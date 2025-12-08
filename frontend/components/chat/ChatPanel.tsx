@@ -477,7 +477,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     return (
       <div
         ref={panelRef}
-        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-card/30 rounded-xl p-4`}
+        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-card/30 dark:bg-bg-strong/60 rounded-xl p-4`}
       >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
@@ -628,7 +628,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   sendMessageCore(GENERATE_PLAN_TRIGGER);
                 }}
                 disabled={isLoading || !readyToGenerate}
-                className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 generate-shimmer"
+                className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 generate-shimmer dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60 dark:shadow-[0_0_20px_hsl(25_85%_55%/0.25)] dark:hover:shadow-[0_0_30px_hsl(25_85%_55%/0.4)]"
               >
                 <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
                 <span>Generate Trip Options</span>

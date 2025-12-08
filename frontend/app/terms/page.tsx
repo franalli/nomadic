@@ -85,11 +85,11 @@ export default function TermsPage() {
               <li>
                 Our data practices, including what is shared with Expedia Group when you request
                 booking details, are described in the{' '}
-                <Link href="/privacy" className="text-blue-700 underline">
+                <Link href="/privacy" className="text-primary underline">
                   Privacy Policy
                 </Link>{' '}
                 and{' '}
-                <Link href="/cookies" className="text-blue-700 underline">
+                <Link href="/cookies" className="text-primary underline">
                   Cookie Policy
                 </Link>
                 .
@@ -132,12 +132,12 @@ export default function TermsPage() {
       cta={
         <div className="space-y-2">
           <h3 className="text-lg font-semibold">Need help or have questions?</h3>
-          <p className="text-slate-700">
+          <p className="text-text-soft">
             Visit our contact page for support. For booking assistance, include your Expedia
             itinerary or confirmation number so we can resolve issues quickly with their Rapid API
             team.
           </p>
-          <Link href="/contact" className="text-blue-700 underline">
+          <Link href="/contact" className="text-primary underline">
             Go to /contact
           </Link>
         </div>

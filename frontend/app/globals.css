@@ -50,12 +50,98 @@
   --ring: 160 45% 25%;
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Earthy Nomadic palette - Dark mode */
+    --bg: 160 30% 8%;
+    --bg-soft: 160 20% 12%;
+    --bg-strong: 160 35% 6%;
+    --surface: 160 25% 12%;
+    --border: 160 20% 22%;
+
+    --text: 35 25% 92%;
+    --text-soft: 35 20% 78%;
+    --text-muted: 160 15% 55%;
+    --text-onDark: 160 40% 15%;
+
+    --charcoal: 35 20% 88%;
+    --sand: 25 30% 20%;
+    --bronze: 25 85% 58%;
+    --sky: 160 40% 45%;
+
+    /* Core theme tokens */
+    --background: 160 30% 8%;
+    --foreground: 35 25% 92%;
+
+    --card: 160 25% 12%;
+    --card-foreground: 35 25% 90%;
+
+    --popover: 160 25% 14%;
+    --popover-foreground: 35 25% 90%;
+
+    --primary: 160 40% 42%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 25 30% 22%;
+    --secondary-foreground: 25 50% 80%;
+
+    --muted: 160 20% 14%;
+    --muted-foreground: 160 15% 68%;
+
+    --accent: 25 85% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 98%;
+
+    --input: 160 20% 22%;
+    --ring: 160 40% 45%;
+  }
+}
+
 html {
   scroll-behavior: smooth;
 }
 
 body {
   @apply bg-bg text-text font-body;
+}
+
+/* Number input spinner styling for dark mode */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  opacity: 1;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    filter: invert(1);
+  }
+
+  /* Firefox number input */
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  /* Select dropdown styling for dark mode */
+  select {
+    background-color: hsl(160 25% 12%);
+    color: hsl(35 25% 92%);
+  }
+
+  select option {
+    background-color: hsl(160 25% 12%);
+    color: hsl(35 25% 92%);
+  }
+
+  select option:hover,
+  select option:checked {
+    background-color: hsl(160 40% 20%);
+  }
 }
 
 @keyframes compass-spin {
