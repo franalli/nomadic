@@ -608,27 +608,29 @@ def test_merge_trip_inputs_explicit_null_clears_dates():
     assert "end_date" in result.missing_fields
 
 
-def test_merge_trip_inputs_explicit_null_clears_vibes():
-    """Test that explicit_nulls clears vibes array."""
+def test_merge_trip_inputs_explicit_null_clears_activity_categories():
+    """Test that explicit_nulls clears activity categories."""
     from app.crud_document import merge_trip_inputs
-    from app.schemas import DocumentTripInputs
+    from app.schemas import ActivitySettings, DocumentTripInputs
 
     existing = DocumentTripInputs(
         destinations=["Paris"],
         origin="London",
-        vibes=["adventure", "foodie"],
+        activity_settings=ActivitySettings(categories=["🏖️ beach", "💕 romantic"]),
     )
 
-    # User clears all vibes
-    incoming = {"vibes": None}
+    # User clears all activity themes
+    incoming = {"activity_settings": None}
 
     result = merge_trip_inputs(
         existing,
         incoming,
-        explicit_nulls={"vibes"},
+        explicit_nulls={"activity_settings"},
     )
 
-    assert result.vibes == [], "vibes should be empty list after explicit null"
+    assert (
+        result.activity_settings.categories == []
+    ), "activity categories should be cleared after explicit null"
 
 
 def test_apply_user_patch_clears_origin():
@@ -854,10 +856,10 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
         assert data.branches == [], "Branches should be pruned when destinations are cleared"
 
 
-def test_patch_trip_inputs_vibes_preserves_existing_fields():
-    """PATCH /v1/document should not reset destinations when only vibes change."""
+def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
+    """PATCH /v1/document should not reset destinations when only activity categories change."""
 
-    seed = seed_session_with_document(session_token="session-vibes-patch")
+    seed = seed_session_with_document(session_token="session-activities-patch")
 
     response = client.patch(
         "/v1/document",
@@ -865,14 +867,17 @@ def test_patch_trip_inputs_vibes_preserves_existing_fields():
         headers=get_csrf_headers(),
         json={
             "version": 1,
-            "trip_inputs": {"vibes": ["adventure", "foodie"]},
+            "trip_inputs": {"activity_settings": {"categories": ["🏖️ beach", "🍝 food"]}},
         },
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["document"]["trip_inputs"]["destinations"] == ["Nice"]
-    assert payload["document"]["trip_inputs"]["vibes"] == ["adventure", "foodie"]
+    assert payload["document"]["trip_inputs"]["activity_settings"]["categories"] == [
+        "🏖️ beach",
+        "🍝 food",
+    ]
 
     persisted = client.get(
         "/v1/document",
@@ -880,7 +885,10 @@ def test_patch_trip_inputs_vibes_preserves_existing_fields():
     )
     assert persisted.status_code == 200
     persisted_doc = persisted.json()
-    assert persisted_doc["document"]["trip_inputs"]["vibes"] == ["adventure", "foodie"]
+    assert persisted_doc["document"]["trip_inputs"]["activity_settings"]["categories"] == [
+        "🏖️ beach",
+        "🍝 food",
+    ]
 
 
 @pytest.mark.skipif(
@@ -982,12 +990,12 @@ def test_plan_flow_preserves_user_removed_destinations(monkeypatch: object):
     assert persisted["document"]["trip_inputs"]["destinations"] == ["Nice"]
 
 
-def test_plan_flow_persists_llm_vibes(monkeypatch: object):
-    """When the planner returns vibes, they should be saved to the document."""
+def test_plan_flow_persists_llm_activity_categories(monkeypatch: object):
+    """When the planner returns activity categories, they should be saved to the document."""
 
     from app import plan as plan_module
 
-    seed = seed_session_with_document(session_token="session-plan-vibes")
+    seed = seed_session_with_document(session_token="session-plan-activities")
 
     def fake_call(req, history=None, document_data=None, **kwargs):
         return plan_module.PlannerLLMOutput(
@@ -1004,7 +1012,7 @@ def test_plan_flow_persists_llm_vibes(monkeypatch: object):
                 "budget": 2000,
                 "missing_fields": [],
                 "multi_city_intent": None,
-                "vibes": ["adventure", "f1"],
+                "activity_settings": {"categories": ["🧗 adventure", "🏎️ f1"]},
             },
             ready_to_generate=True,
         )
@@ -1015,12 +1023,15 @@ def test_plan_flow_persists_llm_vibes(monkeypatch: object):
         "/v1/plan",
         cookies=get_session_cookies(seed["session_token"]),
         headers=get_csrf_headers(),
-        json={"message": "Set vibes"},
+        json={"message": "Set activities"},
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["document"]["trip_inputs"]["vibes"] == ["adventure", "f1"]
+    assert payload["document"]["trip_inputs"]["activity_settings"]["categories"] == [
+        "🧗 adventure",
+        "🏎️ f1",
+    ]
 
     persisted = client.get(
         "/v1/document",
@@ -1028,7 +1039,10 @@ def test_plan_flow_persists_llm_vibes(monkeypatch: object):
     )
     assert persisted.status_code == 200
     persisted_doc = persisted.json()
-    assert persisted_doc["document"]["trip_inputs"]["vibes"] == ["adventure", "f1"]
+    assert persisted_doc["document"]["trip_inputs"]["activity_settings"]["categories"] == [
+        "🧗 adventure",
+        "🏎️ f1",
+    ]
 
 
 # =============================================================================
@@ -1162,7 +1176,7 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
         data.trip_inputs.children = 0
         data.trip_inputs.requires_assistance = False
         data.trip_inputs.budget = 2000
-        data.trip_inputs.vibes = ["beach"]
+        data.trip_inputs.activity_settings.categories = ["🏖️ beach"]
         data.branches = []
         data.tiles = {}
         doc.document = data.model_dump()
@@ -1179,7 +1193,7 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
                 "origin": "Paris",  # Changed from London
                 "start_date": "2025-12-10",  # Changed from 12-01
                 "adults": 4,  # Changed from 2
-                "vibes": ["adventure", "culture"],  # Changed from ["beach"]
+                "activity_settings": {"categories": ["🧗 adventure", "🏛️ culture"]},
             },
         },
     )
@@ -1202,7 +1216,7 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
                 "requires_assistance": False,
                 "budget": 2000,
                 "missing_fields": [],
-                "vibes": ["beach"],  # LLM returns ["beach"]
+                "activity_settings": {"categories": ["🏖️ beach"]},
             },
             ready_to_generate=True,
         )
@@ -1226,7 +1240,9 @@ def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
     assert trip_inputs["origin"] == "London", "LLM value should win (most recent)"
     assert trip_inputs["start_date"] == "2025-12-01", "LLM value should win (most recent)"
     assert trip_inputs["adults"] == 2, "LLM value should win (most recent)"
-    assert trip_inputs["vibes"] == ["beach"], "LLM value should win (most recent)"
+    assert trip_inputs["activity_settings"]["categories"] == [
+        "🏖️ beach"
+    ], "LLM value should win (most recent)"
 
 
 @pytest.mark.skipif(

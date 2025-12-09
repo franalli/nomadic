@@ -32,7 +32,7 @@ export interface paths {
         put?: never;
         /**
          * Validate Trip Input
-         * @description Validate a trip input (origin, destination, or vibe).
+         * @description Validate a trip input (origin or destination).
          *
          *     Returns corrected values if the input was valid but had typos/formatting issues.
          *     For destinations, may return multiple values if the input contained multiple
@@ -357,8 +357,6 @@ export interface components {
             missing_fields?: string[];
             /** Multi City Intent */
             multi_city_intent?: ("multi_city" | "separate") | null;
-            /** Vibes */
-            vibes?: string[];
             booking_types?: components["schemas"]["BookingTypes"];
             flight_settings?: components["schemas"]["FlightSettings"];
             hotel_settings?: components["schemas"]["HotelSettings"];
@@ -392,12 +390,11 @@ export interface components {
             missing_fields?: string[] | null;
             /** Multi City Intent */
             multi_city_intent?: ("multi_city" | "separate") | null;
-            /** Vibes */
-            vibes?: string[] | null;
             booking_types?: components["schemas"]["BookingTypes"] | null;
             flight_settings?: components["schemas"]["FlightSettings"] | null;
             hotel_settings?: components["schemas"]["HotelSettings"] | null;
             activity_settings?: components["schemas"]["ActivitySettings"] | null;
+            transport_settings?: components["schemas"]["TransportSettings"] | null;
         };
         /**
          * FlightSettings
@@ -630,14 +627,14 @@ export interface components {
         };
         /**
          * TripInputValidationRequest
-         * @description Request to validate a trip input (origin, destination, or vibe).
+         * @description Request to validate a trip input (origin or destination).
          */
         TripInputValidationRequest: {
             /**
              * Field Type
              * @enum {string}
              */
-            field_type: "origin" | "destination" | "vibe";
+            field_type: "origin" | "destination";
             /** Value */
             value: string;
         };

@@ -86,7 +86,6 @@ export type DocumentTripInputs = {
   currency?: string | null;
   missing_fields: string[];
   multi_city_intent?: 'multi_city' | 'separate' | null;
-  vibes?: string[];
   booking_types?: BookingTypes;
   flight_settings?: FlightSettings;
   hotel_settings?: HotelSettings;

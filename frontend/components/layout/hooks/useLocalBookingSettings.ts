@@ -28,6 +28,8 @@ export interface UseLocalBookingSettingsReturn {
   handleUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
   handleUpdateTransportSettings: (settings: Partial<TransportSettings>) => void;
   handleUpdateActivitySettings: (settings: Partial<ActivitySettings>) => void;
+  handleAddActivity: (activity: string) => void;
+  handleRemoveActivity: (index: number) => void;
 }
 
 // Debounce delay for batching rapid setting changes
@@ -383,15 +385,46 @@ export function useLocalBookingSettings(
         // For arrays, check if content changed
         if (JSON.stringify(currentSettings.categories) !== JSON.stringify(newCategories)) {
           if (newCategories.length === 0) {
-            onToast('Showing all activity categories! 🎭', 'confirmation');
-          } else {
-            const formatted = newCategories.map(c => c.replace('_', ' & ')).join(', ');
-            onToast(`Filtering activities: ${formatted}! 🎭`, 'confirmation');
+            onToast('Cleared all activities', 'confirmation');
           }
         }
       }
     },
     [commitWithDebounce, onToast]
+  );
+
+  // Add activity handler
+  const handleAddActivity = useCallback(
+    (activity: string) => {
+      const trimmed = activity.trim();
+      if (!trimmed) return;
+
+      const currentCategories = activitySettingsRef.current.categories;
+      // Check for duplicates (case-insensitive)
+      if (currentCategories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+        onToast('Activity already added', 'info');
+        return;
+      }
+
+      const newCategories = [...currentCategories, trimmed];
+      handleUpdateActivitySettings({ categories: newCategories });
+      onToast(`Added "${trimmed}"`, 'confirmation');
+    },
+    [handleUpdateActivitySettings, onToast]
+  );
+
+  // Remove activity handler
+  const handleRemoveActivity = useCallback(
+    (index: number) => {
+      const currentCategories = activitySettingsRef.current.categories;
+      if (index < 0 || index >= currentCategories.length) return;
+
+      const removed = currentCategories[index];
+      const newCategories = currentCategories.filter((_, i) => i !== index);
+      handleUpdateActivitySettings({ categories: newCategories });
+      onToast(`Removed "${removed}"`, 'confirmation');
+    },
+    [handleUpdateActivitySettings, onToast]
   );
 
   return {
@@ -405,5 +438,7 @@ export function useLocalBookingSettings(
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
     handleUpdateActivitySettings,
+    handleAddActivity,
+    handleRemoveActivity,
   };
 }

@@ -91,10 +91,6 @@ interface ChatPanelProps {
     content: ReactNode;
     missingFields?: string[];
   };
-  /** Vibes section - separate collapsible for trip vibes/themes */
-  vibesSection?: {
-    content: ReactNode;
-  };
   /** When true, the panel will try to fill available height */
   fullHeight?: boolean;
   /** When true, branches have been generated */
@@ -118,7 +114,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onGeneratePlanStart,
       selectedBranchId,
       tripDetails,
-      vibesSection,
       fullHeight,
       hasBranches,
       isGenerating,
@@ -134,7 +129,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Mobile detection for responsive collapsed defaults
     const [isMobile, setIsMobile] = useState(false);
     const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
-    const [vibesOpen, setVibesOpen] = useState(true);
     const [generateTriggered, setGenerateTriggered] = useState(false);
     const [hasShownHint, setHasShownHint] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
@@ -233,7 +227,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       if (hasUserMessage && isMobile && !hasShownHint) {
         setTripDetailsOpen(false);
-        setVibesOpen(false);
       }
     }, [hasUserMessage, isMobile, hasShownHint]);
 
@@ -638,40 +631,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         </div>
 
         {/* Trip inputs section - positioned below chat input */}
-        {(showTripDetails || (vibesSection && hasUserMessage)) && (
+        {showTripDetails && (
           <div ref={tripInputsRef} className="mt-1.5 pt-1.5 pb-3 border-t border-border/50 space-y-4">
-            {showTripDetails ? (
-              <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
-                <div>
-                  <Collapsible.Trigger asChild>
-                    <button className={`w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
-                      <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
-                      Trip Details
-                    </button>
-                  </Collapsible.Trigger>
-                  <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                    <div className="text-sm pt-3">{tripDetails?.content}</div>
-                  </Collapsible.Content>
-                </div>
-              </Collapsible.Root>
-            ) : null}
-
-            {vibesSection && hasUserMessage ? (
-              <Collapsible.Root open={vibesOpen} onOpenChange={setVibesOpen}>
-                <div>
-                  <Collapsible.Trigger asChild>
-                    <button className={`w-full flex items-center gap-2 text-accent text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-accent/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
-                      <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${vibesOpen ? '' : '-rotate-90'}`} />
-                      <Sparkles className="h-3 w-3" />
-                      Vibes
-                    </button>
-                  </Collapsible.Trigger>
-                  <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                    <div className="text-sm pt-3">{vibesSection.content}</div>
-                  </Collapsible.Content>
-                </div>
-              </Collapsible.Root>
-            ) : null}
+            <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
+              <div>
+                <Collapsible.Trigger asChild>
+                  <button className={`w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
+                    Trip Details
+                  </button>
+                </Collapsible.Trigger>
+                <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
+                  <div className="text-sm pt-3">{tripDetails?.content}</div>
+                </Collapsible.Content>
+              </div>
+            </Collapsible.Root>
           </div>
         )}
 

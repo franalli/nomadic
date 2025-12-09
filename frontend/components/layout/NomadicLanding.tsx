@@ -13,7 +13,6 @@ import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBooki
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
-import { VibesSection } from '@/components/layout/VibesSection';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
 import { Card, CardContent } from '@/components/ui/card';
@@ -128,6 +127,8 @@ export function NomadicLanding() {
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
     handleUpdateActivitySettings,
+    handleAddActivity,
+    handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
 
   // Branch manager hook - manages branches, tiles, and generating state
@@ -184,20 +185,15 @@ export function NomadicLanding() {
     tripInputsDraft,
     editingField,
     selectedLocationBadge,
-    vibeInput,
-    vibeInputExpanded,
     destinationInput,
     destinationInputExpanded,
     originInput,
     originInputExpanded,
     pendingOrigin,
     pendingDestination,
-    pendingVibe,
     setTripInputsDraft,
     setEditingField,
     setSelectedLocationBadge,
-    setVibeInput,
-    setVibeInputExpanded,
     setDestinationInput,
     setDestinationInputExpanded,
     setOriginInput,
@@ -216,8 +212,6 @@ export function NomadicLanding() {
     handleToggleMultiCity,
     handleAddDestination,
     handleRemoveDestination,
-    handleAddVibe,
-    handleRemoveVibe,
   } = tripInputsEditor;
 
   // Date range selector hook - manages calendar state and date selection
@@ -367,29 +361,13 @@ export function NomadicLanding() {
         onUpdateHotelSettings={handleUpdateHotelSettings}
         onUpdateActivitySettings={handleUpdateActivitySettings}
         onUpdateTransportSettings={handleUpdateTransportSettings}
+        onAddActivity={handleAddActivity}
+        onRemoveActivity={handleRemoveActivity}
         llmUpdatedFields={llmUpdatedFields}
         onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       />
     ),
     missingFields,
-  };
-
-  // Vibes section content - passed to ChatPanel
-  const vibesSection = {
-    content: (
-      <VibesSection
-        vibes={tripInputs.vibes ?? []}
-        vibeInput={vibeInput}
-        vibeInputExpanded={vibeInputExpanded}
-        pendingVibe={pendingVibe}
-        onAddVibe={handleAddVibe}
-        onRemoveVibe={handleRemoveVibe}
-        setVibeInput={setVibeInput}
-        setVibeInputExpanded={setVibeInputExpanded}
-        isLLMUpdated={false}
-        onAcknowledge={undefined}
-      />
-    ),
   };
 
   // Chat panel content that can be reused in both layouts
@@ -404,7 +382,6 @@ export function NomadicLanding() {
           onGeneratePlanStart={handleGeneratePlanStart}
           onFreshStart={handleStartNewSession}
           tripDetails={tripDetailsSection}
-          vibesSection={vibesSection}
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}

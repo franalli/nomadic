@@ -5,7 +5,6 @@ Trip Input Validation Module
 This module provides lightweight LLM-based validation for trip inputs:
 - Origin: Must be a real, valid location (single value only)
 - Destinations: Must be real, valid locations (supports multi-destination splitting)
-- Vibes: Loosely normalized trip themes/moods
 
 Uses the same LLM as the main planner but with minimal prompts (~10 max tokens)
 for fast, cheap responses. Results are cached in a TTL memory cache to avoid
@@ -100,19 +99,6 @@ Correct misspellings to real places (Sydny->Sydney, vinna -> Vienna, Barselonaa-
 Expand abbreviations (NYC->New York City, SF->San Francisco, LA->Los Angeles).
 Reject fictional or non-existent places."""
 
-_VIBE_PROMPT = """Validate "{value}" as trip interest(s)/activities/purpose/features.
-Return JSON only.
-Single vibe: {{"v":["the normalized value"],"e":"relevant emoji","ok":true}}
-Multiple vibes: {{"v":["vibe1","vibe2"],"e":["emoji1","emoji2"],"ok":true}}
-Invalid: {{"v":[],"ok":false,"r":"reason"}}
-If input contains multiple vibes (e.g. "beach and hiking", "food, culture"), split them.
-Accept any real activity: backpacking, sports, events, cuisine, culture, music, shows, nature.
-Accept any real interests: christianity, history, art, architecture, wildlife, relaxation,
-nightlife, harry potter, disney.
-Normalize abbreviations: f1->Formula 1, foodie->food.
-Always include "e" with relevant emoji(s) (e.g. 🏖️ for beach, 🎒 for backpacking, 🏎️ for Formula 1).
-Reject: offensive content, criminal activities, impossible activities, random nonsense words."""
-
 
 def _call_llm_validation(
     prompt: str,
@@ -174,7 +160,7 @@ def _call_llm_validation(
 
 def validate_input(
     value: str,
-    field_type: Literal["origin", "destination", "vibe"],
+    field_type: Literal["origin", "destination"],
 ) -> ValidationResult:
     """
     Validate a trip input value.
@@ -183,7 +169,7 @@ def validate_input(
 
     Args:
         value: The raw input value to validate.
-        field_type: Type of input ("origin", "destination", or "vibe").
+        field_type: Type of input ("origin" or "destination").
 
     Returns:
         ValidationResult with corrected values, validity flag, and optional reason.
@@ -207,15 +193,10 @@ def validate_input(
         return ValidationResult(**cached)
 
     # Build prompt based on field type
-    if field_type in ("origin", "destination"):
-        prompt = _LOCATION_PROMPT.format(
-            field_type=field_type,
-            value=normalized_value,
-        )
-    else:  # vibe
-        prompt = _VIBE_PROMPT.format(
-            value=normalized_value,
-        )
+    prompt = _LOCATION_PROMPT.format(
+        field_type=field_type,
+        value=normalized_value,
+    )
 
     # Call LLM
     llm_response = _call_llm_validation(prompt)
@@ -231,28 +212,6 @@ def validate_input(
 
     is_valid = llm_response.get("ok", False)
     reason = llm_response.get("r") or llm_response.get("reason")
-
-    # For vibes, prepend emoji to each value
-    if field_type == "vibe" and corrected_values and is_valid:
-        emojis_raw = llm_response.get("e", "✨")
-        # Handle emoji as list or single string
-        if isinstance(emojis_raw, list):
-            emojis = [
-                str(e).strip()[:2] if len(str(e).strip()) >= 2 else str(e).strip()[:1]
-                for e in emojis_raw
-            ]
-            # Pad with default if fewer emojis than vibes
-            while len(emojis) < len(corrected_values):
-                emojis.append("✨")
-        else:
-            # Single emoji for all vibes
-            emoji = str(emojis_raw).strip() if emojis_raw else "✨"
-            emoji = emoji[:2] if len(emoji) >= 2 else emoji[:1]
-            if not emoji:
-                emoji = "✨"
-            emojis = [emoji] * len(corrected_values)
-        # Prepend emoji to each corrected value
-        corrected_values = [f"{emojis[i]} {v}" for i, v in enumerate(corrected_values)]
 
     # For origin, enforce single value
     if field_type == "origin" and len(corrected_values) > 1:
@@ -280,7 +239,7 @@ def validate_input(
 
 def prewarm_cache() -> int:
     """
-    Pre-populate the cache with common destinations and vibes.
+    Pre-populate the cache with common destinations.
 
     Called on server startup. Returns the number of entries added.
     """
@@ -338,30 +297,6 @@ def prewarm_cache() -> int:
         "Zurich",
     ]
 
-    # Common vibes with emojis (~20 popular themes)
-    common_vibes = [
-        ("beach", "🏖️"),
-        ("adventure", "🎒"),
-        ("romantic", "💕"),
-        ("relaxation", "😌"),
-        ("culture", "🏛️"),
-        ("food", "🍽️"),
-        ("nightlife", "🌃"),
-        ("nature", "🌿"),
-        ("history", "📜"),
-        ("luxury", "💎"),
-        ("budget", "💰"),
-        ("family", "👨‍👩‍👧‍👦"),
-        ("solo", "🚶"),
-        ("honeymoon", "💒"),
-        ("wellness", "🧘"),
-        ("spa", "💆"),
-        ("hiking", "🥾"),
-        ("diving", "🤿"),
-        ("skiing", "⛷️"),
-        ("shopping", "🛍️"),
-    ]
-
     count = 0
 
     # Pre-populate destinations (valid for both origin and destination)
@@ -375,17 +310,6 @@ def prewarm_cache() -> int:
                     "reason": None,
                 }
                 count += 1
-
-    # Pre-populate vibes with emojis
-    for vibe, emoji in common_vibes:
-        cache_key = _cache_key("vibe", vibe)
-        if cache_key not in _validation_cache:
-            _validation_cache[cache_key] = {
-                "corrected_values": [f"{emoji} {vibe}"],
-                "is_valid": True,
-                "reason": None,
-            }
-            count += 1
 
     return count
 

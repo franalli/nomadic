@@ -51,14 +51,6 @@ const HOTEL_AMENITIES = [
   { value: 'pet_friendly', label: 'Pet friendly' },
 ] as const;
 
-const ACTIVITY_CATEGORIES = [
-  { value: 'tours', label: 'Tours' },
-  { value: 'experiences', label: 'Experiences' },
-  { value: 'outdoor', label: 'Outdoor' },
-  { value: 'cultural', label: 'Cultural' },
-  { value: 'food_drink', label: 'Food & Drink' },
-] as const;
-
 const CURRENCY_OPTIONS = [
   { value: 'USD', label: 'USD ($)' },
   { value: 'EUR', label: 'EUR (€)' },
@@ -82,7 +74,6 @@ export type TripInputsDraft = {
   requires_assistance?: boolean | null;
   budget?: string | null;
   currency?: string | null;
-  vibes?: string[];
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,7 +86,6 @@ const FIELD_LABELS: Record<string, string> = {
   dates: 'Dates',
   travelers: 'Travelers',
   budget: 'Budget',
-  vibes: 'Vibes',
   multi_city_intent: 'How to visit',
 };
 
@@ -120,7 +110,6 @@ export const toTripInputsDraft = (inputs: DocumentTripInputs): TripInputsDraft =
     requires_assistance: inputs.requires_assistance ?? null,
     budget: inputs.budget != null ? String(inputs.budget) : null,
     currency: inputs.currency ?? 'USD',
-    vibes: inputs.vibes ?? [],
   };
 };
 
@@ -209,6 +198,8 @@ export interface TripDetailsFormProps {
   onUpdateHotelSettings: (settings: Partial<HotelSettings>) => void;
   onUpdateActivitySettings: (settings: Partial<ActivitySettings>) => void;
   onUpdateTransportSettings: (settings: Partial<TransportSettings>) => void;
+  onAddActivity: (activity: string) => void;
+  onRemoveActivity: (index: number) => void;
 
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields?: Set<LLMUpdatableField>;
@@ -277,6 +268,8 @@ function TripDetailsFormInner({
   onUpdateHotelSettings,
   onUpdateActivitySettings,
   onUpdateTransportSettings,
+  onAddActivity,
+  onRemoveActivity,
   llmUpdatedFields,
   onAcknowledgeLLMUpdate,
 }: TripDetailsFormProps) {
@@ -320,6 +313,9 @@ function TripDetailsFormInner({
   const [hotelsSettingsOpen, setHotelsSettingsOpen] = useState(false);
   const [transportSettingsOpen, setTransportSettingsOpen] = useState(false);
   const [activitiesSettingsOpen, setActivitiesSettingsOpen] = useState(false);
+
+  // Activity input state
+  const [activityInput, setActivityInput] = useState('');
 
   return (
     <div className="flex flex-col gap-3">
@@ -690,31 +686,60 @@ function TripDetailsFormInner({
                   />
                   <span className="text-[11px] text-muted-foreground">Book activities</span>
                 </label>
-                <div className={`flex flex-wrap gap-1.5 rounded-lg p-0.5 ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}>
-                  {ACTIVITY_CATEGORIES.map((category) => {
-                    const isSelected = activitySettings.categories.includes(category.value);
-                    return (
-                      <button
-                        key={category.value}
-                        type="button"
-                        onClick={() => {
-                          const newCategories = isSelected
-                            ? activitySettings.categories.filter((c) => c !== category.value)
-                            : [...activitySettings.categories, category.value];
-                          onUpdateActivitySettings({ categories: newCategories });
-                          acknowledgeField('activity_settings.categories' as LLMUpdatableField);
-                        }}
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-all duration-200 ${
-                          isSelected
-                            ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                            : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                        }`}
+                {/* Activity badges */}
+                {activitySettings.categories.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {activitySettings.categories.map((category, index) => (
+                      <span
+                        key={`${category}-${index}`}
+                        className={`inline-flex items-center gap-1 rounded-full border border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-pill-active ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}
                       >
-                        {category.label}
-                      </button>
-                    );
-                  })}
-                </div>
+                        <span className="truncate">{category}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onRemoveActivity(index);
+                            acknowledgeField('activity_settings.categories' as LLMUpdatableField);
+                          }}
+                          className="flex-shrink-0 rounded-full p-0.5 hover:bg-primary/20 transition-colors"
+                          aria-label={`Remove ${category}`}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Add activity input */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (activityInput.trim()) {
+                      onAddActivity(activityInput);
+                      setActivityInput('');
+                      acknowledgeField('activity_settings.categories' as LLMUpdatableField);
+                    }
+                  }}
+                  className="flex-1"
+                >
+                  <input
+                    type="text"
+                    value={activityInput}
+                    onChange={(e) => setActivityInput(e.target.value)}
+                    placeholder={activitySettings.categories.length > 0 ? '+ add activity' : 'Enter activity...'}
+                    className="w-full rounded-full border border-border/40 bg-muted/20 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/40 focus:outline-none"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (activityInput.trim()) {
+                          onAddActivity(activityInput);
+                          setActivityInput('');
+                          acknowledgeField('activity_settings.categories' as LLMUpdatableField);
+                        }
+                      }
+                    }}
+                  />
+                </form>
               </div>
             }
           />

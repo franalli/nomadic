@@ -30,7 +30,6 @@ import json
 import os
 import re
 import time
-import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, List, Optional, cast
 from zoneinfo import ZoneInfo
@@ -133,7 +132,6 @@ _TRIP_INPUT_FIELDS = (
     "budget",
     "currency",
     "multi_city_intent",
-    "vibes",
 )
 
 # Booking preference fields - these are nested objects extracted from conversation
@@ -905,13 +903,29 @@ def _normalize_booking_field(field: str, raw_value: dict) -> Optional[dict]:
 
     if field == "activity_settings":
         # ActivitySettings: categories (list of str)
+        # Activities can be user-added custom entries or emoji-prefixed themes
         result = {}
         if "categories" in raw_value:
             categories = raw_value["categories"]
             if isinstance(categories, list):
-                result["categories"] = [
-                    _normalize_str(c).lower() for c in categories if c and _normalize_str(c)
-                ]
+                normalized_categories = []
+                for cat in categories:
+                    cat_str = _normalize_str(cat)
+                    if not cat_str:
+                        continue
+                    # Keep the activity as-is (user-entered or emoji-prefixed)
+                    # Just normalize whitespace and dedupe
+                    normalized_categories.append(cat_str)
+                if normalized_categories:
+                    # Dedupe while preserving order
+                    seen = set()
+                    deduped = []
+                    for c in normalized_categories:
+                        c_lower = c.lower()
+                        if c_lower not in seen:
+                            seen.add(c_lower)
+                            deduped.append(c)
+                    result["categories"] = deduped
         return result if result else None
 
     if field == "transport_settings":
@@ -1008,7 +1022,7 @@ def _compute_missing_fields(trip_inputs: dict) -> List[str]:
     Compute the list of missing REQUIRED trip input fields in canonical order.
 
     Only checks the 4 required fields: destinations, origin, start_date, end_date.
-    Optional fields (adults, children, requires_assistance, budget, vibes) are not included.
+    Optional fields (adults, children, requires_assistance, budget) are not included.
 
     Args:
         trip_inputs: A dictionary of trip input values.
@@ -1291,7 +1305,6 @@ def _call_openai_for_plan(
             "budget": ti.budget,
             "currency": ti.currency,
             "multi_city_intent": ti.multi_city_intent,
-            "vibes": ti.vibes or [],
             # Booking preferences
             "booking_types": ti.booking_types.model_dump() if ti.booking_types else None,
             "flight_settings": ti.flight_settings.model_dump() if ti.flight_settings else None,
@@ -1316,7 +1329,6 @@ def _call_openai_for_plan(
             "budget": None,
             "currency": DEFAULT_CURRENCY,
             "multi_city_intent": None,
-            "vibes": [],
             # Booking preferences - initialize as None (will use schema defaults)
             "booking_types": None,
             "flight_settings": None,
@@ -1391,9 +1403,9 @@ EXTRACTION (set trip_inputs for ANY location mentioned):
 | wheelchair/accessibility | requires_assistance=true |
 | $N / €N / £N | budget=N, currency=USD/EUR/GBP |
 | "for N days" + start | compute end_date |
-| "romantic"/"adventure"/"relaxing" | vibes=[theme] |
-| "food trip"/"beach vacation" | vibes=[themes mentioned] |
-| "want tours"/"outdoor activities" | activity_settings:{{categories:[type]}} |
+| "romantic getaway"/"beach trip" | activity_settings:{{categories:[emoji theme]}} |
+| "wine tasting"/"spa weekend" | activity_settings:{{categories:[emoji theme]}} |
+| "want tours"/"outdoor activities" | activity_settings:{{categories:[emoji theme]}} |
 
 Dates→YYYY-MM-DD. "today"={today}. Auto-correct typos.
 
@@ -1402,31 +1414,35 @@ MULTI-DESTINATION:
 - multi_city_intent="multi_city" ONLY if user says "one trip"/"multi-city"/"together"
 - Never ask about this—just add destinations and move on
 
-VIBES (extract themes/moods—ALWAYS prefix with relevant emoji):
-"romantic getaway"→vibes:["💕 romantic"],
-"adventure"→vibes:["🧗 adventure"],
-"beach trip"→vibes:["🏖️ beach"]
-Emoji map: 🏖️ beach, 💕 romantic, 🧗 adventure, 👨‍👩‍👧 family,
+ACTIVITIES (use activity_settings.categories):
+Users can add activities via UI or chat. Check STATE for existing categories—ALWAYS preserve them.
+When user mentions new activities, APPEND to the existing list from STATE, don't replace.
+IMPORTANT: Split compound activities into separate entries (e.g., "running and backpacking" →
+["🏃 running", "🎒 backpacking"]).
+IMPORTANT: ALWAYS prefix each activity with a relevant emoji. If no emoji fits,
+use ✨ as default.
+Common emoji mappings: 🏖️ beach, 💕 romantic, 🧗 adventure, 👨‍👩‍👧 family,
 🍝 food, 🍷 wine, 🏛️ culture, 📜 history, 💆 spa, 😌 relaxation,
-🥾 hiking, 🏎️ F1, 🤿 diving, ⛷️ skiing, 🎭 nightlife.
-Default ✨ if unsure.
-Extract vibes when user mentions trip themes.
-ADD to existing vibes.
-If empty after required fields: "What's the vibe?"
+🥾 hiking, 🏎️ f1, 🤿 diving, ⛷️ skiing, 🎭 nightlife, 🏃 running, 🎒 backpacking.
+Dedupe categories (case-insensitive). Don't ask for activities—they're optional.
 
 BOOKING PREFS (extract only when mentioned):
 | Type | Examples |
 |------|----------|
-| booking_types | "need flights"→flights:true, "I'll drive"→flights:false,ground_transport:true |
+| booking_types | "need hotels"→hotels:true, "book activities"→activities:true,
+  "need flights"→flights:true, "I'll drive"→flights:false,ground_transport:true |
 | flight_settings | "business class"→cabin_class:"business",
   "direct only"→direct_only:true |
 | hotel_settings | "5-star"→min_stars:5,
-  "need pool"→amenities:["pool"] |
-| activity_settings | "tours"→categories:["tours"],
-  "outdoor"→categories:["outdoor"],
-  "cultural"→categories:["cultural"],
-  "food experiences"→categories:["food_drink"] |
-| transport_settings | "rent car"→car:true |
+  "need pool"→amenities:["pool"],
+  "pet friendly"/"breakfast included"→amenities:[value] |
+| activity_settings | "outdoor"→categories:["🧗 adventure"],
+  "museum day"→categories:["🏛️ culture"],
+  "food experiences"→categories:["🍝 food"],
+  "spa weekend"→categories:["💆 spa"],
+  "wine tasting"→categories:["🍷 wine"],
+  "beach vacation"→categories:["🏖️ beach"] |
+| transport_settings | "rent car"→car:true, "take the train"→train:true, "bus it"→bus:true |
 
 UPDATES: Acknowledge changes briefly ("Got it—Boston instead of NYC").
 - "Add X"→append to destinations. "Remove X"→remove from destinations.
@@ -1457,7 +1473,7 @@ OUTPUT (JSON only):
 {{"assistant_message":"...","trip_inputs":{{fields}},"ready_to_generate":false,"branches":[]}}
 
 trip_inputs fields: destinations[], origin, start_date, end_date, adults, children,
-requires_assistance, budget, currency, multi_city_intent, vibes[],
+requires_assistance, budget, currency, multi_city_intent,
 booking_types, flight_settings, hotel_settings, activity_settings, transport_settings
 
 Omit unchanged fields. Backend computes missing_fields—don't include it.
@@ -1652,31 +1668,6 @@ adults, children, requires_assistance, budget, currency}}"""
                 normalized_llm_response["destinations"] = [
                     _normalize_str(d) for d in dest_list if d and _normalize_str(d)
                 ]
-            elif field == "vibes":
-                vibe_list = (
-                    raw_value if isinstance(raw_value, list) else ([raw_value] if raw_value else [])
-                )
-                # Preserve emoji prefix if present, otherwise add default
-                normalized_vibes = []
-                for v in vibe_list:
-                    v_str = _normalize_str(v)
-                    if not v_str:
-                        continue
-                    # Check if starts with emoji (emoji can be 1-2 chars)
-                    first_char = v_str[0]
-                    is_emoji = unicodedata.category(first_char) in ("So", "Sm")
-                    is_emoji = is_emoji or ord(first_char) > 0x1F000
-                    if is_emoji:
-                        # Already has emoji, keep as-is (lowercase the text part)
-                        parts = v_str.split(" ", 1)
-                        if len(parts) == 2:
-                            normalized_vibes.append(f"{parts[0]} {parts[1].lower()}")
-                        else:
-                            normalized_vibes.append(v_str.lower())
-                    else:
-                        # No emoji, add default sparkle
-                        normalized_vibes.append(f"✨ {v_str.lower()}")
-                normalized_llm_response["vibes"] = normalized_vibes
             elif field in ("start_date", "end_date"):
                 normalized_llm_response[field] = _normalize_date(raw_value)
             elif field in ("adults", "children", "budget"):
@@ -1706,7 +1697,7 @@ adults, children, requires_assistance, budget, currency}}"""
         # Merge LLM response with current state (LLM can overwrite)
         trip_inputs = dict(current_trip_inputs)
         for field, value in normalized_llm_response.items():
-            if field in ("destinations", "vibes"):
+            if field == "destinations":
                 # For arrays, only update if LLM provided non-empty list
                 if value:
                     trip_inputs[field] = value
@@ -1715,8 +1706,22 @@ adults, children, requires_assistance, budget, currency}}"""
                 if value:
                     existing = trip_inputs.get(field)
                     if isinstance(existing, dict):
-                        # Merge: new values override existing
-                        trip_inputs[field] = {**existing, **value}
+                        # Special handling for activity_settings:
+                        # append categories instead of replacing
+                        if field == "activity_settings" and "categories" in value:
+                            existing_cats = existing.get("categories", [])
+                            new_cats = value.get("categories", [])
+                            # Merge lists, deduping case-insensitively while preserving order
+                            merged_cats = list(existing_cats)
+                            seen_lower = {c.lower() for c in existing_cats}
+                            for cat in new_cats:
+                                if cat.lower() not in seen_lower:
+                                    merged_cats.append(cat)
+                                    seen_lower.add(cat.lower())
+                            trip_inputs[field] = {**existing, **value, "categories": merged_cats}
+                        else:
+                            # Merge: new values override existing
+                            trip_inputs[field] = {**existing, **value}
                     else:
                         trip_inputs[field] = value
             else:
@@ -2052,7 +2057,7 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                     primary_branch.tiles.activities.append(tile.id)
 
         # 9. Build trip inputs for document
-        # LLM output already includes vibes/multi_city_intent – just propagate what it sent
+        # LLM output already includes multi_city_intent – just propagate what it sent
         # Include ALL fields including booking preferences so LLM can update them
         doc_trip_inputs = None
         if trip_inputs_model:
@@ -2067,7 +2072,6 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
                 budget=trip_inputs_model.budget,
                 currency=trip_inputs_model.currency,
                 missing_fields=trip_inputs_model.missing_fields,
-                vibes=trip_inputs_model.vibes or [],
                 multi_city_intent=trip_inputs_model.multi_city_intent,
                 # Booking preferences - propagate LLM updates
                 booking_types=trip_inputs_model.booking_types,

@@ -60,7 +60,7 @@ db_dependency = Depends(get_db)
 
 @app.on_event("startup")
 async def startup_event():
-    """Pre-warm the validation cache with common destinations and vibes."""
+    """Pre-warm the validation cache with common destinations."""
     count = prewarm_cache()
     print(f"[Validation] Pre-warmed cache with {count} entries")
 
@@ -120,7 +120,7 @@ def health():
 @app.post("/v1/validate-trip-input", response_model=TripInputValidationResponse)
 def validate_trip_input(req: TripInputValidationRequest):
     """
-    Validate a trip input (origin, destination, or vibe).
+    Validate a trip input (origin or destination).
 
     Returns corrected values if the input was valid but had typos/formatting issues.
     For destinations, may return multiple values if the input contained multiple
@@ -425,12 +425,13 @@ def patch_plan_document(
                 changes.append(f"set budget to ${val}")
             else:
                 changes.append("cleared budget")
-        if "vibes" in fields_set:
-            val = getattr(trip_patch, "vibes", None)
-            if val:
-                changes.append(f"set vibes to {val}")
-            else:
-                changes.append("cleared vibes")
+        if "activity_settings" in fields_set:
+            val = getattr(trip_patch, "activity_settings", None)
+            categories = getattr(val, "categories", None) if val else None
+            if categories:
+                changes.append(f"set activity categories to {categories}")
+            elif val is not None:
+                changes.append("cleared activity categories")
 
         if changes:
             changes_text = ", ".join(changes)

@@ -14,19 +14,6 @@ import type { ToastType } from '@/types/hooks';
 const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY'] as const;
 type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
-/**
- * Parse a vibe string that may contain an emoji prefix.
- * Format: "emoji text" (e.g., "🏖️ beach") or just "text" for legacy vibes.
- */
-function parseVibeText(vibe: string): string {
-  const parts = vibe.split(' ');
-  // Check if first part looks like an emoji (starts with non-ASCII)
-  if (parts.length > 1 && /^[\p{Emoji}]/u.test(parts[0])) {
-    return parts.slice(1).join(' ').toLowerCase();
-  }
-  return vibe.toLowerCase();
-}
-
 export interface TripInputsEditorOptions {
   tripInputs: DocumentTripInputs;
   storeTripInputs: DocumentTripInputs | null | undefined;
@@ -41,26 +28,21 @@ export interface TripInputsEditorState {
   tripInputsDraft: TripInputsDraft;
   editingField: keyof TripInputsDraft | null;
   selectedLocationBadge: 'origin' | number | null;
-  vibeInput: string;
-  vibeInputExpanded: boolean;
   destinationInput: string;
   destinationInputExpanded: boolean;
   originInput: string;
   originInputExpanded: boolean;
   // Validation state
-  validationLoading: 'origin' | 'destination' | 'vibe' | null;
+  validationLoading: 'origin' | 'destination' | null;
   // Pending values shown during validation (not persisted)
   pendingOrigin: string | null;
   pendingDestination: string | null;
-  pendingVibe: string | null;
 }
 
 export interface TripInputsEditorActions {
   setTripInputsDraft: React.Dispatch<React.SetStateAction<TripInputsDraft>>;
   setEditingField: React.Dispatch<React.SetStateAction<keyof TripInputsDraft | null>>;
   setSelectedLocationBadge: React.Dispatch<React.SetStateAction<'origin' | number | null>>;
-  setVibeInput: React.Dispatch<React.SetStateAction<string>>;
-  setVibeInputExpanded: React.Dispatch<React.SetStateAction<boolean>>;
   setDestinationInput: React.Dispatch<React.SetStateAction<string>>;
   setDestinationInputExpanded: React.Dispatch<React.SetStateAction<boolean>>;
   setOriginInput: React.Dispatch<React.SetStateAction<string>>;
@@ -79,8 +61,6 @@ export interface TripInputsEditorActions {
   handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
   handleRemoveDestination: (index: number) => Promise<void>;
-  handleAddVibe: (vibe: string) => Promise<void>;
-  handleRemoveVibe: (index: number) => Promise<void>;
   resetDraft: () => void;
 }
 
@@ -108,33 +88,29 @@ export function useTripInputsEditor(
 
   const [editingField, setEditingField] = useState<keyof TripInputsDraft | null>(null);
   const [selectedLocationBadge, setSelectedLocationBadge] = useState<'origin' | number | null>(null);
-  const [vibeInput, setVibeInput] = useState('');
-  const [vibeInputExpanded, setVibeInputExpanded] = useState(false);
   const [destinationInput, setDestinationInput] = useState('');
   const [destinationInputExpanded, setDestinationInputExpanded] = useState(false);
   const [originInput, setOriginInput] = useState('');
   const [originInputExpanded, setOriginInputExpanded] = useState(false);
 
   // Validation state
-  const [validationLoading, setValidationLoading] = useState<'origin' | 'destination' | 'vibe' | null>(null);
+  const [validationLoading, setValidationLoading] = useState<'origin' | 'destination' | null>(null);
   // Pending values shown during validation (not persisted, discarded on rejection)
   const [pendingOrigin, setPendingOrigin] = useState<string | null>(null);
   const [pendingDestination, setPendingDestination] = useState<string | null>(null);
-  const [pendingVibe, setPendingVibe] = useState<string | null>(null);
 
   // Sync tripInputsDraft when store trip_inputs changes
-  // Always sync destinations and vibes (they're modified by bot, not inline editing)
+  // Always sync destinations (they're modified by bot, not inline editing)
   // Only skip other fields if user is actively editing them
   useEffect(() => {
     if (!storeTripInputs) return;
 
     setTripInputsDraft((prev) => {
-      // Always update destinations and vibes from store (source of truth)
+      // Always update destinations from store (source of truth)
       // This ensures bot-initiated changes are reflected in UI
       const newDraft: TripInputsDraft = {
         ...prev,
         destinations: storeTripInputs.destinations ?? [],
-        vibes: storeTripInputs.vibes ?? [],
       };
 
       // Only update other fields if not actively editing
@@ -587,111 +563,10 @@ export function useTripInputsEditor(
     ]
   );
 
-  const handleAddVibe = useCallback(
-    async (vibe: string) => {
-      const trimmedVibe = vibe.trim().toLowerCase();
-      if (!trimmedVibe) return;
-
-      const currentVibes = tripInputs.vibes ?? [];
-
-      // Show pending value immediately (not stored anywhere)
-      setPendingVibe(trimmedVibe);
-      setVibeInput('');
-
-      // Start validation
-      setValidationLoading('vibe');
-
-      try {
-        const result = await validateTripInput('vibe', trimmedVibe);
-
-        if (!result.is_valid) {
-          // Invalid vibe - discard pending value and show error toast
-          setPendingVibe(null);
-          const errorMsg = result.reason || 'This doesn\'t appear to be a valid trip vibe.';
-          onToast(`Invalid vibe: ${errorMsg}`, 'error');
-          setValidationLoading(null);
-          return;
-        }
-
-        // Auto-apply corrections (including multi-vibe splits)
-        const correctedValues = result.corrected_values.map(v => v.toLowerCase());
-        const wasSplit = correctedValues.length > 1;
-
-        // Filter out duplicates (by text only, ignoring emoji) and add all corrected values
-        const newVibes = [...currentVibes];
-        const addedVibes: string[] = [];
-        for (const vibe of correctedValues) {
-          const vibeText = parseVibeText(vibe);
-          if (!newVibes.some((v) => parseVibeText(v) === vibeText)) {
-            newVibes.push(vibe);
-            addedVibes.push(vibe);
-          }
-        }
-
-        if (addedVibes.length === 0) {
-          setPendingVibe(null);
-          setValidationLoading(null);
-          return;
-        }
-
-        const success = await documentStore.commitTripInputs({ vibes: newVibes });
-
-        if (!success) {
-          setPendingVibe(null);
-          onToast('Failed to add vibe. Please try again.', 'error');
-          setValidationLoading(null);
-          return;
-        }
-
-        // Clear pending value (now stored in document)
-        setPendingVibe(null);
-        setValidationLoading(null);
-
-        // Show confirmation toast for added vibes
-        if (wasSplit) {
-          onToast(`Added ${addedVibes.join(', ')} to your trip vibes! ✨`, 'confirmation');
-        } else {
-          onToast(`Added "${addedVibes[0]}" to your trip vibes! ✨`, 'confirmation');
-        }
-      } catch {
-        setPendingVibe(null);
-        onToast('Validation failed. Please try again.', 'error');
-        setValidationLoading(null);
-      }
-    },
-    [tripInputs.vibes, documentStore, onToast]
-  );
-
-  const handleRemoveVibe = useCallback(
-    async (index: number) => {
-      const currentVibes = tripInputs.vibes ?? [];
-      if (index < 0 || index >= currentVibes.length) return;
-
-      const removedVibe = currentVibes[index];
-      const newVibes = currentVibes.filter((_, i) => i !== index);
-
-      // Optimistically update via documentStore.commitTripInputs
-      const success = await documentStore.commitTripInputs({ vibes: newVibes });
-
-      if (!success) {
-        onToast('Failed to remove vibe. Please try again.', 'error');
-        return;
-      }
-
-      // Add confirmation toast to confirm the vibe was removed
-      if (removedVibe) {
-        onToast(`Removed "${removedVibe}" from your trip vibes.`, 'confirmation');
-      }
-    },
-    [tripInputs.vibes, documentStore, onToast]
-  );
-
   const resetDraft = useCallback(() => {
     setTripInputsDraft(toTripInputsDraft(DEFAULT_TRIP_INPUTS));
     setEditingField(null);
     setSelectedLocationBadge(null);
-    setVibeInput('');
-    setVibeInputExpanded(false);
     setDestinationInput('');
     setDestinationInputExpanded(false);
     setOriginInput('');
@@ -701,7 +576,6 @@ export function useTripInputsEditor(
     // Reset pending values
     setPendingOrigin(null);
     setPendingDestination(null);
-    setPendingVibe(null);
   }, []);
 
   return {
@@ -709,8 +583,6 @@ export function useTripInputsEditor(
     tripInputsDraft,
     editingField,
     selectedLocationBadge,
-    vibeInput,
-    vibeInputExpanded,
     destinationInput,
     destinationInputExpanded,
     originInput,
@@ -720,13 +592,10 @@ export function useTripInputsEditor(
     // Pending values (shown during validation)
     pendingOrigin,
     pendingDestination,
-    pendingVibe,
     // State setters
     setTripInputsDraft,
     setEditingField,
     setSelectedLocationBadge,
-    setVibeInput,
-    setVibeInputExpanded,
     setDestinationInput,
     setDestinationInputExpanded,
     setOriginInput,
@@ -746,8 +615,6 @@ export function useTripInputsEditor(
     handleToggleMultiCity,
     handleAddDestination,
     handleRemoveDestination,
-    handleAddVibe,
-    handleRemoveVibe,
     resetDraft,
   };
 }

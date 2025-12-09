@@ -170,7 +170,6 @@ class DocumentTripInputsPatch(BaseModel):
     currency: Optional[str] = None
     missing_fields: Optional[List[str]] = None
     multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
-    vibes: Optional[List[str]] = None
     booking_types: Optional["BookingTypes"] = None
     flight_settings: Optional["FlightSettings"] = None
     hotel_settings: Optional["HotelSettings"] = None
@@ -232,9 +231,6 @@ class DocumentTripInputs(BaseModel):
     # "separate" = generate separate branch options for each destination
     # null = not yet clarified (will be asked if 2+ destinations)
     multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
-    # Vibes: trip purposes/themes like "F1", "Backpacking", "Adventure", etc.
-    # Open-ended list that LLM will validate/normalize to actual activities or purposes
-    vibes: List[str] = Field(default_factory=list)
     # Booking preferences - what to search for and category-specific settings
     booking_types: BookingTypes = Field(default_factory=BookingTypes)
     flight_settings: FlightSettings = Field(default_factory=FlightSettings)
@@ -297,9 +293,9 @@ class PlanDocumentPatch(BaseModel):
 
 
 class TripInputValidationRequest(BaseModel):
-    """Request to validate a trip input (origin, destination, or vibe)."""
+    """Request to validate a trip input (origin or destination)."""
 
-    field_type: Literal["origin", "destination", "vibe"]
+    field_type: Literal["origin", "destination"]
     value: str
 
 

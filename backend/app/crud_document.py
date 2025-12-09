@@ -13,12 +13,17 @@ from sqlalchemy.orm import Session
 
 from app import db_models as models
 from app.schemas import (
+    ActivitySettings,
+    BookingTypes,
     BranchSelections,
     DocumentBranch,
     DocumentTripInputs,
     DocumentTripInputsPatch,
+    FlightSettings,
+    HotelSettings,
     PlanDocumentData,
     PlanDocumentPatch,
+    TransportSettings,
     UpdatedBy,
 )
 from app.schemas import (
@@ -60,7 +65,8 @@ def get_or_create_document(
 
 def get_document_data(doc: models.PlanDocument) -> PlanDocumentData:
     """Parse the JSON document into a Pydantic model."""
-    return PlanDocumentData.model_validate(doc.document)
+    raw_data = dict(doc.document) if doc.document else {}
+    return PlanDocumentData.model_validate(raw_data)
 
 
 def save_document_data(
@@ -147,7 +153,6 @@ def merge_trip_inputs(
         "budget",
         "currency",
         "multi_city_intent",
-        "vibes",
         "destinations",
         # Booking preferences (nested objects - replace entirely)
         "booking_types",
@@ -156,6 +161,13 @@ def merge_trip_inputs(
         "activity_settings",
         "transport_settings",
     ]
+    booking_defaults = {
+        "booking_types": BookingTypes,
+        "flight_settings": FlightSettings,
+        "hotel_settings": HotelSettings,
+        "activity_settings": ActivitySettings,
+        "transport_settings": TransportSettings,
+    }
 
     # Ensure explicit_nulls is a set (for membership testing)
     nulls_set = explicit_nulls or set()
@@ -178,15 +190,15 @@ def merge_trip_inputs(
                 existing_dest = set(result.destinations or [])
                 incoming_dest = set(incoming_value or [])
                 result.destinations = list(existing_dest | incoming_dest)
-        elif field == "vibes":
-            # Vibes are always replaced, not merged
+        elif field in booking_defaults:
             if is_explicit_null:
-                # Explicitly clear vibes
-                result.vibes = []
+                # Reset booking preference to default instance
+                default_factory = booking_defaults[field]
+                setattr(result, field, default_factory())
                 if _DEBUG_LOG:
-                    print(f"[DEBUG] Cleared '{field}' (explicit null)")
+                    print(f"[DEBUG] Reset '{field}' to default (explicit null)")
             elif incoming_value is not None:
-                result.vibes = incoming_value
+                setattr(result, field, incoming_value)
                 if _DEBUG_LOG:
                     print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
         else:

@@ -73,7 +73,6 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   budget: null,
   currency: 'USD',
   multi_city_intent: null,
-  vibes: [],
   missing_fields: ['destinations', 'origin', 'start_date', 'end_date'],
   booking_types: DEFAULT_BOOKING_TYPES,
   flight_settings: DEFAULT_FLIGHT_SETTINGS,
@@ -96,7 +95,6 @@ export type LLMUpdatableField =
   | 'children'
   | 'budget'
   | 'currency'
-  | 'vibes'
   // Settings objects (parent level)
   | 'booking_types'
   | 'flight_settings'
@@ -201,7 +199,6 @@ function detectChangedFields(
     if (newInputs.children != null) changed.push('children');
     if (newInputs.budget != null) changed.push('budget');
     if (newInputs.currency && newInputs.currency !== DEFAULT_TRIP_INPUTS.currency) changed.push('currency');
-    if (newInputs.vibes?.length) changed.push('vibes');
     // Check settings against defaults (parent + sub-fields)
     const newFlight = newInputs.flight_settings;
     const defFlight = DEFAULT_FLIGHT_SETTINGS;
@@ -250,9 +247,6 @@ function detectChangedFields(
   if (oldInputs.children !== newInputs.children) changed.push('children');
   if (oldInputs.budget !== newInputs.budget) changed.push('budget');
   if (oldInputs.currency !== newInputs.currency) changed.push('currency');
-  if (JSON.stringify(oldInputs.vibes) !== JSON.stringify(newInputs.vibes)) {
-    changed.push('vibes');
-  }
   // Compare settings objects (parent + sub-fields)
   const oldFlight = oldInputs.flight_settings;
   const newFlight = newInputs.flight_settings;
