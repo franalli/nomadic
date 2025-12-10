@@ -132,6 +132,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [generateTriggered, setGenerateTriggered] = useState(false);
     const [hasShownHint, setHasShownHint] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
+    const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const tripInputsRef = useRef<HTMLDivElement | null>(null);
@@ -273,6 +274,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           content: isGenerateTrigger ? 'Generate my trip options' : trimmed,
         };
         setMessages((prev) => [...prev, userMessage]);
+        setSuggestedResponses([]); // Clear suggestions when user sends a message
         setIsLoading(true);
 
         try {
@@ -314,6 +316,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
           const hasBranchesNow = data.document.branches.length > 0;
           const isReadyToGenerate = data.document.ready_to_generate === true;
+
+          // Update suggested responses from LLM (if provided)
+          setSuggestedResponses(data.document.suggested_responses || []);
 
           if (hasBranchesNow) {
             // Branches generated: remove "ready" messages (by ID prefix) and add post-generate message
@@ -560,6 +565,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
+          {/* Dynamic LLM-generated suggestions */}
+          {suggestedResponses.length > 0 && !isLoading && !showSuggestions && (
+            <div className="flex flex-wrap justify-center gap-1.5 pt-3 pb-1 px-2">
+              {suggestedResponses.map((suggestion, idx) => (
+                <button
+                  key={`sugg-${idx}`}
+                  type="button"
+                  onClick={() => {
+                    sendMessageCore(suggestion);
+                  }}
+                  className="suggestion-enter text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"
+                  style={{ animationDelay: `${idx * 500}ms` }}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="relative">
           <textarea
             ref={inputRef}
@@ -588,20 +612,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           <button
             type="submit"
             className={`absolute right-2 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
-              isLoading
-                ? 'bg-muted'
-                : input.trim()
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
-                  : 'bg-muted/80 text-muted-foreground hover:bg-muted'
+              input.trim() && !isLoading
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
+                : 'bg-muted/80 text-muted-foreground hover:bg-muted'
             }`}
             disabled={isLoading || !input.trim()}
             title="Send message (Enter)"
           >
-            {isLoading ? (
-              <Compass className="text-primary compass-spin h-5 w-5" />
-            ) : (
-              <ArrowUp className="h-5 w-5" />
-            )}
+            <ArrowUp className="h-5 w-5" />
           </button>
           </form>
 

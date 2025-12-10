@@ -208,6 +208,26 @@ export function useLocalBookingSettings(
     [document, documentStore]
   );
 
+  const ensureBookingTypeEnabled = useCallback(
+    (key: keyof BookingTypes) => {
+      if (bookingTypesRef.current[key]) return bookingTypesRef.current;
+
+      const updated = { ...bookingTypesRef.current, [key]: true };
+      bookingTypesRef.current = updated;
+      setLocalBookingTypes(updated);
+
+      // Commit booking toggle immediately (debounced)
+      commitWithDebounce(
+        { booking_types: updated },
+        bookingTypesCommitTimer,
+        hasPendingBookingTypesChanges
+      );
+
+      return updated;
+    },
+    [commitWithDebounce]
+  );
+
   // Booking types update handler
   const handleUpdateBookingTypes = useCallback(
     (settings: Partial<BookingTypes>) => {
@@ -250,6 +270,7 @@ export function useLocalBookingSettings(
   // Flight settings update handler
   const handleUpdateFlightSettings = useCallback(
     (settings: Partial<FlightSettings>) => {
+      ensureBookingTypeEnabled('flights');
       const currentSettings = flightSettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
       // Update ref and state synchronously so rapid clicks work correctly
@@ -284,12 +305,13 @@ export function useLocalBookingSettings(
         onToast(`Updated flight settings: ${messages.join(', ')}! ✈️`, 'confirmation');
       }
     },
-    [commitWithDebounce, onToast]
+    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
   );
 
   // Hotel settings update handler
   const handleUpdateHotelSettings = useCallback(
     (settings: Partial<HotelSettings>) => {
+      ensureBookingTypeEnabled('hotels');
       const currentSettings = hotelSettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
       // Update ref and state synchronously so rapid clicks work correctly
@@ -325,12 +347,13 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, onToast]
+    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
   );
 
   // Transport settings update handler
   const handleUpdateTransportSettings = useCallback(
     (settings: Partial<TransportSettings>) => {
+      ensureBookingTypeEnabled('ground_transport');
       const currentSettings = transportSettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
       // Update ref and state synchronously so rapid clicks work correctly
@@ -360,12 +383,13 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, onToast]
+    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
   );
 
   // Activity settings update handler
   const handleUpdateActivitySettings = useCallback(
     (settings: Partial<ActivitySettings>) => {
+      ensureBookingTypeEnabled('activities');
       const currentSettings = activitySettingsRef.current;
       const newSettings = { ...currentSettings, ...settings };
       // Update ref and state synchronously so rapid clicks work correctly
@@ -390,7 +414,7 @@ export function useLocalBookingSettings(
         }
       }
     },
-    [commitWithDebounce, onToast]
+    [commitWithDebounce, ensureBookingTypeEnabled, onToast]
   );
 
   // Add activity handler

@@ -84,6 +84,7 @@ class PlannerLLMOutput:
         trip_inputs: Dict of collected/updated trip input fields.
         ready_to_generate: True when all fields are complete but branches haven't
                            been generated yet (waiting for user to click Generate).
+        suggested_responses: List of 1-3 suggested user responses for quick replies.
         token_estimate: Estimated total tokens used so far for debugging purposes.
     """
 
@@ -94,12 +95,14 @@ class PlannerLLMOutput:
         assistant_message: str,
         trip_inputs: Optional[dict] = None,
         ready_to_generate: bool = False,
+        suggested_responses: Optional[List[str]] = None,
         token_estimate: Optional[int] = None,
     ) -> None:
         self.branches = branches
         self.assistant_message = assistant_message
         self.trip_inputs = trip_inputs or {}
         self.ready_to_generate = ready_to_generate
+        self.suggested_responses = suggested_responses or []
         self.token_estimate = token_estimate
 
 
@@ -154,6 +157,16 @@ _REQUIRED_TRIP_INPUT_FIELDS = (
 
 DEFAULT_CURRENCY = os.getenv("DEFAULT_TRIP_CURRENCY", "USD")
 SUPPORTED_CURRENCIES = {"USD", "EUR", "GBP", "CAD", "AUD", "JPY"}
+DEFAULT_BOOKING_TYPES = {
+    "hotels": False,
+    "flights": False,
+    "ground_transport": False,
+    "activities": False,
+}
+DEFAULT_FLIGHT_SETTINGS = {"round_trip": True, "cabin_class": "economy", "direct_only": False}
+DEFAULT_HOTEL_SETTINGS = {"min_stars": 0, "amenities": []}
+DEFAULT_ACTIVITY_SETTINGS = {"categories": []}
+DEFAULT_TRANSPORT_SETTINGS = {"car": False, "train": False, "bus": False}
 
 
 # =============================================================================
@@ -833,6 +846,139 @@ def _normalize_currency(value: Any, *, default: Optional[str] = None) -> Optiona
     return default
 
 
+def _normalize_multi_city_intent(value: Any) -> Optional[str]:
+    """
+    Normalize multi-city intent from canonical values or natural language phrases.
+
+    Accepts the explicit enum values ("multi_city"/"separate"), booleans, and
+    common phrases like "one trip together" or "separate trips". Returns the
+    canonical string or None if no intent can be determined.
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return "multi_city" if value else "separate"
+
+    text = _normalize_str(value)
+    if not text:
+        return None
+
+    normalized = re.sub(r"\s+", " ", text.lower().replace("_", " ").replace("-", " ")).strip()
+
+    # Quick exact matches
+    if normalized in {
+        "multi city",
+        "multicity",
+        "multi city trip",
+        "multi city itinerary",
+        "multi city intent",
+    }:
+        return "multi_city"
+    if normalized in {
+        "separate",
+        "separate trip",
+        "separate trips",
+        "separate itinerary",
+        "separate itineraries",
+    }:
+        return "separate"
+
+    # Phrase-based inference
+    separate_phrases = (
+        "separate trip",
+        "separate trips",
+        "separate itineraries",
+        "do them separately",
+        "each separately",
+        "each on their own",
+        "different trips",
+        "individual trips",
+        "their own trip",
+        "own trip",
+        "own trips",
+        "not together",
+        "separately",
+    )
+    multi_phrases = (
+        "multi city",
+        "multicity",
+        "multi city trip",
+        "one trip",
+        "single trip",
+        "same trip",
+        "together",
+        "all together",
+        "one itinerary",
+        "single itinerary",
+        "same itinerary",
+        "combined trip",
+        "one go",
+        "one journey",
+    )
+
+    # Check for explicit separation intent first (unless negated)
+    if "not separate" not in normalized:
+        for phrase in separate_phrases:
+            if phrase in normalized:
+                return "separate"
+
+    for phrase in multi_phrases:
+        if phrase in normalized:
+            return "multi_city"
+
+    return None
+
+
+def _ensure_booking_types(trip_inputs: dict) -> dict:
+    """Guarantee booking_types exists with all keys."""
+    existing = trip_inputs.get("booking_types")
+    if not isinstance(existing, dict):
+        existing = dict(DEFAULT_BOOKING_TYPES)
+    else:
+        existing = {**DEFAULT_BOOKING_TYPES, **existing}
+    trip_inputs["booking_types"] = existing
+    return existing
+
+
+def _should_enable_booking_for_flights(flight_settings: dict | None) -> bool:
+    if not flight_settings or not isinstance(flight_settings, dict):
+        return False
+    return (
+        (
+            "cabin_class" in flight_settings
+            and flight_settings.get("cabin_class") != DEFAULT_FLIGHT_SETTINGS["cabin_class"]
+        )
+        or ("direct_only" in flight_settings and flight_settings.get("direct_only") is True)
+        or (
+            "round_trip" in flight_settings
+            and flight_settings.get("round_trip") != DEFAULT_FLIGHT_SETTINGS["round_trip"]
+        )
+    )
+
+
+def _should_enable_booking_for_hotels(hotel_settings: dict | None) -> bool:
+    if not hotel_settings or not isinstance(hotel_settings, dict):
+        return False
+    if hotel_settings.get("min_stars", 0) and hotel_settings.get("min_stars") > 0:
+        return True
+    amenities = hotel_settings.get("amenities") or []
+    return isinstance(amenities, list) and len(amenities) > 0
+
+
+def _should_enable_booking_for_activities(activity_settings: dict | None) -> bool:
+    if not activity_settings or not isinstance(activity_settings, dict):
+        return False
+    categories = activity_settings.get("categories") or []
+    return isinstance(categories, list) and len(categories) > 0
+
+
+def _should_enable_booking_for_transport(transport_settings: dict | None) -> bool:
+    if not transport_settings or not isinstance(transport_settings, dict):
+        return False
+    return any(transport_settings.get(key) is True for key in ("car", "train", "bus"))
+
+
 def _clamp_traveler_value(value: Optional[int]) -> Optional[int]:
     """
     Constrain a traveler count (adults or children) to a valid range [0, 20].
@@ -1306,7 +1452,9 @@ def _call_openai_for_plan(
             "currency": ti.currency,
             "multi_city_intent": ti.multi_city_intent,
             # Booking preferences
-            "booking_types": ti.booking_types.model_dump() if ti.booking_types else None,
+            "booking_types": (
+                ti.booking_types.model_dump() if ti.booking_types else dict(DEFAULT_BOOKING_TYPES)
+            ),
             "flight_settings": ti.flight_settings.model_dump() if ti.flight_settings else None,
             "hotel_settings": ti.hotel_settings.model_dump() if ti.hotel_settings else None,
             "activity_settings": (
@@ -1330,7 +1478,7 @@ def _call_openai_for_plan(
             "currency": DEFAULT_CURRENCY,
             "multi_city_intent": None,
             # Booking preferences - initialize as None (will use schema defaults)
-            "booking_types": None,
+            "booking_types": dict(DEFAULT_BOOKING_TYPES),
             "flight_settings": None,
             "hotel_settings": None,
             "activity_settings": None,
@@ -1403,6 +1551,7 @@ EXTRACTION (set trip_inputs for ANY location mentioned):
 | wheelchair/accessibility | requires_assistance=true |
 | $N / €N / £N | budget=N, currency=USD/EUR/GBP |
 | "for N days" + start | compute end_date |
+| "leaving today, not sure when back" | start_date={today}, end_date=null |
 | "romantic getaway"/"beach trip" | activity_settings:{{categories:[emoji theme]}} |
 | "wine tasting"/"spa weekend" | activity_settings:{{categories:[emoji theme]}} |
 | "want tours"/"outdoor activities" | activity_settings:{{categories:[emoji theme]}} |
@@ -1470,11 +1619,19 @@ BRANCHES (only on generate trigger):
 - If no budget: estimate ~$200/day/person mid-range, note in description
 
 OUTPUT (JSON only):
-{{"assistant_message":"...","trip_inputs":{{fields}},"ready_to_generate":false,"branches":[]}}
+{{"assistant_message":"...","trip_inputs":{{fields}},"ready_to_generate":false,"branches":[],"suggested_responses":[]}}
 
 trip_inputs fields: destinations[], origin, start_date, end_date, adults, children,
 requires_assistance, budget, currency, multi_city_intent,
 booking_types, flight_settings, hotel_settings, activity_settings, transport_settings
+
+suggested_responses: array of 0-3 PLAIN STRINGS representing what the USER might say next.
+- CRITICAL: These must be STATEMENTS the user would say, NEVER questions.
+- NEVER include question marks. Any suggestion with "?" is invalid and will be rejected.
+- Focus on the next missing required field in order: destinations → origin → dates
+- Good: ["Barcelona sounds perfect", "Flying from Boston", "December 10-17", "Maybe Bali"]
+- FORBIDDEN: ["Where to?", "What dates?", "Any specific beach?", "Any dates in mind?"]
+- Keep each 2-6 words. If unsure, return empty array []
 
 Omit unchanged fields. Backend computes missing_fields—don't include it.
 
@@ -1652,6 +1809,23 @@ adults, children, requires_assistance, budget, currency}}"""
 
         assistant_message = str(data.get("assistant_message") or "").strip()
 
+        # Parse suggested responses (0-3 quick reply options)
+        # These must be user statements, never questions
+        suggested_responses_raw = data.get("suggested_responses") or []
+        if not isinstance(suggested_responses_raw, list):
+            suggested_responses_raw = []
+        suggested_responses = []
+        for s in suggested_responses_raw[:3]:
+            if isinstance(s, dict):
+                # Handle if LLM returns objects instead of strings
+                text = s.get("content") or s.get("text") or ""
+            else:
+                text = str(s) if s else ""
+            text = text.strip()
+            # Reject questions - suggestions must be user statements, not assistant questions
+            if text and "?" not in text:
+                suggested_responses.append(text)
+
         trip_inputs_payload = data.get("trip_inputs") or {}
 
         # Normalize LLM response fields and merge with current state
@@ -1680,8 +1854,9 @@ adults, children, requires_assistance, budget, currency}}"""
                 elif isinstance(raw_value, str):
                     normalized_llm_response[field] = raw_value.lower() in ("true", "yes", "1")
             elif field == "multi_city_intent":
-                if raw_value in ("multi_city", "separate"):
-                    normalized_llm_response[field] = raw_value
+                normalized_value = _normalize_multi_city_intent(raw_value)
+                if normalized_value:
+                    normalized_llm_response[field] = normalized_value
             else:
                 normalized_llm_response[field] = _normalize_str(raw_value)
 
@@ -1728,6 +1903,27 @@ adults, children, requires_assistance, budget, currency}}"""
                 # For scalars, update if LLM provided non-None value
                 if value is not None:
                     trip_inputs[field] = value
+
+        # Ensure booking_types exists and flip the relevant toggles on when sub-settings are present
+        booking_types = _ensure_booking_types(trip_inputs)
+        if _should_enable_booking_for_flights(trip_inputs.get("flight_settings")):
+            booking_types["flights"] = True
+        if _should_enable_booking_for_hotels(trip_inputs.get("hotel_settings")):
+            booking_types["hotels"] = True
+        if _should_enable_booking_for_transport(trip_inputs.get("transport_settings")):
+            booking_types["ground_transport"] = True
+        if _should_enable_booking_for_activities(trip_inputs.get("activity_settings")):
+            booking_types["activities"] = True
+
+        # Fallback: infer "How to visit" intent directly from the latest user message
+        # if the LLM didn't return a value. This helps capture chats like
+        # "let's do it all in one trip" or "make them separate trips".
+        if not trip_inputs.get("multi_city_intent"):
+            destinations = trip_inputs.get("destinations") or []
+            if len(destinations) >= 2:
+                inferred_intent = _normalize_multi_city_intent(req.message)
+                if inferred_intent:
+                    trip_inputs["multi_city_intent"] = inferred_intent
 
         # FALLBACK: If LLM failed to compute end_date from duration, do it ourselves
         if trip_inputs.get("start_date") and not trip_inputs.get("end_date"):
@@ -1849,6 +2045,7 @@ adults, children, requires_assistance, budget, currency}}"""
             assistant_message=assistant_message,
             trip_inputs=trip_inputs,
             ready_to_generate=final_ready_to_generate,
+            suggested_responses=suggested_responses,
             token_estimate=token_estimate,
         )
 
@@ -2107,6 +2304,8 @@ def plan_trip(db: Session, session_id: str, req: PlanRequest) -> PlanDocumentRes
         doc_data_dict["assistant_message_id"] = str(assistant_chat.id)
         # Pass through the ready_to_generate flag from planner output
         doc_data_dict["ready_to_generate"] = planner_output.ready_to_generate
+        # Pass through suggested responses for quick reply buttons
+        doc_data_dict["suggested_responses"] = planner_output.suggested_responses
 
         # DEBUG (3/3): After merge - final document state
         if _DEBUG_LOG:

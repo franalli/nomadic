@@ -44,7 +44,7 @@ from app.schemas import (
     TripInputValidationResponse,
 )
 from app.tile_service.service import search_tiles
-from app.validation import clear_cache, prewarm_cache, validate_input
+from app.validation import cache_stats, clear_cache, prewarm_cache, validate_input
 
 APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 
@@ -118,7 +118,7 @@ def health():
 
 
 @app.post("/v1/validate-trip-input", response_model=TripInputValidationResponse)
-def validate_trip_input(req: TripInputValidationRequest):
+def validate_trip_input(req: TripInputValidationRequest, request: Request):
     """
     Validate a trip input (origin or destination).
 
@@ -129,7 +129,8 @@ def validate_trip_input(req: TripInputValidationRequest):
     Raises HTTP 503 if validation fails after retries.
     """
     try:
-        result = validate_input(req.value, req.field_type)
+        session_id = get_session_from_request(request)
+        result = validate_input(req.value, req.field_type, session_id=session_id)
         return TripInputValidationResponse(
             corrected_values=result.corrected_values,
             is_valid=result.is_valid,
@@ -144,12 +145,17 @@ def admin_clear_validation_cache():
     """
     Clear the validation cache. For development/debugging only.
     """
+    before = cache_stats()
     count = clear_cache()
     # Re-populate with common values
     new_count = prewarm_cache()
     return {
         "cleared": count,
         "repopulated": new_count,
+        "stats": {
+            "before": before,
+            "after": cache_stats(),
+        },
     }
 
 

@@ -254,6 +254,8 @@ class PlanDocumentData(BaseModel):
     assistant_message_id: Optional[str] = None
     # Ready to generate flag - when all fields are complete but user hasn't clicked generate yet
     ready_to_generate: bool = False
+    # Suggested user responses for quick replies (1-3 contextual suggestions)
+    suggested_responses: List[str] = Field(default_factory=list)
 
 
 class PlanDocumentResponse(BaseModel):

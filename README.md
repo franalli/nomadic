@@ -72,3 +72,36 @@ docker compose run --rm backend alembic upgrade head
 - **Ruff** – `[tool.ruff]` in the same file (E/F/I/B, py312) powers linting; VS Code’s `source.fixAll.ruff` and the `ruff --fix` pre-commit hook keep files clean, matching the manual `python -m ruff check app --fix` command.
 - **Pre-commit hooks** – install once with `pre-commit install`; the configured `black` and `ruff --fix` hooks (see `.pre-commit-config.yaml`) automatically format/lint staged backend files or can be run explicitly via `pre-commit run --all-files`.
 - **Frontend linting** – run `npm run lint` inside `frontend/` (runs `next lint` and full `eslint .`) or `npm run lint:fix` to auto-fix what ESLint safely can.
+
+## Trip input validation caching
+
+- FastAPI endpoint `/v1/validate-trip-input` now reuses several TTL caches (case-insensitive keys): positive validation results, short-TTL negatives, destination split parsing, prompt renderings, last-known-good fallback, and per-session rate counters.
+- Defaults live in `backend/app/config.py` (e.g., `validation_cache_ttl`, `validation_negative_cache_ttl`, `validation_rate_limit_window` and `validation_rate_limit_max_requests`). Negative caching is enabled by default with a short TTL; rate limiting is per session token and uses a rolling window.
+- Admin helper `/v1/admin/clear-validation-cache` clears all caches, prewarms common destinations, and reports before/after stats.
+
+## Prompts
+
+Go through every file in /frontend. Do you see any unused logic, variables or functions? Any unnecessary re-renders? Any older legacy logic that is no longer relevant? Any over-engineered logic that should be simplified? Maintain all current functionality. Only suggest a refactor if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Evaluate impact on /backend.
+
+Go through every file in /backend. Do you see any unused logic, variables or functions? Any older legacy logic that is no longer relevant? Any unnecessary repetitions? Any over-engineered logic that should be simplified? Maintain all current functionality. Only suggest a refactor if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Evaluate impact on /frontend.
+
+Go through every file in /backend and /frontend. Do you see any unused logic, variables or functions? Any older legacy logic that is no longer relevant? Any unnecessary re-renders? Any over-engineered logic that should be simplified? Maintain all current functionality. Only suggest a refactor if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Evaluate impact on /frontend and /backend.
+
+Start implementation following plan recommendations. Only apply a step if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Afterwards, run pre-commit hooks in .venv, and ensure they pass.
+
+Update the trip input field [FIELD_NAME] ([FIELD_TYPE]): [DESCRIPTION]
+
+Follow the trip inputs update checklist - update all locations:
+
+Backend schemas (schemas.py): DocumentTripInputs, DocumentTripInputsPatch, DocumentBranch
+LLM integration (plan.py): \_TRIP_INPUT_FIELDS, system prompt, validation, normalization, dict building, branch construction
+CRUD (crud_document.py): mergeable_fields, cascade logic in apply_user_patch and apply_planner_update
+Tile service if needed (tile_service/models.py, service.py, mock_provider.py)
+Frontend types (types/document.ts): DocumentTripInputs, DocumentBranch
+Store defaults (documentStore.ts)
+UI component (TripDetailsForm.tsx): input control and draft type
+Hook (useTripInputsEditor.ts): handler function
+Props passing (NomadicLanding.tsx)
+Display (BranchPanel.tsx) if shown in summary
+Tests (test_plan_document.py): all fixtures and test data
+Regenerate frontend types from OpenAPI

@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     validation_cache_size: int = 1000
     validation_cache_ttl: int = 86400  # 24 hours
     validation_max_tokens: int = 50  # Enough for JSON response
+    validation_negative_cache_enabled: bool = True
+    validation_negative_cache_size: int = 500
+    validation_negative_cache_ttl: int = 900  # Short TTL for invalid entries
+    validation_split_cache_size: int = 500
+    validation_prompt_cache_size: int = 500
+    validation_fallback_cache_size: int = 500
+    validation_rate_limit_enabled: bool = True
+    validation_rate_limit_window: int = 300  # seconds
+    validation_rate_limit_max_requests: int = 50
 
     # Cross-origin / Cookie configuration
     # Frontend origin for CORS (e.g., "https://app.nomadic.com")

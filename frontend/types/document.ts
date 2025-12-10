@@ -103,6 +103,7 @@ export type PlanDocumentData = {
   assistant_message?: string | null;
   assistant_message_id?: string | null;
   ready_to_generate?: boolean;
+  suggested_responses?: string[];
 };
 
 export type PlanDocumentResponse = {

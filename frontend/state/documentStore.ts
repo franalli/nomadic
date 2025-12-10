@@ -93,8 +93,10 @@ export type LLMUpdatableField =
   | 'end_date'
   | 'adults'
   | 'children'
+  | 'requires_assistance'
   | 'budget'
   | 'currency'
+  | 'multi_city_intent'
   // Settings objects (parent level)
   | 'booking_types'
   | 'flight_settings'
@@ -197,8 +199,20 @@ function detectChangedFields(
     if (newInputs.end_date) changed.push('end_date');
     if (newInputs.adults != null) changed.push('adults');
     if (newInputs.children != null) changed.push('children');
+    if (newInputs.requires_assistance != null) changed.push('requires_assistance');
     if (newInputs.budget != null) changed.push('budget');
     if (newInputs.currency && newInputs.currency !== DEFAULT_TRIP_INPUTS.currency) changed.push('currency');
+    if (newInputs.multi_city_intent) changed.push('multi_city_intent');
+    // Booking types
+    const newBooking = newInputs.booking_types;
+    const defBooking = DEFAULT_BOOKING_TYPES;
+    if (JSON.stringify(newBooking) !== JSON.stringify(defBooking)) {
+      changed.push('booking_types');
+      if (newBooking?.flights !== defBooking.flights) changed.push('booking_types.flights');
+      if (newBooking?.hotels !== defBooking.hotels) changed.push('booking_types.hotels');
+      if (newBooking?.ground_transport !== defBooking.ground_transport) changed.push('booking_types.ground_transport');
+      if (newBooking?.activities !== defBooking.activities) changed.push('booking_types.activities');
+    }
     // Check settings against defaults (parent + sub-fields)
     const newFlight = newInputs.flight_settings;
     const defFlight = DEFAULT_FLIGHT_SETTINGS;
@@ -245,8 +259,20 @@ function detectChangedFields(
   if (oldInputs.end_date !== newInputs.end_date) changed.push('end_date');
   if (oldInputs.adults !== newInputs.adults) changed.push('adults');
   if (oldInputs.children !== newInputs.children) changed.push('children');
+  if (oldInputs.requires_assistance !== newInputs.requires_assistance) changed.push('requires_assistance');
   if (oldInputs.budget !== newInputs.budget) changed.push('budget');
   if (oldInputs.currency !== newInputs.currency) changed.push('currency');
+  if (oldInputs.multi_city_intent !== newInputs.multi_city_intent) changed.push('multi_city_intent');
+  // Booking types (parent + sub-fields)
+  const oldBooking = oldInputs.booking_types;
+  const newBooking = newInputs.booking_types;
+  if (JSON.stringify(oldBooking) !== JSON.stringify(newBooking)) {
+    changed.push('booking_types');
+    if (oldBooking?.flights !== newBooking?.flights) changed.push('booking_types.flights');
+    if (oldBooking?.hotels !== newBooking?.hotels) changed.push('booking_types.hotels');
+    if (oldBooking?.ground_transport !== newBooking?.ground_transport) changed.push('booking_types.ground_transport');
+    if (oldBooking?.activities !== newBooking?.activities) changed.push('booking_types.activities');
+  }
   // Compare settings objects (parent + sub-fields)
   const oldFlight = oldInputs.flight_settings;
   const newFlight = newInputs.flight_settings;

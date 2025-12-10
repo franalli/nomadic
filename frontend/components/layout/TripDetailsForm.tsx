@@ -16,7 +16,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { memo, useState } from 'react';
+import { Fragment, memo, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
 import { Calendar } from '@/components/ui/calendar';
@@ -313,6 +313,16 @@ function TripDetailsFormInner({
   const [hotelsSettingsOpen, setHotelsSettingsOpen] = useState(false);
   const [transportSettingsOpen, setTransportSettingsOpen] = useState(false);
   const [activitiesSettingsOpen, setActivitiesSettingsOpen] = useState(false);
+  const amenitiesUpdatedByLLM = isSubFieldUpdated('hotel_settings.amenities');
+  const flightsBookingUpdated = isSubFieldUpdated('booking_types.flights');
+  const transportBookingUpdated = isSubFieldUpdated('booking_types.ground_transport');
+  const hotelsBookingUpdated = isSubFieldUpdated('booking_types.hotels');
+  const activitiesBookingUpdated = isSubFieldUpdated('booking_types.activities');
+  const multiCityUpdated = isFieldLLMUpdated('multi_city_intent');
+  const requiresAssistanceUpdated = isFieldLLMUpdated('requires_assistance');
+  const adultsUpdated = isFieldLLMUpdated('adults');
+  const childrenUpdated = isFieldLLMUpdated('children');
+  const travelersUpdated = adultsUpdated || childrenUpdated || requiresAssistanceUpdated;
 
   // Activity input state
   const [activityInput, setActivityInput] = useState('');
@@ -475,14 +485,21 @@ function TripDetailsFormInner({
           icon={Plane}
           isOpen={flightsSettingsOpen}
           onOpenChange={setFlightsSettingsOpen}
-          isLLMUpdated={isFieldLLMUpdated('flight_settings')}
-          onAcknowledge={() => acknowledgeField('flight_settings')}
+          isLLMUpdated={isFieldLLMUpdated('flight_settings') || flightsBookingUpdated}
+          onAcknowledge={() => {
+            acknowledgeField('flight_settings');
+            acknowledgeField('booking_types' as LLMUpdatableField);
+            acknowledgeField('booking_types.flights' as LLMUpdatableField);
+          }}
           expandedContent={
               <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2">
+                <label className={`flex items-center gap-2 ${flightsBookingUpdated ? 'sparkle-control' : ''}`}>
                   <Switch
                     checked={bookingTypes.flights}
-                    onCheckedChange={(checked) => onUpdateBookingTypes({ flights: checked })}
+                    onCheckedChange={(checked) => {
+                      onUpdateBookingTypes({ flights: checked });
+                      acknowledgeField('booking_types.flights' as LLMUpdatableField);
+                    }}
                   />
                   <span className="text-[11px] text-muted-foreground">Book flights</span>
                 </label>
@@ -539,14 +556,21 @@ function TripDetailsFormInner({
             icon={Car}
             isOpen={transportSettingsOpen}
             onOpenChange={setTransportSettingsOpen}
-            isLLMUpdated={isFieldLLMUpdated('transport_settings')}
-            onAcknowledge={() => acknowledgeField('transport_settings')}
+            isLLMUpdated={isFieldLLMUpdated('transport_settings') || transportBookingUpdated}
+            onAcknowledge={() => {
+              acknowledgeField('transport_settings');
+              acknowledgeField('booking_types' as LLMUpdatableField);
+              acknowledgeField('booking_types.ground_transport' as LLMUpdatableField);
+            }}
             expandedContent={
               <div className="flex flex-col gap-2">
-                <label className="flex items-center gap-2">
+                <label className={`flex items-center gap-2 ${transportBookingUpdated ? 'sparkle-control' : ''}`}>
                   <Switch
                     checked={bookingTypes.ground_transport}
-                    onCheckedChange={(checked) => onUpdateBookingTypes({ ground_transport: checked })}
+                    onCheckedChange={(checked) => {
+                      onUpdateBookingTypes({ ground_transport: checked });
+                      acknowledgeField('booking_types.ground_transport' as LLMUpdatableField);
+                    }}
                   />
                   <span className="text-[11px] text-muted-foreground">Book transport</span>
                 </label>
@@ -607,14 +631,21 @@ function TripDetailsFormInner({
             icon={Hotel}
             isOpen={hotelsSettingsOpen}
             onOpenChange={setHotelsSettingsOpen}
-            isLLMUpdated={isFieldLLMUpdated('hotel_settings')}
-            onAcknowledge={() => acknowledgeField('hotel_settings')}
+            isLLMUpdated={isFieldLLMUpdated('hotel_settings') || hotelsBookingUpdated}
+            onAcknowledge={() => {
+              acknowledgeField('hotel_settings');
+              acknowledgeField('booking_types' as LLMUpdatableField);
+              acknowledgeField('booking_types.hotels' as LLMUpdatableField);
+            }}
             expandedContent={
               <div className="flex flex-col gap-3">
-                <label className="flex items-center gap-2">
+                <label className={`flex items-center gap-2 ${hotelsBookingUpdated ? 'sparkle-control' : ''}`}>
                   <Switch
                     checked={bookingTypes.hotels}
-                    onCheckedChange={(checked) => onUpdateBookingTypes({ hotels: checked })}
+                    onCheckedChange={(checked) => {
+                      onUpdateBookingTypes({ hotels: checked });
+                      acknowledgeField('booking_types.hotels' as LLMUpdatableField);
+                    }}
                   />
                   <span className="text-[11px] text-muted-foreground">Book hotels</span>
                 </label>
@@ -640,28 +671,31 @@ function TripDetailsFormInner({
                     ))}
                   </div>
                 </div>
-                <div className={`flex flex-wrap gap-1.5 rounded-lg p-0.5 ${isSubFieldUpdated('hotel_settings.amenities') ? 'sparkle-control' : ''}`}>
-                  {HOTEL_AMENITIES.map((amenity) => {
+                <div className="flex flex-wrap gap-2 rounded-lg p-0.5">
+                  {HOTEL_AMENITIES.map((amenity, index) => {
                     const isSelected = hotelSettings.amenities.includes(amenity.value);
+                    const shouldBreak = (index + 1) % 4 === 0 && index !== HOTEL_AMENITIES.length - 1;
                     return (
-                      <button
-                        key={amenity.value}
-                        type="button"
-                        onClick={() => {
-                          const newAmenities = isSelected
-                            ? hotelSettings.amenities.filter((a) => a !== amenity.value)
-                            : [...hotelSettings.amenities, amenity.value];
-                          onUpdateHotelSettings({ amenities: newAmenities });
-                          acknowledgeField('hotel_settings.amenities' as LLMUpdatableField);
-                        }}
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-all duration-200 ${
-                          isSelected
-                            ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                            : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                        }`}
-                      >
-                        {amenity.label}
-                      </button>
+                      <Fragment key={amenity.value}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newAmenities = isSelected
+                              ? hotelSettings.amenities.filter((a) => a !== amenity.value)
+                              : [...hotelSettings.amenities, amenity.value];
+                            onUpdateHotelSettings({ amenities: newAmenities });
+                            acknowledgeField('hotel_settings.amenities' as LLMUpdatableField);
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition-all duration-200 ${
+                            isSelected
+                              ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
+                              : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
+                          } ${amenitiesUpdatedByLLM && isSelected ? 'sparkle-control' : ''}`}
+                        >
+                          {amenity.label}
+                        </button>
+                        {shouldBreak && <span className="w-full" aria-hidden="true" />}
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -675,14 +709,21 @@ function TripDetailsFormInner({
             icon={Ticket}
             isOpen={activitiesSettingsOpen}
             onOpenChange={setActivitiesSettingsOpen}
-            isLLMUpdated={isFieldLLMUpdated('activity_settings')}
-            onAcknowledge={() => acknowledgeField('activity_settings')}
+            isLLMUpdated={isFieldLLMUpdated('activity_settings') || activitiesBookingUpdated}
+            onAcknowledge={() => {
+              acknowledgeField('activity_settings');
+              acknowledgeField('booking_types' as LLMUpdatableField);
+              acknowledgeField('booking_types.activities' as LLMUpdatableField);
+            }}
             expandedContent={
               <div className="flex flex-col gap-3">
-                <label className="flex items-center gap-2">
+                <label className={`flex items-center gap-2 ${activitiesBookingUpdated ? 'sparkle-control' : ''}`}>
                   <Switch
                     checked={bookingTypes.activities}
-                    onCheckedChange={(checked) => onUpdateBookingTypes({ activities: checked })}
+                    onCheckedChange={(checked) => {
+                      onUpdateBookingTypes({ activities: checked });
+                      acknowledgeField('booking_types.activities' as LLMUpdatableField);
+                    }}
                   />
                   <span className="text-[11px] text-muted-foreground">Book activities</span>
                 </label>
@@ -754,18 +795,21 @@ function TripDetailsFormInner({
             icon={Route}
             isOpen={multiCityPillOpen}
             onOpenChange={setMultiCityPillOpen}
+            isLLMUpdated={multiCityUpdated}
+            onAcknowledge={() => acknowledgeField('multi_city_intent' as LLMUpdatableField)}
             expandedContent={
               <>
                 <button
                   type="button"
                   onClick={() => {
                     if (tripInputs.multi_city_intent !== 'multi_city') onToggleMultiCity();
+                    acknowledgeField('multi_city_intent' as LLMUpdatableField);
                   }}
                   className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-all duration-200 ${
                     tripInputs.multi_city_intent === 'multi_city'
                       ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                       : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  }`}
+                  } ${multiCityUpdated && tripInputs.multi_city_intent === 'multi_city' ? 'sparkle-control' : ''}`}
                 >
                   Visit both
                 </button>
@@ -773,12 +817,13 @@ function TripDetailsFormInner({
                   type="button"
                   onClick={() => {
                     if (tripInputs.multi_city_intent === 'multi_city') onToggleMultiCity();
+                    acknowledgeField('multi_city_intent' as LLMUpdatableField);
                   }}
                   className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-all duration-200 ${
                     tripInputs.multi_city_intent !== 'multi_city'
                       ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                       : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  }`}
+                  } ${multiCityUpdated && tripInputs.multi_city_intent !== 'multi_city' ? 'sparkle-control' : ''}`}
                 >
                   Compare destinations
                 </button>
@@ -794,10 +839,11 @@ function TripDetailsFormInner({
           compact
           isOpen={travelersPillOpen}
           onOpenChange={setTravelersPillOpen}
-          isLLMUpdated={isFieldLLMUpdated('adults') || isFieldLLMUpdated('children')}
+          isLLMUpdated={travelersUpdated}
           onAcknowledge={() => {
             acknowledgeField('adults');
             acknowledgeField('children');
+            acknowledgeField('requires_assistance' as LLMUpdatableField);
           }}
           expandedContent={
             <div className="flex flex-col gap-2">
@@ -821,7 +867,7 @@ function TripDetailsFormInner({
                   }}
                   placeholder="0"
                   min={0}
-                  className="w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                  className={`w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${adultsUpdated ? 'sparkle-control' : ''}`}
                 />
               </div>
               {/* Children input */}
@@ -844,14 +890,17 @@ function TripDetailsFormInner({
                   }}
                   placeholder="0"
                   min={0}
-                  className="w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                  className={`w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${childrenUpdated ? 'sparkle-control' : ''}`}
                 />
               </div>
               {/* Requires assistance toggle */}
-              <label className="flex items-center gap-2">
+              <label className={`flex items-center gap-2 ${requiresAssistanceUpdated ? 'sparkle-control' : ''}`}>
                 <Switch
                   checked={tripInputs.requires_assistance ?? false}
-                  onCheckedChange={() => onToggleRequiresAssistance()}
+                  onCheckedChange={() => {
+                    onToggleRequiresAssistance();
+                    acknowledgeField('requires_assistance' as LLMUpdatableField);
+                  }}
                 />
                 <span className="text-[11px] text-muted-foreground">Requires assistance</span>
               </label>
@@ -876,7 +925,7 @@ function TripDetailsFormInner({
                   onFieldChange('currency', e.target.value);
                   onUpdateCurrency(e.target.value);
                 }}
-                className="h-8 w-24 rounded-full border border-primary/30 bg-card px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                className={`h-8 w-24 rounded-full border border-primary/30 bg-card px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${isBudgetLLMUpdated ? 'sparkle-control' : ''}`}
               >
                 {CURRENCY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -891,7 +940,7 @@ function TripDetailsFormInner({
                 placeholder="Budget"
                 min={0}
                 step={100}
-                className="w-24 rounded-full border border-primary/30 bg-card text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active"
+                className={`w-24 rounded-full border border-primary/30 bg-card text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${isBudgetLLMUpdated ? 'sparkle-control' : ''}`}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
