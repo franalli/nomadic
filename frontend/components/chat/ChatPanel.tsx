@@ -25,7 +25,7 @@ import type {
 import type { Tile } from '@/types/tile';
 
 const STREAM_CHUNK_SIZE = 1; // characters per chunk for smooth typing
-const STREAM_DELAY_MS = 24; // delay between chunks in ms (~55 chars/sec, natural typing speed)
+const STREAM_DELAY_MS = 35; // delay between chunks in ms (~29 chars/sec)
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
 const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 // Message to show after plan is generated with specific examples
@@ -54,7 +54,7 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
 // Typing indicator component - extracted to module level to prevent recreation
 const TypingIndicator = () => (
   <div className="text-left message-enter">
-    <div className="border-border/50 bg-gradient-to-br from-muted to-muted/80 text-foreground inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md border px-4 py-3 shadow-sm">
+    <div className="border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md px-4 py-3 shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)]">
       <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '0ms' }} />
       <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '150ms' }} />
       <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '300ms' }} />
@@ -138,6 +138,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const tripInputsRef = useRef<HTMLDivElement | null>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
     const prevIsLoadingRef = useRef(false);
+    const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
+    const isUserScrolledUpRef = useRef(false);
+    const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
     // Show suggestions only when no user messages yet
@@ -147,19 +150,62 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       ? 'h-full'
       : 'min-h-[300px]';
 
-    const scrollToBottom = useCallback(() => {
+    // Check if user is near the bottom of the scroll container
+    const isNearBottom = useCallback(() => {
       const node = scrollContainerRef.current;
-      if (!node) return;
-      // Double-RAF ensures scroll happens after React DOM update and browser paint
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          node.scrollTo({
-            top: node.scrollHeight,
-            behavior: 'smooth',
-          });
-        });
-      });
+      if (!node) return true;
+      const threshold = 100; // pixels from bottom to consider "at bottom"
+      return node.scrollHeight - node.scrollTop - node.clientHeight < threshold;
     }, []);
+
+    // Custom smooth scroll with controlled duration
+    const smoothScrollTo = useCallback((element: HTMLElement, targetScrollTop: number, duration: number) => {
+      const startScrollTop = element.scrollTop;
+      const distance = targetScrollTop - startScrollTop;
+      const startTime = performance.now();
+
+      // Ease-out cubic for natural deceleration
+      const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+      const animateScroll = (currentTime: number) => {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const easedProgress = easeOutCubic(progress);
+
+        element.scrollTop = startScrollTop + distance * easedProgress;
+
+        if (progress < 1) {
+          requestAnimationFrame(animateScroll);
+        }
+      };
+
+      requestAnimationFrame(animateScroll);
+    }, []);
+
+    // Smooth scroll to bottom using custom animation
+    const scrollToBottom = useCallback((force = false) => {
+      // Don't auto-scroll if user has scrolled up, unless forced
+      if (!force && isUserScrolledUpRef.current) return;
+
+      const container = scrollContainerRef.current;
+      if (!container) return;
+
+      // Debounce rapid scroll calls to prevent jitter
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+
+      scrollTimeoutRef.current = setTimeout(() => {
+        const targetScrollTop = container.scrollHeight - container.clientHeight;
+        // 2000ms duration for a slow, relaxed scroll
+        smoothScrollTo(container, targetScrollTop, 2000);
+      }, 16); // Single frame delay for batching
+    }, [smoothScrollTo]);
+
+    // Track user scroll position to avoid fighting user scroll
+    const handleScroll = useCallback(() => {
+      isUserScrolledUpRef.current = !isNearBottom();
+    }, [isNearBottom]);
 
     // Scroll the page to bring chat panel into view (used after send/receive)
     const scrollPanelIntoView = useCallback(() => {
@@ -171,7 +217,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
     useEffect(() => {
       if (prevIsLoadingRef.current && !isLoading) {
-        scrollToBottom();
+        // Reset scroll tracking and force scroll to bottom when response finishes
+        isUserScrolledUpRef.current = false;
+        scrollToBottom(true);
         scrollPanelIntoView();
         requestAnimationFrame(() => {
           inputRef.current?.focus();
@@ -179,6 +227,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       }
       prevIsLoadingRef.current = isLoading;
     }, [isLoading, scrollToBottom, scrollPanelIntoView]);
+
+    // Cleanup timeout on unmount
+    useEffect(() => {
+      return () => {
+        if (scrollTimeoutRef.current) {
+          clearTimeout(scrollTimeoutRef.current);
+        }
+      };
+    }, []);
+
+    // Scroll to bottom when messages change (during streaming or new messages)
+    useEffect(() => {
+      // Only auto-scroll if there are messages and we're not in loading history state
+      if (messages.length > 0 && !isLoadingHistory) {
+        scrollToBottom();
+      }
+    }, [messages, isLoadingHistory, scrollToBottom]);
+
+    // Reset scroll tracking when user sends a message (starts loading)
+    useEffect(() => {
+      if (isLoading) {
+        isUserScrolledUpRef.current = false;
+      }
+    }, [isLoading]);
 
     // Load chat history from backend API on mount
     useEffect(() => {
@@ -475,7 +547,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     return (
       <div
         ref={panelRef}
-        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-card/30 dark:bg-bg-strong/60 rounded-xl p-4`}
+        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-white dark:bg-bg-strong/60 border border-gray-200/80 dark:border-transparent rounded-xl p-4`}
       >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
@@ -504,11 +576,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         <div
           ref={scrollContainerRef}
-          className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm scroll-smooth no-scrollbar"
+          className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm no-scrollbar"
           style={{ overflowAnchor: 'none' }}
           role="log"
           aria-label="Chat messages"
           aria-busy={isLoadingHistory || isLoading}
+          onScroll={handleScroll}
         >
           {isLoadingHistory ? (
             <div className="flex items-center justify-center py-4" role="status" aria-label="Loading chat history">
@@ -526,8 +599,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   <div
                     className={
                       m.role === 'user'
-                        ? 'bg-gradient-to-br from-primary to-primary/90 text-primary-foreground inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 shadow-md text-left hover:shadow-lg transition-shadow'
-                        : `border-border/50 bg-gradient-to-br from-muted to-muted/80 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md border px-4 py-2.5 transition-all hover:border-border/70 ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
+                        ? 'bg-gradient-to-br from-primary via-primary to-primary/85 text-primary-foreground inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_8px_rgba(0,0,0,0.12),0_4px_16px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.2)] hover:shadow-[0_4px_12px_rgba(0,0,0,0.15),0_8px_24px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,0.25)] hover:-translate-y-0.5'
+                        : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
                     }
                   >
                     {m.role === 'assistant' ? (
@@ -541,6 +614,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 </div>
               ))}
               {showTypingIndicator && <TypingIndicator />}
+              {/* Invisible sentinel for smooth scroll-to-bottom */}
+              <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
             </>
           )}
         </div>
@@ -585,9 +660,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
 
           <form onSubmit={handleSubmit} className="relative">
-          <textarea
+            {/* Custom shimmer placeholder - only when input is empty and no user message */}
+            {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
+              <div className="placeholder-shimmer" aria-hidden="true">
+                {hasBranches ? 'Refine your trip...' : 'Where would you like to go?'}
+              </div>
+            )}
+            <textarea
             ref={inputRef}
-            className="border-input bg-muted/40 hover:bg-muted/60 text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-hidden min-h-[48px] max-h-[200px] scroll-mb-4"
+            className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
               hasBranches
                 ? 'Refine your trip...'
@@ -611,7 +692,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           />
           <button
             type="submit"
-            className={`absolute right-2 top-1/2 flex -translate-y-1/2 items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
+            className={`absolute right-2 top-[6px] flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
               input.trim() && !isLoading
                 ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
                 : 'bg-muted/80 text-muted-foreground hover:bg-muted'
@@ -619,7 +700,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             disabled={isLoading || !input.trim()}
             title="Send message (Enter)"
           >
-            <ArrowUp className="h-5 w-5" />
+            <ArrowUp className={`h-5 w-5 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'send-arrow-shimmer' : ''}`} />
           </button>
           </form>
 

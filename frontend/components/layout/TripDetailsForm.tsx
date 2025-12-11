@@ -9,7 +9,6 @@ import {
   Loader2,
   MapPin,
   Plane,
-  Route,
   Ticket,
   Train,
   Users,
@@ -304,7 +303,6 @@ function TripDetailsFormInner({
   const calendarStartDate = selectedDateRange?.from;
 
   // Collapsible open states for trip input pills (kept for remaining collapsible pills)
-  const [multiCityPillOpen, setMultiCityPillOpen] = useState(false);
   const [travelersPillOpen, setTravelersPillOpen] = useState(false);
   const [budgetPillOpen, setBudgetPillOpen] = useState(false);
 
@@ -318,7 +316,6 @@ function TripDetailsFormInner({
   const transportBookingUpdated = isSubFieldUpdated('booking_types.ground_transport');
   const hotelsBookingUpdated = isSubFieldUpdated('booking_types.hotels');
   const activitiesBookingUpdated = isSubFieldUpdated('booking_types.activities');
-  const multiCityUpdated = isFieldLLMUpdated('multi_city_intent');
   const requiresAssistanceUpdated = isFieldLLMUpdated('requires_assistance');
   const adultsUpdated = isFieldLLMUpdated('adults');
   const childrenUpdated = isFieldLLMUpdated('children');
@@ -400,6 +397,8 @@ function TripDetailsFormInner({
             onAddDestination={onAddDestination}
             hasDestination={hasDestination}
             pendingDestination={pendingDestination}
+            multiCityIntent={tripInputs.multi_city_intent}
+            onToggleMultiCity={onToggleMultiCity}
           />
         </InlineEditPill>
 
@@ -788,50 +787,6 @@ function TripDetailsFormInner({
 
       {/* Row 3: Other trip input pills */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {/* Multi-city toggle (only shown when 2+ destinations) */}
-        {(tripInputs.destinations ?? []).length >= 2 && (
-          <ExpandablePill
-            label={FIELD_LABELS.multi_city_intent}
-            icon={Route}
-            isOpen={multiCityPillOpen}
-            onOpenChange={setMultiCityPillOpen}
-            isLLMUpdated={multiCityUpdated}
-            onAcknowledge={() => acknowledgeField('multi_city_intent' as LLMUpdatableField)}
-            expandedContent={
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (tripInputs.multi_city_intent !== 'multi_city') onToggleMultiCity();
-                    acknowledgeField('multi_city_intent' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-all duration-200 ${
-                    tripInputs.multi_city_intent === 'multi_city'
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${multiCityUpdated && tripInputs.multi_city_intent === 'multi_city' ? 'sparkle-control' : ''}`}
-                >
-                  Visit both
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (tripInputs.multi_city_intent === 'multi_city') onToggleMultiCity();
-                    acknowledgeField('multi_city_intent' as LLMUpdatableField);
-                  }}
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-all duration-200 ${
-                    tripInputs.multi_city_intent !== 'multi_city'
-                      ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
-                      : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                  } ${multiCityUpdated && tripInputs.multi_city_intent !== 'multi_city' ? 'sparkle-control' : ''}`}
-                >
-                  Compare destinations
-                </button>
-              </>
-            }
-          />
-        )}
-
         {/* Travelers field */}
         <ExpandablePill
           label={FIELD_LABELS.travelers}

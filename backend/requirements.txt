@@ -12,3 +12,4 @@ pre-commit==4.4.0
 httpx==0.28.1
 openai==2.8.0
 cachetools==5.5.0
+langgraph==1.0.4

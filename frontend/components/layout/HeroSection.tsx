@@ -5,7 +5,7 @@ import React, { memo } from 'react';
 
 const HERO_IMAGE =
   'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=2000&q=80';
-const HERO_VIDEO = '/hiking_video2.mp4';
+const HERO_VIDEO = '/hiking_video.mp4';
 const HERO_TAGLINE = 'We Plan the Rest.';
 
 interface HeroBackgroundProps {

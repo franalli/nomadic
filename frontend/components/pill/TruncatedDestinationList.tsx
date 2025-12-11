@@ -1,7 +1,7 @@
 'use client';
 
 import { Loader2 } from 'lucide-react';
-import { memo, useState } from 'react';
+import { Fragment, memo, useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { LocationBadge } from './LocationBadge';
@@ -21,6 +21,10 @@ export interface TruncatedDestinationListProps {
   onAddDestination: (destination: string) => void;
   hasDestination: boolean;
   pendingDestination: string | null;
+  /** Current multi-city intent: 'multi_city' = visit both, 'separate' or null = compare */
+  multiCityIntent?: 'multi_city' | 'separate' | null;
+  /** Callback to toggle between visit both and compare modes */
+  onToggleMultiCity?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,8 +42,15 @@ function TruncatedDestinationListInner({
   onAddDestination,
   hasDestination,
   pendingDestination,
+  multiCityIntent,
+  onToggleMultiCity,
 }: TruncatedDestinationListProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Determine separator text based on multi-city intent
+  // 'multi_city' = visit both = "and", otherwise = compare = "or"
+  const separatorText = multiCityIntent === 'multi_city' ? 'and' : 'or';
+  const showSeparator = destinations.length >= 2 && onToggleMultiCity;
 
   const visibleDestinations = destinations.slice(0, maxVisible);
   const hiddenDestinations = destinations.slice(maxVisible);
@@ -47,17 +58,29 @@ function TruncatedDestinationListInner({
 
   return (
     <>
-      {/* Visible destinations */}
+      {/* Visible destinations with separators */}
       {visibleDestinations.map((dest, idx) => (
-        <LocationBadge
-          key={`dest-${idx}`}
-          type="destination"
-          index={idx}
-          value={dest}
-          isSelected={selectedBadge === idx}
-          onSelect={onSelectBadge}
-          onRemove={() => onRemoveDestination(idx)}
-        />
+        <Fragment key={`dest-group-${idx}`}>
+          <LocationBadge
+            type="destination"
+            index={idx}
+            value={dest}
+            isSelected={selectedBadge === idx}
+            onSelect={onSelectBadge}
+            onRemove={() => onRemoveDestination(idx)}
+          />
+          {/* Show separator between visible destinations (not after the last visible one unless there are hidden) */}
+          {showSeparator && idx < visibleDestinations.length - 1 && (
+            <button
+              type="button"
+              onClick={onToggleMultiCity}
+              className="text-[10px] font-medium text-orange-500 hover:text-orange-400 transition-colors cursor-pointer -mx-0.5 self-center border border-orange-500 rounded-full w-5 h-5 flex items-center justify-center hover:border-orange-400"
+              title={multiCityIntent === 'multi_city' ? 'Click to compare destinations' : 'Click to visit both'}
+            >
+              {separatorText}
+            </button>
+          )}
+        </Fragment>
       ))}
 
       {/* "+X more" badge with Popover */}
