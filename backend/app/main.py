@@ -1,5 +1,7 @@
+import logging
 import os
-from typing import List
+from datetime import datetime
+from typing import Any, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,9 +12,11 @@ import app.schemas as schemas
 from app.config import settings
 from app.crud_document import (
     add_tiles_to_branch,
+    apply_planner_update,
     apply_user_patch,
     get_document,
     get_document_data,
+    get_or_create_document,
 )
 from app.crud_trip import (
     fetch_chat_history,
@@ -24,6 +28,18 @@ from app.crud_trip import (
     should_rotate_session,
 )
 from app.db import get_db
+from app.graph_plan_utils import (
+    check_payload_size,
+    compute_today_iso,
+    ensure_thread_id,
+    generate_request_id,
+    is_date_ambiguous,
+    is_valid_thread_id,
+    normalize_trip_inputs,
+    sanitize_session_state,
+    truncate_assistant_message,
+    validate_suggested_responses,
+)
 from app.middleware import (
     CSRFMiddleware,
     SessionMiddleware,
@@ -33,9 +49,16 @@ from app.middleware import (
 )
 from app.middleware.session import _generate_csrf_token
 from app.plan import plan_trip
+from app.plan_graph import run_turn
 from app.schemas import (
     ChatHistoryResponse,
     ChatMessageResponse,
+    GraphPlanErrorCode,
+    GraphPlanObservability,
+    GraphPlanRequest,
+    GraphPlanResponse,
+    GraphPlanTokens,
+    PlanDocumentData,
     PlanDocumentPatch,
     PlanDocumentResponse,
     PlanRequest,
@@ -45,6 +68,10 @@ from app.schemas import (
 )
 from app.tile_service.service import search_tiles
 from app.validation import cache_stats, clear_cache, prewarm_cache, validate_input
+
+# Configure logging for the graph plan route
+logger = logging.getLogger(__name__)
+
 
 APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 
@@ -180,6 +207,378 @@ def track_tile_click(
     db.commit()
 
     return {"status": "ok"}
+
+
+@app.post("/v1/graph_plan", response_model=GraphPlanResponse)
+def graph_plan_endpoint(
+    request: Request,
+    response: Response,
+    req: GraphPlanRequest,
+    db: Session = db_dependency,
+):
+    """
+    LangGraph-based planning endpoint.
+
+    Accepts a user message and optional session state, runs the graph planner,
+    persists document updates, and returns the updated session state.
+
+    Features:
+    - Feature flag gating (ENABLE_GRAPH_PLAN_ROUTE)
+    - Payload size validation
+    - Optimistic concurrency via document versioning
+    - Fallback to legacy planner on failure (GRAPH_FALLBACK_TO_LEGACY)
+    - Cache-Control: no-store to prevent caching of personalized responses
+    """
+    # --- Feature flag gate ---
+    if not settings.enable_graph_plan_route:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": GraphPlanErrorCode.ROUTE_DISABLED,
+                "message": "Graph plan route is disabled",
+            },
+        )
+
+    # --- Content-Type validation ---
+    content_type = request.headers.get("content-type", "")
+    if not content_type.startswith("application/json"):
+        raise HTTPException(
+            status_code=415,
+            detail={
+                "error_code": GraphPlanErrorCode.UNSUPPORTED_MEDIA_TYPE,
+                "message": "Content-Type must be application/json",
+            },
+        )
+
+    # --- Payload size validation ---
+    payload_error = check_payload_size(request)
+    if payload_error:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error_code": GraphPlanErrorCode.PAYLOAD_TOO_LARGE,
+                "message": payload_error,
+            },
+        )
+
+    # --- Generate request ID and compute today_iso ---
+    request_id = generate_request_id()
+    today_iso = compute_today_iso()
+
+    # --- Validate thread_id if provided ---
+    if req.thread_id and not is_valid_thread_id(req.thread_id):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": GraphPlanErrorCode.INVALID_THREAD_ID,
+                "message": "Invalid thread_id format",
+            },
+        )
+
+    # --- Sanitize and prepare session state ---
+    session_state = sanitize_session_state(req.session_state)
+
+    # --- Handle reset parameter: new thread_id when reset=true + empty session_state ---
+    if req.reset and not session_state:
+        session_state = {}
+        session_state["thread_id"] = str(ensure_thread_id(None))  # Force new thread
+        # Initialize from trip_inputs if provided
+        if req.trip_inputs:
+            session_state["trip_inputs"] = normalize_trip_inputs(dict(req.trip_inputs))
+    elif not session_state:
+        session_state = {}
+
+    # --- Initialize trip_inputs if not present ---
+    if "trip_inputs" not in session_state:
+        raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
+        session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
+
+    # --- Ensure thread_id is set ---
+    if "thread_id" not in session_state:
+        session_state["thread_id"] = ensure_thread_id(req.thread_id)
+
+    # --- Inject today_iso into session state for date parsing ---
+    session_state["today_iso"] = today_iso
+
+    # --- Get session from request for document persistence ---
+    session_id = get_session_from_request(request)
+    db_session = get_or_create_session(db, session_id)
+
+    # --- Track previous ready_to_generate for observability ---
+    ready_to_generate_prev = session_state.get("metadata", {}).get("ready_to_generate", False)
+
+    # --- Get or create document for this session ---
+    document = None
+    document_data = None
+    document_version = None
+    try:
+        document = get_or_create_document(db, session=db_session)
+        document_data = get_document_data(document)
+        document_version = document.version
+
+        # Check optimistic concurrency if expected_version provided
+        if req.expected_version is not None and document_version != req.expected_version:
+            msg = (
+                f"Document version mismatch: "
+                f"expected {req.expected_version}, got {document_version}"
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error_code": GraphPlanErrorCode.VERSION_CONFLICT,
+                    "message": msg,
+                    "server_doc_version": document_version,
+                    "client_doc_version": req.expected_version,
+                    "retry_after_ms": 100,
+                },
+            )
+
+        # Hydrate session state from document (branches AND trip_inputs)
+        if document_data:
+            if document_data.branches:
+                session_state["branches"] = [b.model_dump() for b in document_data.branches]
+            if document_data.trip_inputs:
+                # Document trip_inputs override session trip_inputs (document is source of truth)
+                session_state["trip_inputs"] = document_data.trip_inputs.model_dump()
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions (like version conflict)
+    except Exception as e:
+        logger.warning(f"[{request_id}] Failed to load document for session: {e}")
+        # Continue without document - not fatal
+
+    # --- Check for date ambiguity in user message - return 400 if ambiguous ---
+    if is_date_ambiguous(req.message):
+        logger.info(f"[{request_id}] Date ambiguity detected in message")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error_code": GraphPlanErrorCode.DATE_AMBIGUOUS,
+                "message": (
+                    "Date in message is ambiguous. "
+                    "Please specify an exact date (e.g., 2025-01-15) or provide more context."
+                ),
+            },
+        )
+
+    # --- Call run_turn with timeout ---
+    try:
+        # run_turn is synchronous; timeout is handled within plan_graph.py
+        result = run_turn(req.message, session_state)
+        logger.info(f"[{request_id}] Graph planner succeeded (LangGraph path)")
+    except TimeoutError:
+        logger.error(f"[{request_id}] run_turn timed out")
+        if settings.graph_fallback_to_legacy:
+            logger.info(f"[{request_id}] Falling back to legacy planner (reason: timeout)")
+            return _fallback_to_legacy(
+                request,
+                response,
+                req,
+                db,
+                session_id,
+                request_id,
+                document_data,
+                document_version,
+                today_iso,
+                ready_to_generate_prev,
+            )
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error_code": GraphPlanErrorCode.LLM_TIMEOUT,
+                "message": "Planning request timed out",
+            },
+        ) from None
+    except Exception as e:
+        logger.error(f"[{request_id}] run_turn failed: {e}")
+        if settings.graph_fallback_to_legacy:
+            logger.info(f"[{request_id}] Falling back to legacy planner (reason: {e})")
+            return _fallback_to_legacy(
+                request,
+                response,
+                req,
+                db,
+                session_id,
+                request_id,
+                document_data,
+                document_version,
+                today_iso,
+                ready_to_generate_prev,
+            )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": GraphPlanErrorCode.LLM_ERROR,
+                "message": "Planning request failed",
+            },
+        ) from e
+
+    # --- Validate and sanitize output ---
+    assistant_message = result.get("assistant_message", "")
+    assistant_message = truncate_assistant_message(assistant_message)
+
+    # Validate suggested responses
+    suggested_responses = result.get("suggested_responses", [])
+    suggested_responses = validate_suggested_responses(suggested_responses)
+
+    # Extract updated session state
+    updated_session_state = result.get("session_state", session_state)
+
+    # Extract branches and trip_inputs from result
+    branches = result.get("branches", [])
+    trip_inputs = result.get("trip_inputs", updated_session_state.get("trip_inputs", {}))
+    ready_to_generate_now = result.get("ready_to_generate", False)
+    # Note: errors are in result but not currently surfaced in response
+
+    # --- Compute changes_made by comparing trip_inputs ---
+    changes_made = trip_inputs != session_state.get("trip_inputs", {})
+
+    # --- Persist document if we have a document ---
+    new_document_version = document_version
+    updated_at = datetime.now().isoformat()
+    if document:
+        try:
+            # Convert branches to DocumentBranch objects if needed
+            from app.schemas import DocumentBranch, DocumentTripInputs
+
+            branch_objs = []
+            for b in branches:
+                if isinstance(b, dict):
+                    branch_objs.append(DocumentBranch.model_validate(b))
+                else:
+                    branch_objs.append(b)
+
+            # Convert trip_inputs to DocumentTripInputs if needed
+            trip_inputs_obj = None
+            if trip_inputs:
+                if isinstance(trip_inputs, dict):
+                    trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
+                else:
+                    trip_inputs_obj = trip_inputs
+
+            # Get or create trip context for this session
+            trip_context = get_latest_trip_context_for_session(db, db_session.id)
+            trip_context_id = trip_context.id if trip_context else 0
+
+            # Apply planner update
+            updated_doc = apply_planner_update(
+                db,
+                doc=document,
+                trip_context_id=trip_context_id,
+                trip_inputs=trip_inputs_obj,
+                branches=branch_objs if branch_objs else None,
+            )
+            if updated_doc:
+                new_document_version = updated_doc.version
+                document_data = get_document_data(updated_doc)
+                db.commit()
+        except Exception as e:
+            logger.error(f"[{request_id}] Failed to persist document: {e}")
+            db.rollback()
+            # Non-fatal - continue with response
+
+    # --- Build observability data ---
+    observability = GraphPlanObservability(
+        tokens=GraphPlanTokens(prompt=0, completion=0, total=0),  # TODO: populate from LLM
+        model_used=result.get("session_state", {}).get("metadata", {}).get("model_used"),
+        router_intent=result.get("session_state", {}).get("router_intent"),
+        strategy_topic=result.get("session_state", {}).get("strategy_topic"),
+        monolith_used=result.get("session_state", {}).get("flags", {}).get("force_monolith", False),
+        fallback_to_legacy=False,
+        today_iso=today_iso,
+        ready_to_generate_prev=ready_to_generate_prev,
+        ready_to_generate_now=ready_to_generate_now,
+    )
+
+    # --- Set Cache-Control header ---
+    response.headers["Cache-Control"] = "no-store"
+
+    # --- Build document data for response ---
+    response_document = document_data if document_data else PlanDocumentData()
+
+    # --- Build and return response ---
+    return GraphPlanResponse(
+        document=response_document,
+        session_state=updated_session_state,
+        version=new_document_version or 1,
+        updated_by="planner",
+        updated_at=updated_at,
+        changes_made=changes_made,
+        request_id=request_id,
+        observability=observability,
+    )
+
+
+def _fallback_to_legacy(
+    request: Request,
+    response: Response,
+    req: GraphPlanRequest,
+    db: Session,
+    session_id: int,
+    request_id: str,
+    document_data: Any,
+    document_version: Optional[int],
+    today_iso: str,
+    ready_to_generate_prev: bool,
+) -> GraphPlanResponse:
+    """
+    Fallback to the legacy planner when graph planning fails.
+
+    Converts the GraphPlanRequest to a PlanRequest and calls plan_trip,
+    then wraps the result in a GraphPlanResponse.
+    """
+    logger.info(f"[{request_id}] Falling back to legacy planner")
+
+    try:
+        # Convert GraphPlanRequest to PlanRequest
+        legacy_req = PlanRequest(
+            message=req.message,
+            trip_inputs=req.trip_inputs,
+            preferences=None,  # Legacy planner uses trip_inputs
+        )
+
+        # Call the legacy planner
+        result = plan_trip(db, session_id, legacy_req)
+
+        # Build document for response using the legacy planner output if available
+        response_document = getattr(result, "document", None) or document_data or PlanDocumentData()
+        ready_to_generate_now = False
+        trip_inputs = {}
+        if getattr(result, "document", None):
+            trip_inputs = result.document.trip_inputs.model_dump()
+            ready_to_generate_now = result.document.ready_to_generate
+        elif response_document:
+            # Fallback to response_document values when legacy output missing
+            trip_inputs = response_document.trip_inputs.model_dump()
+            ready_to_generate_now = response_document.ready_to_generate
+
+        # Convert PlanDocumentResponse to GraphPlanResponse
+        return GraphPlanResponse(
+            document=response_document,
+            session_state={
+                "trip_inputs": trip_inputs,
+            },
+            version=getattr(result, "version", None) or document_version or 1,
+            updated_by="planner",
+            updated_at=datetime.now().isoformat(),
+            changes_made=True,
+            request_id=request_id,
+            observability=GraphPlanObservability(
+                tokens=GraphPlanTokens(prompt=0, completion=0, total=0),
+                fallback_to_legacy=True,
+                today_iso=today_iso,
+                ready_to_generate_prev=ready_to_generate_prev,
+                ready_to_generate_now=ready_to_generate_now,
+            ),
+        )
+    except Exception as e:
+        logger.error(f"[{request_id}] Legacy fallback also failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error_code": GraphPlanErrorCode.LLM_ERROR,
+                "message": "Both graph and legacy planners failed",
+            },
+        ) from e
 
 
 @app.post("/v1/plan", response_model=PlanDocumentResponse)

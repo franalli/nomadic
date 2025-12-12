@@ -1,0 +1,715 @@
+"""
+Utility functions for the /v1/graph_plan route.
+
+This module provides:
+- Session state sanitization and validation
+- Trip input normalization (currency, destinations, dates)
+- Output validation (suggested responses, message truncation)
+- Today ISO computation with server timezone
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import unicodedata
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Set
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from app.config import settings
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Server timezone for consistent date handling
+logger = logging.getLogger(__name__)
+
+try:
+    SERVER_TZ = ZoneInfo("Europe/Amsterdam")
+except ZoneInfoNotFoundError:
+    logger.warning("Time zone Europe/Amsterdam not found; falling back to UTC")
+    SERVER_TZ = ZoneInfo("UTC")
+
+# Allowed keys in session_state (everything else is dropped)
+ALLOWED_SESSION_STATE_KEYS: Set[str] = {
+    "thread_id",
+    "trip_inputs",
+    "metadata",
+    "flags",
+    "last_summary",
+    "branches",
+    "suggested_responses",
+    "errors",
+    "router_intent",
+    "strategy_topic",
+}
+
+# ISO-4217 currency codes we accept
+ISO_4217_CURRENCIES: Set[str] = {
+    "USD",
+    "EUR",
+    "GBP",
+    "CAD",
+    "AUD",
+    "JPY",
+    "CHF",
+    "CNY",
+    "INR",
+    "MXN",
+    "BRL",
+    "KRW",
+    "SGD",
+    "HKD",
+    "NOK",
+    "SEK",
+    "DKK",
+    "NZD",
+    "ZAR",
+    "RUB",
+    "TRY",
+    "PLN",
+    "THB",
+    "MYR",
+    "IDR",
+    "PHP",
+    "CZK",
+    "ILS",
+    "AED",
+    "SAR",
+}
+
+# Currency symbol to ISO code mapping
+CURRENCY_SYMBOL_MAP: Dict[str, str] = {
+    "$": "USD",
+    "€": "EUR",
+    "£": "GBP",
+    "¥": "JPY",
+    "₹": "INR",
+    "₩": "KRW",
+    "₽": "RUB",
+    "₺": "TRY",
+    "R$": "BRL",
+    "kr": "SEK",  # Also used for NOK, DKK
+    "CHF": "CHF",
+    "A$": "AUD",
+    "C$": "CAD",
+    "NZ$": "NZD",
+    "HK$": "HKD",
+    "S$": "SGD",
+}
+
+# Maximum payload size (200KB)
+MAX_PAYLOAD_SIZE_BYTES = 200 * 1024
+
+# Fields that can be explicitly set to null by the UI
+EXPLICIT_NULL_FIELDS: Set[str] = {
+    "origin",
+    "start_date",
+    "end_date",
+    "adults",
+    "children",
+    "requires_assistance",
+    "budget",
+    "currency",
+    "multi_city_intent",
+}
+
+
+# =============================================================================
+# Today ISO Computation
+# =============================================================================
+
+
+def compute_today_iso() -> str:
+    """
+    Compute today's date in ISO format using server timezone.
+
+    This should be called once at route ingress and passed to all nodes.
+
+    Returns:
+        str: Today's date in YYYY-MM-DD format (server TZ).
+    """
+    return datetime.now(SERVER_TZ).date().isoformat()
+
+
+# =============================================================================
+# Request ID Generation
+# =============================================================================
+
+
+def generate_request_id() -> str:
+    """Generate a unique request ID for tracking."""
+    return str(uuid.uuid4())
+
+
+# =============================================================================
+# Thread ID Validation
+# =============================================================================
+
+
+def is_valid_thread_id(thread_id: Any) -> bool:
+    """
+    Check if thread_id is a valid UUID.
+
+    Args:
+        thread_id: The thread ID to validate.
+
+    Returns:
+        bool: True if valid UUID, False otherwise.
+    """
+    if thread_id is None:
+        return False
+
+    if not isinstance(thread_id, str):
+        return False
+
+    try:
+        uuid.UUID(thread_id)
+        return True
+    except ValueError:
+        return False
+
+
+def ensure_thread_id(thread_id: Any) -> str:
+    """
+    Validate thread_id is a valid UUID, or generate a new one.
+
+    Args:
+        thread_id: The thread ID to validate (may be None or invalid).
+
+    Returns:
+        str: A valid UUID string (existing if valid, new if not).
+    """
+    if is_valid_thread_id(thread_id):
+        return thread_id
+    return str(uuid.uuid4())
+
+
+# Backwards compatibility alias
+def validate_thread_id(thread_id: Any) -> bool:
+    """Check if thread_id is valid. Use is_valid_thread_id for clarity."""
+    return is_valid_thread_id(thread_id)
+
+
+# =============================================================================
+# Session State Sanitization
+# =============================================================================
+
+
+def sanitize_session_state(
+    session_state: Optional[Dict[str, Any]],
+    explicit_nulls: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Sanitize session_state by keeping only allowed keys.
+
+    Args:
+        session_state: Raw session state from client.
+        explicit_nulls: Set of field names explicitly set to null by UI.
+
+    Returns:
+        Dict with only allowed keys, validated thread_id.
+    """
+    if session_state is None:
+        return {
+            "thread_id": str(uuid.uuid4()),
+            "trip_inputs": {},
+            "metadata": {},
+            "flags": {},
+            "last_summary": None,
+            "branches": [],
+            "suggested_responses": [],
+            "errors": [],
+        }
+
+    # Filter to allowed keys only
+    sanitized: Dict[str, Any] = {}
+    for key in ALLOWED_SESSION_STATE_KEYS:
+        if key in session_state:
+            sanitized[key] = session_state[key]
+
+    # Ensure thread_id is valid (returns valid UUID or generates new one)
+    sanitized["thread_id"] = ensure_thread_id(sanitized.get("thread_id"))
+
+    # Ensure required keys exist with defaults
+    sanitized.setdefault("trip_inputs", {})
+    sanitized.setdefault("metadata", {})
+    sanitized.setdefault("flags", {})
+    sanitized.setdefault("branches", [])
+    sanitized.setdefault("suggested_responses", [])
+    sanitized.setdefault("errors", [])
+
+    # Store explicit nulls in metadata for merge logic
+    if explicit_nulls:
+        sanitized["metadata"]["explicit_nulls"] = list(explicit_nulls)
+
+    return sanitized
+
+
+# =============================================================================
+# Currency Normalization
+# =============================================================================
+
+
+def normalize_currency(value: Any) -> Optional[str]:
+    """
+    Normalize currency to ISO-4217 code.
+
+    Maps symbols ($, €, £) to codes and validates against ISO-4217 set.
+
+    Args:
+        value: Currency string (symbol or code).
+
+    Returns:
+        ISO-4217 code if valid, None otherwise.
+    """
+    if value is None:
+        return None
+
+    if not isinstance(value, str):
+        return None
+
+    value = value.strip()
+    if not value:
+        return None
+
+    # Check if it's a symbol
+    if value in CURRENCY_SYMBOL_MAP:
+        return CURRENCY_SYMBOL_MAP[value]
+
+    # Uppercase and check against ISO codes
+    upper = value.upper()
+    if upper in ISO_4217_CURRENCIES:
+        return upper
+
+    # Check if symbol is part of value (e.g., "$100" -> extract $)
+    for symbol, code in CURRENCY_SYMBOL_MAP.items():
+        if value.startswith(symbol):
+            return code
+
+    return None
+
+
+# =============================================================================
+# Destination Normalization
+# =============================================================================
+
+
+def normalize_destinations(destinations: Any, max_count: Optional[int] = None) -> List[str]:
+    """
+    Normalize destinations list with NFC, trim, and case-insensitive dedupe.
+
+    Preserves original casing for display while deduplicating.
+
+    Args:
+        destinations: Raw destinations list.
+        max_count: Maximum number of destinations (uses config default if None).
+
+    Returns:
+        Normalized, deduplicated list of destinations.
+    """
+    if max_count is None:
+        max_count = settings.max_destinations
+
+    if not isinstance(destinations, list):
+        return []
+
+    seen_lower: Set[str] = set()
+    result: List[str] = []
+
+    for dest in destinations:
+        if not isinstance(dest, str):
+            continue
+
+        # Unicode NFC normalization + trim + collapse whitespace
+        normalized = normalize_text(dest)
+        if not normalized:
+            continue
+
+        # Case-insensitive deduplication
+        lower = normalized.lower()
+        if lower in seen_lower:
+            continue
+
+        seen_lower.add(lower)
+        result.append(normalized)  # Preserve original casing
+
+        # Enforce max count
+        if len(result) >= max_count:
+            break
+
+    return result
+
+
+def normalize_text(text: str) -> str:
+    """
+    Normalize text with Unicode NFC, trim, and whitespace collapse.
+
+    Args:
+        text: Raw text string.
+
+    Returns:
+        Normalized string.
+    """
+    if not isinstance(text, str):
+        return ""
+
+    # Unicode NFC normalization
+    text = unicodedata.normalize("NFC", text)
+
+    # Trim and collapse repeated whitespace
+    text = " ".join(text.split())
+
+    return text
+
+
+# =============================================================================
+# Numeric Clamping
+# =============================================================================
+
+
+def clamp_adults(value: Any) -> Optional[int]:
+    """Clamp adults to valid range (≥1)."""
+    if value is None:
+        return None
+    try:
+        v = int(value)
+        return max(1, v) if v > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def clamp_children(value: Any) -> Optional[int]:
+    """Clamp children to valid range (≥0)."""
+    if value is None:
+        return None
+    try:
+        v = int(value)
+        return max(0, v)
+    except (ValueError, TypeError):
+        return None
+
+
+def clamp_budget(value: Any) -> Optional[int]:
+    """Clamp budget to valid range (≥0)."""
+    if value is None:
+        return None
+    try:
+        v = int(float(value))  # Handle float input
+        return max(0, v)
+    except (ValueError, TypeError):
+        return None
+
+
+# =============================================================================
+# Trip Inputs Normalization
+# =============================================================================
+
+
+def normalize_trip_inputs(trip_inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize trip inputs with validation and clamping.
+
+    Args:
+        trip_inputs: Raw trip inputs dict.
+
+    Returns:
+        Normalized trip inputs dict.
+    """
+    if not isinstance(trip_inputs, dict):
+        return {}
+
+    result: Dict[str, Any] = {}
+
+    # Destinations (with max limit)
+    if "destinations" in trip_inputs:
+        result["destinations"] = normalize_destinations(trip_inputs["destinations"])
+
+    # Origin (text normalization)
+    if "origin" in trip_inputs:
+        origin = trip_inputs["origin"]
+        if origin is not None:
+            result["origin"] = normalize_text(str(origin)) or None
+        else:
+            result["origin"] = None
+
+    # Dates (pass through, validation happens elsewhere)
+    for date_field in ("start_date", "end_date"):
+        if date_field in trip_inputs:
+            result[date_field] = trip_inputs[date_field]
+
+    # Numeric fields with clamping
+    if "adults" in trip_inputs:
+        result["adults"] = clamp_adults(trip_inputs["adults"])
+
+    if "children" in trip_inputs:
+        result["children"] = clamp_children(trip_inputs["children"])
+
+    if "budget" in trip_inputs:
+        result["budget"] = clamp_budget(trip_inputs["budget"])
+
+    # Currency normalization
+    if "currency" in trip_inputs:
+        currency = normalize_currency(trip_inputs["currency"])
+        if currency:
+            result["currency"] = currency
+
+    # Pass through other valid fields
+    passthrough_fields = {
+        "multi_city_intent",
+        "requires_assistance",
+        "booking_types",
+        "flight_settings",
+        "hotel_settings",
+        "activity_settings",
+        "transport_settings",
+        "strategy_settings",
+        "missing_fields",
+    }
+
+    for field in passthrough_fields:
+        if field in trip_inputs:
+            result[field] = trip_inputs[field]
+
+    return result
+
+
+# =============================================================================
+# Suggested Responses Validation
+# =============================================================================
+
+
+def validate_suggested_responses(responses: Any) -> List[str]:
+    """
+    Validate and filter suggested responses.
+
+    Rules:
+    - Max 3 items
+    - 2-6 words each
+    - No question marks
+
+    Args:
+        responses: Raw suggested responses list.
+
+    Returns:
+        Filtered list of valid responses.
+    """
+    if not isinstance(responses, list):
+        return []
+
+    max_count = settings.max_suggested_responses
+    result: List[str] = []
+
+    for resp in responses:
+        if not isinstance(resp, str):
+            continue
+
+        resp = resp.strip()
+        if not resp:
+            continue
+
+        # No question marks
+        if "?" in resp:
+            continue
+
+        # Word count check (2-6 words)
+        words = resp.split()
+        if len(words) < 2 or len(words) > 6:
+            continue
+
+        result.append(resp)
+
+        if len(result) >= max_count:
+            break
+
+    return result
+
+
+# =============================================================================
+# Assistant Message Truncation
+# =============================================================================
+
+
+def truncate_assistant_message(message: Any) -> str:
+    """
+    Truncate assistant message to configured max length.
+
+    Args:
+        message: Raw assistant message.
+
+    Returns:
+        Truncated message string.
+    """
+    if message is None:
+        return ""
+
+    if not isinstance(message, str):
+        message = str(message)
+
+    max_len = settings.assistant_msg_max_len
+
+    if len(message) <= max_len:
+        return message
+
+    # Truncate and add ellipsis
+    return message[: max_len - 3] + "..."
+
+
+# =============================================================================
+# Payload Size Validation
+# =============================================================================
+
+# Maximum payload size in bytes (200KB)
+MAX_PAYLOAD_SIZE_BYTES = 200 * 1024
+
+
+def check_payload_size(request: Any) -> Optional[str]:
+    """
+    Check if payload size is within limits.
+
+    Args:
+        request: FastAPI Request object.
+
+    Returns:
+        Error message if too large, None if OK.
+    """
+    # Try to get Content-Length from request headers
+    content_length = None
+
+    if hasattr(request, "headers"):
+        content_length_str = request.headers.get("content-length")
+        if content_length_str:
+            try:
+                content_length = int(content_length_str)
+            except (ValueError, TypeError):
+                pass
+
+    if content_length is None:
+        return None  # Allow if not specified (will be checked at parsing)
+
+    if content_length > MAX_PAYLOAD_SIZE_BYTES:
+        return (
+            f"Payload too large: {content_length} bytes exceeds {MAX_PAYLOAD_SIZE_BYTES} byte limit"
+        )
+
+    return None
+
+
+# =============================================================================
+# Date Ambiguity Detection
+# =============================================================================
+
+# Patterns that indicate ambiguous dates needing context
+AMBIGUOUS_DATE_PATTERNS = [
+    r"\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+    r"\bthis\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+next\s+week\b",
+    r"\bnext\s+week(end)?\b",
+    r"\bthis\s+week(end)?\b",
+    r"\bin\s+\d+\s+(days?|weeks?)\b",
+]
+
+# Compiled patterns for efficiency
+_AMBIGUOUS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in AMBIGUOUS_DATE_PATTERNS]
+
+
+def is_date_ambiguous(date_str: Optional[str]) -> bool:
+    """
+    Check if a date string is ambiguous (needs context to resolve).
+
+    ISO format dates (YYYY-MM-DD) are never ambiguous.
+    Relative phrases like "next Friday" are ambiguous.
+
+    Args:
+        date_str: Date string to check.
+
+    Returns:
+        True if ambiguous, False if clear or None.
+    """
+    if date_str is None:
+        return False
+
+    if not isinstance(date_str, str):
+        return False
+
+    date_str = date_str.strip()
+    if not date_str:
+        return False
+
+    # ISO format is never ambiguous
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return False
+
+    # Check for ambiguous patterns
+    for pattern in _AMBIGUOUS_PATTERNS:
+        if pattern.search(date_str):
+            return True
+
+    return False
+
+
+# =============================================================================
+# PII Redaction (Basic)
+# =============================================================================
+
+# Simple patterns for basic PII redaction
+EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+PHONE_PATTERN = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
+
+
+def redact_pii(text: str) -> str:
+    """
+    Apply basic PII redaction to text.
+
+    Redacts:
+    - Email addresses
+    - Phone numbers
+
+    Args:
+        text: Text to redact.
+
+    Returns:
+        Text with PII redacted.
+    """
+    if not isinstance(text, str):
+        return str(text) if text else ""
+
+    text = EMAIL_PATTERN.sub("[EMAIL]", text)
+    text = PHONE_PATTERN.sub("[PHONE]", text)
+
+    return text
+
+
+# =============================================================================
+# Strategy Enable Check
+# =============================================================================
+
+
+def is_strategy_enabled(strategy_topic: Optional[str]) -> bool:
+    """
+    Check if a strategy module is enabled.
+
+    Args:
+        strategy_topic: Strategy topic name (boating, hiking, etc.).
+
+    Returns:
+        True if enabled, False otherwise.
+    """
+    if not strategy_topic:
+        return False
+
+    topic_lower = strategy_topic.lower()
+
+    flag_map = {
+        "boating": settings.enable_strategy_boating,
+        "hiking": settings.enable_strategy_hiking,
+        "diving": settings.enable_strategy_diving,
+        "skiing": settings.enable_strategy_skiing,
+        "cycling": settings.enable_strategy_cycling,
+    }
+
+    # Default to enabled if strategy not in map
+    return flag_map.get(topic_lower, True)

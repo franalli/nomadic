@@ -13,3 +13,5 @@ httpx==0.28.1
 openai==2.8.0
 cachetools==5.5.0
 langgraph==1.0.4
+jsonschema==4.25.1
+tzdata==2024.2

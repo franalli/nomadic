@@ -122,3 +122,29 @@ export type PlanDocumentPatch = {
   selections?: Record<string, BranchSelections>;
   trip_inputs?: DocumentTripInputsPatch;
 };
+
+// Graph planner types (superset of PlanDocumentResponse)
+export type GraphPlanTokens = {
+  prompt: number;
+  completion: number;
+  total: number;
+};
+
+export type GraphPlanObservability = {
+  tokens: GraphPlanTokens;
+  model_used?: string | null;
+  router_intent?: string | null;
+  strategy_topic?: string | null;
+  monolith_used?: boolean;
+  fallback_to_legacy?: boolean;
+  today_iso?: string | null;
+  ready_to_generate_prev?: boolean;
+  ready_to_generate_now?: boolean;
+};
+
+export type GraphPlanResponse = PlanDocumentResponse & {
+  session_state: Record<string, unknown>;
+  request_id: string;
+  observability?: GraphPlanObservability | null;
+  changes_made: boolean;
+};

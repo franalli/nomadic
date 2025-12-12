@@ -15,12 +15,12 @@ import {
 import Markdown from 'react-markdown';
 
 import { apiFetch } from '@/lib/api';
-import type { PlanRequest } from '@/types/api';
+import type { GraphPlanRequest } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
 import type {
   DocumentBranch,
   DocumentTripInputs,
-  PlanDocumentResponse,
+  GraphPlanResponse,
 } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
@@ -85,7 +85,7 @@ interface ChatPanelProps {
     tripInputs?: DocumentTripInputs | null;
     readyToGenerate?: boolean;
     // Full response for store update
-    response?: PlanDocumentResponse;
+    response?: GraphPlanResponse;
   }) => void;
   tripDetails?: {
     content: ReactNode;
@@ -133,6 +133,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [hasShownHint, setHasShownHint] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
+    const [sessionState, setSessionState] = useState<Record<string, unknown> | null>(null);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const tripInputsRef = useRef<HTMLDivElement | null>(null);
@@ -350,12 +351,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setIsLoading(true);
 
         try {
-          const body: PlanRequest = {
+          const body: GraphPlanRequest = {
             message: trimmed,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            session_state: sessionState ?? undefined,
           };
 
-          const res = await apiFetch('/v1/plan', {
+          const res = await apiFetch('/v1/graph_plan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
@@ -366,9 +367,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             throw new Error(text || `Plan failed: ${res.status}`);
           }
 
-          const data: PlanDocumentResponse = await res.json();
+          const data: GraphPlanResponse = await res.json();
 
-          const handlePlanResultInternal = (payload: PlanDocumentResponse) => {
+          // Persist session state for next turn
+          setSessionState(data.session_state ?? null);
+
+          const handlePlanResultInternal = (payload: GraphPlanResponse) => {
             const doc = payload.document;
             const primaryBranch =
               doc.branches.find((b) => b.is_primary) ?? doc.branches[0];
@@ -493,7 +497,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           setIsLoading(false);
         }
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState]
     );
 
     const addAssistantMessage = useCallback((message: string) => {

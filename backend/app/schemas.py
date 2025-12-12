@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -113,6 +113,33 @@ class PlanRequest(BaseModel):
 
     message: str  # The user's chat message
     timezone: Optional[str] = None  # IANA timezone (e.g., "Europe/Rome") for "today" calculation
+
+
+class GraphPlanRequest(BaseModel):
+    """Request schema for graph-based planning entrypoint."""
+
+    message: str
+    trip_inputs: dict = Field(default_factory=dict)
+    session_state: dict | None = None
+    document_id: str | None = Field(
+        default=None,
+        description="Optional document ID for persistence and optimistic concurrency",
+    )
+    expected_version: int | None = Field(
+        default=None,
+        description="Expected document version for optimistic concurrency control",
+    )
+    thread_id: str | None = Field(
+        default=None,
+        description="Optional thread ID for conversation tracking",
+    )
+    reset: bool = Field(
+        default=False,
+        description=(
+            "When true with empty session_state, "
+            "generate new thread_id and optionally init from trip_inputs"
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -307,3 +334,78 @@ class TripInputValidationResponse(BaseModel):
     corrected_values: List[str]  # List to support multi-destination splitting
     is_valid: bool
     reason: Optional[str] = None
+
+
+# =============================================================================
+# Graph Plan Types - LangGraph-based planning route
+# =============================================================================
+
+
+class GraphPlanErrorCode(str):
+    """Stable error codes for /v1/graph_plan responses."""
+
+    DATE_AMBIGUOUS = "DATE_AMBIGUOUS"
+    SCHEMA_MISMATCH = "SCHEMA_MISMATCH"
+    MODULE_DISABLED = "MODULE_DISABLED"
+    PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
+    VERSION_CONFLICT = "VERSION_CONFLICT"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+    PROVIDER_JSON_INVALID = "PROVIDER_JSON_INVALID"
+    UNSUPPORTED_MEDIA_TYPE = "UNSUPPORTED_MEDIA_TYPE"
+    ROUTE_DISABLED = "ROUTE_DISABLED"
+    INVALID_THREAD_ID = "INVALID_THREAD_ID"
+    LLM_TIMEOUT = "LLM_TIMEOUT"
+    LLM_ERROR = "LLM_ERROR"
+
+
+class GraphPlanTokens(BaseModel):
+    """Token usage for observability."""
+
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
+class GraphPlanObservability(BaseModel):
+    """Minimal observability data for /v1/graph_plan responses."""
+
+    tokens: GraphPlanTokens = Field(default_factory=GraphPlanTokens)
+    model_used: Optional[str] = None
+    router_intent: Optional[str] = None
+    strategy_topic: Optional[str] = None
+    monolith_used: bool = False
+    fallback_to_legacy: bool = False
+    today_iso: Optional[str] = None
+    ready_to_generate_prev: bool = False
+    ready_to_generate_now: bool = False
+
+
+class GraphPlanResponse(BaseModel):
+    """Response from /v1/graph_plan endpoint."""
+
+    # Core document fields
+    document: PlanDocumentData
+    session_state: Dict[str, Any]
+    version: int
+    updated_by: UpdatedBy
+    updated_at: str
+    changes_made: bool = False
+
+    # Request tracking
+    request_id: str
+
+    # Observability (optional, all fields have defaults)
+    observability: Optional[GraphPlanObservability] = None
+
+
+class GraphPlanErrorResponse(BaseModel):
+    """Error response from /v1/graph_plan endpoint."""
+
+    error_code: str
+    detail: str
+    request_id: str
+
+    # For VERSION_CONFLICT (409)
+    server_doc_version: Optional[int] = None
+    client_doc_version: Optional[int] = None
+    retry_after_ms: Optional[int] = None

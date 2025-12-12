@@ -24,6 +24,33 @@ class Settings(BaseSettings):
     # core
     env: str = os.getenv("ENV", "local")
 
+    # =============================================================================
+    # LangGraph Planning Route Configuration
+    # =============================================================================
+    # Feature flags
+    enable_graph_plan_route: bool = False  # Enable /v1/graph_plan route
+    graph_fallback_to_legacy: bool = False  # Fallback to legacy planner on provider failure
+
+    # Route configuration
+    graph_plan_route_timeout_ms: int = 15000  # Overall route timeout in milliseconds
+
+    # Output limits
+    assistant_msg_max_len: int = 2000  # Max chars for assistant message
+    max_destinations: int = 20  # Max destinations per trip
+    max_suggested_responses: int = 3  # Max suggested responses
+
+    # Strategy feature flags (default enabled)
+    enable_strategy_boating: bool = True
+    enable_strategy_hiking: bool = True
+    enable_strategy_diving: bool = True
+    enable_strategy_skiing: bool = True
+    enable_strategy_cycling: bool = True
+
+    # LLM timeouts (in seconds)
+    llm_timeout_router: float = 3.0
+    llm_timeout_specialist: float = 6.0
+    llm_timeout_monolith: float = 10.0
+
     # backend
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
