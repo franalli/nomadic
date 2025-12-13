@@ -15,7 +15,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { apiFetch } from '@/lib/api';
+import { apiFetch, trackSuggestionClick } from '@/lib/api';
 import type { GraphPlanRequest } from '@/types/api';
 import type { ChatMessage } from '@/types/chat';
 import type {
@@ -719,6 +719,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   key={`sugg-${idx}`}
                   type="button"
                   onClick={() => {
+                    // Track suggestion click for analytics (fire-and-forget)
+                    trackSuggestionClick(suggestion, idx);
                     sendMessageCore(suggestion);
                   }}
                   className="suggestion-enter text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"

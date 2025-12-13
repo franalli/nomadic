@@ -100,6 +100,14 @@ class TileClickEvent(BaseModel):
     branch_id: Optional[str] = None  # now a string since branches are in JSON document
 
 
+class SuggestionClickEvent(BaseModel):
+    """Track when a user clicks a suggested response pill."""
+
+    suggestion_text: str  # The text of the suggestion that was clicked
+    suggestion_index: int  # Position in the list (0, 1, 2)
+    request_id: Optional[str] = None
+
+
 class PlanRequest(BaseModel):
     """Request to send a chat message to the planner.
 
@@ -366,6 +374,28 @@ class GraphPlanTokens(BaseModel):
     total: int = 0
 
 
+class EntityConfidenceInfo(BaseModel):
+    """Confidence information for a single extracted entity (e.g., destination)."""
+
+    value: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    needs_confirmation: bool = False
+    fuzzy_suggestion: Optional[str] = None
+    ambiguity_type: Optional[str] = None  # "name_person", "multiple_places", etc.
+
+
+class ExtractionConfidenceInfo(BaseModel):
+    """Overall extraction confidence for the current request."""
+
+    overall: float = Field(ge=0.0, le=1.0, default=1.0)
+    level: str = "high"  # "high", "medium", "low"
+    destinations: List[EntityConfidenceInfo] = Field(default_factory=list)
+    origin: Optional[EntityConfidenceInfo] = None
+    detected_language: Optional[str] = None
+    is_english: bool = True
+    typo_suggestions: List[str] = Field(default_factory=list)
+
+
 class GraphPlanObservability(BaseModel):
     """Minimal observability data for /v1/graph_plan responses."""
 
@@ -378,6 +408,7 @@ class GraphPlanObservability(BaseModel):
     today_iso: Optional[str] = None
     ready_to_generate_prev: bool = False
     ready_to_generate_now: bool = False
+    extraction_confidence: Optional[ExtractionConfidenceInfo] = None
 
 
 class GraphPlanResponse(BaseModel):

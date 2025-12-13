@@ -87,6 +87,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/suggestions/click": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Track Suggestion Click
+         * @description Persist a suggestion pill click for analytics.
+         *     Tracks which LLM-generated suggestions users find valuable.
+         */
+        post: operations["track_suggestion_click_v1_suggestions_click_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/graph_plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Graph Plan Endpoint
+         * @description LangGraph-based planning endpoint.
+         *
+         *     Accepts a user message and optional session state, runs the graph planner,
+         *     persists document updates, and returns the updated session state.
+         *
+         *     Features:
+         *     - Feature flag gating (ENABLE_GRAPH_PLAN_ROUTE)
+         *     - Payload size validation
+         *     - Optimistic concurrency via document versioning
+         *     - Fallback to legacy planner on failure (GRAPH_FALLBACK_TO_LEGACY)
+         *     - Cache-Control: no-store to prevent caching of personalized responses
+         */
+        post: operations["graph_plan_endpoint_v1_graph_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/plan": {
         parameters: {
             query?: never;
@@ -128,7 +179,7 @@ export interface paths {
          * @description Reset/delete a planning session and all associated data.
          *
          *     Uses row-level locking to prevent deadlocks with concurrent plan operations.
-         *     Also clears session cookies from the browser.
+         *     Also clears session cookies from the browser and LangGraph checkpoint state.
          */
         delete: operations["reset_session_v1_session_delete"];
         options?: never;
@@ -320,8 +371,11 @@ export interface components {
             requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
-            /** Currency */
-            currency?: string | null;
+            /**
+             * Currency
+             * @default USD
+             */
+            currency: string;
             /**
              * Is Primary
              * @default false
@@ -351,8 +405,11 @@ export interface components {
             requires_assistance?: boolean | null;
             /** Budget */
             budget?: number | null;
-            /** Currency */
-            currency?: string | null;
+            /**
+             * Currency
+             * @default USD
+             */
+            currency: string;
             /** Missing Fields */
             missing_fields?: string[];
             /** Multi City Intent */
@@ -394,7 +451,53 @@ export interface components {
             flight_settings?: components["schemas"]["FlightSettings"] | null;
             hotel_settings?: components["schemas"]["HotelSettings"] | null;
             activity_settings?: components["schemas"]["ActivitySettings"] | null;
-            transport_settings?: components["schemas"]["TransportSettings"] | null;
+        };
+        /**
+         * EntityConfidenceInfo
+         * @description Confidence information for a single extracted entity (e.g., destination).
+         */
+        EntityConfidenceInfo: {
+            /** Value */
+            value: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Needs Confirmation
+             * @default false
+             */
+            needs_confirmation: boolean;
+            /** Fuzzy Suggestion */
+            fuzzy_suggestion?: string | null;
+            /** Ambiguity Type */
+            ambiguity_type?: string | null;
+        };
+        /**
+         * ExtractionConfidenceInfo
+         * @description Overall extraction confidence for the current request.
+         */
+        ExtractionConfidenceInfo: {
+            /**
+             * Overall
+             * @default 1
+             */
+            overall: number;
+            /**
+             * Level
+             * @default high
+             */
+            level: string;
+            /** Destinations */
+            destinations?: components["schemas"]["EntityConfidenceInfo"][];
+            origin?: components["schemas"]["EntityConfidenceInfo"] | null;
+            /** Detected Language */
+            detected_language?: string | null;
+            /**
+             * Is English
+             * @default true
+             */
+            is_english: boolean;
+            /** Typo Suggestions */
+            typo_suggestions?: string[];
         };
         /**
          * FlightSettings
@@ -424,6 +527,128 @@ export interface components {
             lat: number;
             /** Lon */
             lon: number;
+        };
+        /**
+         * GraphPlanObservability
+         * @description Minimal observability data for /v1/graph_plan responses.
+         */
+        GraphPlanObservability: {
+            tokens?: components["schemas"]["GraphPlanTokens"];
+            /** Model Used */
+            model_used?: string | null;
+            /** Router Intent */
+            router_intent?: string | null;
+            /** Strategy Topic */
+            strategy_topic?: string | null;
+            /**
+             * Monolith Used
+             * @default false
+             */
+            monolith_used: boolean;
+            /**
+             * Fallback To Legacy
+             * @default false
+             */
+            fallback_to_legacy: boolean;
+            /** Today Iso */
+            today_iso?: string | null;
+            /**
+             * Ready To Generate Prev
+             * @default false
+             */
+            ready_to_generate_prev: boolean;
+            /**
+             * Ready To Generate Now
+             * @default false
+             */
+            ready_to_generate_now: boolean;
+            extraction_confidence?: components["schemas"]["ExtractionConfidenceInfo"] | null;
+        };
+        /**
+         * GraphPlanRequest
+         * @description Request schema for graph-based planning entrypoint.
+         */
+        GraphPlanRequest: {
+            /** Message */
+            message: string;
+            /** Trip Inputs */
+            trip_inputs?: {
+                [key: string]: unknown;
+            };
+            /** Session State */
+            session_state?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Document Id
+             * @description Optional document ID for persistence and optimistic concurrency
+             */
+            document_id?: string | null;
+            /**
+             * Expected Version
+             * @description Expected document version for optimistic concurrency control
+             */
+            expected_version?: number | null;
+            /**
+             * Thread Id
+             * @description Optional thread ID for conversation tracking
+             */
+            thread_id?: string | null;
+            /**
+             * Reset
+             * @description When true with empty session_state, generate new thread_id and optionally init from trip_inputs
+             * @default false
+             */
+            reset: boolean;
+        };
+        /**
+         * GraphPlanResponse
+         * @description Response from /v1/graph_plan endpoint.
+         */
+        GraphPlanResponse: {
+            document: components["schemas"]["PlanDocumentData"];
+            /** Session State */
+            session_state: {
+                [key: string]: unknown;
+            };
+            /** Version */
+            version: number;
+            /**
+             * Updated By
+             * @enum {string}
+             */
+            updated_by: "user" | "planner";
+            /** Updated At */
+            updated_at: string;
+            /**
+             * Changes Made
+             * @default false
+             */
+            changes_made: boolean;
+            /** Request Id */
+            request_id: string;
+            observability?: components["schemas"]["GraphPlanObservability"] | null;
+        };
+        /**
+         * GraphPlanTokens
+         * @description Token usage for observability.
+         */
+        GraphPlanTokens: {
+            /**
+             * Prompt
+             * @default 0
+             */
+            prompt: number;
+            /**
+             * Completion
+             * @default 0
+             */
+            completion: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -467,6 +692,8 @@ export interface components {
              * @default false
              */
             ready_to_generate: boolean;
+            /** Suggested Responses */
+            suggested_responses?: string[];
         };
         /**
          * PlanDocumentPatch
@@ -531,6 +758,18 @@ export interface components {
             /** Timezone */
             timezone?: string | null;
         };
+        /**
+         * SuggestionClickEvent
+         * @description Track when a user clicks a suggested response pill.
+         */
+        SuggestionClickEvent: {
+            /** Suggestion Text */
+            suggestion_text: string;
+            /** Suggestion Index */
+            suggestion_index: number;
+            /** Request Id */
+            request_id?: string | null;
+        };
         /** Tile */
         Tile: {
             /** Id */
@@ -556,7 +795,7 @@ export interface components {
             live_price?: number | null;
             /**
              * Currency
-             * @default EUR
+             * @default USD
              */
             currency: string;
             /**
@@ -761,6 +1000,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    track_suggestion_click_v1_suggestions_click_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestionClickEvent"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_plan_endpoint_v1_graph_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GraphPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphPlanResponse"];
                 };
             };
             /** @description Validation Error */

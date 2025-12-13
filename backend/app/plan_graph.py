@@ -4,9 +4,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random as _random_module
 import re
 from copy import deepcopy
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
@@ -62,6 +64,31 @@ except ImportError:
     tiktoken = None  # type: ignore
     _TIKTOKEN_AVAILABLE = False
 
+# Try to import spacy for NER-based entity extraction
+try:
+    import spacy
+    from spacy.language import Language
+
+    _SPACY_AVAILABLE = True
+    _spacy_nlp: Optional[Language] = None  # Lazy-loaded
+except ImportError:
+    spacy = None  # type: ignore
+    Language = None  # type: ignore
+    _SPACY_AVAILABLE = False
+    _spacy_nlp = None
+
+# Import known places database for confidence scoring
+from app.known_places import (
+    LANGDETECT_AVAILABLE,
+    calculate_place_confidence,
+    fuzzy_match_place,
+    get_confidence_level,
+    is_ambiguous_entity,
+    is_known_place,
+    is_likely_english,
+    needs_confirmation,
+)
+
 # =============================================================================
 # DEBUG LOGGING
 # =============================================================================
@@ -85,18 +112,75 @@ def _debug_error(message: str, **kwargs: Any) -> None:
         print(f"[PLAN_GRAPH ERROR] ❌ {message} {extras}".strip())
 
 
+# Emoji mapping for each node/specialist for high-visibility debug logging
+_NODE_EMOJIS: dict[str, str] = {
+    # Core nodes
+    "extractor": "🔍",
+    "normalize_inputs": "📐",
+    "router": "🧭",
+    "validate_and_merge": "✅",
+    "response_polish": "✨",
+    "summarize": "📝",
+    "branch_postprocess": "🌿",
+    "tile_search": "🗺️",
+    "short_circuit_responder": "⚡",
+    # Specialists
+    "specialist:required_fields": "📋",
+    "specialist:hotels": "🏨",
+    "specialist:flights": "✈️",
+    "specialist:activities": "🎭",
+    "specialist:transport": "🚗",
+    "specialist:correction": "🔧",
+    # Strategy
+    "strategy_node": "🎯",
+    "boating": "⛵",
+    "hiking": "🥾",
+    "skiing": "⛷️",
+    "diving": "🤿",
+    "cycling": "🚴",
+    # Monolith fallback
+    "monolith_node": "🏛️",
+}
+
+# Cache hit emoji for debug logging
+_CACHE_EMOJI = "💾"
+
+
+def _debug_cache_hit(cache_name: str, key: str = "", value_preview: str = "") -> None:
+    """Log cache hit for debugging with optional value preview."""
+    if _DEBUG_LOG:
+        key_info = f" key={key[:50]}" if key else ""
+        # Show first 80 chars of cached value if provided
+        val_info = ""
+        if value_preview:
+            preview = value_preview.replace("\n", " ")[:80]
+            val_info = f" => '{preview}...'"
+        print(
+            f"[PLAN_GRAPH DEBUG] {_CACHE_EMOJI}{_CACHE_EMOJI}{_CACHE_EMOJI} "
+            f"CACHE HIT: {cache_name}{key_info}{val_info}"
+        )
+
+
 def _debug_node_entry(node_name: str, state: "GraphState") -> None:
     """Log entry into a graph node."""
     if _DEBUG_LOG:
         ti = state.trip_inputs
-        _debug(
-            f">>> ENTERING {node_name}",
-            user_text=(
-                state.user_text[:50] + "..." if len(state.user_text) > 50 else state.user_text
-            ),
-            destinations=ti.destinations,
-            origin=ti.origin,
-            intent=state.intent,
+        # Get emoji for node, or default rocket
+        emoji = _NODE_EMOJIS.get(node_name, "🚀")
+        extras = " ".join(
+            f"{k}={v}"
+            for k, v in {
+                "user_text": (
+                    state.user_text[:50] + "..." if len(state.user_text) > 50 else state.user_text
+                ),
+                "destinations": ti.destinations,
+                "origin": ti.origin,
+                "intent": state.intent,
+            }.items()
+        )
+        print(
+            f"[PLAN_GRAPH DEBUG] {emoji}{emoji}{emoji} "
+            f"ENTERING {node_name} {emoji}{emoji}{emoji} {extras}"
         )
 
 
@@ -115,23 +199,41 @@ def _debug_node_exit(node_name: str, state: "GraphState") -> None:
 # TOKEN ESTIMATION (ported from plan.py)
 # =============================================================================
 
+# Cached tiktoken encoder singleton for performance
+_TIKTOKEN_ENCODER: Optional[Any] = None
+_TIKTOKEN_ENCODER_INITIALIZED = False
+
+
+def _get_tiktoken_encoder() -> Optional[Any]:
+    """Get or create the cached tiktoken encoder (singleton pattern)."""
+    global _TIKTOKEN_ENCODER, _TIKTOKEN_ENCODER_INITIALIZED
+    if not _TIKTOKEN_ENCODER_INITIALIZED:
+        _TIKTOKEN_ENCODER_INITIALIZED = True
+        if _TIKTOKEN_AVAILABLE:
+            try:
+                _TIKTOKEN_ENCODER = tiktoken.get_encoding("cl100k_base")  # type: ignore[union-attr]
+                _debug("Tiktoken encoder initialized (cl100k_base)")
+            except Exception as e:
+                _debug_error("Failed to initialize tiktoken encoder", error=str(e))
+    return _TIKTOKEN_ENCODER
+
 
 def _count_tokens(text: str) -> int:
-    """Estimate token count for a text block using tiktoken, with safe fallbacks."""
+    """Estimate token count for a text block using cached tiktoken encoder."""
     safe_text = text or ""
     if not _TIKTOKEN_AVAILABLE:
         # Fallback: ~4 chars per token
         return len(safe_text) // 4
 
+    encoder = _get_tiktoken_encoder()
+    if encoder is None:
+        return len(safe_text) // 4
+
     try:
-        return len(tiktoken.encode(safe_text))  # type: ignore[union-attr]
+        return len(encoder.encode(safe_text))
     except Exception:
-        try:
-            encoding = tiktoken.get_encoding("cl100k_base")  # type: ignore[union-attr]
-            return len(encoding.encode(safe_text))
-        except Exception:
-            # Fallback to character-based estimation
-            return len(safe_text) // 4
+        # Fallback to character-based estimation
+        return len(safe_text) // 4
 
 
 def _estimate_prompt_tokens(prompt: str, parsed_inputs: Dict[str, Any]) -> int:
@@ -168,36 +270,45 @@ _REQUIRED_TRIP_INPUT_FIELDS = (
 # USER INTENT ARCHETYPES (for conversational style adaptation)
 # =============================================================================
 # Priority order: lower number = higher priority (speed preferences win)
+# Patterns are pre-compiled for efficiency
 USER_INTENT_ARCHETYPES = {
     "quick_booking": {
         "priority": 1,
         "patterns": [
-            r"\b(just\s+flights?|book\s+now|asap|fastest|quick\s+book|just\s+need)\b",
-            r"\b(hurry|urgent|immediately|right\s+away)\b",
+            re.compile(
+                r"\b(just\s+flights?|book\s+now|asap|fastest|quick\s+book|just\s+need)\b", re.I
+            ),
+            re.compile(r"\b(hurry|urgent|immediately|right\s+away)\b", re.I),
         ],
         "description": "Streamlined, minimal questions, skip optional fields",
     },
     "short_trip": {
         "priority": 2,
         "patterns": [
-            r"\b(weekend|quick\s+trip|2-3\s+days|getaway|short\s+trip|day\s+trip)\b",
-            r"\b(mini\s+vacation|long\s+weekend|brief\s+visit)\b",
+            re.compile(
+                r"\b(weekend|quick\s+trip|2-3\s+days|getaway|short\s+trip|day\s+trip)\b", re.I
+            ),
+            re.compile(r"\b(mini\s+vacation|long\s+weekend|brief\s+visit)\b", re.I),
         ],
         "description": "Focus on essentials, suggest compact itineraries",
     },
     "adventurous": {
         "priority": 3,
         "patterns": [
-            r"\b(explore|off\s+the?\s+beaten\s+path|unique|adventure|hidden\s+gems?)\b",
-            r"\b(authentic|local\s+experience|undiscovered|unusual)\b",
+            re.compile(
+                r"\b(explore|off\s+the?\s+beaten\s+path|unique|adventure|hidden\s+gems?)\b", re.I
+            ),
+            re.compile(r"\b(authentic|local\s+experience|undiscovered|unusual)\b", re.I),
         ],
         "description": "Proactive tips, suggest hidden gems, enthusiastic tone",
     },
     "undecided": {
         "priority": 4,
         "patterns": [
-            r"\b(not\s+sure|help\s+me|suggestions?|ideas?|recommend|where\s+should)\b",
-            r"\b(can\'t\s+decide|options?|what\s+do\s+you\s+think)\b",
+            re.compile(
+                r"\b(not\s+sure|help\s+me|suggestions?|ideas?|recommend|where\s+should)\b", re.I
+            ),
+            re.compile(r"\b(can\'t\s+decide|options?|what\s+do\s+you\s+think)\b", re.I),
         ],
         "description": "Curated options, gentle guidance, offer comparisons",
     },
@@ -209,18 +320,19 @@ USER_INTENT_ARCHETYPES = {
 }
 
 # User tone detection patterns (for response adaptation)
+# Patterns are pre-compiled for efficiency
 USER_TONE_PATTERNS = {
     "enthusiastic": {
         "patterns": [
-            r"!{2,}",  # Multiple exclamation marks
-            r"\b(can\'t\s+wait|so\s+excited|amazing|awesome|love\s+it|perfect)\b",
-            r"\b(yay|woohoo|fantastic|incredible|thrilled)\b",
+            re.compile(r"!{2,}", re.I),  # Multiple exclamation marks
+            re.compile(r"\b(can\'t\s+wait|so\s+excited|amazing|awesome|love\s+it|perfect)\b", re.I),
+            re.compile(r"\b(yay|woohoo|fantastic|incredible|thrilled)\b", re.I),
         ],
     },
     "frustrated": {
         "patterns": [
-            r"\b(ugh|again\??|still|already\s+told|not\s+working)\b",
-            r"\b(confused|frustrat|annoying|wrong|doesn\'t\s+work)\b",
+            re.compile(r"\b(ugh|again\??|still|already\s+told|not\s+working)\b", re.I),
+            re.compile(r"\b(confused|frustrat|annoying|wrong|doesn\'t\s+work)\b", re.I),
         ],
         # Also detect very short replies as potential frustration
         "max_length": 15,  # Very short replies may indicate frustration
@@ -242,7 +354,7 @@ INTENT_DECAY_SCHEDULE = {
 
 def _detect_user_intent_hint(text: str) -> Optional[str]:
     """
-    Detect user intent archetype from text using regex patterns.
+    Detect user intent archetype from text using pre-compiled regex patterns.
     Returns the highest-priority matching intent, or None if no match.
     """
     text_lower = text.lower()
@@ -252,7 +364,7 @@ def _detect_user_intent_hint(text: str) -> Optional[str]:
         if not config["patterns"]:  # Skip default (detailed_planner)
             continue
         for pattern in config["patterns"]:
-            if re.search(pattern, text_lower, re.I):
+            if pattern.search(text_lower):
                 matches.append((config["priority"], intent_name))
                 break  # One match per intent is enough
 
@@ -266,19 +378,19 @@ def _detect_user_intent_hint(text: str) -> Optional[str]:
 
 def _detect_user_tone(text: str) -> str:
     """
-    Detect user tone from text using regex patterns.
+    Detect user tone from text using pre-compiled regex patterns.
     Returns: 'enthusiastic', 'frustrated', or 'neutral'.
     """
     text_lower = text.lower()
 
     # Check enthusiastic patterns
     for pattern in USER_TONE_PATTERNS["enthusiastic"]["patterns"]:
-        if re.search(pattern, text_lower, re.I):
+        if pattern.search(text_lower):
             return "enthusiastic"
 
     # Check frustrated patterns
     for pattern in USER_TONE_PATTERNS["frustrated"]["patterns"]:
-        if re.search(pattern, text_lower, re.I):
+        if pattern.search(text_lower):
             return "frustrated"
 
     # Check for very short replies (potential frustration)
@@ -408,6 +520,777 @@ _GENERATE_PLAN_TRIGGER = "GENERATE_PLAN_NOW"
 def _is_generate_plan_trigger(message: str) -> bool:
     """Check if the message is the special generate plan trigger."""
     return message.strip().upper() == _GENERATE_PLAN_TRIGGER
+
+
+# =============================================================================
+# SHORT-CIRCUIT PATTERNS FOR LIGHTWEIGHT FLOW
+# =============================================================================
+# These patterns detect simple inputs that can bypass the LLM router/specialist
+# pipeline, saving ~800 tokens per message.
+
+# Pattern: Greetings (hi, hello, hey, good morning, etc.)
+_GREETING_PATTERN = re.compile(
+    r"^(h(i|ey|ello|iya|owdy)|yo|sup|good\s+(morning|afternoon|evening|day)|"
+    r"what'?s\s+up|greetings?)[\s\.\!\?]*$",
+    re.IGNORECASE,
+)
+
+# Pattern: Acknowledgments (ok, thanks, got it, sure, etc.)
+_ACKNOWLEDGMENT_PATTERN = re.compile(
+    r"^(ok(ay)?|thanks?(\s+(you|so much|a lot))?|thank\s+you(\s+so much)?|"
+    r"got\s+it|sure|alright|cool|great|sounds?\s+good|perfect|"
+    r"awesome|nice|good|fine|understood|noted|yep|yup|roger)[\s\.\!\?]*$",
+    re.IGNORECASE,
+)
+
+# Pattern: Simple confirmations (yes, yeah, yep, yup)
+_YES_PATTERN = re.compile(
+    r"^(yes|yeah|yep|yup|yea|ya|sure|absolutely|definitely|of course|"
+    r"please|do it|go ahead|let'?s\s+do\s+(it|this|that))[\s\.\!\?]*$",
+    re.IGNORECASE,
+)
+
+# Pattern: Simple negations (no, nope, nah, not really)
+_NO_PATTERN = re.compile(
+    r"^(no|nope|nah|not\s+really|no\s+thanks?|never\s*mind|cancel|"
+    r"don'?t|stop|wait|hold\s+on)[\s\.\!\?]*$",
+    re.IGNORECASE,
+)
+
+# Pattern: Off-topic queries (narrow, conservative patterns)
+_OFF_TOPIC_PATTERNS: List[tuple[re.Pattern, str]] = [
+    # Weather-only queries
+    (
+        re.compile(
+            r"^(?:what(?:'s| is) the )?weather\s+(?:like\s+)?(?:in|for|at)\s+\w+[\s\?\!\.]*$",
+            re.IGNORECASE,
+        ),
+        "weather",
+    ),
+    # Pure math/calculation
+    (
+        re.compile(r"^(?:what(?:'s| is)\s+)?\d+\s*[\+\-\*\/x×÷]\s*\d+[\s\?\=]*$", re.IGNORECASE),
+        "math",
+    ),
+    # General knowledge unrelated to travel
+    (
+        re.compile(
+            r"^(?:who|what|when|where)\s+(?:is|was|are|were)\s+(?:the\s+)?(?:president|capital|population|king|queen|ceo|founder)\b",
+            re.IGNORECASE,
+        ),
+        "general_knowledge",
+    ),
+    # Explicit non-travel requests
+    (
+        re.compile(
+            r"^(?:can you |please\s+)?(?:write|compose|draft)\s+"
+            r"(?:me\s+)?(?:a\s+)?(?:poem|song|story|essay|email|letter)\b",
+            re.IGNORECASE,
+        ),
+        "creative_writing",
+    ),
+]
+
+# Friendly greeting responses (randomized for variety)
+_GREETING_RESPONSES = [
+    "Hi! 👋 Where are you looking to travel?",
+    "Hello! What destination is calling your name?",
+    "Hey! Ready to plan a trip. Where to?",
+    "Hi there! Where would you like to go?",
+]
+
+# Off-topic redirect responses
+_OFF_TOPIC_RESPONSES: Dict[str, str] = {
+    "weather": (
+        "I'm focused on trip planning—for weather, try a forecast site! "
+        "Now, where would you like to travel?"
+    ),
+    "math": "I'm your travel assistant, not a calculator! 😄 Where are you looking to go?",
+    "general_knowledge": "I specialize in travel planning! Tell me where you'd like to explore.",
+    "creative_writing": "I'm best at planning trips! Where would you like to travel?",
+}
+
+# Pending actions that can be triggered by yes/no confirmations
+_PENDING_ACTIONS = {
+    "generate_plan": "Triggering plan generation...",
+    "confirm_dates": "Dates confirmed.",
+    "confirm_travelers": "Travelers confirmed.",
+}
+
+# Ambiguous destinations that need clarification (US state vs country, etc.)
+# These will trigger a clarification prompt instead of blindly accepting
+_AMBIGUOUS_DESTINATIONS: Dict[str, List[str]] = {
+    "georgia": ["Georgia (US state)", "Georgia (country)"],
+    "jordan": ["Jordan (country)", "Jordan (as a person's name?)"],
+    "florence": ["Florence, Italy", "Florence, South Carolina", "Florence, Alabama"],
+    "paris": ["Paris, France", "Paris, Texas"],
+    "berlin": ["Berlin, Germany", "Berlin, Connecticut", "Berlin, New Hampshire"],
+    "london": ["London, UK", "London, Ontario"],
+    "rome": ["Rome, Italy", "Rome, Georgia"],
+    "athens": ["Athens, Greece", "Athens, Georgia"],
+    "barcelona": ["Barcelona, Spain", "Barcelona, Venezuela"],
+    "valencia": ["Valencia, Spain", "Valencia, Venezuela", "Valencia, California"],
+    "cambridge": ["Cambridge, UK", "Cambridge, Massachusetts"],
+    "oxford": ["Oxford, UK", "Oxford, Mississippi"],
+    "sydney": ["Sydney, Australia", "Sydney, Nova Scotia"],
+    "melbourne": ["Melbourne, Australia", "Melbourne, Florida"],
+    "perth": ["Perth, Australia", "Perth, Scotland"],
+    "hamilton": ["Hamilton, Bermuda", "Hamilton, New Zealand", "Hamilton, Ontario"],
+    "santiago": ["Santiago, Chile", "Santiago de Compostela, Spain"],
+    "victoria": ["Victoria, BC", "Victoria, Australia", "Victoria Falls"],
+    "portland": ["Portland, Oregon", "Portland, Maine"],
+    "springfield": ["Springfield, Illinois", "Springfield, Massachusetts", "Springfield, Missouri"],
+    "columbus": ["Columbus, Ohio", "Columbus, Georgia"],
+    "jackson": ["Jackson, Mississippi", "Jackson Hole, Wyoming"],
+    "madison": ["Madison, Wisconsin", "Madison, Alabama"],
+    "richmond": ["Richmond, Virginia", "Richmond, California", "Richmond, UK"],
+}
+
+# Common non-place words that might be capitalized but aren't destinations
+_NON_DESTINATION_WORDS = frozenset(
+    [
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "so",
+        "yes",
+        "no",
+        "maybe",
+        "perhaps",
+        "soon",
+        "later",
+        "now",
+        "today",
+        "tomorrow",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+    ]
+)
+
+
+# =============================================================================
+# PRE-COMPILED EXTRACTOR PATTERNS
+# =============================================================================
+# These patterns are pre-compiled at module load time to avoid repeated
+# re.compile() calls during extraction. ~35 patterns total.
+
+# Budget patterns
+_BUDGET_SYMBOL_PATTERN = re.compile(r"(?P<cur>[$€£¥])\s*(?P<amt>\d[\d,\.]*)", re.IGNORECASE)
+_BUDGET_CODE_PATTERN = re.compile(
+    r"(?P<amt>\d[\d,\.]*)\s*(?P<cur>USD|EUR|GBP|CAD|AUD|JPY)", re.IGNORECASE
+)
+
+# Origin/destination patterns
+# Stop at date-related words to avoid capturing "Paris next week" as destination
+_DATE_STOPWORDS = (
+    r"(?:today|tomorrow|next|this|on|in|for|leaving|departing|starting|\d{1,2}(?:st|nd|rd|th)?)"
+)
+# Unicode letter class for destination names (covers Latin + accented chars)
+_PLACE_CHAR = r"[A-Za-z\u00C0-\u024F'']"  # Letters including accents and apostrophes
+_PLACE_CHARS = (
+    r"[A-Za-z\u00C0-\u024F\s\-,'']"  # Plus spaces, hyphens, commas (NO periods in mid-pattern)
+)
+_PLACE_CHARS_WITH_DOT = (
+    r"[A-Za-z\u00C0-\u024F\s\-,''\.]+?"  # With periods for abbreviations like St.
+)
+
+_ORIGIN_DEST_FROM_TO_PATTERN = re.compile(
+    r"from\s+(?:the\s+)?(?P<o>"
+    + _PLACE_CHAR
+    + _PLACE_CHARS_WITH_DOT
+    + r")\s+to\s+(?:the\s+)?(?P<d>"
+    + _PLACE_CHAR
+    + _PLACE_CHARS_WITH_DOT
+    + r")"
+    r"(?:\s+" + _DATE_STOPWORDS + r"|\s*[,]|\s*$)",
+    re.IGNORECASE,
+)
+_ORIGIN_DEST_TO_FROM_PATTERN = re.compile(
+    r"to\s+(?:the\s+)?(?P<d>"
+    + _PLACE_CHAR
+    + _PLACE_CHARS_WITH_DOT
+    + r")\s+from\s+(?:the\s+)?(?P<o>"
+    + _PLACE_CHAR
+    + _PLACE_CHARS_WITH_DOT
+    + r")"
+    r"(?:\s+" + _DATE_STOPWORDS + r"|\s*[,]|\s*$)",
+    re.IGNORECASE,
+)
+_DEST_LEAVING_PATTERN = re.compile(
+    r"^(?P<dest>"
+    + _PLACE_CHAR
+    + _PLACE_CHARS_WITH_DOT
+    + r")\s+(?:leaving|departing|starting|on|in)\s+"
+    r"(?:today|tomorrow|next\s+week|this\s+weekend|\d)",
+    re.IGNORECASE,
+)
+_DEST_GOING_TO_PATTERN = re.compile(
+    r"(?:going|go|want(?:ing)?\s+to\s+go|visit(?:ing)?|travel(?:l?ing)?|fly(?:ing)?|trip)\s+"
+    r"(?:to\s+)?(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
+    r"(?:\s+(?:today|tomorrow|next|on|in|for|maybe|and\s+then)|\s*[,!?]|\s*$)",
+    re.IGNORECASE,
+)
+# Pattern for "flying [airline] to X" - extracts destination after airline name
+_DEST_FLYING_AIRLINE_PATTERN = re.compile(
+    r"fly(?:ing)?\s+(?:with\s+)?(?:emirates|delta|united|american|lufthansa|british\s+airways|"
+    r"air\s+france|qatar|etihad|singapore|cathay|ryanair|easyjet|jetblue|southwest)\s+"
+    r"to\s+(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
+    r"(?:\s+(?:today|tomorrow|next|on|in|for)|\s*[,!?]|\s*$)",
+    re.IGNORECASE,
+)
+
+# Traveler patterns
+_TRAVELER_SOLO_PATTERN = re.compile(r"\b(solo|just me|traveling alone|by myself)\b", re.IGNORECASE)
+_TRAVELER_COUPLE_PATTERN = re.compile(
+    r"\b(couple|me and (my )?(partner|wife|husband|girlfriend|boyfriend))\b", re.IGNORECASE
+)
+_TRAVELER_FAMILY_PATTERN = re.compile(r"\bfamily of (\d+)\b", re.IGNORECASE)
+_TRAVELER_ADULTS_KIDS_PATTERN = re.compile(
+    r"(\d+)\s*adults?\s*(?:,|and)?\s*(\d+)\s*(?:kids?|children)", re.IGNORECASE
+)
+_TRAVELER_ADULTS_ONLY_PATTERN = re.compile(r"(\d+)\s*adults?", re.IGNORECASE)
+
+# Accessibility pattern
+_ACCESSIBILITY_PATTERN = re.compile(
+    r"\b(wheelchair|accessibility|disabled|mobility|requires? assistance)\b", re.IGNORECASE
+)
+
+# Date patterns
+_DATE_TODAY_PATTERN = re.compile(r"\b(today|tonight|now)\b", re.IGNORECASE)
+_DATE_TOMORROW_PATTERN = re.compile(r"\btomorrow\b", re.IGNORECASE)
+_DATE_NEXT_WEEK_PATTERN = re.compile(r"\bnext week\b", re.IGNORECASE)
+_DATE_WEEKEND_PATTERN = re.compile(r"\bweekend\b", re.IGNORECASE)
+
+# Category activation patterns
+_CAT_FLIGHTS_PATTERN = re.compile(
+    r"flight|cabin|nonstop|direct|one[-\s]?way|round[-\s]?trip|airline", re.IGNORECASE
+)
+_CAT_HOTELS_PATTERN = re.compile(
+    r"hotel|amenit|star|room|accommodation|stay|lodge|resort", re.IGNORECASE
+)
+_CAT_TRANSPORT_PATTERN = re.compile(
+    r"\btrain|car rental|rent a? car|bus|drive|driving\b", re.IGNORECASE
+)
+_CAT_ACTIVITIES_PATTERN = re.compile(
+    r"activity|tour|museum|beach|hike|dive|nightlife|restaurant|show|ticket", re.IGNORECASE
+)
+
+# Flight settings patterns
+_FLIGHT_DIRECT_PATTERN = re.compile(r"\b(nonstop|non-stop|direct)\b", re.IGNORECASE)
+_FLIGHT_ONEWAY_PATTERN = re.compile(r"\b(one[-\s]?way)\b", re.IGNORECASE)
+_FLIGHT_ROUNDTRIP_PATTERN = re.compile(r"\b(round[-\s]?trip)\b", re.IGNORECASE)
+_FLIGHT_BUSINESS_PATTERN = re.compile(r"\b(business)\b", re.IGNORECASE)
+_FLIGHT_FIRST_CLASS_PATTERN = re.compile(r"\b(first\s*class)\b", re.IGNORECASE)
+_FLIGHT_PREMIUM_ECONOMY_PATTERN = re.compile(r"\b(premium\s*economy)\b", re.IGNORECASE)
+
+# Hotel settings patterns
+_HOTEL_STARS_PATTERN = re.compile(r"(\d)\s*[-\s]?star", re.IGNORECASE)
+_HOTEL_POOL_PATTERN = re.compile(r"\bpool\b", re.IGNORECASE)
+_HOTEL_GYM_PATTERN = re.compile(r"\bgym\b", re.IGNORECASE)
+_HOTEL_SPA_PATTERN = re.compile(r"\bspa\b", re.IGNORECASE)
+_HOTEL_WIFI_PATTERN = re.compile(r"\bwifi\b", re.IGNORECASE)
+_HOTEL_BREAKFAST_PATTERN = re.compile(r"\bbreakfast\b", re.IGNORECASE)
+
+# Transport settings patterns
+_TRANSPORT_CAR_PATTERN = re.compile(r"\b(car|rent a car|car rental|drive|driving)\b", re.IGNORECASE)
+_TRANSPORT_TRAIN_PATTERN = re.compile(r"\btrain\b", re.IGNORECASE)
+_TRANSPORT_BUS_PATTERN = re.compile(r"\bbus\b", re.IGNORECASE)
+
+# Strategy detection patterns
+_STRATEGY_BOATING_PATTERN = re.compile(r"boat|boating|sail|yacht|kayak|canoe|marina", re.IGNORECASE)
+_STRATEGY_HIKING_PATTERN = re.compile(r"hike|trek|trail|alpine|mountain|hiking", re.IGNORECASE)
+_STRATEGY_DIVING_PATTERN = re.compile(r"dive|diving|scuba|snorkel", re.IGNORECASE)
+_STRATEGY_SKIING_PATTERN = re.compile(r"ski|skiing|snowboard|slopes|powder", re.IGNORECASE)
+_STRATEGY_CYCLING_PATTERN = re.compile(r"cycle|cycling|bike|biking|bicycle", re.IGNORECASE)
+
+# Short-circuit bare input patterns
+# More permissive pattern for bare destinations:
+# - Case insensitive (catches "patagonia" and "Patagonia")
+# - Allows accents (São Paulo, Zürich, Côte d'Azur)
+# - Allows apostrophes (St. John's, Hawai'i)
+# - Allows periods (St. Petersburg, U.S.A.)
+# - Min 2 chars, max 40 chars
+_BARE_DEST_PATTERN = re.compile(r"^[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F\s\-,\.\'']+$")
+_BARE_DATE_PATTERN = re.compile(
+    r"^(today|tomorrow|next\s+(week|month|weekend)|this\s+(week|weekend|month)|"
+    r"in\s+\d+\s+(days?|weeks?|months?)|"
+    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}(?:st|nd|rd|th)?|"
+    r"\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|"
+    r"\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})[\s\.\,\!\?]*$",
+    re.IGNORECASE,
+)
+_BARE_SOLO_PATTERN = re.compile(r"^(just\s+me|solo|alone|myself|1)[\s\.\!\?]*$", re.IGNORECASE)
+_BARE_TRAVELERS_PATTERN = re.compile(
+    r"^(\d+)(?:\s*(?:adults?|people|travelers?|of us))?[\s\.\!\?]*$", re.IGNORECASE
+)
+_BARE_ORIGIN_PATTERN = re.compile(r"^(?:from\s+)?([A-Z][a-zA-Z\s\-,]+)[\s\.\!\?]*$")
+
+# Destination list split pattern (comma or "and")
+_DEST_SPLIT_PATTERN = re.compile(r",|\band\b")
+# Duration extraction patterns
+_DURATION_PATTERNS = [
+    re.compile(r"coming\s+back\s+in\s+(\d+)\s*days?", re.IGNORECASE),
+    re.compile(r"returning?\s+in\s+(\d+)\s*days?", re.IGNORECASE),
+    re.compile(r"for\s+(\d+)\s*days?", re.IGNORECASE),
+    re.compile(r"(\d+)\s*days?\s+trip", re.IGNORECASE),
+    re.compile(r"(\d+)\s*day\s+trip", re.IGNORECASE),
+]
+
+# ISO date validation pattern
+_ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# =============================================================================
+# DESTINATION → ACTIVITY INFERENCE
+# =============================================================================
+# Some destinations strongly imply certain activities. When a user mentions
+# these destinations, we should also infer the associated activities.
+# This enables multi-faceted extraction: "Patagonia" → destination + hiking
+#
+# Format: destination_keyword → list of (activity_category, emoji)
+# Keywords are matched case-insensitively against destination names
+
+_DESTINATION_ACTIVITY_HINTS: Dict[str, List[str]] = {
+    # Hiking/Trekking destinations
+    "patagonia": ["🥾 hiking"],
+    "torres del paine": ["🥾 hiking"],
+    "everest": ["🥾 hiking", "🏔️ mountaineering"],
+    "kilimanjaro": ["🥾 hiking", "🏔️ mountaineering"],
+    "machu picchu": ["🥾 hiking", "🏛️ culture"],
+    "inca trail": ["🥾 hiking"],
+    "annapurna": ["🥾 hiking"],
+    "dolomites": ["🥾 hiking", "⛷️ skiing"],
+    "alps": ["🥾 hiking", "⛷️ skiing"],
+    "swiss alps": ["🥾 hiking", "⛷️ skiing"],
+    "appalachian": ["🥾 hiking"],
+    "grand canyon": ["🥾 hiking"],
+    "yosemite": ["🥾 hiking", "🧗 climbing"],
+    "zion": ["🥾 hiking"],
+    "banff": ["🥾 hiking", "⛷️ skiing"],
+    "rockies": ["🥾 hiking", "⛷️ skiing"],
+    "rocky mountains": ["🥾 hiking", "⛷️ skiing"],
+    "mt fuji": ["🥾 hiking"],
+    "mount fuji": ["🥾 hiking"],
+    # Diving/Beach destinations
+    "maldives": ["🤿 diving", "🏖️ beach"],
+    "great barrier reef": ["🤿 diving", "🏖️ beach"],
+    "red sea": ["🤿 diving"],
+    "bora bora": ["🤿 diving", "🏖️ beach"],
+    "fiji": ["🤿 diving", "🏖️ beach"],
+    "phuket": ["🤿 diving", "🏖️ beach"],
+    "bali": ["🤿 diving", "🏖️ beach", "🧘 wellness"],
+    "galapagos": ["🤿 diving", "🦎 wildlife"],
+    "raja ampat": ["🤿 diving"],
+    "cozumel": ["🤿 diving", "🏖️ beach"],
+    "bonaire": ["🤿 diving"],
+    "sipadan": ["🤿 diving"],
+    "palau": ["🤿 diving"],
+    # Skiing destinations
+    "aspen": ["⛷️ skiing"],
+    "vail": ["⛷️ skiing"],
+    "chamonix": ["⛷️ skiing", "🥾 hiking"],
+    "zermatt": ["⛷️ skiing", "🥾 hiking"],
+    "st. moritz": ["⛷️ skiing"],
+    "whistler": ["⛷️ skiing"],
+    "niseko": ["⛷️ skiing"],
+    "courchevel": ["⛷️ skiing"],
+    "verbier": ["⛷️ skiing"],
+    "innsbruck": ["⛷️ skiing"],
+    "jackson hole": ["⛷️ skiing"],
+    "park city": ["⛷️ skiing"],
+    # Safari/Wildlife destinations
+    "serengeti": ["🦁 safari", "🦎 wildlife"],
+    "masai mara": ["🦁 safari", "🦎 wildlife"],
+    "kruger": ["🦁 safari", "🦎 wildlife"],
+    "okavango": ["🦁 safari", "🦎 wildlife"],
+    "yellowstone": ["🦎 wildlife", "🥾 hiking"],
+    "amazon": ["🦎 wildlife", "🌴 jungle"],
+    "costa rica": ["🦎 wildlife", "🌴 jungle", "🏄 surfing"],
+    "borneo": ["🦎 wildlife", "🌴 jungle"],
+    # Surfing destinations
+    "hawaii": ["🏄 surfing", "🏖️ beach", "🥾 hiking"],
+    "oahu": ["🏄 surfing", "🏖️ beach"],
+    "maui": ["🏄 surfing", "🏖️ beach", "🥾 hiking"],
+    "pipeline": ["🏄 surfing"],
+    "north shore": ["🏄 surfing"],
+    "jeffreys bay": ["🏄 surfing"],
+    "gold coast": ["🏄 surfing", "🏖️ beach"],
+    "byron bay": ["🏄 surfing", "🏖️ beach"],
+    "mentawai": ["🏄 surfing"],
+    "uluwatu": ["🏄 surfing"],
+    # Cultural destinations (implicit culture/sightseeing)
+    "rome": ["🏛️ culture", "🍝 food"],
+    "florence": ["🏛️ culture", "🍝 food", "🎨 art"],
+    "paris": ["🏛️ culture", "🍝 food", "🎨 art"],
+    "kyoto": ["🏛️ culture", "🍜 food"],
+    "petra": ["🏛️ culture", "🥾 hiking"],
+    "angkor wat": ["🏛️ culture"],
+    "cairo": ["🏛️ culture"],
+    "athens": ["🏛️ culture"],
+    # Wine destinations
+    "napa": ["🍷 wine", "🍝 food"],
+    "napa valley": ["🍷 wine", "🍝 food"],
+    "bordeaux": ["🍷 wine", "🍝 food"],
+    "tuscany": ["🍷 wine", "🍝 food", "🏛️ culture"],
+    "mendoza": ["🍷 wine"],
+    "barossa": ["🍷 wine"],
+    "rioja": ["🍷 wine"],
+    # Wellness/Spa destinations
+    "sedona": ["🧘 wellness", "🥾 hiking"],
+    "ubud": ["🧘 wellness", "🏛️ culture"],
+    # Boating/Sailing
+    "greek islands": ["⛵ sailing", "🏖️ beach"],
+    "santorini": ["⛵ sailing", "🏖️ beach", "🏛️ culture"],
+    "mykonos": ["⛵ sailing", "🏖️ beach", "🎉 nightlife"],
+    "croatia": ["⛵ sailing", "🏖️ beach"],
+    "caribbean": ["⛵ sailing", "🏖️ beach"],
+    "virgin islands": ["⛵ sailing", "🏖️ beach"],
+    "whitsundays": ["⛵ sailing", "🏖️ beach"],
+}
+
+
+def _infer_activities_from_destination(destination: str) -> List[str]:
+    """
+    Infer implied activities from a destination name.
+
+    Returns a list of activity categories with emoji prefixes,
+    or an empty list if no activities are implied.
+    """
+    dest_lower = destination.lower().strip()
+
+    # Direct match
+    if dest_lower in _DESTINATION_ACTIVITY_HINTS:
+        return _DESTINATION_ACTIVITY_HINTS[dest_lower]
+
+    # Partial match (destination contains keyword or keyword contains destination)
+    for keyword, activities in _DESTINATION_ACTIVITY_HINTS.items():
+        if keyword in dest_lower or dest_lower in keyword:
+            return activities
+
+    return []
+
+
+def _check_ambiguous_destination(destination: str) -> Optional[List[str]]:
+    """
+    Check if a destination name is ambiguous.
+    Returns a list of clarification options if ambiguous, None otherwise.
+    """
+    dest_lower = destination.strip().lower()
+    return _AMBIGUOUS_DESTINATIONS.get(dest_lower)
+
+
+def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """
+    Detect if user input can be short-circuited without LLM calls.
+
+    Returns a dict with:
+        - type: str - the short-circuit type (greeting, acknowledgment, etc.)
+        - response: Optional[str] - a template response, or None to use default follow-up
+        - action: Optional[str] - an action to execute (for confirmations)
+        - parsed: Optional[Dict] - extracted data to merge (for bare field inputs)
+
+    Returns None if the input should go through the normal LLM pipeline.
+    """
+    text_clean = text.strip()
+    text_lower = text_clean.lower()
+
+    # Skip short-circuit if there's substantial content (>50 chars usually has travel info)
+    if len(text_clean) > 50:
+        return None
+
+    # 1. Greetings
+    if _GREETING_PATTERN.match(text_clean):
+        return {
+            "type": "greeting",
+            "response": _random_module.choice(_GREETING_RESPONSES),
+            "action": None,
+            "parsed": None,
+        }
+
+    # 2. Acknowledgments (ok, thanks, got it)
+    if _ACKNOWLEDGMENT_PATTERN.match(text_clean):
+        return {
+            "type": "acknowledgment",
+            "response": None,  # Will use _default_follow_up_question
+            "action": None,
+            "parsed": None,
+        }
+
+    # 3. Simple confirmations (yes, yeah)
+    if _YES_PATTERN.match(text_clean):
+        pending = state.metadata.get("pending_action")
+        if pending == "generate_plan":
+            # Execute the pending action
+            return {
+                "type": "confirmation_yes",
+                "response": None,
+                "action": "generate_plan",
+                "parsed": None,
+            }
+        # Generic yes without pending action - just acknowledge and continue
+        return {
+            "type": "confirmation_yes",
+            "response": None,
+            "action": None,
+            "parsed": None,
+        }
+
+    # 4. Simple negations (no, nope)
+    if _NO_PATTERN.match(text_clean):
+        pending = state.metadata.get("pending_action")
+        if pending:
+            # Clear the pending action
+            return {
+                "type": "confirmation_no",
+                "response": "No problem. What would you like to do instead?",
+                "action": "clear_pending",
+                "parsed": None,
+            }
+        return {
+            "type": "confirmation_no",
+            "response": None,
+            "action": None,
+            "parsed": None,
+        }
+
+    # 5. Off-topic detection (narrow patterns)
+    for pattern, topic in _OFF_TOPIC_PATTERNS:
+        if pattern.match(text_clean):
+            _debug(f"Off-topic detected: {topic}", input=text_clean[:30])
+            return {
+                "type": "off_topic",
+                "response": _OFF_TOPIC_RESPONSES.get(
+                    topic, "I'm your travel assistant! Where would you like to go?"
+                ),
+                "action": None,
+                "parsed": None,
+            }
+
+    # 6. Bare destination input (single capitalized word/phrase, 2-30 chars)
+    # Detect if this looks like a place name even without prior destination question.
+    # Conditions:
+    #   - 2-30 chars, matches capitalized pattern
+    #   - No destinations set yet
+    #   - Either last question was about destinations OR input looks like a place name
+    #     (first turn heuristic: capitalized word(s) without common verbs/actions)
+    #   - NOT matching grammar-bound patterns (from/to, going to, etc.)
+    last_field = state.metadata.get("last_question_field")
+
+    # Skip bare destination for grammar-bound inputs that should go through regex extraction
+    _has_grammar_pattern = bool(
+        re.search(
+            r"\b(?:from|to|going|visiting|flying|travel(?:l?ing)?|trip)\b",
+            text_clean,
+            re.IGNORECASE,
+        )
+    )
+
+    if (
+        2 <= len(text_clean) <= 30
+        and not state.trip_inputs.destinations
+        and _BARE_DEST_PATTERN.match(text_clean)
+        and not _has_grammar_pattern  # Don't short-circuit grammar-bound inputs
+    ):
+        # Check if this looks like a place name (not a greeting, action word, etc.)
+        is_likely_place = last_field == "destinations" or (
+            # First-turn heuristic: capitalized, not common non-place words
+            text_clean[0].isupper()
+            and text_lower
+            not in (
+                "help",
+                "hi",
+                "hello",
+                "hey",
+                "please",
+                "thanks",
+                "thank",
+                "ok",
+                "okay",
+                "yes",
+                "no",
+                "sure",
+                "maybe",
+                "cancel",
+                "stop",
+                "wait",
+                "what",
+                "how",
+                "when",
+                "where",
+                "why",
+                "who",
+                "i",
+                "we",
+                "my",
+                "me",
+                "plan",
+                "trip",
+                "book",
+                "booking",
+                "travel",
+                "vacation",
+                "holiday",
+                "adventure",
+            )
+            and not text_lower.startswith(
+                (
+                    "i ",
+                    "we ",
+                    "my ",
+                    "can ",
+                    "could ",
+                    "would ",
+                    "flying ",
+                    "going ",
+                    "want ",
+                    "need ",
+                    "looking ",
+                )
+            )
+        )
+        if is_likely_place:
+            # Strip date-related suffixes from destination name
+            # e.g., "Patagonia in December" -> "Patagonia"
+            dest_name = text_clean
+            date_suffix_pattern = re.compile(
+                r"\s+(?:in|on|for|during|around|from|starting|leaving|departing)\s+"
+                r"(?:january|february|march|april|may|june|july|august|september|"
+                r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|"
+                r"today|tomorrow|next\s+week|next\s+month|this\s+weekend|\d{1,2}(?:st|nd|rd|th)?)",
+                re.IGNORECASE,
+            )
+            dest_match = date_suffix_pattern.split(dest_name)
+            if dest_match:
+                dest_name = dest_match[0].strip()
+
+            # Also handle date extraction from the suffix
+            date_hint = None
+            date_hint_match = re.search(
+                r"(?:in|on|for|during)\s+(january|february|march|april|may|june|july|august|"
+                r"september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|"
+                r"today|tomorrow|next\s+week|next\s+month|this\s+weekend)",
+                text_clean,
+                re.IGNORECASE,
+            )
+            if date_hint_match:
+                date_hint = date_hint_match.group(1).lower()
+
+            # Infer activities from destination (multi-faceted extraction)
+            inferred_activities = _infer_activities_from_destination(dest_name)
+
+            parsed_data: Dict[str, Any] = {"destinations_delta": [dest_name]}
+
+            if date_hint:
+                parsed_data["start_date_hint"] = date_hint
+
+            if inferred_activities:
+                parsed_data["inferred_activity_categories"] = inferred_activities
+                _debug(
+                    "Bare destination detected with inferred activities",
+                    input=text_clean,
+                    activities=inferred_activities,
+                    first_turn=(last_field != "destinations"),
+                )
+            else:
+                _debug(
+                    "Bare destination detected",
+                    input=text_clean,
+                    first_turn=(last_field != "destinations"),
+                )
+
+            # This looks like a destination answer - let it parse but mark for validation
+            return {
+                "type": "bare_destination",
+                "response": None,
+                "action": "validate_destination",
+                "parsed": parsed_data,
+            }
+
+    # 7. Simple date input (if last question was about dates)
+    if last_field in ("start_date", "end_date"):
+        if _BARE_DATE_PATTERN.match(text_clean):
+            return {
+                "type": "bare_date",
+                "response": None,
+                "action": None,
+                "parsed": {f"{last_field}_hint": text_clean},
+            }
+
+    # 8. Simple traveler input (if last question was about travelers)
+    if last_field == "adults":
+        # "just me", "solo", "alone", "myself", "1"
+        if _BARE_SOLO_PATTERN.match(text_clean):
+            return {
+                "type": "bare_travelers",
+                "response": None,
+                "action": None,
+                "parsed": {"adults_delta": 1, "children_delta": 0},
+            }
+        traveler_match = _BARE_TRAVELERS_PATTERN.match(text_clean)
+        if traveler_match:
+            return {
+                "type": "bare_travelers",
+                "response": None,
+                "action": None,
+                "parsed": {"adults_delta": int(traveler_match.group(1))},
+            }
+
+    # 9. Origin input (if last question was about origin)
+    if last_field == "origin" and 2 <= len(text_clean) <= 40:
+        # "from X" or just a city name
+        origin_match = _BARE_ORIGIN_PATTERN.match(text_clean)
+        if origin_match:
+            return {
+                "type": "bare_origin",
+                "response": None,
+                "action": None,
+                "parsed": {"origin_delta": origin_match.group(1).strip()},
+            }
+
+    # No short-circuit detected
+    return None
 
 
 # =============================================================================
@@ -564,16 +1447,10 @@ def _extract_duration_days_from_message(message: str) -> Optional[int]:
         return None
 
     lowered = message.lower()
-    patterns = [
-        r"coming\s+back\s+in\s+(\d+)\s*days?",
-        r"returning?\s+in\s+(\d+)\s*days?",
-        r"for\s+(\d+)\s*days?",
-        r"(\d+)\s*days?\s+trip",
-        r"(\d+)\s*day\s+trip",
-    ]
 
-    for pattern in patterns:
-        match = re.search(pattern, lowered)
+    # Use pre-compiled patterns for efficiency
+    for pattern in _DURATION_PATTERNS:
+        match = pattern.search(lowered)
         if match:
             try:
                 return int(match.group(1))
@@ -612,8 +1489,8 @@ def _normalize_date(value: Any) -> Optional[str]:
         except ValueError:
             continue
 
-    iso_match = re.match(r"^\d{4}-\d{2}-\d{2}$", text)
-    return text if iso_match else None
+    # Use pre-compiled pattern for ISO date validation
+    return text if _ISO_DATE_PATTERN.match(text) else None
 
 
 def _parse_iso_date(text: Optional[str]) -> Optional[datetime]:
@@ -1006,50 +1883,91 @@ def _default_follow_up_question(
     missing_fields: List[str],
     user_intent: str = "detailed_planner",
     user_tone: str = "neutral",
+    trip_inputs: Optional[dict] = None,
 ) -> Optional[str]:
     """
     Get the default question to ask for the next missing field.
-    Adapts phrasing based on user intent and tone.
+    Adapts phrasing based on user intent, tone, and existing trip context.
+    Professional and natural—matches user energy without overdoing it.
     """
     if not missing_fields:
         return None
 
-    # Base prompts for each field
+    trip_inputs = trip_inputs or {}
+    destinations = trip_inputs.get("destinations", [])
+
+    # When we know the destination, can reference it
+    dest_name = destinations[0] if destinations else None
+
+    # Helper to build destination-aware messages
+    def _dest_prefix(template_with: str, template_without: str) -> str:
+        if dest_name:
+            return template_with.replace("{dest}", dest_name)
+        return template_without
+
+    # Base prompts - professional and warm
     base_prompts = {
-        "destinations": "Where would you like to go?",
-        "origin": "Where will you be traveling from?",
-        "start_date": "When does your trip start?",
-        "end_date": "When does your trip end?",
-        "adults": "How many adults will be going?",
-        "budget": "What's your budget for this trip?",
+        "destinations": "Where are you looking to go?",
+        "origin": _dest_prefix(
+            "{dest}—nice. Where are you flying from?", "Where are you flying from?"
+        ),
+        "start_date": _dest_prefix(
+            "When are you heading to {dest}?", "When are you looking to travel?"
+        ),
+        "end_date": "When do you need to be back?",
+        "adults": "How many travelers?",
+        "budget": "Any budget in mind?",
     }
 
-    # Intent-specific phrasing variants
+    # Quick booking - minimal, efficient
     quick_prompts = {
         "destinations": "Where to?",
         "origin": "Flying from?",
-        "start_date": "Departure date?",
-        "end_date": "Return date?",
-        "adults": "How many travelers?",
-        "budget": "Budget range?",
+        "start_date": "When?",
+        "end_date": "Return?",
+        "adults": "How many?",
+        "budget": "Budget?",
     }
 
+    # Adventurous - match energy but don't overdo
     adventurous_prompts = {
-        "destinations": "Where's the adventure taking you? 🌴",
-        "origin": "Where are you setting off from?",
-        "start_date": "When does the adventure begin?",
+        "destinations": "Where is the adventure taking you?",
+        "origin": _dest_prefix(
+            "{dest}—good choice. Where are you coming from?", "Where are you setting off from?"
+        ),
+        "start_date": _dest_prefix("When are you heading to {dest}?", "When does the trip start?"),
         "end_date": "When do you need to be back?",
-        "adults": "How many adventurers in your crew?",
-        "budget": "What's your budget for this adventure?",
+        "adults": "How many in your group?",
+        "budget": "What is your budget?",
     }
 
+    # Undecided - helpful guide
     undecided_prompts = {
-        "destinations": "Any destinations you've been dreaming about?",
-        "origin": "Where will you be starting your journey from?",
+        "destinations": (
+            "Any destinations you have been thinking about? "
+            "Or I can suggest some based on what you are in the mood for."
+        ),
+        "origin": _dest_prefix(
+            "{dest} is a good choice. Where will you be traveling from?",
+            "Where will you be traveling from?",
+        ),
         "start_date": "Do you have any dates in mind?",
-        "end_date": "Any idea when you'd like to return?",
+        "end_date": "Any idea when you would like to return?",
         "adults": "How many people are traveling?",
         "budget": "Do you have a rough budget in mind?",
+    }
+
+    # Short trip - acknowledge time constraints
+    short_trip_prompts = {
+        "destinations": "Where are you thinking for a quick trip?",
+        "origin": _dest_prefix(
+            "{dest} is great for a short trip. Where are you flying from?",
+            "Where are you flying from?",
+        ),
+        "start_date": "When are you going?",
+        "end_date": "When do you need to be back?",
+        "adults": "How many travelers?",
+        "budget": "Budget for this trip?",
     }
 
     # Select prompt set based on intent
@@ -1059,6 +1977,8 @@ def _default_follow_up_question(
         prompts = adventurous_prompts
     elif user_intent == "undecided":
         prompts = undecided_prompts
+    elif user_intent == "short_trip":
+        prompts = short_trip_prompts
     else:
         prompts = base_prompts
 
@@ -1069,20 +1989,202 @@ def _default_follow_up_question(
             if question:
                 # Adjust for frustrated tone - be more direct, skip embellishments
                 if user_tone == "frustrated":
-                    # Strip emojis and use simpler phrasing
+                    # Use simpler, direct phrasing
                     question = quick_prompts.get(field, question)
                 return question
     return None
+
+
+def _default_follow_up_with_field(
+    missing_fields: List[str],
+    user_intent: str = "detailed_planner",
+    user_tone: str = "neutral",
+    trip_inputs: Optional[dict] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Get the default question and the field being asked about.
+
+    Returns a tuple of (question, field_name) for tracking which field
+    was last asked, enabling context-aware clarification responses.
+    """
+    if not missing_fields:
+        return None, None
+
+    trip_inputs = trip_inputs or {}
+    destinations = trip_inputs.get("destinations", [])
+    dest_name = destinations[0] if destinations else None
+
+    def _dest_prefix(template_with: str, template_without: str) -> str:
+        if dest_name:
+            return template_with.replace("{dest}", dest_name)
+        return template_without
+
+    # Base prompts
+    base_prompts = {
+        "destinations": "Where are you looking to go?",
+        "origin": _dest_prefix(
+            "{dest}—nice. Where are you flying from?", "Where are you flying from?"
+        ),
+        "start_date": _dest_prefix(
+            "When are you heading to {dest}?", "When are you looking to travel?"
+        ),
+        "end_date": "When do you need to be back?",
+        "adults": "How many travelers?",
+        "budget": "Any budget in mind?",
+    }
+
+    quick_prompts = {
+        "destinations": "Where to?",
+        "origin": "Flying from?",
+        "start_date": "When?",
+        "end_date": "Return?",
+        "adults": "How many?",
+        "budget": "Budget?",
+    }
+
+    if user_intent == "quick_booking":
+        prompts = quick_prompts
+    else:
+        prompts = base_prompts
+
+    for field in _REQUIRED_TRIP_INPUT_FIELDS:
+        if field in missing_fields:
+            question = prompts.get(field, base_prompts.get(field))
+            if question:
+                if user_tone == "frustrated":
+                    question = quick_prompts.get(field, question)
+                return question, field
+    return None, None
 
 
 # =============================================================================
 # SUGGESTED RESPONSES FILTERING (ported from plan.py)
 # =============================================================================
 
+# Patterns that indicate assistant-style phrasing (not user voice)
+_ASSISTANT_PHRASES = frozenset(
+    [
+        "i can help",
+        "let me",
+        "i'll help",
+        "would you like",
+        "shall i",
+        "i suggest",
+        "i recommend",
+        "we can",
+        "we could",
+        "here are",
+        "here's",
+        "feel free",
+        "don't hesitate",
+        "so i can",
+        "assist you",
+        "help you",
+    ]
+)
+
+# Patterns indicating vague/placeholder content
+_VAGUE_PATTERNS = frozenset(
+    [
+        "...",
+        "[",
+        "]",
+        "enter",
+        "select",
+        "choose",
+        "type",
+        "input",
+        "specify",
+        "provide",
+    ]
+)
+
+# Instruction-style verbs that indicate prompts, not user responses
+_INSTRUCTION_STARTS = frozenset(
+    [
+        "add",
+        "include",
+        "specify",
+        "provide",
+        "enter",
+        "select",
+        "choose",
+        "consider",
+        "try",
+        "explore",
+        "look for",
+        "looking for",
+        "search for",
+        "find",
+        "get",
+        "set",
+        "update",
+        "change",
+    ]
+)
+
+
+def _is_low_quality_suggestion(text: str) -> bool:
+    """Check if suggestion is too vague, assistant-style, or instruction-like."""
+    lower = text.lower().strip()
+
+    # Reject assistant-style phrases
+    for phrase in _ASSISTANT_PHRASES:
+        if phrase in lower:
+            return True
+
+    # Reject vague/placeholder patterns
+    for pattern in _VAGUE_PATTERNS:
+        if pattern in lower:
+            return True
+
+    # Reject instruction-style starts (these are prompts, not user responses)
+    for instruction in _INSTRUCTION_STARTS:
+        if lower.startswith(instruction + " ") or lower.startswith(instruction + " a "):
+            return True
+
+    # Reject if too short (less than 2 words)
+    words = text.split()
+    if len(words) < 2:
+        return True
+
+    # Reject if too many words (more than 8)
+    if len(words) > 8:
+        return True
+
+    # Reject generic fillers
+    generic_fillers = {"yes", "no", "ok", "okay", "sure", "thanks", "thank you"}
+    if lower in generic_fillers:
+        return True
+
+    # Reject suggestions that are too generic/vague (no concrete nouns)
+    vague_phrases = [
+        "a specific",
+        "the best",
+        "some options",
+        "more details",
+        "more information",
+        "something",
+        "anything",
+        "preferences",
+        "activities",  # too generic without context
+        "destination",  # too generic without a name
+        "by the beach",  # vague location
+        "near the",
+        "around the",
+    ]
+    for vague in vague_phrases:
+        if vague in lower:
+            return True
+
+    return False
+
 
 def _filter_suggested_responses(responses: List[Any]) -> List[str]:
-    """Filter suggested responses: remove questions, limit to 3, handle dict format."""
+    """Filter suggested responses: remove questions, low-quality, limit to 3, handle dict format."""
     result = []
+    seen_lower = set()  # Deduplicate case-insensitively
+
     for r in responses:
         # Handle dict format
         if isinstance(r, dict):
@@ -1098,7 +2200,17 @@ def _filter_suggested_responses(responses: List[Any]) -> List[str]:
         if "?" in text:
             continue
 
-        # Limit length
+        # Reject low-quality suggestions
+        if _is_low_quality_suggestion(text):
+            continue
+
+        # Deduplicate case-insensitively
+        lower = text.lower()
+        if lower in seen_lower:
+            continue
+        seen_lower.add(lower)
+
+        # Limit length (truncate if needed, but prefer rejection for quality)
         if len(text) > 50:
             text = text[:47] + "..."
 
@@ -1106,6 +2218,754 @@ def _filter_suggested_responses(responses: List[Any]) -> List[str]:
 
         if len(result) >= 3:
             break
+
+    return result
+
+
+# Universal cities for dynamic origin suggestions
+_UNIVERSAL_ORIGIN_CITIES = [
+    "London",
+    "New York",
+    "Paris",
+    "Tokyo",
+    "Dubai",
+    "Sydney",
+    "Los Angeles",
+    "Singapore",
+    "Hong Kong",
+    "Berlin",
+]
+
+
+def _generate_contextual_suggestions(state: "GraphState") -> List[str]:
+    """Generate high-quality contextual suggestions based on current trip state.
+
+    Returns 2-3 actionable suggestions in user voice based on what's missing.
+    """
+    suggestions = []
+    ti = state.trip_inputs
+
+    # Priority 1: Missing required fields
+    if not ti.origin:
+        # Suggest diverse origin cities
+        import random
+
+        origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
+        suggestions = [f"From {city}" for city in origins]
+        return suggestions[:3]
+
+    if not ti.destinations:
+        # Check if user mentioned trip type in their last message for context-aware suggestions
+        last_user_msg = ""
+        for msg in reversed(state.chat_history):
+            if msg.get("role") == "user":
+                last_user_msg = msg.get("content", "").lower()
+                break
+
+        # Beach-related destinations
+        if any(
+            word in last_user_msg
+            for word in ["beach", "ocean", "sea", "tropical", "island", "relax"]
+        ):
+            suggestions = ["Bali, Indonesia", "The Maldives", "Cancun, Mexico"]
+        # Adventure/hiking
+        elif any(
+            word in last_user_msg for word in ["hike", "hiking", "mountain", "adventure", "trek"]
+        ):
+            suggestions = ["Swiss Alps", "Patagonia, Argentina", "Nepal"]
+        # City/culture
+        elif any(word in last_user_msg for word in ["city", "culture", "museum", "history", "art"]):
+            suggestions = ["Rome, Italy", "Tokyo, Japan", "Barcelona, Spain"]
+        # Food/culinary
+        elif any(
+            word in last_user_msg for word in ["food", "culinary", "wine", "gastronomy", "eat"]
+        ):
+            suggestions = ["Paris, France", "Tokyo, Japan", "Bangkok, Thailand"]
+        # Skiing/winter
+        elif any(word in last_user_msg for word in ["ski", "snow", "winter", "slopes"]):
+            suggestions = ["Chamonix, France", "Aspen, Colorado", "Zermatt, Switzerland"]
+        else:
+            # Generic popular destinations
+            suggestions = ["Paris, France", "Bali, Indonesia", "Tokyo, Japan"]
+        return suggestions[:3]
+
+    if not ti.start_date:
+        # Suggest relative dates
+        suggestions = ["Next month", "In 2 weeks", "This December"]
+        return suggestions[:3]
+
+    # Priority 2: Missing travelers info
+    if ti.adults is None:
+        suggestions = ["Just me", "2 adults", "Family of 4"]
+        return suggestions[:3]
+
+    # Priority 3: Booking preferences
+    booking = ti.booking_types or {}
+    if not booking.get("flights") and not booking.get("ground_transport"):
+        suggestions = ["I'll need flights", "I'll rent a car", "Train travel works"]
+        return suggestions[:3]
+
+    if booking.get("flights") and not ti.flight_settings.get("cabin_class"):
+        suggestions = ["Economy is fine", "Business class", "Direct flights only"]
+        return suggestions[:3]
+
+    if not booking.get("hotels"):
+        suggestions = ["Need hotel recommendations", "Already have accommodation", "4-star hotels"]
+        return suggestions[:3]
+
+    # Priority 4: Activities and interests
+    activities = ti.activity_settings.get("categories", []) or []
+    if not activities:
+        suggestions = ["Add sightseeing", "Beach activities", "Local food experiences"]
+        return suggestions[:3]
+
+    # Priority 5: Ready to generate
+    suggestions = ["Looks good, generate my plan", "Add more activities", "Adjust the budget"]
+    return suggestions[:3]
+
+
+def _get_suggestions_with_fallback(raw_suggestions: List[Any], state: "GraphState") -> List[str]:
+    """Filter LLM suggestions, falling back to contextual generation if empty."""
+    filtered = _filter_suggested_responses(raw_suggestions)
+
+    # If we got good suggestions from the LLM, use them
+    if len(filtered) >= 2:
+        return filtered
+
+    # Otherwise, generate contextual fallbacks
+    contextual = _generate_contextual_suggestions(state)
+
+    # Combine: LLM suggestions first, then contextual to fill up to 3
+    combined = filtered + [s for s in contextual if s not in filtered]
+    return combined[:3]
+
+
+# =============================================================================
+# SPACY NER-BASED ENTITY EXTRACTION
+# =============================================================================
+# Labels we care about for travel planning
+_SPACY_RELEVANT_LABELS = frozenset({"GPE", "LOC", "FAC", "DATE", "TIME", "MONEY", "ORG", "PRODUCT"})
+# Labels that are too noisy to use directly
+_SPACY_NOISY_LABELS = frozenset({"CARDINAL", "ORDINAL", "PERCENT", "QUANTITY"})
+
+# Custom semantic labels for travel domain
+_TRAVEL_SEMANTIC_LABELS = frozenset(
+    {"HOTEL", "AIRLINE", "AMENITY", "INTEREST", "PREFERENCE", "LOYALTY"}
+)
+
+# Timeout for spaCy processing (seconds)
+_SPACY_TIMEOUT_SECONDS = 2.0
+
+# Regex patterns that indicate grammar-bound extraction (no NER needed)
+_GRAMMAR_BOUND_PATTERNS = (
+    r"\bfrom\s+\w+\s+to\s+\w+",  # "from X to Y"
+    r"\bto\s+\w+\s+from\s+\w+",  # "to Y from X"
+    r"\bgoing\s+to\s+\w+",  # "going to X"
+    r"\bvisit(?:ing)?\s+\w+",  # "visit(ing) X"
+    r"\btravel(?:ing|ling)?\s+to\s+",  # "travel(l)ing to"
+    r"\bfly(?:ing)?\s+to\s+",  # "fly(ing) to"
+    r"\bheading\s+to\s+",  # "heading to"
+)
+_GRAMMAR_BOUND_RE = re.compile("|".join(_GRAMMAR_BOUND_PATTERNS), re.IGNORECASE)
+
+
+def _should_run_spacy_ner(text: str, parsed: Dict[str, Any]) -> bool:
+    """
+    Determine if spaCy NER should be run based on extraction gaps.
+
+    Returns True if any of these conditions are met:
+    - Missing semantic entities (destination/origin without grammar cues)
+    - Ambiguity remains (e.g., multiple cities with unclear roles)
+    - No destinations extracted yet by regex
+
+    Returns False for:
+    - Inputs containing only grammar-bound entities (from/to patterns)
+    - All core fields already extracted by regex
+    """
+    if not _SPACY_AVAILABLE:
+        return False
+
+    # Check if regex already extracted destinations with grammar cues
+    has_grammar_bound = bool(_GRAMMAR_BOUND_RE.search(text))
+    has_destinations = "destinations_delta" in parsed
+    has_origin = "origin_delta" in parsed
+
+    # If we have grammar-bound patterns AND extracted both origin/dest, skip NER
+    if has_grammar_bound and has_destinations and has_origin:
+        _debug("Skipping spaCy NER: grammar-bound extraction complete")
+        return False
+
+    # If regex extracted destinations via grammar pattern, check for ambiguity
+    if has_grammar_bound and has_destinations:
+        # Check for potential ambiguity (multiple cities mentioned without clear roles)
+        # This is a heuristic: if text has more capitalized words than extracted destinations
+        destinations = parsed.get("destinations_delta", [])
+        # Count potential place names (capitalized words not in common words)
+        common_words = {
+            "I",
+            "We",
+            "The",
+            "My",
+            "Our",
+            "A",
+            "An",
+            "And",
+            "Or",
+            "But",
+            "For",
+            "To",
+            "From",
+        }
+        potential_places = [
+            w for w in re.findall(r"\b[A-Z][a-z]+\b", text) if w not in common_words
+        ]
+
+        # If there are more potential places than extracted, NER might help
+        if len(potential_places) > len(destinations) + 1:  # +1 for origin
+            _debug(
+                "Running spaCy NER: potential ambiguity detected",
+                potential=potential_places,
+                extracted=destinations,
+            )
+            return True
+
+        _debug("Skipping spaCy NER: grammar-bound extraction sufficient")
+        return False
+
+    # If no destinations extracted and no grammar patterns, definitely need NER
+    if not has_destinations and not has_grammar_bound:
+        _debug("Running spaCy NER: no regex extraction, no grammar patterns")
+        return True
+
+    # If we have destinations but no origin, check if text might contain one
+    if has_destinations and not has_origin:
+        # Look for potential origin indicators
+        if re.search(r"\b(from|leaving|departing|starting)\b", text, re.IGNORECASE):
+            _debug("Running spaCy NER: origin indicator present but not extracted")
+            return True
+
+    # Default: run NER if we're missing destinations
+    if not has_destinations:
+        _debug("Running spaCy NER: destinations not extracted")
+        return True
+
+    _debug("Skipping spaCy NER: regex extraction complete")
+    return False
+
+
+def _get_spacy_nlp() -> Optional["Language"]:
+    """Lazy-load spaCy model with EntityRuler for custom patterns."""
+    global _spacy_nlp
+
+    if not _SPACY_AVAILABLE:
+        return None
+
+    if _spacy_nlp is not None:
+        return _spacy_nlp
+
+    try:
+        # Try loading the medium model first (better NER accuracy)
+        try:
+            _spacy_nlp = spacy.load("en_core_web_md")
+            _debug("spaCy loaded: en_core_web_md")
+        except OSError:
+            # Fall back to small model if medium not available
+            try:
+                _spacy_nlp = spacy.load("en_core_web_sm")
+                _debug("spaCy loaded: en_core_web_sm (fallback)")
+            except OSError:
+                _debug("spaCy model not available, NER extraction disabled")
+                return None
+
+        # Add EntityRuler BEFORE spaCy's NER for custom travel patterns
+        # This ensures our regex-based patterns take priority
+        ruler = _spacy_nlp.add_pipe("entity_ruler", before="ner")
+
+        # Custom patterns for travel-specific entities
+        patterns = [
+            # Popular travel destinations that might not be in default NER
+            {"label": "GPE", "pattern": "Patagonia"},
+            {"label": "GPE", "pattern": "Torres del Paine"},
+            {"label": "GPE", "pattern": "Dolomites"},
+            {"label": "GPE", "pattern": "Great Barrier Reef"},
+            {"label": "GPE", "pattern": "Raja Ampat"},
+            {"label": "GPE", "pattern": "Maldives"},
+            {"label": "GPE", "pattern": "Bora Bora"},
+            {"label": "GPE", "pattern": "Machu Picchu"},
+            {"label": "GPE", "pattern": "Santorini"},
+            {"label": "GPE", "pattern": "Amalfi Coast"},
+            {"label": "GPE", "pattern": "Cinque Terre"},
+            {"label": "GPE", "pattern": "EBC"},  # Everest Base Camp
+            {"label": "GPE", "pattern": "Everest Base Camp"},
+            {"label": "GPE", "pattern": "Costa Rica"},
+            {"label": "GPE", "pattern": "BVI"},  # British Virgin Islands
+            {"label": "GPE", "pattern": "British Virgin Islands"},
+            # Relative date patterns (already handled by regex but good for backup)
+            {"label": "DATE", "pattern": [{"LOWER": "next"}, {"LOWER": "week"}]},
+            {"label": "DATE", "pattern": [{"LOWER": "next"}, {"LOWER": "month"}]},
+            {"label": "DATE", "pattern": [{"LOWER": "this"}, {"LOWER": "weekend"}]},
+        ]
+        ruler.add_patterns(patterns)
+
+        _debug(f"spaCy EntityRuler configured with {len(patterns)} custom patterns")
+        return _spacy_nlp
+
+    except Exception as e:
+        _debug(f"Failed to load spaCy: {e}")
+        return None
+
+
+def _spacy_extract_entities(
+    text: str,
+    regex_confirmed_spans: Optional[List[tuple]] = None,
+    timeout_seconds: float = _SPACY_TIMEOUT_SECONDS,
+) -> Dict[str, Any]:
+    """
+    Use spaCy NER to extract semantic entities from text.
+
+    This function extracts entities that regex patterns may have missed,
+    particularly semantic entities without grammar cues.
+
+    Args:
+        text: Input text to process
+        regex_confirmed_spans: List of (start, end) char spans already extracted by regex.
+                              spaCy will not overwrite these spans.
+        timeout_seconds: Maximum time for spaCy processing (default 2 seconds)
+
+    Returns a dict with:
+        - spacy_destinations: List of GPE/LOC entities (places)
+        - spacy_dates: List of DATE entities
+        - spacy_money: List of MONEY entities
+        - spacy_hotels: List of hotel/accommodation mentions
+        - spacy_airlines: List of airline mentions
+    """
+    result: Dict[str, Any] = {}
+    regex_confirmed_spans = regex_confirmed_spans or []
+
+    nlp = _get_spacy_nlp()
+    if nlp is None:
+        return result
+
+    try:
+        # Process with timeout protection
+        import signal
+        import sys
+
+        # Windows doesn't support SIGALRM, so we use a simple try/except
+        # For production, consider using concurrent.futures with timeout
+        if sys.platform != "win32":
+
+            def timeout_handler(signum, frame):
+                raise TimeoutError("spaCy processing timed out")
+
+            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+            signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+
+        try:
+            doc = nlp(text)
+        finally:
+            if sys.platform != "win32":
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                signal.signal(signal.SIGALRM, old_handler)
+
+        places: List[str] = []
+        dates: List[str] = []
+        money: List[str] = []
+        hotels: List[str] = []
+        airlines: List[str] = []
+
+        for ent in doc.ents:
+            # Skip noisy labels
+            if ent.label_ in _SPACY_NOISY_LABELS:
+                continue
+
+            ent_text = ent.text.strip()
+
+            # Skip very short entities (likely noise)
+            if len(ent_text) < 2:
+                continue
+
+            # Check if this span overlaps with regex-confirmed spans
+            # If so, skip it (prefer regex over NER on overlapping spans)
+            ent_start, ent_end = ent.start_char, ent.end_char
+            overlaps_regex = any(
+                not (ent_end <= rs or ent_start >= re)  # Overlap check
+                for rs, re in regex_confirmed_spans
+            )
+            if overlaps_regex:
+                continue
+
+            lower = ent_text.lower()
+
+            # Hotel brand names to filter from destinations
+            hotel_brands = frozenset(
+                {
+                    "hilton",
+                    "marriott",
+                    "hyatt",
+                    "sheraton",
+                    "westin",
+                    "ritz",
+                    "four seasons",
+                    "intercontinental",
+                    "holiday inn",
+                    "best western",
+                    "radisson",
+                    "wyndham",
+                    "accor",
+                    "ibis",
+                    "novotel",
+                    "sofitel",
+                    "fairmont",
+                    "mandarin oriental",
+                    "peninsula",
+                    "aman",
+                    "w hotel",
+                    "doubletree",
+                    "mercure",
+                    "pullman",
+                    "mgallery",
+                    "swissotel",
+                    "melia",
+                    "nh hotel",
+                    "crowne plaza",
+                    "kimpton",
+                    "le meridien",
+                    "st regis",
+                    "renaissance",
+                    "autograph collection",
+                    "tribute portfolio",
+                    "aloft",
+                    "element",
+                    "ac hotels",
+                    "moxy",
+                    "tru",
+                    "canopy",
+                    "curio",
+                    "tapestry",
+                    "luxury collection",
+                    "motel 6",
+                    "super 8",
+                    "la quinta",
+                    "days inn",
+                    "red roof",
+                    "econo lodge",
+                    "travelodge",
+                    "comfort inn",
+                    "quality inn",
+                    "sleep inn",
+                    "clarion",
+                    "ascend collection",
+                    "cambria",
+                    "generator hostel",
+                    "generator",
+                    "selina",
+                    "hostelworld",
+                    "hi hostel",
+                    "a&o hostel",
+                    "st christopher",
+                    "meininger",
+                    "wombats",
+                    "clinknoord",
+                    "euro hostel",
+                    "clink hostel",
+                    "airbnb",
+                    "vrbo",
+                    "booking.com",
+                    "expedia",
+                    "hotels.com",
+                }
+            )
+
+            # Airline names to filter from destinations
+            airline_brands = frozenset(
+                {
+                    "delta",
+                    "united",
+                    "american",
+                    "southwest",
+                    "jetblue",
+                    "spirit",
+                    "frontier",
+                    "alaska",
+                    "hawaiian",
+                    "ryanair",
+                    "easyjet",
+                    "emirates",
+                    "qatar",
+                    "etihad",
+                    "lufthansa",
+                    "british airways",
+                    "air france",
+                    "klm",
+                    "singapore",
+                    "cathay",
+                }
+            )
+
+            if ent.label_ in ("GPE", "LOC", "FAC"):
+                # Geo-political entities, locations, facilities
+                # Filter out common false positives and hotel/airline names
+                if lower in ("i", "we", "the", "a", "an", "my", "our"):
+                    continue
+                # Check if this is actually a hotel brand misclassified as GPE
+                if lower in hotel_brands or any(hb in lower for hb in hotel_brands):
+                    hotels.append(ent_text)
+                # Check if this is actually an airline misclassified as GPE
+                elif lower in airline_brands or any(ab in lower for ab in airline_brands):
+                    airlines.append(ent_text)
+                else:
+                    places.append(ent_text)
+
+            elif ent.label_ == "DATE":
+                dates.append(ent_text)
+
+            elif ent.label_ == "MONEY":
+                money.append(ent_text)
+
+            elif ent.label_ == "ORG":
+                # Check if this looks like a hotel or airline
+                if any(kw in lower for kw in hotel_brands) or "hotel" in lower or "resort" in lower:
+                    hotels.append(ent_text)
+                elif (
+                    any(kw in lower for kw in airline_brands)
+                    or "airline" in lower
+                    or "airways" in lower
+                ):
+                    airlines.append(ent_text)
+
+        if places:
+            # Deduplicate while preserving order
+            seen = set()
+            unique_places = []
+            for p in places:
+                p_lower = p.lower()
+                if p_lower not in seen:
+                    seen.add(p_lower)
+                    unique_places.append(p)
+            result["spacy_destinations"] = unique_places
+
+        if dates:
+            result["spacy_dates"] = dates
+
+        if money:
+            result["spacy_money"] = money
+
+        if hotels:
+            result["spacy_hotels"] = hotels
+
+        if airlines:
+            result["spacy_airlines"] = airlines
+
+        if result:
+            _debug("spaCy NER extracted entities", entities=result)
+
+    except TimeoutError:
+        _debug("spaCy NER timed out, returning regex-only result")
+        return {}
+    except Exception as e:
+        _debug(f"spaCy extraction error: {e}")
+
+    return result
+
+
+# -----------------------
+# Confidence Scoring Types
+# -----------------------
+class EntityConfidence(BaseModel):
+    """Confidence information for a single extracted entity."""
+
+    value: str  # The extracted value (e.g., "Paris")
+    confidence: float = Field(ge=0.0, le=1.0)  # 0.0 to 1.0
+    extraction_method: str = "unknown"  # "regex", "spacy", "llm", "hybrid"
+    needs_confirmation: bool = False  # Whether to ask user to confirm
+    fuzzy_suggestion: Optional[str] = None  # Suggested correction if typo detected
+    ambiguity_type: Optional[str] = None  # e.g., "country/person_name"
+
+
+class ExtractionConfidence(BaseModel):
+    """Overall confidence scoring for extracted data."""
+
+    overall: float = Field(default=0.5, ge=0.0, le=1.0)
+    level: str = "medium"  # "high", "medium", "low"
+
+    # Per-field confidence
+    destinations: List[EntityConfidence] = Field(default_factory=list)
+    origin: Optional[EntityConfidence] = None
+    dates: Optional[float] = None
+
+    # Metadata
+    extraction_method: str = "unknown"  # Primary method used
+    detected_language: Optional[str] = None
+    language_confidence: Optional[float] = None
+    is_english: bool = True
+
+    # Reasons for low confidence
+    low_confidence_reasons: List[str] = Field(default_factory=list)
+
+    # Fuzzy match suggestions for typos
+    typo_suggestions: Dict[str, str] = Field(default_factory=dict)  # original -> suggested
+
+
+# Confidence thresholds
+CONFIDENCE_THRESHOLD_HIGH = 0.80  # Skip to router, no confirmation needed
+CONFIDENCE_THRESHOLD_MEDIUM = 0.50  # Proceed but may need confirmation
+# Below 0.50 = Low confidence, force LLM extraction
+
+
+def _calculate_entity_confidence(
+    entity: str,
+    extraction_method: str,
+    has_grammar_pattern: bool = False,
+    context_text: str = "",
+) -> EntityConfidence:
+    """
+    Calculate confidence for a single extracted entity.
+
+    Args:
+        entity: The extracted value (place name, etc.)
+        extraction_method: How it was extracted ("regex", "spacy", "llm")
+        has_grammar_pattern: Whether a grammar pattern was matched
+        context_text: Full user input for additional context
+
+    Returns:
+        EntityConfidence with score and metadata
+    """
+    # Calculate base confidence using known_places module
+    confidence = calculate_place_confidence(
+        entity,
+        extraction_method,
+        has_grammar_pattern,
+        context_text,
+    )
+
+    # Determine if confirmation needed
+    needs_confirm = needs_confirmation(confidence)
+
+    # Check for fuzzy match suggestions
+    fuzzy_suggestion = None
+    if not is_known_place(entity):
+        fuzzy = fuzzy_match_place(entity, threshold=85)
+        if fuzzy:
+            matched, score = fuzzy
+            if matched.lower() != entity.lower():
+                fuzzy_suggestion = matched
+
+    # Check ambiguity
+    ambiguity = None
+    if is_ambiguous_entity(entity):
+        from app.known_places import get_ambiguity_info
+
+        info = get_ambiguity_info(entity)
+        if info:
+            ambiguity = "/".join(info.get("types", []))
+
+    return EntityConfidence(
+        value=entity,
+        confidence=confidence,
+        extraction_method=extraction_method,
+        needs_confirmation=needs_confirm,
+        fuzzy_suggestion=fuzzy_suggestion,
+        ambiguity_type=ambiguity,
+    )
+
+
+def _calculate_extraction_confidence(
+    parsed: Dict[str, Any],
+    user_text: str,
+    extraction_method: str = "regex",
+    grammar_patterns_matched: bool = False,
+) -> ExtractionConfidence:
+    """
+    Calculate overall confidence for the extraction results.
+
+    Args:
+        parsed: The parsed_inputs dict with extracted data
+        user_text: Original user text
+        extraction_method: Primary extraction method used
+        grammar_patterns_matched: Whether grammar patterns matched
+
+    Returns:
+        ExtractionConfidence with overall and per-entity scores
+    """
+    result = ExtractionConfidence(
+        extraction_method=extraction_method,
+    )
+
+    low_reasons: List[str] = []
+    entity_scores: List[float] = []
+
+    # Language detection (only for longer texts - short texts are unreliable)
+    # Note: langdetect often misidentifies English with place names as other languages
+    # We only flag as non-English if grammar patterns didn't match (no "from/to", "going to")
+    # because those patterns are strong English indicators
+    if LANGDETECT_AVAILABLE and len(user_text) > 20 and not grammar_patterns_matched:
+        is_eng, lang, lang_conf = is_likely_english(user_text, threshold=0.7)
+        result.detected_language = lang
+        result.language_confidence = lang_conf
+        result.is_english = is_eng
+
+        # Only flag as non-English if very confident AND detected a specific known language
+        # langdetect's confidence for English text with place names is often wrong
+        known_non_english = {"de", "es", "fr", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko", "ar"}
+        if not is_eng and lang_conf > 0.9 and lang in known_non_english:
+            low_reasons.append(f"non_english_detected:{lang}")
+            # Non-English lowers confidence but don't add a separate score
+            # The entities themselves will handle scoring
+
+    # Process destination entities
+    destinations = parsed.get("destinations_delta", [])
+    for dest in destinations:
+        entity_conf = _calculate_entity_confidence(
+            dest,
+            extraction_method,
+            grammar_patterns_matched,
+            user_text,
+        )
+        result.destinations.append(entity_conf)
+        entity_scores.append(entity_conf.confidence)
+
+        # Track typo suggestions (always add if there's a fuzzy suggestion)
+        if entity_conf.fuzzy_suggestion:
+            result.typo_suggestions[dest] = entity_conf.fuzzy_suggestion
+            low_reasons.append(f"potential_typo:{dest}")
+
+        # Track ambiguity
+        if entity_conf.ambiguity_type:
+            low_reasons.append(f"ambiguous:{dest}")
+
+    # Process origin
+    origin = parsed.get("origin_delta")
+    if origin:
+        origin_conf = _calculate_entity_confidence(
+            origin,
+            extraction_method,
+            grammar_patterns_matched,
+            user_text,
+        )
+        result.origin = origin_conf
+        entity_scores.append(origin_conf.confidence)
+
+        # Track typo suggestions
+        if origin_conf.fuzzy_suggestion:
+            result.typo_suggestions[origin] = origin_conf.fuzzy_suggestion
+            low_reasons.append(f"potential_typo:{origin}")
+
+    # If no entities extracted at all, that's low confidence
+    if not destinations and not origin and not parsed.get("start_date_hint"):
+        if len(user_text.strip()) > 3:  # Not just a greeting
+            low_reasons.append("no_entities_extracted")
+            entity_scores.append(0.3)
+
+    # Calculate overall score
+    # Note: entity scores already include method bonuses from calculate_place_confidence
+    if entity_scores:
+        result.overall = min(1.0, sum(entity_scores) / len(entity_scores))
+    else:
+        result.overall = 0.5  # Default neutral
+
+    result.level = get_confidence_level(result.overall)
+    result.low_confidence_reasons = low_reasons
 
     return result
 
@@ -1198,8 +3058,24 @@ register_strategy("cycling", "strategy_cycling")
 # -----------------------
 # Prompt & LLM helpers
 # -----------------------
-def load_prompt(name: str) -> str:
+@lru_cache(maxsize=32)
+def _load_prompt_cached(name: str) -> str:
+    """Internal cached prompt loader."""
     return (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
+
+
+# Track which prompts have been loaded (for cache hit logging)
+_PROMPTS_LOADED: set[str] = set()
+
+
+def load_prompt(name: str) -> str:
+    """Load prompt template from file with LRU caching and debug logging."""
+    result = _load_prompt_cached(name)
+    if name in _PROMPTS_LOADED:
+        _debug_cache_hit("load_prompt", name, value_preview=result)
+    else:
+        _PROMPTS_LOADED.add(name)
+    return result
 
 
 # Model size to actual model name mapping
@@ -1464,16 +3340,15 @@ def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
 
     # Always provide a user-facing message - be conversational
     # Use the default follow-up question based on missing fields, adapted to user intent/tone
-    missing = _compute_missing_fields(state.trip_inputs.model_dump(exclude_none=True))
+    trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
+    missing = _compute_missing_fields(trip_inputs_dict)
     user_intent = state.metadata.get("user_intent", "detailed_planner")
     user_tone = state.metadata.get("user_tone", "neutral")
-    fallback_msg = _default_follow_up_question(missing, user_intent, user_tone)
+    fallback_msg = _default_follow_up_question(missing, user_intent, user_tone, trip_inputs_dict)
     if fallback_msg:
         state.last_summary = fallback_msg
     else:
-        state.last_summary = (
-            "I'd love to help plan your trip! What destination are you thinking about?"
-        )
+        state.last_summary = "Where are you looking to travel?"
 
     state.ready_to_generate = False
     return state
@@ -1501,9 +3376,41 @@ def extractor(state: GraphState) -> GraphState:
         _debug_node_exit("extractor", state)
         return state
 
-    # budget + currency (multiple patterns)
+    # =========================================================================
+    # SHORT-CIRCUIT DETECTION
+    # Check if this input can bypass the LLM router/specialist pipeline
+    # =========================================================================
+    short_circuit = _detect_short_circuit(text, state)
+    if short_circuit:
+        sc_type = short_circuit["type"]
+        _debug(f"Short-circuit detected: {sc_type}", input=text[:30] if len(text) > 30 else text)
+
+        state.flags["short_circuit"] = sc_type
+        state.flags["short_circuit_response"] = short_circuit.get("response")
+        state.flags["short_circuit_action"] = short_circuit.get("action")
+
+        # If short-circuit extracted parsed data, merge it
+        sc_parsed = short_circuit.get("parsed")
+        if sc_parsed:
+            parsed.update(sc_parsed)
+            _debug("Short-circuit parsed data", parsed=sc_parsed)
+
+        # For confirmations that trigger actions, handle them
+        if short_circuit.get("action") == "generate_plan":
+            state.flags["generate_requested"] = True
+            state.flags["generate_plan"] = True
+            _debug("Short-circuit triggered generate_plan")
+        elif short_circuit.get("action") == "clear_pending":
+            state.metadata.pop("pending_action", None)
+            _debug("Short-circuit cleared pending_action")
+
+        state.parsed_inputs = parsed
+        _debug_node_exit("extractor", state)
+        return state
+
+    # budget + currency (using pre-compiled patterns)
     # Pattern 1: Symbol before amount ($1000, €500)
-    m = re.search(r"(?P<cur>[$€£¥])\s*(?P<amt>\d[\d,\.]*)", text)
+    m = _BUDGET_SYMBOL_PATTERN.search(text)
     if m:
         cur = m.group("cur")
         amt = float(m.group("amt").replace(",", ""))
@@ -1513,7 +3420,7 @@ def extractor(state: GraphState) -> GraphState:
         }
     # Pattern 2: Amount with currency code (1000 USD, 500 EUR)
     if "budget_delta" not in parsed:
-        m = re.search(r"(?P<amt>\d[\d,\.]*)\s*(?P<cur>USD|EUR|GBP|CAD|AUD|JPY)", text, re.I)
+        m = _BUDGET_CODE_PATTERN.search(text)
         if m:
             amt = float(m.group("amt").replace(",", ""))
             parsed["budget_delta"] = {
@@ -1521,89 +3428,98 @@ def extractor(state: GraphState) -> GraphState:
                 "currency": m.group("cur").upper(),
             }
 
-    # origin/destinations - multiple patterns
+    # origin/destinations - multiple patterns (using pre-compiled patterns)
     # Pattern 1: "from X to Y"
-    m = re.search(r"from\s+(?P<o>[A-Za-z\s\-]+?)\s+to\s+(?P<d>[A-Za-z\s,\-and]+)", text, re.I)
+    m = _ORIGIN_DEST_FROM_TO_PATTERN.search(text)
     if m:
         parsed["origin_delta"] = m.group("o").strip()
         parsed["destinations_delta"] = [
-            x.strip() for x in re.split(r",|\band\b", m.group("d")) if x.strip()
+            x.strip() for x in _DEST_SPLIT_PATTERN.split(m.group("d")) if x.strip()
         ]
+        parsed["_grammar_matched"] = True  # Track for confidence scoring
     # Pattern 2: "to Y from X"
     if "origin_delta" not in parsed:
-        m = re.search(r"to\s+(?P<d>[A-Za-z\s,\-and]+?)\s+from\s+(?P<o>[A-Za-z\s\-]+)", text, re.I)
+        m = _ORIGIN_DEST_TO_FROM_PATTERN.search(text)
         if m:
             parsed["origin_delta"] = m.group("o").strip()
             parsed["destinations_delta"] = [
-                x.strip() for x in re.split(r",|\band\b", m.group("d")) if x.strip()
+                x.strip() for x in _DEST_SPLIT_PATTERN.split(m.group("d")) if x.strip()
             ]
+            parsed["_grammar_matched"] = True  # Track for confidence scoring
 
     # Pattern 3: "[destination] leaving today/tomorrow/next week"
-    # Extract destination before date phrase
     if "destinations_delta" not in parsed:
-        m = re.search(
-            r"^(?P<dest>[A-Za-z\s\-]+?)\s+(?:leaving|departing|starting|on|in)\s+(?:today|tomorrow|next\s+week|this\s+weekend|\d)",
-            text,
-            re.I,
-        )
+        m = _DEST_LEAVING_PATTERN.search(text)
         if m:
             dest = m.group("dest").strip()
             # Make sure it's a reasonable destination name (not too long, not generic words)
             if dest and len(dest) < 50 and dest.lower() not in ("i", "we", "the", "a", "an", "my"):
                 parsed["destinations_delta"] = [dest]
 
-    # Pattern 4: "going to X" / "want to go to X" / "visit X"
+    # Pattern 4: "flying [airline] to X" - check this BEFORE general flying pattern
+    # to correctly extract airline and destination
     if "destinations_delta" not in parsed:
-        m = re.search(
-            r"(?:going|go|want(?:ing)?\s+to\s+go|visit(?:ing)?|travel(?:ing)?)\s+(?:to\s+)?(?P<dest>[A-Za-z\s,\-and]+?)(?:\s+(?:today|tomorrow|next|on|in|for|\.|$))",
-            text,
-            re.I,
-        )
+        m = _DEST_FLYING_AIRLINE_PATTERN.search(text)
         if m:
             dest = m.group("dest").strip()
             if dest and len(dest) < 50:
                 parsed["destinations_delta"] = [
-                    x.strip() for x in re.split(r",|\band\b", dest) if x.strip()
+                    x.strip() for x in _DEST_SPLIT_PATTERN.split(dest) if x.strip()
                 ]
+                parsed["_grammar_matched"] = True  # Track for confidence scoring
+                # Also note the airline mention
+                airline = m.group(0).split("to")[0].strip()
+                airline = re.sub(
+                    r"^fly(?:ing)?\s*(?:with\s*)?", "", airline, flags=re.IGNORECASE
+                ).strip()
+                if airline:
+                    parsed["airline_mentions"] = [airline]
 
-    # Traveler patterns (from plan.py EXTRACTION RULES)
+    # Pattern 5: "going to X" / "want to go to X" / "visit X" / "flying to X"
+    if "destinations_delta" not in parsed:
+        m = _DEST_GOING_TO_PATTERN.search(text)
+        if m:
+            dest = m.group("dest").strip()
+            if dest and len(dest) < 50:
+                parsed["destinations_delta"] = [
+                    x.strip() for x in _DEST_SPLIT_PATTERN.split(dest) if x.strip()
+                ]
+                parsed["_grammar_matched"] = True  # Track for confidence scoring
+
+    # Traveler patterns (using pre-compiled patterns)
     # solo / just me
-    if re.search(r"\b(solo|just me|traveling alone|by myself)\b", text, re.I):
+    if _TRAVELER_SOLO_PATTERN.search(text):
         parsed["adults_delta"] = 1
         parsed["children_delta"] = 0
     # couple / me and partner
-    elif re.search(
-        r"\b(couple|me and (my )?(partner|wife|husband|girlfriend|boyfriend))\b", text, re.I
-    ):
+    elif _TRAVELER_COUPLE_PATTERN.search(text):
         parsed["adults_delta"] = 2
         parsed["children_delta"] = 0
     # family of N
-    elif m := re.search(r"\bfamily of (\d+)\b", text, re.I):
+    elif m := _TRAVELER_FAMILY_PATTERN.search(text):
         family_size = int(m.group(1))
         parsed["adults_delta"] = min(2, family_size)
         parsed["children_delta"] = max(0, family_size - 2)
     # N adults, M kids
-    elif m := re.search(r"(\d+)\s*adults?\s*(?:,|and)?\s*(\d+)\s*(?:kids?|children)", text, re.I):
+    elif m := _TRAVELER_ADULTS_KIDS_PATTERN.search(text):
         parsed["adults_delta"] = int(m.group(1))
         parsed["children_delta"] = int(m.group(2))
     # Just N adults
-    elif m := re.search(r"(\d+)\s*adults?", text, re.I):
+    elif m := _TRAVELER_ADULTS_ONLY_PATTERN.search(text):
         parsed["adults_delta"] = int(m.group(1))
 
-    # Accessibility
-    if re.search(
-        r"\b(wheelchair|accessibility|disabled|mobility|requires? assistance)\b", text, re.I
-    ):
+    # Accessibility (using pre-compiled pattern)
+    if _ACCESSIBILITY_PATTERN.search(text):
         parsed["requires_assistance_delta"] = True
 
-    # Date patterns - relative dates
-    if re.search(r"\b(today|tonight|now)\b", text, re.I):
+    # Date patterns - relative dates (using pre-compiled patterns)
+    if _DATE_TODAY_PATTERN.search(text):
         parsed["start_date_hint"] = "today"
-    elif re.search(r"\btomorrow\b", text, re.I):
+    elif _DATE_TOMORROW_PATTERN.search(text):
         parsed["start_date_hint"] = "tomorrow"
-    elif re.search(r"\bnext week\b", text, re.I):
+    elif _DATE_NEXT_WEEK_PATTERN.search(text):
         parsed["start_date_hint"] = "next week"
-    elif re.search(r"\bweekend\b", text, re.I):
+    elif _DATE_WEEKEND_PATTERN.search(text):
         parsed["start_date_hint"] = "weekend"
 
     # Duration extraction
@@ -1616,82 +3532,80 @@ def extractor(state: GraphState) -> GraphState:
     if multi_intent:
         parsed["multi_city_intent_delta"] = multi_intent
 
-    # Category activation
+    # Category activation (using pre-compiled patterns)
     cats = []
-    if re.search(r"flight|cabin|nonstop|direct|one[-\s]?way|round[-\s]?trip|airline", text, re.I):
+    if _CAT_FLIGHTS_PATTERN.search(text):
         cats.append("flights")
-    if re.search(r"hotel|amenit|star|room|accommodation|stay|lodge|resort", text, re.I):
+    if _CAT_HOTELS_PATTERN.search(text):
         cats.append("hotels")
-    if re.search(r"\btrain|car rental|rent a? car|bus|drive|driving\b", text, re.I):
+    if _CAT_TRANSPORT_PATTERN.search(text):
         cats.append("transport")
-    if re.search(
-        r"activity|tour|museum|beach|hike|dive|nightlife|restaurant|show|ticket", text, re.I
-    ):
+    if _CAT_ACTIVITIES_PATTERN.search(text):
         cats.append("activities")
     if cats:
         parsed["category_activation"] = cats
 
-    # Flight settings extraction
-    if "flights" in cats or re.search(r"flight|cabin|nonstop|direct|one[-\s]?way", text, re.I):
+    # Flight settings extraction (using pre-compiled patterns)
+    if "flights" in cats or _CAT_FLIGHTS_PATTERN.search(text):
         flight_settings: Dict[str, Any] = {}
-        if re.search(r"\b(nonstop|non-stop|direct)\b", text, re.I):
+        if _FLIGHT_DIRECT_PATTERN.search(text):
             flight_settings["direct_only"] = True
-        if re.search(r"\b(one[-\s]?way)\b", text, re.I):
+        if _FLIGHT_ONEWAY_PATTERN.search(text):
             flight_settings["round_trip"] = False
-        if re.search(r"\b(round[-\s]?trip)\b", text, re.I):
+        if _FLIGHT_ROUNDTRIP_PATTERN.search(text):
             flight_settings["round_trip"] = True
-        if re.search(r"\b(business)\b", text, re.I):
+        if _FLIGHT_BUSINESS_PATTERN.search(text):
             flight_settings["cabin_class"] = "business"
-        elif re.search(r"\b(first\s*class)\b", text, re.I):
+        elif _FLIGHT_FIRST_CLASS_PATTERN.search(text):
             flight_settings["cabin_class"] = "first"
-        elif re.search(r"\b(premium\s*economy)\b", text, re.I):
+        elif _FLIGHT_PREMIUM_ECONOMY_PATTERN.search(text):
             flight_settings["cabin_class"] = "premium_economy"
         if flight_settings:
             parsed["flight_settings_delta"] = flight_settings
 
-    # Hotel settings extraction
-    if "hotels" in cats or re.search(r"hotel|star|amenit", text, re.I):
+    # Hotel settings extraction (using pre-compiled patterns)
+    if "hotels" in cats or _CAT_HOTELS_PATTERN.search(text):
         hotel_settings: Dict[str, Any] = {}
-        if m := re.search(r"(\d)\s*[-\s]?star", text, re.I):
+        if m := _HOTEL_STARS_PATTERN.search(text):
             hotel_settings["min_stars"] = int(m.group(1))
         amenities = []
-        if re.search(r"\bpool\b", text, re.I):
+        if _HOTEL_POOL_PATTERN.search(text):
             amenities.append("pool")
-        if re.search(r"\bgym\b", text, re.I):
+        if _HOTEL_GYM_PATTERN.search(text):
             amenities.append("gym")
-        if re.search(r"\bspa\b", text, re.I):
+        if _HOTEL_SPA_PATTERN.search(text):
             amenities.append("spa")
-        if re.search(r"\bwifi\b", text, re.I):
+        if _HOTEL_WIFI_PATTERN.search(text):
             amenities.append("wifi")
-        if re.search(r"\bbreakfast\b", text, re.I):
+        if _HOTEL_BREAKFAST_PATTERN.search(text):
             amenities.append("breakfast")
         if amenities:
             hotel_settings["amenities"] = amenities
         if hotel_settings:
             parsed["hotel_settings_delta"] = hotel_settings
 
-    # Transport settings extraction
-    if "transport" in cats or re.search(r"train|car|bus|drive", text, re.I):
+    # Transport settings extraction (using pre-compiled patterns)
+    if "transport" in cats or _CAT_TRANSPORT_PATTERN.search(text):
         transport_settings: Dict[str, Any] = {}
-        if re.search(r"\b(car|rent a car|car rental|drive|driving)\b", text, re.I):
+        if _TRANSPORT_CAR_PATTERN.search(text):
             transport_settings["car"] = True
-        if re.search(r"\btrain\b", text, re.I):
+        if _TRANSPORT_TRAIN_PATTERN.search(text):
             transport_settings["train"] = True
-        if re.search(r"\bbus\b", text, re.I):
+        if _TRANSPORT_BUS_PATTERN.search(text):
             transport_settings["bus"] = True
         if transport_settings:
             parsed["transport_settings_delta"] = transport_settings
 
-    # Strategy detection heuristic (router will finalize)
-    if re.search(r"boat|boating|sail|yacht|kayak|canoe|marina", text, re.I):
+    # Strategy detection heuristic (using pre-compiled patterns)
+    if _STRATEGY_BOATING_PATTERN.search(text):
         parsed["strategy_hint"] = "boating"
-    elif re.search(r"hike|trek|trail|alpine|mountain|hiking", text, re.I):
+    elif _STRATEGY_HIKING_PATTERN.search(text):
         parsed["strategy_hint"] = "hiking"
-    elif re.search(r"dive|diving|scuba|snorkel", text, re.I):
+    elif _STRATEGY_DIVING_PATTERN.search(text):
         parsed["strategy_hint"] = "diving"
-    elif re.search(r"ski|skiing|snowboard|slopes|powder", text, re.I):
+    elif _STRATEGY_SKIING_PATTERN.search(text):
         parsed["strategy_hint"] = "skiing"
-    elif re.search(r"cycle|cycling|bike|biking|bicycle", text, re.I):
+    elif _STRATEGY_CYCLING_PATTERN.search(text):
         parsed["strategy_hint"] = "cycling"
 
     # =========================================================================
@@ -1740,6 +3654,180 @@ def extractor(state: GraphState) -> GraphState:
             state.metadata["user_intent"] = "detailed_planner"
             state.metadata["intent_confidence"] = 0.5
 
+    # =========================================================================
+    # SPACY NER - SELECTIVE SEMANTIC EXTRACTION
+    # =========================================================================
+    # Run spaCy NER only when:
+    # - Missing semantic entities (destination/origin without grammar cues)
+    # - Ambiguity remains (multiple cities with unclear roles)
+    # - Regex didn't extract destinations
+    #
+    # Do NOT run spaCy when:
+    # - Grammar-bound patterns already extracted all entities
+    # - All core fields already extracted by regex
+
+    if _should_run_spacy_ner(text, parsed):
+        # Collect regex-confirmed spans to avoid overwriting
+        regex_confirmed_spans: List[tuple] = []
+
+        # Track spans from "from X to Y" and similar patterns
+        if "origin_delta" in parsed or "destinations_delta" in parsed:
+            # Find the match spans for origin/destination patterns
+            for pattern in [
+                _ORIGIN_DEST_FROM_TO_PATTERN,
+                _ORIGIN_DEST_TO_FROM_PATTERN,
+                _DEST_LEAVING_PATTERN,
+                _DEST_GOING_TO_PATTERN,
+            ]:
+                m = pattern.search(text)
+                if m:
+                    regex_confirmed_spans.append((m.start(), m.end()))
+                    break  # Only one pattern should match
+
+        # Run spaCy with span protection
+        spacy_entities = _spacy_extract_entities(text, regex_confirmed_spans)
+
+        # Merge spaCy results WITHOUT overwriting regex-confirmed extractions
+        # spaCy adds semantic entities, regex provides grammar-bound ones
+
+        # Destinations: only add if regex didn't extract any
+        if "spacy_destinations" in spacy_entities and "destinations_delta" not in parsed:
+            parsed["destinations_delta"] = spacy_entities["spacy_destinations"]
+            _debug(
+                "spaCy NER extracted destinations (semantic)",
+                destinations=spacy_entities["spacy_destinations"],
+            )
+
+        # For mixed inputs: if regex got some destinations, spaCy might find additional ones
+        # (e.g., "from NYC to Paris, maybe also Rome" - regex gets NYC/Paris, spaCy might get Rome)
+        elif "spacy_destinations" in spacy_entities and "destinations_delta" in parsed:
+            existing = set(d.lower() for d in parsed["destinations_delta"])
+            additional = [
+                d for d in spacy_entities["spacy_destinations"] if d.lower() not in existing
+            ]
+            if additional:
+                parsed["destinations_delta"].extend(additional)
+                _debug(
+                    "spaCy NER added additional destinations",
+                    additional=additional,
+                )
+
+        # Store date hints for potential later use (don't overwrite regex)
+        if "spacy_dates" in spacy_entities and "start_date_hint" not in parsed:
+            date_hints = spacy_entities["spacy_dates"]
+            if date_hints:
+                parsed["spacy_date_hint"] = date_hints[0]
+                _debug(f"spaCy NER date hint: {date_hints[0]}")
+
+        # Store money hints for budget extraction (don't overwrite regex)
+        if "spacy_money" in spacy_entities and "budget_delta" not in parsed:
+            money_hints = spacy_entities["spacy_money"]
+            if money_hints:
+                parsed["spacy_money_hint"] = money_hints[0]
+                _debug(f"spaCy NER money hint: {money_hints[0]}")
+
+        # Store hotel/airline mentions for domain-specific routing
+        if "spacy_hotels" in spacy_entities:
+            parsed["hotel_mentions"] = spacy_entities["spacy_hotels"]
+            _debug(f"spaCy NER hotel mentions: {spacy_entities['spacy_hotels']}")
+
+        if "spacy_airlines" in spacy_entities:
+            parsed["airline_mentions"] = spacy_entities["spacy_airlines"]
+            _debug(f"spaCy NER airline mentions: {spacy_entities['spacy_airlines']}")
+
+    # =========================================================================
+    # DESTINATION → ACTIVITY INFERENCE (multi-faceted extraction)
+    # =========================================================================
+    # If destinations were extracted via regex patterns, infer activities
+    if "destinations_delta" in parsed and "inferred_activity_categories" not in parsed:
+        all_inferred: List[str] = []
+        for dest in parsed["destinations_delta"]:
+            inferred = _infer_activities_from_destination(dest)
+            for act in inferred:
+                if act not in all_inferred:
+                    all_inferred.append(act)
+
+        if all_inferred:
+            parsed["inferred_activity_categories"] = all_inferred
+            _debug(
+                "Inferred activities from regex-extracted destinations",
+                destinations=parsed["destinations_delta"],
+                activities=all_inferred,
+            )
+
+    # =========================================================================
+    # CONFIDENCE SCORING
+    # =========================================================================
+    # Calculate confidence scores for all extracted entities
+    # This helps route_after_router decide whether to force LLM extraction
+
+    # Determine extraction method and whether grammar patterns matched
+    extraction_method = "regex"
+    grammar_matched = False
+
+    # Check if spaCy was used (added entities means hybrid)
+    if "spacy_destinations" in parsed.get("_spacy_raw", {}):
+        extraction_method = "hybrid"
+
+    # Check if grammar patterns were matched (from/to, going to, etc.)
+    if "origin_delta" in parsed and "destinations_delta" in parsed:
+        # Both origin and destination extracted = likely grammar pattern
+        grammar_matched = True
+    elif parsed.get("_grammar_matched"):
+        grammar_matched = True
+
+    # Calculate confidence
+    confidence = _calculate_extraction_confidence(
+        parsed,
+        text,
+        extraction_method=extraction_method,
+        grammar_patterns_matched=grammar_matched,
+    )
+
+    # Store confidence in metadata for routing decisions
+    state.metadata["extraction_confidence"] = {
+        "overall": confidence.overall,
+        "level": confidence.level,
+        "method": extraction_method,
+        "grammar_matched": grammar_matched,
+        "is_english": confidence.is_english,
+        "detected_language": confidence.detected_language,
+        "low_confidence_reasons": confidence.low_confidence_reasons,
+        "typo_suggestions": confidence.typo_suggestions,
+    }
+
+    # Store per-entity confidence in parsed_inputs for frontend
+    if confidence.destinations:
+        parsed["destination_confidences"] = [
+            {
+                "value": ec.value,
+                "confidence": ec.confidence,
+                "needs_confirmation": ec.needs_confirmation,
+                "fuzzy_suggestion": ec.fuzzy_suggestion,
+                "ambiguity_type": ec.ambiguity_type,
+            }
+            for ec in confidence.destinations
+        ]
+
+    if confidence.origin:
+        parsed["origin_confidence"] = {
+            "value": confidence.origin.value,
+            "confidence": confidence.origin.confidence,
+            "needs_confirmation": confidence.origin.needs_confirmation,
+            "fuzzy_suggestion": confidence.origin.fuzzy_suggestion,
+        }
+
+    _debug(
+        "Extraction confidence calculated",
+        overall=f"{confidence.overall:.2f}",
+        level=confidence.level,
+        method=extraction_method,
+        grammar_matched=grammar_matched,
+        reasons=(
+            confidence.low_confidence_reasons[:3] if confidence.low_confidence_reasons else None
+        ),
+    )
+
     state.parsed_inputs = parsed
     _debug_node_exit("extractor", state)
     return state
@@ -1754,6 +3842,21 @@ def normalize_inputs(state: GraphState) -> GraphState:
     This node runs after extractor and before router.
     """
     _debug_node_entry("normalize_inputs", state)
+
+    # Early exit for short-circuits with no parsed data (greetings, acknowledgments, off-topic)
+    # These don't need any normalization work
+    sc_type = state.flags.get("short_circuit")
+    if sc_type and sc_type in (
+        "greeting",
+        "acknowledgment",
+        "off_topic",
+        "confirmation_yes",
+        "confirmation_no",
+    ):
+        if not state.parsed_inputs:
+            _debug(f"Skipping normalize_inputs for short-circuit: {sc_type}")
+            _debug_node_exit("normalize_inputs", state)
+            return state
 
     parsed = state.parsed_inputs
     ti = state.trip_inputs.model_copy(deep=True)
@@ -1822,6 +3925,31 @@ def normalize_inputs(state: GraphState) -> GraphState:
         existing = dict(ti.transport_settings) if ti.transport_settings else {}
         existing.update(parsed["transport_settings_delta"])
         ti.transport_settings = existing
+
+    # Apply inferred activities from destination (multi-faceted extraction)
+    # These are activities implied by the destination, e.g., "Patagonia" → hiking
+    if "inferred_activity_categories" in parsed:
+        inferred = parsed["inferred_activity_categories"]
+        existing_settings = dict(ti.activity_settings) if ti.activity_settings else {}
+        existing_cats = list(existing_settings.get("categories", []))
+
+        for cat in inferred:
+            if cat not in existing_cats:
+                existing_cats.append(cat)
+
+        existing_settings["categories"] = existing_cats
+        ti.activity_settings = existing_settings
+
+        # Also enable activities booking type
+        if ti.booking_types:
+            ti.booking_types["activities"] = True
+        else:
+            ti.booking_types = {"activities": True}
+
+        _debug(
+            "Applied inferred activities from destination",
+            categories=existing_cats,
+        )
 
     # Auto-enable booking types based on settings
     _auto_enable_booking_types(ti)
@@ -1939,6 +4067,11 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     # Get today's date for prompt injection
     today_iso = state.metadata.get("today_iso") or _today_iso()
 
+    # Get extraction confidence for confirmation prompts
+    extraction_conf = state.metadata.get("extraction_confidence", {})
+    confidence_level = extraction_conf.get("level", "unknown")
+    typo_suggestions = extraction_conf.get("typo_suggestions", [])
+
     prompt = load_prompt(name)
     system_prompt = (
         prompt.replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
@@ -1946,6 +4079,8 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
         .replace("{today}", today_iso)
         .replace("{user_intent_hint}", state.metadata.get("user_intent", "detailed_planner"))
         .replace("{user_tone}", state.metadata.get("user_tone", "neutral"))
+        .replace("{extraction_confidence}", confidence_level)
+        .replace("{typo_suggestions}", json.dumps(typo_suggestions) if typo_suggestions else "none")
     )
 
     # Determine timeout based on model type
@@ -2045,9 +4180,9 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             state.trip_inputs = ti
             state.last_summary = j.get("assistant_message", "")
 
-            # Filter suggested responses (no questions, max 3)
+            # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _filter_suggested_responses(raw_suggestions)
+            state.suggested_responses = _get_suggestions_with_fallback(raw_suggestions, state)
 
             # Only set ready_to_generate if explicitly triggered
             state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
@@ -2254,9 +4389,9 @@ async def strategy_node(state: GraphState) -> GraphState:
             state.trip_inputs = ti
             state.last_summary = j.get("assistant_message", "")
 
-            # Filter suggested responses
+            # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _filter_suggested_responses(raw_suggestions)
+            state.suggested_responses = _get_suggestions_with_fallback(raw_suggestions, state)
 
             # Only set ready_to_generate if explicitly triggered
             state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
@@ -2421,8 +4556,9 @@ async def monolith_node(state: GraphState) -> GraphState:
             state.last_summary = j.get("assistant_message", "")
 
             # Filter suggested responses
+            # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _filter_suggested_responses(raw_suggestions)
+            state.suggested_responses = _get_suggestions_with_fallback(raw_suggestions, state)
 
             # Only set ready_to_generate if explicitly triggered
             state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
@@ -2610,6 +4746,10 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     # Check feature flag
     if not settings.enable_response_polish:
         return True, "feature_disabled"
+
+    # Short-circuited responses are already template-based and don't need polish
+    if s.flags.get("short_circuit"):
+        return True, "short_circuit"
 
     # No message to polish
     if not s.last_summary:
@@ -2844,7 +4984,8 @@ def summarize(state: GraphState) -> GraphState:
     _debug_node_entry("summarize", state)
     # If no assistant message, generate a default follow-up question
     if not state.last_summary:
-        missing = _compute_missing_fields(state.trip_inputs.model_dump(exclude_none=True))
+        trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
+        missing = _compute_missing_fields(trip_inputs_dict)
         _debug(
             "Summarize fallback triggered",
             missing=missing,
@@ -2852,10 +4993,19 @@ def summarize(state: GraphState) -> GraphState:
         )
         user_intent = state.metadata.get("user_intent", "detailed_planner")
         user_tone = state.metadata.get("user_tone", "neutral")
-        default_question = _default_follow_up_question(missing, user_intent, user_tone)
+        # Use the version that returns both question and field for tracking
+        default_question, asked_field = _default_follow_up_with_field(
+            missing, user_intent, user_tone, trip_inputs_dict
+        )
         if default_question:
             state.last_summary = default_question
-            _debug("Summarize set default question", question=default_question)
+            if asked_field:
+                state.metadata["last_question_field"] = asked_field
+                _debug(
+                    "Summarize set default question", question=default_question, field=asked_field
+                )
+            else:
+                _debug("Summarize set default question", question=default_question)
         else:
             _debug("Summarize: no default question available")
     else:
@@ -3081,6 +5231,218 @@ def should_use_monolith(state: GraphState) -> bool:
 
 
 # -----------------------
+# Short-circuit responder (lightweight node for simple inputs)
+# -----------------------
+def short_circuit_responder(state: GraphState) -> GraphState:
+    """
+    Handle short-circuited inputs without LLM calls.
+
+    This node is reached when the extractor detects a simple input pattern
+    (greeting, acknowledgment, yes/no, bare field input) that can be handled
+    with template-based responses instead of going through the full LLM pipeline.
+
+    Saves ~800 tokens per message.
+    """
+    _debug_node_entry("short_circuit_responder", state)
+
+    sc_type = state.flags.get("short_circuit", "unknown")
+    sc_response = state.flags.get("short_circuit_response")
+    sc_action = state.flags.get("short_circuit_action")
+
+    _debug(f"Short-circuit responder handling: {sc_type}", action=sc_action)
+
+    # Get trip context for generating follow-up questions
+    trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
+    missing = _compute_missing_fields(trip_inputs_dict)
+    user_intent = state.metadata.get("user_intent", "detailed_planner")
+    user_tone = state.metadata.get("user_tone", "neutral")
+
+    # Handle based on short-circuit type
+    if sc_response:
+        # Use the pre-defined template response
+        state.last_summary = sc_response
+        # For greetings, we're asking about destinations
+        if sc_type == "greeting":
+            state.metadata["last_question_field"] = "destinations"
+        _debug("Using template response", response=sc_response[:50])
+    else:
+        # Generate a contextual follow-up question with field tracking
+        follow_up, asked_field = _default_follow_up_with_field(
+            missing, user_intent, user_tone, trip_inputs_dict
+        )
+        if asked_field:
+            state.metadata["last_question_field"] = asked_field
+            _debug(f"Tracking question field: {asked_field}")
+
+        if follow_up:
+            # For acknowledgments, add a brief prefix
+            if sc_type == "acknowledgment":
+                state.last_summary = follow_up
+            elif sc_type in ("confirmation_yes", "confirmation_no"):
+                if sc_action == "generate_plan":
+                    # Plan generation was triggered - this will be handled by the graph
+                    state.last_summary = "Generating your travel plan..."
+                else:
+                    state.last_summary = follow_up
+            elif sc_type in ("bare_destination", "bare_origin", "bare_date", "bare_travelers"):
+                # Field was extracted - acknowledge and ask next question
+                if sc_type == "bare_destination":
+                    dest = state.parsed_inputs.get("destinations_delta", [""])[0]
+
+                    # Check for ambiguous destinations
+                    if sc_action == "validate_destination":
+                        ambiguous_options = _check_ambiguous_destination(dest)
+                        if ambiguous_options:
+                            # Ask for clarification instead of accepting blindly
+                            options_str = " or ".join(ambiguous_options[:3])
+                            state.last_summary = f"Did you mean {options_str}?"
+                            state.suggested_responses = ambiguous_options[:3]
+                            state.metadata["last_question_field"] = "destinations"
+                            # Don't apply the parsed destination - wait for clarification
+                            state.parsed_inputs.pop("destinations_delta", None)
+                            _debug(
+                                "Ambiguous destination detected",
+                                dest=dest,
+                                options=ambiguous_options,
+                            )
+                        else:
+                            # Not ambiguous - accept it
+                            state.last_summary = (
+                                f"{dest}—nice choice! {follow_up}"
+                                if follow_up
+                                else f"{dest}—great pick!"
+                            )
+                    else:
+                        state.last_summary = (
+                            f"{dest}—nice choice! {follow_up}"
+                            if follow_up
+                            else f"{dest}—great pick!"
+                        )
+                elif sc_type == "bare_origin":
+                    origin = state.parsed_inputs.get("origin_delta", "")
+                    state.last_summary = (
+                        f"Got it, flying from {origin}. {follow_up}"
+                        if follow_up
+                        else f"Flying from {origin}."
+                    )
+                elif sc_type == "bare_date":
+                    state.last_summary = f"Noted! {follow_up}" if follow_up else "Dates noted!"
+                elif sc_type == "bare_travelers":
+                    adults = state.parsed_inputs.get("adults_delta")
+                    if adults == 1:
+                        state.last_summary = (
+                            f"Solo trip—got it! {follow_up}" if follow_up else "Solo trip noted!"
+                        )
+                    else:
+                        state.last_summary = (
+                            f"{adults} travelers—noted! {follow_up}"
+                            if follow_up
+                            else f"{adults} travelers noted!"
+                        )
+            else:
+                state.last_summary = follow_up
+        else:
+            # No follow-up needed, we might be ready to generate
+            state.last_summary = (
+                "Looks like I have everything I need! Ready to generate your travel plan?"
+            )
+            state.metadata["pending_action"] = "generate_plan"
+            state.metadata["last_question_field"] = None  # Clear - we're asking for confirmation
+
+    # Generate contextual suggestions (unless already set for ambiguous destinations)
+    if not state.suggested_responses:
+        state.suggested_responses = _generate_contextual_suggestions(state)
+    _debug("Generated suggestions", count=len(state.suggested_responses))
+
+    # Set intent for logging purposes
+    state.intent = f"short_circuit:{sc_type}"
+
+    _debug_node_exit("short_circuit_responder", state)
+    return state
+
+
+# -----------------------
+# Conditional routing after normalize_inputs
+# -----------------------
+def route_after_normalize(state: GraphState) -> str:
+    """Route to short_circuit_responder if short-circuit detected, otherwise to router."""
+    if state.flags.get("short_circuit"):
+        sc_type = state.flags.get("short_circuit")
+        _debug("Routing to short_circuit_responder", type=sc_type)
+        return "short_circuit_responder"
+    return "router"
+
+
+# -----------------------
+# Conditional routing after required_fields (for deferred intent handling)
+# -----------------------
+def route_after_required_fields(state: GraphState) -> str:
+    """
+    Route after required_fields completes.
+
+    If there's a deferred_intent (original intent that was postponed until core fields
+    were extracted), route to that specialist. Otherwise, go to validate_and_merge.
+
+    This enables multi-faceted extraction: "direct flight from Rome to Patagonia next week"
+    first extracts destinations/origin/dates via required_fields, then routes to flights
+    specialist for flight-specific preferences.
+    """
+    deferred_intent = state.metadata.get("deferred_intent")
+
+    if deferred_intent:
+        # Core fields should now be extracted - check if we should proceed with deferred intent
+        ti = state.trip_inputs
+        core_fields_complete = ti.destinations and ti.origin and ti.start_date
+
+        if core_fields_complete:
+            # Append the required_fields response to chat history to avoid repetition
+            if state.last_summary:
+                state.chat_history.append(
+                    {
+                        "role": "assistant",
+                        "content": state.last_summary,
+                    }
+                )
+
+            # Clear deferred intent to prevent loops
+            state.metadata.pop("deferred_intent", None)
+            deferred_topic = state.metadata.pop("deferred_strategy_topic", None)
+
+            _debug(
+                "Routing to deferred intent after core fields extracted",
+                deferred_intent=deferred_intent,
+                deferred_topic=deferred_topic,
+            )
+
+            # Restore strategy topic if it was a strategy intent
+            if deferred_intent == "strategy" and deferred_topic:
+                state.strategy_topic = deferred_topic
+                return "strategy_node"
+
+            # Map intent to node
+            intent_to_node = {
+                "flights": "flights_node",
+                "hotels": "hotels_node",
+                "transport": "transport_node",
+                "activities": "activities_node",
+                "correction_needed": "correction_node",
+            }
+            return intent_to_node.get(deferred_intent, "validate_and_merge")
+        else:
+            # Core fields still incomplete - clear deferred and continue to validate
+            _debug(
+                "Core fields still incomplete, clearing deferred intent",
+                destinations=bool(ti.destinations),
+                origin=bool(ti.origin),
+                start_date=bool(ti.start_date),
+            )
+            state.metadata.pop("deferred_intent", None)
+            state.metadata.pop("deferred_strategy_topic", None)
+
+    return "validate_and_merge"
+
+
+# -----------------------
 # Conditional routing after branch_postprocess
 # -----------------------
 def route_after_branch_postprocess(state: GraphState) -> str:
@@ -3105,6 +5467,7 @@ def route_after_branch_postprocess(state: GraphState) -> str:
 _graph = StateGraph(GraphState)
 _graph.add_node("extractor", extractor)
 _graph.add_node("normalize_inputs", normalize_inputs)
+_graph.add_node("short_circuit_responder", short_circuit_responder)
 _graph.add_node("router", router)
 _graph.add_node("required_fields_node", required_fields_node)
 _graph.add_node("flights_node", flights_node)
@@ -3120,17 +5483,151 @@ _graph.add_node("tile_search", tile_search)
 _graph.add_node("summarize", summarize)
 _graph.add_node("response_polish", response_polish)
 
-# Flow: START → extractor → normalize_inputs → router
+
+# Routing function after extractor - fast-path for pure short-circuits
+def route_after_extractor(state: GraphState) -> str:
+    """
+    Route immediately after extractor for maximum responsiveness.
+
+    Pure short-circuits (greeting, acknowledgment, off-topic, yes/no without parsed data)
+    bypass normalize_inputs entirely.
+
+    Short-circuits with parsed data (bare_destination, bare_date, etc.) go through
+    normalize_inputs to apply the extracted data.
+    """
+    sc_type = state.flags.get("short_circuit")
+    if sc_type:
+        # Pure short-circuits with no data to normalize - go directly to responder
+        if sc_type in ("greeting", "acknowledgment", "off_topic"):
+            _debug(f"Fast-path: bypassing normalize_inputs for {sc_type}")
+            return "short_circuit_responder"
+        # Yes/no confirmations without pending action that would change state
+        if sc_type in ("confirmation_yes", "confirmation_no") and not state.parsed_inputs:
+            _debug(f"Fast-path: bypassing normalize_inputs for {sc_type}")
+            return "short_circuit_responder"
+    # All other cases go through normalize_inputs
+    return "normalize_inputs"
+
+
+# Flow: START → extractor → (conditional) normalize_inputs or short_circuit_responder
 _graph.add_edge(START, "extractor")
-_graph.add_edge("extractor", "normalize_inputs")
-_graph.add_edge("normalize_inputs", "router")
+
+# Conditional edge after extractor: fast-path for pure short-circuits
+_graph.add_conditional_edges(
+    "extractor",
+    route_after_extractor,
+    {
+        "normalize_inputs": "normalize_inputs",
+        "short_circuit_responder": "short_circuit_responder",
+    },
+)
+
+# Conditional edge: normalize_inputs → router OR short_circuit_responder
+_graph.add_conditional_edges(
+    "normalize_inputs",
+    route_after_normalize,
+    {
+        "router": "router",
+        "short_circuit_responder": "short_circuit_responder",
+    },
+)
+
+# short_circuit_responder → summarize (bypass validate_and_merge, branch_postprocess)
+_graph.add_edge("short_circuit_responder", "summarize")
 
 
 def route_after_router(state: GraphState) -> str:
     if should_use_monolith(state):
         return "monolith_node"
+
+    # =========================================================================
+    # CONFIDENCE-BASED ROUTING
+    # =========================================================================
+    # Force required_fields for low confidence extractions
+    # This allows the LLM to validate/correct entities like typos or non-English
+    extraction_conf = state.metadata.get("extraction_confidence", {})
+    confidence_level = extraction_conf.get("level", "medium")
+    confidence_score = extraction_conf.get("overall", 0.5)
+
+    # Low confidence forces LLM extraction regardless of intent
+    if confidence_level == "low" and state.intent not in ("correction_needed", "required_fields"):
+        low_reasons = extraction_conf.get("low_confidence_reasons", [])
+        state.metadata["force_required_fields_reason"] = "low_extraction_confidence"
+        state.metadata["deferred_intent"] = state.intent
+        if state.strategy_topic:
+            state.metadata["deferred_strategy_topic"] = state.strategy_topic
+        _debug(
+            "Forcing required_fields due to low extraction confidence",
+            confidence=f"{confidence_score:.2f}",
+            level=confidence_level,
+            reasons=low_reasons[:3],
+        )
+        return "required_fields_node"
+
+    # Non-English detected with high confidence → force LLM extraction
+    if not extraction_conf.get("is_english", True):
+        lang = extraction_conf.get("detected_language", "unknown")
+        lang_conf = extraction_conf.get("language_confidence", 0)
+        if lang_conf > 0.8 and state.intent not in ("correction_needed", "required_fields"):
+            state.metadata["force_required_fields_reason"] = f"non_english:{lang}"
+            state.metadata["deferred_intent"] = state.intent
+            _debug(
+                "Forcing required_fields due to non-English input",
+                detected_language=lang,
+                language_confidence=f"{lang_conf:.2f}",
+            )
+            return "required_fields_node"
+
+    # Typo suggestions present → force LLM extraction to confirm/correct
+    typo_suggestions = extraction_conf.get("typo_suggestions", {})
+    if typo_suggestions and state.intent not in ("correction_needed", "required_fields"):
+        state.metadata["force_required_fields_reason"] = "typo_detected"
+        state.metadata["typo_suggestions"] = typo_suggestions
+        state.metadata["deferred_intent"] = state.intent
+        _debug(
+            "Forcing required_fields due to potential typos",
+            typo_suggestions=typo_suggestions,
+        )
+        return "required_fields_node"
+
+    # CRITICAL: Force required_fields when core fields are missing
+    # This ensures destination extraction happens even when router detects
+    # activity/flight/strategy keywords. The required_fields specialist has the best
+    # extraction logic for bare place names, typos, etc.
+    ti = state.trip_inputs
+    core_fields_missing = not ti.destinations or not ti.origin or not ti.start_date
+
+    if core_fields_missing and state.intent not in ("correction_needed", "required_fields"):
+        # Store the original intent to route to after required_fields completes
+        original_intent = state.intent
+        original_topic = state.strategy_topic
+
+        # Only defer if there's a meaningful intent to come back to
+        if original_intent and original_intent != "required_fields":
+            state.metadata["deferred_intent"] = original_intent
+            if original_topic:
+                state.metadata["deferred_strategy_topic"] = original_topic
+            _debug(
+                "Deferring intent until core fields extracted",
+                deferred_intent=original_intent,
+                deferred_topic=original_topic,
+                destinations=bool(ti.destinations),
+                origin=bool(ti.origin),
+                start_date=bool(ti.start_date),
+            )
+        else:
+            _debug(
+                "Forcing required_fields route due to missing core fields",
+                destinations=bool(ti.destinations),
+                origin=bool(ti.origin),
+                start_date=bool(ti.start_date),
+            )
+        return "required_fields_node"
+
+    # Handle strategy routing
     if state.intent == "strategy":
         return "strategy_node"
+
     intent = state.intent or "required_fields"
     return {
         "required_fields": "required_fields_node",
@@ -3157,10 +5654,23 @@ _graph.add_conditional_edges(
     },
 )
 
-# From any worker → validate_and_merge → branch_postprocess →
-# (conditional) tile_search/summarize → END
-for n in [
+# required_fields_node has special conditional routing for deferred intents
+_graph.add_conditional_edges(
     "required_fields_node",
+    route_after_required_fields,
+    {
+        "validate_and_merge": "validate_and_merge",
+        "flights_node": "flights_node",
+        "hotels_node": "hotels_node",
+        "transport_node": "transport_node",
+        "activities_node": "activities_node",
+        "strategy_node": "strategy_node",
+        "correction_node": "correction_node",
+    },
+)
+
+# Other workers go directly to validate_and_merge
+for n in [
     "flights_node",
     "hotels_node",
     "transport_node",

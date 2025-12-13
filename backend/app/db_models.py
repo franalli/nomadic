@@ -131,6 +131,22 @@ class TileClick(Base, TimestampMixin):
     request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
+class SuggestionClick(Base, TimestampMixin):
+    """
+    Track suggestion pill clicks for analytics.
+    Helps measure quality and engagement with LLM-generated suggestions.
+    """
+
+    __tablename__ = "suggestion_clicks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+
+    suggestion_text: Mapped[str] = mapped_column(String(128), nullable=False)
+    suggestion_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
 class ChatMessage(Base, TimestampMixin):
     __tablename__ = "chat_messages"
 

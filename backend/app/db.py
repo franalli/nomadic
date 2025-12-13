@@ -61,13 +61,24 @@ _async_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
 
 def _get_async_engine() -> AsyncEngine:
-    """Get or create the async engine (lazy initialization)."""
+    """Get or create the async engine (lazy initialization).
+
+    Pool configuration for 20-30 concurrent users:
+    - pool_size=15: Base number of connections to maintain
+    - max_overflow=25: Additional connections allowed under load (total max: 40)
+    - pool_recycle=3600: Recycle connections after 1 hour to avoid stale connections
+    - pool_pre_ping=True: Verify connection is alive before using it
+    """
     global _async_engine
     if _async_engine is None:
         _async_engine = create_async_engine(
             ASYNC_DATABASE_URL,
             future=True,
             echo=False,
+            pool_size=15,
+            max_overflow=25,
+            pool_recycle=3600,
+            pool_pre_ping=True,
         )
     return _async_engine
 

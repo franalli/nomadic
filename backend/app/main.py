@@ -56,6 +56,8 @@ from app.plan_graph import clear_session_checkpoint, condense_long_message, run_
 from app.schemas import (
     ChatHistoryResponse,
     ChatMessageResponse,
+    EntityConfidenceInfo,
+    ExtractionConfidenceInfo,
     GraphPlanErrorCode,
     GraphPlanObservability,
     GraphPlanRequest,
@@ -205,6 +207,30 @@ def track_tile_click(
     click = db_models.TileClick(
         tile_identifier=event.tile_id,
         branch_identifier=event.branch_id,
+        session_id=session_id,
+        request_id=event.request_id,
+    )
+
+    db.add(click)
+    db.commit()
+
+    return {"status": "ok"}
+
+
+@app.post("/v1/suggestions/click")
+def track_suggestion_click(
+    request: Request,
+    event: schemas.SuggestionClickEvent,
+    db: Session = db_dependency,
+):
+    """
+    Persist a suggestion pill click for analytics.
+    Tracks which LLM-generated suggestions users find valuable.
+    """
+    session_id = get_session_from_request(request)
+    click = db_models.SuggestionClick(
+        suggestion_text=event.suggestion_text[:128],  # Truncate to fit column
+        suggestion_index=event.suggestion_index,
         session_id=session_id,
         request_id=event.request_id,
     )
@@ -490,6 +516,47 @@ async def graph_plan_endpoint(
             # Non-fatal - continue with response
 
     # --- Build observability data ---
+    # Extract confidence data from session state metadata
+    extraction_conf_raw = (
+        result.get("session_state", {}).get("metadata", {}).get("extraction_confidence", {})
+    )
+    extraction_confidence = None
+    if extraction_conf_raw:
+        # Build destination confidence info list
+        dest_confidences = []
+        for dest_conf in extraction_conf_raw.get("destinations", []):
+            dest_confidences.append(
+                EntityConfidenceInfo(
+                    value=dest_conf.get("value", ""),
+                    confidence=dest_conf.get("confidence", 1.0),
+                    needs_confirmation=dest_conf.get("needs_confirmation", False),
+                    fuzzy_suggestion=dest_conf.get("fuzzy_suggestion"),
+                    ambiguity_type=dest_conf.get("ambiguity_type"),
+                )
+            )
+
+        # Build origin confidence info if present
+        origin_conf_raw = extraction_conf_raw.get("origin")
+        origin_confidence = None
+        if origin_conf_raw:
+            origin_confidence = EntityConfidenceInfo(
+                value=origin_conf_raw.get("value", ""),
+                confidence=origin_conf_raw.get("confidence", 1.0),
+                needs_confirmation=origin_conf_raw.get("needs_confirmation", False),
+                fuzzy_suggestion=origin_conf_raw.get("fuzzy_suggestion"),
+                ambiguity_type=origin_conf_raw.get("ambiguity_type"),
+            )
+
+        extraction_confidence = ExtractionConfidenceInfo(
+            overall=extraction_conf_raw.get("overall", 1.0),
+            level=extraction_conf_raw.get("level", "high"),
+            destinations=dest_confidences,
+            origin=origin_confidence,
+            detected_language=extraction_conf_raw.get("detected_language"),
+            is_english=extraction_conf_raw.get("is_english", True),
+            typo_suggestions=extraction_conf_raw.get("typo_suggestions", []),
+        )
+
     observability = GraphPlanObservability(
         tokens=GraphPlanTokens(prompt=0, completion=0, total=0),  # TODO: populate from LLM
         model_used=result.get("session_state", {}).get("metadata", {}).get("model_used"),
@@ -500,6 +567,7 @@ async def graph_plan_endpoint(
         today_iso=today_iso,
         ready_to_generate_prev=ready_to_generate_prev,
         ready_to_generate_now=ready_to_generate_now,
+        extraction_confidence=extraction_confidence,
     )
 
     # --- Set Cache-Control header ---

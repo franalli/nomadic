@@ -110,3 +110,24 @@ export async function validateTripInput(
 
   return res.json();
 }
+
+/**
+ * Track a suggestion pill click for analytics.
+ * Fire-and-forget - we don't wait for confirmation.
+ */
+export function trackSuggestionClick(
+  suggestionText: string,
+  suggestionIndex: number,
+  requestId?: string
+): void {
+  apiFetch('/v1/suggestions/click', {
+    method: 'POST',
+    body: JSON.stringify({
+      suggestion_text: suggestionText,
+      suggestion_index: suggestionIndex,
+      request_id: requestId,
+    }),
+  }).catch(() => {
+    // Silently ignore tracking failures
+  });
+}
