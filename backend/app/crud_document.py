@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app import db_models as models
@@ -33,21 +35,26 @@ from app.schemas import (
 _DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
 
-def get_document(db: Session, *, session: models.Session) -> Optional[models.PlanDocument]:
-    """Fetch the plan document for a session."""
+# =============================================================================
+# Sync functions (for legacy endpoints)
+# =============================================================================
+
+
+def get_document_sync(db: Session, *, session: models.Session) -> Optional[models.PlanDocument]:
+    """Fetch the plan document for a session (sync version)."""
     return (
         db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).first()
     )
 
 
-def get_or_create_document(
+def get_or_create_document_sync(
     db: Session,
     *,
     session: models.Session,
     updated_by: UpdatedBy = "planner",
 ) -> models.PlanDocument:
-    """Get existing document or create an empty one."""
-    doc = get_document(db, session=session)
+    """Get existing document or create an empty one (sync version)."""
+    doc = get_document_sync(db, session=session)
     if doc:
         return doc
 
@@ -63,24 +70,76 @@ def get_or_create_document(
     return doc
 
 
+# =============================================================================
+# Async functions (for async endpoints and LangGraph)
+# =============================================================================
+
+
+async def get_document(
+    db: AsyncSession, *, session: models.Session
+) -> Optional[models.PlanDocument]:
+    """Fetch the plan document for a session (async)."""
+    stmt = select(models.PlanDocument).filter(models.PlanDocument.session_id == session.id)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_or_create_document(
+    db: AsyncSession,
+    *,
+    session: models.Session,
+    updated_by: UpdatedBy = "planner",
+) -> models.PlanDocument:
+    """Get existing document or create an empty one (async)."""
+    doc = await get_document(db, session=session)
+    if doc:
+        return doc
+
+    empty_data = PlanDocumentData().model_dump()
+    doc = models.PlanDocument(
+        session_id=session.id,
+        version=1,
+        updated_by=updated_by,
+        document=empty_data,
+    )
+    db.add(doc)
+    await db.flush()
+    return doc
+
+
 def get_document_data(doc: models.PlanDocument) -> PlanDocumentData:
     """Parse the JSON document into a Pydantic model."""
     raw_data = dict(doc.document) if doc.document else {}
     return PlanDocumentData.model_validate(raw_data)
 
 
-def save_document_data(
+def save_document_data_sync(
     db: Session,
     *,
     doc: models.PlanDocument,
     data: PlanDocumentData,
     updated_by: UpdatedBy,
 ) -> models.PlanDocument:
-    """Save updated document data, incrementing version."""
+    """Save updated document data, incrementing version (sync)."""
     doc.document = data.model_dump()
     doc.version += 1
     doc.updated_by = updated_by
     db.flush()
+    return doc
+
+
+async def save_document_data(
+    db: AsyncSession,
+    *,
+    doc: models.PlanDocument,
+    data: PlanDocumentData,
+    updated_by: UpdatedBy,
+) -> models.PlanDocument:
+    """Save updated document data, incrementing version (async)."""
+    doc.document = data.model_dump()
+    doc.version += 1
+    doc.updated_by = updated_by
+    await db.flush()
     return doc
 
 
@@ -198,6 +257,12 @@ def merge_trip_inputs(
                 if _DEBUG_LOG:
                     print(f"[DEBUG] Reset '{field}' to default (explicit null)")
             elif incoming_value is not None:
+                # Convert dict to Pydantic model if needed to avoid serialization warnings
+                model_class = booking_defaults[field]
+                if isinstance(incoming_value, dict):
+                    incoming_value = model_class(**incoming_value)
+                elif not isinstance(incoming_value, model_class):
+                    incoming_value = model_class.model_validate(incoming_value)
                 setattr(result, field, incoming_value)
                 if _DEBUG_LOG:
                     print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
@@ -215,6 +280,8 @@ def merge_trip_inputs(
                     print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
 
     # Handle missing_fields - always recompute based on actual values
+    # ONLY include REQUIRED fields: destinations, origin, start_date
+    # end_date is OPTIONAL and should not block ready_to_generate
     missing = []
     if not result.destinations:
         missing.append("destinations")
@@ -222,8 +289,7 @@ def merge_trip_inputs(
         missing.append("origin")
     if result.start_date is None:
         missing.append("start_date")
-    if result.end_date is None:
-        missing.append("end_date")
+    # NOTE: end_date is intentionally NOT included - it's optional
     result.missing_fields = missing
 
     return result
@@ -371,14 +437,100 @@ def prune_branches_and_tiles(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def apply_user_patch(
+def apply_user_patch_sync(
     db: Session,
     *,
     doc: models.PlanDocument,
     patch: PlanDocumentPatch,
 ) -> models.PlanDocument:
     """
-    Apply a user-initiated patch to the document using CRDT merge.
+    Apply a user-initiated patch to the document using CRDT merge (sync).
+
+    When trip_inputs change (e.g., user removes a destination), the primary branch
+    is updated to reflect the new values so UI displays updated destinations.
+    """
+    data = get_document_data(doc)
+
+    # Detect fields explicitly set to null (user clicked X on field badge)
+    explicit_nulls: set[str] = set()
+    if isinstance(patch.trip_inputs, DocumentTripInputsPatch):
+        for field_name in patch.trip_inputs.model_fields_set:
+            if getattr(patch.trip_inputs, field_name, "NOT_NONE") is None:
+                explicit_nulls.add(field_name)
+                if _DEBUG_LOG:
+                    print(f"[DEBUG] apply_user_patch_sync: '{field_name}' set to null")
+
+    # Merge trip inputs with replace_destinations=True
+    data.trip_inputs = merge_trip_inputs(
+        data.trip_inputs,
+        patch.trip_inputs,
+        replace_destinations=True,
+        explicit_nulls=explicit_nulls if explicit_nulls else None,
+    )
+
+    # Merge branches
+    data.branches = merge_branches(data.branches, patch.branches, patch.remove_branch_ids)
+
+    # Merge tiles
+    data.tiles = merge_tiles(data.tiles, patch.tiles, patch.remove_tile_ids)
+
+    # Update selections
+    data.branches = merge_selections(data.branches, patch.selections)
+
+    # Prune branches referencing removed destinations, and clean up orphaned tiles
+    if patch.trip_inputs is not None and data.branches:
+        data.branches, data.tiles = prune_branches_and_tiles(
+            data.branches,
+            data.tiles,
+            data.trip_inputs.destinations,
+        )
+
+    # Cascade trip_inputs changes to the primary branch
+    # This ensures destination removals are reflected in the branch
+    if patch.trip_inputs is not None and data.branches:
+        primary_idx = next(
+            (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
+        )
+        if primary_idx is not None:
+            primary = data.branches[primary_idx]
+            # Always sync destinations (including empty list for removals)
+            primary.destinations = data.trip_inputs.destinations
+
+            # Sync other fields only if they were explicitly provided in the patch
+            def _field_was_provided(field_name: str) -> bool:
+                if isinstance(patch.trip_inputs, DocumentTripInputsPatch):
+                    return field_name in patch.trip_inputs.model_fields_set
+                return True  # Full DocumentTripInputs payloads are treated as explicit
+
+            if _field_was_provided("origin"):
+                primary.origin = data.trip_inputs.origin
+            if _field_was_provided("start_date"):
+                primary.start_date = data.trip_inputs.start_date
+            if _field_was_provided("end_date"):
+                primary.end_date = data.trip_inputs.end_date
+            if _field_was_provided("adults"):
+                primary.adults = data.trip_inputs.adults
+            if _field_was_provided("children"):
+                primary.children = data.trip_inputs.children
+            if _field_was_provided("requires_assistance"):
+                primary.requires_assistance = data.trip_inputs.requires_assistance
+            if _field_was_provided("budget"):
+                primary.budget = data.trip_inputs.budget
+            if _field_was_provided("currency"):
+                primary.currency = data.trip_inputs.currency
+            data.branches[primary_idx] = primary
+
+    return save_document_data_sync(db, doc=doc, data=data, updated_by="user")
+
+
+async def apply_user_patch(
+    db: AsyncSession,
+    *,
+    doc: models.PlanDocument,
+    patch: PlanDocumentPatch,
+) -> models.PlanDocument:
+    """
+    Apply a user-initiated patch to the document using CRDT merge (async).
 
     When trip_inputs change (e.g., user removes a destination), the primary branch
     is updated to reflect the new values so UI displays updated destinations.
@@ -454,11 +606,11 @@ def apply_user_patch(
                 primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
 
-    return save_document_data(db, doc=doc, data=data, updated_by="user")
+    return await save_document_data(db, doc=doc, data=data, updated_by="user")
 
 
-def apply_planner_update(
-    db: Session,
+async def apply_planner_update(
+    db: AsyncSession,
     *,
     doc: models.PlanDocument,
     trip_context_id: int,
@@ -467,7 +619,7 @@ def apply_planner_update(
     tiles: Optional[dict[str, TileSchema]] = None,
 ) -> models.PlanDocument:
     """
-    Apply planner-generated branches and tiles to the document.
+    Apply planner-generated branches and tiles to the document (async).
 
     Most recent update wins - no field protection needed.
 
@@ -528,10 +680,10 @@ def apply_planner_update(
     if tiles is not None:
         data.tiles = merge_tiles(data.tiles, tiles)
 
-    return save_document_data(db, doc=doc, data=data, updated_by="planner")
+    return await save_document_data(db, doc=doc, data=data, updated_by="planner")
 
 
-def add_tiles_to_branch(
+def add_tiles_to_branch_sync(
     db: Session,
     *,
     doc: models.PlanDocument,
@@ -540,7 +692,7 @@ def add_tiles_to_branch(
     updated_by: UpdatedBy = "planner",
 ) -> models.PlanDocument:
     """
-    Add tiles to a specific branch and update the document.
+    Add tiles to a specific branch and update the document (sync).
     Used when fetching tiles for a non-primary branch.
     """
     data = get_document_data(doc)
@@ -567,4 +719,43 @@ def add_tiles_to_branch(
 
     data.branches[branch_idx] = branch
 
-    return save_document_data(db, doc=doc, data=data, updated_by=updated_by)
+    return save_document_data_sync(db, doc=doc, data=data, updated_by=updated_by)
+
+
+async def add_tiles_to_branch(
+    db: AsyncSession,
+    *,
+    doc: models.PlanDocument,
+    branch_id: str,
+    tiles: list[TileSchema],
+    updated_by: UpdatedBy = "planner",
+) -> models.PlanDocument:
+    """
+    Add tiles to a specific branch and update the document (async).
+    Used when fetching tiles for a non-primary branch.
+    """
+    data = get_document_data(doc)
+
+    # Find the branch
+    branch_idx = next((i for i, b in enumerate(data.branches) if b.id == branch_id), None)
+    if branch_idx is None:
+        return doc  # Branch not found, no-op
+
+    branch = data.branches[branch_idx]
+
+    # Add tiles to document
+    tiles_dict = {t.id: t for t in tiles}
+    data.tiles = merge_tiles(data.tiles, tiles_dict)
+
+    # Categorize tile IDs by type
+    for tile in tiles:
+        if tile.type == "hotel" and tile.id not in branch.tiles.stays:
+            branch.tiles.stays.append(tile.id)
+        elif tile.type == "flight" and tile.id not in branch.tiles.flights:
+            branch.tiles.flights.append(tile.id)
+        elif tile.type == "activity" and tile.id not in branch.tiles.activities:
+            branch.tiles.activities.append(tile.id)
+
+    data.branches[branch_idx] = branch
+
+    return await save_document_data(db, doc=doc, data=data, updated_by=updated_by)

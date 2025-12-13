@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
@@ -46,10 +46,26 @@ class Settings(BaseSettings):
     enable_strategy_skiing: bool = True
     enable_strategy_cycling: bool = True
 
+    # Response polish node configuration
+    enable_response_polish: bool = True  # Enable response polishing for natural tone
+    response_polish_timeout_ms: int = 200  # Hard timeout cap for polish node (ms)
+    response_polish_warn_threshold_ms: int = 150  # Log warning if polish exceeds this (ms)
+
     # LLM timeouts (in seconds)
-    llm_timeout_router: float = 3.0
-    llm_timeout_specialist: float = 6.0
-    llm_timeout_monolith: float = 10.0
+    llm_timeout_router: float = 8.0
+    llm_timeout_specialist: float = 12.0
+    llm_timeout_monolith: float = 20.0
+
+    # LLM configuration (parity with plan.py)
+    plan_chat_history_limit: int = 20  # Max messages to include in context
+    openai_plan_max_tokens: int = 800  # Token limit for LLM response
+    openai_plan_temperature: float = 0.5  # Response creativity (lower = more consistent)
+    openai_plan_top_p: float = 0.95  # Nucleus sampling threshold
+    llm_max_retries: int = 3  # Retry count for API errors
+    openai_plan_seed: int | None = None  # Optional seed for reproducibility
+
+    # Debug flags
+    debug_plan_messages: bool = False  # Enable verbose debug logging for planning
 
     # backend
     backend_host: str = "0.0.0.0"
@@ -86,7 +102,7 @@ settings = Settings()
 
 
 # =============================================================================
-# OpenAI Client Singleton
+# OpenAI Client Singleton (Sync - for legacy code and migrations)
 # =============================================================================
 
 _openai_client: Optional[OpenAI] = None
@@ -94,7 +110,7 @@ _openai_client: Optional[OpenAI] = None
 
 def get_openai_client() -> Optional[OpenAI]:
     """
-    Get or create the singleton OpenAI client instance.
+    Get or create the singleton OpenAI client instance (synchronous).
 
     Uses lazy initialization to avoid creating the client until needed.
     The API key is read from settings or environment variable.
@@ -112,6 +128,35 @@ def get_openai_client() -> Optional[OpenAI]:
         _openai_client = OpenAI(api_key=api_key)
 
     return _openai_client
+
+
+# =============================================================================
+# Async OpenAI Client Singleton
+# =============================================================================
+
+_async_openai_client: Optional[AsyncOpenAI] = None
+
+
+def get_async_openai_client() -> Optional[AsyncOpenAI]:
+    """
+    Get or create the singleton AsyncOpenAI client instance.
+
+    Uses lazy initialization to avoid creating the client until needed.
+    The API key is read from settings or environment variable.
+
+    Returns:
+        Optional[AsyncOpenAI]: The async OpenAI client, or None if no API key is configured.
+    """
+    global _async_openai_client
+
+    api_key = settings.openai_api_key or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    if _async_openai_client is None:
+        _async_openai_client = AsyncOpenAI(api_key=api_key)
+
+    return _async_openai_client
 
 
 def generate_session_token() -> str:

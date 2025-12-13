@@ -535,7 +535,10 @@ def validate_suggested_responses(responses: Any) -> List[str]:
 
 def truncate_assistant_message(message: Any) -> str:
     """
-    Truncate assistant message to configured max length.
+    Truncate assistant message to configured max length gracefully.
+
+    This is the synchronous fallback. For better results, use the async
+    condense_long_message() from plan_graph.py which uses LLM re-summarization.
 
     Args:
         message: Raw assistant message.
@@ -554,8 +557,32 @@ def truncate_assistant_message(message: Any) -> str:
     if len(message) <= max_len:
         return message
 
-    # Truncate and add ellipsis
-    return message[: max_len - 3] + "..."
+    # Graceful truncation at natural boundary
+    target = max_len - 3
+
+    if target <= 0:
+        return message[:max_len]
+
+    truncated = message[:target]
+
+    # Try to find last sentence ending (. ! ?)
+    last_sentence = -1
+    for punct in ".!?":
+        idx = truncated.rfind(punct)
+        if idx > last_sentence:
+            last_sentence = idx
+
+    # If we found a sentence ending in the last ~30% of text, use it
+    if last_sentence > target * 0.7:
+        return message[: last_sentence + 1]
+
+    # Otherwise find last word boundary
+    last_space = truncated.rfind(" ")
+    if last_space > target * 0.5:
+        return message[:last_space] + "..."
+
+    # Final fallback
+    return truncated + "..."
 
 
 # =============================================================================

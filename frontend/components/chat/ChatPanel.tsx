@@ -13,6 +13,7 @@ import {
   useState,
 } from 'react';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { apiFetch } from '@/lib/api';
 import type { GraphPlanRequest } from '@/types/api';
@@ -63,12 +64,67 @@ const TypingIndicator = () => (
 );
 
 // Markdown components config - extracted to module level to prevent recreation on each render
+// Full GFM support with professional styling for chat bubbles
 const MARKDOWN_COMPONENTS = {
-  p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2 last:mb-0">{children}</p>,
-  strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
-  ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc pl-4 mb-2">{children}</ul>,
-  ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal pl-4 mb-2">{children}</ol>,
-  li: ({ children }: { children?: React.ReactNode }) => <li className="mb-1">{children}</li>,
+  // Paragraphs with proper spacing
+  p: ({ children }: { children?: React.ReactNode }) => (
+    <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
+  ),
+  // Bold text with emphasis
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-foreground">{children}</strong>
+  ),
+  // Italic text
+  em: ({ children }: { children?: React.ReactNode }) => (
+    <em className="italic">{children}</em>
+  ),
+  // Unordered lists with proper bullet styling
+  ul: ({ children }: { children?: React.ReactNode }) => (
+    <ul className="my-2 ml-1 space-y-1.5 first:mt-0 last:mb-0">{children}</ul>
+  ),
+  // Ordered lists with proper number styling
+  ol: ({ children }: { children?: React.ReactNode }) => (
+    <ol className="my-2 ml-1 list-decimal space-y-1.5 pl-4 first:mt-0 last:mb-0">{children}</ol>
+  ),
+  // List items with custom bullet point styling
+  li: ({ children }: { children?: React.ReactNode }) => (
+    <li className="relative pl-4 before:absolute before:left-0 before:top-[0.6em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-primary/60 before:content-['']">
+      {children}
+    </li>
+  ),
+  // Inline code for technical terms
+  code: ({ children }: { children?: React.ReactNode }) => (
+    <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-sm">{children}</code>
+  ),
+  // Links with proper styling
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-primary underline decoration-primary/50 underline-offset-2 hover:decoration-primary transition-colors"
+    >
+      {children}
+    </a>
+  ),
+  // Blockquotes for emphasis or quotes
+  blockquote: ({ children }: { children?: React.ReactNode }) => (
+    <blockquote className="my-2 border-l-2 border-primary/40 pl-3 italic text-muted-foreground first:mt-0 last:mb-0">
+      {children}
+    </blockquote>
+  ),
+  // Horizontal rules for section breaks
+  hr: () => <hr className="my-3 border-border/50" />,
+  // Headers (rarely used in chat but supported)
+  h1: ({ children }: { children?: React.ReactNode }) => (
+    <h1 className="mb-2 text-lg font-bold first:mt-0">{children}</h1>
+  ),
+  h2: ({ children }: { children?: React.ReactNode }) => (
+    <h2 className="mb-2 text-base font-semibold first:mt-0">{children}</h2>
+  ),
+  h3: ({ children }: { children?: React.ReactNode }) => (
+    <h3 className="mb-1.5 text-sm font-semibold first:mt-0">{children}</h3>
+  ),
 };
 
 interface ChatPanelProps {
@@ -312,6 +368,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         return () => clearTimeout(timer);
       }
     }, [hasUserMessage, hasShownHint]);
+
+    // Reset generate-related state when readyToGenerate becomes false
+    // This ensures a clean slate after Fresh Start or when requirements are no longer met
+    useEffect(() => {
+      if (!readyToGenerate) {
+        setReadyMessageShown(false);
+        setGenerateTriggered(false);
+        // Remove any "ready to generate" messages from the chat
+        setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(READY_MESSAGE_ID_PREFIX)));
+      }
+    }, [readyToGenerate]);
 
     // Show ready to generate message when all details are collected
     useEffect(() => {
@@ -559,8 +626,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             Travel Planner
           </div>
           <div className="flex items-center gap-3">
-            {/* Fresh Start button */}
-            {onFreshStart && hasUserMessage && (
+            {/* Fresh Start button - always visible when onFreshStart is provided */}
+            {onFreshStart && (
               <button
                 type="button"
                 onClick={() => {
@@ -608,7 +675,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     }
                   >
                     {m.role === 'assistant' ? (
-                      <Markdown components={MARKDOWN_COMPONENTS}>
+                      <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
                         {m.content}
                       </Markdown>
                     ) : (

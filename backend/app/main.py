@@ -5,6 +5,7 @@ from typing import Any, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 import app.db_models as db_models
@@ -22,12 +23,14 @@ from app.crud_trip import (
     fetch_chat_history,
     get_latest_trip_context_for_session,
     get_or_create_session,
+    get_or_create_session_sync,
     get_session_by_token,
+    get_session_by_token_sync,
     record_chat_message,
-    rotate_session,
-    should_rotate_session,
+    rotate_session_sync,
+    should_rotate_session_sync,
 )
-from app.db import get_db
+from app.db import get_async_db, get_db
 from app.graph_plan_utils import (
     check_payload_size,
     compute_today_iso,
@@ -49,7 +52,7 @@ from app.middleware import (
 )
 from app.middleware.session import _generate_csrf_token
 from app.plan import plan_trip
-from app.plan_graph import run_turn
+from app.plan_graph import clear_session_checkpoint, condense_long_message, run_turn
 from app.schemas import (
     ChatHistoryResponse,
     ChatMessageResponse,
@@ -77,7 +80,10 @@ APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 
 app = FastAPI(title=APP_NAME)
 
+# Sync DB dependency for legacy endpoints and migrations
 db_dependency = Depends(get_db)
+# Async DB dependency for async endpoints
+async_db_dependency = Depends(get_async_db)
 
 
 # =============================================================================
@@ -210,11 +216,11 @@ def track_tile_click(
 
 
 @app.post("/v1/graph_plan", response_model=GraphPlanResponse)
-def graph_plan_endpoint(
+async def graph_plan_endpoint(
     request: Request,
     response: Response,
     req: GraphPlanRequest,
-    db: Session = db_dependency,
+    db: AsyncSession = async_db_dependency,
 ):
     """
     LangGraph-based planning endpoint.
@@ -302,7 +308,7 @@ def graph_plan_endpoint(
 
     # --- Get session from request for document persistence ---
     session_id = get_session_from_request(request)
-    db_session = get_or_create_session(db, session_id)
+    db_session = await get_or_create_session(db, session_id)
 
     # --- Track previous ready_to_generate for observability ---
     ready_to_generate_prev = session_state.get("metadata", {}).get("ready_to_generate", False)
@@ -312,7 +318,7 @@ def graph_plan_endpoint(
     document_data = None
     document_version = None
     try:
-        document = get_or_create_document(db, session=db_session)
+        document = await get_or_create_document(db, session=db_session)
         document_data = get_document_data(document)
         document_version = document.version
 
@@ -362,8 +368,8 @@ def graph_plan_endpoint(
 
     # --- Call run_turn with timeout ---
     try:
-        # run_turn is synchronous; timeout is handled within plan_graph.py
-        result = run_turn(req.message, session_state)
+        # run_turn is async; timeout is handled within plan_graph.py
+        result = await run_turn(req.message, session_state)
         logger.info(f"[{request_id}] Graph planner succeeded (LangGraph path)")
     except TimeoutError:
         logger.error(f"[{request_id}] run_turn timed out")
@@ -373,7 +379,6 @@ def graph_plan_endpoint(
                 request,
                 response,
                 req,
-                db,
                 session_id,
                 request_id,
                 document_data,
@@ -396,7 +401,6 @@ def graph_plan_endpoint(
                 request,
                 response,
                 req,
-                db,
                 session_id,
                 request_id,
                 document_data,
@@ -414,7 +418,16 @@ def graph_plan_endpoint(
 
     # --- Validate and sanitize output ---
     assistant_message = result.get("assistant_message", "")
-    assistant_message = truncate_assistant_message(assistant_message)
+    # Use async LLM re-summarization for long messages, with sync fallback
+    if len(assistant_message) > settings.assistant_msg_max_len:
+        try:
+            assistant_message = await condense_long_message(
+                assistant_message,
+                settings.assistant_msg_max_len,
+            )
+        except Exception as e:
+            logger.warning(f"[{request_id}] Condense failed, using sync truncation: {e}")
+            assistant_message = truncate_assistant_message(assistant_message)
 
     # Validate suggested responses
     suggested_responses = result.get("suggested_responses", [])
@@ -456,11 +469,11 @@ def graph_plan_endpoint(
                     trip_inputs_obj = trip_inputs
 
             # Get or create trip context for this session
-            trip_context = get_latest_trip_context_for_session(db, db_session.id)
+            trip_context = await get_latest_trip_context_for_session(db, session=db_session)
             trip_context_id = trip_context.id if trip_context else 0
 
             # Apply planner update
-            updated_doc = apply_planner_update(
+            updated_doc = await apply_planner_update(
                 db,
                 doc=document,
                 trip_context_id=trip_context_id,
@@ -470,10 +483,10 @@ def graph_plan_endpoint(
             if updated_doc:
                 new_document_version = updated_doc.version
                 document_data = get_document_data(updated_doc)
-                db.commit()
+                await db.commit()
         except Exception as e:
             logger.error(f"[{request_id}] Failed to persist document: {e}")
-            db.rollback()
+            await db.rollback()
             # Non-fatal - continue with response
 
     # --- Build observability data ---
@@ -495,6 +508,11 @@ def graph_plan_endpoint(
     # --- Build document data for response ---
     response_document = document_data if document_data else PlanDocumentData()
 
+    # --- Set assistant_message and suggested_responses from this turn's result ---
+    response_document.assistant_message = assistant_message
+    response_document.suggested_responses = suggested_responses
+    response_document.ready_to_generate = ready_to_generate_now
+
     # --- Build and return response ---
     return GraphPlanResponse(
         document=response_document,
@@ -512,8 +530,7 @@ def _fallback_to_legacy(
     request: Request,
     response: Response,
     req: GraphPlanRequest,
-    db: Session,
-    session_id: int,
+    session_id: str,
     request_id: str,
     document_data: Any,
     document_version: Optional[int],
@@ -525,15 +542,21 @@ def _fallback_to_legacy(
 
     Converts the GraphPlanRequest to a PlanRequest and calls plan_trip,
     then wraps the result in a GraphPlanResponse.
+
+    Note: Creates its own sync database session since plan_trip requires sync Session.
     """
     logger.info(f"[{request_id}] Falling back to legacy planner")
 
+    # Get a sync database session for the legacy planner
+    db_gen = get_db()
+    db = next(db_gen)
+
     try:
         # Convert GraphPlanRequest to PlanRequest
+        # Note: PlanRequest only has 'message' and optional 'timezone' fields
         legacy_req = PlanRequest(
             message=req.message,
-            trip_inputs=req.trip_inputs,
-            preferences=None,  # Legacy planner uses trip_inputs
+            timezone=None,
         )
 
         # Call the legacy planner
@@ -602,10 +625,10 @@ def plan(
         result = plan_trip(db, session_id, req)
 
         # Check if we should rotate the session (after first trip creation)
-        db_session = get_or_create_session(db, session_id)
-        if should_rotate_session(db, session=db_session):
+        db_session = get_or_create_session_sync(db, session_id)
+        if should_rotate_session_sync(db, session=db_session):
             # Rotate the session token
-            rotated_session = rotate_session(db, old_session=db_session)
+            rotated_session = rotate_session_sync(db, old_session=db_session)
             db.commit()
 
             # Set new cookies with the rotated session token
@@ -626,12 +649,16 @@ def reset_session(
     Reset/delete a planning session and all associated data.
 
     Uses row-level locking to prevent deadlocks with concurrent plan operations.
-    Also clears session cookies from the browser.
+    Also clears session cookies from the browser and LangGraph checkpoint state.
     """
     session_id = get_session_from_request(request)
 
+    # Clear LangGraph checkpoint for this session (even if session not in DB)
+    if session_id:
+        clear_session_checkpoint(session_id)
+
     # Lock the session row first to prevent deadlocks with concurrent operations
-    session = get_session_by_token(db, session_id, lock_for_update=True)
+    session = get_session_by_token_sync(db, session_id, lock_for_update=True)
     if not session:
         # Clear cookies even if session not found in DB
         response = Response(status_code=204)
@@ -680,9 +707,9 @@ def reset_session(
 
 
 @app.get("/v1/chat", response_model=ChatHistoryResponse)
-def get_chat_history(
+async def get_chat_history(
     request: Request,
-    db: Session = db_dependency,
+    db: AsyncSession = async_db_dependency,
 ):
     """
     Get chat history for the current session.
@@ -691,14 +718,14 @@ def get_chat_history(
     Used by the frontend to restore chat state on page load.
     """
     session_id = get_session_from_request(request)
-    session = get_session_by_token(db, session_id)
+    session = await get_session_by_token(db, session_id)
 
     # Return empty history for new sessions (no error)
     if not session:
         return ChatHistoryResponse(messages=[])
 
     # Fetch messages (returns oldest first after reversal)
-    messages = fetch_chat_history(db, session=session, limit=50)
+    messages = await fetch_chat_history(db, session=session, limit=50)
 
     # Convert to response format, filtering out empty and system messages
     # System messages are internal audit logs (e.g., UI edit tracking) not meant for display
@@ -722,21 +749,21 @@ def get_chat_history(
 
 
 @app.get("/v1/document", response_model=PlanDocumentResponse)
-def get_plan_document(
+async def get_plan_document(
     request: Request,
-    db: Session = db_dependency,
+    db: AsyncSession = async_db_dependency,
 ):
     """
     Get the current plan document for a session.
     Returns the centralized source of truth for branches and tiles.
     """
     session_id = get_session_from_request(request)
-    session = get_session_by_token(db, session_id)
+    session = await get_session_by_token(db, session_id)
     if not session:
         # No session in DB yet - return 204 (no document)
         return Response(status_code=204)
 
-    doc = get_document(db, session=session)
+    doc = await get_document(db, session=session)
     if not doc:
         return Response(status_code=204)
 
@@ -751,26 +778,26 @@ def get_plan_document(
 
 
 @app.patch("/v1/document", response_model=PlanDocumentResponse)
-def patch_plan_document(
+async def patch_plan_document(
     request: Request,
     patch: PlanDocumentPatch,
-    db: Session = db_dependency,
+    db: AsyncSession = async_db_dependency,
 ):
     """
     Apply a partial update to the plan document.
     Uses CRDT-style merge: additions win, deletions require explicit flags.
     """
     session_id = get_session_from_request(request)
-    session = get_session_by_token(db, session_id)
+    session = await get_session_by_token(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    doc = get_document(db, session=session)
+    doc = await get_document(db, session=session)
     if not doc:
         raise HTTPException(status_code=404, detail="No plan document for this session")
 
     # Apply the patch using CRDT merge
-    updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+    updated_doc = await apply_user_patch(db, doc=doc, patch=patch)
 
     # Record a system message describing the user's field changes
     # so the LLM knows what the user modified via the UI
@@ -843,9 +870,9 @@ def patch_plan_document(
             system_msg = f"[User edited trip inputs via UI: {changes_text}]"
 
             # Get the latest trip context for this session
-            latest_ctx = get_latest_trip_context_for_session(db, session=session)
+            latest_ctx = await get_latest_trip_context_for_session(db, session=session)
 
-            record_chat_message(
+            await record_chat_message(
                 db,
                 session=session,
                 trip_context=latest_ctx,
@@ -854,7 +881,7 @@ def patch_plan_document(
                 metadata={"ui_edit": True},
             )
 
-    db.commit()
+    await db.commit()
 
     doc_data = get_document_data(updated_doc)
 
@@ -868,21 +895,21 @@ def patch_plan_document(
 
 
 @app.post("/v1/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
-def fetch_tiles_for_branch(
+async def fetch_tiles_for_branch(
     request: Request,
     branch_id: str,
-    db: Session = db_dependency,
+    db: AsyncSession = async_db_dependency,
 ):
     """
     Fetch tiles for a specific branch and add them to the document.
     Used when switching branches to load tiles on demand.
     """
     session_id = get_session_from_request(request)
-    session = get_session_by_token(db, session_id)
+    session = await get_session_by_token(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    doc = get_document(db, session=session)
+    doc = await get_document(db, session=session)
     if not doc:
         raise HTTPException(status_code=404, detail="No plan document for this session")
 
@@ -923,14 +950,14 @@ def fetch_tiles_for_branch(
 
     if tiles_response.tiles:
         # Add tiles to the document
-        updated_doc = add_tiles_to_branch(
+        updated_doc = await add_tiles_to_branch(
             db,
             doc=doc,
             branch_id=branch_id,
             tiles=tiles_response.tiles,
             updated_by="planner",
         )
-        db.commit()
+        await db.commit()
 
         doc_data = get_document_data(updated_doc)
 

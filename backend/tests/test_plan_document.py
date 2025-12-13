@@ -437,7 +437,7 @@ def test_apply_planner_update_handles_empty_destinations():
             children=None,
             requires_assistance=None,
             budget=None,
-            missing_fields=["destinations", "start_date", "end_date", "adults", "budget"],
+            missing_fields=["destinations", "start_date"],  # Only required fields
         )
 
         doc = apply_planner_update(
@@ -605,7 +605,7 @@ def test_merge_trip_inputs_explicit_null_clears_dates():
     assert result.start_date is None, "start_date should be cleared"
     assert result.end_date is None, "end_date should be cleared"
     assert "start_date" in result.missing_fields
-    assert "end_date" in result.missing_fields
+    # NOTE: end_date is NOT a required field, so it's not in missing_fields
 
 
 def test_merge_trip_inputs_explicit_null_clears_activity_categories():

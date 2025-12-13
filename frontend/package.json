@@ -26,6 +26,7 @@
     "react-day-picker": "^9.11.3",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.0",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
