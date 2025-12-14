@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, List, Optional
 
@@ -36,7 +37,6 @@ from app.graph_plan_utils import (
     compute_today_iso,
     ensure_thread_id,
     generate_request_id,
-    is_date_ambiguous,
     is_valid_thread_id,
     normalize_trip_inputs,
     sanitize_session_state,
@@ -80,24 +80,24 @@ logger = logging.getLogger(__name__)
 
 APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
 
-app = FastAPI(title=APP_NAME)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan hooks.
+
+    Used instead of deprecated @app.on_event handlers.
+    """
+    count = prewarm_cache()
+    print(f"[Validation] Pre-warmed cache with {count} entries")
+    yield
+
+
+app = FastAPI(title=APP_NAME, lifespan=lifespan)
 
 # Sync DB dependency for legacy endpoints and migrations
 db_dependency = Depends(get_db)
 # Async DB dependency for async endpoints
 async_db_dependency = Depends(get_async_db)
-
-
-# =============================================================================
-# Startup Event - Pre-warm validation cache
-# =============================================================================
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Pre-warm the validation cache with common destinations."""
-    count = prewarm_cache()
-    print(f"[Validation] Pre-warmed cache with {count} entries")
 
 
 # Build allowed origins list from config
@@ -378,19 +378,8 @@ async def graph_plan_endpoint(
         logger.warning(f"[{request_id}] Failed to load document for session: {e}")
         # Continue without document - not fatal
 
-    # --- Check for date ambiguity in user message - return 400 if ambiguous ---
-    if is_date_ambiguous(req.message):
-        logger.info(f"[{request_id}] Date ambiguity detected in message")
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error_code": GraphPlanErrorCode.DATE_AMBIGUOUS,
-                "message": (
-                    "Date in message is ambiguous. "
-                    "Please specify an exact date (e.g., 2025-01-15) or provide more context."
-                ),
-            },
-        )
+    # Note: We intentionally do not reject relative date phrases (e.g., "next week").
+    # The planner should handle them contextually using today_iso.
 
     # --- Call run_turn with timeout ---
     try:
@@ -522,6 +511,17 @@ async def graph_plan_endpoint(
     )
     extraction_confidence = None
     if extraction_conf_raw:
+        typo_suggestions_raw = extraction_conf_raw.get("typo_suggestions", [])
+        typo_suggestions: list[str]
+        if isinstance(typo_suggestions_raw, dict):
+            # plan_graph stores typo suggestions as {original: suggested}
+            # API schema expects list[str]
+            typo_suggestions = [f"{k} -> {v}" for k, v in typo_suggestions_raw.items()]
+        elif isinstance(typo_suggestions_raw, list):
+            typo_suggestions = [str(x) for x in typo_suggestions_raw]
+        else:
+            typo_suggestions = []
+
         # Build destination confidence info list
         dest_confidences = []
         for dest_conf in extraction_conf_raw.get("destinations", []):
@@ -554,7 +554,7 @@ async def graph_plan_endpoint(
             origin=origin_confidence,
             detected_language=extraction_conf_raw.get("detected_language"),
             is_english=extraction_conf_raw.get("is_english", True),
-            typo_suggestions=extraction_conf_raw.get("typo_suggestions", []),
+            typo_suggestions=typo_suggestions,
         )
 
     observability = GraphPlanObservability(
@@ -562,7 +562,10 @@ async def graph_plan_endpoint(
         model_used=result.get("session_state", {}).get("metadata", {}).get("model_used"),
         router_intent=result.get("session_state", {}).get("router_intent"),
         strategy_topic=result.get("session_state", {}).get("strategy_topic"),
-        monolith_used=result.get("session_state", {}).get("flags", {}).get("force_monolith", False),
+        monolith_used=bool(
+            result.get("session_state", {}).get("metadata", {}).get("monolith_used")
+            or result.get("session_state", {}).get("flags", {}).get("force_monolith", False)
+        ),
         fallback_to_legacy=False,
         today_iso=today_iso,
         ready_to_generate_prev=ready_to_generate_prev,

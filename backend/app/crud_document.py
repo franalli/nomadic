@@ -683,6 +683,67 @@ async def apply_planner_update(
     return await save_document_data(db, doc=doc, data=data, updated_by="planner")
 
 
+def apply_planner_update_sync(
+    db: Session,
+    *,
+    doc: models.PlanDocument,
+    trip_context_id: int,
+    trip_inputs: Optional[DocumentTripInputs],
+    branches: Optional[list[DocumentBranch]] = None,
+    tiles: Optional[dict[str, TileSchema]] = None,
+) -> models.PlanDocument:
+    """Apply planner-generated branches and tiles to the document (sync).
+
+    Mirrors apply_planner_update() but for sync SQLAlchemy sessions.
+    """
+    data = get_document_data(doc)
+
+    # Update trip context
+    data.trip_context_id = trip_context_id
+
+    # Merge trip inputs - most recent update wins
+    data.trip_inputs = merge_trip_inputs(
+        data.trip_inputs,
+        trip_inputs,
+        replace_destinations=True,
+    )
+
+    # Merge branches (planner branches are added/updated) - only if provided
+    if branches is not None:
+        data.branches = merge_branches(data.branches, branches)
+    elif trip_inputs is not None and data.branches:
+        # No new branches but trip_inputs changed - update the primary branch
+        primary_idx = next(
+            (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
+        )
+        if primary_idx is not None:
+            primary = data.branches[primary_idx]
+            primary.destinations = trip_inputs.destinations
+            if trip_inputs.origin is not None:
+                primary.origin = trip_inputs.origin
+            if trip_inputs.start_date is not None:
+                primary.start_date = trip_inputs.start_date
+            if trip_inputs.end_date is not None:
+                primary.end_date = trip_inputs.end_date
+            if trip_inputs.adults is not None:
+                primary.adults = trip_inputs.adults
+            if trip_inputs.children is not None:
+                primary.children = trip_inputs.children
+            if trip_inputs.requires_assistance is not None:
+                primary.requires_assistance = trip_inputs.requires_assistance
+            if trip_inputs.budget is not None:
+                primary.budget = trip_inputs.budget
+            if trip_inputs.currency is not None:
+                primary.currency = trip_inputs.currency
+            data.branches[primary_idx] = primary
+
+    # Merge tiles - only if provided
+    if tiles is not None:
+        data.tiles = merge_tiles(data.tiles, tiles)
+
+    return save_document_data_sync(db, doc=doc, data=data, updated_by="planner")
+
+
 def add_tiles_to_branch_sync(
     db: Session,
     *,

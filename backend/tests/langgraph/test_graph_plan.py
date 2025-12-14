@@ -16,14 +16,15 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
@@ -33,22 +34,35 @@ os.environ["ENABLE_GRAPH_PLAN_ROUTE"] = "true"
 
 import app.db_models as models  # noqa: E402  pylint: disable=C0413
 from app.config import settings  # noqa: E402  pylint: disable=C0413
-from app.db import Base, get_db  # noqa: E402  pylint: disable=C0413
+from app.db import Base, get_async_db, get_db  # noqa: E402  pylint: disable=C0413
 from app.main import app  # noqa: E402  pylint: disable=C0413
 from app.schemas import GraphPlanErrorCode  # noqa: E402  pylint: disable=C0413
 
 TEST_DB_PATH = BACKEND_DIR / "test_graph_plan_pytest.db"
 TEST_DATABASE_URL = f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}"
+ASYNC_TEST_DATABASE_URL = f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}"
 engine = create_engine(
     TEST_DATABASE_URL,
     future=True,
     connect_args={"check_same_thread": False, "timeout": 30},
+)
+async_engine = create_async_engine(
+    ASYNC_TEST_DATABASE_URL,
+    future=True,
+    echo=False,
 )
 TestingSessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
     bind=engine,
     future=True,
+)
+
+AsyncTestingSessionLocal = async_sessionmaker(
+    bind=async_engine,
+    class_=AsyncSession,
+    autoflush=False,
+    expire_on_commit=False,
 )
 
 
@@ -60,9 +74,26 @@ def override_get_db():
         db.close()
 
 
+async def override_get_async_db():
+    async with AsyncTestingSessionLocal() as db:
+        try:
+            yield db
+        finally:
+            await db.close()
+
+
 def seed_session(session_token: str = "test-session-123") -> dict:
     """Create a test session."""
     with TestingSessionLocal() as db:
+        existing = (
+            db.query(models.Session).filter(models.Session.session_token == session_token).first()
+        )
+        if existing is not None:
+            return {
+                "session_id": existing.id,
+                "session_token": session_token,
+            }
+
         now = datetime.now(UTC)
         expires_at = now + timedelta(days=90)
         session = models.Session(
@@ -85,8 +116,13 @@ def setup_database():
         TEST_DB_PATH.unlink()
     Base.metadata.create_all(bind=engine)
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_async_db] = override_get_async_db
     yield
     app.dependency_overrides.clear()
+    engine.dispose()
+    import asyncio
+
+    asyncio.run(async_engine.dispose())
     if TEST_DB_PATH.exists():
         TEST_DB_PATH.unlink()
 
@@ -96,9 +132,10 @@ def client():
     """Test client with session cookie."""
     session_data = seed_session()
     with TestClient(app) as client:
-        client.cookies.set("session_token", session_data["session_token"])
+        # Cookie names are set by SessionMiddleware in app.middleware.session
+        client.cookies.set("session_id", session_data["session_token"])
         # Set a dummy CSRF token
-        client.cookies.set("csrf_token", "test-csrf-token")
+        client.cookies.set("csrf", "test-csrf-token")
         yield client
 
 
@@ -187,13 +224,16 @@ class TestGraphPlanHappyPath:
         assert response.status_code == 200
         data = response.json()
 
-        # Verify response structure
-        assert "assistant_message" in data
-        assert "trip_inputs" in data
-        assert "ready_to_generate" in data
-        assert "branches" in data
+        # Verify response structure (GraphPlanResponse)
+        assert "document" in data
         assert "session_state" in data
+        assert "request_id" in data
         assert "observability" in data
+
+        assert "assistant_message" in data["document"]
+        assert "trip_inputs" in data["document"]
+        assert "ready_to_generate" in data["document"]
+        assert "branches" in data["document"]
 
         # Verify Cache-Control header
         assert response.headers.get("Cache-Control") == "no-store"
@@ -276,7 +316,7 @@ class TestGraphPlanObservability:
         data = response.json()
 
         obs = data.get("observability", {})
-        assert "request_id" in obs
+        assert "request_id" in data
         assert "tokens" in obs
 
 
@@ -293,14 +333,20 @@ class TestGraphPlanFallback:
             mock_run_turn.side_effect = Exception("Graph planner failed")
 
             with patch("app.main.plan_trip") as mock_plan_trip:
-                # Mock legacy planner response
-                mock_result = MagicMock()
-                mock_result.chat_response = "Fallback response"
-                mock_result.trip_inputs = MagicMock()
-                mock_result.trip_inputs.model_dump.return_value = {}
-                mock_result.ready_to_generate = False
-                mock_result.branches = []
-                mock_plan_trip.return_value = mock_result
+                from app.schemas import PlanDocumentData, PlanDocumentResponse
+
+                # Mock legacy planner response (PlanDocumentResponse shape)
+                mock_plan_trip.return_value = PlanDocumentResponse(
+                    version=1,
+                    updated_by="planner",
+                    document=PlanDocumentData(
+                        assistant_message="Fallback response",
+                        branches=[],
+                        ready_to_generate=False,
+                    ),
+                    updated_at=datetime.now(UTC).isoformat(),
+                    changes_made=True,
+                )
 
                 response = client.post(
                     "/v1/graph_plan",
@@ -311,7 +357,7 @@ class TestGraphPlanFallback:
                 # Should succeed using fallback
                 assert response.status_code == 200
                 data = response.json()
-                assert data.get("observability", {}).get("fallback_used") is True
+                assert data.get("observability", {}).get("fallback_to_legacy") is True
 
         settings.graph_fallback_to_legacy = original_fallback
 

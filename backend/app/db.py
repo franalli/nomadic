@@ -47,13 +47,28 @@ def get_db() -> Generator:
 # Lazy initialization to avoid breaking Alembic migrations
 # =============================================================================
 
-# Convert any PostgreSQL URL to postgresql+asyncpg:// for async driver
-# Handle: postgresql://, postgres://, postgresql+psycopg2://
-ASYNC_DATABASE_URL = re.sub(
-    r"^postgresql(\+psycopg2)?://",
-    "postgresql+asyncpg://",
-    DATABASE_URL.replace("postgres://", "postgresql://"),
-)
+
+def _to_async_database_url(url: str) -> str:
+    """Convert sync DATABASE_URL into an async-driver URL.
+
+    - PostgreSQL -> asyncpg
+    - SQLite (pysqlite or plain) -> aiosqlite
+    """
+    if url.startswith("sqlite+pysqlite://"):
+        return url.replace("sqlite+pysqlite://", "sqlite+aiosqlite://", 1)
+    if url.startswith("sqlite://"):
+        return url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+
+    # Convert any PostgreSQL URL to postgresql+asyncpg:// for async driver
+    # Handle: postgresql://, postgres://, postgresql+psycopg2://
+    return re.sub(
+        r"^postgresql(\+psycopg2)?://",
+        "postgresql+asyncpg://",
+        url.replace("postgres://", "postgresql://"),
+    )
+
+
+ASYNC_DATABASE_URL = _to_async_database_url(DATABASE_URL)
 
 # Lazy-initialized async engine and session factory
 _async_engine: Optional[AsyncEngine] = None
@@ -71,15 +86,23 @@ def _get_async_engine() -> AsyncEngine:
     """
     global _async_engine
     if _async_engine is None:
-        _async_engine = create_async_engine(
-            ASYNC_DATABASE_URL,
-            future=True,
-            echo=False,
-            pool_size=15,
-            max_overflow=25,
-            pool_recycle=3600,
-            pool_pre_ping=True,
-        )
+        engine_kwargs: dict = {
+            "future": True,
+            "echo": False,
+        }
+
+        # SQLite does not support QueuePool settings like max_overflow.
+        if not ASYNC_DATABASE_URL.startswith("sqlite+"):
+            engine_kwargs.update(
+                {
+                    "pool_size": 15,
+                    "max_overflow": 25,
+                    "pool_recycle": 3600,
+                    "pool_pre_ping": True,
+                }
+            )
+
+        _async_engine = create_async_engine(ASYNC_DATABASE_URL, **engine_kwargs)
     return _async_engine
 
 

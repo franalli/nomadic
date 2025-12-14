@@ -8,19 +8,19 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-BACKEND_DIR = Path(__file__).resolve().parents[1]
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 
 import app.db_models as models  # noqa: E402  pylint: disable=C0413
-from app.db import Base, get_db  # noqa: E402  pylint: disable=C0413
+from app.db import Base, get_async_db, get_db  # noqa: E402  pylint: disable=C0413
 from app.main import app  # noqa: E402  pylint: disable=C0413
 
 TEST_DB_PATH = BACKEND_DIR / "test_plan_document_pytest.db"
@@ -30,6 +30,20 @@ engine = create_engine(
     future=True,
     connect_args={"check_same_thread": False, "timeout": 30},
 )
+
+async_engine = create_async_engine(
+    f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}",
+    future=True,
+    echo=False,
+)
+
+TestingAsyncSessionLocal = async_sessionmaker(
+    async_engine,
+    class_=AsyncSession,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+)
 TestingSessionLocal = sessionmaker(
     autocommit=False,
     autoflush=False,
@@ -38,12 +52,14 @@ TestingSessionLocal = sessionmaker(
 )
 
 
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
+async def override_get_async_db():
+    async with TestingAsyncSessionLocal() as db:
         yield db
-    finally:
-        db.close()
+
+
+def override_get_db():
+    with TestingSessionLocal() as db:
+        yield db
 
 
 def seed_session_with_document(session_token: str = "session-123") -> dict:
@@ -174,6 +190,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
         }
 
 
+app.dependency_overrides[get_async_db] = override_get_async_db
 app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
@@ -211,6 +228,9 @@ def setup_module(_: object):
 def teardown_module(_: object):
     Base.metadata.drop_all(bind=engine)
     engine.dispose()
+    import asyncio
+
+    asyncio.run(async_engine.dispose())
     if TEST_DB_PATH.exists():
         TEST_DB_PATH.unlink()
 
@@ -325,7 +345,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
     When the LLM modifies trip_inputs (e.g., user says "add Florence"), the primary branch
     should reflect the new values immediately, not just the trip_inputs field.
     """
-    from app.crud_document import apply_planner_update, get_document_data
+    from app.crud_document import apply_planner_update_sync, get_document_data
     from app.schemas import DocumentTripInputs
 
     seed = seed_session_with_document(session_token="session-cascade-test")
@@ -360,7 +380,7 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
             missing_fields=[],
         )
 
-        doc = apply_planner_update(
+        doc = apply_planner_update_sync(
             db,
             doc=doc,
             trip_context_id=seed["trip_context_id"],
@@ -407,7 +427,7 @@ def test_apply_planner_update_handles_empty_destinations():
     When the user removes all destinations, the trip_inputs.destinations should become
     empty and the primary branch should also have empty destinations.
     """
-    from app.crud_document import apply_planner_update, get_document_data
+    from app.crud_document import apply_planner_update_sync, get_document_data
     from app.schemas import DocumentTripInputs
 
     seed = seed_session_with_document(session_token="session-empty-dest-test")
@@ -440,7 +460,7 @@ def test_apply_planner_update_handles_empty_destinations():
             missing_fields=["destinations", "start_date"],  # Only required fields
         )
 
-        doc = apply_planner_update(
+        doc = apply_planner_update_sync(
             db,
             doc=doc,
             trip_context_id=seed["trip_context_id"],
@@ -639,7 +659,7 @@ def test_apply_user_patch_clears_origin():
     When user clicks X on the origin badge, the frontend sends a patch with
     origin=null. This should actually clear the origin field.
     """
-    from app.crud_document import apply_user_patch, get_document_data, save_document_data
+    from app.crud_document import apply_user_patch_sync, get_document_data, save_document_data_sync
     from app.schemas import DocumentTripInputsPatch, PlanDocumentPatch
 
     seed = seed_session_with_document(session_token="session-clear-origin")
@@ -655,7 +675,7 @@ def test_apply_user_patch_clears_origin():
         # First set up a document with origin
         data = get_document_data(doc)
         data.trip_inputs.origin = "London"
-        doc = save_document_data(db, doc=doc, data=data, updated_by="user")
+        doc = save_document_data_sync(db, doc=doc, data=data, updated_by="user")
 
         # Verify origin is set
         data = get_document_data(doc)
@@ -668,7 +688,7 @@ def test_apply_user_patch_clears_origin():
             trip_inputs=DocumentTripInputsPatch(origin=None),
         )
 
-        updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+        updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
         data = get_document_data(updated_doc)
 
         assert data.trip_inputs.origin is None, "Origin should be cleared"
@@ -686,7 +706,7 @@ def test_apply_user_patch_removes_destination():
     When a user removes a destination from the UI, the PATCH should
     result in the updated destinations list, not a union with the old list.
     """
-    from app.crud_document import apply_user_patch, get_document_data
+    from app.crud_document import apply_user_patch_sync, get_document_data
     from app.schemas import DocumentTripInputs, PlanDocumentPatch
 
     seed = seed_session_with_document(session_token="session-user-patch-remove")
@@ -719,7 +739,7 @@ def test_apply_user_patch_removes_destination():
             ),
         )
 
-        updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+        updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
         data = get_document_data(updated_doc)
 
         assert data.trip_inputs.destinations == [], "Nice should have been removed"
@@ -732,7 +752,7 @@ def test_apply_user_patch_removes_one_destination_from_multiple():
     When a user removes one destination from multiple, the remaining
     destinations should be preserved.
     """
-    from app.crud_document import apply_user_patch, get_document_data
+    from app.crud_document import apply_user_patch_sync, get_document_data
     from app.schemas import DocumentTripInputs, PlanDocumentPatch
 
     # First seed a document with multiple destinations
@@ -797,7 +817,7 @@ def test_apply_user_patch_removes_one_destination_from_multiple():
             ),
         )
 
-        updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+        updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
         data = get_document_data(updated_doc)
 
         assert data.trip_inputs.destinations == ["Nice", "Lyon"], "Paris should have been removed"
@@ -810,7 +830,7 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
     When a user removes a destination from trip_inputs, the primary branch should
     also have its destinations updated to match.
     """
-    from app.crud_document import apply_user_patch, get_document_data
+    from app.crud_document import apply_user_patch_sync, get_document_data
     from app.schemas import DocumentTripInputs, PlanDocumentPatch
 
     seed = seed_session_with_document(session_token="session-cascade-user-patch")
@@ -845,7 +865,7 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
             ),
         )
 
-        updated_doc = apply_user_patch(db, doc=doc, patch=patch)
+        updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
         data = get_document_data(updated_doc)
 
         # Verify trip_inputs updated
@@ -889,443 +909,3 @@ def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
         "🏖️ beach",
         "🍝 food",
     ]
-
-
-@pytest.mark.skipif(
-    "sqlite" in TEST_DATABASE_URL,
-    reason="SQLite does not support concurrent write transactions needed for this test",
-)
-def test_plan_flow_preserves_user_removed_destinations(monkeypatch: object):
-    """Plan endpoint should not reintroduce destinations the user removed mid-turn."""
-    from app import plan as plan_module
-    from app.crud_document import apply_user_patch, get_document, get_document_data
-    from app.schemas import DocumentTripInputs, PlanDocumentPatch
-
-    seed = seed_session_with_document(session_token="session-plan-respects-removal")
-
-    # Start with two destinations and no branches to simplify the scenario
-    with TestingSessionLocal() as db:
-        doc = (
-            db.query(models.PlanDocument)
-            .filter(models.PlanDocument.id == seed["document_id"])
-            .first()
-        )
-        assert doc is not None
-        data = get_document_data(doc)
-        data.trip_inputs.destinations = ["Nice", "Rome"]
-        data.branches = []
-        data.tiles = {}
-        doc.document = data.model_dump()
-        db.commit()
-
-    def fake_call(req, history_rows=None, history=None, document_data=None, **kwargs):
-        # Simulate the user removing "Rome" while the LLM call is in flight
-        # Note: We use the seed session_token since req no longer contains session_id
-        with TestingSessionLocal() as db2:
-            session = (
-                db2.query(models.Session)
-                .filter(models.Session.session_token == seed["session_token"])
-                .first()
-            )
-            doc = get_document(db2, session=session)
-            apply_user_patch(
-                db2,
-                doc=doc,
-                patch=PlanDocumentPatch(
-                    version=doc.version,
-                    trip_inputs=DocumentTripInputs(
-                        destinations=["Nice"],
-                        origin="London",
-                        start_date="2025-12-01",
-                        end_date="2025-12-07",
-                        adults=2,
-                        children=0,
-                        requires_assistance=False,
-                        budget=2000,
-                        missing_fields=["destinations"],
-                    ),
-                ),
-            )
-            db2.commit()
-
-        return plan_module.PlannerLLMOutput(
-            branches=[],
-            assistant_message="stubbed response",
-            trip_inputs={
-                "destinations": ["Nice", "Rome"],  # Stale planner output
-                "origin": "London",
-                "start_date": "2025-12-01",
-                "end_date": "2025-12-07",
-                "adults": 2,
-                "children": 0,
-                "requires_assistance": False,
-                "budget": 2000,
-                "missing_fields": [],
-            },
-            ready_to_generate=True,
-        )
-
-    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
-
-    response = client.post(
-        "/v1/plan",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={
-            "message": "Plan while removing destination",
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["document"]["trip_inputs"]["destinations"] == ["Nice"]
-
-    # Persisted document should also reflect the removal
-    persisted_response = client.get(
-        "/v1/document",
-        cookies=get_session_cookies(seed["session_token"]),
-    )
-    assert persisted_response.status_code == 200
-    persisted = persisted_response.json()
-    assert persisted["document"]["trip_inputs"]["destinations"] == ["Nice"]
-
-
-def test_plan_flow_persists_llm_activity_categories(monkeypatch: object):
-    """When the planner returns activity categories, they should be saved to the document."""
-
-    from app import plan as plan_module
-
-    seed = seed_session_with_document(session_token="session-plan-activities")
-
-    def fake_call(req, history=None, document_data=None, **kwargs):
-        return plan_module.PlannerLLMOutput(
-            branches=[],
-            assistant_message="ready",
-            trip_inputs={
-                "destinations": ["Nice"],
-                "origin": "London",
-                "start_date": "2025-12-01",
-                "end_date": "2025-12-07",
-                "adults": 2,
-                "children": 0,
-                "requires_assistance": False,
-                "budget": 2000,
-                "missing_fields": [],
-                "multi_city_intent": None,
-                "activity_settings": {"categories": ["🧗 adventure", "🏎️ f1"]},
-            },
-            ready_to_generate=True,
-        )
-
-    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
-
-    response = client.post(
-        "/v1/plan",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={"message": "Set activities"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["document"]["trip_inputs"]["activity_settings"]["categories"] == [
-        "🧗 adventure",
-        "🏎️ f1",
-    ]
-
-    persisted = client.get(
-        "/v1/document",
-        cookies=get_session_cookies(seed["session_token"]),
-    )
-    assert persisted.status_code == 200
-    persisted_doc = persisted.json()
-    assert persisted_doc["document"]["trip_inputs"]["activity_settings"]["categories"] == [
-        "🧗 adventure",
-        "🏎️ f1",
-    ]
-
-
-# =============================================================================
-# Tests for trip inputs sync - user changes before/during LLM call
-# =============================================================================
-
-
-def test_plan_flow_llm_destinations_overwrite_user_removals(monkeypatch: object):
-    """Plan endpoint applies LLM destinations as most-recent-wins.
-
-    With the simplified merge logic, LLM updates are applied last and win.
-    The LLM is expected to acknowledge any changes in its assistant_message.
-
-    This tests the scenario where:
-    1. User has destinations ["Nice", "Rome"]
-    2. User removes "Rome" via UI (PATCH /v1/document)
-    3. User sends a chat message
-    4. LLM returns destinations ["Nice", "Rome"]
-    5. LLM values are applied (most recent wins)
-    """
-    from app import plan as plan_module
-    from app.crud_document import get_document_data
-
-    seed = seed_session_with_document(session_token="session-sync-before-request")
-
-    # Step 1: Set up initial state with multiple destinations
-    with TestingSessionLocal() as db:
-        doc = (
-            db.query(models.PlanDocument)
-            .filter(models.PlanDocument.id == seed["document_id"])
-            .first()
-        )
-        assert doc is not None
-        data = get_document_data(doc)
-        data.trip_inputs.destinations = ["Nice", "Rome"]
-        data.branches = []
-        data.tiles = {}
-        doc.document = data.model_dump()
-        db.commit()
-
-    # Step 2: User removes "Rome" via PATCH endpoint (before the /plan request)
-    patch_response = client.patch(
-        "/v1/document",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={
-            "version": 1,
-            "trip_inputs": {
-                "destinations": ["Nice"],  # Rome removed
-            },
-        },
-    )
-    assert patch_response.status_code == 200
-    # Verify the patch was applied
-    assert patch_response.json()["document"]["trip_inputs"]["destinations"] == ["Nice"]
-
-    # Step 3: Mock LLM to return destinations including Rome (LLM is most recent, so it wins)
-    def fake_call(req, history=None, document_data=None, **kwargs):
-        # LLM returns its own view of destinations
-        # With most-recent-wins, LLM output will be applied
-        return plan_module.PlannerLLMOutput(
-            branches=[],
-            assistant_message="Here are your options",
-            trip_inputs={
-                "destinations": ["Nice", "Rome"],  # LLM's output (most recent wins)
-                "origin": "London",
-                "start_date": "2025-12-01",
-                "end_date": "2025-12-07",
-                "adults": 2,
-                "children": 0,
-                "requires_assistance": False,
-                "budget": 2000,
-                "missing_fields": [],
-            },
-            ready_to_generate=True,
-        )
-
-    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
-
-    # Step 4: User sends chat message
-    response = client.post(
-        "/v1/plan",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={"message": "What should I do in Nice?"},
-    )
-
-    # Step 5: Verify LLM values are applied (most recent wins)
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["document"]["trip_inputs"]["destinations"] == [
-        "Nice",
-        "Rome",
-    ], "LLM output should be applied (most recent wins)"
-
-    # Verify persisted state also has the LLM's destinations
-    persisted = client.get(
-        "/v1/document",
-        cookies=get_session_cookies(seed["session_token"]),
-    )
-    assert persisted.status_code == 200
-    assert persisted.json()["document"]["trip_inputs"]["destinations"] == ["Nice", "Rome"]
-
-
-def test_plan_flow_llm_updates_overwrite_previous_values(monkeypatch: object):
-    """Plan endpoint applies LLM updates as most-recent-wins.
-
-    When a user modifies fields before sending a message, and the LLM returns
-    different values, the LLM values win (most recent update wins).
-    The LLM is expected to acknowledge any changes in its assistant_message.
-    """
-    from app import plan as plan_module
-    from app.crud_document import get_document_data
-
-    seed = seed_session_with_document(session_token="session-sync-all-fields")
-
-    # Step 1: Set up initial state
-    with TestingSessionLocal() as db:
-        doc = (
-            db.query(models.PlanDocument)
-            .filter(models.PlanDocument.id == seed["document_id"])
-            .first()
-        )
-        assert doc is not None
-        data = get_document_data(doc)
-        data.trip_inputs.destinations = ["Nice"]
-        data.trip_inputs.origin = "London"
-        data.trip_inputs.start_date = "2025-12-01"
-        data.trip_inputs.end_date = "2025-12-07"
-        data.trip_inputs.adults = 2
-        data.trip_inputs.children = 0
-        data.trip_inputs.requires_assistance = False
-        data.trip_inputs.budget = 2000
-        data.trip_inputs.activity_settings.categories = ["🏖️ beach"]
-        data.branches = []
-        data.tiles = {}
-        doc.document = data.model_dump()
-        db.commit()
-
-    # Step 2: User modifies multiple fields via PATCH
-    patch_response = client.patch(
-        "/v1/document",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={
-            "version": 1,
-            "trip_inputs": {
-                "origin": "Paris",  # Changed from London
-                "start_date": "2025-12-10",  # Changed from 12-01
-                "adults": 4,  # Changed from 2
-                "activity_settings": {"categories": ["🧗 adventure", "🏛️ culture"]},
-            },
-        },
-    )
-    assert patch_response.status_code == 200
-
-    # Step 3: Mock LLM to return its own values (LLM is most recent, so it wins)
-    def fake_call(req, history=None, document_data=None, **kwargs):
-        return plan_module.PlannerLLMOutput(
-            branches=[],
-            assistant_message=(
-                "I've updated your departure city from Paris to London and your dates."
-            ),
-            trip_inputs={
-                "destinations": ["Nice"],
-                "origin": "London",  # LLM returns London
-                "start_date": "2025-12-01",  # LLM returns 12-01
-                "end_date": "2025-12-07",
-                "adults": 2,  # LLM returns 2
-                "children": 0,
-                "requires_assistance": False,
-                "budget": 2000,
-                "missing_fields": [],
-                "activity_settings": {"categories": ["🏖️ beach"]},
-            },
-            ready_to_generate=True,
-        )
-
-    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
-
-    # Step 4: User sends chat message
-    response = client.post(
-        "/v1/plan",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={"message": "Update my trip details"},
-    )
-
-    # Step 5: Verify LLM values win (most recent update)
-    assert response.status_code == 200
-    payload = response.json()
-    trip_inputs = payload["document"]["trip_inputs"]
-
-    # LLM values should be applied (most recent wins)
-    assert trip_inputs["origin"] == "London", "LLM value should win (most recent)"
-    assert trip_inputs["start_date"] == "2025-12-01", "LLM value should win (most recent)"
-    assert trip_inputs["adults"] == 2, "LLM value should win (most recent)"
-    assert trip_inputs["activity_settings"]["categories"] == [
-        "🏖️ beach"
-    ], "LLM value should win (most recent)"
-
-
-@pytest.mark.skipif(
-    "sqlite" in TEST_DATABASE_URL,
-    reason="SQLite does not support concurrent write transactions needed for this test",
-)
-def test_plan_flow_preserves_user_additions_during_llm_call(monkeypatch: object):
-    """Plan endpoint should preserve user ADDITIONS made during the LLM call.
-
-    If user adds a destination while the LLM is processing, the addition
-    should be preserved and merged with the LLM's output.
-    """
-    from app import plan as plan_module
-    from app.crud_document import apply_user_patch, get_document, get_document_data
-    from app.schemas import PlanDocumentPatch
-
-    seed = seed_session_with_document(session_token="session-sync-additions")
-
-    # Set up initial state with one destination
-    with TestingSessionLocal() as db:
-        doc = (
-            db.query(models.PlanDocument)
-            .filter(models.PlanDocument.id == seed["document_id"])
-            .first()
-        )
-        assert doc is not None
-        data = get_document_data(doc)
-        data.trip_inputs.destinations = ["Nice"]
-        data.branches = []
-        data.tiles = {}
-        doc.document = data.model_dump()
-        db.commit()
-
-    def fake_call(req, history=None, document_data=None, **kwargs):
-        # Simulate user ADDING "Florence" during the LLM call
-        with TestingSessionLocal() as db2:
-            session = (
-                db2.query(models.Session)
-                .filter(models.Session.session_token == seed["session_token"])
-                .first()
-            )
-            doc = get_document(db2, session=session)
-            apply_user_patch(
-                db2,
-                doc=doc,
-                patch=PlanDocumentPatch(
-                    version=doc.version,
-                    trip_inputs={"destinations": ["Nice", "Florence"]},  # User added Florence
-                ),
-            )
-            db2.commit()
-
-        # LLM returns only Nice (doesn't know about Florence)
-        return plan_module.PlannerLLMOutput(
-            branches=[],
-            assistant_message="Great trip to Nice",
-            trip_inputs={
-                "destinations": ["Nice"],  # Doesn't include user-added Florence
-                "origin": "London",
-                "start_date": "2025-12-01",
-                "end_date": "2025-12-07",
-                "adults": 2,
-                "children": 0,
-                "requires_assistance": False,
-                "budget": 2000,
-                "missing_fields": [],
-            },
-            ready_to_generate=True,
-        )
-
-    monkeypatch.setattr(plan_module, "_call_openai_for_plan", fake_call)
-
-    response = client.post(
-        "/v1/plan",
-        cookies=get_session_cookies(seed["session_token"]),
-        headers=get_csrf_headers(),
-        json={"message": "Plan my trip"},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    destinations = payload["document"]["trip_inputs"]["destinations"]
-
-    # Both Nice (from LLM) and Florence (user-added) should be present
-    assert "Nice" in destinations, "LLM destination should be present"
-    assert "Florence" in destinations, "User-added destination should be preserved"

@@ -2,13 +2,16 @@
 
 import os
 import sys
+from pathlib import Path
 
 # Suppress debug output before importing plan_graph
 os.environ["PLAN_GRAPH_DEBUG"] = "0"
 
-sys.path.insert(0, "c:\\Users\\Filippo\\Desktop\\nomadic\\backend")
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
 
-from app.plan_graph import GraphState, TripInputs, extractor
+from app.plan_graph import GraphState, TripInputs, extractor  # noqa: E402
 
 
 def test_confidence_levels():

@@ -225,11 +225,14 @@ def sanitize_session_state(
             "errors": [],
         }
 
-    # Filter to allowed keys only
-    sanitized: Dict[str, Any] = {}
-    for key in ALLOWED_SESSION_STATE_KEYS:
-        if key in session_state:
-            sanitized[key] = session_state[key]
+    if not isinstance(session_state, dict):
+        session_state = {}
+
+    # Drop only known-dangerous prototype-pollution keys; keep other keys for forward-compat.
+    dangerous_keys = {"__proto__", "constructor", "prototype"}
+    sanitized: Dict[str, Any] = {
+        key: value for key, value in session_state.items() if key not in dangerous_keys
+    }
 
     # Ensure thread_id is valid (returns valid UUID or generates new one)
     sanitized["thread_id"] = ensure_thread_id(sanitized.get("thread_id"))
@@ -241,6 +244,13 @@ def sanitize_session_state(
     sanitized.setdefault("branches", [])
     sanitized.setdefault("suggested_responses", [])
     sanitized.setdefault("errors", [])
+
+    if not isinstance(sanitized.get("trip_inputs"), dict):
+        sanitized["trip_inputs"] = {}
+    if not isinstance(sanitized.get("metadata"), dict):
+        sanitized["metadata"] = {}
+    if not isinstance(sanitized.get("flags"), dict):
+        sanitized["flags"] = {}
 
     # Store explicit nulls in metadata for merge logic
     if explicit_nulls:
@@ -334,8 +344,27 @@ def normalize_destinations(destinations: Any, max_count: Optional[int] = None) -
         if lower in seen_lower:
             continue
 
+        def _title_case_place(text: str) -> str:
+            # Preserve short all-caps tokens (e.g., "EBC", "USA")
+            if text.isupper() and len(text) <= 4:
+                return text
+
+            # Title-case words, preserving hyphens/apostrophes reasonably.
+            words: List[str] = []
+            for word in text.split():
+                parts = []
+                for part in word.split("-"):
+                    if not part:
+                        parts.append(part)
+                        continue
+                    first = part[0].upper()
+                    rest = part[1:].lower() if len(part) > 1 else ""
+                    parts.append(first + rest)
+                words.append("-".join(parts))
+            return " ".join(words)
+
         seen_lower.add(lower)
-        result.append(normalized)  # Preserve original casing
+        result.append(_title_case_place(normalized))
 
         # Enforce max count
         if len(result) >= max_count:
@@ -669,6 +698,15 @@ def is_date_ambiguous(date_str: Optional[str]) -> bool:
     # ISO format is never ambiguous
     if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
         return False
+
+    # Numeric day/month ambiguity: 01/02/2025 could be DD/MM or MM/DD.
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", date_str)
+    if m:
+        a = int(m.group(1))
+        b = int(m.group(2))
+        # If both components could be months, and they differ, it's ambiguous.
+        if 1 <= a <= 12 and 1 <= b <= 12 and a != b:
+            return True
 
     # Check for ambiguous patterns
     for pattern in _AMBIGUOUS_PATTERNS:
