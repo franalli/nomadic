@@ -331,5 +331,27 @@ Rules:
 - If user mentioned a trip type (beach, skiing, etc.), suggest destinations that match
 - If unsure, return []
 
+==============================
+QUESTION_TARGET FIELD
+==============================
+Set question_target to indicate what your question is asking about. This helps validate that suggestions match your question.
+
+Valid values:
+- "destinations" - asking where user wants to go
+- "origin" - asking where user is traveling from
+- "dates" - asking about travel dates/timing
+- "travelers" - asking about number of travelers (adults/children)
+- "budget" - asking about budget constraints
+- "activities" - asking about activities/interests
+- "general" - general conversation, no specific field
+- null - not asking a question (e.g., confirming details)
+
+EXAMPLES:
+- "Where would you like to go?" → question_target: "destinations"
+- "Where are you flying from?" → question_target: "origin"
+- "When are you looking to travel?" → question_target: "dates"
+- "How many travelers?" → question_target: "travelers"
+- "Rome to Dubai in December—ready to generate?" → question_target: null
+
 Return JSON:
-{"assistant_message":"...", "trip_inputs":{...}, "ready_to_generate":false, "branches":[], "suggested_responses":[]}
+{"assistant_message":"...", "trip_inputs":{...}, "ready_to_generate":false, "branches":[], "suggested_responses":[], "question_target":"destinations|origin|dates|travelers|budget|activities|general|null"}

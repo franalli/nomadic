@@ -410,6 +410,12 @@ class GraphPlanObservability(BaseModel):
     ready_to_generate_now: bool = False
     extraction_confidence: Optional[ExtractionConfidenceInfo] = None
 
+    # Short-circuit and routing metrics
+    short_circuit_type: Optional[str] = None  # greeting, acknowledgment, confirmation_yes, etc.
+    llm_calls_made: int = 0  # Count of LLM calls in this request
+    cache_hits: int = 0  # Response cache hits
+    confidence_routing: Optional[str] = None  # high_bypass, medium_llm, low_force_llm
+
 
 class GraphPlanResponse(BaseModel):
     """Response from /v1/graph_plan endpoint."""

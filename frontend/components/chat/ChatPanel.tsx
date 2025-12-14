@@ -724,7 +724,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     sendMessageCore(suggestion);
                   }}
                   className="suggestion-enter text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"
-                  style={{ animationDelay: `${idx * 500}ms` }}
+                  style={{ animationDelay: `${idx * 100}ms` }}
                 >
                   {suggestion}
                 </button>

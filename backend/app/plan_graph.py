@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import random as _random_module
@@ -11,10 +12,11 @@ from copy import deepcopy
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from cachetools import TTLCache
 from jsonschema import Draft7Validator
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -76,17 +78,20 @@ except ImportError:
     _TIKTOKEN_AVAILABLE = False
 
 # Try to import spacy for NER-based entity extraction
+if TYPE_CHECKING:
+    from spacy.language import Language as SpacyLanguage
+else:
+    SpacyLanguage = object  # type: ignore
+
 try:
     import spacy
-    from spacy.language import Language
 
     _SPACY_AVAILABLE = True
-    _spacy_nlp: Optional[Language] = None  # Lazy-loaded
 except ImportError:
     spacy = None  # type: ignore
-    Language = None  # type: ignore
     _SPACY_AVAILABLE = False
-    _spacy_nlp = None
+
+_spacy_nlp: Optional[SpacyLanguage] = None  # Lazy-loaded
 
 
 def _env_truthy(name: str) -> bool:
@@ -141,6 +146,17 @@ def _debug_error(message: str, **kwargs: Any) -> None:
         print(f"[PLAN_GRAPH ERROR] ❌ {message} {extras}".strip())
 
 
+def _debug_suggestions(suggestions: List[str], source: str = "") -> None:
+    """Print user prompt suggestions for debug visibility."""
+    if _DEBUG_LOG:
+        src_tag = f" ({source})" if source else ""
+        if suggestions:
+            suggestions_str = " | ".join(suggestions)
+            print(f"[PLAN_GRAPH DEBUG] 💡 Prompt suggestions{src_tag}: [{suggestions_str}]")
+        else:
+            print(f"[PLAN_GRAPH DEBUG] 💡 Prompt suggestions{src_tag}: (none)")
+
+
 # Emoji mapping for each node/specialist for high-visibility debug logging
 _NODE_EMOJIS: dict[str, str] = {
     # Core nodes
@@ -153,6 +169,9 @@ _NODE_EMOJIS: dict[str, str] = {
     "branch_postprocess": "🌿",
     "tile_search": "🗺️",
     "short_circuit_responder": "⚡",
+    # Short-circuit detection & fast-path routing
+    "short_circuit": "🔌",
+    "fast_path": "🏎️",
     # Specialists
     "specialist:required_fields": "📋",
     "specialist:hotels": "🏨",
@@ -173,6 +192,9 @@ _NODE_EMOJIS: dict[str, str] = {
 
 # Cache hit emoji for debug logging
 _CACHE_EMOJI = "💾"
+
+# Token usage emoji for high-visibility token logging
+_TOKEN_EMOJI = "🪙"
 
 
 def _debug_cache_hit(cache_name: str, key: str = "", value_preview: str = "") -> None:
@@ -222,6 +244,164 @@ def _debug_node_exit(node_name: str, state: "GraphState") -> None:
             errors=len(state.errors),
             branches=len(state.branches),
         )
+
+
+# =============================================================================
+# OBSERVABILITY HELPERS
+# =============================================================================
+
+
+def _increment_llm_calls(state: "GraphState") -> None:
+    """Increment the LLM call counter in state metadata for observability."""
+    meta = state.metadata or {}
+    meta["llm_calls_made"] = meta.get("llm_calls_made", 0) + 1
+    state.metadata = meta
+
+
+def _increment_cache_hits(state: "GraphState") -> None:
+    """Increment the cache hit counter in state metadata for observability."""
+    meta = state.metadata or {}
+    meta["cache_hits"] = meta.get("cache_hits", 0) + 1
+    state.metadata = meta
+
+
+def _record_node_tokens(state: "GraphState", node_name: str, tokens: int) -> None:
+    """Record token usage for a specific node in state metadata."""
+    meta = state.metadata or {}
+    node_tokens = meta.get("node_tokens", {})
+    node_tokens[node_name] = node_tokens.get(node_name, 0) + tokens
+    meta["node_tokens"] = node_tokens
+    meta["total_tokens"] = meta.get("total_tokens", 0) + tokens
+    state.metadata = meta
+
+
+def _debug_token_summary(state: "GraphState") -> None:
+    """Print a summary of token usage across all nodes at the end of the trace."""
+    if not _DEBUG_LOG:
+        return
+    meta = state.metadata or {}
+    node_tokens = meta.get("node_tokens", {})
+    total_tokens = meta.get("total_tokens", 0)
+
+    if not node_tokens:
+        return
+
+    print("\n" + "=" * 70)
+    print(f"[PLAN_GRAPH DEBUG] {_TOKEN_EMOJI} TOKEN USAGE SUMMARY {_TOKEN_EMOJI}")
+    print("=" * 70)
+
+    # Sort by token count descending
+    sorted_nodes = sorted(node_tokens.items(), key=lambda x: x[1], reverse=True)
+    for node_name, tokens in sorted_nodes:
+        emoji = _NODE_EMOJIS.get(node_name, "🚀")
+        bar_len = min(int(tokens / 100), 40)  # Scale bar (100 tokens = 1 char, max 40)
+        bar = "█" * bar_len
+        print(f"  {emoji} {node_name:<25} {tokens:>8,} tokens  {bar}")
+
+    print("-" * 70)
+    print(f"  {_TOKEN_EMOJI} {'TOTAL':<25} {total_tokens:>8,} tokens")
+    print("=" * 70 + "\n")
+
+
+def _set_confidence_routing(state: "GraphState", routing: str) -> None:
+    """Set the confidence routing type in state metadata for observability."""
+    meta = state.metadata or {}
+    meta["confidence_routing"] = routing
+    state.metadata = meta
+
+
+# =============================================================================
+# LLM RESPONSE CACHING (TTLCache)
+# =============================================================================
+# Cache LLM responses for common patterns to reduce API calls and latency.
+# Uses in-memory TTLCache - suitable for single-instance deployments.
+
+# Cache configuration via environment variables
+_RESPONSE_CACHE_TTL = int(os.getenv("RESPONSE_CACHE_TTL_SECONDS", "3600"))  # 1 hour default
+_RESPONSE_CACHE_MAXSIZE = int(os.getenv("RESPONSE_CACHE_MAXSIZE", "200"))
+
+# Response caches by type
+_follow_up_cache: TTLCache = TTLCache(maxsize=_RESPONSE_CACHE_MAXSIZE, ttl=_RESPONSE_CACHE_TTL)
+_ready_state_cache: TTLCache = TTLCache(maxsize=100, ttl=_RESPONSE_CACHE_TTL)
+
+
+def _compute_cache_key(
+    prompt_name: str,
+    core_fields_state: str,
+    user_intent: str = "",
+    extra: str = "",
+) -> str:
+    """
+    Compute a cache key for LLM response caching.
+
+    Args:
+        prompt_name: Name of the prompt being used
+        core_fields_state: Serialized state of core trip fields (dest, origin, date)
+        user_intent: User intent archetype (quick_booking, detailed_planner, etc.)
+        extra: Any additional context to include in key
+
+    Returns:
+        MD5 hash string suitable for cache key
+    """
+    key_parts = f"{prompt_name}|{core_fields_state}|{user_intent}|{extra}"
+    return hashlib.md5(key_parts.encode()).hexdigest()
+
+
+def _get_core_fields_state(trip_inputs: "TripInputs") -> str:
+    """Get a serialized representation of core trip fields for cache key."""
+    return json.dumps(
+        {
+            "destinations": sorted(trip_inputs.destinations or []),
+            "origin": trip_inputs.origin,
+            "start_date": trip_inputs.start_date,
+            "has_end_date": trip_inputs.end_date is not None,
+        },
+        sort_keys=True,
+    )
+
+
+def _get_cached_response(cache: TTLCache, key: str) -> Optional[Dict[str, Any]]:
+    """Try to get a cached response."""
+    result = cache.get(key)
+    if result is not None:
+        _debug_cache_hit("response_cache", key[:16])
+    return result
+
+
+def _set_cached_response(cache: TTLCache, key: str, response: Dict[str, Any]) -> None:
+    """Cache an LLM response."""
+    cache[key] = response
+
+
+# =============================================================================
+# TYPO CORRECTION HELPERS
+# =============================================================================
+
+
+def _apply_typo_corrections(state: "GraphState", corrections: Dict[str, str]) -> None:
+    """
+    Apply typo corrections to trip_inputs in place.
+
+    Args:
+        state: Current graph state to modify
+        corrections: Dict mapping original text -> corrected text
+    """
+    ti = state.trip_inputs
+
+    # Apply to destinations
+    if ti.destinations:
+        ti.destinations = [corrections.get(dest, dest) for dest in ti.destinations]
+
+    # Apply to origin
+    if ti.origin and ti.origin in corrections:
+        ti.origin = corrections[ti.origin]
+
+    _debug(
+        "Applied typo corrections",
+        corrections=corrections,
+        destinations=ti.destinations,
+        origin=ti.origin,
+    )
 
 
 # =============================================================================
@@ -304,6 +484,15 @@ _REQUIRED_TRIP_INPUT_FIELDS = (
     "origin",
     "start_date",
 )
+
+# Auto-correct typo threshold: fuzzy match score at or above which typos are
+# auto-corrected without LLM confirmation. Default 100 means disabled (always confirm).
+# Set to 98 to auto-correct very obvious typos like "Londen" -> "London".
+AUTO_CORRECT_TYPO_THRESHOLD = int(os.getenv("AUTO_CORRECT_TYPO_THRESHOLD", "100"))
+
+# Confidence threshold for skipping router entirely (high-confidence extraction)
+# When confidence >= this AND all core fields present AND no typos -> skip to validate_and_merge
+CONFIDENCE_THRESHOLD_SKIP_ROUTER = float(os.getenv("CONFIDENCE_THRESHOLD_SKIP_ROUTER", "0.92"))
 
 # =============================================================================
 # USER INTENT ARCHETYPES (for conversational style adaptation)
@@ -655,6 +844,7 @@ _PENDING_ACTIONS = {
     "generate_plan": "Triggering plan generation...",
     "confirm_dates": "Dates confirmed.",
     "confirm_travelers": "Travelers confirmed.",
+    "confirm_typo": "Typo correction confirmed.",
 }
 
 # Ambiguous destinations that need clarification (US state vs country, etc.)
@@ -1133,6 +1323,15 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
                 "response": None,
                 "action": "generate_plan",
                 "parsed": None,
+            }
+        if pending == "confirm_typo":
+            # Apply the typo corrections stored in metadata
+            typo_corrections = state.metadata.get("pending_typo_corrections", {})
+            return {
+                "type": "confirm_typo",
+                "response": None,
+                "action": "apply_typo_corrections",
+                "parsed": {"typo_corrections": typo_corrections},
             }
         # Generic yes without pending action - just acknowledge and continue
         return {
@@ -2253,10 +2452,45 @@ def _is_low_quality_suggestion(text: str) -> bool:
         if lower.startswith(instruction + " ") or lower.startswith(instruction + " a "):
             return True
 
-    # Reject if too short (less than 2 words)
+    # Reject request patterns (user asking the assistant to do something)
+    request_patterns = [
+        "please ",
+        "can you ",
+        "could you ",
+        "would you ",
+        "will you ",
+        "i need you to",
+        "i want you to",
+        "i'd like you to",
+    ]
+    for pattern in request_patterns:
+        if lower.startswith(pattern):
+            return True
+
+    # Reject if too short (less than 2 words) UNLESS it looks like a place name
+    # Single-word destinations like "Nepal", "Bali", "Peru" are valid
     words = text.split()
     if len(words) < 2:
-        return True
+        # Reject single letters but allow 2-3 char uppercase abbreviations (LA, NYC, UK)
+        if len(text) == 1:
+            return True
+        # Allow all-uppercase abbreviations (LA, UK, NYC, USA) - valid place codes
+        if text.isupper() and len(text) <= 4:
+            pass  # Allow these
+        elif len(text) <= 2:
+            # Reject 2-char lowercase or mixed case (not abbreviations)
+            return True
+        # Reject pure numbers (like "2", "10", "2024")
+        if text.isdigit():
+            return True
+        # Reject common command words that might be capitalized
+        command_words = {"go", "try", "set", "get", "add", "run", "use", "see", "ask", "let"}
+        if lower in command_words:
+            return True
+        # Allow single words that start with uppercase (proper nouns = places)
+        # or are at least 4 characters (likely a place name or valid term)
+        if not (text[0].isupper() or len(text) >= 4):
+            return True
 
     # Reject if too many words (more than 8)
     if len(words) > 8:
@@ -2268,6 +2502,7 @@ def _is_low_quality_suggestion(text: str) -> bool:
         return True
 
     # Reject suggestions that are too generic/vague (no concrete nouns)
+    # Use word boundary matching to avoid false positives like "Adventure activities"
     vague_phrases = [
         "a specific",
         "the best",
@@ -2276,9 +2511,9 @@ def _is_low_quality_suggestion(text: str) -> bool:
         "more information",
         "something",
         "anything",
+        "anywhere",  # too vague without specifics
+        "somewhere",  # too vague without specifics
         "preferences",
-        "activities",  # too generic without context
-        "destination",  # too generic without a name
         "by the beach",  # vague location
         "near the",
         "around the",
@@ -2286,6 +2521,11 @@ def _is_low_quality_suggestion(text: str) -> bool:
     for vague in vague_phrases:
         if vague in lower:
             return True
+
+    # Reject if ONLY the word "activities" or "destination" (too generic alone)
+    # But allow "Adventure activities", "Beach activities", etc.
+    if lower == "activities" or lower == "destination":
+        return True
 
     return False
 
@@ -2346,108 +2586,394 @@ _UNIVERSAL_ORIGIN_CITIES = [
     "Berlin",
 ]
 
+# Intent-aware destination suggestions
+_ADVENTURE_DESTINATIONS = [
+    "Swiss Alps",
+    "Patagonia, Argentina",
+    "Nepal",
+    "New Zealand",
+    "Costa Rica",
+    "Iceland",
+    "Norway",
+    "Peru",
+]
+_BEACH_DESTINATIONS = [
+    "Bali, Indonesia",
+    "The Maldives",
+    "Cancun, Mexico",
+    "Phuket, Thailand",
+    "Hawaii",
+    "Fiji",
+    "Seychelles",
+    "Caribbean",
+]
+_CITY_DESTINATIONS = [
+    "Rome, Italy",
+    "Tokyo, Japan",
+    "Barcelona, Spain",
+    "Paris, France",
+    "New York",
+    "London",
+    "Singapore",
+    "Dubai",
+]
+_FOOD_DESTINATIONS = [
+    "Paris, France",
+    "Tokyo, Japan",
+    "Bangkok, Thailand",
+    "Barcelona, Spain",
+    "Mexico City",
+    "Bologna, Italy",
+    "Singapore",
+    "Lima, Peru",
+]
+_SKIING_DESTINATIONS = [
+    "Chamonix, France",
+    "Aspen, Colorado",
+    "Zermatt, Switzerland",
+    "Niseko, Japan",
+    "Whistler, Canada",
+    "St. Moritz",
+]
 
-def _generate_contextual_suggestions(state: "GraphState") -> List[str]:
-    """Generate high-quality contextual suggestions based on current trip state.
+# Minimum relevance score threshold - suggestions below this are suppressed
+_SUGGESTION_RELEVANCE_THRESHOLD = 0.7
+# Minimum number of suggestions to show - if fewer pass threshold, show none
+_MIN_SUGGESTIONS_TO_SHOW = 2
 
-    Returns 2-3 actionable suggestions in user voice based on what's missing.
+
+def _score_suggestion_relevance(
+    suggestion: str,
+    question_target: Optional[str],
+    user_intent: Optional[str] = None,
+) -> float:
     """
-    suggestions = []
+    Score how relevant a suggestion is to the question_target.
+
+    Returns a score from 0.0 to 1.0:
+    - 1.0: High confidence match
+    - 0.7-0.9: Good match
+    - 0.4-0.6: Weak match
+    - 0.0-0.3: Mismatch
+
+    Args:
+        suggestion: The suggestion text to score
+        question_target: What field the assistant is asking about
+        user_intent: User intent (adventurous, quick_booking, etc.)
+    """
+    if not suggestion or not question_target:
+        # If no question_target, we can't score relevance - accept suggestion
+        return 0.8
+
+    lower = suggestion.lower().strip()
+
+    # Pattern matching for each question_target type
+    if question_target == "origin":
+        # Origin suggestions should start with "From" or be a city name
+        if lower.startswith("from "):
+            return 1.0
+        # Check if it looks like a city (capitalized, no travel verbs)
+        if not any(word in lower for word in ["to ", "visit", "go to", "explore"]):
+            # Could be a city name without "From" - medium confidence
+            return 0.6
+        return 0.2  # Likely a destination, not origin
+
+    elif question_target == "destinations":
+        # Destination suggestions should NOT start with "From"
+        if lower.startswith("from "):
+            return 0.1  # This is an origin, not destination
+        # Check for place-like patterns (proper nouns, location words)
+        destination_indicators = [
+            "beach",
+            "island",
+            "mountain",
+            "city",
+            "country",
+            "alps",
+            "coast",
+            "bay",
+            "valley",
+            "lake",
+        ]
+        if any(ind in lower for ind in destination_indicators):
+            return 1.0
+        # If it contains comma (like "Paris, France"), likely a destination
+        if "," in suggestion:
+            return 0.95
+        # Check if it matches adventure destinations for intent
+        if user_intent == "adventurous":
+            adventure_keywords = ["trek", "hike", "climb", "adventure", "explore"]
+            if any(kw in lower for kw in adventure_keywords):
+                return 0.9
+        # Generic place name - accept with medium confidence
+        if not any(word in lower for word in ["from ", "next ", "in ", " weeks", " month"]):
+            return 0.8
+        return 0.3
+
+    elif question_target == "dates":
+        # Date suggestions should contain time-related words
+        date_indicators = [
+            "month",
+            "week",
+            "december",
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "today",
+            "tomorrow",
+            "next",
+            "in ",
+            "spring",
+            "summer",
+            "fall",
+            "winter",
+            "christmas",
+            "holiday",
+            "-",  # For date ranges like "Dec 15-22"
+        ]
+        if any(ind in lower for ind in date_indicators):
+            return 1.0
+        # Check for numeric patterns (dates)
+        if any(char.isdigit() for char in suggestion):
+            return 0.9
+        return 0.2  # Doesn't look like a date
+
+    elif question_target == "travelers":
+        # Traveler suggestions should mention numbers or group types
+        traveler_indicators = [
+            "solo",
+            "just me",
+            "couple",
+            "family",
+            "adult",
+            "child",
+            "kid",
+            "person",
+            "people",
+            "1 ",
+            "2 ",
+            "3 ",
+            "4 ",
+            "5 ",
+            "6 ",
+            "me and",
+            "with my",
+            "group of",
+        ]
+        if any(ind in lower for ind in traveler_indicators):
+            return 1.0
+        # Check for numeric patterns
+        if any(char.isdigit() for char in suggestion):
+            return 0.8
+        return 0.2  # Doesn't look like traveler info
+
+    elif question_target == "budget":
+        # Budget suggestions should mention money or cost levels
+        budget_indicators = [
+            "$",
+            "€",
+            "£",
+            "budget",
+            "luxury",
+            "mid-range",
+            "cheap",
+            "affordable",
+            "expensive",
+            "per day",
+            "per night",
+            "total",
+        ]
+        if any(ind in lower for ind in budget_indicators):
+            return 1.0
+        # Check for numeric patterns (budget amounts)
+        if any(char.isdigit() for char in suggestion):
+            return 0.7
+        return 0.2
+
+    elif question_target == "activities":
+        # Activity suggestions should mention activity types
+        activity_indicators = [
+            "sightseeing",
+            "hiking",
+            "diving",
+            "snorkeling",
+            "beach",
+            "museum",
+            "tour",
+            "food",
+            "wine",
+            "spa",
+            "adventure",
+            "shopping",
+            "nightlife",
+            "culture",
+            "art",
+            "history",
+            "sports",
+            "yoga",
+            "safari",
+            "cruise",
+        ]
+        if any(ind in lower for ind in activity_indicators):
+            return 1.0
+        return 0.5  # Could be an activity
+
+    elif question_target == "general":
+        # General questions - accept most suggestions
+        return 0.7
+
+    # Unknown question_target - accept with low confidence
+    return 0.5
+
+
+def _generate_contextual_suggestions(
+    state: "GraphState",
+    question_target: Optional[str] = None,
+) -> List[str]:
+    """Generate high-quality contextual suggestions based on question_target.
+
+    Args:
+        state: Current graph state
+        question_target: What field the assistant is asking about
+
+    Returns 2-3 actionable suggestions in user voice.
+    """
+    import random
+
     ti = state.trip_inputs
 
-    # Priority 1: Missing required fields
-    if not ti.origin:
-        # Suggest diverse origin cities
-        import random
+    # If we have a question_target, generate suggestions for that field
+    if question_target:
+        if question_target == "origin":
+            origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
+            return [f"From {city}" for city in origins]
 
-        origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
-        suggestions = [f"From {city}" for city in origins]
-        return suggestions[:3]
+        elif question_target == "destinations":
+            # Check user intent for context-aware suggestions
+            user_intent = state.metadata.get("user_intent_hint", "")
+            last_user_msg = ""
+            for msg in reversed(state.chat_history):
+                if msg.get("role") == "user":
+                    last_user_msg = msg.get("content", "").lower()
+                    break
 
-    if not ti.destinations:
-        # Check if user mentioned trip type in their last message for context-aware suggestions
-        last_user_msg = ""
-        for msg in reversed(state.chat_history):
-            if msg.get("role") == "user":
-                last_user_msg = msg.get("content", "").lower()
-                break
-
-        # Beach-related destinations
-        if any(
-            word in last_user_msg
-            for word in ["beach", "ocean", "sea", "tropical", "island", "relax"]
-        ):
-            suggestions = ["Bali, Indonesia", "The Maldives", "Cancun, Mexico"]
-        # Adventure/hiking
-        elif any(
-            word in last_user_msg for word in ["hike", "hiking", "mountain", "adventure", "trek"]
-        ):
-            suggestions = ["Swiss Alps", "Patagonia, Argentina", "Nepal"]
-        # City/culture
-        elif any(word in last_user_msg for word in ["city", "culture", "museum", "history", "art"]):
-            suggestions = ["Rome, Italy", "Tokyo, Japan", "Barcelona, Spain"]
-        # Food/culinary
-        elif any(
-            word in last_user_msg for word in ["food", "culinary", "wine", "gastronomy", "eat"]
-        ):
-            suggestions = ["Paris, France", "Tokyo, Japan", "Bangkok, Thailand"]
-        # Skiing/winter
-        elif any(word in last_user_msg for word in ["ski", "snow", "winter", "slopes"]):
-            suggestions = ["Chamonix, France", "Aspen, Colorado", "Zermatt, Switzerland"]
-        else:
+            # Adventure/hiking
+            if user_intent == "adventurous" or any(
+                word in last_user_msg
+                for word in ["hike", "hiking", "mountain", "adventure", "trek"]
+            ):
+                return random.sample(_ADVENTURE_DESTINATIONS, min(3, len(_ADVENTURE_DESTINATIONS)))
+            # Beach-related
+            elif any(
+                word in last_user_msg
+                for word in ["beach", "ocean", "sea", "tropical", "island", "relax"]
+            ):
+                return random.sample(_BEACH_DESTINATIONS, min(3, len(_BEACH_DESTINATIONS)))
+            # City/culture
+            elif any(
+                word in last_user_msg for word in ["city", "culture", "museum", "history", "art"]
+            ):
+                return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
+            # Food/culinary
+            elif any(
+                word in last_user_msg for word in ["food", "culinary", "wine", "gastronomy", "eat"]
+            ):
+                return random.sample(_FOOD_DESTINATIONS, min(3, len(_FOOD_DESTINATIONS)))
+            # Skiing/winter
+            elif any(word in last_user_msg for word in ["ski", "snow", "winter", "slopes"]):
+                return random.sample(_SKIING_DESTINATIONS, min(3, len(_SKIING_DESTINATIONS)))
             # Generic popular destinations
-            suggestions = ["Paris, France", "Bali, Indonesia", "Tokyo, Japan"]
-        return suggestions[:3]
+            else:
+                return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
 
-    if not ti.start_date:
-        # Suggest relative dates
-        suggestions = ["Next month", "In 2 weeks", "This December"]
-        return suggestions[:3]
+        elif question_target == "dates":
+            return ["Next month", "In 2 weeks", "This December"]
 
-    # Priority 2: Missing travelers info
-    if ti.adults is None:
-        suggestions = ["Just me", "2 adults", "Family of 4"]
-        return suggestions[:3]
+        elif question_target == "travelers":
+            return ["Just me", "2 adults", "Family of 4"]
 
-    # Priority 3: Booking preferences
-    booking = ti.booking_types or {}
-    if not booking.get("flights") and not booking.get("ground_transport"):
-        suggestions = ["I'll need flights", "I'll rent a car", "Train travel works"]
-        return suggestions[:3]
+        elif question_target == "budget":
+            return ["Around $2000", "Mid-range budget", "Luxury trip"]
 
-    if booking.get("flights") and not ti.flight_settings.get("cabin_class"):
-        suggestions = ["Economy is fine", "Business class", "Direct flights only"]
-        return suggestions[:3]
+        elif question_target == "activities":
+            return ["Sightseeing and culture", "Beach and relaxation", "Adventure activities"]
 
-    if not booking.get("hotels"):
-        suggestions = ["Need hotel recommendations", "Already have accommodation", "4-star hotels"]
-        return suggestions[:3]
+        elif question_target == "general":
+            # Generic helpful suggestions based on what's missing
+            if not ti.destinations:
+                return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
+            elif not ti.origin:
+                origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
+                return [f"From {city}" for city in origins]
+            elif not ti.start_date:
+                return ["Next month", "In 2 weeks", "This December"]
+            else:
+                return ["Looks good, generate my plan", "Add more details", "Change dates"]
 
-    # Priority 4: Activities and interests
-    activities = ti.activity_settings.get("categories", []) or []
-    if not activities:
-        suggestions = ["Add sightseeing", "Beach activities", "Local food experiences"]
-        return suggestions[:3]
-
-    # Priority 5: Ready to generate
-    suggestions = ["Looks good, generate my plan", "Add more activities", "Adjust the budget"]
-    return suggestions[:3]
+    # Fallback: No question_target - use legacy priority-based logic
+    # but return empty to avoid mismatched suggestions
+    return []
 
 
-def _get_suggestions_with_fallback(raw_suggestions: List[Any], state: "GraphState") -> List[str]:
-    """Filter LLM suggestions, falling back to contextual generation if empty."""
+def _get_suggestions_with_fallback(
+    raw_suggestions: List[Any],
+    state: "GraphState",
+    question_target: Optional[str] = None,
+) -> List[str]:
+    """Filter LLM suggestions by relevance to question_target.
+
+    Args:
+        raw_suggestions: Raw suggestions from LLM
+        state: Current graph state
+        question_target: What field the assistant is asking about
+
+    Returns:
+        List of relevant suggestions (may be empty if none are relevant)
+    """
     filtered = _filter_suggested_responses(raw_suggestions)
 
-    # If we got good suggestions from the LLM, use them
-    if len(filtered) >= 2:
-        return filtered
+    if not filtered:
+        # No LLM suggestions - try contextual generation
+        if question_target:
+            contextual = _generate_contextual_suggestions(state, question_target)
+            return contextual[:3]
+        # No question_target - return empty rather than bad suggestions
+        return []
 
-    # Otherwise, generate contextual fallbacks
-    contextual = _generate_contextual_suggestions(state)
+    # Score each suggestion for relevance
+    user_intent = state.metadata.get("user_intent_hint")
+    scored_suggestions = []
+    for suggestion in filtered:
+        score = _score_suggestion_relevance(suggestion, question_target, user_intent)
+        scored_suggestions.append((suggestion, score))
+        if _DEBUG_LOG:
+            _debug(f"Suggestion score: '{suggestion}' -> {score:.2f} (target={question_target})")
 
-    # Combine: LLM suggestions first, then contextual to fill up to 3
-    combined = filtered + [s for s in contextual if s not in filtered]
-    return combined[:3]
+    # Filter by threshold
+    passing = [s for s, score in scored_suggestions if score >= _SUGGESTION_RELEVANCE_THRESHOLD]
+
+    # If not enough pass, suppress entirely (better no suggestions than bad ones)
+    if len(passing) < _MIN_SUGGESTIONS_TO_SHOW:
+        _debug(
+            f"Suppressing suggestions: only {len(passing)} passed threshold "
+            f"(need {_MIN_SUGGESTIONS_TO_SHOW})"
+        )
+        # Try contextual fallback
+        if question_target:
+            contextual = _generate_contextual_suggestions(state, question_target)
+            if len(contextual) >= _MIN_SUGGESTIONS_TO_SHOW:
+                return contextual[:3]
+        return []
+
+    return passing[:3]
 
 
 # =============================================================================
@@ -2730,11 +3256,14 @@ def _should_run_spacy_ner(text: str, parsed: Dict[str, Any]) -> bool:
     return False
 
 
-def _get_spacy_nlp() -> Optional["Language"]:
+def _get_spacy_nlp() -> Optional[SpacyLanguage]:
     """Lazy-load spaCy model with EntityRuler for custom patterns."""
     global _spacy_nlp
 
     if not _spacy_enabled():
+        return None
+
+    if spacy is None:
         return None
 
     if _spacy_nlp is not None:
@@ -2753,6 +3282,8 @@ def _get_spacy_nlp() -> Optional["Language"]:
             except OSError:
                 _debug("spaCy model not available, NER extraction disabled")
                 return None
+
+            assert _spacy_nlp is not None
 
         # Add EntityRuler BEFORE spaCy's NER for custom travel patterns
         # This ensures our regex-based patterns take priority
@@ -3223,6 +3754,12 @@ class TripInputs(BaseModel):
     strategy_settings: Dict[str, Any] = Field(default_factory=dict)
 
 
+# Valid values for question_target field
+QUESTION_TARGET_VALUES = frozenset(
+    {"destinations", "origin", "dates", "travelers", "budget", "activities", "general", None}
+)
+
+
 class GraphState(BaseModel):
     user_text: str
     trip_inputs: TripInputs = Field(default_factory=TripInputs)
@@ -3241,6 +3778,10 @@ class GraphState(BaseModel):
     flags: Dict[str, Any] = Field(default_factory=dict)
     # Chat history for LLM context (list of {role, content} dicts) - matches plan.py
     chat_history: List[Dict[str, str]] = Field(default_factory=list)
+    # What field the assistant's question is asking about (for suggestion relevance)
+    question_target: Optional[str] = (
+        None  # destinations|origin|dates|travelers|budget|activities|general
+    )
 
 
 TRIP_JSON_SCHEMA = {
@@ -3591,6 +4132,37 @@ def extractor(state: GraphState) -> GraphState:
     """
     Extract structured data from user text using regex patterns.
     Enhanced to match plan.py extraction rules.
+
+    HANDLES DIRECTLY (regex + spaCy, no LLM needed):
+    - Destinations/origin via grammar patterns (from/to, going to, flying to, etc.)
+    - Budget with currency symbols ($1000, €500, 1000 USD)
+    - Traveler counts (solo, couple, family of N, N adults M kids)
+    - Relative dates (today, tomorrow, next week, weekend)
+    - Duration in days ("for 5 days")
+    - Multi-city intent keywords (one trip, separate trips)
+    - Category activation (flights, hotels, transport, activities keywords)
+    - Flight settings (direct, one-way, round-trip, cabin class)
+    - Hotel settings (star rating, amenities like pool, gym, spa)
+    - Transport settings (car, train, bus)
+    - Strategy hints (boating, hiking, diving, skiing, cycling)
+    - User intent archetype & tone detection
+    - Destination -> activity inference (Patagonia -> hiking)
+
+    REQUIRES LLM FALLBACK (routed to required_fields or specialists):
+    - Ambiguous/unknown places needing validation or disambiguation
+    - Complex date expressions ("last week of March", "around Christmas")
+    - Non-English input parsing and confirmation
+    - Typo corrections requiring user confirmation
+    - Contextual intent when keywords are missing
+    - Detailed specialist preferences (specific dive sites, scenic routes)
+    - Conversational responses and follow-up question generation
+
+    SHORT-CIRCUITS (bypasses LLM entirely via short_circuit_responder):
+    - Greetings: "hi", "hello", "hey" -> random greeting + destination question
+    - Acknowledgments: "ok", "thanks", "got it" -> continue flow
+    - Confirmations: "yes"/"no" with pending_action -> execute or clear action
+    - Off-topic: weather, math, general knowledge -> redirect to travel
+    - Bare inputs: destination/date/travelers as answer to last question
     """
     _debug_node_entry("extractor", state)
 
@@ -3630,8 +4202,17 @@ def extractor(state: GraphState) -> GraphState:
             state.flags["generate_requested"] = True
             state.flags["generate_plan"] = True
             _debug("Short-circuit triggered generate_plan")
+        elif short_circuit.get("action") == "apply_typo_corrections":
+            # Apply the stored typo corrections to trip_inputs
+            typo_corrections = (sc_parsed or {}).get("typo_corrections", {})
+            if typo_corrections:
+                _apply_typo_corrections(state, typo_corrections)
+            state.metadata.pop("pending_action", None)
+            state.metadata.pop("pending_typo_corrections", None)
+            _debug("Short-circuit applied typo corrections", corrections=typo_corrections)
         elif short_circuit.get("action") == "clear_pending":
             state.metadata.pop("pending_action", None)
+            state.metadata.pop("pending_typo_corrections", None)
             _debug("Short-circuit cleared pending_action")
 
         state.parsed_inputs = parsed
@@ -4358,8 +4939,8 @@ async def router(state: GraphState) -> GraphState:
             .replace("{user_intent_hint}", user_intent_hint or "none")
         )
 
-        if _DEBUG_LOG:
-            _debug("Router prompt tokens", tokens=_estimate_prompt_tokens(tpl, state.parsed_inputs))
+        tokens = _estimate_prompt_tokens(tpl, state.parsed_inputs)
+        _record_node_tokens(state, "router", tokens)
 
         out = await call_llm_with_timeout(
             model=llm_config["model_hint"],
@@ -4368,6 +4949,7 @@ async def router(state: GraphState) -> GraphState:
             max_tokens=llm_config["max_tokens"],
             temperature=llm_config["temperature"],
         )
+        _increment_llm_calls(state)
         j = jloads_safe(out)
         state.intent = j.get("intent") or "required_fields"
         topic = j.get("topic") or state.parsed_inputs.get("strategy_hint")
@@ -4421,6 +5003,47 @@ async def router(state: GraphState) -> GraphState:
 # -----------------------
 # Specialists (shared handler)
 # -----------------------
+
+
+def _select_required_fields_prompt(state: GraphState) -> str:
+    """
+    Select the appropriate split prompt for required_fields based on state.
+
+    Returns the combined prompt (shared_style + phase-specific prompt).
+    Uses split prompts for ~50% token reduction when available.
+    """
+    # Check for typos or ambiguous entities needing confirmation
+    extraction_conf = state.metadata.get("extraction_confidence", {})
+    typo_suggestions = extraction_conf.get("typo_suggestions", [])
+
+    if typo_suggestions:
+        # Use confirmation prompt for typo/ambiguity resolution
+        preamble = load_prompt("shared_style")
+        phase_prompt = load_prompt("required_fields_confirm")
+        return preamble + "\n" + phase_prompt
+
+    # Check if all core fields are present (ready state)
+    ti = state.trip_inputs
+    if ti.destinations and ti.origin and ti.start_date:
+        # Use ready state prompt
+        preamble = load_prompt("shared_style")
+        phase_prompt = load_prompt("required_fields_ready")
+        # Fill in trip details for ready state
+        dests = ", ".join(ti.destinations) if ti.destinations else ""
+        phase_prompt = (
+            phase_prompt.replace("{destinations}", dests)
+            .replace("{origin}", ti.origin or "")
+            .replace("{start_date}", ti.start_date or "")
+            .replace("{end_date}", ti.end_date or "not specified")
+        )
+        return preamble + "\n" + phase_prompt
+
+    # Default: use extraction prompt
+    preamble = load_prompt("shared_style")
+    phase_prompt = load_prompt("required_fields_extract")
+    return preamble + "\n" + phase_prompt
+
+
 async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = True) -> GraphState:
     """
     Shared handler for specialist nodes with JSON retry logic.
@@ -4443,7 +5066,12 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     confidence_level = extraction_conf.get("level", "unknown")
     typo_suggestions = extraction_conf.get("typo_suggestions", [])
 
-    prompt = load_prompt(name)
+    # Use split prompts for required_fields to reduce token usage
+    if name == "required_fields":
+        prompt = _select_required_fields_prompt(state)
+    else:
+        prompt = load_prompt(name)
+
     system_prompt = (
         prompt.replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
         .replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
@@ -4459,11 +5087,8 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     attempts = settings.llm_max_retries if retry_on_json_error else 1
     last_error = None
 
-    if _DEBUG_LOG:
-        _debug(
-            f"Specialist {name} prompt tokens",
-            tokens=_estimate_prompt_tokens(system_prompt, state.parsed_inputs),
-        )
+    tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
+    _record_node_tokens(state, f"specialist:{name}", tokens)
 
     for attempt in range(attempts):
         try:
@@ -4478,6 +5103,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 user_message=state.user_text,
                 top_p=llm_config["top_p"],
             )
+            _increment_llm_calls(state)
             j = jloads_safe(out)
 
             # Debug: log raw LLM response
@@ -4552,9 +5178,26 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             state.trip_inputs = ti
             state.last_summary = j.get("assistant_message", "")
 
+            # Parse question_target from LLM response for suggestion relevance
+            raw_question_target = j.get("question_target")
+            if raw_question_target and isinstance(raw_question_target, str):
+                normalized_target = raw_question_target.lower().strip()
+                if normalized_target in QUESTION_TARGET_VALUES:
+                    state.question_target = normalized_target
+                elif normalized_target == "null" or normalized_target == "none":
+                    state.question_target = None
+                else:
+                    _debug(f"Unknown question_target from LLM: {raw_question_target}")
+                    state.question_target = None
+            else:
+                state.question_target = None
+
             # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _get_suggestions_with_fallback(raw_suggestions, state)
+            state.suggested_responses = _get_suggestions_with_fallback(
+                raw_suggestions, state, state.question_target
+            )
+            _debug_suggestions(state.suggested_responses, source=f"specialist:{name}")
 
             # Only set ready_to_generate if explicitly triggered
             state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
@@ -4676,6 +5319,7 @@ async def strategy_node(state: GraphState) -> GraphState:
             "Prefer skippered",
             "Max 4 hours daily",
         ]
+        _debug_suggestions(state.suggested_responses, source="strategy_node:fallback")
         _debug_node_exit("strategy_node", state)
         return state
 
@@ -4694,11 +5338,8 @@ async def strategy_node(state: GraphState) -> GraphState:
         .replace("{topic}", topic)
     )
 
-    if _DEBUG_LOG:
-        _debug(
-            f"Strategy {topic} prompt tokens",
-            tokens=_estimate_prompt_tokens(system_prompt, state.parsed_inputs),
-        )
+    tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
+    _record_node_tokens(state, f"strategy:{topic}", tokens)
 
     for attempt in range(attempts):
         try:
@@ -4713,6 +5354,7 @@ async def strategy_node(state: GraphState) -> GraphState:
                 user_message=state.user_text,
                 top_p=llm_config["top_p"],
             )
+            _increment_llm_calls(state)
             j = jloads_safe(out)
 
             ti = state.trip_inputs.model_copy(deep=True)
@@ -4762,9 +5404,25 @@ async def strategy_node(state: GraphState) -> GraphState:
             state.trip_inputs = ti
             state.last_summary = j.get("assistant_message", "")
 
-            # Filter suggested responses with contextual fallback
+            # Parse question_target from LLM response for suggestion relevance
+            raw_question_target = j.get("question_target")
+            if raw_question_target and isinstance(raw_question_target, str):
+                normalized_target = raw_question_target.lower().strip()
+                if normalized_target in QUESTION_TARGET_VALUES:
+                    state.question_target = normalized_target
+                elif normalized_target == "null" or normalized_target == "none":
+                    state.question_target = None
+                else:
+                    state.question_target = None
+            else:
+                state.question_target = None
+
+            # Filter suggested responses with relevance scoring
             raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _get_suggestions_with_fallback(raw_suggestions, state)
+            state.suggested_responses = _get_suggestions_with_fallback(
+                raw_suggestions, state, state.question_target
+            )
+            _debug_suggestions(state.suggested_responses, source="strategy_node")
 
             # Only set ready_to_generate if explicitly triggered
             state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
@@ -4864,11 +5522,8 @@ async def monolith_node(state: GraphState) -> GraphState:
     attempts = settings.llm_max_retries
     last_error = None
 
-    if _DEBUG_LOG:
-        _debug(
-            "Monolith prompt tokens",
-            tokens=_estimate_prompt_tokens(system_prompt, state.parsed_inputs),
-        )
+    tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
+    _record_node_tokens(state, "monolith_node", tokens)
 
     for attempt in range(attempts):
         try:
@@ -4883,6 +5538,7 @@ async def monolith_node(state: GraphState) -> GraphState:
                 user_message=state.user_text,
                 top_p=llm_config["top_p"],
             )
+            _increment_llm_calls(state)
             j = jloads_safe(out)
 
             ti = state.trip_inputs.model_copy(deep=True)
@@ -4930,10 +5586,25 @@ async def monolith_node(state: GraphState) -> GraphState:
             state.trip_inputs = ti
             state.last_summary = j.get("assistant_message", "")
 
-            # Filter suggested responses
-            # Filter suggested responses with contextual fallback
+            # Parse question_target from LLM response for suggestion relevance
+            raw_question_target = j.get("question_target")
+            if raw_question_target and isinstance(raw_question_target, str):
+                normalized_target = raw_question_target.lower().strip()
+                if normalized_target in QUESTION_TARGET_VALUES:
+                    state.question_target = normalized_target
+                elif normalized_target == "null" or normalized_target == "none":
+                    state.question_target = None
+                else:
+                    state.question_target = None
+            else:
+                state.question_target = None
+
+            # Filter suggested responses with relevance scoring
             raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _get_suggestions_with_fallback(raw_suggestions, state)
+            state.suggested_responses = _get_suggestions_with_fallback(
+                raw_suggestions, state, state.question_target
+            )
+            _debug_suggestions(state.suggested_responses, source="monolith_node")
 
             # Only set ready_to_generate if explicitly triggered
             state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
@@ -5126,6 +5797,10 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     if s.flags.get("short_circuit"):
         return True, "short_circuit"
 
+    # Cached responses are already polished from previous use
+    if s.flags.get("skip_polish"):
+        return True, "cache_hit"
+
     # No message to polish
     if not s.last_summary:
         return True, "no_message"
@@ -5204,6 +5879,7 @@ async def response_polish(state: GraphState) -> GraphState:
             max_tokens=llm_config["max_tokens"],
             temperature=llm_config["temperature"],
         )
+        _increment_llm_calls(state)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         state.metadata["polish_duration_ms"] = round(elapsed_ms, 2)
@@ -5672,6 +6348,9 @@ def short_circuit_responder(state: GraphState) -> GraphState:
                             options_str = " or ".join(ambiguous_options[:3])
                             state.last_summary = f"Did you mean {options_str}?"
                             state.suggested_responses = ambiguous_options[:3]
+                            _debug_suggestions(
+                                state.suggested_responses, source="ambiguous_destination"
+                            )
                             state.metadata["last_question_field"] = "destinations"
                             # Don't apply the parsed destination - wait for clarification
                             state.parsed_inputs.pop("destinations_delta", None)
@@ -5723,11 +6402,15 @@ def short_circuit_responder(state: GraphState) -> GraphState:
             )
             state.metadata["pending_action"] = "generate_plan"
             state.metadata["last_question_field"] = None  # Clear - we're asking for confirmation
+            state.question_target = None
 
     # Generate contextual suggestions (unless already set for ambiguous destinations)
+    # Use last_question_field from short-circuit logic as question_target
     if not state.suggested_responses:
-        state.suggested_responses = _generate_contextual_suggestions(state)
-    _debug("Generated suggestions", count=len(state.suggested_responses))
+        question_target = state.metadata.get("last_question_field")
+        state.question_target = question_target
+        state.suggested_responses = _generate_contextual_suggestions(state, question_target)
+    _debug_suggestions(state.suggested_responses, source="short_circuit_responder")
 
     # Set intent for logging purposes
     state.intent = f"short_circuit:{sc_type}"
@@ -5740,11 +6423,88 @@ def short_circuit_responder(state: GraphState) -> GraphState:
 # Conditional routing after normalize_inputs
 # -----------------------
 def route_after_normalize(state: GraphState) -> str:
-    """Route to short_circuit_responder if short-circuit detected, otherwise to router."""
+    """
+    Route after normalize_inputs completes.
+
+    Routing priority:
+    1. Short-circuit detected → short_circuit_responder (no LLM)
+    2. High confidence extraction + core fields present + no new content → skip router
+       and go directly to required_fields_node for confirmation (saves router LLM call)
+    3. Default → router (LLM determines intent)
+
+    Note: The bypass is conservative - it only triggers when the user input appears
+    to be a simple confirmation/acknowledgment with no new intent-bearing content.
+    """
+    # 1. Short-circuit takes priority
     if state.flags.get("short_circuit"):
         sc_type = state.flags.get("short_circuit")
         _debug("Routing to short_circuit_responder", type=sc_type)
+        _set_confidence_routing(state, f"short_circuit:{sc_type}")
         return "short_circuit_responder"
+
+    # 2. High-confidence router bypass (CONSERVATIVE)
+    # Only bypass when:
+    # - Very high extraction confidence
+    # - Core fields already complete
+    # - No typos detected
+    # - User input is short (likely just confirmation, not new request)
+    # - No strategy/activity keywords that would require routing
+    extraction_conf = state.metadata.get("extraction_confidence", {})
+    conf_level = extraction_conf.get("level", "medium")
+    conf_overall = extraction_conf.get("overall", 0.5)
+
+    ti = state.trip_inputs
+    core_fields_complete = ti.destinations and ti.origin and ti.start_date
+    no_typos = not extraction_conf.get("typo_suggestions", {})
+
+    # Only bypass for very short inputs (confirmations) that don't contain new intent
+    user_text = state.user_text or ""
+    is_short_input = len(user_text.strip()) <= 30
+
+    # Check for strategy/intent keywords that would require routing
+    intent_keywords = (
+        "cycling",
+        "hiking",
+        "diving",
+        "skiing",
+        "boating",
+        "flight",
+        "hotel",
+        "transport",
+        "activity",
+        "activities",
+        "how",
+        "what",
+        "when",
+        "where",
+        "should",
+        "recommend",
+    )
+    has_intent_keywords = any(kw in user_text.lower() for kw in intent_keywords)
+
+    if (
+        conf_overall >= CONFIDENCE_THRESHOLD_SKIP_ROUTER
+        and core_fields_complete
+        and no_typos
+        and conf_level == "high"
+        and is_short_input
+        and not has_intent_keywords
+    ):
+        _debug(
+            "High-confidence router bypass",
+            confidence=f"{conf_overall:.2f}",
+            destinations=ti.destinations,
+            origin=ti.origin,
+            start_date=ti.start_date,
+            user_text_len=len(user_text.strip()),
+        )
+        _set_confidence_routing(state, "high_confidence_bypass")
+        # Set intent directly to skip router LLM call
+        state.intent = "required_fields"
+        return "required_fields_node"
+
+    # 3. Default: use router to determine intent
+    _set_confidence_routing(state, f"router:{conf_level}")
     return "router"
 
 
@@ -5897,13 +6657,14 @@ _graph.add_conditional_edges(
     },
 )
 
-# Conditional edge: normalize_inputs → router OR short_circuit_responder
+# Conditional edge: normalize_inputs → router OR short_circuit_responder OR required_fields_node
 _graph.add_conditional_edges(
     "normalize_inputs",
     route_after_normalize,
     {
         "router": "router",
         "short_circuit_responder": "short_circuit_responder",
+        "required_fields_node": "required_fields_node",
     },
 )
 
@@ -5981,6 +6742,9 @@ def route_after_router(state: GraphState) -> str:
         state.metadata["force_required_fields_reason"] = "typo_detected"
         state.metadata["typo_suggestions"] = typo_suggestions
         state.metadata["deferred_intent"] = state.intent
+        # Set up pending action for short-circuit typo confirmation on next turn
+        state.metadata["pending_action"] = "confirm_typo"
+        state.metadata["pending_typo_corrections"] = typo_suggestions
         _debug(
             "Forcing required_fields due to potential typos",
             typo_suggestions=typo_suggestions,
@@ -6236,6 +7000,16 @@ async def run_turn(
         # Do not let metrics break the turn
         pass
 
+    # Extract observability metrics from result state
+    result_meta = result.metadata or {}
+    result_flags = result.flags or {}
+
+    # Print token usage summary at end of trace
+    _debug_token_summary(result)
+
+    # Log final suggestions being returned
+    _debug_suggestions(result.suggested_responses, source="FINAL RESPONSE")
+
     # Assemble response
     resp = {
         "assistant_message": result.last_summary or "",
@@ -6246,16 +7020,20 @@ async def run_turn(
         "errors": result.errors,
         "session_state": {
             "trip_inputs": result.trip_inputs.model_dump(),
-            "metadata": result.metadata,
-            "flags": result.flags,
+            "metadata": result_meta,
+            "flags": result_flags,
             "last_summary": result.last_summary,
             "branches": result.branches,
             "suggested_responses": result.suggested_responses,
             "errors": result.errors,
             "thread_id": thread_id,
-            # Optional: expose for debugging/analytics if your nodes set them
+            # Observability metrics for analytics
             "router_intent": getattr(result, "intent", None),
             "strategy_topic": getattr(result, "strategy_topic", None),
+            "short_circuit_type": result_flags.get("short_circuit"),
+            "llm_calls_made": result_meta.get("llm_calls_made", 0),
+            "cache_hits": result_meta.get("cache_hits", 0),
+            "confidence_routing": result_meta.get("confidence_routing"),
         },
     }
     return resp

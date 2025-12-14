@@ -22,3 +22,4 @@ orjson>=3.9.0
 spacy>=3.7.0
 langdetect>=1.0.9
 rapidfuzz>=3.0.0
+pytest-benchmark>=4.0.0

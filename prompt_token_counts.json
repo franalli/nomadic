@@ -1,0 +1,81 @@
+{
+  "tokenizer_model": "gpt-4o-mini",
+  "rows": [
+    {
+      "file": "backend/app/prompts/monolith.txt",
+      "tokens": 3426,
+      "bytes": 14998
+    },
+    {
+      "file": "backend/app/prompts/required_fields.txt",
+      "tokens": 3426,
+      "bytes": 14656
+    },
+    {
+      "file": "backend/app/prompts/activities.txt",
+      "tokens": 1590,
+      "bytes": 7056
+    },
+    {
+      "file": "backend/app/prompts/hotels.txt",
+      "tokens": 961,
+      "bytes": 4080
+    },
+    {
+      "file": "backend/app/prompts/correction.txt",
+      "tokens": 958,
+      "bytes": 4511
+    },
+    {
+      "file": "backend/app/prompts/flights.txt",
+      "tokens": 873,
+      "bytes": 4008
+    },
+    {
+      "file": "backend/app/prompts/transport.txt",
+      "tokens": 862,
+      "bytes": 3967
+    },
+    {
+      "file": "backend/app/prompts/router.txt",
+      "tokens": 776,
+      "bytes": 3239
+    },
+    {
+      "file": "backend/app/prompts/strategy_boating.txt",
+      "tokens": 654,
+      "bytes": 2793
+    },
+    {
+      "file": "backend/app/prompts/strategy_hiking.txt",
+      "tokens": 601,
+      "bytes": 2600
+    },
+    {
+      "file": "backend/app/prompts/strategy_diving.txt",
+      "tokens": 579,
+      "bytes": 2492
+    },
+    {
+      "file": "backend/app/prompts/strategy_skiing.txt",
+      "tokens": 557,
+      "bytes": 2399
+    },
+    {
+      "file": "backend/app/prompts/strategy_cycling.txt",
+      "tokens": 546,
+      "bytes": 2347
+    },
+    {
+      "file": "backend/app/prompts/response_polish.txt",
+      "tokens": 470,
+      "bytes": 2070
+    },
+    {
+      "file": "backend/app/prompts/condense.txt",
+      "tokens": 230,
+      "bytes": 1028
+    }
+  ],
+  "total_tokens": 16509
+}
