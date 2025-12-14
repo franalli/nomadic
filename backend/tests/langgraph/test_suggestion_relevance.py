@@ -124,7 +124,8 @@ class TestScoreSuggestionRelevance:
         assert _score_suggestion_relevance("Next month", "dates") == 1.0
         assert _score_suggestion_relevance("December 15-22", "dates") >= 0.9
         assert _score_suggestion_relevance("In 2 weeks", "dates") == 1.0
-        assert _score_suggestion_relevance("This December", "dates") == 1.0
+        assert _score_suggestion_relevance("January 15, 2025", "dates") >= 0.9
+        assert _score_suggestion_relevance("February 28, 2025", "dates") >= 0.9
 
     def test_non_date_suggestions_for_dates(self):
         """Non-date suggestions should score low for date questions."""
@@ -322,15 +323,31 @@ class TestGenerateContextualSuggestions:
         assert has_adventure, f"Expected adventure destinations, got: {result}"
 
     def test_generates_date_suggestions(self):
-        """Should generate date suggestions."""
+        """Should generate specific bookable date suggestions."""
         state = create_test_state()
         result = _generate_contextual_suggestions(state, "dates")
 
         assert len(result) == 3
-        date_keywords = ["month", "week", "december", "next", "in "]
+        # Date suggestions should be in "Month DD, YYYY" format or contain date words
+        month_names = [
+            "january",
+            "february",
+            "march",
+            "april",
+            "may",
+            "june",
+            "july",
+            "august",
+            "september",
+            "october",
+            "november",
+            "december",
+        ]
         for suggestion in result:
-            has_date_word = any(kw in suggestion.lower() for kw in date_keywords)
-            assert has_date_word, f"'{suggestion}' doesn't look like a date"
+            lower = suggestion.lower()
+            has_month = any(month in lower for month in month_names)
+            has_digit = any(c.isdigit() for c in suggestion)
+            assert has_month and has_digit, f"'{suggestion}' doesn't look like a specific date"
 
     def test_generates_traveler_suggestions(self):
         """Should generate traveler suggestions."""
@@ -481,6 +498,83 @@ class TestEdgeCases:
         assert 1 <= _MIN_SUGGESTIONS_TO_SHOW <= 3
 
 
+class TestAdventureHikingScenario:
+    """Test the specific 'adventure trip with hiking' scenario from production."""
+
+    def test_adventure_hiking_destination_suggestions(self):
+        """
+        Scenario: User says 'Plan an adventure trip with hiking and outdoor activities'
+        Assistant asks: 'Do you have a specific destination in mind?'
+        Expected: Destination suggestions should pass through without being filtered.
+
+        This test captures a production issue where only 1 of 3 suggestions
+        was reaching the frontend (Barcelona, New York, Tokyo -> only New York visible).
+        """
+        # Raw suggestions that the LLM might generate for destinations
+        raw_suggestions = ["Barcelona", "New York", "Tokyo"]
+
+        # These should all pass the low-quality filter
+        for suggestion in raw_suggestions:
+            assert not _is_low_quality_suggestion(
+                suggestion
+            ), f"'{suggestion}' should NOT be rejected as low quality"
+
+        # Filter should preserve all 3
+        filtered = _filter_suggested_responses(raw_suggestions)
+        assert len(filtered) == 3, f"Expected 3 suggestions, got {len(filtered)}: {filtered}"
+        assert "Barcelona" in filtered
+        assert "New York" in filtered
+        assert "Tokyo" in filtered
+
+    def test_adventure_hiking_destination_scoring(self):
+        """Destination suggestions should score high for destinations question_target."""
+        suggestions = ["Barcelona", "New York", "Tokyo"]
+        question_target = "destinations"
+
+        for suggestion in suggestions:
+            score = _score_suggestion_relevance(suggestion, question_target)
+            assert score >= _SUGGESTION_RELEVANCE_THRESHOLD, (
+                f"'{suggestion}' scored {score} for target '{question_target}', "
+                f"expected >= {_SUGGESTION_RELEVANCE_THRESHOLD}"
+            )
+
+    def test_adventure_hiking_full_flow(self):
+        """Test the full suggestion flow for adventure hiking scenario."""
+        state = create_test_state(
+            user_text="Plan an adventure trip with hiking and outdoor activities",
+            user_intent="adventure",
+        )
+
+        raw_suggestions = ["Barcelona", "New York", "Tokyo"]
+        question_target = "destinations"
+
+        result = _get_suggestions_with_fallback(raw_suggestions, state, question_target)
+
+        # Should return all 3 (or at least 2+ after filtering)
+        assert len(result) >= 2, f"Expected at least 2 suggestions, got {len(result)}: {result}"
+
+        # All returned suggestions should be from the original list
+        for suggestion in result:
+            assert suggestion in raw_suggestions, f"Unexpected suggestion: {suggestion}"
+
+    def test_peru_nepal_new_zealand_scenario(self):
+        """
+        Another production scenario where suggestions were [Peru, Nepal, New Zealand]
+        but only New Zealand was visible in the UI.
+        """
+        raw_suggestions = ["Peru", "Nepal", "New Zealand"]
+
+        # All should pass the low-quality filter
+        for suggestion in raw_suggestions:
+            assert not _is_low_quality_suggestion(
+                suggestion
+            ), f"'{suggestion}' should NOT be rejected as low quality"
+
+        # Filter should preserve all 3
+        filtered = _filter_suggested_responses(raw_suggestions)
+        assert len(filtered) == 3, f"Expected 3 suggestions, got {len(filtered)}: {filtered}"
+
+
 # =============================================================================
 # Performance Tests (optional - can be skipped in CI)
 # =============================================================================
@@ -502,3 +596,139 @@ class TestSuggestionPerformance:
 
         # Should complete in under 100ms for 300 suggestions
         assert elapsed < 0.1, f"Scoring took {elapsed:.3f}s for {len(suggestions)} suggestions"
+
+
+# =============================================================================
+# Suggestion Regeneration Tests (when question changes)
+# =============================================================================
+
+
+class TestSuggestionRegenerationOnQuestionChange:
+    """
+    Tests for ensuring suggestions are regenerated when the question changes.
+
+    Bug context: When user answers a question (e.g., destination), the next question
+    (e.g., origin) should have NEW suggestions matching that question, not stale
+    suggestions from the previous question.
+    """
+
+    def test_suggestions_match_origin_question_after_destination_answered(self):
+        """
+        After user provides destination, suggestions should be for origin (not destinations).
+
+        Scenario:
+        - Q1: "Where are you looking to go?" -> Suggestions: [Paris, Tokyo, Rome]
+        - User: "Paris"
+        - Q2: "Where are you flying from?" -> Suggestions should be ORIGIN cities!
+        """
+        # Create state as if destination was just answered
+        state = create_test_state(
+            user_text="Paris",
+            destinations=["Paris"],  # User just selected destination
+            origin=None,  # Origin still needed
+        )
+
+        # Generate suggestions for origin question
+        suggestions = _generate_contextual_suggestions(state, question_target="origin")
+
+        # Verify suggestions are for ORIGIN (should have "From" prefix)
+        assert len(suggestions) >= 2, f"Expected 2+ origin suggestions, got {suggestions}"
+        for suggestion in suggestions:
+            assert (
+                "From " in suggestion
+            ), f"Origin suggestion should have 'From' prefix: '{suggestion}'"
+
+    def test_suggestions_match_dates_question_after_origin_answered(self):
+        """
+        After user provides origin, suggestions should be for dates.
+
+        Scenario:
+        - Q1: "Where are you flying from?" -> Suggestions: [From NYC, From London]
+        - User: "New York"
+        - Q2: "When are you heading to Paris?" -> Suggestions should be DATES!
+        """
+        # Create state as if origin was just answered
+        state = create_test_state(
+            user_text="New York",
+            destinations=["Paris"],
+            origin="New York",  # User just provided origin
+            start_date=None,  # Date still needed
+        )
+
+        # Generate suggestions for start_date question
+        suggestions = _generate_contextual_suggestions(state, question_target="start_date")
+
+        # Verify suggestions are for DATES
+        assert len(suggestions) >= 2, f"Expected 2+ date suggestions, got {suggestions}"
+        date_words = ["month", "week", "december", "january", "february", "march"]
+        for suggestion in suggestions:
+            lower = suggestion.lower()
+            has_date_word = any(word in lower for word in date_words)
+            has_digit = any(c.isdigit() for c in suggestion)
+            assert (
+                has_date_word or has_digit
+            ), f"Date suggestion should contain date words or numbers: '{suggestion}'"
+
+    def test_stale_destination_suggestions_not_reused_for_origin(self):
+        """
+        Simulates the exact bug: destination suggestions [Swiss Alps, Patagonia, Rockies]
+        should NOT appear when asking for origin.
+        """
+        # These were the stale suggestions from the destination question
+        stale_suggestions = ["Swiss Alps", "Patagonia", "The Rockies"]
+
+        # Generate fresh origin suggestions
+        state = create_test_state(
+            user_text="Swiss Alps",
+            destinations=["Swiss Alps"],
+        )
+        fresh_suggestions = _generate_contextual_suggestions(state, question_target="origin")
+
+        # None of the stale suggestions should be in the fresh ones
+        for stale in stale_suggestions:
+            assert stale not in fresh_suggestions, (
+                f"Stale destination '{stale}' should not appear in origin suggestions: "
+                f"{fresh_suggestions}"
+            )
+
+    def test_question_target_field_name_variants(self):
+        """
+        Test that both field names work: 'start_date' (from DB) and 'dates' (from LLM).
+        """
+        state = create_test_state(destinations=["Paris"], origin="London")
+
+        # Both should generate date suggestions
+        for target in ["start_date", "end_date", "dates"]:
+            suggestions = _generate_contextual_suggestions(state, question_target=target)
+            assert len(suggestions) >= 2, f"Expected suggestions for {target}, got {suggestions}"
+            # Verify at least one looks like a date
+            combined = " ".join(suggestions).lower()
+            assert any(
+                word in combined for word in ["month", "week", "next", "december", "2"]
+            ), f"Suggestions for {target} don't look like dates: {suggestions}"
+
+    def test_question_target_travelers_variants(self):
+        """
+        Test that both 'adults' (field name) and 'travelers' (LLM term) work.
+        """
+        state = create_test_state(destinations=["Paris"], origin="London", start_date="2025-02-01")
+
+        # Both should generate traveler count suggestions
+        for target in ["adults", "travelers"]:
+            suggestions = _generate_contextual_suggestions(state, question_target=target)
+            assert len(suggestions) >= 2, f"Expected suggestions for {target}, got {suggestions}"
+            # Verify at least one mentions travelers/people/adults
+            combined = " ".join(suggestions).lower()
+            assert any(
+                word in combined for word in ["solo", "just me", "adult", "family", "2", "couple"]
+            ), f"Suggestions for {target} don't look like traveler counts: {suggestions}"
+
+    def test_contextual_suggestions_empty_when_no_question_target(self):
+        """
+        When question_target is None or empty, should return empty list
+        (to avoid mismatched suggestions).
+        """
+        state = create_test_state()
+
+        assert _generate_contextual_suggestions(state, question_target=None) == []
+        assert _generate_contextual_suggestions(state, question_target="") == []

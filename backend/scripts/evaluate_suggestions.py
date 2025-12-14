@@ -54,7 +54,8 @@ test_cases = {
     "VALID DATES (should be ACCEPTED)": [
         "Next month",
         "In 2 weeks",
-        "This December",
+        "December 28, 2025",
+        "January 15, 2026",
         "December 15-22",
         "January 2026",
         "Next weekend",

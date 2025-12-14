@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app import db_models as models
+from app.graph_plan_utils import normalize_destinations
 from app.schemas import (
     ActivitySettings,
     BookingTypes,
@@ -644,6 +645,11 @@ async def apply_planner_update(
         replace_destinations=True,
     )
 
+    # Normalize destinations: case-insensitive deduplication + title-casing
+    # This ensures "rome" and "Rome" become a single "Rome"
+    if data.trip_inputs.destinations:
+        data.trip_inputs.destinations = normalize_destinations(data.trip_inputs.destinations)
+
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:
         data.branches = merge_branches(data.branches, branches)
@@ -707,6 +713,11 @@ def apply_planner_update_sync(
         trip_inputs,
         replace_destinations=True,
     )
+
+    # Normalize destinations: case-insensitive deduplication + title-casing
+    # This ensures "rome" and "Rome" become a single "Rome"
+    if data.trip_inputs.destinations:
+        data.trip_inputs.destinations = normalize_destinations(data.trip_inputs.destinations)
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:

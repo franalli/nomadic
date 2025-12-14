@@ -15,8 +15,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { apiFetch, trackSuggestionClick } from '@/lib/api';
-import type { GraphPlanRequest } from '@/types/api';
+import { apiFetch, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import type { ChatMessage } from '@/types/chat';
 import type {
   DocumentBranch,
@@ -25,8 +24,6 @@ import type {
 } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
-const STREAM_CHUNK_SIZE = 1; // characters per chunk for smooth typing
-const STREAM_DELAY_MS = 35; // delay between chunks in ms (~29 chars/sec)
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
 const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 // Message to show after plan is generated with specific examples
@@ -182,6 +179,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+    const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
     // Mobile detection for responsive collapsed defaults
     const [isMobile, setIsMobile] = useState(false);
     const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
@@ -417,152 +415,124 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setIsLoading(true);
 
-        try {
-          const body: GraphPlanRequest = {
-            message: trimmed,
-            session_state: sessionState ?? undefined,
-          };
+        // Create a message bubble for streaming tokens into
+        const streamingMsgId = `a_stream_${Date.now()}`;
+        setMessages((prev) => [
+          ...prev,
+          { id: streamingMsgId, role: 'assistant', content: '' },
+        ]);
+        setStreamingMessageId(streamingMsgId);
+        setHasReceivedFirstToken(false); // Reset for new streaming message
 
-          const res = await apiFetch('/v1/graph_plan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          });
+        // Use SSE streaming for real-time token display
+        const body = {
+          message: trimmed,
+          session_state: sessionState ?? undefined,
+        };
 
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(text || `Plan failed: ${res.status}`);
-          }
+        // Create a promise that resolves when streaming completes
+        await new Promise<void>((resolve) => {
+          const abortStream = streamGraphPlan(body, {
+            onToken: (token: string) => {
+              // Mark that we've received the first token (hides typing indicator)
+              setHasReceivedFirstToken(true);
+              // Append token to the streaming message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === streamingMsgId
+                    ? { ...msg, content: (msg.content || '') + token }
+                    : msg
+                )
+              );
+            },
+            onComplete: (response) => {
+              setStreamingMessageId(null);
 
-          const data: GraphPlanResponse = await res.json();
+              // Parse the response - it matches GraphPlanResponse structure
+              const data = response as unknown as GraphPlanResponse;
 
-          // Persist session state for next turn
-          setSessionState(data.session_state ?? null);
+              // Persist session state for next turn
+              setSessionState(data.session_state ?? null);
 
-          const handlePlanResultInternal = (payload: GraphPlanResponse) => {
-            const doc = payload.document;
-            const primaryBranch =
-              doc.branches.find((b) => b.is_primary) ?? doc.branches[0];
-            onPlanResult({
-              tripContextId: doc.trip_context_id ?? null,
-              branches: doc.branches,
-              tiles: doc.tiles,
-              primaryBranchId: primaryBranch?.id ?? selectedBranchId ?? null,
-              tripInputs: doc.trip_inputs ?? null,
-              readyToGenerate: doc.ready_to_generate ?? false,
-              // Pass full response for store update
-              response: payload,
-            });
-          };
+              // Handle plan result
+              const doc = data.document;
+              const primaryBranch =
+                doc.branches?.find((b) => b.is_primary) ?? doc.branches?.[0];
+              onPlanResult({
+                tripContextId: doc.trip_context_id ?? null,
+                branches: doc.branches ?? [],
+                tiles: doc.tiles ?? {},
+                primaryBranchId: primaryBranch?.id ?? selectedBranchId ?? null,
+                tripInputs: doc.trip_inputs ?? null,
+                readyToGenerate: doc.ready_to_generate ?? false,
+                response: data,
+              });
 
-          handlePlanResultInternal(data);
+              const hasBranchesNow = (doc.branches?.length ?? 0) > 0;
+              const isReadyToGenerate = doc.ready_to_generate === true;
 
-          const hasBranchesNow = data.document.branches.length > 0;
-          const isReadyToGenerate = data.document.ready_to_generate === true;
+              // Update suggested responses from LLM (if provided)
+              setSuggestedResponses(doc.suggested_responses || []);
 
-          // Update suggested responses from LLM (if provided)
-          setSuggestedResponses(data.document.suggested_responses || []);
-
-          if (hasBranchesNow) {
-            // Branches generated: remove "ready" messages (by ID prefix) and add post-generate message
-            setMessages((prev) => {
-              const filtered = prev.filter((msg) => !msg.id.startsWith(READY_MESSAGE_ID_PREFIX));
-              const newMessages = [
-                ...filtered,
-                { id: `post_${Date.now()}`, role: 'assistant' as const, content: POST_GENERATE_MESSAGE },
-              ];
-              return newMessages;
-            });
-            return;
-          }
-
-          // Stream the assistant's response
-          // Note: Backend always provides assistant_message, fallback is just for safety
-          const assistantText =
-            data.document.assistant_message || "Here are your trip options!";
-          const msgId = data.document.assistant_message_id ?? `a_${Date.now()}`;
-
-          // If this is a "ready to generate" response, use a special ID prefix so we can remove it later
-          const baseId = isReadyToGenerate ? READY_MESSAGE_ID_PREFIX + msgId : msgId;
-
-          // Split into bubbles: by newlines first (preserves list items), then by sentences
-          const splitIntoBubbles = (text: string): string[] => {
-            const bubbles: string[] = [];
-            // Split by double newlines (paragraphs) or single newlines (list items)
-            const blocks = text.split(/\n+/).map((b) => b.trim()).filter((b) => b.length > 0);
-
-            for (const block of blocks) {
-              // If it's a list item (starts with number. or - or *), keep it as one bubble
-              if (/^(\d+\.|[-*])/.test(block)) {
-                bubbles.push(block);
-              } else {
-                // Otherwise split by sentence-ending punctuation
-                const sentences = block
-                  .split(/(?<=[.!?])\s+/)
-                  .map((s) => s.trim())
-                  .filter((s) => s.length > 0);
-                bubbles.push(...sentences);
-              }
-            }
-            return bubbles;
-          };
-
-          const bubbleTexts = splitIntoBubbles(assistantText);
-
-          const streamTextIntoMessage = (messageId: string, text: string) =>
-            new Promise<void>((resolve) => {
-              if (!text.length) {
-                resolve();
-                return;
-              }
-              setStreamingMessageId(messageId);
-              let idx = 0;
-              const interval = setInterval(() => {
-                const nextChunk = text.slice(idx, idx + STREAM_CHUNK_SIZE);
-                idx += STREAM_CHUNK_SIZE;
+              if (hasBranchesNow) {
+                // Branches generated: remove streaming message and "ready" messages,
+                // add post-generate message
+                setMessages((prev) => {
+                  const filtered = prev.filter(
+                    (msg) =>
+                      msg.id !== streamingMsgId &&
+                      !msg.id.startsWith(READY_MESSAGE_ID_PREFIX)
+                  );
+                  return [
+                    ...filtered,
+                    {
+                      id: `post_${Date.now()}`,
+                      role: 'assistant' as const,
+                      content: POST_GENERATE_MESSAGE,
+                    },
+                  ];
+                });
+              } else if (isReadyToGenerate) {
+                // Update the streaming message ID to use the ready prefix
+                // so it can be removed when generation starts
                 setMessages((prev) =>
                   prev.map((msg) =>
-                    msg.id === messageId
-                      ? { ...msg, content: `${msg.content || ''}${nextChunk}` }
+                    msg.id === streamingMsgId
+                      ? { ...msg, id: `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}` }
                       : msg
                   )
                 );
-                if (idx >= text.length) {
-                  clearInterval(interval);
-                  setStreamingMessageId(null);
-                  resolve();
-                }
-              }, STREAM_DELAY_MS);
-            });
+              }
 
-          const streamAssistantBubbles = async () => {
-            if (!bubbleTexts.length) return;
-            setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(`${baseId}_s`)));
+              setIsLoading(false);
+              resolve();
+            },
+            onError: (error: Error) => {
+              setStreamingMessageId(null);
+              console.error('Failed to plan trip', error);
 
-            for (let i = 0; i < bubbleTexts.length; i += 1) {
-              const bubbleId = `${baseId}_s${i}`;
-              const text = bubbleTexts[i];
-              setMessages((prev) => [
-                ...prev,
-                { id: bubbleId, role: 'assistant', content: '' },
-              ]);
-              await streamTextIntoMessage(bubbleId, text);
-            }
-          };
+              // Replace streaming message with error message
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === streamingMsgId
+                    ? {
+                        ...msg,
+                        id: `a_err_${Date.now()}`,
+                        content:
+                          'I ran into an error planning this trip. Try again in a moment or tweak your message.',
+                      }
+                    : msg
+                )
+              );
 
-          await streamAssistantBubbles();
-        } catch (error) {
-          console.error('Failed to plan trip', error);
-          const assistantMessage: ChatMessage = {
-            id: `a_err_${Date.now()}`,
-            role: 'assistant',
-            content:
-              'I ran into an error planning this trip. Try again in a moment or tweak your message.',
-          };
-          setMessages((prev) => [...prev, assistantMessage]);
-        } finally {
-          setIsLoading(false);
-        }
+              setIsLoading(false);
+              resolve(); // Resolve instead of reject to prevent unhandled promise rejection
+            },
+          });
+
+          // Store abort function for potential cleanup (not currently used but available)
+          void abortStream;
+        });
       },
       [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState]
     );
@@ -612,8 +582,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Simple render - no content-based filters, just show all non-empty messages
     const visibleMessages = messages.filter((m) => m.content && m.content.trim().length > 0);
 
-    // Show typing indicator when loading and no streaming message yet
-    const showTypingIndicator = isLoading && !streamingMessageId;
+    // Show typing indicator when loading and haven't received first streaming token yet
+    const showTypingIndicator = isLoading && !hasReceivedFirstToken;
 
     return (
       <div
@@ -713,18 +683,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
           {/* Dynamic LLM-generated suggestions */}
           {suggestedResponses.length > 0 && !isLoading && !showSuggestions && (
-            <div className="flex flex-wrap justify-center gap-1.5 pt-3 pb-1 px-2">
+            <div
+              key={`suggestions-container-${suggestedResponses.length}`}
+              className="flex flex-wrap justify-center gap-1.5 pt-3 pb-1 px-2"
+            >
               {suggestedResponses.map((suggestion, idx) => (
                 <button
-                  key={`sugg-${idx}`}
+                  key={`sugg-${suggestion.slice(0, 20)}-${idx}`}
                   type="button"
                   onClick={() => {
                     // Track suggestion click for analytics (fire-and-forget)
                     trackSuggestionClick(suggestion, idx);
                     sendMessageCore(suggestion);
                   }}
-                  className="suggestion-enter text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"
-                  style={{ animationDelay: `${idx * 100}ms` }}
+                  className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"
                 >
                   {suggestion}
                 </button>

@@ -1118,7 +1118,9 @@ _BARE_DEST_PATTERN = re.compile(r"^[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F\s\-
 _BARE_DATE_PATTERN = re.compile(
     r"^(today|tomorrow|next\s+(week|month|weekend)|this\s+(week|weekend|month)|"
     r"in\s+\d+\s+(days?|weeks?|months?)|"
-    r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s*\d{1,2}(?:st|nd|rd|th)?|"
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
+    r"\s*\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|"
     r"\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|"
     r"\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})[\s\.\,\!\?]*$",
     re.IGNORECASE,
@@ -1127,7 +1129,7 @@ _BARE_SOLO_PATTERN = re.compile(r"^(just\s+me|solo|alone|myself|1)[\s\.\!\?]*$",
 _BARE_TRAVELERS_PATTERN = re.compile(
     r"^(\d+)(?:\s*(?:adults?|people|travelers?|of us))?[\s\.\!\?]*$", re.IGNORECASE
 )
-_BARE_ORIGIN_PATTERN = re.compile(r"^(?:from\s+)?([A-Z][a-zA-Z\s\-,]+)[\s\.\!\?]*$")
+_BARE_ORIGIN_PATTERN = re.compile(r"^(?:from\s+)?([A-Z][a-zA-Z\s\-,]+)[\s\.\!\?]*$", re.IGNORECASE)
 
 # Destination list split pattern (comma or "and")
 _DEST_SPLIT_PATTERN = re.compile(r",|\band\b")
@@ -1282,6 +1284,41 @@ def _check_ambiguous_destination(destination: str) -> Optional[List[str]]:
     return _AMBIGUOUS_DESTINATIONS.get(dest_lower)
 
 
+def _debug_short_circuit_decision(
+    input_text: str,
+    detected_type: Optional[str],
+    last_field: Optional[str],
+    decision: str,
+    reason: Optional[str] = None,
+    parsed_data: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Log structured observability data for short-circuit decisions.
+
+    Format: [SHORT_CIRCUIT] input="..." type=... last_field=... decision=... reason=...
+
+    Args:
+        input_text: The raw user input (truncated for logging).
+        detected_type: The short-circuit type detected (or None if bypassed).
+        last_field: The last_question_field from previous turn.
+        decision: TRIGGERED, BYPASSED, or PATTERN_MISS.
+        reason: Optional explanation for the decision.
+        parsed_data: Optional parsed data extracted from the input.
+    """
+    truncated = input_text[:30] + "..." if len(input_text) > 30 else input_text
+    parts = [
+        f'[SHORT_CIRCUIT] input="{truncated}"',
+        f"type={detected_type or 'none'}",
+        f"last_field={last_field or 'none'}",
+        f"decision={decision}",
+    ]
+    if reason:
+        parts.append(f"reason={reason}")
+    if parsed_data:
+        parts.append(f"parsed={parsed_data}")
+    _debug(" ".join(parts))
+
+
 def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
     """
     Detect if user input can be short-circuited without LLM calls.
@@ -1296,13 +1333,16 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
     """
     text_clean = text.strip()
     text_lower = text_clean.lower()
+    last_field = state.metadata.get("last_question_field")
 
     # Skip short-circuit if there's substantial content (>50 chars usually has travel info)
     if len(text_clean) > 50:
+        _debug_short_circuit_decision(text, None, last_field, "BYPASSED", reason="input_too_long")
         return None
 
     # 1. Greetings
     if _GREETING_PATTERN.match(text_clean):
+        _debug_short_circuit_decision(text, "greeting", last_field, "TRIGGERED")
         return {
             "type": "greeting",
             "response": _random_module.choice(_GREETING_RESPONSES),
@@ -1318,6 +1358,9 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
         pending = state.metadata.get("pending_action")
         if pending == "generate_plan":
             # Execute the pending action
+            _debug_short_circuit_decision(
+                text, "confirmation_yes", last_field, "TRIGGERED", reason=f"pending={pending}"
+            )
             return {
                 "type": "confirmation_yes",
                 "response": None,
@@ -1327,6 +1370,14 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
         if pending == "confirm_typo":
             # Apply the typo corrections stored in metadata
             typo_corrections = state.metadata.get("pending_typo_corrections", {})
+            _debug_short_circuit_decision(
+                text,
+                "confirm_typo",
+                last_field,
+                "TRIGGERED",
+                reason=f"pending={pending}",
+                parsed_data=typo_corrections,
+            )
             return {
                 "type": "confirm_typo",
                 "response": None,
@@ -1334,6 +1385,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
                 "parsed": {"typo_corrections": typo_corrections},
             }
         # Generic yes without pending action - just acknowledge and continue
+        _debug_short_circuit_decision(text, "confirmation_yes", last_field, "TRIGGERED")
         return {
             "type": "confirmation_yes",
             "response": None,
@@ -1345,12 +1397,16 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
         pending = state.metadata.get("pending_action")
         if pending:
             # Clear the pending action
+            _debug_short_circuit_decision(
+                text, "confirmation_no", last_field, "TRIGGERED", reason=f"pending={pending}"
+            )
             return {
                 "type": "confirmation_no",
                 "response": "No problem. What would you like to do instead?",
                 "action": "clear_pending",
                 "parsed": None,
             }
+        _debug_short_circuit_decision(text, "confirmation_no", last_field, "TRIGGERED")
         return {
             "type": "confirmation_no",
             "response": None,
@@ -1360,6 +1416,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
 
     # 3. Acknowledgments (ok, thanks, got it)
     if _ACKNOWLEDGMENT_PATTERN.match(text_clean):
+        _debug_short_circuit_decision(text, "acknowledgment", last_field, "TRIGGERED")
         return {
             "type": "acknowledgment",
             "response": None,  # Will use _default_follow_up_question
@@ -1372,6 +1429,9 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
         pending = state.metadata.get("pending_action")
         if pending == "generate_plan":
             # Execute the pending action
+            _debug_short_circuit_decision(
+                text, "confirmation_yes", last_field, "TRIGGERED", reason=f"pending={pending}"
+            )
             return {
                 "type": "confirmation_yes",
                 "response": None,
@@ -1407,7 +1467,9 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
     # 6. Off-topic detection (narrow patterns)
     for pattern, topic in _OFF_TOPIC_PATTERNS:
         if pattern.match(text_clean):
-            _debug(f"Off-topic detected: {topic}", input=text_clean[:30])
+            _debug_short_circuit_decision(
+                text, "off_topic", last_field, "TRIGGERED", reason=f"topic={topic}"
+            )
             return {
                 "type": "off_topic",
                 "response": _OFF_TOPIC_RESPONSES.get(
@@ -1417,7 +1479,83 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
                 "parsed": None,
             }
 
-    # 7. Bare destination input (single capitalized word/phrase, 2-30 chars)
+    # 7. Simple date input - dates are unambiguous, detect BEFORE destination check
+    # This handles users proactively providing dates or clicking date suggestions
+    # Must come before destination check so "next week" is detected as date, not destination
+    if _BARE_DATE_PATTERN.match(text_clean):
+        # Determine which date field to set based on what's missing
+        target_field = "start_date"
+        if last_field in ("start_date", "end_date"):
+            target_field = last_field
+        elif state.trip_inputs.start_date and not state.trip_inputs.end_date:
+            target_field = "end_date"
+        parsed = {f"{target_field}_hint": text_clean}
+        _debug_short_circuit_decision(
+            text,
+            "bare_date",
+            last_field,
+            "TRIGGERED",
+            reason=f"target={target_field}",
+            parsed_data=parsed,
+        )
+        return {
+            "type": "bare_date",
+            "response": None,
+            "action": None,
+            "parsed": parsed,
+        }
+
+    # 8. Simple traveler input (if last question was about travelers)
+    # Must come before destination check so "2" is detected as travelers count when asked
+    if last_field == "adults":
+        # "just me", "solo", "alone", "myself", "1"
+        if _BARE_SOLO_PATTERN.match(text_clean):
+            parsed = {"adults_delta": 1, "children_delta": 0}
+            _debug_short_circuit_decision(
+                text,
+                "bare_travelers",
+                last_field,
+                "TRIGGERED",
+                reason="solo_pattern",
+                parsed_data=parsed,
+            )
+            return {
+                "type": "bare_travelers",
+                "response": None,
+                "action": None,
+                "parsed": parsed,
+            }
+        traveler_match = _BARE_TRAVELERS_PATTERN.match(text_clean)
+        if traveler_match:
+            parsed = {"adults_delta": int(traveler_match.group(1))}
+            _debug_short_circuit_decision(
+                text, "bare_travelers", last_field, "TRIGGERED", parsed_data=parsed
+            )
+            return {
+                "type": "bare_travelers",
+                "response": None,
+                "action": None,
+                "parsed": parsed,
+            }
+
+    # 9. Origin input (if last question was about origin)
+    # Must come before destination check so "London" is detected as origin when asked
+    if last_field == "origin" and 2 <= len(text_clean) <= 40:
+        # "from X" or just a city name
+        origin_match = _BARE_ORIGIN_PATTERN.match(text_clean)
+        if origin_match:
+            parsed = {"origin_delta": origin_match.group(1).strip()}
+            _debug_short_circuit_decision(
+                text, "bare_origin", last_field, "TRIGGERED", parsed_data=parsed
+            )
+            return {
+                "type": "bare_origin",
+                "response": None,
+                "action": None,
+                "parsed": parsed,
+            }
+
+    # 10. Bare destination input (single capitalized word/phrase, 2-30 chars)
     # Detect if this looks like a place name even without prior destination question.
     # Conditions:
     #   - 2-30 chars, matches capitalized pattern
@@ -1536,18 +1674,15 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
 
             if inferred_activities:
                 parsed_data["inferred_activity_categories"] = inferred_activities
-                _debug(
-                    "Bare destination detected with inferred activities",
-                    input=text_clean,
-                    activities=inferred_activities,
-                    first_turn=(last_field != "destinations"),
-                )
-            else:
-                _debug(
-                    "Bare destination detected",
-                    input=text_clean,
-                    first_turn=(last_field != "destinations"),
-                )
+
+            _debug_short_circuit_decision(
+                text,
+                "bare_destination",
+                last_field,
+                "TRIGGERED",
+                reason="first_turn" if last_field != "destinations" else "direct_answer",
+                parsed_data=parsed_data,
+            )
 
             # This looks like a destination answer - let it parse but mark for validation
             return {
@@ -1557,48 +1692,10 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
                 "parsed": parsed_data,
             }
 
-    # 7. Simple date input (if last question was about dates)
-    if last_field in ("start_date", "end_date"):
-        if _BARE_DATE_PATTERN.match(text_clean):
-            return {
-                "type": "bare_date",
-                "response": None,
-                "action": None,
-                "parsed": {f"{last_field}_hint": text_clean},
-            }
-
-    # 8. Simple traveler input (if last question was about travelers)
-    if last_field == "adults":
-        # "just me", "solo", "alone", "myself", "1"
-        if _BARE_SOLO_PATTERN.match(text_clean):
-            return {
-                "type": "bare_travelers",
-                "response": None,
-                "action": None,
-                "parsed": {"adults_delta": 1, "children_delta": 0},
-            }
-        traveler_match = _BARE_TRAVELERS_PATTERN.match(text_clean)
-        if traveler_match:
-            return {
-                "type": "bare_travelers",
-                "response": None,
-                "action": None,
-                "parsed": {"adults_delta": int(traveler_match.group(1))},
-            }
-
-    # 9. Origin input (if last question was about origin)
-    if last_field == "origin" and 2 <= len(text_clean) <= 40:
-        # "from X" or just a city name
-        origin_match = _BARE_ORIGIN_PATTERN.match(text_clean)
-        if origin_match:
-            return {
-                "type": "bare_origin",
-                "response": None,
-                "action": None,
-                "parsed": {"origin_delta": origin_match.group(1).strip()},
-            }
-
-    # No short-circuit detected
+    # No short-circuit detected - log for observability
+    _debug_short_circuit_decision(
+        text, None, last_field, "PATTERN_MISS", reason="no_pattern_matched"
+    )
     return None
 
 
@@ -2214,18 +2311,13 @@ def _default_follow_up_question(
             return template_with.replace("{dest}", dest_name)
         return template_without
 
-    # Base prompts - professional and warm
+    # Base prompts - professional and warm (only required fields)
     base_prompts = {
         "destinations": "Where are you looking to go?",
-        "origin": _dest_prefix(
-            "{dest}—nice. Where are you flying from?", "Where are you flying from?"
-        ),
+        "origin": "Where are you flying from?",
         "start_date": _dest_prefix(
             "When are you heading to {dest}?", "When are you looking to travel?"
         ),
-        "end_date": "When do you need to be back?",
-        "adults": "How many travelers?",
-        "budget": "Any budget in mind?",
     }
 
     # Quick booking - minimal, efficient
@@ -2233,17 +2325,12 @@ def _default_follow_up_question(
         "destinations": "Where to?",
         "origin": "Flying from?",
         "start_date": "When?",
-        "end_date": "Return?",
-        "adults": "How many?",
-        "budget": "Budget?",
     }
 
     # Adventurous - match energy but don't overdo
     adventurous_prompts = {
         "destinations": "Where is the adventure taking you?",
-        "origin": _dest_prefix(
-            "{dest}—good choice. Where are you coming from?", "Where are you setting off from?"
-        ),
+        "origin": "Where are you coming from?",
         "start_date": _dest_prefix("When are you heading to {dest}?", "When does the trip start?"),
         "end_date": "When do you need to be back?",
         "adults": "How many in your group?",
@@ -2328,27 +2415,19 @@ def _default_follow_up_with_field(
             return template_with.replace("{dest}", dest_name)
         return template_without
 
-    # Base prompts
+    # Base prompts (only required fields)
     base_prompts = {
         "destinations": "Where are you looking to go?",
-        "origin": _dest_prefix(
-            "{dest}—nice. Where are you flying from?", "Where are you flying from?"
-        ),
+        "origin": "Where are you flying from?",
         "start_date": _dest_prefix(
             "When are you heading to {dest}?", "When are you looking to travel?"
         ),
-        "end_date": "When do you need to be back?",
-        "adults": "How many travelers?",
-        "budget": "Any budget in mind?",
     }
 
     quick_prompts = {
         "destinations": "Where to?",
         "origin": "Flying from?",
         "start_date": "When?",
-        "end_date": "Return?",
-        "adults": "How many?",
-        "budget": "Budget?",
     }
 
     if user_intent == "quick_booking":
@@ -2589,7 +2668,7 @@ _UNIVERSAL_ORIGIN_CITIES = [
 # Intent-aware destination suggestions
 _ADVENTURE_DESTINATIONS = [
     "Swiss Alps",
-    "Patagonia, Argentina",
+    "Patagonia",
     "Nepal",
     "New Zealand",
     "Costa Rica",
@@ -2710,7 +2789,7 @@ def _score_suggestion_relevance(
             return 0.8
         return 0.3
 
-    elif question_target == "dates":
+    elif question_target in ("dates", "start_date", "end_date"):
         # Date suggestions should contain time-related words
         date_indicators = [
             "month",
@@ -2746,7 +2825,7 @@ def _score_suggestion_relevance(
             return 0.9
         return 0.2  # Doesn't look like a date
 
-    elif question_target == "travelers":
+    elif question_target in ("travelers", "adults"):
         # Traveler suggestions should mention numbers or group types
         traveler_indicators = [
             "solo",
@@ -2894,10 +2973,21 @@ def _generate_contextual_suggestions(
             else:
                 return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
 
-        elif question_target == "dates":
-            return ["Next month", "In 2 weeks", "This December"]
+        elif question_target in ("start_date", "end_date", "dates"):
+            # Generate specific bookable dates
+            from datetime import datetime, timedelta
 
-        elif question_target == "travelers":
+            today = datetime.now()
+            two_weeks = today + timedelta(days=14)
+            one_month = today + timedelta(days=30)
+            two_months = today + timedelta(days=60)
+            return [
+                two_weeks.strftime("%B %d, %Y"),
+                one_month.strftime("%B %d, %Y"),
+                two_months.strftime("%B %d, %Y"),
+            ]
+
+        elif question_target in ("adults", "travelers"):
             return ["Just me", "2 adults", "Family of 4"]
 
         elif question_target == "budget":
@@ -2914,7 +3004,15 @@ def _generate_contextual_suggestions(
                 origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
                 return [f"From {city}" for city in origins]
             elif not ti.start_date:
-                return ["Next month", "In 2 weeks", "This December"]
+                from datetime import datetime, timedelta
+
+                today = datetime.now()
+                two_weeks = today + timedelta(days=14)
+                one_month = today + timedelta(days=30)
+                return [
+                    two_weeks.strftime("%B %d, %Y"),
+                    one_month.strftime("%B %d, %Y"),
+                ]
             else:
                 return ["Looks good, generate my plan", "Add more details", "Change dates"]
 
@@ -4005,6 +4103,134 @@ async def call_llm_with_timeout(
         raise TimeoutError(f"LLM call timed out after {timeout_seconds}s") from None
 
 
+# =============================================================================
+# STREAMING LLM SUPPORT
+# =============================================================================
+# Simulated streaming parameters (hybrid timing for natural LLM-like flow)
+# Fast start, gradual deceleration mimics real LLM token generation patterns
+_STREAM_BASE_DELAY_MS = 8  # Starting delay (fast burst)
+_STREAM_MAX_DELAY_MS = 18  # Maximum delay (deceleration cap)
+_STREAM_ACCEL_FACTOR = 0.015  # How quickly delay increases per character
+_STREAM_JITTER_MS = 4  # Random variance for organic feel
+
+
+async def call_llm_streaming(
+    model: str,
+    prompt: str,
+    max_tokens: int = 512,
+    temperature: float = 0.2,
+    history: Optional[List[Dict[str, str]]] = None,
+    user_message: Optional[str] = None,
+    top_p: Optional[float] = None,
+):
+    """
+    Call the LLM with streaming enabled. Yields tokens as they arrive.
+
+    This is used for response_polish and other text-only outputs where
+    we want to stream tokens directly to the frontend via SSE.
+
+    Args:
+        model: Model size identifier ("small", "medium", "large").
+        prompt: The system prompt to send.
+        max_tokens: Maximum tokens in response.
+        temperature: Sampling temperature.
+        history: Optional list of {role, content} dicts for conversation history.
+        user_message: Optional current user message (appended after history).
+        top_p: Optional nucleus sampling threshold.
+
+    Yields:
+        str: Token chunks as they arrive from the LLM.
+    """
+
+    from app.config import get_async_openai_client
+
+    client = get_async_openai_client()
+    if client is None:
+        raise RuntimeError("OpenAI client is not configured")
+
+    model_name = _MODEL_MAP.get(model, model)
+
+    # Build messages array - same structure as call_llm
+    messages: List[Dict[str, str]] = [{"role": "system", "content": prompt}]
+
+    if history:
+        for msg in history:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+
+    if user_message:
+        messages.append({"role": "user", "content": user_message})
+
+    # Build params - note: no response_format for streaming plain text
+    params: Dict[str, Any] = {
+        "model": model_name,
+        "messages": messages,
+        "stream": True,
+    }
+
+    # Optional seed for reproducibility
+    seed_env = os.getenv("OPENAI_PLAN_SEED")
+    if seed_env:
+        try:
+            params["seed"] = int(seed_env)
+        except ValueError:
+            pass
+
+    # GPT-4 models: use max_tokens, temperature, top_p
+    if "gpt-4" in model_name.lower():
+        params["max_tokens"] = max_tokens
+        params["temperature"] = temperature
+        if top_p is not None:
+            params["top_p"] = top_p
+    else:
+        params["max_completion_tokens"] = max_tokens
+
+    async for chunk in await client.chat.completions.create(**params):
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+async def simulate_streaming(text: str):
+    """
+    Simulate streaming for code-generated messages with hybrid timing.
+
+    Uses a fast-start, gradual-deceleration pattern that mimics real LLM
+    token generation. Includes slight random jitter for organic feel.
+
+    Timing pattern:
+    - First ~50 chars: ~8-12ms/char (fast burst, ~80-125 chars/sec)
+    - Mid section: gradual slowdown to ~15-18ms/char
+    - Random jitter ±4ms prevents robotic feel
+
+    Args:
+        text: The complete text to simulate streaming for.
+
+    Yields:
+        str: Single characters with natural variable delay.
+    """
+    import random
+
+    total_chars = len(text)
+    for i, char in enumerate(text):
+        # Progress through text (0.0 to 1.0)
+        progress = i / max(total_chars, 1)
+
+        # Base delay increases with progress (fast start, slower end)
+        base_delay = _STREAM_BASE_DELAY_MS + (
+            (_STREAM_MAX_DELAY_MS - _STREAM_BASE_DELAY_MS) * progress * _STREAM_ACCEL_FACTOR * 100
+        )
+        base_delay = min(base_delay, _STREAM_MAX_DELAY_MS)
+
+        # Add jitter for organic feel
+        jitter = random.uniform(-_STREAM_JITTER_MS, _STREAM_JITTER_MS)
+        delay_ms = max(4, base_delay + jitter)  # Floor at 4ms
+
+        yield char
+        await asyncio.sleep(delay_ms / 1000.0)
+
+
 def _truncate_to_balanced_json(raw: str) -> Optional[str]:
     """
     Extract a valid JSON object from a potentially truncated or malformed string.
@@ -4825,10 +5051,12 @@ def normalize_inputs(state: GraphState) -> GraphState:
 
     # Apply destinations delta
     if "destinations_delta" in parsed:
+        existing_lower = {d.lower() for d in ti.destinations}
         for d in parsed["destinations_delta"]:
             d_norm = _normalize_str(d)
-            if d_norm and d_norm not in ti.destinations:
+            if d_norm and d_norm.lower() not in existing_lower:
                 ti.destinations.append(d_norm)
+                existing_lower.add(d_norm.lower())
 
     # Apply traveler deltas
     if "adults_delta" in parsed:
@@ -4910,6 +5138,64 @@ def normalize_inputs(state: GraphState) -> GraphState:
         ti.currency = _normalize_currency(ti.currency, default=DEFAULT_CURRENCY)
     elif ti.budget is not None:
         ti.currency = DEFAULT_CURRENCY
+
+    # =========================================================================
+    # LIGHTWEIGHT VALIDATION FOR SHORT-CIRCUIT PATHS
+    # Short-circuits bypass validate_and_merge, so we do basic sanity checks here
+    # =========================================================================
+    today_iso = state.metadata.get("today_iso", date.today().isoformat())
+    validation_warnings = []
+
+    # Validate dates are not in the past (allow today)
+    if ti.start_date:
+        try:
+            start = date.fromisoformat(ti.start_date)
+            today = date.fromisoformat(today_iso)
+            if start < today:
+                validation_warnings.append(f"Start date {ti.start_date} is in the past")
+                # Don't clear - user may have intentionally set a past date for planning
+        except (ValueError, TypeError):
+            validation_warnings.append(f"Invalid start date format: {ti.start_date}")
+            ti.start_date = None  # Clear invalid date
+
+    if ti.end_date:
+        try:
+            end = date.fromisoformat(ti.end_date)
+            today = date.fromisoformat(today_iso)
+            if end < today:
+                validation_warnings.append(f"End date {ti.end_date} is in the past")
+        except (ValueError, TypeError):
+            validation_warnings.append(f"Invalid end date format: {ti.end_date}")
+            ti.end_date = None  # Clear invalid date
+
+    # Validate end_date is after start_date
+    if ti.start_date and ti.end_date:
+        try:
+            start = date.fromisoformat(ti.start_date)
+            end = date.fromisoformat(ti.end_date)
+            if end < start:
+                validation_warnings.append(
+                    f"End date {ti.end_date} is before start date {ti.start_date}"
+                )
+        except (ValueError, TypeError):
+            pass  # Already handled above
+
+    # Validate traveler counts are in reasonable range
+    if ti.adults is not None and (ti.adults < 1 or ti.adults > 20):
+        validation_warnings.append(f"Unusual adult count: {ti.adults}")
+        ti.adults = max(1, min(20, ti.adults))  # Clamp to valid range
+
+    if ti.children is not None and (ti.children < 0 or ti.children > 20):
+        validation_warnings.append(f"Unusual children count: {ti.children}")
+        ti.children = max(0, min(20, ti.children))  # Clamp to valid range
+
+    # Validate budget is positive
+    if ti.budget is not None and ti.budget <= 0:
+        validation_warnings.append(f"Invalid budget: {ti.budget}")
+        ti.budget = None  # Clear invalid budget
+
+    if validation_warnings:
+        _debug("Short-circuit validation warnings", warnings=validation_warnings)
 
     state.trip_inputs = ti
     _debug_node_exit("normalize_inputs", state)
@@ -5135,10 +5421,12 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     continue
 
                 if k == "destinations" and isinstance(v, list):
+                    existing_lower = {d.lower() for d in ti.destinations}
                     for d in v:
                         d_norm = _normalize_str(d)
-                        if d_norm and d_norm not in ti.destinations:
+                        if d_norm and d_norm.lower() not in existing_lower:
                             ti.destinations.append(d_norm)
+                            existing_lower.add(d_norm.lower())
                 elif k in (
                     "flight_settings",
                     "hotel_settings",
@@ -5366,10 +5654,12 @@ async def strategy_node(state: GraphState) -> GraphState:
                 if k in {"strategy_settings"}:
                     continue
                 if k == "destinations" and isinstance(v, list):
+                    existing_lower = {d.lower() for d in ti.destinations}
                     for d in v:
                         d_norm = _normalize_str(d)
-                        if d_norm and d_norm not in ti.destinations:
+                        if d_norm and d_norm.lower() not in existing_lower:
                             ti.destinations.append(d_norm)
+                            existing_lower.add(d_norm.lower())
                 elif k in (
                     "flight_settings",
                     "hotel_settings",
@@ -5544,10 +5834,12 @@ async def monolith_node(state: GraphState) -> GraphState:
             ti = state.trip_inputs.model_copy(deep=True)
             for k, v in (j.get("trip_inputs", {}) or {}).items():
                 if k == "destinations" and isinstance(v, list):
+                    existing_lower = {d.lower() for d in ti.destinations}
                     for d in v:
                         d_norm = _normalize_str(d)
-                        if d_norm and d_norm not in ti.destinations:
+                        if d_norm and d_norm.lower() not in existing_lower:
                             ti.destinations.append(d_norm)
+                            existing_lower.add(d_norm.lower())
                 elif k in (
                     "flight_settings",
                     "hotel_settings",
@@ -6338,10 +6630,20 @@ def short_circuit_responder(state: GraphState) -> GraphState:
             elif sc_type in ("bare_destination", "bare_origin", "bare_date", "bare_travelers"):
                 # Field was extracted - acknowledge and ask next question
                 if sc_type == "bare_destination":
-                    dest = state.parsed_inputs.get("destinations_delta", [""])[0]
+                    # Guard against empty destinations list
+                    dest_list = state.parsed_inputs.get("destinations_delta", [])
+                    dest = (
+                        dest_list[0]
+                        if dest_list
+                        else (
+                            state.trip_inputs.destinations[0]
+                            if state.trip_inputs.destinations
+                            else ""
+                        )
+                    )
 
                     # Check for ambiguous destinations
-                    if sc_action == "validate_destination":
+                    if sc_action == "validate_destination" and dest:
                         ambiguous_options = _check_ambiguous_destination(dest)
                         if ambiguous_options:
                             # Ask for clarification instead of accepting blindly
@@ -6373,7 +6675,9 @@ def short_circuit_responder(state: GraphState) -> GraphState:
                             else f"{dest}—great pick!"
                         )
                 elif sc_type == "bare_origin":
-                    origin = state.parsed_inputs.get("origin_delta", "")
+                    origin = (
+                        state.parsed_inputs.get("origin_delta") or state.trip_inputs.origin or ""
+                    )
                     state.last_summary = (
                         f"Got it, flying from {origin}. {follow_up}"
                         if follow_up
@@ -6383,6 +6687,9 @@ def short_circuit_responder(state: GraphState) -> GraphState:
                     state.last_summary = f"Noted! {follow_up}" if follow_up else "Dates noted!"
                 elif sc_type == "bare_travelers":
                     adults = state.parsed_inputs.get("adults_delta")
+                    # Guard against None or invalid values in template
+                    if adults is None:
+                        adults = state.trip_inputs.adults or 1
                     if adults == 1:
                         state.last_summary = (
                             f"Solo trip—got it! {follow_up}" if follow_up else "Solo trip noted!"
@@ -6404,12 +6711,11 @@ def short_circuit_responder(state: GraphState) -> GraphState:
             state.metadata["last_question_field"] = None  # Clear - we're asking for confirmation
             state.question_target = None
 
-    # Generate contextual suggestions (unless already set for ambiguous destinations)
-    # Use last_question_field from short-circuit logic as question_target
-    if not state.suggested_responses:
-        question_target = state.metadata.get("last_question_field")
-        state.question_target = question_target
-        state.suggested_responses = _generate_contextual_suggestions(state, question_target)
+    # Always regenerate contextual suggestions to match the current question
+    # (Previous suggestions may be stale from a different question)
+    question_target = state.metadata.get("last_question_field")
+    state.question_target = question_target
+    state.suggested_responses = _generate_contextual_suggestions(state, question_target)
     _debug_suggestions(state.suggested_responses, source="short_circuit_responder")
 
     # Set intent for logging purposes
@@ -6954,13 +7260,27 @@ async def run_turn(
     metadata.pop("validator_failures", None)
     metadata.pop("no_progress_turns", None)
     metadata.pop("last_intent", None)
+    # Clear turn-scoped context fields - nodes will re-set them as needed
+    # last_question_field is set by nodes that ask questions, cleared here so stale
+    # context from previous turns doesn't influence short-circuit detection
+    metadata.pop("last_question_field", None)
+    # Clear pending actions to prevent stale actions from triggering on unrelated inputs
+    metadata.pop("pending_action", None)
+    metadata.pop("pending_typo_corrections", None)
+    # Clear deferred intent/strategy to prevent stale deferrals
+    metadata.pop("deferred_intent", None)
+    metadata.pop("deferred_strategy_topic", None)
 
     # Build input state
-    # Reset turn-specific flags to prevent monolith fallback from persisting
+    # Reset turn-specific flags to prevent stale state from persisting
     incoming_flags = deepcopy(session_state.get("flags", {}))
     incoming_flags.pop("force_monolith", None)
     incoming_flags.pop("generate_plan", None)
     incoming_flags.pop("generate_requested", None)
+    # Clear short-circuit flags so each turn re-detects from scratch
+    incoming_flags.pop("short_circuit", None)
+    incoming_flags.pop("short_circuit_response", None)
+    incoming_flags.pop("short_circuit_action", None)
 
     state = GraphState(
         user_text=user_text,
@@ -7037,6 +7357,179 @@ async def run_turn(
         },
     }
     return resp
+
+
+# =============================================================================
+# STREAMING RUN_TURN (SSE support)
+# =============================================================================
+
+
+async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, Any]] = None):
+    """
+    Streaming version of run_turn that yields SSE events.
+
+    Runs the graph normally until response_polish, then streams the final
+    assistant message. For code-only paths (short-circuit), simulates streaming.
+
+    Yields SSE events in the format:
+        {"type": "token", "data": "..."} - streaming token
+        {"type": "complete", "data": {...}} - final state with all extractions
+
+    Args:
+        user_text: The user's message.
+        session_state: Optional session state from previous turns.
+
+    Yields:
+        Dict with SSE event data.
+    """
+
+    _debug("=" * 60)
+    _debug(
+        "RUN_TURN_STREAMING START", user_text=user_text[:100] if len(user_text) > 100 else user_text
+    )
+    _debug("=" * 60)
+
+    session_state = session_state or {}
+    thread_id = session_state.get("thread_id") or str(uuid4())
+
+    # Previous state snapshot for progress heuristics
+    prev_ti = TripInputs(**session_state.get("trip_inputs", {}))
+
+    # Build metadata with today_iso from session_state (defaults to current date)
+    metadata = deepcopy(session_state.get("metadata", {}))
+    if "today_iso" in session_state:
+        metadata["today_iso"] = session_state["today_iso"]
+    elif "today_iso" not in metadata:
+        metadata["today_iso"] = date.today().isoformat()
+
+    # Reset turn-specific metadata counters
+    metadata.pop("validator_failures", None)
+    metadata.pop("no_progress_turns", None)
+    metadata.pop("last_intent", None)
+    # Clear turn-scoped context fields - nodes will re-set them as needed
+    # last_question_field is set by nodes that ask questions, cleared here so stale
+    # context from previous turns doesn't influence short-circuit detection
+    metadata.pop("last_question_field", None)
+    # Clear pending actions to prevent stale actions from triggering on unrelated inputs
+    metadata.pop("pending_action", None)
+    metadata.pop("pending_typo_corrections", None)
+    # Clear deferred intent/strategy to prevent stale deferrals
+    metadata.pop("deferred_intent", None)
+    metadata.pop("deferred_strategy_topic", None)
+
+    # Build input state
+    # Reset turn-specific flags to prevent stale state from persisting
+    incoming_flags = deepcopy(session_state.get("flags", {}))
+    incoming_flags.pop("force_monolith", None)
+    incoming_flags.pop("generate_plan", None)
+    incoming_flags.pop("generate_requested", None)
+    # Clear short-circuit flags so each turn re-detects from scratch
+    incoming_flags.pop("short_circuit", None)
+    incoming_flags.pop("short_circuit_response", None)
+    incoming_flags.pop("short_circuit_action", None)
+
+    state = GraphState(
+        user_text=user_text,
+        trip_inputs=TripInputs(**session_state.get("trip_inputs", {})),
+        metadata=metadata,
+        flags=incoming_flags,
+        last_summary=session_state.get("last_summary"),
+        branches=deepcopy(session_state.get("branches", [])),
+        suggested_responses=deepcopy(session_state.get("suggested_responses", [])),
+        errors=deepcopy(session_state.get("errors", [])),
+        chat_history=deepcopy(session_state.get("chat_history", [])),
+    )
+
+    # Use a unique thread_id per turn
+    turn_thread_id = f"{thread_id}_{uuid4().hex[:8]}"
+
+    # Run the full graph (non-streaming) to get final state
+    # Note: We run the full graph first, then stream the final message
+    # This ensures all extractions complete before we start streaming
+    result: GraphState | dict = await app.ainvoke(
+        state, config={"configurable": {"thread_id": turn_thread_id}}
+    )
+
+    # Normalize to GraphState
+    if isinstance(result, dict):
+        result = GraphState.model_validate(result)
+
+    # Update progress metrics
+    try:
+        made_progress = _progress_signal(prev_ti, result.trip_inputs)
+        meta = result.metadata or {}
+        if made_progress:
+            meta["no_progress_turns"] = 0
+        else:
+            meta["no_progress_turns"] = int(meta.get("no_progress_turns", 0)) + 1
+        result.metadata = meta
+    except Exception:
+        pass
+
+    result_meta = result.metadata or {}
+    result_flags = result.flags or {}
+
+    # Print token usage summary
+    _debug_token_summary(result)
+    _debug_suggestions(result.suggested_responses, source="FINAL RESPONSE (STREAMING)")
+
+    # Get the final assistant message to stream
+    final_message = result.last_summary or ""
+
+    # Determine if this was a short-circuit or polish-skipped path
+    polish_skipped = result_meta.get("polish_skipped_reason")
+    is_short_circuit = bool(result_flags.get("short_circuit"))
+
+    # Stream the message
+    if final_message:
+        if polish_skipped or is_short_circuit:
+            # Simulated streaming for code-generated messages
+            _debug(
+                "Simulating streaming for code-generated response",
+                reason=polish_skipped or "short_circuit",
+            )
+            async for char in simulate_streaming(final_message):
+                yield {"type": "token", "data": char}
+        else:
+            # For LLM-polished responses, we already have the complete response
+            # (since we ran the full graph). Stream it with simulated timing
+            # to provide consistent UX.
+            #
+            # Note: True LLM streaming would require restructuring the graph
+            # to run response_polish as a separate streaming call. For now,
+            # we simulate to maintain UX consistency.
+            _debug("Simulating streaming for polished response")
+            async for char in simulate_streaming(final_message):
+                yield {"type": "token", "data": char}
+
+    # Build final response (same as run_turn)
+    resp = {
+        "assistant_message": final_message,
+        "trip_inputs": result.trip_inputs.model_dump(exclude_none=True),
+        "ready_to_generate": result.ready_to_generate,
+        "branches": result.branches,
+        "suggested_responses": result.suggested_responses,
+        "errors": result.errors,
+        "session_state": {
+            "trip_inputs": result.trip_inputs.model_dump(),
+            "metadata": result_meta,
+            "flags": result_flags,
+            "last_summary": result.last_summary,
+            "branches": result.branches,
+            "suggested_responses": result.suggested_responses,
+            "errors": result.errors,
+            "thread_id": thread_id,
+            "router_intent": getattr(result, "intent", None),
+            "strategy_topic": getattr(result, "strategy_topic", None),
+            "short_circuit_type": result_flags.get("short_circuit"),
+            "llm_calls_made": result_meta.get("llm_calls_made", 0),
+            "cache_hits": result_meta.get("cache_hits", 0),
+            "confidence_routing": result_meta.get("confidence_routing"),
+        },
+    }
+
+    # Yield complete event with full state
+    yield {"type": "complete", "data": resp}
 
 
 # =============================================================================

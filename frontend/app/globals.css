@@ -239,21 +239,9 @@ input[type="number"]::-webkit-outer-spin-button {
   animation: message-slide-in 0.25s ease-out forwards;
 }
 
-/* Suggestion chip entrance animation */
-@keyframes suggestion-fade-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
+/* Suggestion chip - no animation, always visible */
 .suggestion-enter {
-  opacity: 0;
-  animation: suggestion-fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  opacity: 1;
 }
 
 /* Custom scrollbar styling */

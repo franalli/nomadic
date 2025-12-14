@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -6,6 +7,7 @@ from typing import Any, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -52,7 +54,12 @@ from app.middleware import (
 )
 from app.middleware.session import _generate_csrf_token
 from app.plan import plan_trip
-from app.plan_graph import clear_session_checkpoint, condense_long_message, run_turn
+from app.plan_graph import (
+    clear_session_checkpoint,
+    condense_long_message,
+    run_turn,
+    run_turn_streaming,
+)
 from app.schemas import (
     ChatHistoryResponse,
     ChatMessageResponse,
@@ -594,6 +601,232 @@ async def graph_plan_endpoint(
         changes_made=changes_made,
         request_id=request_id,
         observability=observability,
+    )
+
+
+# =============================================================================
+# SSE Streaming Graph Plan Endpoint
+# =============================================================================
+
+
+@app.post("/v1/graph_plan/stream")
+async def graph_plan_stream_endpoint(
+    request: Request,
+    req: GraphPlanRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Streaming version of the graph plan endpoint using Server-Sent Events (SSE).
+
+    Streams tokens as they are generated, then sends a final 'complete' event
+    with the full response data including session state and extracted trip inputs.
+
+    SSE Event Format:
+        event: token
+        data: {"type": "token", "data": "..."}
+
+        event: complete
+        data: {"type": "complete", "data": {...}}
+
+        event: error
+        data: {"type": "error", "message": "..."}
+    """
+    # --- Feature flag gate ---
+    if not settings.enable_graph_plan_route:
+
+        async def error_stream():
+            payload = json.dumps({"type": "error", "message": "Graph plan route is disabled"})
+            yield f"event: error\ndata: {payload}\n\n"
+
+        return StreamingResponse(
+            error_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # --- Generate request ID and compute today_iso ---
+    request_id = generate_request_id()
+    today_iso = compute_today_iso()
+
+    # --- Sanitize and prepare session state ---
+    session_state = sanitize_session_state(req.session_state)
+
+    # --- Handle reset parameter ---
+    if req.reset and not session_state:
+        session_state = {}
+        session_state["thread_id"] = str(ensure_thread_id(None))
+        if req.trip_inputs:
+            session_state["trip_inputs"] = normalize_trip_inputs(dict(req.trip_inputs))
+    elif not session_state:
+        session_state = {}
+
+    # --- Initialize trip_inputs if not present ---
+    if "trip_inputs" not in session_state:
+        raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
+        session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
+
+    # --- Ensure thread_id is set ---
+    if "thread_id" not in session_state:
+        session_state["thread_id"] = ensure_thread_id(req.thread_id)
+
+    # --- Inject today_iso into session state ---
+    session_state["today_iso"] = today_iso
+
+    # --- Get session from request for document persistence ---
+    session_id = get_session_from_request(request)
+
+    async def generate_sse():
+        """Generator that yields SSE events from the streaming graph execution."""
+        try:
+            db_session = await get_or_create_session(db, session_id)
+
+            # Get or create document
+            document = None
+            document_data = None
+            document_version = None
+            try:
+                document = await get_or_create_document(db, session=db_session)
+                document_data = get_document_data(document)
+                document_version = document.version
+
+                # Hydrate session state from document
+                if document_data:
+                    if document_data.branches:
+                        session_state["branches"] = [b.model_dump() for b in document_data.branches]
+                    if document_data.trip_inputs:
+                        session_state["trip_inputs"] = document_data.trip_inputs.model_dump()
+            except Exception as e:
+                logger.warning(f"[{request_id}] Failed to load document for session: {e}")
+
+            # Stream tokens from run_turn_streaming
+            final_result = None
+            token_count = 0
+            async for event in run_turn_streaming(req.message, session_state):
+                if event["type"] == "token":
+                    token_count += 1
+                    if token_count <= 5 or token_count % 50 == 0:
+                        logger.debug(f"[{request_id}] Streaming token #{token_count}")
+                    yield f"event: token\ndata: {json.dumps(event)}\n\n"
+                elif event["type"] == "complete":
+                    logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
+                    final_result = event["data"]
+
+            if final_result is None:
+                error_payload = json.dumps({"type": "error", "message": "No result from graph"})
+                yield f"event: error\ndata: {error_payload}\n\n"
+                return
+
+            # --- Process and persist final result ---
+            assistant_message = final_result.get("assistant_message", "")
+            if len(assistant_message) > settings.assistant_msg_max_len:
+                try:
+                    assistant_message = await condense_long_message(
+                        assistant_message,
+                        settings.assistant_msg_max_len,
+                    )
+                except Exception as e:
+                    logger.warning(f"[{request_id}] Condense failed: {e}")
+                    assistant_message = truncate_assistant_message(assistant_message)
+
+            suggested_responses = validate_suggested_responses(
+                final_result.get("suggested_responses", [])
+            )
+            updated_session_state = final_result.get("session_state", session_state)
+            branches = final_result.get("branches", [])
+            trip_inputs = final_result.get(
+                "trip_inputs", updated_session_state.get("trip_inputs", {})
+            )
+            ready_to_generate_now = final_result.get("ready_to_generate", False)
+            changes_made = trip_inputs != session_state.get("trip_inputs", {})
+
+            # Persist document
+            new_document_version = document_version
+            updated_at = datetime.now().isoformat()
+            if document:
+                try:
+                    from app.schemas import DocumentBranch, DocumentTripInputs
+
+                    branch_objs = []
+                    for b in branches:
+                        if isinstance(b, dict):
+                            branch_objs.append(DocumentBranch.model_validate(b))
+                        else:
+                            branch_objs.append(b)
+
+                    trip_inputs_obj = None
+                    if trip_inputs:
+                        if isinstance(trip_inputs, dict):
+                            trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
+                        else:
+                            trip_inputs_obj = trip_inputs
+
+                    trip_context = await get_latest_trip_context_for_session(db, session=db_session)
+                    trip_context_id = trip_context.id if trip_context else 0
+
+                    updated_doc = await apply_planner_update(
+                        db,
+                        doc=document,
+                        trip_context_id=trip_context_id,
+                        trip_inputs=trip_inputs_obj,
+                        branches=branch_objs if branch_objs else None,
+                    )
+                    if updated_doc:
+                        new_document_version = updated_doc.version
+                        document_data = get_document_data(updated_doc)
+                        await db.commit()
+                except Exception as e:
+                    logger.error(f"[{request_id}] Failed to persist document: {e}")
+                    await db.rollback()
+
+            # Build response document
+            response_document = document_data if document_data else PlanDocumentData()
+            response_document.assistant_message = assistant_message
+            response_document.suggested_responses = suggested_responses
+            response_document.ready_to_generate = ready_to_generate_now
+
+            # Build full response matching GraphPlanResponse
+            full_response = {
+                "document": (
+                    response_document.model_dump()
+                    if hasattr(response_document, "model_dump")
+                    else response_document
+                ),
+                "session_state": updated_session_state,
+                "version": new_document_version or 1,
+                "updated_by": "planner",
+                "updated_at": updated_at,
+                "changes_made": changes_made,
+                "request_id": request_id,
+                "observability": {
+                    "tokens": {"prompt": 0, "completion": 0, "total": 0},
+                    "today_iso": today_iso,
+                    "ready_to_generate_now": ready_to_generate_now,
+                },
+            }
+
+            complete_payload = json.dumps(
+                {"type": "complete", "data": full_response},
+                default=str,
+            )
+            yield f"event: complete\ndata: {complete_payload}\n\n"
+
+        except TimeoutError:
+            logger.error(f"[{request_id}] run_turn_streaming timed out")
+            timeout_payload = json.dumps({"type": "error", "message": "Request timed out"})
+            yield f"event: error\ndata: {timeout_payload}\n\n"
+        except Exception as e:
+            logger.error(f"[{request_id}] run_turn_streaming failed: {e}")
+            error_payload = json.dumps({"type": "error", "message": str(e)})
+            yield f"event: error\ndata: {error_payload}\n\n"
+
+    return StreamingResponse(
+        generate_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )
 
 

@@ -313,6 +313,7 @@ def normalize_destinations(destinations: Any, max_count: Optional[int] = None) -
     Normalize destinations list with NFC, trim, and case-insensitive dedupe.
 
     Preserves original casing for display while deduplicating.
+    Strips country suffixes in "Place, Country" format (e.g., "Banff, Canada" -> "Banff").
 
     Args:
         destinations: Raw destinations list.
@@ -330,6 +331,105 @@ def normalize_destinations(destinations: Any, max_count: Optional[int] = None) -
     seen_lower: Set[str] = set()
     result: List[str] = []
 
+    def _strip_country_suffix(text: str) -> str:
+        """Strip country suffix in 'Place, Country' format."""
+        if ", " not in text:
+            return text
+
+        # Split on last comma to handle cases like "New York City, USA"
+        parts = text.rsplit(", ", 1)
+        if len(parts) != 2:
+            return text
+
+        place, potential_country = parts
+
+        # Common country names and codes to strip
+        countries = {
+            "usa",
+            "us",
+            "united states",
+            "united states of america",
+            "uk",
+            "united kingdom",
+            "england",
+            "great britain",
+            "canada",
+            "australia",
+            "france",
+            "germany",
+            "italy",
+            "spain",
+            "japan",
+            "china",
+            "india",
+            "brazil",
+            "mexico",
+            "netherlands",
+            "switzerland",
+            "austria",
+            "belgium",
+            "portugal",
+            "greece",
+            "turkey",
+            "thailand",
+            "vietnam",
+            "indonesia",
+            "malaysia",
+            "singapore",
+            "philippines",
+            "south korea",
+            "korea",
+            "taiwan",
+            "new zealand",
+            "ireland",
+            "scotland",
+            "wales",
+            "norway",
+            "sweden",
+            "denmark",
+            "finland",
+            "iceland",
+            "poland",
+            "czech republic",
+            "czechia",
+            "hungary",
+            "croatia",
+            "slovenia",
+            "romania",
+            "bulgaria",
+            "egypt",
+            "morocco",
+            "south africa",
+            "kenya",
+            "tanzania",
+            "argentina",
+            "chile",
+            "peru",
+            "colombia",
+            "costa rica",
+            "panama",
+            "cuba",
+            "jamaica",
+            "bahamas",
+            "dominican republic",
+            "puerto rico",
+            "uae",
+            "united arab emirates",
+            "dubai",
+            "qatar",
+            "saudi arabia",
+            "israel",
+            "jordan",
+            "lebanon",
+            "russia",
+            "ukraine",
+        }
+
+        if potential_country.lower().strip() in countries:
+            return place.strip()
+
+        return text
+
     for dest in destinations:
         if not isinstance(dest, str):
             continue
@@ -338,6 +438,9 @@ def normalize_destinations(destinations: Any, max_count: Optional[int] = None) -
         normalized = normalize_text(dest)
         if not normalized:
             continue
+
+        # Strip country suffix (e.g., "Banff, Canada" -> "Banff")
+        normalized = _strip_country_suffix(normalized)
 
         # Case-insensitive deduplication
         lower = normalized.lower()
@@ -517,7 +620,7 @@ def validate_suggested_responses(responses: Any) -> List[str]:
 
     Rules:
     - Max 3 items
-    - 2-6 words each
+    - 1-8 words each (single-word destinations like "Norway" are valid)
     - No question marks
 
     Args:
@@ -544,9 +647,9 @@ def validate_suggested_responses(responses: Any) -> List[str]:
         if "?" in resp:
             continue
 
-        # Word count check (2-6 words)
+        # Word count check (1-8 words) - single-word destinations are valid
         words = resp.split()
-        if len(words) < 2 or len(words) > 6:
+        if len(words) < 1 or len(words) > 8:
             continue
 
         result.append(resp)

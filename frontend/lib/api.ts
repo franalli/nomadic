@@ -131,3 +131,158 @@ export function trackSuggestionClick(
     // Silently ignore tracking failures
   });
 }
+
+/**
+ * SSE Event types for streaming graph plan responses.
+ */
+export interface SSETokenEvent {
+  type: 'token';
+  data: string;
+}
+
+export interface SSECompleteEvent {
+  type: 'complete';
+  data: {
+    document: unknown;
+    session_state: Record<string, unknown>;
+    version: number;
+    updated_by: string;
+    updated_at: string;
+    changes_made: boolean;
+    request_id: string;
+    observability?: unknown;
+  };
+}
+
+export interface SSEErrorEvent {
+  type: 'error';
+  message: string;
+}
+
+export type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent;
+
+/**
+ * Callbacks for streaming graph plan responses.
+ */
+export interface StreamGraphPlanCallbacks {
+  /** Called for each token received from the stream */
+  onToken: (token: string) => void;
+  /** Called when the stream completes with the full response */
+  onComplete: (response: SSECompleteEvent['data']) => void;
+  /** Called when an error occurs */
+  onError: (error: Error) => void;
+}
+
+/**
+ * Stream a graph plan response using Server-Sent Events.
+ *
+ * This function connects to the SSE endpoint and streams tokens as they arrive,
+ * providing real-time feedback to the user.
+ *
+ * @param body - The request body (same as GraphPlanRequest)
+ * @param callbacks - Callbacks for handling stream events
+ * @returns A function to abort the stream
+ */
+export function streamGraphPlan(
+  body: {
+    message: string;
+    session_state?: Record<string, unknown>;
+    trip_inputs?: Record<string, unknown>;
+    reset?: boolean;
+    thread_id?: string;
+  },
+  callbacks: StreamGraphPlanCallbacks
+): () => void {
+  const controller = new AbortController();
+  const url = `${API_BASE}/v1/graph_plan/stream`;
+
+  // Build headers with CSRF token
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+  const csrfToken = getCsrfToken();
+  if (csrfToken) {
+    headers['X-CSRF-Token'] = csrfToken;
+  }
+
+  // Start the fetch request
+  fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers,
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Stream request failed: ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error('No response body');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        // Decode the chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+
+        // Process complete SSE events from the buffer
+        const lines = buffer.split('\n');
+        buffer = '';
+
+        let currentEvent = '';
+        let currentData = '';
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            currentData = line.slice(6);
+          } else if (line === '' && currentData) {
+            // Empty line signals end of event
+            try {
+              const parsed = JSON.parse(currentData) as SSEEvent;
+
+              if (parsed.type === 'token') {
+                callbacks.onToken(parsed.data);
+              } else if (parsed.type === 'complete') {
+                callbacks.onComplete(parsed.data);
+              } else if (parsed.type === 'error') {
+                callbacks.onError(new Error(parsed.message));
+              }
+            } catch {
+              // Ignore parse errors for incomplete data
+            }
+            currentEvent = '';
+            currentData = '';
+          } else if (line !== '') {
+            // Incomplete line, add back to buffer
+            buffer += line + '\n';
+          }
+        }
+
+        // Keep any remaining incomplete data in the buffer
+        if (currentData) {
+          buffer = `event: ${currentEvent}\ndata: ${currentData}`;
+        }
+      }
+    })
+    .catch((error) => {
+      if (error.name !== 'AbortError') {
+        callbacks.onError(error);
+      }
+    });
+
+  // Return abort function
+  return () => controller.abort();
+}
