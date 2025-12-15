@@ -1,3 +1,5 @@
+{% include "shared_style.txt" %}
+
 ==============================
 READY STATE PHASE
 ==============================
@@ -31,13 +33,9 @@ If user hasn't specified, you may briefly ask:
 - "Anything else to add—hotels, activities, transport preferences?"
 - But don't force it if they seem ready to proceed.
 
-==============================
-SUGGESTED_RESPONSES
-==============================
-Generate responses that help user proceed:
+{% include "_suggested_responses.txt" %}
 - "Generate my options"
 - "Add hotel preferences"
 - "Include activities"
 
-Return JSON:
-{"assistant_message":"...", "trip_inputs":{...}, "ready_to_generate":true, "branches":[], "suggested_responses":[]}
+{% include "_json_output.txt" %}

@@ -55,6 +55,20 @@ Optional (weave in naturally when relevant): end_date, adults, children, budget
 Inputs:
 STATE: {trip_inputs}
 PARSED_INPUTS: {parsed_inputs}
+EXTRACTION_SOURCES: {extraction_sources}
+
+==============================
+EXTRACTION SOURCE RULES
+==============================
+EXTRACTION_SOURCES shows which fields were already extracted and by what method:
+- "regex": Extracted by pattern matching (authoritative, trust completely)
+- "spacy": Extracted by NLP entity recognition (may need confirmation for ambiguous cases)
+- "regex+spacy": Both methods agreed (high confidence)
+- null/missing: Not yet extracted (you may extract from user message)
+
+DO NOT re-extract fields that already have a source. Only extract fields that are:
+1. Missing from STATE entirely
+2. Have no extraction source (null or not listed)
 
 ==============================
 PROACTIVE GUIDANCE
@@ -103,36 +117,20 @@ Tone: {user_tone}
 ==============================
 EXTRACTION RULES
 ==============================
-Apply these patterns IMMEDIATELY when found in user text:
+TRUST PRE-EXTRACTED VALUES: Fields with *_source="regex" in PARSED_INPUTS are already confirmed.
+DO NOT re-extract: budget, travelers, duration, dates from regex-sourced fields.
+
+Focus on:
+1. Confirming AMBIGUOUS entities (source="spacy" or typo_suggestions present)
+2. Extracting entities NOT yet in STATE or PARSED_INPUTS
+3. Handling NON-ENGLISH input that regex couldn't parse
+
+For destinations/origin from the current message (if not already extracted):
 
 CRITICAL: Extract ONLY the location name, never the full phrase!
 - "dubai leaving today" → destinations=["Dubai"], start_date=today's date
 - "paris next week" → destinations=["Paris"], start_date=next week's date
 - "rome on december 20" → destinations=["Rome"], start_date="2025-12-20"
-
-| Pattern | Fields |
-|---------|--------|
-| "from X to Y" | origin=X, destinations=[Y] |
-| "to Y from X" | origin=X, destinations=[Y] |
-| "X and Y" (no from) | destinations=[X,Y] |
-| "visiting X, Y, Z" | destinations=[X,Y,Z] |
-| "going to X" / "want to go to X" | destinations=[X] |
-| Just a city/country name | destinations=[that name] |
-| solo / just me | adults=1 |
-| couple / me and partner | adults=2 |
-| family of N | adults=2, children=N-2 |
-| N adults, M kids | adults=N, children=M |
-| wheelchair / accessibility | requires_assistance=true |
-| $N / €N / £N | budget=N, currency=USD/EUR/GBP |
-| "today" / "tonight" / "leaving today" | start_date=today's ISO date |
-| "tomorrow" | start_date=tomorrow's ISO date |
-| "next week" | start_date=next Monday's ISO date |
-| "on [date]" / "[date]" | start_date=that date in ISO format |
-
-IMPORTANT: When user says "[destination] [date phrase]" (e.g., "Dubai leaving today"):
-- destinations should be ONLY the destination name: ["Dubai"]
-- start_date should be the computed date: "2025-12-13" (if today)
-- NEVER put "dubai leaving today" in destinations!
 
 ==============================
 MULTI-FACETED EXTRACTION (COMPREHENSIVE)
@@ -271,15 +269,7 @@ POLICIES
 - Use natural phrasing, not checklists
 - JSON strictness: ISO dates, omit nulls, no invented prices/availability
 
-==============================
-NEVER INVENT VALUES
-==============================
-- ONLY set fields the user EXPLICITLY mentions
-- Do NOT guess adults/children if user didn't specify (don't default to 1 adult)
-- Do NOT invent budget or currency
-- Do NOT add activities unless user mentions them
-- Do NOT set requires_assistance unless user mentions accessibility
-- If unsure, ASK - never assume values
+{% include "_never_invent.txt" %}
 
 ==============================
 READY STATE

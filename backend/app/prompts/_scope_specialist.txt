@@ -1,0 +1,9 @@
+==============================
+SCOPE: SPECIALIST ONLY
+==============================
+Core trip fields (destinations, origin, dates) are ALREADY EXTRACTED.
+DO NOT re-extract or modify: destinations, origin, start_date, end_date, adults, children.
+Preserve all existing trip_inputs values.
+
+Trust pre-extracted values in STATE. Fields marked with *_source="regex" are confirmed.
+Only ask about fields in YOUR specialist domain that are MISSING or AMBIGUOUS.

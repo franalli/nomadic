@@ -184,6 +184,13 @@ def llm_json_for_prompt(
                 "suggested_responses": [],
             }
 
+        # Parse STATE from prompt to check what's already set
+        state_raw = _extract_between(prompt, "STATE:", "PARSED_INPUTS:")
+        state = _safe_json_loads(state_raw)
+        has_destinations = bool(state.get("destinations"))
+        has_origin = bool(state.get("origin"))
+        has_start_date = bool(state.get("start_date"))
+
         iso_dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", user_message or "")
         if not iso_dates:
             iso_dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", prompt)
@@ -192,8 +199,46 @@ def llm_json_for_prompt(
         if len(iso_dates) >= 2:
             trip_inputs["start_date"] = iso_dates[0]
             trip_inputs["end_date"] = iso_dates[1]
+            has_start_date = True
         elif len(iso_dates) == 1:
             trip_inputs["start_date"] = iso_dates[0]
+            has_start_date = True
+
+        # Check if origin is in the user message (e.g., "From Sydney")
+        origin_match = re.search(r"\bfrom\s+([A-Z][a-zA-Z\s]+)", user_message or "", re.I)
+        if origin_match:
+            has_origin = True
+
+        # Determine what to ask for based on what's missing
+        if has_destinations and has_origin and has_start_date:
+            return {
+                "assistant_message": "You're all set! Ready to see options?",
+                "trip_inputs": trip_inputs,
+                "ready_to_generate": False,
+                "branches": [],
+                "suggested_responses": ["Show me options", "Add more details"],
+            }
+
+        if has_destinations and has_origin and not has_start_date:
+            dest_name = state.get("destinations", ["your destination"])[0]
+            return {
+                "assistant_message": f"Great—when are you planning to visit {dest_name}?",
+                "trip_inputs": trip_inputs,
+                "ready_to_generate": False,
+                "branches": [],
+                "suggested_responses": ["Next month", "December 15-22", "Flexible dates"],
+                "question_target": "dates",
+            }
+
+        if has_destinations and not has_origin:
+            return {
+                "assistant_message": "Where will you be flying from?",
+                "trip_inputs": trip_inputs,
+                "ready_to_generate": False,
+                "branches": [],
+                "suggested_responses": ["From London", "From New York", "From Sydney"],
+                "question_target": "origin",
+            }
 
         if trip_inputs:
             return {
@@ -313,7 +358,10 @@ def llm_json_for_prompt(
             "suggested_responses": ["Central location", "Quiet area"],
         }
 
-    if "SCOPE: TRANSPORT PREFERENCES ONLY" in prompt.upper():
+    if (
+        "SCOPE: TRANSPORT PREFERENCES ONLY" in prompt.upper()
+        or "GROUND TRANSPORT preferences" in prompt
+    ):
         msg = (user_message or "").lower()
         transport: Dict[str, Any] = {}
         if any(k in msg for k in ["rent a car", "car rental", "drive", "driving"]):

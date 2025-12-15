@@ -207,11 +207,13 @@ class TestLoadPromptCache:
 
     def test_load_prompt_invalid_name(self):
         """Invalid prompt name should raise or return empty."""
+        from jinja2.exceptions import TemplateNotFound
+
         try:
             result = load_prompt("nonexistent_prompt_xyz")
             # If it doesn't raise, should return empty or None
             assert result is None or result == ""
-        except (FileNotFoundError, ValueError):
+        except (FileNotFoundError, ValueError, TemplateNotFound):
             pass  # Expected behavior
 
 

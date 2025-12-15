@@ -14,7 +14,19 @@ Start assistant_message with a context-appropriate emoji (1-2 max per message):
     💰 budget, ✓ ready state. Default ✨ only if nothing fits.
 
 STATE: {current_state_json}
+EXTRACTION_SOURCES: {extraction_sources}
 {existing_branches}
+
+==============================
+EXTRACTION SOURCE RULES
+==============================
+EXTRACTION_SOURCES shows which fields were already extracted and by what method:
+- "regex": Extracted by pattern matching (authoritative, trust completely)
+- "spacy": Extracted by NLP entity recognition (may need confirmation for ambiguous cases)
+- "regex+spacy": Both methods agreed (high confidence)
+- null/missing: Not yet extracted (you may extract from user message)
+
+DO NOT re-extract fields that already have a source. Only extract fields missing from STATE.
 
 ==============================
 MARKDOWN FORMATTING RULES
@@ -81,7 +93,7 @@ REALITY & FEASIBILITY CHECK (APPLY BEFORE WRITING STATE)
   - Propose 1–2 realistic alternatives (prefer nearby or similar experiences)
   - Ask ONE corrective or confirmatory question
 - Use this correction template:
-  "Notice: {{issue}}. Because {{reason}}. Options: {{A}}, {{B}}. Which should I apply?"
+  "Notice: {issue}. Because {reason}. Options: {A}, {B}. Which should I apply?"
 - Prefer correction over silent acceptance.
 
 ==============================

@@ -55,8 +55,13 @@ from app.middleware import (
 from app.middleware.session import _generate_csrf_token
 from app.plan import plan_trip
 from app.plan_graph import (
+    checkpoint_stats,
+    clear_all_checkpoints,
+    clear_response_caches,
     clear_session_checkpoint,
     condense_long_message,
+    prune_stale_checkpoints,
+    response_cache_stats,
     run_turn,
     run_turn_streaming,
 )
@@ -198,6 +203,73 @@ def admin_clear_validation_cache():
             "before": before,
             "after": cache_stats(),
         },
+    }
+
+
+@app.post("/v1/admin/fresh-start")
+def admin_fresh_start():
+    """
+    Perform a complete system cache and checkpoint cleanup.
+
+    This clears:
+    - All validation caches (preserving rate limiting)
+    - All LLM response caches
+    - All stale LangGraph checkpoints (>24h idle)
+
+    For development/debugging and maintenance only.
+    Does NOT clear rate limiting cache to prevent abuse.
+    """
+    # Get before stats
+    before_validation = cache_stats()
+    before_response = response_cache_stats()
+    before_checkpoints = checkpoint_stats()
+
+    # Clear validation caches (preserve rate limiting)
+    validation_cleared = clear_cache(preserve_rate_limiting=True)
+
+    # Clear response caches
+    response_cleared = clear_response_caches()
+
+    # Prune stale checkpoints
+    checkpoints_pruned = prune_stale_checkpoints()
+
+    # Re-populate validation cache with common values
+    validation_repopulated = prewarm_cache()
+
+    return {
+        "validation": {
+            "cleared": validation_cleared,
+            "repopulated": validation_repopulated,
+            "before": before_validation,
+            "after": cache_stats(),
+        },
+        "response_caches": {
+            "cleared": response_cleared,
+            "before": before_response,
+            "after": response_cache_stats(),
+        },
+        "checkpoints": {
+            "pruned": checkpoints_pruned,
+            "before": before_checkpoints,
+            "after": checkpoint_stats(),
+        },
+    }
+
+
+@app.post("/v1/admin/clear-all-checkpoints")
+def admin_clear_all_checkpoints():
+    """
+    Clear ALL LangGraph checkpoints regardless of age.
+
+    Use with caution - this will clear all in-progress session states.
+    For emergency maintenance only.
+    """
+    before = checkpoint_stats()
+    cleared = clear_all_checkpoints()
+    return {
+        "cleared": cleared,
+        "before": before,
+        "after": checkpoint_stats(),
     }
 
 
@@ -960,6 +1032,12 @@ def reset_session(
     # Clear LangGraph checkpoint for this session (even if session not in DB)
     if session_id:
         clear_session_checkpoint(session_id)
+
+    # Clear response caches (preserves rate limiting for security)
+    clear_response_caches()
+
+    # Prune stale checkpoints to prevent memory overflow
+    prune_stale_checkpoints()
 
     # Lock the session row first to prevent deadlocks with concurrent operations
     session = get_session_by_token_sync(db, session_id, lock_for_update=True)

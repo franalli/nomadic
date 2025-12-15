@@ -1,0 +1,8 @@
+==============================
+SUGGESTED_RESPONSES RULES
+==============================
+- 0–3 statements the USER might say as their reply
+- MUST be complete responses with concrete examples, NOT prompts
+- NEVER questions, NEVER ellipsis (...), NEVER placeholders
+- 2–6 words each
+- If unsure, return []

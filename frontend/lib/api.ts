@@ -83,6 +83,42 @@ export async function resetSession(): Promise<Response> {
 }
 
 /**
+ * LocalStorage keys used by the application.
+ * Keep in sync when adding new localStorage usage.
+ */
+const LOCAL_STORAGE_KEYS = {
+  /** Trip summary cached for the summary page */
+  TRIP_SUMMARY: 'nomadic_trip_summary',
+  /** User consent preferences (GDPR) - should NOT be cleared on fresh start */
+  CONSENT: 'nomadic_consent_v1',
+} as const;
+
+/**
+ * Clear all session-related localStorage data.
+ *
+ * This clears trip summary and other session data, but intentionally
+ * preserves the user's consent preferences to maintain GDPR compliance
+ * and avoid re-prompting users.
+ *
+ * Call this during "Fresh Start" or session reset operations.
+ */
+export function clearSessionLocalStorage(): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    // Clear session-related data
+    window.localStorage.removeItem(LOCAL_STORAGE_KEYS.TRIP_SUMMARY);
+
+    // NOTE: We intentionally do NOT clear CONSENT preferences
+    // to maintain GDPR compliance and avoid re-prompting users
+
+    // Add any future session-related localStorage keys here
+  } catch (error) {
+    console.error('Failed to clear session localStorage', error);
+  }
+}
+
+/**
  * Validate a trip input (origin or destination) using LLM-based validation.
  *
  * @param fieldType - Type of input: 'origin' or 'destination'

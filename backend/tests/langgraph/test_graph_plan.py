@@ -497,14 +497,16 @@ class TestGraphPlanUtilities:
         """Suggested responses validation works."""
         from app.graph_plan_utils import validate_suggested_responses
 
-        # Valid responses (2-6 words, no question marks)
+        # Valid responses (1-8 words, no question marks)
         responses = [
             "Tell me more",  # Valid: 3 words
             "Show flights please",  # Valid: 3 words
             "?",  # Invalid: question mark
             "",  # Invalid: empty
-            "A",  # Invalid: too short (1 word)
-            "This is a very very very long response",  # Invalid: too many words
+            "Norway",  # Valid: 1 word (destinations)
+            (
+                "This is a very very very long response that exceeds the limit",
+            ),  # Invalid: too many words (>8)
         ]
 
         validated = validate_suggested_responses(responses)
@@ -514,5 +516,5 @@ class TestGraphPlanUtilities:
         for r in validated:
             assert "?" not in r
             assert r  # Not empty
-            assert len(r.split()) >= 2
-            assert len(r.split()) <= 6
+            assert len(r.split()) >= 1
+            assert len(r.split()) <= 8

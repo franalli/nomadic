@@ -6,6 +6,11 @@ import {
   DEFAULT_TRIP_INPUTS,
   useDocumentStore,
 } from '@/state/documentStore';
+import {
+  areActivitiesDuplicate,
+  deduplicateActivities,
+  normalizeActivityWithEmoji,
+} from '@/lib/utils';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -423,15 +428,20 @@ export function useLocalBookingSettings(
       const trimmed = activity.trim();
       if (!trimmed) return;
 
+      // Normalize activity with emoji prefix
+      const normalized = normalizeActivityWithEmoji(trimmed);
+
       const currentCategories = activitySettingsRef.current.categories;
-      // Check for duplicates (case-insensitive)
-      if (currentCategories.some((c) => c.toLowerCase() === trimmed.toLowerCase())) {
+      // Check for duplicates (case-insensitive, ignoring emoji prefix)
+      if (currentCategories.some((c) => areActivitiesDuplicate(c, normalized))) {
         onToast('Activity already added', 'info');
         return;
       }
 
-      const newCategories = [...currentCategories, trimmed];
-      handleUpdateActivitySettings({ categories: newCategories });
+      const newCategories = [...currentCategories, normalized];
+      // Deduplicate to be safe (in case of edge cases)
+      const deduped = deduplicateActivities(newCategories);
+      handleUpdateActivitySettings({ categories: deduped });
       onToast(`Added "${trimmed}"`, 'confirmation');
     },
     [handleUpdateActivitySettings, onToast]

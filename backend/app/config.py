@@ -97,8 +97,43 @@ class Settings(BaseSettings):
     # Cookie domain for subdomain sharing (e.g., ".nomadic.com"), or None for same-origin
     cookie_domain: str | None = os.getenv("COOKIE_DOMAIN", None)
 
+    # =============================================================================
+    # LangSmith Tracing Configuration
+    # =============================================================================
+    langsmith_api_key: str | None = os.getenv("LANGSMITH_API_KEY")
+    langsmith_endpoint: str = os.getenv("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com")
+    langsmith_project: str = os.getenv("LANGSMITH_PROJECT", "default")
+    langsmith_tracing_enabled: bool = os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+
 
 settings = Settings()
+
+
+# =============================================================================
+# LangSmith Environment Setup
+# =============================================================================
+def configure_langsmith_tracing(
+    enabled: bool = True,
+    project: str | None = None,
+) -> None:
+    """
+    Configure LangSmith tracing environment variables.
+
+    This should be called before any LangGraph operations to enable tracing.
+    LangGraph automatically picks up these environment variables.
+
+    Args:
+        enabled: Whether to enable tracing
+        project: Optional project name override (defaults to settings.langsmith_project)
+    """
+    api_key = settings.langsmith_api_key
+    if not api_key:
+        return
+
+    os.environ["LANGCHAIN_API_KEY"] = api_key
+    os.environ["LANGCHAIN_ENDPOINT"] = settings.langsmith_endpoint
+    os.environ["LANGCHAIN_TRACING_V2"] = "true" if enabled else "false"
+    os.environ["LANGCHAIN_PROJECT"] = project or settings.langsmith_project
 
 
 # =============================================================================

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { resetSession } from '@/lib/api';
+import { clearSessionLocalStorage, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanDocumentResponse } from '@/types/document';
@@ -329,6 +329,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     } catch (error) {
       console.error('Failed to reset planning session', error);
     } finally {
+      // Clear session-related localStorage (preserves consent preferences)
+      clearSessionLocalStorage();
+
       handleClearContext();
 
       // Scroll to chat panel and focus input after reset

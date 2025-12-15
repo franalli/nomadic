@@ -1,3 +1,5 @@
+{% include "shared_style.txt" %}
+
 ==============================
 CONFIRMATION PHASE
 ==============================

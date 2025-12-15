@@ -31,7 +31,7 @@ import os
 import re
 import time
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 from zoneinfo import ZoneInfo
 
 import tiktoken
@@ -166,6 +166,301 @@ DEFAULT_FLIGHT_SETTINGS = {"round_trip": True, "cabin_class": "economy", "direct
 DEFAULT_HOTEL_SETTINGS = {"min_stars": 0, "amenities": []}
 DEFAULT_ACTIVITY_SETTINGS = {"categories": []}
 DEFAULT_TRANSPORT_SETTINGS = {"car": False, "train": False, "bus": False}
+
+# =============================================================================
+# ACTIVITY EMOJI MAPPING
+# =============================================================================
+# Maps activity keywords (lowercase) to their emoji prefixes.
+# Used to normalize activities so they all have consistent emoji prefixes.
+
+_ACTIVITY_EMOJI_MAP: Dict[str, str] = {
+    # Beach/coastal
+    "beach": "🏖️",
+    "coastal": "🏖️",
+    "seaside": "🏖️",
+    # Romantic
+    "romantic": "💕",
+    "couples": "💕",
+    "honeymoon": "💕",
+    # Adventure/extreme
+    "adventure": "🧗",
+    "extreme": "🧗",
+    "adrenaline": "🧗",
+    "climbing": "🧗",
+    "rock climbing": "🧗",
+    "bungee": "🧗",
+    "skydiving": "🧗",
+    "paragliding": "🧗",
+    "zip-line": "🧗",
+    "zipline": "🧗",
+    # Family
+    "family": "👨‍👩‍👧",
+    "kids": "👨‍👩‍👧",
+    "children": "👨‍👩‍👧",
+    # Food/culinary
+    "food": "🍝",
+    "culinary": "🍝",
+    "gastronomy": "🍝",
+    "food tour": "🍝",
+    "cooking class": "🍝",
+    "street food": "🍝",
+    # Wine/tasting
+    "wine": "🍷",
+    "vineyard": "🍷",
+    "tasting": "🍷",
+    "wine tasting": "🍷",
+    "brewery": "🍷",
+    "distillery": "🍷",
+    # Culture/museums
+    "culture": "🏛️",
+    "museums": "🏛️",
+    "galleries": "🏛️",
+    "art": "🏛️",
+    "exhibitions": "🏛️",
+    "sightseeing": "🏛️",
+    # History
+    "history": "📜",
+    "heritage": "📜",
+    "ancient": "📜",
+    "archaeology": "📜",
+    # Theater/shows
+    "theater": "🎭",
+    "theatre": "🎭",
+    "shows": "🎭",
+    "opera": "🎭",
+    "ballet": "🎭",
+    "broadway": "🎭",
+    "cabaret": "🎭",
+    "comedy": "🎭",
+    # Spa/wellness
+    "spa": "💆",
+    "wellness": "💆",
+    "yoga": "💆",
+    "meditation": "💆",
+    "retreat": "💆",
+    "spa day": "💆",
+    "massage": "💆",
+    # Relaxation
+    "relaxation": "😌",
+    "chill": "😌",
+    "unwind": "😌",
+    # Hiking/trekking
+    "hiking": "🥾",
+    "trekking": "🥾",
+    "trails": "🥾",
+    "hike": "🥾",
+    "trek": "🥾",
+    # Dirt riding/motorbike
+    "dirt riding": "🏍️",
+    "motorbike": "🏍️",
+    "atv": "🏍️",
+    "quad": "🏍️",
+    "off-road": "🏍️",
+    "motocross": "🏍️",
+    "motogp": "🏍️",
+    # Racing/F1
+    "f1": "🏎️",
+    "racing": "🏎️",
+    "motorsport": "🏎️",
+    "go-kart": "🏎️",
+    "formula 1": "🏎️",
+    "grand prix": "🏎️",
+    "nascar": "🏎️",
+    # Diving/snorkeling
+    "diving": "🤿",
+    "snorkeling": "🤿",
+    "scuba": "🤿",
+    # Skiing/winter
+    "skiing": "⛷️",
+    "snowboarding": "⛷️",
+    "winter sports": "⛷️",
+    "snow activities": "🎿",
+    # Nightlife
+    "nightlife": "🎉",
+    "clubs": "🎉",
+    "bars": "🎉",
+    "entertainment": "🎉",
+    "party": "🎉",
+    "clubbing": "🎉",
+    "night out": "🎉",
+    # Running
+    "running": "🏃",
+    "jogging": "🏃",
+    "marathon": "🏃",
+    "triathlon": "🏃",
+    "trail running": "🏃",
+    # Backpacking
+    "backpacking": "🎒",
+    "budget travel": "🎒",
+    # Music
+    "music": "🎵",
+    "concerts": "🎵",
+    "festivals": "🎵",
+    "live music": "🎵",
+    "dj": "🎵",
+    "rave": "🎵",
+    # Movies/film
+    "movies": "🎬",
+    "film festival": "🎬",
+    "premiere": "🎬",
+    "cinema": "🎬",
+    "celebrity events": "🎬",
+    # Circus/carnival
+    "circus": "🎪",
+    "carnival": "🎪",
+    "parade": "🎪",
+    "celebration": "🎪",
+    "fair": "🎪",
+    # Shopping
+    "shopping": "🛍️",
+    "markets": "🛍️",
+    "boutiques": "🛍️",
+    # Cycling
+    "cycling": "🚴",
+    "biking": "🚴",
+    "mountain biking": "🚴",
+    "bmx": "🚴",
+    # Surfing/water sports
+    "surfing": "🏄",
+    "water sports": "🏄",
+    "jet ski": "🏄",
+    "wakeboard": "🏄",
+    # Kayaking/paddling
+    "kayaking": "🛶",
+    "canoeing": "🛶",
+    "paddleboarding": "🛶",
+    "rafting": "🛶",
+    # Sailing/boating
+    "sailing": "⛵",
+    "boating": "⛵",
+    "yacht": "⛵",
+    "cruise": "⛵",
+    # Fishing
+    "fishing": "🎣",
+    "deep sea fishing": "🎣",
+    # Safari/wildlife
+    "safari": "🦁",
+    "wildlife": "🦁",
+    "animal watching": "🦁",
+    "zoo": "🦁",
+    "whale watching": "🦁",
+    "wildlife tours": "🦁",
+    # Nature
+    "nature": "🌲",
+    "national parks": "🌲",
+    "aurora": "🌲",
+    "northern lights": "🌲",
+    "outdoor": "🌲",
+    "outdoor activities": "🌲",
+    # Golf
+    "golf": "⛳",
+    # Tennis
+    "tennis": "🎾",
+    # Sports events
+    "basketball": "🏀",
+    "football": "🏀",
+    "soccer": "🏀",
+    "sports events": "🏀",
+    # Academic
+    "academic": "🎓",
+    "conference": "🎓",
+    "seminar": "🎓",
+    "workshop": "🎓",
+    "lecture": "🎓",
+    "university": "🎓",
+    "research": "🎓",
+    "study abroad": "🎓",
+    # Competition
+    "competition": "🏆",
+    "hackathon": "🏆",
+    "tournament": "🏆",
+    "championship": "🏆",
+    "esports": "🏆",
+    "olympics": "🏆",
+    "world cup": "🏆",
+    # Tours (generic)
+    "tours": "🎫",
+    "guided tours": "🎫",
+    "excursions": "🎫",
+    "day trips": "🎫",
+    # Experiences
+    "experiences": "🌟",
+    "local experiences": "🌟",
+}
+
+# Default emoji for activities that don't match any known category
+_DEFAULT_ACTIVITY_EMOJI = "✨"
+
+
+def _normalize_activity_with_emoji(activity: str) -> str:
+    """
+    Normalize an activity string to ensure it has an emoji prefix.
+
+    - If the activity already starts with an emoji, return it as-is
+    - Otherwise, look up the activity in the emoji map and add the appropriate emoji
+    - If no match found, use the sparkle emoji as default
+    """
+    activity = activity.strip()
+    if not activity:
+        return activity
+
+    # Check if the activity already starts with an emoji
+    first_char = activity[0]
+    if ord(first_char) > 0x1F00:
+        return activity
+
+    activity_lower = activity.lower()
+
+    # Direct match in emoji map
+    if activity_lower in _ACTIVITY_EMOJI_MAP:
+        emoji = _ACTIVITY_EMOJI_MAP[activity_lower]
+        return f"{emoji} {activity}"
+
+    # Try matching with common suffixes removed
+    for suffix in [" activities", " tours", " experiences"]:
+        if activity_lower.endswith(suffix):
+            base = activity_lower[: -len(suffix)]
+            if base in _ACTIVITY_EMOJI_MAP:
+                emoji = _ACTIVITY_EMOJI_MAP[base]
+                return f"{emoji} {activity}"
+
+    # Try partial matching - check if any keyword is contained in the activity
+    for keyword, emoji in _ACTIVITY_EMOJI_MAP.items():
+        if keyword in activity_lower:
+            if re.search(rf"\b{re.escape(keyword)}\b", activity_lower):
+                return f"{emoji} {activity}"
+
+    # No match found, use default sparkle emoji
+    return f"{_DEFAULT_ACTIVITY_EMOJI} {activity}"
+
+
+def _deduplicate_activities_case_insensitive(categories: List[str]) -> List[str]:
+    """
+    Deduplicate activity categories case-insensitively.
+    When comparing, strips the emoji prefix to compare only the activity text.
+    Keeps the first occurrence of each unique activity.
+    """
+    seen_lower: set = set()
+    deduped: List[str] = []
+
+    for cat in categories:
+        text = cat.strip()
+        text_start = 0
+        for i, char in enumerate(text):
+            if ord(char) < 0x1F00 and char != " ":
+                text_start = i
+                break
+            elif char == " " and i > 0:
+                text_start = i + 1
+                break
+
+        text_portion = text[text_start:].strip().lower()
+
+        if text_portion and text_portion not in seen_lower:
+            seen_lower.add(text_portion)
+            deduped.append(cat)
+
+    return deduped
 
 
 # =============================================================================
@@ -1070,18 +1365,12 @@ def _normalize_booking_field(field: str, raw_value: dict) -> Optional[dict]:
                     cat_str = _normalize_str(cat)
                     if not cat_str:
                         continue
-                    # Keep the activity as-is (user-entered or emoji-prefixed)
-                    # Just normalize whitespace and dedupe
-                    normalized_categories.append(cat_str)
+                    # Normalize activity with emoji prefix
+                    cat_with_emoji = _normalize_activity_with_emoji(cat_str)
+                    normalized_categories.append(cat_with_emoji)
                 if normalized_categories:
-                    # Dedupe while preserving order
-                    seen = set()
-                    deduped = []
-                    for c in normalized_categories:
-                        c_lower = c.lower()
-                        if c_lower not in seen:
-                            seen.add(c_lower)
-                            deduped.append(c)
+                    # Deduplicate case-insensitively (compares text portion only)
+                    deduped = _deduplicate_activities_case_insensitive(normalized_categories)
                     result["categories"] = deduped
         return result if result else None
 

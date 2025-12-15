@@ -1,0 +1,2 @@
+Return JSON:
+{"assistant_message":"...", "trip_inputs":{...}, "ready_to_generate":false, "branches":[], "suggested_responses":[], "question_target":"destinations|origin|dates|travelers|budget|activities|general|null"}

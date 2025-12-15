@@ -405,9 +405,13 @@ def prewarm_cache() -> int:
     return count
 
 
-def clear_cache() -> int:
+def clear_cache(preserve_rate_limiting: bool = True) -> int:
     """
     Clear all validation caches.
+
+    Args:
+        preserve_rate_limiting: If True (default), preserves the rate counter cache
+                                to prevent abuse. Set to False only for full system reset.
 
     Returns the number of entries that were cleared across caches.
     """
@@ -417,14 +421,17 @@ def clear_cache() -> int:
         + len(_split_cache)
         + len(_prompt_cache)
         + len(_fallback_cache)
-        + len(_rate_counter_cache)
     )
     _validation_cache.clear()
     _negative_cache.clear()
     _split_cache.clear()
     _prompt_cache.clear()
     _fallback_cache.clear()
-    _rate_counter_cache.clear()
+
+    if not preserve_rate_limiting:
+        count += len(_rate_counter_cache)
+        _rate_counter_cache.clear()
+
     return count
 
 

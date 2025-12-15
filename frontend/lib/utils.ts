@@ -118,3 +118,333 @@ export const formatBudgetValue = (value?: string | number | null): string => {
   if (!Number.isFinite(parsed) || parsed <= 0) return '';
   return `$${Math.round(parsed).toLocaleString()}`;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity Emoji Normalization Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maps activity keywords (lowercase) to their emoji prefixes.
+ * Used to normalize activities so they all have consistent emoji prefixes.
+ */
+const ACTIVITY_EMOJI_MAP: Record<string, string> = {
+  // Beach/coastal
+  beach: '🏖️',
+  coastal: '🏖️',
+  seaside: '🏖️',
+  // Romantic
+  romantic: '💕',
+  couples: '💕',
+  honeymoon: '💕',
+  // Adventure/extreme
+  adventure: '🧗',
+  extreme: '🧗',
+  adrenaline: '🧗',
+  climbing: '🧗',
+  'rock climbing': '🧗',
+  bungee: '🧗',
+  skydiving: '🧗',
+  paragliding: '🧗',
+  'zip-line': '🧗',
+  zipline: '🧗',
+  // Family
+  family: '👨‍👩‍👧',
+  kids: '👨‍👩‍👧',
+  children: '👨‍👩‍👧',
+  // Food/culinary
+  food: '🍝',
+  culinary: '🍝',
+  gastronomy: '🍝',
+  'food tour': '🍝',
+  'cooking class': '🍝',
+  'street food': '🍝',
+  // Wine/tasting
+  wine: '🍷',
+  vineyard: '🍷',
+  tasting: '🍷',
+  'wine tasting': '🍷',
+  brewery: '🍷',
+  distillery: '🍷',
+  // Culture/museums
+  culture: '🏛️',
+  museums: '🏛️',
+  galleries: '🏛️',
+  art: '🏛️',
+  exhibitions: '🏛️',
+  sightseeing: '🏛️',
+  // History
+  history: '📜',
+  heritage: '📜',
+  ancient: '📜',
+  archaeology: '📜',
+  // Theater/shows
+  theater: '🎭',
+  theatre: '🎭',
+  shows: '🎭',
+  opera: '🎭',
+  ballet: '🎭',
+  broadway: '🎭',
+  cabaret: '🎭',
+  comedy: '🎭',
+  // Spa/wellness
+  spa: '💆',
+  wellness: '💆',
+  yoga: '💆',
+  meditation: '💆',
+  retreat: '💆',
+  'spa day': '💆',
+  massage: '💆',
+  // Relaxation
+  relaxation: '😌',
+  chill: '😌',
+  unwind: '😌',
+  // Hiking/trekking
+  hiking: '🥾',
+  trekking: '🥾',
+  trails: '🥾',
+  hike: '🥾',
+  trek: '🥾',
+  // Dirt riding/motorbike
+  'dirt riding': '🏍️',
+  motorbike: '🏍️',
+  atv: '🏍️',
+  quad: '🏍️',
+  'off-road': '🏍️',
+  motocross: '🏍️',
+  motogp: '🏍️',
+  // Racing/F1
+  f1: '🏎️',
+  racing: '🏎️',
+  motorsport: '🏎️',
+  'go-kart': '🏎️',
+  'formula 1': '🏎️',
+  'grand prix': '🏎️',
+  nascar: '🏎️',
+  // Diving/snorkeling
+  diving: '🤿',
+  snorkeling: '🤿',
+  scuba: '🤿',
+  // Skiing/winter
+  skiing: '⛷️',
+  snowboarding: '⛷️',
+  'winter sports': '⛷️',
+  'snow activities': '🎿',
+  // Nightlife
+  nightlife: '🎉',
+  clubs: '🎉',
+  bars: '🎉',
+  entertainment: '🎉',
+  party: '🎉',
+  clubbing: '🎉',
+  'night out': '🎉',
+  // Running
+  running: '🏃',
+  jogging: '🏃',
+  marathon: '🏃',
+  triathlon: '🏃',
+  'trail running': '🏃',
+  // Backpacking
+  backpacking: '🎒',
+  'budget travel': '🎒',
+  // Music
+  music: '🎵',
+  concerts: '🎵',
+  festivals: '🎵',
+  'live music': '🎵',
+  dj: '🎵',
+  rave: '🎵',
+  // Movies/film
+  movies: '🎬',
+  'film festival': '🎬',
+  premiere: '🎬',
+  cinema: '🎬',
+  'celebrity events': '🎬',
+  // Circus/carnival
+  circus: '🎪',
+  carnival: '🎪',
+  parade: '🎪',
+  celebration: '🎪',
+  fair: '🎪',
+  // Shopping
+  shopping: '🛍️',
+  markets: '🛍️',
+  boutiques: '🛍️',
+  // Cycling
+  cycling: '🚴',
+  biking: '🚴',
+  'mountain biking': '🚴',
+  bmx: '🚴',
+  // Surfing/water sports
+  surfing: '🏄',
+  'water sports': '🏄',
+  'jet ski': '🏄',
+  wakeboard: '🏄',
+  // Kayaking/paddling
+  kayaking: '🛶',
+  canoeing: '🛶',
+  paddleboarding: '🛶',
+  rafting: '🛶',
+  // Sailing/boating
+  sailing: '⛵',
+  boating: '⛵',
+  yacht: '⛵',
+  cruise: '⛵',
+  // Fishing
+  fishing: '🎣',
+  'deep sea fishing': '🎣',
+  // Safari/wildlife
+  safari: '🦁',
+  wildlife: '🦁',
+  'animal watching': '🦁',
+  zoo: '🦁',
+  'whale watching': '🦁',
+  'wildlife tours': '🦁',
+  // Nature
+  nature: '🌲',
+  'national parks': '🌲',
+  aurora: '🌲',
+  'northern lights': '🌲',
+  outdoor: '🌲',
+  'outdoor activities': '🌲',
+  // Golf
+  golf: '⛳',
+  // Tennis
+  tennis: '🎾',
+  // Sports events
+  basketball: '🏀',
+  football: '🏀',
+  soccer: '🏀',
+  'sports events': '🏀',
+  // Academic
+  academic: '🎓',
+  conference: '🎓',
+  seminar: '🎓',
+  workshop: '🎓',
+  lecture: '🎓',
+  university: '🎓',
+  research: '🎓',
+  'study abroad': '🎓',
+  // Competition
+  competition: '🏆',
+  hackathon: '🏆',
+  tournament: '🏆',
+  championship: '🏆',
+  esports: '🏆',
+  olympics: '🏆',
+  'world cup': '🏆',
+  // Tours (generic)
+  tours: '🎫',
+  'guided tours': '🎫',
+  excursions: '🎫',
+  'day trips': '🎫',
+  // Experiences
+  experiences: '🌟',
+  'local experiences': '🌟',
+};
+
+/** Default emoji for activities that don't match any known category */
+const DEFAULT_ACTIVITY_EMOJI = '✨';
+
+/**
+ * Check if a string starts with an emoji character.
+ */
+const startsWithEmoji = (str: string): boolean => {
+  if (!str || str.length === 0) return false;
+  const codePoint = str.codePointAt(0) ?? 0;
+  // Emoji ranges (simplified check)
+  return codePoint > 0x1f00;
+};
+
+/**
+ * Normalize an activity string to ensure it has an emoji prefix.
+ *
+ * - If the activity already starts with an emoji, return it as-is
+ * - Otherwise, look up the activity in the emoji map and add the appropriate emoji
+ * - If no match found, use the sparkle emoji as default
+ */
+export const normalizeActivityWithEmoji = (activity: string): string => {
+  const trimmed = activity.trim();
+  if (!trimmed) return trimmed;
+
+  // Check if already has emoji prefix
+  if (startsWithEmoji(trimmed)) {
+    return trimmed;
+  }
+
+  const activityLower = trimmed.toLowerCase();
+
+  // Direct match in emoji map
+  if (activityLower in ACTIVITY_EMOJI_MAP) {
+    const emoji = ACTIVITY_EMOJI_MAP[activityLower];
+    return `${emoji} ${trimmed}`;
+  }
+
+  // Try matching with common suffixes removed
+  for (const suffix of [' activities', ' tours', ' experiences']) {
+    if (activityLower.endsWith(suffix)) {
+      const base = activityLower.slice(0, -suffix.length);
+      if (base in ACTIVITY_EMOJI_MAP) {
+        const emoji = ACTIVITY_EMOJI_MAP[base];
+        return `${emoji} ${trimmed}`;
+      }
+    }
+  }
+
+  // Try partial matching - check if any keyword is contained in the activity
+  for (const [keyword, emoji] of Object.entries(ACTIVITY_EMOJI_MAP)) {
+    // Only match if keyword is a complete word in the activity
+    const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (regex.test(activityLower)) {
+      return `${emoji} ${trimmed}`;
+    }
+  }
+
+  // No match found, use default sparkle emoji
+  return `${DEFAULT_ACTIVITY_EMOJI} ${trimmed}`;
+};
+
+/**
+ * Extract the text portion of an activity string (after the emoji).
+ */
+const getActivityTextPortion = (activity: string): string => {
+  const text = activity.trim();
+  // Find where the actual text starts (after emoji and space)
+  for (let i = 0; i < text.length; i++) {
+    const codePoint = text.codePointAt(i) ?? 0;
+    if (codePoint < 0x1f00 && text[i] !== ' ') {
+      return text.slice(i).trim().toLowerCase();
+    } else if (text[i] === ' ' && i > 0) {
+      return text.slice(i + 1).trim().toLowerCase();
+    }
+  }
+  return text.toLowerCase();
+};
+
+/**
+ * Check if two activities are duplicates (case-insensitive, ignoring emoji prefix).
+ */
+export const areActivitiesDuplicate = (activity1: string, activity2: string): boolean => {
+  const text1 = getActivityTextPortion(activity1);
+  const text2 = getActivityTextPortion(activity2);
+  return text1 === text2;
+};
+
+/**
+ * Deduplicate activity categories case-insensitively.
+ * When comparing, strips the emoji prefix to compare only the activity text.
+ * Keeps the first occurrence of each unique activity.
+ */
+export const deduplicateActivities = (categories: string[]): string[] => {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+
+  for (const cat of categories) {
+    const textPortion = getActivityTextPortion(cat);
+    if (textPortion && !seen.has(textPortion)) {
+      seen.add(textPortion);
+      deduped.push(cat);
+    }
+  }
+
+  return deduped;
+};

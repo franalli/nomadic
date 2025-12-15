@@ -193,6 +193,50 @@ def test_graph_plan_casual_conversation_short_circuit(client):
     assert out["document"]["trip_inputs"] == {} or "destinations" in out["document"]["trip_inputs"]
 
 
+def test_graph_plan_does_not_reask_destination_when_set(client):
+    """Regression test: when destination is already in STATE and user adds origin,
+    the response should ask for dates, NOT re-ask for destination."""
+    with (
+        patch("app.plan_graph.call_llm_with_timeout", _patched_call_llm_with_timeout),
+        patch("app.plan_graph.search_tiles", lambda *args, **kwargs: _EmptyTilesResponse()),
+    ):
+        # Turn 1: User specifies destination
+        turn1 = _post(client, {"message": "I want to go to the Swiss Alps"})
+        assert turn1["document"]["trip_inputs"].get("destinations") == ["Swiss Alps"]
+
+        state = turn1["session_state"]
+
+        # Turn 2: User specifies origin - should NOT re-ask for destination
+        turn2 = _post(client, {"message": "From Sydney"}, session_state=state)
+
+        # The response should ask for dates, NOT for destination
+        assistant_msg = (turn2["document"]["assistant_message"] or "").lower()
+
+        # Should NOT ask for destination again
+        assert "what destination" not in assistant_msg
+        assert "where are you looking to travel" not in assistant_msg
+        assert "where would you like to go" not in assistant_msg
+
+        # Should preserve the destination
+        assert turn2["document"]["trip_inputs"].get("destinations") == ["Swiss Alps"]
+
+        # Should have extracted origin
+        assert turn2["document"]["trip_inputs"].get("origin") == "Sydney"
+
+        # Since dates may be auto-set, the response should either:
+        # 1. Ask for dates (if dates are missing), or
+        # 2. Confirm ready to proceed (if all fields are set)
+        # Either way, it should NOT re-ask for destination
+        assert (
+            "when" in assistant_msg
+            or "date" in assistant_msg
+            or "ready" in assistant_msg
+            or "set" in assistant_msg
+            or turn2["document"].get("question_target") == "dates"
+            or turn2["document"].get("ready_to_generate") is True
+        )
+
+
 def test_graph_plan_one_way_flights_multi_turn(client):
     with (
         patch("app.plan_graph.call_llm_with_timeout", _patched_call_llm_with_timeout),

@@ -14,11 +14,17 @@ Routing rules (deterministic):
 - If deep planning cues (gear, permits, safety, distances, certification, route legs, operator/skipper) → intent="strategy" and detect the topic.
 - If message indicates infeasible or contradictory plan → intent="correction_needed".
 - If user asks for a deep planning strategy (gear/permits/risks/legs) → intent="strategy" with best-effort topic.
+- If user expresses a TRIP INTENT with a strategy-eligible activity (skiing, hiking, diving, boating, cycling) as the PRIMARY FOCUS → intent="strategy" with topic. Examples:
+  • "skiing trip to Alps" → intent="strategy", topic="skiing"
+  • "I want to go hiking there" → intent="strategy", topic="hiking"
+  • "diving vacation in Maldives" → intent="strategy", topic="diving"
+  • "cycling tour through France" → intent="strategy", topic="cycling"
+  • "go skiing" / "wanna ski" / "let's do some skiing" → intent="strategy", topic="skiing"
 - If any REQUIRED field (destinations, origin, start_date) is missing AND the user mentions one → intent="required_fields".
 - Else if flights keywords (flight, nonstop, one-way, cabin, business, premium) → "flights".
 - Else if hotels keywords (hotel, star, amenity, pool, breakfast) → "hotels".
 - Else if ground transport (train, car, rental, bus) → "transport".
-- Else if ANY activity, event, experience, or interest → "activities". This includes but is not limited to:
+- Else if ANY activity, event, experience, or interest (NOT covered by strategy above) → "activities". This includes but is not limited to:
   • Sports: golf, tennis, surfing, skiing, hiking, diving, cycling, running, climbing, kayaking
   • Motorsports: F1, MotoGP, racing, go-kart, dirt riding, ATV, motocross
   • Water: boating, sailing, snorkeling, scuba, fishing, jet ski, paddleboard

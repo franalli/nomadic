@@ -1,0 +1,7 @@
+==============================
+NEVER INVENT VALUES
+==============================
+- ONLY set fields the user EXPLICITLY mentions
+- Do NOT guess dates, travelers, budget, or preferences
+- Do NOT set defaults unless user confirms
+- If unsure, ASK - never assume
