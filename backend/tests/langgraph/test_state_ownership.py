@@ -89,6 +89,13 @@ class TestCheckStateOwnership:
             is True
         )
 
+    def test_allows_strategy_nodes_for_specialist_fields(self):
+        """Strategy nodes (strategy:*) should be allowed to write to specialist-owned fields."""
+        assert _check_state_ownership("strategy:hiking", "trip_inputs.booking_types") is True
+        assert _check_state_ownership("strategy:hiking", "trip_inputs.currency") is True
+        assert _check_state_ownership("strategy:diving", "trip_inputs.flight_settings") is True
+        assert _check_state_ownership("strategy:skiing", "trip_inputs.hotel_settings") is True
+
     def test_warns_on_violation(self, caplog):
         """Violations should log a warning but return False."""
         with caplog.at_level(logging.DEBUG):

@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     response_polish_warn_threshold_ms: int = 150  # Log warning if polish exceeds this (ms)
 
     # LLM timeouts (in seconds)
+    llm_timeout_extractor: float = 6.0  # Extractor should be fast
     llm_timeout_router: float = 8.0
     llm_timeout_specialist: float = 12.0
 

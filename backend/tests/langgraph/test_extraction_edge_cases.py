@@ -1,19 +1,22 @@
 """
-Heavy-duty tests for regex + NER extraction.
+Heavy-duty tests for extraction.
 
-Tests hundreds of:
-- Destinations (cities, countries, regions, landmarks)
-- Hotel chains, hostels, motels
-- Airlines and travel brands
-- Ambiguous entities
-- Case variations (upper, lower, mixed)
-- Edge cases and tricky inputs
+DEPRECATED: This file previously tested regex + spaCy NER extraction.
+The extraction is now performed entirely by the LLM (see backend/app/prompts/extractor.txt).
+
+The spaCy functions tested here are now dead code and will be removed.
+Tests are skipped by default. Some tests may be converted to LLM-based integration tests.
 """
+
+# ruff: noqa: E402
 
 import os
 from typing import Any, Dict
 
 import pytest
+
+# Skip entire module - these tests are for deprecated regex/spaCy extraction
+pytestmark = pytest.mark.skip(reason="Regex/spaCy extraction has been replaced by LLM extraction")
 
 # Enable debug logging for tests
 os.environ["DEBUG_PLAN_MESSAGES"] = "0"  # Set to "1" to see debug output
@@ -21,11 +24,26 @@ os.environ["DEBUG_PLAN_MESSAGES"] = "0"  # Set to "1" to see debug output
 from app.plan_graph import (
     GraphState,
     TripInputs,
-    _get_spacy_nlp,
-    _should_run_spacy_ner,
-    _spacy_extract_entities,
     extractor,
 )
+
+
+# Note: These imports will fail because the functions are deprecated.
+# Keeping stubs for documentation purposes.
+def _get_spacy_nlp():
+    """Deprecated - spaCy extraction removed."""
+    return None
+
+
+def _should_run_spacy_ner(text: str, parsed: Dict[str, Any]) -> bool:
+    """Deprecated - spaCy extraction removed."""
+    return False
+
+
+def _spacy_extract_entities(text: str, parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Deprecated - spaCy extraction removed."""
+    return {}
+
 
 # =============================================================================
 # TEST DATA: DESTINATIONS

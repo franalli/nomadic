@@ -7,12 +7,11 @@ import json
 import os
 import random as _random_module
 import re
-import sys
 from copy import deepcopy
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -41,14 +40,6 @@ from app.crud_trip import (
 )
 from app.known_places import (
     KNOWN_COUNTRIES,
-    LANGDETECT_AVAILABLE,
-    calculate_place_confidence,
-    fuzzy_match_place,
-    get_confidence_level,
-    is_ambiguous_entity,
-    is_known_place,
-    is_likely_english,
-    needs_confirmation,
     normalize_place_synonym,
 )
 from app.schemas import (
@@ -87,48 +78,12 @@ except ImportError:
     tiktoken = None  # type: ignore
     _TIKTOKEN_AVAILABLE = False
 
-# Try to import spacy for NER-based entity extraction
-if TYPE_CHECKING:
-    from spacy.language import Language as SpacyLanguage
-else:
-    SpacyLanguage = object  # type: ignore
-
-try:
-    import spacy
-
-    _SPACY_AVAILABLE = True
-except ImportError:
-    spacy = None  # type: ignore
-    _SPACY_AVAILABLE = False
-
-_spacy_nlp: Optional[SpacyLanguage] = None  # Lazy-loaded
-
 
 def _env_truthy(name: str) -> bool:
     value = os.getenv(name)
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-# Windows lacks a reliable SIGALRM-style timeout, which can lead to unbounded runtime
-# in spaCy model inference. Disable by default, with an explicit override for local use.
-if sys.platform == "win32" and not _env_truthy("ENABLE_SPACY_ON_WINDOWS"):
-    _SPACY_AVAILABLE = False
-
-# Manual kill-switch for any environment (useful for CI or local debugging).
-if _env_truthy("DISABLE_SPACY"):
-    _SPACY_AVAILABLE = False
-
-
-def _spacy_enabled() -> bool:
-    if not _SPACY_AVAILABLE:
-        return False
-    if sys.platform == "win32" and not _env_truthy("ENABLE_SPACY_ON_WINDOWS"):
-        return False
-    if _env_truthy("DISABLE_SPACY"):
-        return False
-    return True
 
 
 _KNOWN_COUNTRIES_LOWER = frozenset(c.lower() for c in KNOWN_COUNTRIES)
@@ -949,9 +904,11 @@ def _check_state_ownership(node_name: str, field_path: str) -> bool:
 
     for o in owners:
         if o == "specialists" and (
-            node_name.endswith("_node") or node_name.startswith("specialist:")
+            node_name.endswith("_node")
+            or node_name.startswith("specialist:")
+            or node_name.startswith("strategy:")
         ):
-            # Specialist nodes can write to specialist-owned fields
+            # Specialist and strategy nodes can write to specialist-owned fields
             return True
 
         if o == node_name:
@@ -1320,6 +1277,12 @@ def _should_override_persisted_intent(
 # - Specialists: Focused extraction → low temp, moderate output
 # - Strategy: Deeper topic analysis → slightly higher temp
 _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
+    "extractor": {
+        "model_hint": "small",
+        "temperature": 0.1,  # Very deterministic for extraction
+        "max_tokens": 512,  # Structured JSON output
+        "top_p": None,
+    },
     "router": {
         "model_hint": "small",
         "temperature": 0.1,  # Very deterministic for classification
@@ -1329,49 +1292,49 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "required_fields": {
         "model_hint": "small",
         "temperature": 0.2,  # Deterministic extraction
-        "max_tokens": 1024,
+        "max_tokens": 512,  # Reduced from 1024 - typical output ~200-400 tokens
         "top_p": None,
     },
     "flights": {
         "model_hint": "small",
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "hotels": {
         "model_hint": "small",
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "transport": {
         "model_hint": "small",
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "activities": {
         "model_hint": "small",
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "correction": {
         "model_hint": "small",
         "temperature": 0.2,
-        "max_tokens": 1024,
+        "max_tokens": 512,  # Reduced from 1024 - typical output ~200-350 tokens
         "top_p": None,
     },
     "strategy": {
         "model_hint": "medium",
         "temperature": 0.3,  # Slightly creative for topic advice
-        "max_tokens": 2048,
+        "max_tokens": 2048,  # Deep planning needs more space
         "top_p": None,
     },
     "response_polish": {
         "model_hint": "small",
         "temperature": 0.4,  # Slightly creative for natural tone
-        "max_tokens": 100,  # Keep polished response concise
+        "max_tokens": 512,  # Must accommodate full polished messages from specialists
         "top_p": None,
     },
 }
@@ -1589,86 +1552,11 @@ _NON_DESTINATION_WORDS = frozenset(
 
 
 # =============================================================================
-# PRE-COMPILED EXTRACTOR PATTERNS
+# PRE-COMPILED PATTERNS (SHORT-CIRCUIT & FILTERING ONLY)
 # =============================================================================
-# These patterns are pre-compiled at module load time to avoid repeated
-# re.compile() calls during extraction. ~35 patterns total.
+# Extraction is now handled by the LLM in the extractor node.
+# These patterns are only used for short-circuit detection and validation.
 
-# Budget patterns
-_BUDGET_SYMBOL_PATTERN = re.compile(r"(?P<cur>[$€£¥])\s*(?P<amt>\d[\d,\.]*)", re.IGNORECASE)
-_BUDGET_CODE_PATTERN = re.compile(
-    r"(?P<amt>\d[\d,\.]*)\s*(?P<cur>USD|EUR|GBP|CAD|AUD|JPY)", re.IGNORECASE
-)
-
-# Origin/destination patterns
-# Stop at date-related words to avoid capturing "Paris next week" as destination
-_DATE_STOPWORDS = (
-    r"(?:today|tomorrow|next|this|on|in|for|leaving|departing|starting|"
-    r"date|dates|flexible|anytime|\d{1,2}(?:st|nd|rd|th)?)"
-)
-# Unicode letter class for destination names (covers Latin + accented chars)
-_PLACE_CHAR = r"[A-Za-z\u00C0-\u024F'']"  # Letters including accents and apostrophes
-_PLACE_CHARS = (
-    r"[A-Za-z\u00C0-\u024F\s\-,'']"  # Plus spaces, hyphens, commas (NO periods in mid-pattern)
-)
-_PLACE_CHARS_WITH_DOT = (
-    r"[A-Za-z\u00C0-\u024F\s\-,''\.]+?"  # With periods for abbreviations like St.
-)
-
-_ORIGIN_DEST_FROM_TO_PATTERN = re.compile(
-    r"from\s+(?:the\s+)?(?P<o>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")\s+to\s+(?:the\s+)?(?P<d>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")"
-    r"(?:\s+" + _DATE_STOPWORDS + r"|\s*[,]|\s*$)",
-    re.IGNORECASE,
-)
-_ORIGIN_DEST_TO_FROM_PATTERN = re.compile(
-    r"to\s+(?:the\s+)?(?P<d>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")\s+from\s+(?:the\s+)?(?P<o>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")"
-    r"(?:\s+" + _DATE_STOPWORDS + r"|\s*[,]|\s*$)",
-    re.IGNORECASE,
-)
-
-# Pattern 2b: "X to Y" without an explicit "from" (common shorthand: "London to Tokyo")
-_ORIGIN_DEST_BARE_TO_PATTERN = re.compile(
-    r"^(?:the\s+)?(?P<o>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")\s+to\s+(?:the\s+)?(?P<d>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")"
-    r"(?:\s+" + _DATE_STOPWORDS + r"|\s*[,]|\s*$)",
-    re.IGNORECASE,
-)
-
-# Pattern for "from X" without destination - extracts origin only
-# E.g., "From Sydney", "from London", "leaving from New York"
-_ORIGIN_ONLY_FROM_PATTERN = re.compile(
-    r"^(?:leaving\s+)?from\s+(?:the\s+)?(?P<o>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")[\s\.\,\!\?]*$",
-    re.IGNORECASE,
-)
-
-_DEST_LEAVING_PATTERN = re.compile(
-    r"^(?P<dest>"
-    + _PLACE_CHAR
-    + _PLACE_CHARS_WITH_DOT
-    + r")\s+(?:leaving|departing|starting|on|in)\s+"
-    r"(?:today|tomorrow|next\s+week|this\s+weekend|\d)",
-    re.IGNORECASE,
-)
 # Words that should NOT be captured as destinations (intent keywords, accommodations, etc.)
 _DEST_EXCLUDE_WORDS = frozenset(
     {
@@ -1741,121 +1629,6 @@ _DEST_EXCLUDE_WORDS = frozenset(
     }
 )
 
-_DEST_GOING_TO_PATTERN = re.compile(
-    r"(?:going|go|want(?:ing)?\s+to\s+go|visit(?:ing)?|travel(?:l?ing)?|fly(?:ing)?|"
-    r"hik(?:e|ing)|trek(?:king)?|"
-    r"backpack(?:ing)?|honeymoon|vacation|holiday|"
-    # Allow modifiers between "a family" and "trip" (e.g., "a family ski trip")
-    r"plan(?:ning)?(?:\s+(?:a|our|my|a\s+family))?(?:\s+\w+)*?(?:\s+(?:trip|vacation|honeymoon))?)"
-    # Require "to" preposition for cleaner destination extraction
-    r"\s+(?:to|in|through)\s+(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
-    r"(?:\s+(?:today|tomorrow|next|on|in|for|maybe|and\s+then|starting|staying|booking|renting|"
-    r"this|but|lol|because|since|so|however|though|and|with|like|around|during|over)|\s*[,!?.]|\s*$)",
-    re.IGNORECASE,
-)
-# Pattern for "flying [airline] to X" - extracts destination after airline name
-_DEST_FLYING_AIRLINE_PATTERN = re.compile(
-    r"fly(?:ing)?\s+(?:with\s+)?(?:emirates|delta|united|american|lufthansa|british\s+airways|"
-    r"air\s+france|qatar|etihad|singapore|cathay|ryanair|easyjet|jetblue|southwest)\s+"
-    r"to\s+(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
-    r"(?:\s+(?:today|tomorrow|next|on|in|for)|\s*[,!?]|\s*$)",
-    re.IGNORECASE,
-)
-
-# Pattern for "in X" contexts ("staying in Dubai", "wine tasting in Tuscany", "In Tokyo we'll...")
-_DEST_IN_PATTERN = re.compile(
-    r"\b(?:in|at|around|near)\s+(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
-    r"(?=(?:\s+(?:today|tomorrow|next|on|in|for|with|we\b|we'll\b|i\b|i'll\b|staying\b|booking\b|renting\b|starting\b|and\b)|,|\.|!|\?|$))",
-    re.IGNORECASE,
-)
-
-# Prefer explicit "in X" over "at X" in ambiguous sentences (e.g., hotels: "at Hilton in Dubai")
-_DEST_ONLY_IN_PATTERN = re.compile(
-    r"\bin\s+(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
-    r"(?=(?:\s+(?:today|tomorrow|next|on|in|for|with|we\b|we'll\b|i\b|i'll\b|staying\b|booking\b|renting\b|starting\b|and\b)|,|\.|!|\?|$))",
-    re.IGNORECASE,
-)
-
-# Traveler patterns
-_TRAVELER_SOLO_PATTERN = re.compile(r"\b(solo|just me|traveling alone|by myself)\b", re.IGNORECASE)
-_TRAVELER_COUPLE_PATTERN = re.compile(
-    (
-        r"\b(couple|me and (my )?(partner|wife|husband|girlfriend|boyfriend)|"
-        r"(?:just\s+)?(?:the\s+)?two\s+of\s+us)\b"
-    ),
-    re.IGNORECASE,
-)
-_TRAVELER_FAMILY_PATTERN = re.compile(r"\bfamily of (\d+)\b", re.IGNORECASE)
-_TRAVELER_ADULTS_KIDS_PATTERN = re.compile(
-    r"(\d+)\s*adults?\s*(?:,|and)?\s*(\d+)\s*(?:kids?|children)", re.IGNORECASE
-)
-_TRAVELER_ADULTS_ONLY_PATTERN = re.compile(r"(\d+)\s*adults?", re.IGNORECASE)
-
-# Pattern for "N of us - [couple phrase], plus our kids aged X and Y"
-# Matches: "4 of us - my wife and I, plus our kids aged 8 and 12"
-_TRAVELER_FAMILY_DETAILED_PATTERN = re.compile(
-    r"(\d+)\s+of\s+us.*?(?:my\s+(?:wife|husband|partner)\s+and\s+(?:I|me)|(?:I|me)\s+and\s+my\s+(?:wife|husband|partner)).*?(?:plus\s+)?(?:our\s+)?(?:kids?|children)",
-    re.IGNORECASE,
-)
-# Pattern for counting children ages like "kids aged 8 and 12" or "children (8, 12)"
-_CHILDREN_AGES_PATTERN = re.compile(
-    r"(?:kids?|children)(?:\s+aged?)?\s*(?:\()?(\d+)(?:\s*(?:,|and)\s*(\d+))?(?:\s*(?:,|and)\s*(\d+))?(?:\s*(?:,|and)\s*(\d+))?(?:\))?",
-    re.IGNORECASE,
-)
-
-# Accessibility pattern
-_ACCESSIBILITY_PATTERN = re.compile(
-    r"\b(wheelchair|accessibility|disabled|mobility|requires? assistance)\b", re.IGNORECASE
-)
-
-# Date patterns
-_DATE_TODAY_PATTERN = re.compile(r"\b(today|tonight|now)\b", re.IGNORECASE)
-_DATE_TOMORROW_PATTERN = re.compile(r"\btomorrow\b", re.IGNORECASE)
-_DATE_NEXT_WEEK_PATTERN = re.compile(r"\bnext week\b", re.IGNORECASE)
-_DATE_WEEKEND_PATTERN = re.compile(r"\bweekend\b", re.IGNORECASE)
-
-# Category activation patterns
-_CAT_FLIGHTS_PATTERN = re.compile(
-    r"flight|cabin|nonstop|direct|one[-\s]?way|round[-\s]?trip|airline", re.IGNORECASE
-)
-_CAT_HOTELS_PATTERN = re.compile(
-    r"hotel|amenit|star|room|accommodation|stay|lodge|resort", re.IGNORECASE
-)
-_CAT_TRANSPORT_PATTERN = re.compile(
-    r"\btrain|car rental|rent a? car|bus|drive|driving\b", re.IGNORECASE
-)
-_CAT_ACTIVITIES_PATTERN = re.compile(
-    r"activity|tour|museum|beach|hike|dive|nightlife|restaurant|show|ticket", re.IGNORECASE
-)
-
-# Flight settings patterns
-_FLIGHT_DIRECT_PATTERN = re.compile(r"\b(nonstop|non-stop|direct)\b", re.IGNORECASE)
-_FLIGHT_ONEWAY_PATTERN = re.compile(r"\b(one[-\s]?way)\b", re.IGNORECASE)
-_FLIGHT_ROUNDTRIP_PATTERN = re.compile(r"\b(round[-\s]?trip)\b", re.IGNORECASE)
-_FLIGHT_BUSINESS_PATTERN = re.compile(r"\b(business)\b", re.IGNORECASE)
-_FLIGHT_FIRST_CLASS_PATTERN = re.compile(r"\b(first\s*class)\b", re.IGNORECASE)
-_FLIGHT_PREMIUM_ECONOMY_PATTERN = re.compile(r"\b(premium\s*economy)\b", re.IGNORECASE)
-
-# Hotel settings patterns
-_HOTEL_STARS_PATTERN = re.compile(r"(\d)\s*[-\s]?star", re.IGNORECASE)
-_HOTEL_POOL_PATTERN = re.compile(r"\bpool\b", re.IGNORECASE)
-_HOTEL_GYM_PATTERN = re.compile(r"\bgym\b", re.IGNORECASE)
-_HOTEL_SPA_PATTERN = re.compile(r"\bspa\b", re.IGNORECASE)
-_HOTEL_WIFI_PATTERN = re.compile(r"\bwifi\b", re.IGNORECASE)
-_HOTEL_BREAKFAST_PATTERN = re.compile(r"\bbreakfast\b", re.IGNORECASE)
-
-# Transport settings patterns
-_TRANSPORT_CAR_PATTERN = re.compile(r"\b(car|rent a car|car rental|drive|driving)\b", re.IGNORECASE)
-_TRANSPORT_TRAIN_PATTERN = re.compile(r"\btrain\b", re.IGNORECASE)
-_TRANSPORT_BUS_PATTERN = re.compile(r"\bbus\b", re.IGNORECASE)
-
-# Strategy detection patterns
-_STRATEGY_BOATING_PATTERN = re.compile(r"boat|boating|sail|yacht|kayak|canoe|marina", re.IGNORECASE)
-_STRATEGY_HIKING_PATTERN = re.compile(r"hike|trek|trail|alpine|mountain|hiking", re.IGNORECASE)
-_STRATEGY_DIVING_PATTERN = re.compile(r"dive|diving|scuba|snorkel", re.IGNORECASE)
-_STRATEGY_SKIING_PATTERN = re.compile(r"ski|skiing|snowboard|slopes|powder", re.IGNORECASE)
-_STRATEGY_CYCLING_PATTERN = re.compile(r"cycle|cycling|bike|biking|bicycle", re.IGNORECASE)
-
 # Short-circuit bare input patterns
 # More permissive pattern for bare destinations:
 # - Case insensitive (catches "patagonia" and "Patagonia")
@@ -1879,41 +1652,6 @@ _BARE_TRAVELERS_PATTERN = re.compile(
     r"^(\d+)(?:\s*(?:adults?|people|travelers?|of us))?[\s\.\!\?]*$", re.IGNORECASE
 )
 _BARE_ORIGIN_PATTERN = re.compile(r"^(?:from\s+)?([A-Z][a-zA-Z\s\-,]+)[\s\.\!\?]*$", re.IGNORECASE)
-
-# Destination list split pattern (comma or "and")
-_DEST_SPLIT_PATTERN = re.compile(r",|\band\b")
-# Duration extraction patterns
-_DURATION_PATTERNS = [
-    re.compile(r"coming\s+back\s+in\s+(\d+)\s*days?", re.IGNORECASE),
-    re.compile(r"returning?\s+in\s+(\d+)\s*days?", re.IGNORECASE),
-    re.compile(r"for\s+(\d+)\s*days?", re.IGNORECASE),
-    re.compile(r"(\d+)\s*days?\s+trip", re.IGNORECASE),
-    re.compile(r"(\d+)\s*day\s+trip", re.IGNORECASE),
-]
-
-# Date range pattern: "March 15-20, 2030" or "Dec 10-15 2030" or "January 5 - 12, 2030"
-# Captures: month, start_day, end_day, year
-_DATE_RANGE_PATTERN = re.compile(
-    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
-    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*"
-    r"(\d{1,2})(?:st|nd|rd|th)?\s*[-–—]\s*(\d{1,2})(?:st|nd|rd|th)?\s*[,\s]+(\d{4})",
-    re.IGNORECASE,
-)
-
-# Cross-month date range: "December 26 - January 2" or "Dec 28 through Jan 3, 2026"
-# Captures: start_month, start_day, end_month, end_day, optional year
-_DATE_CROSS_MONTH_PATTERN = re.compile(
-    r"(?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
-    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*"
-    r"(?P<d1>\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–—]|through|thru|to)\s*"
-    r"(?P<m2>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
-    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*"
-    r"(?P<d2>\d{1,2})(?:st|nd|rd|th)?(?:\s*[,\s]*(?P<year>\d{4}))?",
-    re.IGNORECASE,
-)
-
-# ISO date validation pattern
-_ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # =============================================================================
 # DESTINATION → ACTIVITY INFERENCE
@@ -2848,24 +2586,6 @@ def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
     return _date_normalizer.relative_to_iso(text)
 
 
-def _extract_duration_days_from_message(message: str) -> Optional[int]:
-    """Extract trip duration in days from patterns like 'for 5 days' or '5 day trip'."""
-    if not message:
-        return None
-
-    lowered = message.lower()
-
-    # Use pre-compiled patterns for efficiency
-    for pattern in _DURATION_PATTERNS:
-        match = pattern.search(lowered)
-        if match:
-            try:
-                return int(match.group(1))
-            except (ValueError, IndexError):
-                continue
-    return None
-
-
 def _compute_end_date_from_duration(start_date: Optional[str], duration_days: int) -> Optional[str]:
     """Compute end_date from start_date and duration."""
     return _date_normalizer.compute_end_from_duration(start_date, duration_days)
@@ -3279,6 +2999,28 @@ def _compute_missing_fields(trip_inputs: dict) -> List[str]:
         elif trip_inputs.get(field) is None:
             missing.append(field)
     return missing
+
+
+def _infer_question_target_from_missing(state: "GraphState") -> Optional[str]:
+    """Infer question_target from missing required fields.
+
+    When an LLM doesn't provide a question_target, we infer it from the
+    first missing required field. This enables contextual suggestion
+    generation even when the LLM response doesn't include question_target.
+
+    Args:
+        state: Current graph state
+
+    Returns:
+        The first missing required field as question_target, or None if all
+        required fields are present.
+    """
+    ti = state.trip_inputs
+    missing = _compute_missing_fields(ti.model_dump(exclude_none=True))
+    if missing:
+        # Return the first missing field as the question_target
+        return missing[0]
+    return None
 
 
 def _default_follow_up_question(
@@ -4070,504 +3812,6 @@ def _get_suggestions_with_fallback(
     return passing[:3]
 
 
-# =============================================================================
-# SPACY NER-BASED ENTITY EXTRACTION
-# =============================================================================
-# Labels we care about for travel planning
-_SPACY_RELEVANT_LABELS = frozenset({"GPE", "LOC", "FAC", "DATE", "TIME", "MONEY", "ORG", "PRODUCT"})
-# Labels that are too noisy to use directly
-_SPACY_NOISY_LABELS = frozenset({"CARDINAL", "ORDINAL", "PERCENT", "QUANTITY"})
-
-# Custom semantic labels for travel domain
-_TRAVEL_SEMANTIC_LABELS = frozenset(
-    {"HOTEL", "AIRLINE", "AMENITY", "INTEREST", "PREFERENCE", "LOYALTY"}
-)
-
-# Brand lists used to prevent misclassifying hotels/airlines/OTAs as destinations
-_HOTEL_BRANDS = frozenset(
-    {
-        "hilton",
-        "marriott",
-        "hyatt",
-        "sheraton",
-        "westin",
-        "ritz",
-        "ritz carlton",
-        "four seasons",
-        "st regis",
-        "st. regis",
-        "w hotel",
-        "intercontinental",
-        "crowne plaza",
-        "holiday inn",
-        "hampton inn",
-        "doubletree",
-        "embassy suites",
-        "best western",
-        "radisson",
-        "wyndham",
-        "choice hotels",
-        "accor",
-        "ibis",
-        "novotel",
-        "sofitel",
-        "fairmont",
-        "mandarin oriental",
-        "peninsula",
-        "aman",
-        "banyan tree",
-        "shangri-la",
-        "oberoi",
-        "taj hotels",
-        "taj",
-        "leela",
-        "park hyatt",
-        "grand hyatt",
-        "andaz",
-        "jw marriott",
-        "edition",
-        "mercure",
-        "pullman",
-        "mgallery",
-        "swissotel",
-        "melia",
-        "nh hotel",
-        "kimpton",
-        "le meridien",
-        "renaissance",
-        "autograph collection",
-        "tribute portfolio",
-        "aloft",
-        "element",
-        "ac hotels",
-        "moxy",
-        "tru",
-        "canopy",
-        "curio",
-        "tapestry",
-        "luxury collection",
-        "motel 6",
-        "super 8",
-        "la quinta",
-        "days inn",
-        "red roof",
-        "econo lodge",
-        "travelodge",
-        "comfort inn",
-        "quality inn",
-        "sleep inn",
-        "clarion",
-        "ascend collection",
-        "cambria",
-        "generator hostel",
-        "generator",
-        "selina",
-        "hostelworld",
-        "hi hostel",
-        "a&o hostel",
-        "st christopher",
-        "st christopher's",
-        "meininger",
-        "wombats",
-        "clinknoord",
-        "euro hostel",
-        "clink hostel",
-        "airbnb",
-        "vrbo",
-        "booking.com",
-        "expedia",
-        "hotels.com",
-    }
-)
-
-_AIRLINE_BRANDS = frozenset(
-    {
-        "delta",
-        "united",
-        "american",
-        "southwest",
-        "jetblue",
-        "spirit",
-        "frontier",
-        "alaska",
-        "hawaiian",
-        "ryanair",
-        "easyjet",
-        "emirates",
-        "qatar",
-        "etihad",
-        "lufthansa",
-        "british airways",
-        "air france",
-        "klm",
-        "singapore",
-        "cathay",
-    }
-)
-
-# Timeout for spaCy processing (seconds)
-_SPACY_TIMEOUT_SECONDS = 2.0
-
-# Regex patterns that indicate grammar-bound extraction (no NER needed)
-_GRAMMAR_BOUND_PATTERNS = (
-    r"\bfrom\s+\w+\s+to\s+\w+",  # "from X to Y"
-    r"\bto\s+\w+\s+from\s+\w+",  # "to Y from X"
-    r"\bgoing\s+to\s+\w+",  # "going to X"
-    r"\bvisit(?:ing)?\s+\w+",  # "visit(ing) X"
-    r"\btravel(?:ing|ling)?\s+to\s+",  # "travel(l)ing to"
-    r"\bfly(?:ing)?\s+to\s+",  # "fly(ing) to"
-    r"\bheading\s+to\s+",  # "heading to"
-)
-_GRAMMAR_BOUND_RE = re.compile("|".join(_GRAMMAR_BOUND_PATTERNS), re.IGNORECASE)
-
-
-def _should_run_spacy_ner(text: str, parsed: Dict[str, Any]) -> bool:
-    """
-    Determine if spaCy NER should be run based on extraction gaps.
-
-    Returns True if any of these conditions are met:
-    - Missing semantic entities (destination/origin without grammar cues)
-    - Ambiguity remains (e.g., multiple cities with unclear roles)
-    - No destinations extracted yet by regex
-
-    Returns False for:
-    - Inputs containing only grammar-bound entities (from/to patterns)
-    - All core fields already extracted by regex
-    """
-    if not _spacy_enabled():
-        return False
-
-    # If the user message looks like a pure constraint update (e.g. "direct, business class")
-    # and doesn't contain any obvious semantic cues for new entities, don't pay the cost of NER.
-    semantic_cues_present = bool(
-        re.search(
-            r"\b(from|to|in|at|near|around|between|leaving|departing|starting|arriving)\b"
-            r"|\b\d{4}-\d{2}-\d{2}\b"
-            r"|[$€£¥]"
-            r"|\b(USD|EUR|GBP|CAD|AUD|JPY)\b",
-            text,
-            re.IGNORECASE,
-        )
-    )
-
-    # Check if regex already extracted destinations with grammar cues
-    has_grammar_bound = bool(_GRAMMAR_BOUND_RE.search(text))
-    has_destinations = "destinations_delta" in parsed
-    has_origin = "origin_delta" in parsed
-
-    has_non_location_extractions = any(
-        key in parsed
-        for key in (
-            "flight_settings_delta",
-            "hotel_settings_delta",
-            "transport_settings_delta",
-            "budget_delta",
-            "adults_delta",
-            "children_delta",
-            "start_date_hint",
-            "end_date_hint",
-            "strategy_hint",
-            "requires_assistance_delta",
-        )
-    )
-
-    if (
-        has_non_location_extractions
-        and not (has_destinations or has_origin)
-        and not semantic_cues_present
-    ):
-        _debug("Skipping spaCy NER: constraint-only message")
-        return False
-
-    # If we have grammar-bound patterns AND extracted both origin/dest, skip NER
-    if has_grammar_bound and has_destinations and has_origin:
-        _debug("Skipping spaCy NER: grammar-bound extraction complete")
-        return False
-
-    # If regex extracted destinations via grammar pattern, check for ambiguity
-    if has_grammar_bound and has_destinations:
-        # Check for potential ambiguity (multiple cities mentioned without clear roles)
-        # This is a heuristic: if text has more capitalized words than extracted destinations
-        destinations = parsed.get("destinations_delta", [])
-        # Count potential place names (capitalized words not in common words)
-        common_words = {
-            "I",
-            "We",
-            "The",
-            "My",
-            "Our",
-            "A",
-            "An",
-            "And",
-            "Or",
-            "But",
-            "For",
-            "To",
-            "From",
-        }
-        potential_places = [
-            w for w in re.findall(r"\b[A-Z][a-z]+\b", text) if w not in common_words
-        ]
-
-        # If there are more potential places than extracted, NER might help
-        if len(potential_places) > len(destinations) + 1:  # +1 for origin
-            _debug(
-                "Running spaCy NER: potential ambiguity detected",
-                potential=potential_places,
-                extracted=destinations,
-            )
-            return True
-
-        _debug("Skipping spaCy NER: grammar-bound extraction sufficient")
-        return False
-
-    # If no destinations extracted and no grammar patterns, run NER only if the message
-    # actually contains cues that likely include entities we failed to extract.
-    if not has_destinations and not has_grammar_bound:
-        if semantic_cues_present:
-            _debug("Running spaCy NER: no regex extraction, semantic cues present")
-            return True
-        _debug("Skipping spaCy NER: no regex extraction, no semantic cues")
-        return False
-
-    # If we have destinations but no origin, check if text might contain one
-    if has_destinations and not has_origin:
-        # Look for potential origin indicators
-        if re.search(r"\b(from|leaving|departing|starting)\b", text, re.IGNORECASE):
-            _debug("Running spaCy NER: origin indicator present but not extracted")
-            return True
-
-    # Default: run NER if we're missing destinations AND the message contains cues that
-    # likely include place/date/budget entities.
-    if not has_destinations:
-        if semantic_cues_present:
-            _debug("Running spaCy NER: destinations not extracted")
-            return True
-        _debug("Skipping spaCy NER: destinations missing but no semantic cues")
-        return False
-
-    _debug("Skipping spaCy NER: regex extraction complete")
-    return False
-
-
-def _get_spacy_nlp() -> Optional[SpacyLanguage]:
-    """Lazy-load spaCy model with EntityRuler for custom patterns."""
-    global _spacy_nlp
-
-    if not _spacy_enabled():
-        return None
-
-    if spacy is None:
-        return None
-
-    if _spacy_nlp is not None:
-        return _spacy_nlp
-
-    try:
-        # Try loading the medium model first (better NER accuracy)
-        try:
-            _spacy_nlp = spacy.load("en_core_web_md")
-            _debug("spaCy loaded: en_core_web_md")
-        except OSError:
-            # Fall back to small model if medium not available
-            try:
-                _spacy_nlp = spacy.load("en_core_web_sm")
-                _debug("spaCy loaded: en_core_web_sm (fallback)")
-            except OSError:
-                _debug("spaCy model not available, NER extraction disabled")
-                return None
-
-            assert _spacy_nlp is not None
-
-        # Add EntityRuler BEFORE spaCy's NER for custom travel patterns
-        # This ensures our regex-based patterns take priority
-        ruler = _spacy_nlp.add_pipe("entity_ruler", before="ner")
-
-        # Custom patterns for travel-specific entities
-        patterns = [
-            # Popular travel destinations that might not be in default NER
-            {"label": "GPE", "pattern": "Patagonia"},
-            {"label": "GPE", "pattern": "Torres del Paine"},
-            {"label": "GPE", "pattern": "Dolomites"},
-            {"label": "GPE", "pattern": "Great Barrier Reef"},
-            {"label": "GPE", "pattern": "Raja Ampat"},
-            {"label": "GPE", "pattern": "Maldives"},
-            {"label": "GPE", "pattern": "Bora Bora"},
-            {"label": "GPE", "pattern": "Machu Picchu"},
-            {"label": "GPE", "pattern": "Santorini"},
-            {"label": "GPE", "pattern": "Amalfi Coast"},
-            {"label": "GPE", "pattern": "Cinque Terre"},
-            {"label": "GPE", "pattern": "EBC"},  # Everest Base Camp
-            {"label": "GPE", "pattern": "Everest Base Camp"},
-            {"label": "GPE", "pattern": "Costa Rica"},
-            {"label": "GPE", "pattern": "BVI"},  # British Virgin Islands
-            {"label": "GPE", "pattern": "British Virgin Islands"},
-            # Relative date patterns (already handled by regex but good for backup)
-            {"label": "DATE", "pattern": [{"LOWER": "next"}, {"LOWER": "week"}]},
-            {"label": "DATE", "pattern": [{"LOWER": "next"}, {"LOWER": "month"}]},
-            {"label": "DATE", "pattern": [{"LOWER": "this"}, {"LOWER": "weekend"}]},
-        ]
-        ruler.add_patterns(patterns)
-
-        _debug(f"spaCy EntityRuler configured with {len(patterns)} custom patterns")
-        return _spacy_nlp
-
-    except Exception as e:
-        _debug(f"Failed to load spaCy: {e}")
-        return None
-
-
-def _spacy_extract_entities(
-    text: str,
-    regex_confirmed_spans: Optional[List[tuple]] = None,
-    timeout_seconds: float = _SPACY_TIMEOUT_SECONDS,
-) -> Dict[str, Any]:
-    """
-    Use spaCy NER to extract semantic entities from text.
-
-    This function extracts entities that regex patterns may have missed,
-    particularly semantic entities without grammar cues.
-
-    Args:
-        text: Input text to process
-        regex_confirmed_spans: List of (start, end) char spans already extracted by regex.
-                              spaCy will not overwrite these spans.
-        timeout_seconds: Maximum time for spaCy processing (default 2 seconds)
-
-    Returns a dict with:
-        - spacy_destinations: List of GPE/LOC entities (places)
-        - spacy_dates: List of DATE entities
-        - spacy_money: List of MONEY entities
-        - spacy_hotels: List of hotel/accommodation mentions
-        - spacy_airlines: List of airline mentions
-    """
-    result: Dict[str, Any] = {}
-    regex_confirmed_spans = regex_confirmed_spans or []
-
-    nlp = _get_spacy_nlp()
-    if nlp is None:
-        return result
-
-    try:
-        # Process with timeout protection
-        import signal
-        import sys
-
-        # Windows doesn't support SIGALRM, so we use a simple try/except
-        # For production, consider using concurrent.futures with timeout
-        if sys.platform != "win32":
-
-            def timeout_handler(signum, frame):
-                raise TimeoutError("spaCy processing timed out")
-
-            old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-            signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
-
-        try:
-            doc = nlp(text)
-        finally:
-            if sys.platform != "win32":
-                signal.setitimer(signal.ITIMER_REAL, 0)
-                signal.signal(signal.SIGALRM, old_handler)
-
-        places: List[str] = []
-        dates: List[str] = []
-        money: List[str] = []
-        hotels: List[str] = []
-        airlines: List[str] = []
-
-        for ent in doc.ents:
-            # Skip noisy labels
-            if ent.label_ in _SPACY_NOISY_LABELS:
-                continue
-
-            ent_text = ent.text.strip()
-
-            # Skip very short entities (likely noise)
-            if len(ent_text) < 2:
-                continue
-
-            # Check if this span overlaps with regex-confirmed spans
-            # If so, skip it (prefer regex over NER on overlapping spans)
-            ent_start, ent_end = ent.start_char, ent.end_char
-            overlaps_regex = any(
-                not (ent_end <= rs or ent_start >= re)  # Overlap check
-                for rs, re in regex_confirmed_spans
-            )
-            if overlaps_regex:
-                continue
-
-            lower = ent_text.lower()
-
-            hotel_brands = _HOTEL_BRANDS
-            airline_brands = _AIRLINE_BRANDS
-
-            if ent.label_ in ("GPE", "LOC", "FAC"):
-                # Geo-political entities, locations, facilities
-                # Filter out common false positives and hotel/airline names
-                if lower in ("i", "we", "the", "a", "an", "my", "our"):
-                    continue
-                # Check if this is actually a hotel brand misclassified as GPE
-                if lower in hotel_brands or any(hb in lower for hb in hotel_brands):
-                    hotels.append(ent_text)
-                # Check if this is actually an airline misclassified as GPE
-                elif lower in airline_brands or any(ab in lower for ab in airline_brands):
-                    airlines.append(ent_text)
-                else:
-                    places.append(ent_text)
-
-            elif ent.label_ == "DATE":
-                dates.append(ent_text)
-
-            elif ent.label_ == "MONEY":
-                money.append(ent_text)
-
-            elif ent.label_ == "ORG":
-                # Check if this looks like a hotel or airline
-                if any(kw in lower for kw in hotel_brands) or "hotel" in lower or "resort" in lower:
-                    hotels.append(ent_text)
-                elif (
-                    any(kw in lower for kw in airline_brands)
-                    or "airline" in lower
-                    or "airways" in lower
-                ):
-                    airlines.append(ent_text)
-
-        if places:
-            # Deduplicate while preserving order
-            seen = set()
-            unique_places = []
-            for p in places:
-                p_lower = p.lower()
-                if p_lower not in seen:
-                    seen.add(p_lower)
-                    unique_places.append(p)
-            result["spacy_destinations"] = unique_places
-
-        if dates:
-            result["spacy_dates"] = dates
-
-        if money:
-            result["spacy_money"] = money
-
-        if hotels:
-            result["spacy_hotels"] = hotels
-
-        if airlines:
-            result["spacy_airlines"] = airlines
-
-        if result:
-            _debug("spaCy NER extracted entities", entities=result)
-
-    except TimeoutError:
-        _debug("spaCy NER timed out, returning regex-only result")
-        return {}
-    except Exception as e:
-        _debug(f"spaCy extraction error: {e}")
-
-    return result
-
-
 # -----------------------
 # Confidence Scoring Types
 # -----------------------
@@ -4610,219 +3854,6 @@ class ExtractionConfidence(BaseModel):
 CONFIDENCE_THRESHOLD_HIGH = 0.80  # Skip to router, no confirmation needed
 CONFIDENCE_THRESHOLD_MEDIUM = 0.50  # Proceed but may need confirmation
 # Below 0.50 = Low confidence, force LLM extraction
-
-
-def _calculate_entity_confidence(
-    entity: str,
-    extraction_method: str,
-    has_grammar_pattern: bool = False,
-    context_text: str = "",
-) -> EntityConfidence:
-    """
-    Calculate confidence for a single extracted entity.
-
-    Args:
-        entity: The extracted value (place name, etc.)
-        extraction_method: How it was extracted ("regex", "spacy", "llm")
-        has_grammar_pattern: Whether a grammar pattern was matched
-        context_text: Full user input for additional context
-
-    Returns:
-        EntityConfidence with score and metadata
-    """
-    # Fast-path for common case: grammar-bound, known, non-ambiguous places.
-    # Avoid full Pydantic validation + fuzzy/ambiguity checks.
-    try:
-        if (
-            has_grammar_pattern
-            and extraction_method in {"regex", "hybrid"}
-            and is_known_place(entity)
-            and not is_ambiguous_entity(entity)
-        ):
-            score = 0.5
-            if extraction_method == "regex":
-                score += 0.30
-            else:
-                # Hybrid: still treat grammar-bound extraction as high-confidence.
-                score += 0.30
-            score += 0.25
-            if context_text:
-                ctx_lower = context_text.lower()
-                if any(
-                    w in ctx_lower
-                    for w in ("trip", "travel", "visit", "fly", "going", "vacation", "holiday")
-                ):
-                    score += 0.05
-            score = max(0.0, min(1.0, score))
-
-            return EntityConfidence.model_construct(
-                value=entity,
-                confidence=score,
-                extraction_method=extraction_method,
-                needs_confirmation=False,
-                fuzzy_suggestion=None,
-                ambiguity_type=None,
-            )
-    except Exception:
-        # Fall back to full scoring
-        pass
-
-    # Calculate base confidence using known_places module
-    confidence = calculate_place_confidence(
-        entity,
-        extraction_method,
-        has_grammar_pattern,
-        context_text,
-    )
-
-    # Determine if confirmation needed
-    needs_confirm = needs_confirmation(confidence)
-
-    # Check for fuzzy match suggestions
-    fuzzy_suggestion = None
-    if not is_known_place(entity):
-        fuzzy = fuzzy_match_place(entity, threshold=85)
-        if fuzzy:
-            matched, score = fuzzy
-            if matched.lower() != entity.lower():
-                fuzzy_suggestion = matched
-
-    # Check ambiguity
-    ambiguity = None
-    if is_ambiguous_entity(entity):
-        from app.known_places import get_ambiguity_info
-
-        info = get_ambiguity_info(entity)
-        if info:
-            ambiguity = "/".join(info.get("types", []))
-
-    return EntityConfidence(
-        value=entity,
-        confidence=confidence,
-        extraction_method=extraction_method,
-        needs_confirmation=needs_confirm,
-        fuzzy_suggestion=fuzzy_suggestion,
-        ambiguity_type=ambiguity,
-    )
-
-
-def _calculate_extraction_confidence(
-    parsed: Dict[str, Any],
-    user_text: str,
-    extraction_method: str = "regex",
-    grammar_patterns_matched: bool = False,
-) -> ExtractionConfidence:
-    """
-    Calculate overall confidence for the extraction results.
-
-    Args:
-        parsed: The parsed_inputs dict with extracted data
-        user_text: Original user text
-        extraction_method: Primary extraction method used
-        grammar_patterns_matched: Whether grammar patterns matched
-
-    Returns:
-        ExtractionConfidence with overall and per-entity scores
-    """
-    # Use model_construct to avoid Pydantic validation overhead; we fill fields carefully.
-    result = ExtractionConfidence.model_construct(
-        overall=0.5,
-        level="medium",
-        destinations=[],
-        origin=None,
-        dates=None,
-        extraction_method=extraction_method,
-        detected_language=None,
-        language_confidence=None,
-        is_english=True,
-        low_confidence_reasons=[],
-        typo_suggestions={},
-    )
-
-    low_reasons: List[str] = []
-    entity_scores: List[float] = []
-
-    # Language detection (only for longer texts - short texts are unreliable)
-    # Note: langdetect often misidentifies English with place names as other languages
-    # We only flag as non-English if grammar patterns didn't match (no "from/to", "going to")
-    # because those patterns are strong English indicators
-    if LANGDETECT_AVAILABLE and len(user_text) > 20 and not grammar_patterns_matched:
-        is_eng, lang, lang_conf = is_likely_english(user_text, threshold=0.7)
-        result.detected_language = lang
-        result.language_confidence = lang_conf
-        result.is_english = is_eng
-
-        # Only flag as non-English if very confident AND detected a specific known language
-        # langdetect's confidence for English text with place names is often wrong
-        known_non_english = {"de", "es", "fr", "it", "pt", "nl", "pl", "ru", "zh", "ja", "ko", "ar"}
-        if not is_eng and lang_conf > 0.9 and lang in known_non_english:
-            low_reasons.append(f"non_english_detected:{lang}")
-            # Non-English lowers confidence but don't add a separate score
-            # The entities themselves will handle scoring
-
-    # Process destination entities
-    destinations = parsed.get("destinations_delta", [])
-    has_non_country_destination = any(
-        (d or "").strip().lower() not in _KNOWN_COUNTRIES_LOWER for d in destinations
-    )
-    for dest in destinations:
-        entity_conf = _calculate_entity_confidence(
-            dest,
-            extraction_method,
-            grammar_patterns_matched,
-            user_text,
-        )
-        result.destinations.append(entity_conf)
-        # If we have a mix of city/region and country tokens (e.g., "Nice, France"),
-        # don't let the country clarifier inflate the overall confidence.
-        if not (
-            has_non_country_destination and (dest or "").strip().lower() in _KNOWN_COUNTRIES_LOWER
-        ):
-            entity_scores.append(entity_conf.confidence)
-
-        # Track typo suggestions (always add if there's a fuzzy suggestion)
-        if entity_conf.fuzzy_suggestion:
-            result.typo_suggestions[dest] = entity_conf.fuzzy_suggestion
-            low_reasons.append(f"potential_typo:{dest}")
-
-        # Track ambiguity
-        if entity_conf.ambiguity_type:
-            low_reasons.append(f"ambiguous:{dest}")
-
-    # Process origin
-    origin = parsed.get("origin_delta")
-    if origin:
-        origin_conf = _calculate_entity_confidence(
-            origin,
-            extraction_method,
-            grammar_patterns_matched,
-            user_text,
-        )
-        result.origin = origin_conf
-        entity_scores.append(origin_conf.confidence)
-
-        # Track typo suggestions
-        if origin_conf.fuzzy_suggestion:
-            result.typo_suggestions[origin] = origin_conf.fuzzy_suggestion
-            low_reasons.append(f"potential_typo:{origin}")
-
-    # If no entities extracted at all, that's low confidence
-    if not destinations and not origin and not parsed.get("start_date_hint"):
-        if len(user_text.strip()) > 3:  # Not just a greeting
-            low_reasons.append("no_entities_extracted")
-            entity_scores.append(0.3)
-
-    # Calculate overall score
-    # Note: entity scores already include method bonuses from calculate_place_confidence
-    if entity_scores:
-        result.overall = min(1.0, sum(entity_scores) / len(entity_scores))
-    else:
-        result.overall = 0.5  # Default neutral
-
-    result.level = get_confidence_level(result.overall)
-    result.low_confidence_reasons = low_reasons
-
-    return result
 
 
 # -----------------------
@@ -5391,41 +4422,19 @@ def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
 # -----------------------
 # Cheap extractor (code) - enhanced with patterns from plan.py
 # -----------------------
-def extractor(state: GraphState) -> GraphState:
+async def extractor(state: GraphState) -> GraphState:
     """
-    Extract structured data from user text using regex patterns.
-    Enhanced to match plan.py extraction rules.
+    Extract structured data from user text using LLM.
 
-    HANDLES DIRECTLY (regex + spaCy, no LLM needed):
-    - Destinations/origin via grammar patterns (from/to, going to, flying to, etc.)
-    - Budget with currency symbols ($1000, €500, 1000 USD)
-    - Traveler counts (solo, couple, family of N, N adults M kids)
-    - Relative dates (today, tomorrow, next week, weekend)
-    - Duration in days ("for 5 days")
-    - Multi-city intent keywords (one trip, separate trips)
-    - Category activation (flights, hotels, transport, activities keywords)
-    - Flight settings (direct, one-way, round-trip, cabin class)
-    - Hotel settings (star rating, amenities like pool, gym, spa)
-    - Transport settings (car, train, bus)
-    - Strategy hints (boating, hiking, diving, skiing, cycling)
-    - User intent archetype & tone detection
-    - Destination -> activity inference (Patagonia -> hiking)
-
-    REQUIRES LLM FALLBACK (routed to required_fields or specialists):
-    - Ambiguous/unknown places needing validation or disambiguation
-    - Complex date expressions ("last week of March", "around Christmas")
-    - Non-English input parsing and confirmation
-    - Typo corrections requiring user confirmation
-    - Contextual intent when keywords are missing
-    - Detailed specialist preferences (specific dive sites, scenic routes)
-    - Conversational responses and follow-up question generation
+    All trip input extraction (destinations, origin, dates, travelers, budget,
+    activities, settings) is performed by the LLM for robust natural language
+    understanding.
 
     SHORT-CIRCUITS (bypasses LLM entirely via short_circuit_responder):
     - Greetings: "hi", "hello", "hey" -> random greeting + destination question
     - Acknowledgments: "ok", "thanks", "got it" -> continue flow
     - Confirmations: "yes"/"no" with pending_action -> execute or clear action
     - Off-topic: weather, math, general knowledge -> redirect to travel
-    - Bare inputs: destination/date/travelers as answer to last question
     """
     _debug_node_entry("extractor", state)
 
@@ -5443,7 +4452,8 @@ def extractor(state: GraphState) -> GraphState:
 
     # =========================================================================
     # SHORT-CIRCUIT DETECTION
-    # Check if this input can bypass the LLM router/specialist pipeline
+    # Keep lightweight short-circuits for greetings, acknowledgments, etc.
+    # These save LLM tokens for trivial inputs.
     # =========================================================================
     short_circuit = _detect_short_circuit(text, state)
     if short_circuit:
@@ -5482,719 +4492,125 @@ def extractor(state: GraphState) -> GraphState:
         _debug_node_exit("extractor", state)
         return state
 
-    # budget + currency (using pre-compiled patterns)
-    # Pattern 1: Symbol before amount ($1000, €500)
-    m = _BUDGET_SYMBOL_PATTERN.search(text)
-    if m:
-        cur = m.group("cur")
-        amt = float(m.group("amt").replace(",", ""))
-        parsed["budget_delta"] = {
-            "budget": amt,
-            "currency": {"$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY"}.get(cur, "USD"),
-        }
-        parsed["budget_source"] = "regex"  # Track extraction source
-    # Pattern 2: Amount with currency code (1000 USD, 500 EUR)
-    if "budget_delta" not in parsed:
-        m = _BUDGET_CODE_PATTERN.search(text)
-        if m:
-            amt = float(m.group("amt").replace(",", ""))
-            parsed["budget_delta"] = {
-                "budget": amt,
-                "currency": m.group("cur").upper(),
-            }
-            parsed["budget_source"] = "regex"  # Track extraction source
+    # =========================================================================
+    # LLM-BASED EXTRACTION
+    # All trip input extraction is performed by the LLM for robust NLU.
+    # =========================================================================
+    llm_config = _get_node_llm_config("extractor")
+    today_iso = state.metadata.get("today_iso") or _today_iso()
 
-    # origin/destinations - multiple patterns (using pre-compiled patterns)
-    # Pattern 1: "from X to Y"
-    m = _ORIGIN_DEST_FROM_TO_PATTERN.search(text)
-    if m:
-        parsed["origin_delta"] = m.group("o").strip()
-        parsed["origin_source"] = "regex"  # Track extraction source
-        parsed["destinations_delta"] = [
-            x.strip() for x in _DEST_SPLIT_PATTERN.split(m.group("d")) if x.strip()
-        ]
-        parsed["destinations_source"] = "regex"  # Track extraction source
-        parsed["_grammar_matched"] = True  # Track for confidence scoring
-    # Pattern 2: "to Y from X"
-    if "origin_delta" not in parsed:
-        m = _ORIGIN_DEST_TO_FROM_PATTERN.search(text)
-        if m:
-            parsed["origin_delta"] = m.group("o").strip()
-            parsed["origin_source"] = "regex"  # Track extraction source
-            parsed["destinations_delta"] = [
-                x.strip() for x in _DEST_SPLIT_PATTERN.split(m.group("d")) if x.strip()
-            ]
-            parsed["destinations_source"] = "regex"  # Track extraction source
-            parsed["_grammar_matched"] = True  # Track for confidence scoring
+    try:
+        prompt = load_prompt("extractor")
+        tpl = (
+            prompt.replace("{today}", today_iso)
+            .replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
+            .replace("{user_text}", text)
+        )
 
-    # Pattern 2a: "from X" without destination (user provides origin only)
-    # E.g., "From Sydney", "leaving from London"
-    if "origin_delta" not in parsed:
-        m = _ORIGIN_ONLY_FROM_PATTERN.search(text.strip())
-        if m:
-            parsed["origin_delta"] = m.group("o").strip()
-            parsed["_grammar_matched"] = True  # Track for confidence scoring
+        tokens = _estimate_prompt_tokens(tpl, state.parsed_inputs)
+        _record_node_tokens(state, "extractor", tokens, model=llm_config["model_hint"])
 
-    # Pattern 2b: "X to Y" (no explicit "from")
-    if "origin_delta" not in parsed:
-        m = _ORIGIN_DEST_BARE_TO_PATTERN.search(text.strip())
-        if m:
-            origin = m.group("o").strip()
-            dest_raw = m.group("d").strip()
+        out = await call_llm_with_timeout(
+            model=llm_config["model_hint"],
+            prompt=tpl,
+            timeout_seconds=settings.llm_timeout_extractor,
+            max_tokens=llm_config["max_tokens"],
+            temperature=llm_config["temperature"],
+        )
+        _increment_llm_calls(state)
+        extracted = jloads_safe(out)
 
-            # Guard against false positives like "I want to book ..."
-            origin_lower = origin.lower()
-            dest_lower = dest_raw.lower()
-            if (
-                re.search(r"\b(i|we|my|our)\b", origin_lower)
-                or re.search(r"\b(want|need|like|hope|please|help)\b", origin_lower)
-                or re.search(
-                    r"\b(go|going|fly|flying|travel|traveling|travelling|visit|visiting|"
-                    r"trip|planning|plan|vacation|holiday|honeymoon|backpacking|hiking|ski|skiing)\b",
-                    origin_lower,
-                )
-            ):
-                m = None
-            elif dest_lower in {"book", "booking", "stay", "staying", "rent", "renting"}:
-                m = None
+        # Map LLM output to parsed_inputs format
+        if extracted.get("destinations_delta"):
+            parsed["destinations_delta"] = extracted["destinations_delta"]
+        if extracted.get("origin_delta"):
+            parsed["origin_delta"] = extracted["origin_delta"]
+        if extracted.get("start_date_hint"):
+            parsed["start_date_hint"] = extracted["start_date_hint"]
+        if extracted.get("end_date_hint"):
+            parsed["end_date_hint"] = extracted["end_date_hint"]
+        if extracted.get("duration_days"):
+            parsed["duration_days"] = extracted["duration_days"]
+        if extracted.get("adults_delta") is not None:
+            parsed["adults_delta"] = extracted["adults_delta"]
+        if extracted.get("children_delta") is not None:
+            parsed["children_delta"] = extracted["children_delta"]
+        if extracted.get("requires_assistance_delta") is not None:
+            parsed["requires_assistance_delta"] = extracted["requires_assistance_delta"]
+        if extracted.get("budget_delta"):
+            parsed["budget_delta"] = extracted["budget_delta"]
+        if extracted.get("multi_city_intent_delta"):
+            parsed["multi_city_intent_delta"] = extracted["multi_city_intent_delta"]
+        if extracted.get("category_activation"):
+            parsed["category_activation"] = extracted["category_activation"]
+        if extracted.get("flight_settings_delta"):
+            parsed["flight_settings_delta"] = extracted["flight_settings_delta"]
+        if extracted.get("hotel_settings_delta"):
+            parsed["hotel_settings_delta"] = extracted["hotel_settings_delta"]
+        if extracted.get("transport_settings_delta"):
+            parsed["transport_settings_delta"] = extracted["transport_settings_delta"]
+        if extracted.get("activity_categories_delta"):
+            # Map to inferred_activity_categories for normalize_inputs
+            parsed["inferred_activity_categories"] = extracted["activity_categories_delta"]
+        if extracted.get("strategy_hint"):
+            parsed["strategy_hint"] = extracted["strategy_hint"]
 
-            if m is not None:
-                parsed["origin_delta"] = origin
-                parsed["origin_source"] = "regex"  # Track extraction source
-                parsed["destinations_delta"] = [
-                    x.strip() for x in _DEST_SPLIT_PATTERN.split(dest_raw) if x.strip()
-                ]
-                parsed["destinations_source"] = "regex"  # Track extraction source
-                parsed["_grammar_matched"] = True
+        # Store LLM-reported confidence in metadata
+        confidence_score = extracted.get("confidence", 0.8)
+        confidence_reasons = extracted.get("confidence_reasons", [])
 
-    # Pattern 3: "[destination] leaving today/tomorrow/next week"
-    if "destinations_delta" not in parsed:
-        m = _DEST_LEAVING_PATTERN.search(text)
-        if m:
-            dest = m.group("dest").strip()
-            # Make sure it's a reasonable destination name (not too long, not generic words)
-            if dest and len(dest) < 50 and dest.lower() not in ("i", "we", "the", "a", "an", "my"):
-                parsed["destinations_delta"] = [dest]
-                parsed["destinations_source"] = "regex"  # Track extraction source
-
-    # Pattern 4: "flying [airline] to X" - check this BEFORE general flying pattern
-    # to correctly extract airline and destination
-    if "destinations_delta" not in parsed:
-        m = _DEST_FLYING_AIRLINE_PATTERN.search(text)
-        if m:
-            dest = m.group("dest").strip()
-            if dest and len(dest) < 50:
-                parsed["destinations_delta"] = [
-                    x.strip() for x in _DEST_SPLIT_PATTERN.split(dest) if x.strip()
-                ]
-                parsed["destinations_source"] = "regex"  # Track extraction source
-                parsed["_grammar_matched"] = True  # Track for confidence scoring
-                # Also note the airline mention
-                airline = m.group(0).split("to")[0].strip()
-                airline = re.sub(
-                    r"^fly(?:ing)?\s*(?:with\s*)?", "", airline, flags=re.IGNORECASE
-                ).strip()
-                if airline:
-                    parsed["airline_mentions"] = [airline]
-
-    # Pattern 5: "going to X" / "want to go to X" / "visit X" / "flying to X"
-    if "destinations_delta" not in parsed:
-        m = _DEST_GOING_TO_PATTERN.search(text)
-        if m:
-            dest = m.group("dest").strip()
-            if dest and len(dest) < 50:
-                parsed["destinations_delta"] = [
-                    x.strip() for x in _DEST_SPLIT_PATTERN.split(dest) if x.strip()
-                ]
-                parsed["destinations_source"] = "regex"  # Track extraction source
-                parsed["_grammar_matched"] = True  # Track for confidence scoring
-
-                # If this captured something that looks like a hotel/brand fragment
-                # (e.g. "Holiday Inn" triggering the "holiday" keyword and capturing "Inn"),
-                # drop it so Pattern 6 can recover the true destination ("in Paris").
-                # Also filter out activity keywords that shouldn't be destinations
-                # (e.g., "go skiing there" → "skiing there" is not a place).
-                _ACTIVITY_KEYWORDS = {
-                    "skiing",
-                    "hiking",
-                    "diving",
-                    "boating",
-                    "cycling",
-                    "trekking",
-                    "surfing",
-                    "snorkeling",
-                    "kayaking",
-                    "climbing",
-                    "sailing",
-                    "fishing",
-                    "golfing",
-                    "swimming",
-                    "running",
-                }
-                _PRONOUN_REFS = {"there", "here", "somewhere", "anywhere", "everywhere"}
-                cleaned: list[str] = []
-                for d in parsed.get("destinations_delta", []):
-                    lower = d.lower()
-                    norm = re.sub(r"[^a-z0-9\s]", " ", lower)
-                    norm = re.sub(r"\s+", " ", norm).strip()
-                    # Allow short destinations like "UK"/"LA"/"NYC"/"EBC".
-                    if (
-                        not norm
-                        or len(norm) < 2
-                        or norm in {"st", "inn", "hotel", "hostel", "resort"}
-                    ):
-                        continue
-                    if norm in _HOTEL_BRANDS or any(hb in norm for hb in _HOTEL_BRANDS):
-                        continue
-                    # Filter out activity keywords ("skiing", "hiking", etc.)
-                    # and pronoun references ("there", "here", etc.)
-                    words = norm.split()
-                    # Check if first word is an activity keyword followed by a pronoun
-                    # e.g., "skiing there" → skip entirely
-                    if len(words) >= 1 and words[0] in _ACTIVITY_KEYWORDS:
-                        continue
-                    if norm in _PRONOUN_REFS:
-                        continue
-                    # Also check if entire string ends with pronoun ref
-                    # e.g., "skiing there" after normalization
-                    if len(words) >= 2 and words[-1] in _PRONOUN_REFS:
-                        # Check if preceding words are all activity keywords
-                        if all(w in _ACTIVITY_KEYWORDS for w in words[:-1]):
-                            continue
-                    cleaned.append(d)
-
-                if not cleaned:
-                    parsed.pop("destinations_delta", None)
-                    parsed.pop("destinations_source", None)
-                    parsed.pop("_grammar_matched", None)
-                else:
-                    parsed["destinations_delta"] = cleaned
-
-    # Pattern 6: "in X" contexts (only if nothing else found)
-    if "destinations_delta" not in parsed:
-        # Prefer explicit "in X" matches first (avoids grabbing hotel names after "at")
-        for m in _DEST_ONLY_IN_PATTERN.finditer(text):
-            dest = (m.group("dest") or "").strip()
-            if not dest:
-                continue
-
-            lower = dest.lower()
-            norm = re.sub(r"[^a-z0-9\s]", " ", lower)
-            norm = re.sub(r"\s+", " ", norm).strip()
-
-            # Avoid date/month captures like "in March"
-            if lower in {
-                "january",
-                "february",
-                "march",
-                "april",
-                "may",
-                "june",
-                "july",
-                "august",
-                "september",
-                "october",
-                "november",
-                "december",
-            }:
-                continue
-
-            # Avoid misclassifying hotel/airline/OTA brands as destinations.
-            # Also avoid overly-short/generic captures (e.g. "St" from "St. Regis", or "Inn").
-            if len(norm) < 3 or norm in {"st", "inn", "hotel", "hostel", "resort"}:
-                continue
-            if norm in _HOTEL_BRANDS or any(hb in norm for hb in _HOTEL_BRANDS):
-                continue
-            if norm in _AIRLINE_BRANDS or any(ab in norm for ab in _AIRLINE_BRANDS):
-                continue
-
-            parsed["destinations_delta"] = [
-                x.strip() for x in _DEST_SPLIT_PATTERN.split(dest) if x.strip()
-            ]
-            break
-
-        # Fallback: broader contexts (at/around/near)
-        if "destinations_delta" not in parsed:
-            for m in _DEST_IN_PATTERN.finditer(text):
-                dest = (m.group("dest") or "").strip()
-                if not dest:
-                    continue
-
-                lower = dest.lower()
-                norm = re.sub(r"[^a-z0-9\s]", " ", lower)
-                norm = re.sub(r"\s+", " ", norm).strip()
-
-                # Avoid date/month captures like "in March"
-                if norm in {
-                    "january",
-                    "february",
-                    "march",
-                    "april",
-                    "may",
-                    "june",
-                    "july",
-                    "august",
-                    "september",
-                    "october",
-                    "november",
-                    "december",
-                }:
-                    continue
-
-                # Avoid misclassifying hotel/airline/OTA brands as destinations.
-                # Also avoid overly-short/generic captures (e.g. "St" from "St. Regis", or "Inn").
-                if len(norm) < 3 or norm in {"st", "inn", "hotel", "hostel", "resort"}:
-                    continue
-                if norm in _HOTEL_BRANDS or any(hb in norm for hb in _HOTEL_BRANDS):
-                    continue
-                if norm in _AIRLINE_BRANDS or any(ab in norm for ab in _AIRLINE_BRANDS):
-                    continue
-
-                parsed["destinations_delta"] = [
-                    x.strip() for x in _DEST_SPLIT_PATTERN.split(dest) if x.strip()
-                ]
-                break
-
-    # Traveler patterns (using pre-compiled patterns)
-    # solo / just me
-    if _TRAVELER_SOLO_PATTERN.search(text):
-        parsed["adults_delta"] = 1
-        parsed["children_delta"] = 0
-        parsed["travelers_source"] = "regex"  # Track extraction source
-    # couple / me and partner
-    elif _TRAVELER_COUPLE_PATTERN.search(text):
-        parsed["adults_delta"] = 2
-        parsed["children_delta"] = 0
-        parsed["travelers_source"] = "regex"  # Track extraction source
-    # "N of us - my wife and I, plus our kids aged X and Y" pattern
-    elif _TRAVELER_FAMILY_DETAILED_PATTERN.search(text):
-        # This is a couple (2 adults) plus children
-        parsed["adults_delta"] = 2
-        # Count children by finding ages mentioned
-        ages_match = _CHILDREN_AGES_PATTERN.search(text)
-        if ages_match:
-            # Count non-None groups (each is a child's age)
-            children_count = sum(1 for g in ages_match.groups() if g is not None)
-            parsed["children_delta"] = children_count
+        # Determine confidence level based on score
+        if confidence_score >= 0.8:
+            confidence_level = "high"
+        elif confidence_score >= 0.5:
+            confidence_level = "medium"
         else:
-            # Fallback: extract total from "N of us" and subtract 2 adults
-            total_match = re.search(r"(\d+)\s+of\s+us", text, re.IGNORECASE)
-            if total_match:
-                total = int(total_match.group(1))
-                parsed["children_delta"] = max(0, total - 2)
-        parsed["travelers_source"] = "regex"  # Track extraction source
-        _debug(
-            "Extracted detailed family pattern",
-            adults=parsed.get("adults_delta"),
-            children=parsed.get("children_delta"),
-        )
-    # family of N
-    elif m := _TRAVELER_FAMILY_PATTERN.search(text):
-        family_size = int(m.group(1))
-        parsed["adults_delta"] = min(2, family_size)
-        parsed["children_delta"] = max(0, family_size - 2)
-        parsed["travelers_source"] = "regex"  # Track extraction source
-    # N adults, M kids
-    elif m := _TRAVELER_ADULTS_KIDS_PATTERN.search(text):
-        parsed["adults_delta"] = int(m.group(1))
-        parsed["children_delta"] = int(m.group(2))
-        parsed["travelers_source"] = "regex"  # Track extraction source
-    # Just N adults
-    elif m := _TRAVELER_ADULTS_ONLY_PATTERN.search(text):
-        parsed["adults_delta"] = int(m.group(1))
-        parsed["travelers_source"] = "regex"  # Track extraction source
+            confidence_level = "low"
 
-    # Accessibility (using pre-compiled pattern)
-    if _ACCESSIBILITY_PATTERN.search(text):
-        parsed["requires_assistance_delta"] = True
-        parsed["accessibility_source"] = "regex"  # Track extraction source
-
-    # Date range pattern: "March 15-20, 2030"
-    date_range_match = _DATE_RANGE_PATTERN.search(text)
-    cross_month_match = _DATE_CROSS_MONTH_PATTERN.search(text)
-
-    if cross_month_match:
-        # Cross-month range: "December 26 - January 2" (different months)
-        m1 = cross_month_match.group("m1")
-        d1 = cross_month_match.group("d1")
-        m2 = cross_month_match.group("m2")
-        d2 = cross_month_match.group("d2")
-        year = cross_month_match.group("year")
-
-        # If no year specified, use current/next year based on context
-        if not year:
-            from datetime import date as dt_date
-
-            today = dt_date.today()
-            year = str(today.year)
-            # If start month is December and we're past December, use next year
-            if m1.lower().startswith("dec") and today.month > 1:
-                year = str(today.year)
-            # If the date would be in the past, bump to next year
-            elif m1.lower().startswith("dec") and today.month == 12 and today.day > int(d1):
-                year = str(today.year + 1)
-
-        parsed["start_date_hint"] = f"{m1} {d1}, {year}"
-        # For cross-year (Dec→Jan), end date is next year
-        end_year = year
-        if m1.lower().startswith("dec") and m2.lower().startswith("jan"):
-            end_year = str(int(year) + 1)
-        parsed["end_date_hint"] = f"{m2} {d2}, {end_year}"
-        parsed["dates_source"] = "regex"
-        _debug(
-            "Extracted cross-month date range",
-            start=parsed["start_date_hint"],
-            end=parsed["end_date_hint"],
-        )
-    elif date_range_match:
-        # Extract month from the full match (it's not in a capture group)
-        full_match = date_range_match.group(0)
-        month_match = re.match(
-            r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
-            r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)",
-            full_match,
-            re.IGNORECASE,
-        )
-        if month_match:
-            month_str = month_match.group(1)
-            start_day = date_range_match.group(1)
-            end_day = date_range_match.group(2)
-            year = date_range_match.group(3)
-            # Build date hints
-            parsed["start_date_hint"] = f"{month_str} {start_day}, {year}"
-            parsed["end_date_hint"] = f"{month_str} {end_day}, {year}"
-            parsed["dates_source"] = "regex"
-            _debug(
-                "Extracted date range",
-                start=parsed["start_date_hint"],
-                end=parsed["end_date_hint"],
-            )
-
-    # Date patterns - relative dates (using pre-compiled patterns)
-    elif _DATE_TODAY_PATTERN.search(text):
-        parsed["start_date_hint"] = "today"
-        parsed["dates_source"] = "regex"  # Track extraction source
-    elif _DATE_TOMORROW_PATTERN.search(text):
-        parsed["start_date_hint"] = "tomorrow"
-        parsed["dates_source"] = "regex"  # Track extraction source
-    elif _DATE_NEXT_WEEK_PATTERN.search(text):
-        parsed["start_date_hint"] = "next week"
-        parsed["dates_source"] = "regex"  # Track extraction source
-    elif _DATE_WEEKEND_PATTERN.search(text):
-        parsed["start_date_hint"] = "weekend"
-        parsed["dates_source"] = "regex"  # Track extraction source
-
-    # Duration extraction
-    duration = _extract_duration_days_from_message(text)
-    if duration:
-        parsed["duration_days"] = duration
-        parsed["duration_source"] = "regex"  # Track extraction source
-
-    # Multi-city intent detection
-    multi_intent = _normalize_multi_city_intent(text)
-    if multi_intent:
-        parsed["multi_city_intent_delta"] = multi_intent
-        parsed["multi_city_source"] = "regex"  # Track extraction source
-
-    # Category activation (using pre-compiled patterns)
-    cats = []
-    if _CAT_FLIGHTS_PATTERN.search(text):
-        cats.append("flights")
-    if _CAT_HOTELS_PATTERN.search(text):
-        cats.append("hotels")
-    if _CAT_TRANSPORT_PATTERN.search(text):
-        cats.append("transport")
-    if _CAT_ACTIVITIES_PATTERN.search(text):
-        cats.append("activities")
-    if cats:
-        parsed["category_activation"] = cats
-
-    # Flight settings extraction (using pre-compiled patterns)
-    if "flights" in cats or _CAT_FLIGHTS_PATTERN.search(text):
-        flight_settings: Dict[str, Any] = {}
-        if _FLIGHT_DIRECT_PATTERN.search(text):
-            flight_settings["direct_only"] = True
-        if _FLIGHT_ONEWAY_PATTERN.search(text):
-            flight_settings["round_trip"] = False
-        if _FLIGHT_ROUNDTRIP_PATTERN.search(text):
-            flight_settings["round_trip"] = True
-        if _FLIGHT_BUSINESS_PATTERN.search(text):
-            flight_settings["cabin_class"] = "business"
-        elif _FLIGHT_FIRST_CLASS_PATTERN.search(text):
-            flight_settings["cabin_class"] = "first"
-        elif _FLIGHT_PREMIUM_ECONOMY_PATTERN.search(text):
-            flight_settings["cabin_class"] = "premium_economy"
-        if flight_settings:
-            parsed["flight_settings_delta"] = flight_settings
-
-    # Hotel settings extraction (using pre-compiled patterns)
-    if "hotels" in cats or _CAT_HOTELS_PATTERN.search(text):
-        hotel_settings: Dict[str, Any] = {}
-        if m := _HOTEL_STARS_PATTERN.search(text):
-            hotel_settings["min_stars"] = int(m.group(1))
-        amenities = []
-        if _HOTEL_POOL_PATTERN.search(text):
-            amenities.append("pool")
-        if _HOTEL_GYM_PATTERN.search(text):
-            amenities.append("gym")
-        if _HOTEL_SPA_PATTERN.search(text):
-            amenities.append("spa")
-        if _HOTEL_WIFI_PATTERN.search(text):
-            amenities.append("wifi")
-        if _HOTEL_BREAKFAST_PATTERN.search(text):
-            amenities.append("breakfast")
-        if amenities:
-            hotel_settings["amenities"] = amenities
-        if hotel_settings:
-            parsed["hotel_settings_delta"] = hotel_settings
-
-    # Transport settings extraction (using pre-compiled patterns)
-    if "transport" in cats or _CAT_TRANSPORT_PATTERN.search(text):
-        transport_settings: Dict[str, Any] = {}
-        if _TRANSPORT_CAR_PATTERN.search(text):
-            transport_settings["car"] = True
-        if _TRANSPORT_TRAIN_PATTERN.search(text):
-            transport_settings["train"] = True
-        if _TRANSPORT_BUS_PATTERN.search(text):
-            transport_settings["bus"] = True
-        if transport_settings:
-            parsed["transport_settings_delta"] = transport_settings
-
-    # Strategy detection heuristic (using pre-compiled patterns)
-    if _STRATEGY_BOATING_PATTERN.search(text):
-        parsed["strategy_hint"] = "boating"
-    elif _STRATEGY_HIKING_PATTERN.search(text):
-        parsed["strategy_hint"] = "hiking"
-    elif _STRATEGY_DIVING_PATTERN.search(text):
-        parsed["strategy_hint"] = "diving"
-    elif _STRATEGY_SKIING_PATTERN.search(text):
-        parsed["strategy_hint"] = "skiing"
-    elif _STRATEGY_CYCLING_PATTERN.search(text):
-        parsed["strategy_hint"] = "cycling"
-
-    # =========================================================================
-    # USER INTENT & TONE DETECTION (for conversational style adaptation)
-    # =========================================================================
-    # Detect user intent archetype (fast regex-based hint for router to refine)
-    intent_hint = _detect_user_intent_hint(text)
-    if intent_hint:
-        state.metadata["user_intent_hint"] = intent_hint
-        _debug(f"Detected user intent hint: {intent_hint}")
-
-    # Detect user tone for response adaptation
-    user_tone = _detect_user_tone(text)
-    state.metadata["user_tone"] = user_tone
-    if user_tone != "neutral":
-        _debug(f"Detected user tone: {user_tone}")
-
-    # Handle intent persistence with decay
-    persisted_intent = state.metadata.get("user_intent")
-    intent_turn_count = state.metadata.get("intent_turn_count", 0) + 1
-    state.metadata["intent_turn_count"] = intent_turn_count
-
-    if persisted_intent:
-        confidence = _compute_intent_confidence(intent_turn_count)
-        state.metadata["intent_confidence"] = confidence
-
-        if _should_override_persisted_intent(intent_hint, persisted_intent, confidence):
-            state.metadata["user_intent"] = intent_hint
-            state.metadata["intent_turn_count"] = 1  # Reset turn count
-            state.metadata["intent_confidence"] = 1.0
-            _debug(f"Intent override: {persisted_intent} -> {intent_hint}")
-        elif confidence <= 0:
-            # Decay expired, use hint or default to detailed_planner
-            state.metadata["user_intent"] = intent_hint or "detailed_planner"
-            state.metadata["intent_turn_count"] = 1
-            state.metadata["intent_confidence"] = 1.0 if intent_hint else 0.5
-            _debug(f"Intent decayed, reset to: {state.metadata['user_intent']}")
-    elif intent_hint:
-        # First detection
-        state.metadata["user_intent"] = intent_hint
-        state.metadata["intent_turn_count"] = 1
-        state.metadata["intent_confidence"] = 1.0
-    else:
-        # No hint and no persisted - default to detailed_planner
-        if "user_intent" not in state.metadata:
-            state.metadata["user_intent"] = "detailed_planner"
-            state.metadata["intent_confidence"] = 0.5
-
-    # =========================================================================
-    # SPACY NER - SELECTIVE SEMANTIC EXTRACTION
-    # =========================================================================
-    # Run spaCy NER only when:
-    # - Missing semantic entities (destination/origin without grammar cues)
-    # - Ambiguity remains (multiple cities with unclear roles)
-    # - Regex didn't extract destinations
-    #
-    # Do NOT run spaCy when:
-    # - Grammar-bound patterns already extracted all entities
-    # - All core fields already extracted by regex
-
-    if _should_run_spacy_ner(text, parsed):
-        # Collect regex-confirmed spans to avoid overwriting
-        regex_confirmed_spans: List[tuple] = []
-
-        # Track spans from "from X to Y" and similar patterns
-        if "origin_delta" in parsed or "destinations_delta" in parsed:
-            # Find the match spans for origin/destination patterns
-            for pattern in [
-                _ORIGIN_DEST_FROM_TO_PATTERN,
-                _ORIGIN_DEST_TO_FROM_PATTERN,
-                _DEST_LEAVING_PATTERN,
-                _DEST_GOING_TO_PATTERN,
-            ]:
-                m = pattern.search(text)
-                if m:
-                    regex_confirmed_spans.append((m.start(), m.end()))
-                    break  # Only one pattern should match
-
-        # Run spaCy with span protection
-        spacy_entities = _spacy_extract_entities(text, regex_confirmed_spans)
-
-        # Merge spaCy results WITHOUT overwriting regex-confirmed extractions
-        # spaCy adds semantic entities, regex provides grammar-bound ones
-
-        # Destinations: only add if regex didn't extract any
-        if "spacy_destinations" in spacy_entities and "destinations_delta" not in parsed:
-            parsed["destinations_delta"] = spacy_entities["spacy_destinations"]
-            parsed["destinations_source"] = "spacy"  # Track extraction source
-            _debug(
-                "spaCy NER extracted destinations (semantic)",
-                destinations=spacy_entities["spacy_destinations"],
-            )
-
-        # For mixed inputs: if regex got some destinations, spaCy might find additional ones
-        # (e.g., "from NYC to Paris, maybe also Rome" - regex gets NYC/Paris, spaCy might get Rome)
-        elif "spacy_destinations" in spacy_entities and "destinations_delta" in parsed:
-            existing = set(d.lower() for d in parsed["destinations_delta"])
-            additional = [
-                d for d in spacy_entities["spacy_destinations"] if d.lower() not in existing
-            ]
-            if additional:
-                parsed["destinations_delta"].extend(additional)
-                # Mark as mixed source if we added from spaCy
-                if parsed.get("destinations_source") == "regex":
-                    parsed["destinations_source"] = "regex+spacy"
-                _debug(
-                    "spaCy NER added additional destinations",
-                    additional=additional,
-                )
-
-        # Store date hints for potential later use (don't overwrite regex)
-        if "spacy_dates" in spacy_entities and "start_date_hint" not in parsed:
-            date_hints = spacy_entities["spacy_dates"]
-            if date_hints:
-                parsed["spacy_date_hint"] = date_hints[0]
-                _debug(f"spaCy NER date hint: {date_hints[0]}")
-
-        # Store money hints for budget extraction (don't overwrite regex)
-        if "spacy_money" in spacy_entities and "budget_delta" not in parsed:
-            money_hints = spacy_entities["spacy_money"]
-            if money_hints:
-                parsed["spacy_money_hint"] = money_hints[0]
-                _debug(f"spaCy NER money hint: {money_hints[0]}")
-
-        # Store hotel/airline mentions for domain-specific routing
-        if "spacy_hotels" in spacy_entities:
-            parsed["hotel_mentions"] = spacy_entities["spacy_hotels"]
-            _debug(f"spaCy NER hotel mentions: {spacy_entities['spacy_hotels']}")
-
-        if "spacy_airlines" in spacy_entities:
-            parsed["airline_mentions"] = spacy_entities["spacy_airlines"]
-            _debug(f"spaCy NER airline mentions: {spacy_entities['spacy_airlines']}")
-
-    # =========================================================================
-    # DESTINATION → ACTIVITY INFERENCE (multi-faceted extraction)
-    # =========================================================================
-    # If destinations were extracted via regex patterns, infer activities
-    if "destinations_delta" in parsed and "inferred_activity_categories" not in parsed:
-        all_inferred: List[str] = []
-        for dest in parsed["destinations_delta"]:
-            inferred = _infer_activities_from_destination(dest)
-            for act in inferred:
-                if act not in all_inferred:
-                    all_inferred.append(act)
-
-        if all_inferred:
-            parsed["inferred_activity_categories"] = all_inferred
-            _debug(
-                "Inferred activities from regex-extracted destinations",
-                destinations=parsed["destinations_delta"],
-                activities=all_inferred,
-            )
-
-    # =========================================================================
-    # CONFIDENCE SCORING
-    # =========================================================================
-    # Calculate confidence scores for all extracted entities
-    # This helps route_after_router decide whether to force LLM extraction
-
-    # Determine extraction method and whether grammar patterns matched
-    extraction_method = "regex"
-    grammar_matched = False
-
-    # Check if spaCy was used (added entities means hybrid)
-    if "spacy_destinations" in parsed.get("_spacy_raw", {}):
-        extraction_method = "hybrid"
-
-    # Check if grammar patterns were matched (from/to, going to, etc.)
-    if "origin_delta" in parsed and "destinations_delta" in parsed:
-        # Both origin and destination extracted = likely grammar pattern
-        grammar_matched = True
-    elif parsed.get("_grammar_matched"):
-        grammar_matched = True
-
-    # Calculate confidence
-    confidence = _calculate_extraction_confidence(
-        parsed,
-        text,
-        extraction_method=extraction_method,
-        grammar_patterns_matched=grammar_matched,
-    )
-
-    # Store confidence in metadata for routing decisions
-    state.metadata["extraction_confidence"] = {
-        "overall": confidence.overall,
-        "level": confidence.level,
-        "method": extraction_method,
-        "grammar_matched": grammar_matched,
-        "is_english": confidence.is_english,
-        "detected_language": confidence.detected_language,
-        "low_confidence_reasons": confidence.low_confidence_reasons,
-        "typo_suggestions": confidence.typo_suggestions,
-    }
-
-    # Store per-entity confidence in parsed_inputs for frontend
-    if confidence.destinations:
-        parsed["destination_confidences"] = [
-            {
-                "value": ec.value,
-                "confidence": ec.confidence,
-                "needs_confirmation": ec.needs_confirmation,
-                "fuzzy_suggestion": ec.fuzzy_suggestion,
-                "ambiguity_type": ec.ambiguity_type,
-            }
-            for ec in confidence.destinations
-        ]
-
-    if confidence.origin:
-        parsed["origin_confidence"] = {
-            "value": confidence.origin.value,
-            "confidence": confidence.origin.confidence,
-            "needs_confirmation": confidence.origin.needs_confirmation,
-            "fuzzy_suggestion": confidence.origin.fuzzy_suggestion,
+        state.metadata["extraction_confidence"] = {
+            "overall": confidence_score,
+            "level": confidence_level,
+            "method": "llm",
+            "grammar_matched": False,  # Not applicable for LLM extraction
+            "is_english": True,  # LLM handles multilingual
+            "detected_language": None,
+            "low_confidence_reasons": confidence_reasons,
+            "typo_suggestions": {},
         }
 
-    _debug(
-        "Extraction confidence calculated",
-        overall=f"{confidence.overall:.2f}",
-        level=confidence.level,
-        method=extraction_method,
-        grammar_matched=grammar_matched,
-        reasons=(
-            confidence.low_confidence_reasons[:3] if confidence.low_confidence_reasons else None
-        ),
-    )
+        _debug(
+            "Extraction confidence calculated",
+            overall=f"{confidence_score:.2f}",
+            level=confidence_level,
+            method="llm",
+            grammar_matched=False,
+            reasons=confidence_reasons[:3] if confidence_reasons else None,
+        )
+
+    except TimeoutError:
+        _debug("Extractor LLM timeout, using empty parsed_inputs")
+        state.metadata["extraction_confidence"] = {
+            "overall": 0.0,
+            "level": "low",
+            "method": "llm_timeout",
+            "grammar_matched": False,
+            "is_english": True,
+            "detected_language": None,
+            "low_confidence_reasons": ["llm_timeout"],
+            "typo_suggestions": {},
+        }
+    except Exception as e:
+        _debug_error("Extractor LLM error", error=str(e))
+        state.metadata["extraction_confidence"] = {
+            "overall": 0.0,
+            "level": "low",
+            "method": "llm_error",
+            "grammar_matched": False,
+            "is_english": True,
+            "detected_language": None,
+            "low_confidence_reasons": ["llm_error"],
+            "typo_suggestions": {},
+        }
 
     state.parsed_inputs = parsed
     _debug_node_exit("extractor", state)
@@ -6735,6 +5151,16 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             else:
                 state.question_target = None
 
+            # Fallback: infer question_target from missing fields if LLM didn't provide one
+            if state.question_target is None:
+                inferred_target = _infer_question_target_from_missing(state)
+                if inferred_target:
+                    state.question_target = inferred_target
+                    _debug(
+                        "Inferred question_target from missing fields",
+                        target=inferred_target,
+                    )
+
             # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
             state.suggested_responses = _get_suggestions_with_fallback(
@@ -6931,6 +5357,16 @@ async def strategy_node(state: GraphState) -> GraphState:
                     state.question_target = None
             else:
                 state.question_target = None
+
+            # Fallback: infer question_target from missing fields if LLM didn't provide one
+            if state.question_target is None:
+                inferred_target = _infer_question_target_from_missing(state)
+                if inferred_target:
+                    state.question_target = inferred_target
+                    _debug(
+                        "Inferred question_target from missing fields",
+                        target=inferred_target,
+                    )
 
             # Filter suggested responses with relevance scoring
             raw_suggestions = j.get("suggested_responses", []) or []

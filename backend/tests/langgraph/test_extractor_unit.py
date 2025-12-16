@@ -1,10 +1,25 @@
-"""Unit tests for the extractor function and regex patterns."""
+"""
+Unit tests for the extractor function and regex patterns.
 
-# ruff: noqa: E402
+DEPRECATED: These tests are no longer applicable as extraction is now
+performed entirely by the LLM (see backend/app/prompts/extractor.txt).
+The regex patterns tested here have been removed from plan_graph.py.
+
+These tests are kept for reference but are skipped by default.
+"""
+
+# ruff: noqa: E402, F821
 
 import os
 import sys
 from pathlib import Path
+
+import pytest
+
+# Skip entire module - these tests are for deprecated regex extraction
+pytestmark = pytest.mark.skip(
+    reason="Regex extraction patterns have been removed - extraction is now LLM-based"
+)
 
 # Suppress debug output before importing plan_graph
 os.environ["PLAN_GRAPH_DEBUG"] = "0"
@@ -13,32 +28,32 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-import pytest
-
-from app.plan_graph import (
-    _ACCESSIBILITY_PATTERN,
-    _BUDGET_CODE_PATTERN,
-    _BUDGET_SYMBOL_PATTERN,
-    _DATE_NEXT_WEEK_PATTERN,
-    _DATE_TODAY_PATTERN,
-    _DATE_TOMORROW_PATTERN,
-    _FLIGHT_BUSINESS_PATTERN,
-    _FLIGHT_DIRECT_PATTERN,
-    _HOTEL_STARS_PATTERN,
-    _ORIGIN_DEST_BARE_TO_PATTERN,
-    _ORIGIN_DEST_FROM_TO_PATTERN,
-    _ORIGIN_DEST_TO_FROM_PATTERN,
-    _STRATEGY_DIVING_PATTERN,
-    _STRATEGY_HIKING_PATTERN,
-    _TRANSPORT_CAR_PATTERN,
-    _TRAVELER_ADULTS_KIDS_PATTERN,
-    _TRAVELER_COUPLE_PATTERN,
-    _TRAVELER_FAMILY_PATTERN,
-    _TRAVELER_SOLO_PATTERN,
-    GraphState,
-    TripInputs,
-    extractor,
-)
+# Note: These imports will fail because the patterns have been removed.
+# Keeping this comment for documentation purposes.
+# from app.plan_graph import (
+#     _ACCESSIBILITY_PATTERN,
+#     _BUDGET_CODE_PATTERN,
+#     _BUDGET_SYMBOL_PATTERN,
+#     _DATE_NEXT_WEEK_PATTERN,
+#     _DATE_TODAY_PATTERN,
+#     _DATE_TOMORROW_PATTERN,
+#     _FLIGHT_BUSINESS_PATTERN,
+#     _FLIGHT_DIRECT_PATTERN,
+#     _HOTEL_STARS_PATTERN,
+#     _ORIGIN_DEST_BARE_TO_PATTERN,
+#     _ORIGIN_DEST_FROM_TO_PATTERN,
+#     _ORIGIN_DEST_TO_FROM_PATTERN,
+#     _STRATEGY_DIVING_PATTERN,
+#     _STRATEGY_HIKING_PATTERN,
+#     _TRANSPORT_CAR_PATTERN,
+#     _TRAVELER_ADULTS_KIDS_PATTERN,
+#     _TRAVELER_COUPLE_PATTERN,
+#     _TRAVELER_FAMILY_PATTERN,
+#     _TRAVELER_SOLO_PATTERN,
+#     GraphState,
+#     TripInputs,
+#     extractor,
+# )
 
 
 class TestBudgetPatterns:
@@ -58,10 +73,8 @@ class TestBudgetPatterns:
     )
     def test_budget_symbol_pattern(self, text, expected_symbol, expected_amount):
         """Symbol-before-amount pattern should extract currency and amount."""
-        match = _BUDGET_SYMBOL_PATTERN.search(text)
-        assert match is not None
-        assert match.group("cur") == expected_symbol
-        assert match.group("amt") == expected_amount
+        # Test skipped - pattern removed
+        pass
 
     @pytest.mark.parametrize(
         "text,expected_amount,expected_code",
@@ -77,23 +90,13 @@ class TestBudgetPatterns:
     )
     def test_budget_code_pattern(self, text, expected_amount, expected_code):
         """Amount-before-code pattern should extract amount and currency code."""
-        match = _BUDGET_CODE_PATTERN.search(text)
-        assert match is not None
-        assert match.group("amt") == expected_amount
-        assert match.group("cur").upper() == expected_code.upper()
+        # Test skipped - pattern removed
+        pass
 
     def test_budget_no_match_invalid(self):
         """Invalid budget formats should not match."""
-        invalid_inputs = [
-            "budget around thousand",
-            "no money",
-            "free",
-            "$$",
-            "USD",
-        ]
-        for text in invalid_inputs:
-            assert _BUDGET_SYMBOL_PATTERN.search(text) is None
-            assert _BUDGET_CODE_PATTERN.search(text) is None
+        # Test skipped - pattern removed
+        pass
 
 
 class TestOriginDestinationPatterns:
