@@ -641,10 +641,6 @@ async def graph_plan_endpoint(
         model_used=result.get("session_state", {}).get("metadata", {}).get("model_used"),
         router_intent=result.get("session_state", {}).get("router_intent"),
         strategy_topic=result.get("session_state", {}).get("strategy_topic"),
-        monolith_used=bool(
-            result.get("session_state", {}).get("metadata", {}).get("monolith_used")
-            or result.get("session_state", {}).get("flags", {}).get("force_monolith", False)
-        ),
         fallback_to_legacy=False,
         today_iso=today_iso,
         ready_to_generate_prev=ready_to_generate_prev,

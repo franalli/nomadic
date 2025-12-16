@@ -36,6 +36,8 @@ def _build_search_context(req: TilesSearchRequest) -> SearchContext:
         max_results_per_vertical=req.max_results_per_vertical,
         currency=req.currency,
         response_mode=req.response_mode,
+        budget=req.budget,
+        budget_per_category=req.budget_per_category,
     )
 
 

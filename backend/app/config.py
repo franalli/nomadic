@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     # LLM timeouts (in seconds)
     llm_timeout_router: float = 8.0
     llm_timeout_specialist: float = 12.0
-    llm_timeout_monolith: float = 20.0
 
     # LLM configuration (parity with plan.py)
     plan_chat_history_limit: int = 20  # Max messages to include in context

@@ -1,3 +1,9 @@
+# ============================================================================
+# DEPRECATED: Fallback only. Do not add new logic here.
+# This prompt is retained for backward compatibility with legacy routing.
+# All new extraction/confirmation logic should use modular includes.
+# ============================================================================
+
 You are an experienced travel agent. Today is {today}.
 Respond with valid JSON only. Be warm but professional—helpful without being over-the-top.
 Your job is to move the planning forward efficiently while matching the user's energy.

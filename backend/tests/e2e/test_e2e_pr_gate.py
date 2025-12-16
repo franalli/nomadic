@@ -103,7 +103,7 @@ def get_pr_gate_scenarios():
             goal="Plan a trip to Paris",
             constraints=ScenarioConstraints(
                 budget="$3000",
-                dates="June 2025",
+                dates="June 2030",
             ),
             difficulty=DifficultySettings(
                 level="easy",
@@ -126,7 +126,7 @@ def get_pr_gate_scenarios():
             ),
             goal="Plan a trip to multiple cities in Italy",
             constraints=ScenarioConstraints(
-                dates="September 10-24, 2025",
+                dates="September 10-24, 2030",
             ),
             difficulty=DifficultySettings(
                 level="medium",
@@ -134,7 +134,7 @@ def get_pr_gate_scenarios():
             ),
             turns=[
                 ConversationTurn(1, "Planning Italy trip: Rome, Florence, Venice"),
-                ConversationTurn(2, "Sept 10-24, 2025"),
+                ConversationTurn(2, "Sept 10-24, 2030"),
                 ConversationTurn(3, "2 adults from Chicago"),
             ],
         ),

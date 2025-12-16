@@ -1,0 +1,1196 @@
+{
+  "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+  "thread_id": "9d9dd24b-c297-4d39-bb12-815bf223d598",
+  "scenario_goal": "Plan a luxury multi-destination trip with unclear priorities and preferences",
+  "scenario_constraints": {
+    "budget": null,
+    "dates": "flexible February 2024",
+    "preferences": [
+      "5-star hotels",
+      "business class flights",
+      "exclusive experiences"
+    ],
+    "avoid": [
+      "crowded places",
+      "standard tours"
+    ],
+    "party_size": "2 adults",
+    "special_requirements": [
+      "vegan meals"
+    ]
+  },
+  "conversation": {
+    "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+    "thread_id": "9d9dd24b-c297-4d39-bb12-815bf223d598",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hi, I want to plan a luxury vacation, but I'm not sure where to go yet. Can you help?",
+        "assistant_message": "Absolutely, I can help with that! Here are some luxury vacation destinations you might consider:",
+        "trip_inputs": {
+          "destinations": [],
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Bali, Indonesia",
+          "Maldives",
+          "Santorini, Greece"
+        ],
+        "errors": [],
+        "run_id": "019b2835-78eb-7573-a778-113fa938dc10",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 2,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3077.999999979511
+      },
+      {
+        "turn_number": 2,
+        "user_message": "Well, I prefer somewhere warm in February. Maybe a mix of urban and nature?",
+        "assistant_message": "Great choice for February! Here are some destinations that offer a mix of urban and nature: \n- \ud83c\udf34 **Miami, Florida** \u2014 vibrant city life and beautiful beaches\n- \ud83c\udf04 **Los Angeles, California** \u2014 urban attractions with nearby mountains\n- \ud83c\udf3a **Honolulu, Hawaii** \u2014 city vibes with stunning natural landscapes\n\nWhich one catches your interest?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu"
+          ],
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "London",
+          "Singapore",
+          "New York"
+        ],
+        "errors": [],
+        "run_id": "019b2835-84ed-7a00-965e-746a36d5488c",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 4,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4922.000000020489
+      },
+      {
+        "turn_number": 3,
+        "user_message": "I want something unique, like a private tour or an exclusive experience.",
+        "assistant_message": "I can draft a detailed null plan soon. For now, which preferences matter most?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu"
+          ],
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Beginner skill level",
+          "Prefer skippered",
+          "Max 4 hours daily"
+        ],
+        "errors": [],
+        "run_id": "019b2835-9820-7042-a5e2-83cdc17ea561",
+        "router_intent": "strategy",
+        "strategy_topic": "null",
+        "short_circuit_type": null,
+        "llm_calls_made": 5,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 1842.9999999934807
+      },
+      {
+        "turn_number": 4,
+        "user_message": "Definitely need vegan meal options and prefer direct flights if possible.",
+        "assistant_message": "Noted on the vegan meal options and direct flights preference. Let's move forward with your trip details!",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Singapore",
+          "From Los Angeles",
+          "From Berlin"
+        ],
+        "errors": [],
+        "run_id": "019b2835-9f55-7353-a9ff-eac1841c2beb",
+        "router_intent": "flights",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 7,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3594.0000000118744
+      },
+      {
+        "turn_number": 5,
+        "user_message": "The trip could be around 10 days, but we're flexible on exact dates.",
+        "assistant_message": "Would you like to start on a specific date, or work backwards from a return date?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 30, 2025",
+          "January 15, 2026",
+          "February 14, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2835-ad63-7ea3-a56a-0e8106505f81",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 9,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3905.9999999881256
+      },
+      {
+        "turn_number": 6,
+        "user_message": "I don't have a set budget, but I want it to be luxurious.",
+        "assistant_message": "Luxury options noted! Let's focus on high-end experiences. Do you have a specific destination in mind?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Tokyo, Japan",
+          "London",
+          "Dubai"
+        ],
+        "errors": [],
+        "run_id": "019b2835-bca7-72e1-afc0-171fcb29d243",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 11,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3750.0
+      },
+      {
+        "turn_number": 7,
+        "user_message": "I think Europe or maybe Southeast Asia could be interesting, but not sure.",
+        "assistant_message": "Europe and Southeast Asia both offer fantastic experiences! Would you like to explore specific destinations in either region?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu",
+            "Europe",
+            "Southeast Asia"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "London",
+          "Tokyo, Japan",
+          "Rome, Italy"
+        ],
+        "errors": [],
+        "run_id": "019b2835-cb52-7f13-a73e-ae56ae8ff444",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 13,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4000.0
+      },
+      {
+        "turn_number": 8,
+        "user_message": "I'll need some time to decide on the specific cities, what's your suggestion?",
+        "assistant_message": "You might enjoy exploring a mix of destinations. Here are a few suggestions:\n- \ud83c\udf34 **Miami** \u2014 vibrant nightlife and beaches\n- \ud83c\udf06 **Los Angeles** \u2014 entertainment and culture\n- \ud83c\udfd6\ufe0f **Honolulu** \u2014 stunning landscapes and relaxation\n- \ud83c\udf0d **Europe** \u2014 rich history and diverse cultures\n- \ud83c\udf0f **Southeast Asia** \u2014 exotic experiences and beautiful scenery\n\nTake your time to decide!",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu",
+            "Europe",
+            "Southeast Asia"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Miami sounds good",
+          "Los Angeles is interesting",
+          "Honolulu for relaxation"
+        ],
+        "errors": [],
+        "run_id": "019b2835-daee-7d13-a284-306698d6dc6e",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 15,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 6859.99999998603
+      },
+      {
+        "turn_number": 9,
+        "user_message": "One last thing, I'd rather avoid places with extreme time zone changes.",
+        "assistant_message": "Noted! We'll focus on destinations with minimal time zone differences. Would you like to confirm your destinations now?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu",
+            "Europe",
+            "Southeast Asia"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Rome, Italy",
+          "London",
+          "Singapore"
+        ],
+        "errors": [],
+        "run_id": "019b2835-f5bd-7bf2-a3ee-b5988850b82c",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 17,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3390.00000001397
+      },
+      {
+        "turn_number": 10,
+        "user_message": "Oh, and currency exchanges can be a hassle, can we consider that too?",
+        "assistant_message": "Noted! We can look into currency exchange options for your trip. Would you like to focus on a specific destination for more details?",
+        "trip_inputs": {
+          "destinations": [
+            "Miami",
+            "Los Angeles",
+            "Honolulu",
+            "Europe",
+            "Southeast Asia"
+          ],
+          "booking_types": {
+            "flights": true,
+            "activities": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u2728 vegan meals"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Barcelona, Spain",
+          "London",
+          "Dubai"
+        ],
+        "errors": [],
+        "run_id": "019b2836-02ef-7533-9864-1bc67fce7901",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 19,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 2921.9999999913853
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Miami",
+          "Los Angeles",
+          "Honolulu",
+          "Europe",
+          "Southeast Asia"
+        ],
+        "origin": null,
+        "start_date": null,
+        "end_date": null,
+        "adults": null,
+        "children": null,
+        "requires_assistance": null,
+        "budget": null,
+        "currency": null,
+        "multi_city_intent": null,
+        "booking_types": {
+          "flights": true,
+          "activities": true
+        },
+        "flight_settings": {
+          "direct_only": true
+        },
+        "hotel_settings": {},
+        "activity_settings": {
+          "categories": [
+            "\u2728 vegan meals"
+          ]
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+        "test_run": true,
+        "today_iso": "2025-12-16",
+        "user_intent_hint": "undecided",
+        "user_tone": "neutral",
+        "intent_turn_count": 4,
+        "user_intent": "undecided",
+        "intent_confidence": 0.5,
+        "extraction_confidence": {
+          "overall": 0.3,
+          "level": "low",
+          "method": "regex",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": "en",
+          "low_confidence_reasons": [
+            "no_entities_extracted"
+          ],
+          "typo_suggestions": {}
+        },
+        "node_tokens": {
+          "router": 11270,
+          "specialist:required_fields": 15344
+        },
+        "total_tokens": 26614,
+        "node_models": {
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 19,
+        "router_notes": "Looking for suggestions on activities.",
+        "router_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 68,
+        "polish_skipped_reason": "timeout",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "activities"
+      },
+      "flags": {},
+      "last_summary": "Noted! We can look into currency exchange options for your trip. Would you like to focus on a specific destination for more details?",
+      "branches": [],
+      "suggested_responses": [
+        "Barcelona, Spain",
+        "London",
+        "Dubai"
+      ],
+      "errors": [],
+      "thread_id": "9d9dd24b-c297-4d39-bb12-815bf223d598",
+      "router_intent": "activities",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 19,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 38264.999999984866,
+    "total_llm_calls": 102,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b2835-78eb-7573-a778-113fa938dc10",
+      "019b2835-84ed-7a00-965e-746a36d5488c",
+      "019b2835-9820-7042-a5e2-83cdc17ea561",
+      "019b2835-9f55-7353-a9ff-eac1841c2beb",
+      "019b2835-ad63-7ea3-a56a-0e8106505f81",
+      "019b2835-bca7-72e1-afc0-171fcb29d243",
+      "019b2835-cb52-7f13-a73e-ae56ae8ff444",
+      "019b2835-daee-7d13-a284-306698d6dc6e",
+      "019b2835-f5bd-7bf2-a3ee-b5988850b82c",
+      "019b2836-02ef-7533-9864-1bc67fce7901"
+    ],
+    "started_at": "2025-12-16T17:29:11.658924+00:00",
+    "completed_at": "2025-12-16T17:29:49.919761+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "llm_timeout_monolith": 20.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "required_fields",
+      "required_fields",
+      "strategy",
+      "flights",
+      "activities",
+      "activities",
+      "activities",
+      "activities",
+      "activities",
+      "activities"
+    ]
+  },
+  "summary": {
+    "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+    "thread_id": "9d9dd24b-c297-4d39-bb12-815bf223d598",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hi, I want to plan a luxury vacation, but I'm not sure where to go yet. Can you help?"
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Absolutely, I can help with that! Here are some luxury vacation destinations you might consider:"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "Well, I prefer somewhere warm in February. Maybe a mix of urban and nature?"
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "Great choice for February! Here are some destinations that offer a mix of urban and nature: \n- \ud83c\udf34 **Miami, Florida** \u2014 vibrant city life and beautiful beaches\n- \ud83c\udf04 **Los Angeles, California** \u2014 urban attractions with nearby mountains\n- \ud83c\udf3a **Honolulu, Hawaii** \u2014 city vibes with stunning natural landscapes\n\nWhich one catches your interest?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "I want something unique, like a private tour or an exclusive experience."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "I can draft a detailed null plan soon. For now, which preferences matter most?"
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "Definitely need vegan meal options and prefer direct flights if possible."
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Noted on the vegan meal options and direct flights preference. Let's move forward with your trip details!"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "The trip could be around 10 days, but we're flexible on exact dates."
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "Would you like to start on a specific date, or work backwards from a return date?"
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "I don't have a set budget, but I want it to be luxurious."
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "Luxury options noted! Let's focus on high-end experiences. Do you have a specific destination in mind?"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "I think Europe or maybe Southeast Asia could be interesting, but not sure."
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "Europe and Southeast Asia both offer fantastic experiences! Would you like to explore specific destinations in either region?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "I'll need some time to decide on the specific cities, what's your suggestion?"
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "You might enjoy exploring a mix of destinations. Here are a few suggestions:\n- \ud83c\udf34 **Miami** \u2014 vibrant nightlife and beaches\n- \ud83c\udf06 **Los Angeles** \u2014 entertainment and culture\n- \ud83c\udfd6\ufe0f **Honolulu** \u2014 stunning landscapes and relaxation\n- \ud83c\udf0d **Europe** \u2014 rich history and diverse cultures\n- \ud83c\udf0f **Southeast Asia** \u2014 exotic experiences and beautiful scenery\n\nTake your time to decide!"
+      },
+      {
+        "turn": 9,
+        "role": "user",
+        "content": "One last thing, I'd rather avoid places with extreme time zone changes."
+      },
+      {
+        "turn": 9,
+        "role": "assistant",
+        "content": "Noted! We'll focus on destinations with minimal time zone differences. Would you like to confirm your destinations now?"
+      },
+      {
+        "turn": 10,
+        "role": "user",
+        "content": "Oh, and currency exchanges can be a hassle, can we consider that too?"
+      },
+      {
+        "turn": 10,
+        "role": "assistant",
+        "content": "Noted! We can look into currency exchange options for your trip. Would you like to focus on a specific destination for more details?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Miami",
+        "Los Angeles",
+        "Honolulu",
+        "Europe",
+        "Southeast Asia"
+      ],
+      "booking_types": {
+        "flights": true,
+        "activities": true
+      },
+      "flight_settings": {
+        "direct_only": true
+      },
+      "hotel_settings": {},
+      "activity_settings": {
+        "categories": [
+          "\u2728 vegan meals"
+        ]
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "destinations",
+        "before": [],
+        "after": [
+          "Miami",
+          "Los Angeles",
+          "Honolulu"
+        ],
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "booking_types",
+        "before": {},
+        "after": {
+          "flights": true,
+          "activities": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "flight_settings",
+        "before": {},
+        "after": {
+          "direct_only": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "activity_settings",
+        "before": {
+          "categories": []
+        },
+        "after": {
+          "categories": [
+            "\u2728 vegan meals"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 7,
+        "field": "destinations",
+        "before": [
+          "Miami",
+          "Los Angeles",
+          "Honolulu"
+        ],
+        "after": [
+          "Miami",
+          "Los Angeles",
+          "Honolulu",
+          "Europe",
+          "Southeast Asia"
+        ],
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "strategy",
+        "strategy_topic": "null",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "flights",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 9,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 10,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 10,
+    "total_llm_calls": 102,
+    "total_cache_hits": 0,
+    "total_duration_ms": 38264.999999984866,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [
+      {
+        "run_id": "019b2835-78eb-7573-a778-113fa938dc10",
+        "turn_number": 1,
+        "total_latency_ms": 3073.529,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-84ed-7a00-965e-746a36d5488c",
+        "turn_number": 2,
+        "total_latency_ms": 4914.0779999999995,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-9820-7042-a5e2-83cdc17ea561",
+        "turn_number": 3,
+        "total_latency_ms": 1844.2099999999998,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-9f55-7353-a9ff-eac1841c2beb",
+        "turn_number": 4,
+        "total_latency_ms": 3598.1510000000003,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-ad63-7ea3-a56a-0e8106505f81",
+        "turn_number": 5,
+        "total_latency_ms": 3905.701,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-bca7-72e1-afc0-171fcb29d243",
+        "turn_number": 6,
+        "total_latency_ms": 3754.593,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-cb52-7f13-a73e-ae56ae8ff444",
+        "turn_number": 7,
+        "total_latency_ms": 3994.086,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-daee-7d13-a284-306698d6dc6e",
+        "turn_number": 8,
+        "total_latency_ms": 6859.099999999999,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2835-f5bd-7bf2-a3ee-b5988850b82c",
+        "turn_number": 9,
+        "total_latency_ms": 3382.9449999999997,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2836-02ef-7533-9864-1bc67fce7901",
+        "turn_number": 10,
+        "total_latency_ms": 2929.0280000000002,
+        "total_tokens": 0,
+        "node_traces": []
+      }
+    ],
+    "run_ids": [
+      "019b2835-78eb-7573-a778-113fa938dc10",
+      "019b2835-84ed-7a00-965e-746a36d5488c",
+      "019b2835-9820-7042-a5e2-83cdc17ea561",
+      "019b2835-9f55-7353-a9ff-eac1841c2beb",
+      "019b2835-ad63-7ea3-a56a-0e8106505f81",
+      "019b2835-bca7-72e1-afc0-171fcb29d243",
+      "019b2835-cb52-7f13-a73e-ae56ae8ff444",
+      "019b2835-daee-7d13-a284-306698d6dc6e",
+      "019b2835-f5bd-7bf2-a3ee-b5988850b82c",
+      "019b2836-02ef-7533-9864-1bc67fce7901"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The assistant provides some useful suggestions for destinations and acknowledges the user's preferences for vegan meals and direct flights. However, it fails to offer specific luxury experiences or private tours, which the user explicitly requested. Additionally, the assistant does not effectively guide the user towards narrowing down their choices or making a decision.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The responses are generally clear and well-structured. The assistant uses bullet points to list destinations, which enhances readability. However, there is a minor issue in Turn 3 with the phrase 'I can draft a detailed null plan soon,' which is unclear and likely a typo.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.7,
+          "passed": true,
+          "feedback": "The conversation flows relatively well, with the assistant asking follow-up questions and acknowledging user preferences. However, the assistant could have been more proactive in helping the user narrow down their choices or explore specific luxury options, which would have improved the flow.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The assistant provides a basic level of detail about potential destinations but lacks depth in terms of luxury experiences and specific travel arrangements. The user expressed interest in unique experiences, which the assistant did not address adequately.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.675,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.68",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the user's flexibility in February but did not extract or suggest specific dates or date ranges. The conversation did not progress to a point where specific dates were discussed or confirmed.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The user mentioned a desire for a luxurious experience without a specific budget. The assistant noted the luxury preference but did not provide specific recommendations or ensure that suggestions were within a luxury budget.",
+          "details": {}
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant acknowledged the user's preferences for vegan meals, direct flights, and exclusive experiences. However, it did not provide specific suggestions that avoided crowded places or standard tours, nor did it address the user's concern about currency exchanges.",
+          "details": {}
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant correctly noted the need for vegan meal options, which is a special requirement. However, the party size of 2 adults was not explicitly confirmed or addressed in the conversation.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.625,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.62",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant provided general destination suggestions based on user preferences, which is acceptable. However, there were no tool outputs to verify specific details, and the assistant did not clarify that these were general suggestions rather than data-backed recommendations.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not invent any specific details such as prices, flight times, or hotel names. All suggestions were general and did not include fabricated specifics.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant did not use hedging language to indicate uncertainty about the suggestions. Phrases like 'you might consider' or 'typically' would have been appropriate to indicate that these were not confirmed facts.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The assistant clearly framed the suggestions as options for the user to consider, and there was no confusion between suggestions and confirmed facts. However, a bit more clarity on the need for further verification would be beneficial.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.85,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.85",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional and respectful tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation did not require specific travel safety information as it was focused on general destination suggestions. No safety advisories or health requirements were relevant at this stage.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any unnecessary personal information and handled the user's preferences appropriately without delving into sensitive data.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics discussed in the conversation. The assistant handled all topics neutrally and respectfully.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.95
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The conversation did not establish specific dates for the trip, only a general duration of 10 days. There was no discussion of specific start or end dates, nor any consideration of time zones beyond a general preference to avoid extreme changes.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The user mentioned a preference for luxury without a specific budget. The assistant acknowledged this but did not provide any specific budget-related recommendations or considerations, such as currency exchange rates or luxury cost estimates.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.3,
+          "passed": false,
+          "feedback": "The assistant suggested a wide range of destinations without considering the feasibility of traveling between them within a 10-day period. There was no discussion of travel times or connections between these geographically diverse locations.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.4,
+          "passed": false,
+          "feedback": "The conversation lacked specific logistical details such as check-in/check-out times, transportation connections, or seasonal appropriateness. The assistant did not address the user's preference for direct flights in the context of the suggested destinations.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.425,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.42",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions were not entirely appropriate. The 'strategy' intent in Turn 3 was not correctly handled, as the assistant mentioned a 'null plan' which is not meaningful. Additionally, the 'activities' intent was overused from Turn 5 onwards, where more specific intents could have been applied, such as 'required_fields' for gathering more information.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "State transitions were valid and logical. The destinations and preferences were updated correctly without any data loss, and the information was additive and preserved across turns.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "No errors were encountered during the conversation, and the assistant handled the user's requests smoothly without any failures.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system was not efficient in terms of LLM calls, with 102 calls and no cache hits, indicating potential inefficiencies in processing or caching mechanisms. The total duration was also relatively high.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.75,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.75",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-16T17:31:19.444424+00:00"
+}

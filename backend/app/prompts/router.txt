@@ -20,9 +20,15 @@ Routing rules (deterministic):
   • "diving vacation in Maldives" → intent="strategy", topic="diving"
   • "cycling tour through France" → intent="strategy", topic="cycling"
   • "go skiing" / "wanna ski" / "let's do some skiing" → intent="strategy", topic="skiing"
+- PRIORITY: If user asks for hotels/accommodation EXPLICITLY → intent="hotels" (even if core fields are complete)
+  • "boutique hotel in Marais" → intent="hotels"
+  • "nice hotel" / "where to stay" / "accommodation" → intent="hotels"
+  • "book a hotel" / "find me a hotel" → intent="hotels"
+- PRIORITY: If user asks for flights EXPLICITLY → intent="flights" (even if core fields are complete)
+  • "direct flight" / "nonstop" / "book flights" → intent="flights"
 - If any REQUIRED field (destinations, origin, start_date) is missing AND the user mentions one → intent="required_fields".
 - Else if flights keywords (flight, nonstop, one-way, cabin, business, premium) → "flights".
-- Else if hotels keywords (hotel, star, amenity, pool, breakfast) → "hotels".
+- Else if hotels keywords (hotel, star, amenity, pool, breakfast, boutique, accommodation, where to stay) → "hotels".
 - Else if ground transport (train, car, rental, bus) → "transport".
 - Else if ANY activity, event, experience, or interest (NOT covered by strategy above) → "activities". This includes but is not limited to:
   • Sports: golf, tennis, surfing, skiing, hiking, diving, cycling, running, climbing, kayaking

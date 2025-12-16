@@ -259,41 +259,6 @@ def llm_json_for_prompt(
             "suggested_responses": ["I have dates", "I have a destination"],
         }
 
-    # Monolith (fallback) prompt
-    if (
-        "You are an experienced travel agent." in prompt
-        and "Respond with valid JSON only" in prompt
-    ):
-        if (user_message or "").strip().upper() == "GENERATE_PLAN_NOW":
-            return {
-                "assistant_message": "✓ Great—here are a couple of trip options.",
-                "trip_inputs": {},
-                "ready_to_generate": True,
-                "branches": [
-                    {
-                        "label": "Option A",
-                        "description": "Balanced itinerary",
-                        "destinations": [],
-                        "tiles": {"stays": [], "flights": [], "activities": []},
-                    },
-                    {
-                        "label": "Option B",
-                        "description": "More relaxed pace",
-                        "destinations": [],
-                        "tiles": {"stays": [], "flights": [], "activities": []},
-                    },
-                ],
-                "suggested_responses": [],
-            }
-
-        return {
-            "assistant_message": "Where would you like to go?",
-            "trip_inputs": {},
-            "ready_to_generate": False,
-            "branches": [],
-            "suggested_responses": [],
-        }
-
     if "SCOPE: HIKING STRATEGY ONLY" in prompt:
         return {
             "assistant_message": (

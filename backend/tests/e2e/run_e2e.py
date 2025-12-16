@@ -103,7 +103,6 @@ async def run_nightly():
             "tests/e2e/test_e2e_nightly.py",
             "-v",
             "--tb=short",
-            "--run-nightly",
             "--export-diagnostics",
         ]
     )

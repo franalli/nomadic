@@ -1,19 +1,20 @@
 {
-  "session_id": "20251216-001621",
-  "timestamp": "2025-12-16T00:16:21.942867",
+  "session_id": "20251216-191105",
+  "timestamp": "2025-12-16T19:11:05.780730",
   "project_name": "nomadic-e2e-tests",
   "langsmith_endpoint": "https://eu.api.smith.langchain.com",
   "summary": {
-    "total_tests": 2,
-    "passed": 1,
+    "total_tests": 1,
+    "passed": 0,
     "failed": 1,
-    "pass_rate": 0.5,
-    "total_duration_seconds": 26.0,
+    "pass_rate": 0.0,
+    "total_duration_seconds": 104.98,
     "failures_by_category": {
       "quality_issue": 4,
-      "constraint_violation": 4,
+      "constraint_violation": 6,
+      "groundedness_issue": 2,
       "routing_error": 1,
-      "unknown": 3
+      "unknown": 2
     }
   },
   "evaluator_breakdown": {
@@ -22,12 +23,20 @@
       "failed": 1
     },
     "constraint_evaluator": {
-      "passed": 0,
-      "failed": 1
+      "passed": 1,
+      "failed": 0
+    },
+    "groundedness_evaluator": {
+      "passed": 1,
+      "failed": 0
     },
     "safety_evaluator": {
-      "passed": 2,
+      "passed": 1,
       "failed": 0
+    },
+    "travel_logic_evaluator": {
+      "passed": 0,
+      "failed": 1
     },
     "node_evaluator": {
       "passed": 0,
@@ -36,334 +45,809 @@
   },
   "outcomes": [
     {
-      "test_name": "tests/e2e/test_e2e_pr_gate.py::TestPRGateEvaluation::test_golden_scenario_quality",
-      "scenario_id": "golden_simple_paris_trip",
+      "test_name": "tests/e2e/test_e2e_golden_replays.py::TestGoldenFamilySkiTrip::test_evaluation_passes",
+      "scenario_id": "golden_family_ski_trip",
       "passed": false,
-      "duration_seconds": 22.980932474136353,
+      "duration_seconds": 104.98269057273865,
       "evaluator_scores": {
-        "quality_evaluator": 0.0,
-        "constraint_evaluator": 0.125,
+        "quality_evaluator": 0.5,
+        "constraint_evaluator": 0.75,
+        "groundedness_evaluator": 0.75,
         "safety_evaluator": 1.0,
-        "node_evaluator": 0.0
+        "travel_logic_evaluator": 0.375,
+        "node_evaluator": 0.625
       },
       "failures": [
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "quality_evaluator",
           "criterion": "response_usefulness",
-          "score": 0.0,
-          "feedback": "The assistant did not provide any responses or suggestions to the user's queries. There was no information on romantic restaurants, flights, or hotels, which are crucial for planning the trip.",
+          "score": 0.5,
+          "feedback": "The assistant provides some useful information, such as the comparison between Vail and Breckenridge and suggestions for apr\u00e8s-ski activities. However, the repeated error message about the dates being in the past is distracting and unhelpful. The assistant does not offer specific ski school options or accommodation suggestions, which would have been more actionable.",
           "category": "quality_issue",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "quality_evaluator",
           "criterion": "output_clarity",
-          "score": 0.0,
-          "feedback": "There were no responses from the assistant, so clarity cannot be assessed. The conversation lacks any structured output or guidance.",
+          "score": 0.6,
+          "feedback": "While the language used is generally clear and professional, the repeated error message about the dates being in the past detracts from clarity. The assistant's responses are otherwise well-structured, but the persistent error message creates confusion.",
           "category": "quality_issue",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "quality_evaluator",
           "criterion": "conversation_flow",
-          "score": 0.0,
-          "feedback": "The conversation does not flow as there are no responses from the assistant. The user provided detailed information, but the assistant did not engage or continue the conversation.",
+          "score": 0.4,
+          "feedback": "The conversation flow is disrupted by the repeated error message about the dates. The assistant fails to ask follow-up questions that could guide the user more effectively, such as asking for preferences on specific resorts or activities. The transitions between topics are not smooth due to the interruptions.",
           "category": "quality_issue",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "quality_evaluator",
           "criterion": "detail_appropriateness",
-          "score": 0.0,
-          "feedback": "The assistant did not provide any details, making it impossible to evaluate the appropriateness of detail. The user's requests for specific information were not addressed.",
+          "score": 0.5,
+          "feedback": "The assistant provides some relevant details, such as the comparison of Vail and Breckenridge, but lacks depth in other areas like specific ski school options or accommodation recommendations. The repeated error message about the dates adds unnecessary detail that detracts from the conversation.",
           "category": "quality_issue",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "constraint_evaluator",
           "criterion": "date_extraction",
-          "score": 0.0,
-          "feedback": "The system failed to extract the specified dates (March 15-20, 2025) from the conversation.",
+          "score": 0.5,
+          "feedback": "The dates were correctly extracted and acknowledged in the conversation, but the assistant repeatedly mentioned that the dates were in the past, which was incorrect. This indicates a misunderstanding of the current date context.",
           "category": "constraint_violation",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
-          "evaluator": "constraint_evaluator",
-          "criterion": "budget_adherence",
-          "score": 0.0,
-          "feedback": "The system did not extract the budget of $5000, so it could not ensure recommendations were within budget.",
-          "category": "constraint_violation",
-          "turn_number": 6,
-          "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
-          "error_type": null,
-          "error_message": null,
-          "traceback": null
-        },
-        {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "constraint_evaluator",
           "criterion": "preference_handling",
-          "score": 0.5,
-          "feedback": "The system acknowledged the user's interest in romantic restaurants, museums, and wine tours, but there is no evidence of specific recommendations being made.",
+          "score": 0.7,
+          "feedback": "User preferences for ski-in/ski-out accommodations and beginner slopes for kids were noted. However, there was no specific follow-up on family dining options or ensuring that the ski-in/ski-out preference was met in the recommendations.",
           "category": "constraint_violation",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
-          "evaluator": "constraint_evaluator",
-          "criterion": "party_composition",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
+          "evaluator": "groundedness_evaluator",
+          "criterion": "factual_grounding",
+          "score": 0.7,
+          "feedback": "The assistant provides general information about Vail and Breckenridge, which is likely based on common knowledge. However, there are no tool outputs to verify this information, and the assistant repeatedly mentions the start and end dates being in the past without addressing the user's updated dates.",
+          "category": "groundedness_issue",
+          "turn_number": 8,
+          "node_name": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
+          "evaluator": "groundedness_evaluator",
+          "criterion": "appropriate_hedging",
+          "score": 0.6,
+          "feedback": "The assistant provides information about Vail and Breckenridge without hedging or indicating that these are general observations. It should use hedging language to clarify that these are typical features of the destinations.",
+          "category": "groundedness_issue",
+          "turn_number": 8,
+          "node_name": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
+          "evaluator": "travel_logic_evaluator",
+          "criterion": "date_logic",
           "score": 0.0,
-          "feedback": "The system did not extract the party size of 2 adults, which is crucial for making appropriate travel arrangements.",
+          "feedback": "The assistant repeatedly flagged the start and end dates as being in the past, which is incorrect given the current date context. This indicates a failure in date logic handling.",
           "category": "constraint_violation",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
+          "evaluator": "travel_logic_evaluator",
+          "criterion": "budget_logic",
+          "score": 0.5,
+          "feedback": "The assistant acknowledged the budget but did not provide any recommendations or checks against the budget, such as suggesting accommodations or activities within the $8000 budget.",
+          "category": "constraint_violation",
+          "turn_number": 8,
+          "node_name": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
+          "evaluator": "travel_logic_evaluator",
+          "criterion": "itinerary_feasibility",
+          "score": 0.5,
+          "feedback": "The assistant provided general information about Vail and Breckenridge but did not generate any specific itinerary or check the feasibility of travel between locations.",
+          "category": "constraint_violation",
+          "turn_number": 8,
+          "node_name": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
+          "evaluator": "travel_logic_evaluator",
+          "criterion": "logistics_coherence",
+          "score": 0.5,
+          "feedback": "The assistant did not address logistical details such as check-in/check-out times or specific activity scheduling, which are important for coherence.",
+          "category": "constraint_violation",
+          "turn_number": 8,
+          "node_name": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "node_evaluator",
           "criterion": "routing_accuracy",
-          "score": 0.0,
-          "feedback": "No routing decisions were recorded, indicating a complete failure in identifying user intent and invoking appropriate specialist nodes.",
+          "score": 0.5,
+          "feedback": "The routing decisions were inconsistent. Turn 2 incorrectly identified the strategy as 'hiking' instead of 'skiing'. Additionally, the repeated prompt about the start and end dates being in the past was not addressed, indicating a failure to correctly route to a node that could handle date validation.",
           "category": "routing_error",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
-          "evaluator": "node_evaluator",
-          "criterion": "state_transitions",
-          "score": 0.0,
-          "feedback": "No state transitions were recorded, suggesting that the system failed to track or evolve the trip inputs across turns.",
-          "category": "unknown",
-          "turn_number": 6,
-          "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
-          "error_type": null,
-          "error_message": null,
-          "traceback": null
-        },
-        {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "node_evaluator",
           "criterion": "error_handling",
-          "score": 0.0,
-          "feedback": "Errors were not handled appropriately. The repeated 'object.__init__()' error indicates a systemic issue that was not addressed, and no error messages were provided to the user.",
+          "score": 0.5,
+          "feedback": "The system failed to handle the repeated error message about the dates being in the past. This issue persisted throughout the conversation without resolution, indicating a lack of proper error handling and recovery.",
           "category": "unknown",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         },
         {
-          "test_name": "test_golden_scenario_quality",
-          "scenario_id": "golden_simple_paris_trip",
+          "test_name": "test_evaluation_passes",
+          "scenario_id": "golden_family_ski_trip",
           "evaluator": "node_evaluator",
           "criterion": "efficiency",
-          "score": 0.0,
-          "feedback": "The system was not efficient as there were no LLM calls or caching, and the total duration was 0ms, indicating no processing occurred.",
+          "score": 0.5,
+          "feedback": "The system was inefficient, as indicated by the high number of LLM calls (72) and the lack of cache hits. The repeated prompts about the dates suggest unnecessary processing and lack of optimization.",
           "category": "unknown",
-          "turn_number": 6,
+          "turn_number": 8,
           "node_name": null,
-          "user_message": "And a nice boutique hotel in the Marais district?",
-          "assistant_response": null,
-          "trip_inputs_at_failure": {},
-          "langsmith_run_id": null,
-          "langsmith_url": null,
+          "user_message": "What about apr\u00e8s-ski activities for the kids?",
+          "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Colorado"
+            ],
+            "start_date": "2023-12-26",
+            "end_date": "2024-01-02",
+            "adults": 2,
+            "children": 2,
+            "budget": 8000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {},
+            "activity_settings": {
+              "categories": [
+                "\u26f7\ufe0f skiing"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
           "error_type": null,
           "error_message": null,
           "traceback": null
         }
       ],
-      "run_ids": []
-    },
-    {
-      "test_name": "tests/e2e/test_e2e_pr_gate.py::TestPRGateEvaluation::test_safety_never_fails",
-      "scenario_id": "pr_gate_simple_destination",
-      "passed": true,
-      "duration_seconds": 3.0166432857513428,
-      "evaluator_scores": {
-        "safety_evaluator": 1.0
-      },
-      "failures": [],
-      "run_ids": []
+      "run_ids": [
+        "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "019b285d-696c-7de2-b1f0-c4a3b4d5f00f",
+        "019b285d-7694-7cb3-8cfe-621fb3ba81e2",
+        "019b285d-84ad-7d50-9f43-b2598deef8d0",
+        "019b285d-960b-79f0-9749-c618ca9eeb27",
+        "019b285d-a06d-7ad3-8934-095efd8af875",
+        "019b285d-abeb-7542-b5b7-ceec7f096203",
+        "019b285d-c08b-79f2-bb4b-f01d7d3f709f"
+      ]
     }
   ],
   "failures_by_category": {
     "quality_issue": [
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "quality_evaluator",
         "criterion": "response_usefulness",
-        "score": 0.0,
-        "feedback": "The assistant did not provide any responses or suggestions to the user's queries. There was no information on romantic restaurants, flights, or hotels, which are crucial for planning the trip.",
+        "score": 0.5,
+        "feedback": "The assistant provides some useful information, such as the comparison between Vail and Breckenridge and suggestions for apr\u00e8s-ski activities. However, the repeated error message about the dates being in the past is distracting and unhelpful. The assistant does not offer specific ski school options or accommodation suggestions, which would have been more actionable.",
         "category": "quality_issue",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
       },
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "quality_evaluator",
         "criterion": "output_clarity",
-        "score": 0.0,
-        "feedback": "There were no responses from the assistant, so clarity cannot be assessed. The conversation lacks any structured output or guidance.",
+        "score": 0.6,
+        "feedback": "While the language used is generally clear and professional, the repeated error message about the dates being in the past detracts from clarity. The assistant's responses are otherwise well-structured, but the persistent error message creates confusion.",
         "category": "quality_issue",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
       },
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "quality_evaluator",
         "criterion": "conversation_flow",
-        "score": 0.0,
-        "feedback": "The conversation does not flow as there are no responses from the assistant. The user provided detailed information, but the assistant did not engage or continue the conversation.",
+        "score": 0.4,
+        "feedback": "The conversation flow is disrupted by the repeated error message about the dates. The assistant fails to ask follow-up questions that could guide the user more effectively, such as asking for preferences on specific resorts or activities. The transitions between topics are not smooth due to the interruptions.",
         "category": "quality_issue",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
       },
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "quality_evaluator",
         "criterion": "detail_appropriateness",
-        "score": 0.0,
-        "feedback": "The assistant did not provide any details, making it impossible to evaluate the appropriateness of detail. The user's requests for specific information were not addressed.",
+        "score": 0.5,
+        "feedback": "The assistant provides some relevant details, such as the comparison of Vail and Breckenridge, but lacks depth in other areas like specific ski school options or accommodation recommendations. The repeated error message about the dates adds unnecessary detail that detracts from the conversation.",
         "category": "quality_issue",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
@@ -371,77 +855,331 @@
     ],
     "constraint_violation": [
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "constraint_evaluator",
         "criterion": "date_extraction",
-        "score": 0.0,
-        "feedback": "The system failed to extract the specified dates (March 15-20, 2025) from the conversation.",
+        "score": 0.5,
+        "feedback": "The dates were correctly extracted and acknowledged in the conversation, but the assistant repeatedly mentioned that the dates were in the past, which was incorrect. This indicates a misunderstanding of the current date context.",
         "category": "constraint_violation",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
       },
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
-        "evaluator": "constraint_evaluator",
-        "criterion": "budget_adherence",
-        "score": 0.0,
-        "feedback": "The system did not extract the budget of $5000, so it could not ensure recommendations were within budget.",
-        "category": "constraint_violation",
-        "turn_number": 6,
-        "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
-        "error_type": null,
-        "error_message": null,
-        "traceback": null
-      },
-      {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "constraint_evaluator",
         "criterion": "preference_handling",
-        "score": 0.5,
-        "feedback": "The system acknowledged the user's interest in romantic restaurants, museums, and wine tours, but there is no evidence of specific recommendations being made.",
+        "score": 0.7,
+        "feedback": "User preferences for ski-in/ski-out accommodations and beginner slopes for kids were noted. However, there was no specific follow-up on family dining options or ensuring that the ski-in/ski-out preference was met in the recommendations.",
         "category": "constraint_violation",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
       },
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
-        "evaluator": "constraint_evaluator",
-        "criterion": "party_composition",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
+        "evaluator": "travel_logic_evaluator",
+        "criterion": "date_logic",
         "score": 0.0,
-        "feedback": "The system did not extract the party size of 2 adults, which is crucial for making appropriate travel arrangements.",
+        "feedback": "The assistant repeatedly flagged the start and end dates as being in the past, which is incorrect given the current date context. This indicates a failure in date logic handling.",
         "category": "constraint_violation",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
+        "evaluator": "travel_logic_evaluator",
+        "criterion": "budget_logic",
+        "score": 0.5,
+        "feedback": "The assistant acknowledged the budget but did not provide any recommendations or checks against the budget, such as suggesting accommodations or activities within the $8000 budget.",
+        "category": "constraint_violation",
+        "turn_number": 8,
+        "node_name": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
+        "evaluator": "travel_logic_evaluator",
+        "criterion": "itinerary_feasibility",
+        "score": 0.5,
+        "feedback": "The assistant provided general information about Vail and Breckenridge but did not generate any specific itinerary or check the feasibility of travel between locations.",
+        "category": "constraint_violation",
+        "turn_number": 8,
+        "node_name": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
+        "evaluator": "travel_logic_evaluator",
+        "criterion": "logistics_coherence",
+        "score": 0.5,
+        "feedback": "The assistant did not address logistical details such as check-in/check-out times or specific activity scheduling, which are important for coherence.",
+        "category": "constraint_violation",
+        "turn_number": 8,
+        "node_name": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      }
+    ],
+    "groundedness_issue": [
+      {
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
+        "evaluator": "groundedness_evaluator",
+        "criterion": "factual_grounding",
+        "score": 0.7,
+        "feedback": "The assistant provides general information about Vail and Breckenridge, which is likely based on common knowledge. However, there are no tool outputs to verify this information, and the assistant repeatedly mentions the start and end dates being in the past without addressing the user's updated dates.",
+        "category": "groundedness_issue",
+        "turn_number": 8,
+        "node_name": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
+        "evaluator": "groundedness_evaluator",
+        "criterion": "appropriate_hedging",
+        "score": 0.6,
+        "feedback": "The assistant provides information about Vail and Breckenridge without hedging or indicating that these are general observations. It should use hedging language to clarify that these are typical features of the destinations.",
+        "category": "groundedness_issue",
+        "turn_number": 8,
+        "node_name": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
@@ -449,20 +1187,42 @@
     ],
     "routing_error": [
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "node_evaluator",
         "criterion": "routing_accuracy",
-        "score": 0.0,
-        "feedback": "No routing decisions were recorded, indicating a complete failure in identifying user intent and invoking appropriate specialist nodes.",
+        "score": 0.5,
+        "feedback": "The routing decisions were inconsistent. Turn 2 incorrectly identified the strategy as 'hiking' instead of 'skiing'. Additionally, the repeated prompt about the start and end dates being in the past was not addressed, indicating a failure to correctly route to a node that could handle date validation.",
         "category": "routing_error",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
@@ -470,58 +1230,83 @@
     ],
     "unknown": [
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
-        "evaluator": "node_evaluator",
-        "criterion": "state_transitions",
-        "score": 0.0,
-        "feedback": "No state transitions were recorded, suggesting that the system failed to track or evolve the trip inputs across turns.",
-        "category": "unknown",
-        "turn_number": 6,
-        "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
-        "error_type": null,
-        "error_message": null,
-        "traceback": null
-      },
-      {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "node_evaluator",
         "criterion": "error_handling",
-        "score": 0.0,
-        "feedback": "Errors were not handled appropriately. The repeated 'object.__init__()' error indicates a systemic issue that was not addressed, and no error messages were provided to the user.",
+        "score": 0.5,
+        "feedback": "The system failed to handle the repeated error message about the dates being in the past. This issue persisted throughout the conversation without resolution, indicating a lack of proper error handling and recovery.",
         "category": "unknown",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null
       },
       {
-        "test_name": "test_golden_scenario_quality",
-        "scenario_id": "golden_simple_paris_trip",
+        "test_name": "test_evaluation_passes",
+        "scenario_id": "golden_family_ski_trip",
         "evaluator": "node_evaluator",
         "criterion": "efficiency",
-        "score": 0.0,
-        "feedback": "The system was not efficient as there were no LLM calls or caching, and the total duration was 0ms, indicating no processing occurred.",
+        "score": 0.5,
+        "feedback": "The system was inefficient, as indicated by the high number of LLM calls (72) and the lack of cache hits. The repeated prompts about the dates suggest unnecessary processing and lack of optimization.",
         "category": "unknown",
-        "turn_number": 6,
+        "turn_number": 8,
         "node_name": null,
-        "user_message": "And a nice boutique hotel in the Marais district?",
-        "assistant_response": null,
-        "trip_inputs_at_failure": {},
-        "langsmith_run_id": null,
-        "langsmith_url": null,
+        "user_message": "What about apr\u00e8s-ski activities for the kids?",
+        "assistant_response": "Consider family-friendly apr\u00e8s-ski activities like ice skating, snow tubing, or visiting a local arcade. The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Colorado"
+          ],
+          "start_date": "2023-12-26",
+          "end_date": "2024-01-02",
+          "adults": 2,
+          "children": 2,
+          "budget": 8000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\u26f7\ufe0f skiing"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b285d-5a92-7b40-b0c6-1ffe0a33d99c",
         "error_type": null,
         "error_message": null,
         "traceback": null

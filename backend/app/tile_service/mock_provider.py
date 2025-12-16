@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -5,6 +6,23 @@ from app.schemas import Geo, Tile
 
 from .models import SearchContext
 from .provider_base import Provider
+
+
+def _parse_budget(value) -> Optional[float]:
+    """Parse a budget value that may be a string or number."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        # Remove currency symbols and commas, extract number
+        cleaned = re.sub(r"[^\d.]", "", value)
+        if cleaned:
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+    return None
 
 
 class MockHotelProvider(Provider):
@@ -47,12 +65,25 @@ class MockHotelProvider(Provider):
         total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 2
         nights = self._estimate_nights(ctx)
 
+        # Calculate budget per category if budget is specified
+        budget_limit = _parse_budget(ctx.budget_per_category)
+        if not budget_limit:
+            parsed_budget = _parse_budget(ctx.budget)
+            if parsed_budget:
+                # Allocate ~40% of total budget to hotels
+                budget_limit = parsed_budget * 0.4
+
         base_count = ctx.max_results_per_vertical
         for i in range(1, base_count + 1):
             nightly_rate = 120 + 18 * i
             price = round(
                 nightly_rate * max(nights, 1) * (1 + 0.08 * max(total_travelers - 1, 0)), 2
             )
+
+            # Skip tiles that exceed budget (if budget is set)
+            if budget_limit and price > budget_limit:
+                continue
+
             tiles.append(
                 Tile(
                     id=f"tile_mock_hotel_{i}",
@@ -72,7 +103,11 @@ class MockHotelProvider(Provider):
                     review_count=100 * i,
                     location_label=f"Central {dest}",
                     geo=Geo(lat=38.72 + 0.01 * i, lon=-9.13),
-                    tags=["central", "mock"],
+                    tags=(
+                        ["central", "mock", "within-budget"]
+                        if budget_limit
+                        else ["central", "mock"]
+                    ),
                     availability_status="available" if source_mode == "live" else "unknown",
                     meta={
                         "refundable": True,
@@ -83,6 +118,7 @@ class MockHotelProvider(Provider):
                         "adults": ctx.adults,
                         "children": ctx.children,
                         "nights": nights,
+                        "budget_limit": budget_limit,
                     },
                     score=0.7 + 0.05 * i,
                     source=source_mode,
@@ -104,6 +140,14 @@ class MockFlightProvider(Provider):
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
         total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 1
         max_results = max(1, min(ctx.max_results_per_vertical, 3))
+
+        # Calculate budget per category if budget is specified
+        budget_limit = _parse_budget(ctx.budget_per_category)
+        if not budget_limit:
+            parsed_budget = _parse_budget(ctx.budget)
+            if parsed_budget:
+                # Allocate ~30% of total budget to flights
+                budget_limit = parsed_budget * 0.3
 
         options = [
             {
@@ -135,6 +179,11 @@ class MockFlightProvider(Provider):
         for idx, option in enumerate(options[:max_results]):
             base_price = option["price"]
             price = round(base_price * total_travelers, 2)
+
+            # Skip tiles that exceed budget (if budget is set)
+            if budget_limit and price > budget_limit:
+                continue
+
             tiles.append(
                 Tile(
                     id=f"tile_mock_flight_{idx + 1}",
@@ -156,7 +205,7 @@ class MockFlightProvider(Provider):
                     rating=4.3 + 0.05 * idx,
                     review_count=120 + 35 * idx,
                     location_label=f"{origin} → {dest}",
-                    tags=["flight", option["stops"]],
+                    tags=["flight", option["stops"]] + (["within-budget"] if budget_limit else []),
                     availability_status="available",
                     meta={
                         "stops": option["stops"],
@@ -165,6 +214,7 @@ class MockFlightProvider(Provider):
                         "origin": origin,
                         "adults": ctx.adults,
                         "children": ctx.children,
+                        "budget_limit": budget_limit,
                     },
                     score=0.65 + 0.05 * idx,
                     source=source_mode,
@@ -185,6 +235,14 @@ class MockActivityProvider(Provider):
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
         total_travelers = (ctx.adults or 0) + (ctx.children or 0) or 2
         max_results = max(1, min(ctx.max_results_per_vertical, 3))
+
+        # Calculate budget per category if budget is specified
+        budget_limit = _parse_budget(ctx.budget_per_category)
+        if not budget_limit:
+            parsed_budget = _parse_budget(ctx.budget)
+            if parsed_budget:
+                # Allocate ~30% of total budget to activities
+                budget_limit = parsed_budget * 0.3
 
         activities = [
             {
@@ -219,6 +277,11 @@ class MockActivityProvider(Provider):
         for idx, activity in enumerate(activities[:max_results]):
             per_person = round(activity["price"], 2)
             total = round(per_person * total_travelers, 2)
+
+            # Skip tiles that exceed budget (if budget is set)
+            if budget_limit and total > budget_limit:
+                continue
+
             tiles.append(
                 Tile(
                     id=f"tile_mock_activity_{idx + 1}",
@@ -237,13 +300,15 @@ class MockActivityProvider(Provider):
                     rating=4.5 + 0.06 * idx,
                     review_count=220 + 55 * idx,
                     location_label=dest,
-                    tags=["activity", activity["tag"]],
+                    tags=["activity", activity["tag"]]
+                    + (["within-budget"] if budget_limit else []),
                     availability_status=activity["availability"],
                     meta={
                         "duration": activity["duration"],
                         "destination": dest,
                         "adults": ctx.adults,
                         "children": ctx.children,
+                        "budget_limit": budget_limit,
                     },
                     score=0.6 + 0.05 * idx,
                     source=source_mode,

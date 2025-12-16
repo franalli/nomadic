@@ -26,7 +26,7 @@ class GroundednessEvaluator(BaseEvaluator):
 - Clear distinction between facts and suggestions"""
 
     criteria = [EvaluationCriteria.GROUNDEDNESS]
-    pass_threshold = 0.8  # Higher threshold - hallucinations are critical
+    pass_threshold = 0.85  # Higher threshold - hallucinations erode user trust
 
     def get_evaluation_prompt(
         self,

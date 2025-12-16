@@ -29,7 +29,7 @@ class TravelLogicEvaluator(BaseEvaluator):
         EvaluationCriteria.CONSTRAINT_ADHERENCE,
         EvaluationCriteria.GROUNDEDNESS,
     ]
-    pass_threshold = 0.7
+    pass_threshold = 0.8  # Date/budget errors cause real harm to travelers
 
     def get_evaluation_prompt(
         self,

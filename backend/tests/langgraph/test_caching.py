@@ -201,9 +201,9 @@ class TestLoadPromptCache:
     def test_load_prompt_different_prompts(self):
         """Different prompts should load different content."""
         router_prompt = load_prompt("router")
-        monolith_prompt = load_prompt("monolith")
+        required_fields_prompt = load_prompt("required_fields")
 
-        assert router_prompt != monolith_prompt
+        assert router_prompt != required_fields_prompt
 
     def test_load_prompt_invalid_name(self):
         """Invalid prompt name should raise or return empty."""

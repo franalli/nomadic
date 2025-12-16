@@ -1,0 +1,18 @@
+==============================
+MARKDOWN FORMATTING
+==============================
+1. **Bold** for confirmed details:
+   - "Flying from **Rome** to **Dubai**"
+   - "**December 20-27**"
+
+2. Bullet lists when offering 3+ options:
+   ```
+   Options for you:
+   - 🏖️ **Bali** — tropical beaches
+   - 🏔️ **Swiss Alps** — mountain views
+   - 🏛️ **Rome** — history and culture
+   ```
+
+3. Keep quick confirmations snappy - most responses need NO formatting
+
+4. Don't over-format short responses

@@ -1,4 +1,4 @@
-# plan_graph.py — Minimalist LangGraph with strategy modules + monolith fallback
+# plan_graph.py — Minimalist LangGraph with strategy modules
 from __future__ import annotations
 
 import asyncio
@@ -21,7 +21,7 @@ from jinja2 import Environment, FileSystemLoader
 from jsonschema import Draft7Validator
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import db_models as models
@@ -49,6 +49,7 @@ from app.known_places import (
     is_known_place,
     is_likely_english,
     needs_confirmation,
+    normalize_place_synonym,
 )
 from app.schemas import (
     ActivitySettings,
@@ -195,8 +196,6 @@ _NODE_EMOJIS: dict[str, str] = {
     "skiing": "⛷️",
     "diving": "🤿",
     "cycling": "🚴",
-    # Monolith fallback
-    "monolith_node": "🏛️",
 }
 
 # Cache hit emoji for debug logging
@@ -1029,8 +1028,8 @@ def _apply_llm_delta(
     """
     Apply an LLM-generated trip_inputs delta with normalization and ownership checking.
 
-    This centralizes the delta application logic used by specialists, strategy nodes,
-    and monolith. Each field is normalized appropriately before being written.
+    This centralizes the delta application logic used by specialists and strategy nodes.
+    Each field is normalized appropriately before being written.
 
     Args:
         state: Current graph state
@@ -1049,6 +1048,26 @@ def _apply_llm_delta(
     valid_fields = set(type(ti).model_fields.keys())
 
     for k, v in delta.items():
+        # Map 'travelers' to 'adults' (LLM sometimes uses wrong field name)
+        # BUT only if the LLM didn't also specify children separately
+        if k == "travelers" and isinstance(v, (int, str)):
+            travelers_count = _normalize_int(v)
+            # If LLM also returned 'children', it meant adults; otherwise skip
+            # (let specialized extraction patterns handle mixed family compositions)
+            if "children" in delta or "adults" in delta:
+                # LLM was being specific, map travelers to adults
+                k = "adults"
+                v = travelers_count
+                _debug(f"Mapped LLM 'travelers' to 'adults': {v}", node=node_name)
+            else:
+                # LLM just said "travelers" without breakdown - skip and let it be
+                # The user message context should guide proper extraction
+                _debug(
+                    f"Skipping ambiguous 'travelers' field: {v} (no adults/children breakdown)",
+                    node=node_name,
+                )
+                continue
+
         # Skip unknown fields to avoid crashes
         if k not in valid_fields:
             _debug(f"Skipping unknown field from LLM: {k}", node=node_name)
@@ -1060,13 +1079,23 @@ def _apply_llm_delta(
 
         if k == "destinations" and isinstance(v, list):
             # Merge destinations, avoiding duplicates (case-insensitive)
+            # Also filter out phrase-like entries that contain intent words
             existing_lower = {d.lower() for d in ti.destinations}
             new_destinations = list(ti.destinations)
             for d in v:
                 d_norm = _normalize_str(d)
-                if d_norm and d_norm.lower() not in existing_lower:
+                if not d_norm:
+                    continue
+                # Skip phrase-like destinations containing intent keywords
+                d_lower = d_norm.lower()
+                if any(word in d_lower for word in _DEST_EXCLUDE_WORDS):
+                    _debug(f"Filtering phrase-like destination: {d_norm}", node=node_name)
+                    continue
+                if d_lower not in existing_lower:
                     new_destinations.append(d_norm)
-                    existing_lower.add(d_norm.lower())
+                    existing_lower.add(d_lower)
+            # Deduplicate overlapping locations (e.g., "Paris" + "Marais district" → keep "Paris")
+            new_destinations = _deduplicate_destinations(new_destinations)
             if new_destinations != ti.destinations:
                 updates["destinations"] = new_destinations
 
@@ -1290,7 +1319,6 @@ def _should_override_persisted_intent(
 # - Router: Fast, deterministic classification → low temp, small output
 # - Specialists: Focused extraction → low temp, moderate output
 # - Strategy: Deeper topic analysis → slightly higher temp
-# - Monolith: Complex reasoning fallback → higher temp, large output, top_p
 _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "router": {
         "model_hint": "small",
@@ -1339,12 +1367,6 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
         "temperature": 0.3,  # Slightly creative for topic advice
         "max_tokens": 2048,
         "top_p": None,
-    },
-    "monolith": {
-        "model_hint": "large",
-        "temperature": 0.5,  # More creative for complex responses
-        "max_tokens": 4096,  # Large output for full planning
-        "top_p": 0.95,  # Nucleus sampling for diversity
     },
     "response_polish": {
         "model_hint": "small",
@@ -1647,13 +1669,88 @@ _DEST_LEAVING_PATTERN = re.compile(
     r"(?:today|tomorrow|next\s+week|this\s+weekend|\d)",
     re.IGNORECASE,
 )
+# Words that should NOT be captured as destinations (intent keywords, accommodations, etc.)
+_DEST_EXCLUDE_WORDS = frozenset(
+    {
+        # Trip intent words
+        "trip",
+        "vacation",
+        "holiday",
+        "honeymoon",
+        "romantic",
+        "family",
+        "solo",
+        "quick",
+        "weekend",
+        "getaway",
+        "adventure",
+        "backpacking",
+        "tour",
+        "planning",
+        "booking",
+        "itinerary",
+        "journey",
+        "travel",
+        "travels",
+        # Accommodation words (often incorrectly extracted as destinations)
+        "hotel",
+        "hotels",
+        "hostel",
+        "hostels",
+        "resort",
+        "resorts",
+        "airbnb",
+        "motel",
+        "accommodation",
+        "accommodations",
+        "gym",
+        "pool",
+        "spa",
+        "wifi",
+        "amenity",
+        "amenities",
+        # Currency words (often incorrectly extracted)
+        "usd",
+        "eur",
+        "euro",
+        "euros",
+        "dollar",
+        "dollars",
+        "currency",
+        "payment",
+        "payments",
+        "budget",
+        # Schedule/timing words
+        "schedule",
+        "changes",
+        "change",
+        "case",
+        "minute",
+        "last",
+        "flexible",
+        "refundable",
+        # Preference/requirement words
+        "accessible",
+        "wheelchair",
+        "requirement",
+        "requirements",
+        "preference",
+        "preferences",
+        "need",
+        "needs",
+    }
+)
+
 _DEST_GOING_TO_PATTERN = re.compile(
-    r"(?:going|go|want(?:ing)?\s+to\s+go|visit(?:ing)?|travel(?:l?ing)?|fly(?:ing)?|trip|"
+    r"(?:going|go|want(?:ing)?\s+to\s+go|visit(?:ing)?|travel(?:l?ing)?|fly(?:ing)?|"
     r"hik(?:e|ing)|trek(?:king)?|"
     r"backpack(?:ing)?|honeymoon|vacation|holiday|"
-    r"plan(?:ning)?(?:\s+(?:a|our|my|a\s+family))?(?:\s+(?:trip|vacation|honeymoon))?)\s+"
-    r"(?:(?:to|in|through)\s+)?(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
-    r"(?:\s+(?:today|tomorrow|next|on|in|for|maybe|and\s+then|starting|staying|booking|renting)|\s*$)",
+    # Allow modifiers between "a family" and "trip" (e.g., "a family ski trip")
+    r"plan(?:ning)?(?:\s+(?:a|our|my|a\s+family))?(?:\s+\w+)*?(?:\s+(?:trip|vacation|honeymoon))?)"
+    # Require "to" preposition for cleaner destination extraction
+    r"\s+(?:to|in|through)\s+(?:the\s+)?(?P<dest>" + _PLACE_CHAR + _PLACE_CHARS_WITH_DOT + r")"
+    r"(?:\s+(?:today|tomorrow|next|on|in|for|maybe|and\s+then|starting|staying|booking|renting|"
+    r"this|but|lol|because|since|so|however|though|and|with|like|around|during|over)|\s*[,!?.]|\s*$)",
     re.IGNORECASE,
 )
 # Pattern for "flying [airline] to X" - extracts destination after airline name
@@ -1682,13 +1779,29 @@ _DEST_ONLY_IN_PATTERN = re.compile(
 # Traveler patterns
 _TRAVELER_SOLO_PATTERN = re.compile(r"\b(solo|just me|traveling alone|by myself)\b", re.IGNORECASE)
 _TRAVELER_COUPLE_PATTERN = re.compile(
-    r"\b(couple|me and (my )?(partner|wife|husband|girlfriend|boyfriend))\b", re.IGNORECASE
+    (
+        r"\b(couple|me and (my )?(partner|wife|husband|girlfriend|boyfriend)|"
+        r"(?:just\s+)?(?:the\s+)?two\s+of\s+us)\b"
+    ),
+    re.IGNORECASE,
 )
 _TRAVELER_FAMILY_PATTERN = re.compile(r"\bfamily of (\d+)\b", re.IGNORECASE)
 _TRAVELER_ADULTS_KIDS_PATTERN = re.compile(
     r"(\d+)\s*adults?\s*(?:,|and)?\s*(\d+)\s*(?:kids?|children)", re.IGNORECASE
 )
 _TRAVELER_ADULTS_ONLY_PATTERN = re.compile(r"(\d+)\s*adults?", re.IGNORECASE)
+
+# Pattern for "N of us - [couple phrase], plus our kids aged X and Y"
+# Matches: "4 of us - my wife and I, plus our kids aged 8 and 12"
+_TRAVELER_FAMILY_DETAILED_PATTERN = re.compile(
+    r"(\d+)\s+of\s+us.*?(?:my\s+(?:wife|husband|partner)\s+and\s+(?:I|me)|(?:I|me)\s+and\s+my\s+(?:wife|husband|partner)).*?(?:plus\s+)?(?:our\s+)?(?:kids?|children)",
+    re.IGNORECASE,
+)
+# Pattern for counting children ages like "kids aged 8 and 12" or "children (8, 12)"
+_CHILDREN_AGES_PATTERN = re.compile(
+    r"(?:kids?|children)(?:\s+aged?)?\s*(?:\()?(\d+)(?:\s*(?:,|and)\s*(\d+))?(?:\s*(?:,|and)\s*(\d+))?(?:\s*(?:,|and)\s*(\d+))?(?:\))?",
+    re.IGNORECASE,
+)
 
 # Accessibility pattern
 _ACCESSIBILITY_PATTERN = re.compile(
@@ -1777,6 +1890,27 @@ _DURATION_PATTERNS = [
     re.compile(r"(\d+)\s*days?\s+trip", re.IGNORECASE),
     re.compile(r"(\d+)\s*day\s+trip", re.IGNORECASE),
 ]
+
+# Date range pattern: "March 15-20, 2030" or "Dec 10-15 2030" or "January 5 - 12, 2030"
+# Captures: month, start_day, end_day, year
+_DATE_RANGE_PATTERN = re.compile(
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*"
+    r"(\d{1,2})(?:st|nd|rd|th)?\s*[-–—]\s*(\d{1,2})(?:st|nd|rd|th)?\s*[,\s]+(\d{4})",
+    re.IGNORECASE,
+)
+
+# Cross-month date range: "December 26 - January 2" or "Dec 28 through Jan 3, 2026"
+# Captures: start_month, start_day, end_month, end_day, optional year
+_DATE_CROSS_MONTH_PATTERN = re.compile(
+    r"(?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*"
+    r"(?P<d1>\d{1,2})(?:st|nd|rd|th)?\s*(?:[-–—]|through|thru|to)\s*"
+    r"(?P<m2>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*"
+    r"(?P<d2>\d{1,2})(?:st|nd|rd|th)?(?:\s*[,\s]*(?P<year>\d{4}))?",
+    re.IGNORECASE,
+)
 
 # ISO date validation pattern
 _ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -2454,33 +2588,264 @@ def _normalize_str(value: Any) -> Optional[str]:
     return value_str
 
 
+def _deduplicate_destinations(destinations: List[str]) -> List[str]:
+    """
+    Deduplicate destinations by removing sublocations when parent location exists.
+
+    Examples:
+    - ["Paris", "Marais district"] → ["Paris"] (Marais is in Paris)
+    - ["Tokyo", "Shibuya"] → ["Tokyo"] (Shibuya is in Tokyo)
+    - ["Italy", "Rome", "Florence"] → ["Italy"] or keep all if multi-city
+
+    Also removes exact duplicates case-insensitively.
+    """
+    if not destinations or len(destinations) <= 1:
+        return destinations
+
+    # Known city-district relationships
+    known_sublocations = {
+        "marais": "paris",
+        "marais district": "paris",
+        "le marais": "paris",
+        "montmartre": "paris",
+        "latin quarter": "paris",
+        "shibuya": "tokyo",
+        "shinjuku": "tokyo",
+        "ginza": "tokyo",
+        "manhattan": "new york",
+        "brooklyn": "new york",
+        "soho": "london",
+        "westminster": "london",
+        "trastevere": "rome",
+        "vatican": "rome",
+        "kreuzberg": "berlin",
+        "mitte": "berlin",
+    }
+
+    result = []
+    seen_lower = set()
+    parent_cities = set()
+
+    # First pass: identify parent cities
+    for dest in destinations:
+        dest_lower = dest.lower().strip()
+        # Check if this is a known parent city
+        for _subloc, parent in known_sublocations.items():
+            if parent == dest_lower:
+                parent_cities.add(parent)
+
+    # Second pass: filter out sublocations if parent exists
+    for dest in destinations:
+        dest_lower = dest.lower().strip()
+
+        # Skip exact duplicates
+        if dest_lower in seen_lower:
+            continue
+
+        # Skip sublocations if parent city is present
+        if dest_lower in known_sublocations:
+            parent = known_sublocations[dest_lower]
+            if parent in parent_cities or any(parent in d.lower() for d in destinations):
+                continue
+
+        seen_lower.add(dest_lower)
+        result.append(dest)
+
+    return result if result else destinations  # Never return empty list
+
+
+# =============================================================================
+# DATE NORMALIZER (Consolidated date handling)
+# =============================================================================
+class DateNormalizer:
+    """
+    Centralized date normalization logic.
+
+    Consolidates all date parsing, relative date conversion, and validation
+    into a single class to eliminate duplication across nodes.
+
+    Usage:
+        normalizer = DateNormalizer()
+        iso_date = normalizer.normalize("next week")
+        iso_date, was_partial = normalizer.normalize_with_info("December 2025")
+        end_date = normalizer.compute_end_from_duration("2025-01-01", 7)
+    """
+
+    # Pre-compiled patterns (class-level for efficiency)
+    _ORDINAL_SUFFIX = re.compile(r"(\d+)(st|nd|rd|th)\b", re.IGNORECASE)
+    _PARTIAL_DATE = re.compile(
+        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{4})$",
+        re.IGNORECASE,
+    )
+    _ISO_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+    # Relative date keywords
+    _TODAY_WORDS = frozenset({"today", "tonight", "now"})
+
+    # Supported date formats
+    _DATE_FORMATS = (
+        "%Y-%m-%d",  # 2025-12-28
+        "%d-%m-%Y",  # 28-12-2025
+        "%d/%m/%Y",  # 28/12/2025
+        "%m/%d/%Y",  # 12/28/2025 (US format)
+        "%m-%d-%Y",  # 12-28-2025 (US dash format)
+        "%B %d, %Y",  # December 28, 2025
+        "%b %d, %Y",  # Dec 28, 2025
+        "%d %B %Y",  # 28 December 2025
+        "%d %b %Y",  # 28 Dec 2025
+        "%B %d %Y",  # December 28 2025 (no comma)
+        "%b %d %Y",  # Dec 28 2025 (no comma)
+        "%d %B, %Y",  # 28 December, 2025
+        "%d %b, %Y",  # 28 Dec, 2025
+    )
+
+    def __init__(self, reference_date: Optional[date] = None):
+        """
+        Initialize with optional reference date for relative calculations.
+
+        Args:
+            reference_date: The "today" date for relative calculations.
+                           Defaults to UTC today.
+        """
+        self._reference = reference_date or datetime.now(UTC).date()
+
+    @property
+    def today(self) -> date:
+        """Get the reference date used for relative calculations."""
+        return self._reference
+
+    def relative_to_iso(self, text: Optional[str]) -> Optional[str]:
+        """
+        Convert relative date expressions to ISO format.
+
+        Handles: today, tomorrow, next week, next month, weekend, this weekend
+        """
+        if not text:
+            return None
+
+        lowered = text.lower().strip()
+        today = self._reference
+
+        if lowered in self._TODAY_WORDS:
+            return today.strftime("%Y-%m-%d")
+
+        if lowered == "tomorrow":
+            return (today + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        if "next week" in lowered:
+            return (today + timedelta(days=7)).strftime("%Y-%m-%d")
+
+        if "next month" in lowered:
+            return (today + timedelta(days=30)).strftime("%Y-%m-%d")
+
+        if "weekend" in lowered:
+            days_until_saturday = (5 - today.weekday()) % 7
+            if "next" in lowered and days_until_saturday <= 0:
+                days_until_saturday += 7
+            return (today + timedelta(days=days_until_saturday)).strftime("%Y-%m-%d")
+
+        return None
+
+    def normalize_with_info(self, value: Any) -> tuple[Optional[str], bool]:
+        """
+        Normalize various date formats to ISO format (YYYY-MM-DD).
+
+        Returns:
+            Tuple of (iso_date, was_partial) where was_partial indicates
+            if the date was a partial date like "December 2025" that defaulted
+            to the 1st of the month.
+        """
+        text = _normalize_str(value)
+        if not text:
+            return None, False
+
+        # Try relative dates first
+        relative = self.relative_to_iso(text)
+        if relative:
+            return relative, False
+
+        # Strip ordinal suffixes before parsing (28th -> 28)
+        text_cleaned = self._ORDINAL_SUFFIX.sub(r"\1", text)
+
+        # Try various date formats
+        for fmt in self._DATE_FORMATS:
+            try:
+                parsed = datetime.strptime(text_cleaned, fmt)
+                return parsed.strftime("%Y-%m-%d"), False
+            except ValueError:
+                continue
+
+        # Check for partial dates (month + year only)
+        partial_match = self._PARTIAL_DATE.match(text_cleaned)
+        if partial_match:
+            month_str = partial_match.group(1)
+            year_str = partial_match.group(2)
+            for month_fmt in ("%B %d, %Y", "%b %d, %Y"):
+                try:
+                    parsed = datetime.strptime(f"{month_str} 1, {year_str}", month_fmt)
+                    return parsed.strftime("%Y-%m-%d"), True
+                except ValueError:
+                    continue
+
+        # Check if already ISO format
+        if self._ISO_FORMAT.match(text_cleaned):
+            return text_cleaned, False
+
+        return None, False
+
+    def normalize(self, value: Any) -> Optional[str]:
+        """Normalize various date formats to ISO format (YYYY-MM-DD)."""
+        result, _ = self.normalize_with_info(value)
+        return result
+
+    def parse_iso(self, text: Optional[str]) -> Optional[datetime]:
+        """Parse an ISO date string to a datetime object."""
+        if not text:
+            return None
+        try:
+            return datetime.strptime(text, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    def compute_end_from_duration(
+        self, start_date: Optional[str], duration_days: int
+    ) -> Optional[str]:
+        """Compute end_date from start_date and duration in days."""
+        if not start_date or duration_days <= 0:
+            return None
+
+        start_dt = self.parse_iso(start_date)
+        if not start_dt:
+            return None
+
+        end_dt = start_dt + timedelta(days=duration_days)
+        return end_dt.strftime("%Y-%m-%d")
+
+    def is_valid_range(self, start_date: Optional[str], end_date: Optional[str]) -> bool:
+        """Check if end_date >= start_date (allowing same-day trips)."""
+        if not start_date or not end_date:
+            return True  # Can't validate incomplete range
+
+        start_dt = self.parse_iso(start_date)
+        end_dt = self.parse_iso(end_date)
+        if not start_dt or not end_dt:
+            return True  # Can't validate unparseable dates
+
+        return end_dt >= start_dt
+
+
+# Singleton instance for default usage
+_date_normalizer = DateNormalizer()
+
+
 def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
     """
     Convert relative date expressions to ISO format dates.
 
     Handles: "today", "tomorrow", "next week", "next month", "weekend"
     """
-    if not text:
-        return None
-
-    lowered = text.lower().strip()
-    today = datetime.now(UTC).date()
-
-    if lowered in {"today", "tonight", "now"}:
-        return today.strftime("%Y-%m-%d")
-    if lowered == "tomorrow":
-        return (today + timedelta(days=1)).strftime("%Y-%m-%d")
-    if "next week" in lowered:
-        return (today + timedelta(days=7)).strftime("%Y-%m-%d")
-    if "next month" in lowered:
-        return (today + timedelta(days=30)).strftime("%Y-%m-%d")
-    if "weekend" in lowered:
-        days_until_saturday = (5 - today.weekday()) % 7
-        if "next" in lowered and days_until_saturday <= 0:
-            days_until_saturday += 7
-        return (today + timedelta(days=days_until_saturday)).strftime("%Y-%m-%d")
-
-    return None
+    return _date_normalizer.relative_to_iso(text)
 
 
 def _extract_duration_days_from_message(message: str) -> Optional[int]:
@@ -2503,26 +2868,7 @@ def _extract_duration_days_from_message(message: str) -> Optional[int]:
 
 def _compute_end_date_from_duration(start_date: Optional[str], duration_days: int) -> Optional[str]:
     """Compute end_date from start_date and duration."""
-    if not start_date or duration_days <= 0:
-        return None
-
-    start_dt = _parse_iso_date(start_date)
-    if not start_dt:
-        return None
-
-    end_dt = start_dt + timedelta(days=duration_days)
-    return end_dt.strftime("%Y-%m-%d")
-
-
-# Pre-compiled pattern for stripping ordinal suffixes (1st, 2nd, 3rd, 4th-31st)
-_ORDINAL_SUFFIX_PATTERN = re.compile(r"(\d+)(st|nd|rd|th)\b", re.IGNORECASE)
-
-# Pre-compiled pattern for partial dates (month + year only)
-_PARTIAL_DATE_PATTERN = re.compile(
-    r"^(january|february|march|april|may|june|july|august|september|october|november|december"
-    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{4})$",
-    re.IGNORECASE,
-)
+    return _date_normalizer.compute_end_from_duration(start_date, duration_days)
 
 
 def _normalize_date_with_info(value: Any) -> tuple[Optional[str], bool]:
@@ -2533,78 +2879,17 @@ def _normalize_date_with_info(value: Any) -> tuple[Optional[str], bool]:
     if the date was a partial date like "December 2025" that defaulted to
     the 1st of the month.
     """
-    text = _normalize_str(value)
-    if not text:
-        return None, False
-
-    relative = _relative_date_to_iso(text)
-    if relative:
-        return relative, False
-
-    # Strip ordinal suffixes before parsing (28th -> 28, 1st -> 1, etc.)
-    text_cleaned = _ORDINAL_SUFFIX_PATTERN.sub(r"\1", text)
-
-    # Try various date formats including natural language formats
-    formats_to_try = [
-        "%Y-%m-%d",  # 2025-12-28
-        "%d-%m-%Y",  # 28-12-2025
-        "%d/%m/%Y",  # 28/12/2025
-        "%m/%d/%Y",  # 12/28/2025 (US format)
-        "%m-%d-%Y",  # 12-28-2025 (US dash format)
-        "%B %d, %Y",  # December 28, 2025
-        "%b %d, %Y",  # Dec 28, 2025
-        "%d %B %Y",  # 28 December 2025
-        "%d %b %Y",  # 28 Dec 2025
-        "%B %d %Y",  # December 28 2025 (no comma)
-        "%b %d %Y",  # Dec 28 2025 (no comma)
-        "%d %B, %Y",  # 28 December, 2025
-        "%d %b, %Y",  # 28 Dec, 2025
-    ]
-    for fmt in formats_to_try:
-        try:
-            parsed = datetime.strptime(text_cleaned, fmt)
-            return parsed.strftime("%Y-%m-%d"), False
-        except ValueError:
-            continue
-
-    # Check for partial dates (month + year only, e.g., "December 2025")
-    partial_match = _PARTIAL_DATE_PATTERN.match(text_cleaned)
-    if partial_match:
-        month_str = partial_match.group(1)
-        year_str = partial_match.group(2)
-        # Parse as 1st of the month
-        try:
-            parsed = datetime.strptime(f"{month_str} 1, {year_str}", "%B %d, %Y")
-            return parsed.strftime("%Y-%m-%d"), True
-        except ValueError:
-            # Try abbreviated month format
-            try:
-                parsed = datetime.strptime(f"{month_str} 1, {year_str}", "%b %d, %Y")
-                return parsed.strftime("%Y-%m-%d"), True
-            except ValueError:
-                pass
-
-    # Use pre-compiled pattern for ISO date validation
-    if _ISO_DATE_PATTERN.match(text_cleaned):
-        return text_cleaned, False
-
-    return None, False
+    return _date_normalizer.normalize_with_info(value)
 
 
 def _normalize_date(value: Any) -> Optional[str]:
     """Normalize various date formats to ISO format (YYYY-MM-DD)."""
-    result, _ = _normalize_date_with_info(value)
-    return result
+    return _date_normalizer.normalize(value)
 
 
 def _parse_iso_date(text: Optional[str]) -> Optional[datetime]:
     """Parse an ISO date string to a datetime object."""
-    if not text:
-        return None
-    try:
-        return datetime.strptime(text, "%Y-%m-%d")
-    except ValueError:
-        return None
+    return _date_normalizer.parse_iso(text)
 
 
 def _normalize_int(value: Any) -> Optional[int]:
@@ -2618,6 +2903,23 @@ def _normalize_int(value: Any) -> Optional[int]:
             return int(str(value).strip())
         except Exception:
             return None
+
+
+def _normalize_budget(value: Any) -> Optional[float]:
+    """Normalize a budget value to a float, handling currency symbols."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        # Remove currency symbols and commas, extract number
+        cleaned = re.sub(r"[^\d.]", "", value)
+        if cleaned:
+            try:
+                return float(cleaned)
+            except ValueError:
+                return None
+    return None
 
 
 def _normalize_currency(value: Any, *, default: Optional[str] = None) -> Optional[str]:
@@ -2933,10 +3235,10 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
     if branch_requires_assistance is not None and not isinstance(branch_requires_assistance, bool):
         branch_requires_assistance = None
 
-    branch_budget = _normalize_int(spec.get("budget"))
+    branch_budget = _normalize_budget(spec.get("budget"))
     if branch_budget is None:
-        branch_budget = _normalize_int(fallback_inputs.get("budget"))
-    if branch_budget is not None and branch_budget < 0:
+        branch_budget = _normalize_budget(fallback_inputs.get("budget"))
+    if branch_budget is not None and isinstance(branch_budget, (int, float)) and branch_budget < 0:
         branch_budget = None
 
     branch_currency = _normalize_currency(
@@ -4545,6 +4847,26 @@ class TripInputs(BaseModel):
     # Strategy-specific persisted preferences (per topic)
     strategy_settings: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("budget", mode="before")
+    @classmethod
+    def parse_budget_string(cls, v):
+        """Parse budget from string with currency symbol if needed."""
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            # Remove currency symbols and commas, extract number
+            import re
+
+            cleaned = re.sub(r"[^\d.]", "", v)
+            if cleaned:
+                try:
+                    return float(cleaned)
+                except ValueError:
+                    return None
+        return None
+
 
 # Valid values for question_target field
 QUESTION_TARGET_VALUES = frozenset(
@@ -5444,6 +5766,28 @@ def extractor(state: GraphState) -> GraphState:
         parsed["adults_delta"] = 2
         parsed["children_delta"] = 0
         parsed["travelers_source"] = "regex"  # Track extraction source
+    # "N of us - my wife and I, plus our kids aged X and Y" pattern
+    elif _TRAVELER_FAMILY_DETAILED_PATTERN.search(text):
+        # This is a couple (2 adults) plus children
+        parsed["adults_delta"] = 2
+        # Count children by finding ages mentioned
+        ages_match = _CHILDREN_AGES_PATTERN.search(text)
+        if ages_match:
+            # Count non-None groups (each is a child's age)
+            children_count = sum(1 for g in ages_match.groups() if g is not None)
+            parsed["children_delta"] = children_count
+        else:
+            # Fallback: extract total from "N of us" and subtract 2 adults
+            total_match = re.search(r"(\d+)\s+of\s+us", text, re.IGNORECASE)
+            if total_match:
+                total = int(total_match.group(1))
+                parsed["children_delta"] = max(0, total - 2)
+        parsed["travelers_source"] = "regex"  # Track extraction source
+        _debug(
+            "Extracted detailed family pattern",
+            adults=parsed.get("adults_delta"),
+            children=parsed.get("children_delta"),
+        )
     # family of N
     elif m := _TRAVELER_FAMILY_PATTERN.search(text):
         family_size = int(m.group(1))
@@ -5465,8 +5809,69 @@ def extractor(state: GraphState) -> GraphState:
         parsed["requires_assistance_delta"] = True
         parsed["accessibility_source"] = "regex"  # Track extraction source
 
+    # Date range pattern: "March 15-20, 2030"
+    date_range_match = _DATE_RANGE_PATTERN.search(text)
+    cross_month_match = _DATE_CROSS_MONTH_PATTERN.search(text)
+
+    if cross_month_match:
+        # Cross-month range: "December 26 - January 2" (different months)
+        m1 = cross_month_match.group("m1")
+        d1 = cross_month_match.group("d1")
+        m2 = cross_month_match.group("m2")
+        d2 = cross_month_match.group("d2")
+        year = cross_month_match.group("year")
+
+        # If no year specified, use current/next year based on context
+        if not year:
+            from datetime import date as dt_date
+
+            today = dt_date.today()
+            year = str(today.year)
+            # If start month is December and we're past December, use next year
+            if m1.lower().startswith("dec") and today.month > 1:
+                year = str(today.year)
+            # If the date would be in the past, bump to next year
+            elif m1.lower().startswith("dec") and today.month == 12 and today.day > int(d1):
+                year = str(today.year + 1)
+
+        parsed["start_date_hint"] = f"{m1} {d1}, {year}"
+        # For cross-year (Dec→Jan), end date is next year
+        end_year = year
+        if m1.lower().startswith("dec") and m2.lower().startswith("jan"):
+            end_year = str(int(year) + 1)
+        parsed["end_date_hint"] = f"{m2} {d2}, {end_year}"
+        parsed["dates_source"] = "regex"
+        _debug(
+            "Extracted cross-month date range",
+            start=parsed["start_date_hint"],
+            end=parsed["end_date_hint"],
+        )
+    elif date_range_match:
+        # Extract month from the full match (it's not in a capture group)
+        full_match = date_range_match.group(0)
+        month_match = re.match(
+            r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+            r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)",
+            full_match,
+            re.IGNORECASE,
+        )
+        if month_match:
+            month_str = month_match.group(1)
+            start_day = date_range_match.group(1)
+            end_day = date_range_match.group(2)
+            year = date_range_match.group(3)
+            # Build date hints
+            parsed["start_date_hint"] = f"{month_str} {start_day}, {year}"
+            parsed["end_date_hint"] = f"{month_str} {end_day}, {year}"
+            parsed["dates_source"] = "regex"
+            _debug(
+                "Extracted date range",
+                start=parsed["start_date_hint"],
+                end=parsed["end_date_hint"],
+            )
+
     # Date patterns - relative dates (using pre-compiled patterns)
-    if _DATE_TODAY_PATTERN.search(text):
+    elif _DATE_TODAY_PATTERN.search(text):
         parsed["start_date_hint"] = "today"
         parsed["dates_source"] = "regex"  # Track extraction source
     elif _DATE_TOMORROW_PATTERN.search(text):
@@ -5834,19 +6239,33 @@ def normalize_inputs(state: GraphState) -> GraphState:
         updates["budget"] = bd.get("budget")
         updates["currency"] = bd.get("currency", DEFAULT_CURRENCY)
 
-    # Apply origin delta
+    # Apply origin delta (with synonym normalization)
     if "origin_delta" in parsed:
-        updates["origin"] = _normalize_str(parsed["origin_delta"])
+        origin_raw = _normalize_str(parsed["origin_delta"])
+        updates["origin"] = normalize_place_synonym(origin_raw) if origin_raw else origin_raw
 
-    # Apply destinations delta
+    # Apply destinations delta (with synonym normalization and filtering)
     if "destinations_delta" in parsed:
         existing_lower = {d.lower() for d in ti.destinations}
         new_destinations = list(ti.destinations)  # Copy existing
         for d in parsed["destinations_delta"]:
             d_norm = _normalize_str(d)
-            if d_norm and d_norm.lower() not in existing_lower:
+            if not d_norm:
+                continue
+            # Apply synonym normalization (NYC → New York City, etc.)
+            d_norm = normalize_place_synonym(d_norm)
+            d_lower = d_norm.lower()
+            # Skip phrase-like destinations containing excluded words
+            if any(word in d_lower for word in _DEST_EXCLUDE_WORDS):
+                _debug(
+                    f"Filtering phrase-like destination (delta): {d_norm}", node="normalize_inputs"
+                )
+                continue
+            if d_lower not in existing_lower:
                 new_destinations.append(d_norm)
-                existing_lower.add(d_norm.lower())
+                existing_lower.add(d_lower)
+        if new_destinations != ti.destinations:
+            updates["destinations"] = new_destinations
         if new_destinations != ti.destinations:
             updates["destinations"] = new_destinations
 
@@ -6025,9 +6444,21 @@ def normalize_inputs(state: GraphState) -> GraphState:
             start = date.fromisoformat(ti.start_date)
             end = date.fromisoformat(ti.end_date)
             if end < start:
-                validation_warnings.append(
-                    f"End date {ti.end_date} is before start date {ti.start_date}"
-                )
+                # Check if this is a valid cross-year range (Dec → Jan/Feb)
+                if start.month == 12 and end.month in (1, 2):
+                    # Cross-year range: end date should be next year
+                    corrected_end = end.replace(year=start.year + 1)
+                    validation_updates["end_date"] = corrected_end.isoformat()
+                    _debug(
+                        "Corrected cross-year date range",
+                        start=ti.start_date,
+                        original_end=ti.end_date,
+                        corrected_end=corrected_end.isoformat(),
+                    )
+                else:
+                    validation_warnings.append(
+                        f"End date {ti.end_date} is before start date {ti.start_date}"
+                    )
         except (ValueError, TypeError):
             pass  # Already handled above
 
@@ -6041,7 +6472,7 @@ def normalize_inputs(state: GraphState) -> GraphState:
         validation_updates["children"] = max(0, min(20, ti.children))  # Clamp to valid range
 
     # Validate budget is positive
-    if ti.budget is not None and ti.budget <= 0:
+    if ti.budget is not None and isinstance(ti.budget, (int, float)) and ti.budget <= 0:
         validation_warnings.append(f"Invalid budget: {ti.budget}")
         validation_updates["budget"] = None  # Clear invalid budget
 
@@ -6149,7 +6580,7 @@ def _select_required_fields_prompt(state: GraphState) -> str:
     """
     Select the appropriate split prompt for required_fields based on state.
 
-    Returns the phase-specific prompt (now includes shared_style via Jinja2).
+    Returns the phase-specific prompt with Jinja2 {% include %} support.
     Uses split prompts for ~50% token reduction when available.
     """
     # Check for typos or ambiguous entities needing confirmation
@@ -6551,166 +6982,6 @@ async def strategy_node(state: GraphState) -> GraphState:
 
 
 # -----------------------
-# Monolith fallback (full prompt)
-# -----------------------
-async def monolith_node(state: GraphState) -> GraphState:
-    """
-    Monolith fallback node with timeout and JSON retry logic.
-
-    Used when router confidence is low or specialists fail repeatedly.
-    """
-    # ⚠️ PROMINENT DEBUG WARNING FOR MONOLITH FALLBACK ⚠️
-    _debug("⚠️⚠️⚠️ MONOLITH FALLBACK ACTIVATED ⚠️⚠️⚠️")
-    if _DEBUG_LOG:
-        print("\n" + "=" * 60)
-        print("⚠️⚠️⚠️ MONOLITH FALLBACK ACTIVATED ⚠️⚠️⚠️")
-        print("=" * 60)
-        print("  Reason indicators:")
-        print(f"    - intent: {state.intent}")
-        print(f"    - router_confidence: {state.metadata.get('router_confidence', 'N/A')}")
-        print(f"    - no_progress_turns: {state.metadata.get('no_progress_turns', 0)}")
-        print(f"    - validator_failures: {state.metadata.get('validator_failures', 0)}")
-        print(f"    - force_monolith flag: {state.flags.get('force_monolith', False)}")
-        print(f"    - generate_plan flag: {state.flags.get('generate_plan', False)}")
-        print("=" * 60 + "\n")
-
-    _debug_node_entry("monolith_node", state)
-
-    # Get per-node LLM configuration for monolith
-    llm_config = _get_node_llm_config("monolith")
-
-    prompt = load_prompt("monolith")
-    # Use today_iso from metadata (injected by route) or fall back to current date
-    today_iso = state.metadata.get("today_iso") or _today_iso()
-
-    # Serialize existing branches for LLM context (if any)
-    branch_context = _serialize_branches_for_llm(state.branches, state.metadata.get("tiles"))
-    existing_branches_block = ""
-    if branch_context:
-        existing_branches_block = f"\n[EXISTING BRANCHES AND TILES]\n{branch_context}\n"
-
-    # Build extraction sources summary from parsed_inputs
-    parsed = state.parsed_inputs or {}
-    extraction_sources = {
-        "destinations": parsed.get("destinations_source"),
-        "origin": parsed.get("origin_source"),
-        "budget": parsed.get("budget_source"),
-        "travelers": parsed.get("travelers_source"),
-        "dates": parsed.get("dates_source"),
-        "duration": parsed.get("duration_source"),
-    }
-    # Filter out None values for cleaner output
-    extraction_sources = {k: v for k, v in extraction_sources.items() if v}
-
-    # Build system prompt (without chat history - that goes in separate messages)
-    system_prompt = (
-        prompt.replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
-        .replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
-        .replace("{conversation_summary}", state.last_summary or "")
-        .replace("{errors}", json.dumps(state.errors))
-        .replace("{today}", today_iso)
-        .replace(
-            "{current_state_json}", json.dumps(ti_short(state.trip_inputs))
-        )  # reuse compact state
-        .replace("{existing_branches}", existing_branches_block)
-        .replace(
-            "{extraction_sources}", json.dumps(extraction_sources) if extraction_sources else "{}"
-        )
-    )
-
-    timeout = settings.llm_timeout_monolith
-    attempts = settings.llm_max_retries
-    last_error = None
-
-    tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
-    _record_node_tokens(state, "monolith_node", tokens, model=llm_config["model_hint"])
-
-    for attempt in range(attempts):
-        try:
-            # Pass history as separate messages (matching plan.py behavior)
-            out = await call_llm_with_timeout(
-                model=llm_config["model_hint"],
-                prompt=system_prompt,
-                timeout_seconds=timeout,
-                max_tokens=llm_config["max_tokens"],
-                temperature=llm_config["temperature"],
-                history=state.chat_history,
-                user_message=state.user_text,
-                top_p=llm_config["top_p"],
-            )
-            _increment_llm_calls(state)
-            j = jloads_safe(out)
-
-            # Apply trip_inputs delta using centralized helper
-            delta = j.get("trip_inputs", {}) or {}
-            _apply_llm_delta(state, "monolith_node", delta)
-
-            # Validate the updated trip_inputs
-            TRIP_VALIDATOR.validate(state.trip_inputs.model_dump())
-            state.last_summary = j.get("assistant_message", "")
-
-            # Parse question_target from LLM response for suggestion relevance
-            raw_question_target = j.get("question_target")
-            if raw_question_target and isinstance(raw_question_target, str):
-                normalized_target = raw_question_target.lower().strip()
-                if normalized_target in QUESTION_TARGET_VALUES:
-                    state.question_target = normalized_target
-                elif normalized_target == "null" or normalized_target == "none":
-                    state.question_target = None
-                else:
-                    state.question_target = None
-            else:
-                state.question_target = None
-
-            # Filter suggested responses with relevance scoring
-            raw_suggestions = j.get("suggested_responses", []) or []
-            state.suggested_responses = _get_suggestions_with_fallback(
-                raw_suggestions, state, state.question_target
-            )
-            _debug_suggestions(state.suggested_responses, source="monolith_node")
-
-            # Only set ready_to_generate if explicitly triggered
-            state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
-                "generate_requested", False
-            )
-
-            # Only emit branches if generate was explicitly requested
-            if state.flags.get("generate_requested", False):
-                raw_branches = j.get("branches", []) or []
-                fallback = state.trip_inputs.model_dump(exclude_none=True)
-                normalized_branches: List[Dict[str, Any]] = []
-                for b in raw_branches:
-                    normalized = _normalize_branch_spec(b, fallback)
-                    if normalized:
-                        normalized_branches.append(normalized)
-                state.branches = normalized_branches
-
-            state.metadata["model_used"] = llm_config["model_hint"]
-            state.metadata["monolith_used"] = True
-            state.metadata["token_estimate"] = _count_tokens(out)
-
-            _debug("Monolith completed successfully")
-            _debug_node_exit("monolith_node", state)
-            return state
-
-        except json.JSONDecodeError as e:
-            last_error = e
-            _debug_error(f"Monolith JSON error on attempt {attempt + 1}", error=str(e))
-            if attempt < attempts - 1:
-                system_prompt += INVALID_JSON_HINT
-                continue
-            break
-        except Exception as e:
-            last_error = e
-            _debug_error(f"Monolith error on attempt {attempt + 1}", error=str(e))
-            break
-
-    reason = f"monolith node failed after {attempts} attempt(s): {last_error}"
-    _debug_error("Monolith FAILED", reason=reason)
-    return _record_llm_failure(state, reason)
-
-
-# -----------------------
 # Validation & summarization (enhanced with plan.py logic)
 # -----------------------
 def validate_and_merge(state: GraphState) -> GraphState:
@@ -6737,18 +7008,31 @@ def validate_and_merge(state: GraphState) -> GraphState:
     if ti.end_date and not ISO.match(ti.end_date):
         state.errors.append("Invalid end_date format")
 
-    # Auto-swap dates if end_date < start_date
+    # Auto-swap dates if end_date < start_date (unless it's a valid cross-year range)
     if start_dt and end_dt and end_dt < start_dt:
-        earliest = min(start_dt, end_dt)
-        latest = max(start_dt, end_dt)
-        updates["start_date"] = earliest.strftime("%Y-%m-%d")
-        updates["end_date"] = latest.strftime("%Y-%m-%d")
-        validation_messages.append(
-            "I reordered your dates so the trip starts before it ends. Does that look right?"
-        )
-        start_dt = earliest
-        end_dt = latest
-        _debug("Dates auto-swapped", start=updates["start_date"], end=updates["end_date"])
+        # Check if this is a valid cross-year range (Dec → Jan/Feb)
+        if start_dt.month == 12 and end_dt.month in (1, 2):
+            # Cross-year range: end date should be next year, not swapped
+            corrected_end = end_dt.replace(year=start_dt.year + 1)
+            updates["end_date"] = corrected_end.strftime("%Y-%m-%d")
+            end_dt = corrected_end
+            _debug(
+                "Corrected cross-year date range in validate_and_merge",
+                start=ti.start_date,
+                corrected_end=updates["end_date"],
+            )
+        else:
+            # Not a cross-year range, swap dates
+            earliest = min(start_dt, end_dt)
+            latest = max(start_dt, end_dt)
+            updates["start_date"] = earliest.strftime("%Y-%m-%d")
+            updates["end_date"] = latest.strftime("%Y-%m-%d")
+            validation_messages.append(
+                "I reordered your dates so the trip starts before it ends. Does that look right?"
+            )
+            start_dt = earliest
+            end_dt = latest
+            _debug("Dates auto-swapped", start=updates["start_date"], end=updates["end_date"])
 
     # Past date warnings
     if start_dt and today_dt and start_dt < today_dt:
@@ -6780,7 +7064,7 @@ def validate_and_merge(state: GraphState) -> GraphState:
         updates["requires_assistance"] = None
 
     # Validate budget
-    if ti.budget is not None and ti.budget < 0:
+    if ti.budget is not None and isinstance(ti.budget, (int, float)) and ti.budget < 0:
         updates["budget"] = None
         validation_messages.append("Budget must be zero or higher. Please share an updated budget.")
 
@@ -7270,6 +7554,7 @@ def tile_search(state: GraphState) -> GraphState:
                 currency=branch.get("currency") or ti.currency or DEFAULT_CURRENCY,
                 verticals=verticals,  # type: ignore
                 max_results_per_vertical=5,
+                budget=ti.budget,  # Pass budget for tile filtering
             )
 
             _debug(f"Searching tiles for branch {branch_id}", destination=primary_dest)
@@ -7313,44 +7598,6 @@ def tile_search(state: GraphState) -> GraphState:
     )
     _debug_node_exit("tile_search", state)
     return state
-
-
-# -----------------------
-# Monolith routing policy
-# -----------------------
-def should_use_monolith(state: GraphState) -> bool:
-    """
-    Determine if we should use the monolith fallback.
-
-    The monolith is a comprehensive single-prompt approach that's more expensive
-    but handles complex/ambiguous requests. We use it sparingly to keep the bot
-    conversational and cost-effective.
-
-    Triggers (only in extreme cases):
-    - User explicitly requests plan generation (generate_plan flag)
-    - Router explicitly returns "unknown" intent (can't classify at all)
-    - Multiple consecutive LLM failures (>= 3) indicating systemic issues
-    """
-    # User explicitly triggered plan generation
-    if state.flags.get("generate_plan", False):
-        _debug("Monolith triggered: user requested plan generation")
-        return True
-
-    # Router couldn't classify the intent at all
-    if state.intent == "unknown":
-        _debug("Monolith triggered: router returned unknown intent")
-        return True
-
-    # Multiple consecutive failures indicate something is broken
-    validator_failures = state.metadata.get("validator_failures", 0)
-    if validator_failures >= 5:
-        _debug(
-            "Monolith triggered: multiple failures",
-            validator_failures=validator_failures,
-        )
-        return True
-
-    return False
 
 
 # -----------------------
@@ -7555,23 +7802,39 @@ def route_after_normalize(state: GraphState) -> str:
     is_short_input = len(user_text.strip()) <= 30
 
     # Check for strategy/intent keywords that would require routing
+    # These keywords indicate the user wants a specific specialist, not just confirmation
     intent_keywords = (
+        # Strategy topics
         "cycling",
         "hiking",
         "diving",
         "skiing",
         "boating",
+        # Specialist categories
         "flight",
+        "flights",
         "hotel",
+        "hotels",
+        "boutique",
+        "accommodation",
+        "stay",
+        "where to stay",
         "transport",
+        "train",
+        "car rental",
         "activity",
         "activities",
+        "things to do",
+        # Question words
         "how",
         "what",
         "when",
         "where",
         "should",
         "recommend",
+        "suggest",
+        "find",
+        "book",
     )
     has_intent_keywords = any(kw in user_text.lower() for kw in intent_keywords)
 
@@ -7704,7 +7967,6 @@ _graph.add_node("transport_node", transport_node)
 _graph.add_node("activities_node", activities_node)
 _graph.add_node("strategy_node", strategy_node)
 _graph.add_node("correction_node", correction_node)
-_graph.add_node("monolith_node", monolith_node)
 _graph.add_node("validate_and_merge", validate_and_merge)
 _graph.add_node("branch_postprocess", branch_postprocess)
 _graph.add_node("tile_search", tile_search)
@@ -7766,9 +8028,6 @@ _graph.add_edge("short_circuit_responder", "summarize")
 
 
 def route_after_router(state: GraphState) -> str:
-    if should_use_monolith(state):
-        return "monolith_node"
-
     # =========================================================================
     # CONFIDENCE-BASED ROUTING
     # =========================================================================
@@ -7899,7 +8158,6 @@ _graph.add_conditional_edges(
     "router",
     route_after_router,
     {
-        "monolith_node": "monolith_node",
         "strategy_node": "strategy_node",
         "required_fields_node": "required_fields_node",
         "flights_node": "flights_node",
@@ -7933,7 +8191,6 @@ for n in [
     "activities_node",
     "strategy_node",
     "correction_node",
-    "monolith_node",
 ]:
     _graph.add_edge(n, "validate_and_merge")
 
@@ -8163,7 +8420,7 @@ async def run_turn(
         metadata["today_iso"] = date.today().isoformat()
 
     # Reset turn-specific metadata counters that shouldn't persist across turns
-    # These are used for monolith fallback heuristics and should start fresh each turn
+    # These should start fresh each turn for consistent routing behavior
     metadata.pop("validator_failures", None)
     metadata.pop("no_progress_turns", None)
     metadata.pop("last_intent", None)
@@ -8181,7 +8438,6 @@ async def run_turn(
     # Build input state
     # Reset turn-specific flags to prevent stale state from persisting
     incoming_flags = deepcopy(session_state.get("flags", {}))
-    incoming_flags.pop("force_monolith", None)
     incoming_flags.pop("generate_plan", None)
     incoming_flags.pop("generate_requested", None)
     # Clear short-circuit flags so each turn re-detects from scratch
@@ -8219,21 +8475,16 @@ async def run_turn(
         scenario_id = metadata.get("scenario_id", "")
         is_test_run = metadata.get("test_run", False)
 
-        # Create tracer with tags and metadata for searchability
+        # Create tracer with tags for searchability
+        # Note: LangChainTracer doesn't accept metadata param - we encode info in tags
         tracer = LangChainTracer(
-            project_name=os.getenv("LANGCHAIN_PROJECT", "default"),
+            project_name=os.getenv("LANGSMITH_PROJECT", "default"),
             tags=[
                 "nomadic",
                 f"thread:{thread_id}",
                 *(["e2e-test"] if is_test_run else []),
                 *([f"scenario:{scenario_id}"] if scenario_id else []),
             ],
-            metadata={
-                "thread_id": thread_id,
-                "turn_thread_id": turn_thread_id,
-                "scenario_id": scenario_id,
-                "test_run": is_test_run,
-            },
         )
         config["callbacks"] = [tracer]
         config["run_name"] = f"run_turn_{thread_id[:8]}"
@@ -8256,7 +8507,7 @@ async def run_turn(
     if isinstance(result, dict):
         result = GraphState.model_validate(result)
 
-    # Update simple “no progress” metric used by should_use_monolith()
+    # Update simple “no progress” metric used by conversation quality tracking
     try:
         made_progress = _progress_signal(prev_ti, result.trip_inputs)
         meta = result.metadata or {}
@@ -8370,7 +8621,6 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     # Build input state
     # Reset turn-specific flags to prevent stale state from persisting
     incoming_flags = deepcopy(session_state.get("flags", {}))
-    incoming_flags.pop("force_monolith", None)
     incoming_flags.pop("generate_plan", None)
     incoming_flags.pop("generate_requested", None)
     # Clear short-circuit flags so each turn re-detects from scratch
@@ -8609,7 +8859,7 @@ def _branches_to_document(
             adults=_normalize_int(spec.get("adults")),
             children=_normalize_int(spec.get("children")),
             requires_assistance=spec.get("requires_assistance"),
-            budget=_normalize_int(spec.get("budget")),
+            budget=_normalize_budget(spec.get("budget")),
             currency=(
                 _normalize_currency(spec.get("currency"), default=DEFAULT_CURRENCY)
                 or DEFAULT_CURRENCY

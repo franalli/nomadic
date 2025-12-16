@@ -52,22 +52,11 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(config, items):
     """Modify test collection based on markers."""
-    # Skip nightly tests unless explicitly requested
-    if not config.getoption("--run-nightly", default=False):
-        skip_nightly = pytest.mark.skip(reason="need --run-nightly option to run")
-        for item in items:
-            if "nightly" in item.keywords:
-                item.add_marker(skip_nightly)
+    pass
 
 
 def pytest_addoption(parser):
     """Add custom command line options."""
-    parser.addoption(
-        "--run-nightly",
-        action="store_true",
-        default=False,
-        help="run nightly tests",
-    )
     parser.addoption(
         "--langsmith-project",
         action="store",

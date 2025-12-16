@@ -192,7 +192,6 @@ class ConversationExecutor:
             "enable_strategy_cycling": settings.enable_strategy_cycling,
             "llm_timeout_router": settings.llm_timeout_router,
             "llm_timeout_specialist": settings.llm_timeout_specialist,
-            "llm_timeout_monolith": settings.llm_timeout_monolith,
             "openai_plan_temperature": settings.openai_plan_temperature,
         }
 

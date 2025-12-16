@@ -1,0 +1,1112 @@
+{
+  "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+  "thread_id": "1249838e-6e8d-432e-a976-37ea43a2c851",
+  "scenario_goal": "Book a simple luxury trip to Paris with clear requirements.",
+  "scenario_constraints": {
+    "budget": null,
+    "dates": "specific dates",
+    "preferences": [
+      "5-star hotel",
+      "first class flight"
+    ],
+    "avoid": [],
+    "party_size": "2 adults",
+    "special_requirements": [
+      "vegan meals"
+    ]
+  },
+  "conversation": {
+    "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+    "thread_id": "1249838e-6e8d-432e-a976-37ea43a2c851",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hello, I am looking to plan a luxurious trip to Paris.",
+        "assistant_message": "Paris\u2014great choice for a luxurious getaway! What dates are you considering for your trip?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfdb\ufe0f culture",
+              "\ud83c\udf5d food",
+              "\ud83c\udfa8 art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 30, 2025",
+          "January 15, 2026",
+          "February 14, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b26cd-fa6c-7fa3-b7b1-f9d9ee2347de",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 2,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 2687.000000005355
+      },
+      {
+        "turn_number": 2,
+        "user_message": "I need a first-class flight and a 5-star hotel for a week in November.",
+        "assistant_message": "November is a lovely time to visit Paris! Let's confirm your destination first. Are you flying from a specific city?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfad culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83c\udfa8 art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Singapore",
+          "From Los Angeles",
+          "From Dubai"
+        ],
+        "errors": [],
+        "run_id": "019b26ce-04eb-7bb2-8887-717ad6f9f1c3",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 4,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3187.999999994645
+      },
+      {
+        "turn_number": 3,
+        "user_message": "The dates I'm considering are November 10th to November 17th.",
+        "assistant_message": "November 10th to 17th\u2014great timing for Paris! Just to confirm, where are you flying from? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "start_date": "2025-11-10",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfad culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83c\udfa8 art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Singapore",
+          "From New York",
+          "From Hong Kong"
+        ],
+        "errors": [],
+        "run_id": "019b26ce-1153-7bd3-9556-ea5c2cbb29ca",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3342.9999999934807
+      },
+      {
+        "turn_number": 4,
+        "user_message": "We have two adults travelling.",
+        "assistant_message": "Two adults traveling\u2014great! Just to confirm, you're planning a trip to **Paris** starting on **2025-11-10**. Where will you be flying from? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "start_date": "2025-11-10",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfad culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83c\udfa8 art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Paris",
+          "From Tokyo",
+          "From London"
+        ],
+        "errors": [],
+        "run_id": "019b26ce-1e60-71b2-ad81-ac34d67bbdac",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 8,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3859.99999998603
+      },
+      {
+        "turn_number": 5,
+        "user_message": "Also, ensure we have vegan meal options available.",
+        "assistant_message": "Vegan meal options noted! Let's finalize your trip details. When are you planning to go to **Paris**? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "start_date": "2025-11-10",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfa8 culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83c\udfad art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 30, 2025",
+          "January 15, 2026",
+          "February 14, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b26ce-2d76-71f3-a68b-b8eb842beec7",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 10,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4781.0000000172295
+      },
+      {
+        "turn_number": 6,
+        "user_message": "Can you confirm the availability?",
+        "assistant_message": "I can help with that! First, let's confirm your trip details. You're planning to visit **Paris** starting on **November 10, 2025**, and you're interested in **5-star hotels** and activities related to **culture**, **food**, and **art**. Is that correct? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "start_date": "2025-11-10",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfa8 culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83d\uddbc\ufe0f art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [],
+        "errors": [],
+        "run_id": "019b26ce-402c-7fe2-87f1-957b6528ea8b",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4703.000000008615
+      },
+      {
+        "turn_number": 7,
+        "user_message": "What's the total cost likely to be?",
+        "assistant_message": "To provide an estimate, could you share your travel dates and the number of travelers? This will help me give you a more accurate idea of costs. The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "start_date": "2025-11-10",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfa8 culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83d\uddbc\ufe0f art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [],
+        "errors": [],
+        "run_id": "019b26ce-5286-7ca3-8847-1f64bfb240ac",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 14,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3171.9999999913853
+      },
+      {
+        "turn_number": 8,
+        "user_message": "That's perfect. Let's proceed with the booking.",
+        "assistant_message": "Great! To move forward with the booking, I just need to confirm a few details. You're traveling to **Paris** starting on **November 10, 2025**. Where are you flying from? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Paris"
+          ],
+          "start_date": "2025-11-10",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "min_stars": 5
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfa8 culture",
+              "\ud83c\udf7d\ufe0f food",
+              "\ud83d\uddbc\ufe0f art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From London",
+          "From New York",
+          "From Sydney"
+        ],
+        "errors": [],
+        "run_id": "019b26ce-5eeb-76b0-8034-cdefa67eaf06",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 16,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3780.9999999881256
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Paris"
+        ],
+        "origin": null,
+        "start_date": "2025-11-10",
+        "end_date": null,
+        "adults": null,
+        "children": null,
+        "requires_assistance": null,
+        "budget": null,
+        "currency": null,
+        "multi_city_intent": null,
+        "booking_types": {
+          "activities": true,
+          "hotels": true
+        },
+        "flight_settings": {},
+        "hotel_settings": {
+          "min_stars": 5
+        },
+        "activity_settings": {
+          "categories": [
+            "\ud83c\udfa8 culture",
+            "\ud83c\udf7d\ufe0f food",
+            "\ud83d\uddbc\ufe0f art"
+          ]
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+        "test_run": true,
+        "today_iso": "2025-12-16",
+        "user_tone": "enthusiastic",
+        "intent_turn_count": 4,
+        "user_intent": "undecided",
+        "intent_confidence": 0.5,
+        "extraction_confidence": {
+          "overall": 0.3,
+          "level": "low",
+          "method": "regex",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": "en",
+          "low_confidence_reasons": [
+            "no_entities_extracted"
+          ],
+          "typo_suggestions": {}
+        },
+        "node_tokens": {
+          "router": 9297,
+          "specialist:required_fields": 17541
+        },
+        "total_tokens": 26838,
+        "node_models": {
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 16,
+        "router_notes": "Looking for 5-star hotels in Paris.",
+        "router_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 99,
+        "polish_skipped_reason": "timeout",
+        "user_intent_hint": "undecided",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "hotels"
+      },
+      "flags": {},
+      "last_summary": "Great! To move forward with the booking, I just need to confirm a few details. You're traveling to **Paris** starting on **November 10, 2025**. Where are you flying from? The start date is in the past. Want to update it?",
+      "branches": [],
+      "suggested_responses": [
+        "From London",
+        "From New York",
+        "From Sydney"
+      ],
+      "errors": [],
+      "thread_id": "1249838e-6e8d-432e-a976-37ea43a2c851",
+      "router_intent": "hotels",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 16,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 29514.999999984866,
+    "total_llm_calls": 72,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b26cd-fa6c-7fa3-b7b1-f9d9ee2347de",
+      "019b26ce-04eb-7bb2-8887-717ad6f9f1c3",
+      "019b26ce-1153-7bd3-9556-ea5c2cbb29ca",
+      "019b26ce-1e60-71b2-ad81-ac34d67bbdac",
+      "019b26ce-2d76-71f3-a68b-b8eb842beec7",
+      "019b26ce-402c-7fe2-87f1-957b6528ea8b",
+      "019b26ce-5286-7ca3-8847-1f64bfb240ac",
+      "019b26ce-5eeb-76b0-8034-cdefa67eaf06"
+    ],
+    "started_at": "2025-12-16T10:56:31.846524+00:00",
+    "completed_at": "2025-12-16T10:57:01.354173+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "llm_timeout_monolith": 20.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "activities",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels"
+    ]
+  },
+  "summary": {
+    "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+    "thread_id": "1249838e-6e8d-432e-a976-37ea43a2c851",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hello, I am looking to plan a luxurious trip to Paris."
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Paris\u2014great choice for a luxurious getaway! What dates are you considering for your trip?"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "I need a first-class flight and a 5-star hotel for a week in November."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "November is a lovely time to visit Paris! Let's confirm your destination first. Are you flying from a specific city?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "The dates I'm considering are November 10th to November 17th."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "November 10th to 17th\u2014great timing for Paris! Just to confirm, where are you flying from? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "We have two adults travelling."
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Two adults traveling\u2014great! Just to confirm, you're planning a trip to **Paris** starting on **2025-11-10**. Where will you be flying from? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "Also, ensure we have vegan meal options available."
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "Vegan meal options noted! Let's finalize your trip details. When are you planning to go to **Paris**? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "Can you confirm the availability?"
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "I can help with that! First, let's confirm your trip details. You're planning to visit **Paris** starting on **November 10, 2025**, and you're interested in **5-star hotels** and activities related to **culture**, **food**, and **art**. Is that correct? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "What's the total cost likely to be?"
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "To provide an estimate, could you share your travel dates and the number of travelers? This will help me give you a more accurate idea of costs. The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "That's perfect. Let's proceed with the booking."
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "Great! To move forward with the booking, I just need to confirm a few details. You're traveling to **Paris** starting on **November 10, 2025**. Where are you flying from? The start date is in the past. Want to update it?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Paris"
+      ],
+      "start_date": "2025-11-10",
+      "booking_types": {
+        "activities": true,
+        "hotels": true
+      },
+      "flight_settings": {},
+      "hotel_settings": {
+        "min_stars": 5
+      },
+      "activity_settings": {
+        "categories": [
+          "\ud83c\udfa8 culture",
+          "\ud83c\udf7d\ufe0f food",
+          "\ud83d\uddbc\ufe0f art"
+        ]
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "booking_types",
+        "before": {
+          "activities": true
+        },
+        "after": {
+          "activities": true,
+          "hotels": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "hotel_settings",
+        "before": {},
+        "after": {
+          "min_stars": 5
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "activity_settings",
+        "before": {
+          "categories": [
+            "\ud83c\udfdb\ufe0f culture",
+            "\ud83c\udf5d food",
+            "\ud83c\udfa8 art"
+          ]
+        },
+        "after": {
+          "categories": [
+            "\ud83c\udfad culture",
+            "\ud83c\udf7d\ufe0f food",
+            "\ud83c\udfa8 art"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "start_date",
+        "before": null,
+        "after": "2025-11-10",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 5,
+        "field": "activity_settings",
+        "before": {
+          "categories": [
+            "\ud83c\udfad culture",
+            "\ud83c\udf7d\ufe0f food",
+            "\ud83c\udfa8 art"
+          ]
+        },
+        "after": {
+          "categories": [
+            "\ud83c\udfa8 culture",
+            "\ud83c\udf7d\ufe0f food",
+            "\ud83c\udfad art"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 6,
+        "field": "activity_settings",
+        "before": {
+          "categories": [
+            "\ud83c\udfa8 culture",
+            "\ud83c\udf7d\ufe0f food",
+            "\ud83c\udfad art"
+          ]
+        },
+        "after": {
+          "categories": [
+            "\ud83c\udfa8 culture",
+            "\ud83c\udf7d\ufe0f food",
+            "\ud83d\uddbc\ufe0f art"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 8,
+    "total_llm_calls": 72,
+    "total_cache_hits": 0,
+    "total_duration_ms": 29514.999999984866,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [
+      {
+        "run_id": "019b26cd-fa6c-7fa3-b7b1-f9d9ee2347de",
+        "turn_number": 1,
+        "total_latency_ms": 2683.857,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-04eb-7bb2-8887-717ad6f9f1c3",
+        "turn_number": 2,
+        "total_latency_ms": 3183.255,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-1153-7bd3-9556-ea5c2cbb29ca",
+        "turn_number": 3,
+        "total_latency_ms": 3339.982,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-1e60-71b2-ad81-ac34d67bbdac",
+        "turn_number": 4,
+        "total_latency_ms": 3862.399,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-2d76-71f3-a68b-b8eb842beec7",
+        "turn_number": 5,
+        "total_latency_ms": 4790.937,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-402c-7fe2-87f1-957b6528ea8b",
+        "turn_number": 6,
+        "total_latency_ms": 4697.588,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-5286-7ca3-8847-1f64bfb240ac",
+        "turn_number": 7,
+        "total_latency_ms": 3172.108,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26ce-5eeb-76b0-8034-cdefa67eaf06",
+        "turn_number": 8,
+        "total_latency_ms": 3777.523,
+        "total_tokens": 0,
+        "node_traces": []
+      }
+    ],
+    "run_ids": [
+      "019b26cd-fa6c-7fa3-b7b1-f9d9ee2347de",
+      "019b26ce-04eb-7bb2-8887-717ad6f9f1c3",
+      "019b26ce-1153-7bd3-9556-ea5c2cbb29ca",
+      "019b26ce-1e60-71b2-ad81-ac34d67bbdac",
+      "019b26ce-2d76-71f3-a68b-b8eb842beec7",
+      "019b26ce-402c-7fe2-87f1-957b6528ea8b",
+      "019b26ce-5286-7ca3-8847-1f64bfb240ac",
+      "019b26ce-5eeb-76b0-8034-cdefa67eaf06"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant repeatedly mentions that the start date is in the past, which is incorrect as the user specified 2025. This error is repeated in multiple turns, leading to confusion. The assistant also fails to confirm the origin city, which is crucial for booking flights. While it acknowledges vegan meal preferences, it does not provide any actionable steps or confirmations regarding flight or hotel bookings.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The assistant's responses are generally clear, but the repeated incorrect mention of the start date being in the past creates confusion. The structure is consistent, but the repeated errors detract from overall clarity.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The conversation flow is disrupted by the assistant's repeated incorrect assertion about the start date. It fails to smoothly transition to confirming the origin city, which is a necessary step for booking. The assistant does not effectively guide the user towards finalizing the booking.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant includes some necessary details, such as acknowledging vegan meal preferences, but fails to gather critical information like the origin city. It also does not provide any cost estimates or booking confirmations, which are important for the user's request.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.525,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.53",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant correctly extracted the start date as November 10, 2025, but repeatedly mentioned that the date was in the past, which was incorrect. The end date was not explicitly confirmed or extracted.",
+          "details": {
+            "extracted_start_date": "2025-11-10",
+            "extracted_end_date": null,
+            "issues": [
+              "Incorrectly flagged date as past",
+              "End date not confirmed"
+            ]
+          }
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "The conversation did not address any budget constraints, nor was there any mention of budget extraction or adherence.",
+          "details": {
+            "budget_extracted": false,
+            "budget_discussed": false
+          }
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant acknowledged the user's preference for a 5-star hotel and first-class flight. However, it did not confirm these preferences in the final booking steps.",
+          "details": {
+            "preferences_acknowledged": [
+              "5-star hotel",
+              "first-class flight"
+            ],
+            "preferences_confirmed": false
+          }
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant correctly noted the party size of two adults and acknowledged the need for vegan meals. However, it did not confirm these details in the final steps.",
+          "details": {
+            "adults_extracted": 2,
+            "children_extracted": 0,
+            "special_requirements": [
+              "vegan meals"
+            ],
+            "confirmation_issues": [
+              "Details not confirmed in final steps"
+            ]
+          }
+        }
+      ],
+      "overall_score": 0.5,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.50",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant correctly uses the user's input for dates and destination. However, it repeatedly mentions that the start date is in the past, which is incorrect as the user specified 2025. This indicates a misunderstanding or error in processing the date information.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant does not invent any specific details such as prices, flight times, or hotel names. It sticks to the information provided by the user.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant does not hedge when discussing the availability of vegan meal options or the trip details. It should suggest checking availability rather than implying certainty.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The assistant does not clearly distinguish between confirmed facts and suggestions. It repeatedly asks for confirmation of details but does not clarify what is confirmed or what needs further verification.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.775,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.78",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional and respectful tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation did not require any specific travel safety information, such as advisories or health requirements, as it focused on booking logistics. Therefore, the criterion is not applicable.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any unnecessary personal information and handled the user's travel details appropriately. The information requested was relevant to the travel planning process.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics discussed in the conversation. The assistant maintained a neutral and respectful approach throughout.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.95
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant repeatedly flagged the start date as being in the past, which is incorrect since the user specified a future date (November 10, 2025). This indicates a misunderstanding of the date logic.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "The conversation did not address budget considerations at all. There was no discussion of costs, budget allocations, or currency handling.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The itinerary was not fully developed, and no specific activities or travel times were discussed. The assistant did not confirm the origin city, which is crucial for assessing travel feasibility.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant failed to confirm key logistical details such as the origin city and did not address check-in/check-out times or transportation connections. The repeated incorrect flagging of the start date also indicates a lack of coherence.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.375,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.38",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "9f6a9c8c-4e3c-4b0b-9d68-fef8a47d3f5b",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions were not entirely appropriate. The initial intent was identified as 'activities', but the conversation was more focused on booking flights and hotels. The subsequent turns were all routed to 'hotels', which was not entirely accurate as the user also mentioned flights and meal preferences. The system failed to recognize the need to address flight booking and meal preferences specifically.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "State transitions were valid and logical. The trip inputs evolved correctly over the turns, with no unexpected data loss. Additive information was preserved, and there were no invalid state changes detected.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "There was a repeated error message about the start date being in the past, which was incorrect as the date was set for 2025. This was not handled gracefully, and the assistant did not recover from this partial failure, leading to user confusion.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system was inefficient with 72 LLM calls and no cache hits, indicating potential overuse of resources. The response times were not specified as unreasonable, but the lack of caching suggests inefficiency.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.625,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.62",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-16T10:58:06.160725+00:00"
+}

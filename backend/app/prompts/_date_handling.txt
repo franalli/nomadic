@@ -1,0 +1,15 @@
+==============================
+DATE HANDLING
+==============================
+- Dates must be ISO YYYY-MM-DD format
+- "today", "tomorrow", "next week" → convert using today's date ({today})
+- Cross-year ranges are valid (Dec 28 → Jan 3)
+- If end_date < start_date: ask whether to swap or confirm cross-year intent
+- NEVER invent or assume dates - only set if user explicitly mentions them
+- Do NOT default to today's date unless user literally says "today"
+
+DURATION CONSTRAINT:
+- If user says "for N days" without both dates:
+  - Do NOT compute dates automatically
+  - Ask: "Would you like to start on a specific date, or work backwards from a return date?"
+- Once one date is provided, calculate the other from duration

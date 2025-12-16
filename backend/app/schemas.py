@@ -87,6 +87,10 @@ class TilesSearchRequest(BaseModel):
     currency: str = "USD"
     response_mode: str = "estimate_first"
 
+    # Budget constraints for filtering tiles
+    budget: Optional[float] = None  # Total trip budget
+    budget_per_category: Optional[float] = None  # Suggested allocation per category
+
 
 class TilesSearchResponse(BaseModel):
     tiles_request_id: str
@@ -184,7 +188,7 @@ class DocumentBranch(BaseModel):
     adults: Optional[int] = None
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
-    budget: Optional[int] = None
+    budget: Optional[float] = None
     currency: str = "USD"
     is_primary: bool = False
     tiles: BranchTileIds = Field(default_factory=BranchTileIds)
@@ -201,7 +205,7 @@ class DocumentTripInputsPatch(BaseModel):
     adults: Optional[int] = None
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
-    budget: Optional[int] = None
+    budget: Optional[float] = None
     currency: Optional[str] = None
     missing_fields: Optional[List[str]] = None
     multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
@@ -259,7 +263,7 @@ class DocumentTripInputs(BaseModel):
     adults: Optional[int] = None
     children: Optional[int] = None
     requires_assistance: Optional[bool] = None
-    budget: Optional[int] = None
+    budget: Optional[float] = None
     currency: str = "USD"
     missing_fields: List[str] = Field(default_factory=list)
     # Multi-city intent: "multi_city" = one itinerary visiting all destinations
@@ -403,7 +407,6 @@ class GraphPlanObservability(BaseModel):
     model_used: Optional[str] = None
     router_intent: Optional[str] = None
     strategy_topic: Optional[str] = None
-    monolith_used: bool = False
     fallback_to_legacy: bool = False
     today_iso: Optional[str] = None
     ready_to_generate_prev: bool = False

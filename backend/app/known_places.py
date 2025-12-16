@@ -1103,6 +1103,133 @@ _ALL_KNOWN_PLACES_LOWER: FrozenSet[str] = frozenset(p.lower() for p in ALL_KNOWN
 # Mapping from lowercase to canonical form
 _CANONICAL_PLACES: Dict[str, str] = {p.lower(): p for p in ALL_KNOWN_PLACES}
 
+# =============================================================================
+# PLACE SYNONYM NORMALIZATION
+# =============================================================================
+# Maps common abbreviations and alternate names to their canonical forms.
+# This eliminates the need for LLM to handle synonym normalization.
+
+PLACE_SYNONYMS: Dict[str, str] = {
+    # US city abbreviations
+    "nyc": "New York City",
+    "new york city": "New York City",
+    "la": "Los Angeles",
+    "l.a.": "Los Angeles",
+    "sf": "San Francisco",
+    "s.f.": "San Francisco",
+    "dc": "Washington, D.C.",
+    "d.c.": "Washington, D.C.",
+    "washington dc": "Washington, D.C.",
+    "washington d.c.": "Washington, D.C.",
+    "philly": "Philadelphia",
+    "vegas": "Las Vegas",
+    "nola": "New Orleans",
+    "chi-town": "Chicago",
+    "atl": "Atlanta",
+    "bos": "Boston",
+    "dtx": "Dallas",
+    "dfw": "Dallas",
+    # Country abbreviations
+    "uk": "United Kingdom",
+    "u.k.": "United Kingdom",
+    "the uk": "United Kingdom",
+    "britain": "United Kingdom",
+    "great britain": "United Kingdom",
+    "england": "United Kingdom",  # Often used interchangeably
+    "usa": "United States",
+    "u.s.a.": "United States",
+    "u.s.": "United States",
+    "the states": "United States",
+    "america": "United States",
+    "uae": "United Arab Emirates",
+    "u.a.e.": "United Arab Emirates",
+    "the emirates": "United Arab Emirates",
+    # International city abbreviations
+    "cdmx": "Mexico City",
+    "df": "Mexico City",  # Distrito Federal
+    "hk": "Hong Kong",
+    "sg": "Singapore",
+    "bkk": "Bangkok",
+    "kl": "Kuala Lumpur",
+    # Common alternate names
+    "the big apple": "New York City",
+    "city of lights": "Paris",
+    "the city of light": "Paris",
+    "the eternal city": "Rome",
+    "the windy city": "Chicago",
+    "sin city": "Las Vegas",
+    "motor city": "Detroit",
+    "mile high city": "Denver",
+    "the crescent city": "New Orleans",
+    "the bay area": "San Francisco Bay Area",
+    "bay area": "San Francisco Bay Area",
+    "silicon valley": "San Francisco Bay Area",
+    "socal": "Southern California",
+    "norcal": "Northern California",
+    # European variants
+    "munich": "Munich",  # vs München
+    "cologne": "Cologne",  # vs Köln
+    "vienna": "Vienna",  # vs Wien
+    "prague": "Prague",  # vs Praha
+    "warsaw": "Warsaw",  # vs Warszawa
+    "moscow": "Moscow",  # vs Москва
+    "rome": "Rome",  # vs Roma
+    "milan": "Milan",  # vs Milano
+    "florence": "Florence",  # vs Firenze
+    "venice": "Venice",  # vs Venezia
+    "naples": "Naples",  # vs Napoli
+    "lisbon": "Lisbon",  # vs Lisboa
+    "athens": "Athens",  # vs Αθήνα
+    "copenhagen": "Copenhagen",  # vs København
+    # Asian variants
+    "beijing": "Beijing",  # vs Peking
+    "peking": "Beijing",
+    "bombay": "Mumbai",
+    "calcutta": "Kolkata",
+    "madras": "Chennai",
+    "rangoon": "Yangon",
+    "saigon": "Ho Chi Minh City",
+    "canton": "Guangzhou",
+    # Middle East
+    "mecca": "Mecca",  # vs Makkah
+    "makkah": "Mecca",
+}
+
+# Lowercase lookup for case-insensitive matching
+_PLACE_SYNONYMS_LOWER: Dict[str, str] = {k.lower(): v for k, v in PLACE_SYNONYMS.items()}
+
+
+def normalize_place_synonym(place: str) -> str:
+    """
+    Normalize a place name using the synonym map.
+
+    Returns the canonical form if a synonym is found, otherwise the original.
+    """
+    if not place:
+        return place
+    lowered = place.lower().strip()
+    return _PLACE_SYNONYMS_LOWER.get(lowered, place)
+
+
+def normalize_places(places: List[str]) -> List[str]:
+    """
+    Normalize a list of place names, applying synonym mapping.
+
+    Preserves order and removes duplicates after normalization.
+    """
+    if not places:
+        return places
+
+    seen: set[str] = set()
+    result: List[str] = []
+    for place in places:
+        normalized = normalize_place_synonym(place)
+        lower = normalized.lower()
+        if lower not in seen:
+            seen.add(lower)
+            result.append(normalized)
+    return result
+
 
 # =============================================================================
 # AMBIGUOUS ENTITIES

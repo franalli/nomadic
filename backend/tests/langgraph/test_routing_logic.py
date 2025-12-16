@@ -22,7 +22,6 @@ from app.plan_graph import (
     route_after_normalize,
     route_after_required_fields,
     route_after_router,
-    should_use_monolith,
 )
 
 
@@ -212,17 +211,16 @@ class TestRouteAfterNormalize:
 class TestRouteAfterRouter:
     """Tests for route_after_router function."""
 
-    def test_monolith_triggered_on_unknown(self):
-        """Unknown intent should trigger monolith."""
+    def test_unknown_intent_falls_back_to_required_fields(self):
+        """Unknown intent should fall back to required_fields_node."""
         state = GraphState(
             user_text="something random",
             trip_inputs=TripInputs(),
             intent="unknown",
             metadata={},
         )
-        if should_use_monolith(state):
-            result = route_after_router(state)
-            assert result == "monolith_node"
+        result = route_after_router(state)
+        assert result == "required_fields_node"
 
     def test_low_confidence_forces_required_fields(self):
         """Low extraction confidence should force required_fields."""
@@ -300,35 +298,6 @@ class TestRouteAfterRouter:
         )
         result = route_after_router(state)
         assert result == "required_fields_node"
-
-
-class TestShouldUseMonolith:
-    """Tests for should_use_monolith function."""
-
-    def test_unknown_intent_uses_monolith(self):
-        """Unknown intent should use monolith."""
-        state = GraphState(
-            user_text="random gibberish",
-            trip_inputs=TripInputs(),
-            intent="unknown",
-            metadata={},
-        )
-        assert should_use_monolith(state) is True
-
-    def test_known_intent_not_monolith(self):
-        """Known intents should not use monolith."""
-        known_intents = ["required_fields", "flights", "hotels", "transport", "activities"]
-        for intent in known_intents:
-            state = GraphState(
-                user_text="test",
-                trip_inputs=TripInputs(),
-                intent=intent,
-                metadata={},
-            )
-            # Known intents should not trigger monolith (unless other conditions)
-            # Note: should_use_monolith may have other conditions
-            result = should_use_monolith(state)
-            assert isinstance(result, bool)
 
 
 class TestConfidenceThreshold:

@@ -1,5 +1,3 @@
-{% include "shared_style.txt" %}
-
 ==============================
 READY STATE PHASE
 ==============================
@@ -11,20 +9,29 @@ Current trip:
 - Origin: {origin}
 - Start date: {start_date}
 - End date: {end_date}
+- Budget: {budget} {currency}
 
 ==============================
 CONFIRMATION MESSAGE
 ==============================
-Match user energy level:
+Match user energy level. ALWAYS paraphrase the trip naturally - never output raw field values.
 
 Quick booker:
-"✈️ {origin} to {destinations}, {start_date}—all set. Ready to generate?"
+"✈️ [origin] to [main destination]—[formatted dates]. Ready to generate?"
+Example: "✈️ New York to Paris, March 15-20—all set. Ready to generate?"
 
 Planner:
-"{origin} to {destinations}, {start_date}. Good timing for the weather. Ready to see your options?"
+"Your trip from [origin] to [main destination], [formatted dates]. Good timing! Ready to see your options?"
+Example: "Your trip from New York to Paris, March 15-20. Good timing for spring weather! Ready to see your options?"
 
 Enthusiastic:
-"🌴 {origin} to {destinations}, {start_date}—you're all set! Ready to see the plan?"
+"🌴 [origin] to [main destination]—[formatted dates]! You're all set. Ready to see the plan?"
+
+IMPORTANT:
+- Format destinations naturally: "Paris" not "romantic trip to Paris, Paris"
+- If multiple destinations, use "starting in [first], then [second]..."
+- Never output raw comma-joined destination lists
+- If budget is specified, confirm: "within your $X budget"
 
 ==============================
 OPTIONAL ADDITIONS

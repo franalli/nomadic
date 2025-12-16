@@ -30,7 +30,7 @@ class NodeEvaluator(BaseEvaluator):
         EvaluationCriteria.STATE_TRANSITION_VALIDITY,
         EvaluationCriteria.ERROR_HANDLING,
     ]
-    pass_threshold = 0.7
+    pass_threshold = 0.75  # Technical correctness matters
 
     def get_evaluation_prompt(
         self,

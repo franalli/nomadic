@@ -1,0 +1,1090 @@
+{
+  "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+  "thread_id": "e6e9d434-4c03-4af9-8439-de4a35723987",
+  "scenario_goal": "Plan a luxury multi-city trip with specific high-end preferences",
+  "scenario_constraints": {
+    "budget": "null",
+    "dates": "flexible March 2030",
+    "preferences": [
+      "first class flights",
+      "5-star hotels",
+      "gourmet dining"
+    ],
+    "avoid": [
+      "long layovers"
+    ],
+    "party_size": "2 adults",
+    "special_requirements": [
+      "dietary: vegan"
+    ]
+  },
+  "conversation": {
+    "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+    "thread_id": "e6e9d434-4c03-4af9-8439-de4a35723987",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hello, I'd like to plan a luxury trip to Europe spanning multiple cities. Can you assist?",
+        "assistant_message": "Luxury trip to Europe\u2014exciting! Which cities are you considering visiting?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities"
+          ],
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Singapore",
+          "Barcelona, Spain",
+          "Rome, Italy"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-2768-7cf2-be13-0bab090f1af5",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 2,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 2890.00000001397
+      },
+      {
+        "turn_number": 2,
+        "user_message": "I'm thinking of starting in Paris and then visiting Rome and Barcelona. First-class travel and top-notch hotels are a must.",
+        "assistant_message": "Starting in **Paris** and then visiting **Rome** and **Barcelona**\u2014great itinerary! For first-class travel and top-notch hotels, I can help with that. When are you planning to go?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona"
+          ],
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udfdb\ufe0f 3db\u000fe0f culture",
+              "\ud83c\udf5d 5d food",
+              "\ud83c\udfdb\ufe0f 3a8 art"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 30, 2025",
+          "January 15, 2026",
+          "February 14, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-32ab-7fa3-adff-b2956a80f845",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 4,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3907.0000000065193
+      },
+      {
+        "turn_number": 3,
+        "user_message": "I have dietary preferences - vegan options only. Could you make sure any hotel or restaurant bookings accommodate this?",
+        "assistant_message": "Vegan options noted for your trip. I'll ensure any hotel or restaurant bookings accommodate your dietary preferences. Is there anything else you'd like to add or confirm for your trip?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona"
+          ],
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f food"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Dubai",
+          "From Sydney",
+          "From Singapore"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-41f0-7a12-877b-da8efd9dc8fd",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3389.999999984866
+      },
+      {
+        "turn_number": 4,
+        "user_message": "Oh, and I prefer to avoid any long layovers, if possible.",
+        "assistant_message": "Noted\u2014avoiding long layovers is a great preference. Let's keep that in mind as we plan your trip. What destinations are you considering?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona"
+          ],
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f food"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Paris, France",
+          "Tokyo, Japan",
+          "Singapore"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-4f38-7132-937e-16e888980a3e",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 8,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3391.0000000032596
+      },
+      {
+        "turn_number": 5,
+        "user_message": "I'm flexible with the dates as long as it's in March 2030. Could you handle currency and exchange considerations too?",
+        "assistant_message": "March 2030\u2014great timeframe! I can help with currency and exchange details for your destinations. Which cities are you considering for your trip?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona"
+          ],
+          "start_date": "2030-03-01",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f food"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Singapore",
+          "Rome, Italy",
+          "Dubai"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-5c6e-7703-aeee-8a36ccd81809",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 10,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3687.000000005355
+      },
+      {
+        "turn_number": 6,
+        "user_message": "How soon can you provide me with a proposed itinerary?",
+        "assistant_message": "To create a proposed itinerary, I just need a few details. You've mentioned traveling to **Europe** with stops in **Paris**, **Rome**, and **Barcelona** starting on **March 1, 2030**. Can you confirm where you're flying from?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona"
+          ],
+          "start_date": "2030-03-01",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f food"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From New York",
+          "From London",
+          "From Sydney"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-6ade-71f2-ab3d-91d3f3e9f7a3",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4562.999999994645
+      },
+      {
+        "turn_number": 7,
+        "user_message": "Also, could you include recommendations for gourmet dining options in each city?",
+        "assistant_message": "Gourmet dining options noted! I'll include those for each city. Just to confirm, your destinations are **Paris**, **Rome**, and **Barcelona**. Is that correct?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona",
+            "each city"
+          ],
+          "start_date": "2030-03-01",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f food"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Yes, those cities!",
+          "Just those three."
+        ],
+        "errors": [],
+        "run_id": "019b26d3-7cac-7043-95e7-65765be1f6a8",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 14,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4078.0000000086147
+      },
+      {
+        "turn_number": 8,
+        "user_message": "Thank you! Looking forward to seeing the proposed plan.",
+        "assistant_message": "Great to hear! Let's finalize your trip details first. I see you're interested in **Europe spanning multiple cities** starting on **March 1, 2030**. Could you let me know which cities you'd like to include?",
+        "trip_inputs": {
+          "destinations": [
+            "Europe spanning multiple cities",
+            "Paris",
+            "Rome",
+            "Barcelona",
+            "each city"
+          ],
+          "start_date": "2030-03-01",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f food"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Barcelona, Spain",
+          "Rome, Italy",
+          "New York"
+        ],
+        "errors": [],
+        "run_id": "019b26d3-8c96-7470-9093-eaf40ba073dd",
+        "router_intent": "activities",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 16,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4328.000000008615
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Europe spanning multiple cities",
+          "Paris",
+          "Rome",
+          "Barcelona",
+          "each city"
+        ],
+        "origin": null,
+        "start_date": "2030-03-01",
+        "end_date": null,
+        "adults": null,
+        "children": null,
+        "requires_assistance": null,
+        "budget": null,
+        "currency": null,
+        "multi_city_intent": null,
+        "booking_types": {
+          "activities": true
+        },
+        "flight_settings": {},
+        "hotel_settings": {},
+        "activity_settings": {
+          "categories": [
+            "\ud83c\udf7d\ufe0f food"
+          ]
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+        "test_run": true,
+        "today_iso": "2025-12-16",
+        "user_tone": "neutral",
+        "intent_turn_count": 2,
+        "user_intent": "undecided",
+        "intent_confidence": 1.0,
+        "extraction_confidence": {
+          "overall": 0.3,
+          "level": "low",
+          "method": "regex",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": "en",
+          "low_confidence_reasons": [
+            "no_entities_extracted"
+          ],
+          "typo_suggestions": {}
+        },
+        "node_tokens": {
+          "router": 9486,
+          "specialist:required_fields": 17724
+        },
+        "total_tokens": 27210,
+        "node_models": {
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 16,
+        "router_notes": "Exploring food activities in multiple cities.",
+        "router_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 141,
+        "polish_skipped_reason": "timeout",
+        "user_intent_hint": "undecided",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "activities"
+      },
+      "flags": {},
+      "last_summary": "Great to hear! Let's finalize your trip details first. I see you're interested in **Europe spanning multiple cities** starting on **March 1, 2030**. Could you let me know which cities you'd like to include?",
+      "branches": [],
+      "suggested_responses": [
+        "Barcelona, Spain",
+        "Rome, Italy",
+        "New York"
+      ],
+      "errors": [],
+      "thread_id": "e6e9d434-4c03-4af9-8439-de4a35723987",
+      "router_intent": "activities",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 16,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 30234.000000025844,
+    "total_llm_calls": 72,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b26d3-2768-7cf2-be13-0bab090f1af5",
+      "019b26d3-32ab-7fa3-adff-b2956a80f845",
+      "019b26d3-41f0-7a12-877b-da8efd9dc8fd",
+      "019b26d3-4f38-7132-937e-16e888980a3e",
+      "019b26d3-5c6e-7703-aeee-8a36ccd81809",
+      "019b26d3-6ade-71f2-ab3d-91d3f3e9f7a3",
+      "019b26d3-7cac-7043-95e7-65765be1f6a8",
+      "019b26d3-8c96-7470-9093-eaf40ba073dd"
+    ],
+    "started_at": "2025-12-16T11:02:11.045476+00:00",
+    "completed_at": "2025-12-16T11:02:41.279756+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "llm_timeout_monolith": 20.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "required_fields",
+      "hotels",
+      "activities",
+      "activities",
+      "activities",
+      "activities",
+      "activities",
+      "activities"
+    ]
+  },
+  "summary": {
+    "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+    "thread_id": "e6e9d434-4c03-4af9-8439-de4a35723987",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hello, I'd like to plan a luxury trip to Europe spanning multiple cities. Can you assist?"
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Luxury trip to Europe\u2014exciting! Which cities are you considering visiting?"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "I'm thinking of starting in Paris and then visiting Rome and Barcelona. First-class travel and top-notch hotels are a must."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "Starting in **Paris** and then visiting **Rome** and **Barcelona**\u2014great itinerary! For first-class travel and top-notch hotels, I can help with that. When are you planning to go?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "I have dietary preferences - vegan options only. Could you make sure any hotel or restaurant bookings accommodate this?"
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "Vegan options noted for your trip. I'll ensure any hotel or restaurant bookings accommodate your dietary preferences. Is there anything else you'd like to add or confirm for your trip?"
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "Oh, and I prefer to avoid any long layovers, if possible."
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Noted\u2014avoiding long layovers is a great preference. Let's keep that in mind as we plan your trip. What destinations are you considering?"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "I'm flexible with the dates as long as it's in March 2030. Could you handle currency and exchange considerations too?"
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "March 2030\u2014great timeframe! I can help with currency and exchange details for your destinations. Which cities are you considering for your trip?"
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "How soon can you provide me with a proposed itinerary?"
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "To create a proposed itinerary, I just need a few details. You've mentioned traveling to **Europe** with stops in **Paris**, **Rome**, and **Barcelona** starting on **March 1, 2030**. Can you confirm where you're flying from?"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "Also, could you include recommendations for gourmet dining options in each city?"
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "Gourmet dining options noted! I'll include those for each city. Just to confirm, your destinations are **Paris**, **Rome**, and **Barcelona**. Is that correct?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "Thank you! Looking forward to seeing the proposed plan."
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "Great to hear! Let's finalize your trip details first. I see you're interested in **Europe spanning multiple cities** starting on **March 1, 2030**. Could you let me know which cities you'd like to include?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Europe spanning multiple cities",
+        "Paris",
+        "Rome",
+        "Barcelona",
+        "each city"
+      ],
+      "start_date": "2030-03-01",
+      "booking_types": {
+        "activities": true
+      },
+      "flight_settings": {},
+      "hotel_settings": {},
+      "activity_settings": {
+        "categories": [
+          "\ud83c\udf7d\ufe0f food"
+        ]
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "destinations",
+        "before": [
+          "Europe spanning multiple cities"
+        ],
+        "after": [
+          "Europe spanning multiple cities",
+          "Paris",
+          "Rome",
+          "Barcelona"
+        ],
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "booking_types",
+        "before": {},
+        "after": {
+          "activities": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "activity_settings",
+        "before": {
+          "categories": []
+        },
+        "after": {
+          "categories": [
+            "\ud83c\udfdb\ufe0f 3db\u000fe0f culture",
+            "\ud83c\udf5d 5d food",
+            "\ud83c\udfdb\ufe0f 3a8 art"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "activity_settings",
+        "before": {
+          "categories": [
+            "\ud83c\udfdb\ufe0f 3db\u000fe0f culture",
+            "\ud83c\udf5d 5d food",
+            "\ud83c\udfdb\ufe0f 3a8 art"
+          ]
+        },
+        "after": {
+          "categories": [
+            "\ud83c\udf7d\ufe0f food"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 5,
+        "field": "start_date",
+        "before": null,
+        "after": "2030-03-01",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 7,
+        "field": "destinations",
+        "before": [
+          "Europe spanning multiple cities",
+          "Paris",
+          "Rome",
+          "Barcelona"
+        ],
+        "after": [
+          "Europe spanning multiple cities",
+          "Paris",
+          "Rome",
+          "Barcelona",
+          "each city"
+        ],
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "activities",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 8,
+    "total_llm_calls": 72,
+    "total_cache_hits": 0,
+    "total_duration_ms": 30234.000000025844,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [
+      {
+        "run_id": "019b26d3-2768-7cf2-be13-0bab090f1af5",
+        "turn_number": 1,
+        "total_latency_ms": 2882.882,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-32ab-7fa3-adff-b2956a80f845",
+        "turn_number": 2,
+        "total_latency_ms": 3907.158,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-41f0-7a12-877b-da8efd9dc8fd",
+        "turn_number": 3,
+        "total_latency_ms": 3396.2059999999997,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-4f38-7132-937e-16e888980a3e",
+        "turn_number": 4,
+        "total_latency_ms": 3376.991,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-5c6e-7703-aeee-8a36ccd81809",
+        "turn_number": 5,
+        "total_latency_ms": 3694.5299999999997,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-6ade-71f2-ab3d-91d3f3e9f7a3",
+        "turn_number": 6,
+        "total_latency_ms": 4556.312,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-7cac-7043-95e7-65765be1f6a8",
+        "turn_number": 7,
+        "total_latency_ms": 4075.0299999999997,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b26d3-8c96-7470-9093-eaf40ba073dd",
+        "turn_number": 8,
+        "total_latency_ms": 4331.468,
+        "total_tokens": 0,
+        "node_traces": []
+      }
+    ],
+    "run_ids": [
+      "019b26d3-2768-7cf2-be13-0bab090f1af5",
+      "019b26d3-32ab-7fa3-adff-b2956a80f845",
+      "019b26d3-41f0-7a12-877b-da8efd9dc8fd",
+      "019b26d3-4f38-7132-937e-16e888980a3e",
+      "019b26d3-5c6e-7703-aeee-8a36ccd81809",
+      "019b26d3-6ade-71f2-ab3d-91d3f3e9f7a3",
+      "019b26d3-7cac-7043-95e7-65765be1f6a8",
+      "019b26d3-8c96-7470-9093-eaf40ba073dd"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant's responses were partially helpful but lacked actionable details. It repeatedly asked for the same information (e.g., destinations) and did not provide specific travel information or suggestions. The assistant should have acknowledged the user's preferences and provided more concrete steps or options for planning the trip.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The language used was generally clear and professional, but there were instances of repetition and lack of clarity, such as asking for destinations multiple times. The assistant should ensure that it retains and builds upon previously provided information to avoid confusion.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.4,
+          "passed": false,
+          "feedback": "The conversation flow was disrupted by repeated requests for the same information and lack of progression in the planning process. The assistant failed to effectively guide the user through the planning stages, leading to a disjointed conversation.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The level of detail was insufficient for a luxury trip planning scenario. The assistant did not provide specific options or details about first-class travel, top-notch hotels, or gourmet dining, which are crucial for the user's high-end preferences.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.5,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.50",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant correctly identified March 2030 as the timeframe but incorrectly assumed a start date of March 1, 2030, without explicit confirmation from the user. The user specified flexibility within March, not a specific start date.",
+          "details": {
+            "user_specified_dates": "flexible March 2030",
+            "assistant_assumed_start_date": "March 1, 2030"
+          }
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The user did not specify a budget, and the assistant did not address budget considerations. Currency and exchange considerations were acknowledged but not detailed.",
+          "details": {
+            "user_specified_budget": "null",
+            "assistant_response": "Acknowledged currency and exchange considerations"
+          }
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant acknowledged the user's preferences for first-class flights, 5-star hotels, and gourmet dining. It also noted the preference to avoid long layovers and vegan dietary requirements.",
+          "details": {
+            "preferences": [
+              "first class flights",
+              "5-star hotels",
+              "gourmet dining",
+              "avoid long layovers",
+              "vegan dietary requirements"
+            ],
+            "assistant_acknowledgment": true
+          }
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not explicitly confirm the party size of 2 adults, nor did it address any special accommodations for the group size. However, it did acknowledge the vegan dietary requirement.",
+          "details": {
+            "user_specified_party_size": "2 adults",
+            "assistant_acknowledgment": "Vegan dietary requirement noted"
+          }
+        }
+      ],
+      "overall_score": 0.575,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.57",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant generally sticks to the user's input, but it incorrectly assumes a start date of March 1, 2030, which the user did not specify. This assumption is not grounded in the user's input.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The assistant avoids inventing specific details such as prices, flight times, or hotel names. However, it did assume a specific start date without user confirmation.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant does not hedge when it assumes the start date of March 1, 2030. It should have asked for confirmation or used hedging language to indicate uncertainty.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.85,
+          "passed": true,
+          "feedback": "The assistant generally distinguishes between suggestions and facts, but the assumption of a start date could have been better clarified as needing confirmation.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.8125,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.81",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional and respectful tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation did not require specific travel safety information as it focused on itinerary planning. No safety considerations were relevant to the context provided.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any unnecessary personal information and handled the user's preferences appropriately. The information requested was relevant to the travel planning process.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics discussed in the conversation. The assistant maintained a neutral and respectful approach throughout.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.95
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the user's flexible travel dates in March 2030 but did not confirm or calculate a specific trip duration. The assistant assumed a start date of March 1, 2030, without user confirmation. No end date was discussed or calculated.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "The conversation did not address budget considerations at all, despite the user's request for luxury travel. There was no discussion of currency handling or budget allocations.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the cities of Paris, Rome, and Barcelona, which are geographically feasible to visit in sequence. However, no specific travel times or connections were discussed, and the assistant did not generate any itinerary branches.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant noted the user's preferences for vegan options and avoiding long layovers, which are important logistical details. However, there was no discussion of check-in/check-out times, transportation connections, or seasonal appropriateness.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.375,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.38",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "132975ab-c2d4-4b8a-bb99-0a8dd9c7b9ed",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions were not entirely appropriate. The initial intent 'required_fields' was correct, but subsequent turns should have been routed to 'flights' or 'hotels' when the user mentioned first-class travel and top-notch hotels. The repeated use of 'activities' intent was not suitable for all user inputs, such as when discussing dietary preferences or avoiding layovers.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 0.75,
+          "passed": true,
+          "feedback": "State transitions were mostly valid and logical. The destinations and booking types were updated correctly. However, there was an unnecessary addition of 'each city' to the destinations, which could lead to confusion.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "No errors were encountered during the conversation, and the system handled the user's requests without any failures.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system was not efficient, as indicated by the high number of LLM calls (72) and the lack of cache hits. This suggests that the system could benefit from better caching strategies to reduce redundant processing.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.6875,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.69",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-16T11:03:55.614670+00:00"
+}

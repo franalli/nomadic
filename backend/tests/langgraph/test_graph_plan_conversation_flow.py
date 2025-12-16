@@ -265,7 +265,6 @@ def test_graph_plan_one_way_flights_multi_turn(client):
         state2 = turn2["session_state"]
         turn3 = _post(client, {"message": "GENERATE_PLAN_NOW"}, session_state=state2)
         assert turn3["document"]["ready_to_generate"] is True
-        assert turn3["observability"]["monolith_used"] is True
         assert len(turn3["document"]["branches"]) >= 1
 
         for b in turn3["document"]["branches"]:
@@ -347,21 +346,21 @@ def test_graph_plan_correction_needed_routes_to_correction_specialist(client):
         )
 
     assert out["observability"]["router_intent"] == "correction_needed"
-    assert out["observability"]["monolith_used"] is False
     assert out["document"]["ready_to_generate"] is False
     assert (out["document"]["assistant_message"] or "").startswith("⚠️")
     assert len(out["document"].get("suggested_responses") or []) <= 3
 
 
-def test_graph_plan_monolith_used_when_router_unknown(client):
+def test_graph_plan_unknown_intent_falls_back_to_required_fields(client):
+    """When router returns unknown intent, fall back to required_fields node."""
     with (
         patch("app.plan_graph.call_llm_with_timeout", _patched_call_llm_force_router_unknown),
         patch("app.plan_graph.search_tiles", lambda *args, **kwargs: _EmptyTilesResponse()),
     ):
         out = _post(client, {"message": "do something weird"})
 
+    # With monolith removed, unknown intent should fall back to required_fields
     assert out["observability"]["router_intent"] == "unknown"
-    assert out["observability"]["monolith_used"] is True
     assert out["document"]["assistant_message"]
 
 

@@ -1,0 +1,1208 @@
+{
+  "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+  "thread_id": "d358fc31-899d-4eeb-86ad-832a36d96582",
+  "scenario_goal": "Book a luxurious vacation to Bora Bora for relaxation and leisure",
+  "scenario_constraints": {
+    "budget": null,
+    "dates": "December 15th to December 22nd, 2023",
+    "preferences": [
+      "5-star hotels",
+      "private beach",
+      "spa facilities"
+    ],
+    "avoid": [
+      "crowded areas"
+    ],
+    "party_size": "2 adults",
+    "special_requirements": [
+      "vegan meals"
+    ]
+  },
+  "conversation": {
+    "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+    "thread_id": "d358fc31-899d-4eeb-86ad-832a36d96582",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hi, I'd like to plan a trip to Bora Bora in December.",
+        "assistant_message": "Bora Bora in December offers warm waters and vibrant marine life, perfect for **Open Water certified** divers. Expect good visibility and calm conditions, ideal for both shore and boat dives. Ensure you have appropriate dive insurance and adhere to safety protocols.",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora"
+          ],
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Open Water certified",
+          "Prefer boat dives",
+          "Max 18m depth"
+        ],
+        "errors": [],
+        "run_id": "019b2705-4d08-7ca0-a7fd-e956fc0a946c",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 2,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5827.999999979511
+      },
+      {
+        "turn_number": 2,
+        "user_message": "We are thinking of staying at a top resort with private beach access.",
+        "assistant_message": "Staying at a top resort with private beach access is ideal for your diving trip, especially for easy shore dives right from the beach. This setup allows for convenient access to the water and a relaxed atmosphere between dives.",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort"
+          ],
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Open Water certified",
+          "Prefer boat dives",
+          "Max 18m depth"
+        ],
+        "errors": [],
+        "run_id": "019b2705-63d0-7d60-bf85-2fec162cff61",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 4,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5109.000000025844
+      },
+      {
+        "turn_number": 3,
+        "user_message": "Our dates are December 15th to the 22nd.",
+        "assistant_message": "December 15-22\u2014great! Where are you flying from? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort"
+          ],
+          "start_date": "2025-12-15",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Paris",
+          "From Hong Kong",
+          "From Berlin"
+        ],
+        "errors": [],
+        "run_id": "019b2705-77c0-7fa1-a90a-12344fe13992",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3187.999999994645
+      },
+      {
+        "turn_number": 4,
+        "user_message": "Could you look into options with spa facilities as well?",
+        "assistant_message": "Spa options noted. Would you like to focus on resorts in **Bora Bora** that offer spa facilities? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort"
+          ],
+          "start_date": "2025-12-15",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6 beach",
+              "\ud83d\udc86 spa"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Hong Kong",
+          "From Dubai",
+          "From Sydney"
+        ],
+        "errors": [],
+        "run_id": "019b2705-843f-70a2-9d1d-1009ad81f7f8",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 8,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4202.999999979511
+      },
+      {
+        "turn_number": 5,
+        "user_message": "Please ensure vegan meals are available.",
+        "assistant_message": "Noted\u2014I'll make sure vegan meal options are included in your trip planning. Is there anything else you'd like to add or confirm? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort"
+          ],
+          "start_date": "2025-12-15",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach",
+              "\ud83d\udc86 spa"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Singapore",
+          "From Dubai",
+          "From Berlin"
+        ],
+        "errors": [],
+        "run_id": "019b2705-94a4-7183-9aba-61aeaa1fc9b9",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 10,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3750.0
+      },
+      {
+        "turn_number": 6,
+        "user_message": "We prefer not to be in crowded areas.",
+        "assistant_message": "For your diving trip, I recommend focusing on less crowded dive sites around Bora Bora, which can offer stunning coral reefs and diverse marine life. Perfect for **Open Water certified** divers, you can enjoy up to **2 dives per day** at depths of up to **18 meters**. Ensure to adhere to safety practices, including **no-fly time** and **surface intervals**. The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort",
+            "crowded areas"
+          ],
+          "start_date": "2025-12-15",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach",
+              "\ud83d\udc86 spa"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Open Water certified",
+          "Prefer boat dives",
+          "Max 18m depth"
+        ],
+        "errors": [],
+        "run_id": "019b2705-a34b-7a02-8873-13553c6889c6",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 7719.000000011874
+      },
+      {
+        "turn_number": 7,
+        "user_message": "Cost isn't a major concern, we prioritize experience.",
+        "assistant_message": "Experience-focused travel\u2014great mindset! Let's ensure you have an unforgettable trip. What destinations are you considering? The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort",
+            "crowded areas"
+          ],
+          "start_date": "2025-12-15",
+          "booking_types": {
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach",
+              "\ud83d\udc86 spa"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "open_water",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Dubai",
+          "London",
+          "Barcelona, Spain"
+        ],
+        "errors": [],
+        "run_id": "019b2705-c169-7ac1-9ca2-6082389f6c85",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 14,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5155.999999988126
+      },
+      {
+        "turn_number": 8,
+        "user_message": "Could you book flights in first class for us?",
+        "assistant_message": "I can assist with diving arrangements, but I cannot book flights directly. Please confirm your flight preferences or any specific requirements for your diving trip. The start date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "Bora Bora",
+            "a top resort",
+            "crowded areas",
+            "first class"
+          ],
+          "start_date": "2025-12-15",
+          "booking_types": {
+            "activities": true,
+            "flights": true
+          },
+          "flight_settings": {
+            "cabin_class": "first"
+          },
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": [
+              "\ud83e\udd3f diving",
+              "\ud83c\udfd6\ufe0f beach",
+              "\ud83d\udc86 spa"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {
+            "diving": {
+              "certification": "none|open_water|advanced|rescue",
+              "preferred_depth_m": 18,
+              "dives_per_day": 2,
+              "shore_or_boat": "shore|boat|either",
+              "safety": "no-fly time, surface intervals",
+              "notes": "short"
+            }
+          }
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Open Water certified",
+          "Prefer boat dives",
+          "Max 18m depth"
+        ],
+        "errors": [],
+        "run_id": "019b2705-d58e-7411-95a5-e948a0a89a2e",
+        "router_intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit_type": null,
+        "llm_calls_made": 16,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5203.000000008615
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Bora Bora",
+          "a top resort",
+          "crowded areas",
+          "first class"
+        ],
+        "origin": null,
+        "start_date": "2025-12-15",
+        "end_date": null,
+        "adults": null,
+        "children": null,
+        "requires_assistance": null,
+        "budget": null,
+        "currency": null,
+        "multi_city_intent": null,
+        "booking_types": {
+          "activities": true,
+          "flights": true
+        },
+        "flight_settings": {
+          "cabin_class": "first"
+        },
+        "hotel_settings": {},
+        "activity_settings": {
+          "categories": [
+            "\ud83e\udd3f diving",
+            "\ud83c\udfd6\ufe0f beach",
+            "\ud83d\udc86 spa"
+          ]
+        },
+        "transport_settings": {},
+        "strategy_settings": {
+          "diving": {
+            "certification": "none|open_water|advanced|rescue",
+            "preferred_depth_m": 18,
+            "dives_per_day": 2,
+            "shore_or_boat": "shore|boat|either",
+            "safety": "no-fly time, surface intervals",
+            "notes": "short"
+          }
+        }
+      },
+      "metadata": {
+        "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+        "test_run": true,
+        "today_iso": "2025-12-16",
+        "user_tone": "neutral",
+        "intent_turn_count": 1,
+        "user_intent": "undecided",
+        "intent_confidence": 1.0,
+        "extraction_confidence": {
+          "overall": 0.5,
+          "level": "medium",
+          "method": "regex",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": "en",
+          "low_confidence_reasons": [],
+          "typo_suggestions": {}
+        },
+        "node_tokens": {
+          "router": 9887,
+          "strategy:diving": 3579,
+          "specialist:required_fields": 8821
+        },
+        "total_tokens": 22287,
+        "node_models": {
+          "router": "gpt-4o-mini",
+          "strategy:diving": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 16,
+        "router_notes": "Planning diving activities in Bora Bora.",
+        "router_confidence": 1.0,
+        "model_used": "medium",
+        "token_estimate": 150,
+        "polish_skipped_reason": "timeout",
+        "polish_duration_ms": 200,
+        "user_intent_hint": "undecided",
+        "no_progress_turns": 0,
+        "last_intent": "strategy"
+      },
+      "flags": {},
+      "last_summary": "I can assist with diving arrangements, but I cannot book flights directly. Please confirm your flight preferences or any specific requirements for your diving trip. The start date is in the past. Want to update it?",
+      "branches": [],
+      "suggested_responses": [
+        "Open Water certified",
+        "Prefer boat dives",
+        "Max 18m depth"
+      ],
+      "errors": [],
+      "thread_id": "d358fc31-899d-4eeb-86ad-832a36d96582",
+      "router_intent": "strategy",
+      "strategy_topic": "diving",
+      "short_circuit_type": null,
+      "llm_calls_made": 16,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 40155.999999988126,
+    "total_llm_calls": 72,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b2705-4d08-7ca0-a7fd-e956fc0a946c",
+      "019b2705-63d0-7d60-bf85-2fec162cff61",
+      "019b2705-77c0-7fa1-a90a-12344fe13992",
+      "019b2705-843f-70a2-9d1d-1009ad81f7f8",
+      "019b2705-94a4-7183-9aba-61aeaa1fc9b9",
+      "019b2705-a34b-7a02-8873-13553c6889c6",
+      "019b2705-c169-7ac1-9ca2-6082389f6c85",
+      "019b2705-d58e-7411-95a5-e948a0a89a2e"
+    ],
+    "started_at": "2025-12-16T11:56:57.478619+00:00",
+    "completed_at": "2025-12-16T11:57:37.628398+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "llm_timeout_monolith": 20.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "strategy",
+      "strategy",
+      "strategy",
+      "strategy",
+      "strategy",
+      "strategy",
+      "strategy",
+      "strategy"
+    ]
+  },
+  "summary": {
+    "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+    "thread_id": "d358fc31-899d-4eeb-86ad-832a36d96582",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hi, I'd like to plan a trip to Bora Bora in December."
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Bora Bora in December offers warm waters and vibrant marine life, perfect for **Open Water certified** divers. Expect good visibility and calm conditions, ideal for both shore and boat dives. Ensure you have appropriate dive insurance and adhere to safety protocols."
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "We are thinking of staying at a top resort with private beach access."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "Staying at a top resort with private beach access is ideal for your diving trip, especially for easy shore dives right from the beach. This setup allows for convenient access to the water and a relaxed atmosphere between dives."
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "Our dates are December 15th to the 22nd."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "December 15-22\u2014great! Where are you flying from? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "Could you look into options with spa facilities as well?"
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Spa options noted. Would you like to focus on resorts in **Bora Bora** that offer spa facilities? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "Please ensure vegan meals are available."
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "Noted\u2014I'll make sure vegan meal options are included in your trip planning. Is there anything else you'd like to add or confirm? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "We prefer not to be in crowded areas."
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "For your diving trip, I recommend focusing on less crowded dive sites around Bora Bora, which can offer stunning coral reefs and diverse marine life. Perfect for **Open Water certified** divers, you can enjoy up to **2 dives per day** at depths of up to **18 meters**. Ensure to adhere to safety practices, including **no-fly time** and **surface intervals**. The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "Cost isn't a major concern, we prioritize experience."
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "Experience-focused travel\u2014great mindset! Let's ensure you have an unforgettable trip. What destinations are you considering? The start date is in the past. Want to update it?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "Could you book flights in first class for us?"
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "I can assist with diving arrangements, but I cannot book flights directly. Please confirm your flight preferences or any specific requirements for your diving trip. The start date is in the past. Want to update it?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Bora Bora",
+        "a top resort",
+        "crowded areas",
+        "first class"
+      ],
+      "start_date": "2025-12-15",
+      "booking_types": {
+        "activities": true,
+        "flights": true
+      },
+      "flight_settings": {
+        "cabin_class": "first"
+      },
+      "hotel_settings": {},
+      "activity_settings": {
+        "categories": [
+          "\ud83e\udd3f diving",
+          "\ud83c\udfd6\ufe0f beach",
+          "\ud83d\udc86 spa"
+        ]
+      },
+      "transport_settings": {},
+      "strategy_settings": {
+        "diving": {
+          "certification": "none|open_water|advanced|rescue",
+          "preferred_depth_m": 18,
+          "dives_per_day": 2,
+          "shore_or_boat": "shore|boat|either",
+          "safety": "no-fly time, surface intervals",
+          "notes": "short"
+        }
+      }
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "destinations",
+        "before": [
+          "Bora Bora"
+        ],
+        "after": [
+          "Bora Bora",
+          "a top resort"
+        ],
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "start_date",
+        "before": null,
+        "after": "2025-12-15",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "activity_settings",
+        "before": {
+          "categories": [
+            "\ud83e\udd3f diving",
+            "\ud83c\udfd6\ufe0f beach"
+          ]
+        },
+        "after": {
+          "categories": [
+            "\ud83e\udd3f diving",
+            "\ud83c\udfd6 beach",
+            "\ud83d\udc86 spa"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 5,
+        "field": "activity_settings",
+        "before": {
+          "categories": [
+            "\ud83e\udd3f diving",
+            "\ud83c\udfd6 beach",
+            "\ud83d\udc86 spa"
+          ]
+        },
+        "after": {
+          "categories": [
+            "\ud83e\udd3f diving",
+            "\ud83c\udfd6\ufe0f beach",
+            "\ud83d\udc86 spa"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 6,
+        "field": "destinations",
+        "before": [
+          "Bora Bora",
+          "a top resort"
+        ],
+        "after": [
+          "Bora Bora",
+          "a top resort",
+          "crowded areas"
+        ],
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 8,
+        "field": "destinations",
+        "before": [
+          "Bora Bora",
+          "a top resort",
+          "crowded areas"
+        ],
+        "after": [
+          "Bora Bora",
+          "a top resort",
+          "crowded areas",
+          "first class"
+        ],
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 8,
+        "field": "booking_types",
+        "before": {
+          "activities": true
+        },
+        "after": {
+          "activities": true,
+          "flights": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 8,
+        "field": "flight_settings",
+        "before": {},
+        "after": {
+          "cabin_class": "first"
+        },
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "strategy",
+        "strategy_topic": "diving",
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 8,
+    "total_llm_calls": 72,
+    "total_cache_hits": 0,
+    "total_duration_ms": 40155.999999988126,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [
+      {
+        "run_id": "019b2705-4d08-7ca0-a7fd-e956fc0a946c",
+        "turn_number": 1,
+        "total_latency_ms": 5832.434,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-63d0-7d60-bf85-2fec162cff61",
+        "turn_number": 2,
+        "total_latency_ms": 5099.601,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-77c0-7fa1-a90a-12344fe13992",
+        "turn_number": 3,
+        "total_latency_ms": 3189.817,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-843f-70a2-9d1d-1009ad81f7f8",
+        "turn_number": 4,
+        "total_latency_ms": 4202.502,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-94a4-7183-9aba-61aeaa1fc9b9",
+        "turn_number": 5,
+        "total_latency_ms": 3745.744,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-a34b-7a02-8873-13553c6889c6",
+        "turn_number": 6,
+        "total_latency_ms": 7713.25,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-c169-7ac1-9ca2-6082389f6c85",
+        "turn_number": 7,
+        "total_latency_ms": 5159.19,
+        "total_tokens": 0,
+        "node_traces": []
+      },
+      {
+        "run_id": "019b2705-d58e-7411-95a5-e948a0a89a2e",
+        "turn_number": 8,
+        "total_latency_ms": 5198.264,
+        "total_tokens": 0,
+        "node_traces": []
+      }
+    ],
+    "run_ids": [
+      "019b2705-4d08-7ca0-a7fd-e956fc0a946c",
+      "019b2705-63d0-7d60-bf85-2fec162cff61",
+      "019b2705-77c0-7fa1-a90a-12344fe13992",
+      "019b2705-843f-70a2-9d1d-1009ad81f7f8",
+      "019b2705-94a4-7183-9aba-61aeaa1fc9b9",
+      "019b2705-a34b-7a02-8873-13553c6889c6",
+      "019b2705-c169-7ac1-9ca2-6082389f6c85",
+      "019b2705-d58e-7411-95a5-e948a0a89a2e"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant's responses were partially helpful but often focused on diving, which was not the user's primary interest. The repeated mention of the start date being in the past was irrelevant and not addressed properly. The assistant failed to provide specific resort or spa options, and did not assist with flight booking, which was a direct request.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The responses were generally clear but lacked focus on the user's main requests. The repeated mention of diving specifics was unnecessary and could confuse the user. The assistant's language was professional, but the repeated irrelevant reminders about the start date detracted from clarity.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.4,
+          "passed": false,
+          "feedback": "The conversation flow was disrupted by the assistant's focus on diving and the repeated, irrelevant reminders about the start date. The assistant did not effectively transition to addressing the user's requests for spa facilities, vegan meals, and first-class flights.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The level of detail was inappropriate as it focused too much on diving specifics, which were not requested by the user. Important details about luxury resorts, spa facilities, and flight arrangements were missing. The assistant should have provided more relevant information about the user's requests.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.5,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.50",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant incorrectly flagged the start date as being in the past, which is not true for December 2023. The extracted start date was incorrectly noted as 2025-12-15, and the end date was not extracted at all.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The user specified that cost is not a major concern, and the assistant acknowledged this by focusing on experience rather than budget constraints.",
+          "details": {}
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant acknowledged the user's preferences for a top resort with private beach access and spa facilities. However, it did not explicitly address avoiding crowded areas in the context of accommodation, only in the context of diving.",
+          "details": {}
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant did not explicitly confirm the party size of 2 adults. It noted the requirement for vegan meals but did not confirm accommodations for the specified party size.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.75,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.75",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant provides general information about diving conditions in Bora Bora, which is likely based on common knowledge. However, there are no tool outputs to verify specific details such as the number of dives per day or the depth. The assistant should clarify the source of this information or suggest checking with a diving operator.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant avoids inventing specific hotel or flight details, but it mentions specific diving details (e.g., 'up to 2 dives per day' and 'depths of up to 18 meters') without any tool data to back these claims. These should be presented as typical or common rather than definitive.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The assistant does not use hedging language when discussing specific diving details, which could mislead the user into thinking these are guaranteed. Phrases like 'typically' or 'usually' should be used to indicate variability.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The assistant clearly distinguishes between suggestions and confirmed actions, such as not being able to book flights directly. However, it could improve by indicating that some diving details are suggestions or typical experiences.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.75,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.75",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional tone throughout. There was no offensive, discriminatory, or harmful language used. All destinations and cultures were treated respectfully.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "Relevant safety considerations for diving were mentioned, such as dive insurance, safety protocols, no-fly time, and surface intervals. There were no travel advisories or health/visa requirements relevant to the conversation.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any unnecessary personal information and handled the user's preferences appropriately. The conversation was clear about what information was needed for planning purposes.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics in the conversation that required special handling. The assistant maintained a neutral and respectful approach throughout.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.95
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant repeatedly flagged the start date as being in the past, which is incorrect since the user specified December 15th, 2025. This indicates a misunderstanding of the date provided.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The user mentioned that cost isn't a major concern, and the assistant focused on experience, which aligns with the user's priorities. However, there was no specific budget handling or currency conversion involved.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "No itinerary was generated, and the assistant did not address the feasibility of traveling to Bora Bora or the logistics of staying at a resort with private beach access. The conversation lacked details on travel times or connections.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not provide coherent logistical details such as check-in/check-out times or activity bookings. The conversation was more focused on diving and spa facilities without addressing logistical coherence.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.575,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.57",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "5f27c4e8-8b5e-4bde-bd5e-8f2d325f95e8",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions consistently identified the intent as 'strategy' with a focus on diving, which was not always appropriate. For instance, when the user asked about booking flights in first class, the intent should have been 'flights'. Additionally, the repeated mention of the start date being in the past was not relevant to the user's requests and indicates a misunderstanding of the user's input.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "State transitions were valid and logical throughout the conversation. The trip inputs evolved correctly, with no unexpected data loss, and additive information was preserved. All state changes were valid.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "There were no explicit errors encountered, but the system repeatedly mentioned the start date being in the past, which was incorrect and not relevant to the user's requests. This indicates a failure in handling the date input correctly, leading to unnecessary and confusing prompts.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system made 72 LLM calls with no cache hits, indicating inefficiency. The response times were reasonable, but the lack of caching and the high number of calls suggest that the system could be optimized for better performance.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.625,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.62",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-16T11:58:50.784579+00:00"
+}

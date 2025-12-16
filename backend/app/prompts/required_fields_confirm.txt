@@ -1,5 +1,3 @@
-{% include "shared_style.txt" %}
-
 ==============================
 CONFIRMATION PHASE
 ==============================
@@ -53,5 +51,6 @@ QUESTION_TARGET FIELD
 Set question_target to indicate what your question/confirmation is asking about:
 - "destinations" | "origin" | "dates" | "travelers" | "budget" | "activities" | "general" | null
 
-Return JSON:
-{"assistant_message":"...", "trip_inputs":{...}, "ready_to_generate":false, "branches":[], "suggested_responses":[], "question_target":"destinations|origin|dates|travelers|budget|activities|general|null"}
+{% include "_suggested_responses.txt" %}
+
+{% include "_json_output.txt" %}

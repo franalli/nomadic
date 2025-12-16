@@ -26,7 +26,7 @@ class ConstraintEvaluator(BaseEvaluator):
 - Party size and composition handled correctly"""
 
     criteria = [EvaluationCriteria.CONSTRAINT_ADHERENCE]
-    pass_threshold = 0.7
+    pass_threshold = 0.8  # Ignoring user constraints is frustrating
 
     def get_evaluation_prompt(
         self,

@@ -135,7 +135,6 @@ export type GraphPlanObservability = {
   model_used?: string | null;
   router_intent?: string | null;
   strategy_topic?: string | null;
-  monolith_used?: boolean;
   fallback_to_legacy?: boolean;
   today_iso?: string | null;
   ready_to_generate_prev?: boolean;

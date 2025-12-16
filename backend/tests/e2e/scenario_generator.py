@@ -126,6 +126,17 @@ class ConversationTurn:
             "intent_hint": self.intent_hint,
         }
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ConversationTurn":
+        """Create a ConversationTurn from a dictionary."""
+        # Handle both 'turn' and 'turn_number' keys for compatibility
+        turn_num = data.get("turn_number", data.get("turn", 0))
+        return cls(
+            turn_number=turn_num,
+            user_message=data.get("user_message", ""),
+            intent_hint=data.get("intent_hint"),
+        )
+
 
 @dataclass
 class ConversationScenario:
@@ -161,7 +172,7 @@ class ConversationScenario:
             goal=data["goal"],
             constraints=ScenarioConstraints(**data["constraints"]),
             difficulty=DifficultySettings(**data["difficulty"]),
-            turns=[ConversationTurn(**t) for t in data["turns"]],
+            turns=[ConversationTurn.from_dict(t) for t in data["turns"]],
             expected_outcomes=data.get("expected_outcomes", {}),
             metadata=data.get("metadata", {}),
         )
@@ -284,7 +295,7 @@ Return a JSON object with this exact structure:
     "goal": "Clear description of what the user wants to achieve",
     "constraints": {{
         "budget": "e.g., $2000 or null",
-        "dates": "e.g., flexible March 2025 or specific dates or null",
+        "dates": "e.g., flexible March 2030 or specific dates or null",
         "preferences": ["list", "of", "preferences"],
         "avoid": ["things", "to", "avoid"],
         "party_size": "e.g., 2 adults, 1 child or null",
@@ -470,13 +481,13 @@ GOLDEN_SCENARIOS = [
         "goal": "Plan a romantic 5-day trip to Paris",
         "constraints": {
             "budget": "$5000",
-            "dates": "March 15-20, 2025",
+            "dates": "March 15-20, 2030",
             "preferences": ["romantic restaurants", "museums", "wine tours"],
             "party_size": "2 adults",
         },
         "turns": [
             "Hi! We want to plan a romantic trip to Paris for our anniversary",
-            "We're thinking March 15-20, 2025",
+            "We're thinking March 15-20, 2030",
             "It's just the two of us, and we have about $5000 to spend",
             "We love museums and wine. Any romantic restaurant suggestions?",
             "That sounds perfect! Can you help us find flights from New York?",
@@ -528,13 +539,13 @@ GOLDEN_SCENARIOS = [
             "party_size": "2 adults, 2 children (ages 8 and 12)",
         },
         "turns": [
-            "We're looking to plan a family ski trip over the holidays.",
+            "We're looking to plan a family ski trip to Colorado over the holidays.",
             "December 26th through January 2nd would work best for us.",
             "There will be 4 of us - my wife and I, plus our kids aged 8 and 12.",
             "The children are beginners, so we'd need resorts with good ski schools.",
             "We'd prefer ski-in/ski-out accommodation if possible.",
             "Our budget is around $8000 for the whole trip.",
-            "Would Colorado or Utah be better for families?",
+            "Would Vail or Breckenridge be better for families?",
             "What about après-ski activities for the kids?",
         ],
     },
@@ -672,12 +683,12 @@ GOLDEN_SCENARIOS = [
             "party_size": "1 adult",
         },
         "turns": [
-            "i want to backpack europe this summer but im broke lol",
+            "i want to backpack to Budapest, Prague and Krakow this summer but im broke lol",
             "like seriously my total budget is $1500 including flights",
             "is that even possible? i can rough it, hostels are fine",
-            "maybe eastern europe is cheaper? idk",
+            "eastern europe seems cheaper right?",
             "i have like 2 weeks to travel",
-            "whats the cheapest way to fly from NYC to europe?",
+            "whats the cheapest way to fly from NYC to Budapest?",
             "can i take buses between countries to save money?",
         ],
     },
@@ -741,6 +752,263 @@ GOLDEN_SCENARIOS = [
             "We'd need connecting cabins or at least cabins close together.",
             "First week of August works for everyone's schedules.",
             "What cruise lines are best for multigenerational families?",
+        ],
+    },
+    # Direct hotel request - tests routing to hotels node
+    {
+        "name": "direct_hotel_request",
+        "description": "User asks for hotel directly after providing trip details",
+        "user_profile": {
+            "persona": "honeymoon_couple",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "decisive",
+        },
+        "goal": "Test routing of direct hotel requests to hotels specialist",
+        "constraints": {
+            "budget": "$3000",
+            "dates": "April 10-15, 2030",
+            "preferences": ["boutique hotel", "central location"],
+            "party_size": "2 adults",
+        },
+        "turns": [
+            "We're going to Paris from New York, April 10-15",
+            "Just the two of us, budget around $3000",
+            "Find me a boutique hotel in the Marais district",
+            "Something with a nice rooftop or garden would be great",
+            "What about 4-star options with breakfast included?",
+        ],
+    },
+    # Budget boundary test - tests tight budget filtering
+    {
+        "name": "budget_boundary",
+        "description": "User with very tight budget constraints",
+        "user_profile": {
+            "persona": "budget_backpacker",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "decisive",
+        },
+        "goal": "Test budget filtering with tight constraints",
+        "constraints": {
+            "budget": "$500 total",
+            "dates": "this weekend",
+            "preferences": ["cheap", "basic accommodations"],
+            "party_size": "1 adult",
+        },
+        "turns": [
+            "I want a weekend in NYC but only have $500 total",
+            "That needs to cover hotel and some activities",
+            "Show me what's available in my budget",
+            "What's the cheapest hotel option?",
+            "Any free activities you can recommend?",
+        ],
+    },
+    # Infeasible itinerary - tests travel feasibility validation
+    {
+        "name": "infeasible_itinerary",
+        "description": "User requests physically impossible travel plan",
+        "user_profile": {
+            "persona": "solo_explorer",
+            "experience_level": "novice",
+            "communication_style": "casual",
+            "decision_making": "indecisive",
+        },
+        "goal": "Test detection and handling of impossible travel plans",
+        "constraints": {
+            "budget": "$2000",
+            "dates": "3 days",
+            "preferences": ["see everything"],
+            "party_size": "1 adult",
+        },
+        "turns": [
+            "I want to visit Tokyo, New York, and Sydney in 3 days",
+            "Is that even possible?",
+            "Ok what if I had 5 days instead?",
+            "What's the minimum time I'd need for all three?",
+            "Maybe I should just pick two?",
+        ],
+    },
+    # Correction flow - tests correcting previously extracted info
+    {
+        "name": "correction_flow",
+        "description": "User corrects previously stated information",
+        "user_profile": {
+            "persona": "family_vacation",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "detail_oriented",
+        },
+        "goal": "Test correction of extracted trip details",
+        "constraints": {
+            "budget": "$4000",
+            "dates": "May 1-8, 2030",
+            "preferences": ["art", "food"],
+            "party_size": "2 adults",
+        },
+        "turns": [
+            "We want to go to Rome for 5 days",
+            "Actually I meant Florence, not Rome",
+            "And make it 7 days instead of 5",
+            "May 1st to May 8th, 2030",
+            "Budget is around $4000",
+            "Can you confirm the updated details?",
+        ],
+    },
+    # Hiking strategy test
+    {
+        "name": "hiking_adventure",
+        "description": "Hiking trip testing strategy topic detection",
+        "user_profile": {
+            "persona": "solo_explorer",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "decisive",
+        },
+        "goal": "Plan a hiking trip with proper gear and safety advice",
+        "constraints": {
+            "budget": "$3000",
+            "dates": "September 2030",
+            "preferences": ["mountain hiking", "camping"],
+            "party_size": "1 adult",
+        },
+        "turns": [
+            "I want to go hiking in the Swiss Alps",
+            "Probably September 2030, for about a week",
+            "What gear do I need for alpine hiking?",
+            "Any permits required for the trails?",
+            "What about safety considerations?",
+            "Can you recommend some multi-day routes?",
+        ],
+    },
+    # Diving strategy test
+    {
+        "name": "diving_vacation",
+        "description": "Diving trip testing strategy topic detection",
+        "user_profile": {
+            "persona": "solo_explorer",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "decisive",
+        },
+        "goal": "Plan a diving vacation with certification info",
+        "constraints": {
+            "budget": "$4000",
+            "dates": "November 2030",
+            "preferences": ["scuba diving", "coral reefs"],
+            "party_size": "1 adult",
+        },
+        "turns": [
+            "I want to plan a diving vacation to the Maldives",
+            "I'm PADI certified, looking for advanced dive sites",
+            "November 2030, maybe 10 days",
+            "What dive operators are recommended there?",
+            "Any specific sites for seeing manta rays?",
+            "What about safety briefings and equipment rental?",
+        ],
+    },
+    # Currency conversion test - EUR budget
+    {
+        "name": "euro_budget_trip",
+        "description": "Trip with budget specified in EUR",
+        "user_profile": {
+            "persona": "honeymoon_couple",
+            "experience_level": "intermediate",
+            "communication_style": "formal",
+            "decision_making": "detail_oriented",
+        },
+        "goal": "Test budget handling with non-USD currency",
+        "constraints": {
+            "budget": "€3000",
+            "dates": "June 15-22, 2030",
+            "preferences": ["culture", "fine dining"],
+            "party_size": "2 adults",
+        },
+        "turns": [
+            "We're planning a trip to Italy from London",
+            "June 15th to 22nd, 2030",
+            "Our budget is about 3000 euros",
+            "We'd like to visit Rome and Florence",
+            "Can you recommend hotels within our euro budget?",
+            "What activities fit within our remaining budget?",
+        ],
+    },
+    # Cycling strategy test
+    {
+        "name": "cycling_tour",
+        "description": "Cycling trip testing strategy topic detection",
+        "user_profile": {
+            "persona": "solo_explorer",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "decisive",
+        },
+        "goal": "Plan a cycling tour with route and equipment advice",
+        "constraints": {
+            "budget": "$2500",
+            "dates": "May 2030",
+            "preferences": ["road cycling", "scenic routes"],
+            "party_size": "1 adult",
+        },
+        "turns": [
+            "I want to plan a cycling tour through Provence, France",
+            "Two weeks in May 2030",
+            "What's the best route for road cycling there?",
+            "Should I bring my own bike or rent?",
+            "What about bike-friendly accommodation?",
+            "Any tips for elevation and difficulty levels?",
+        ],
+    },
+    # Boating strategy test
+    {
+        "name": "boating_charter",
+        "description": "Boating trip testing strategy topic detection",
+        "user_profile": {
+            "persona": "family_vacation",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "detail_oriented",
+        },
+        "goal": "Plan a sailing/boating trip with charter info",
+        "constraints": {
+            "budget": "$8000",
+            "dates": "July 2030",
+            "preferences": ["sailing", "island hopping"],
+            "party_size": "4 adults",
+        },
+        "turns": [
+            "We want to charter a sailboat in the Greek islands",
+            "July 2030, about 10 days for 4 of us",
+            "Do we need sailing certifications?",
+            "What's included in bareboat vs skippered charter?",
+            "Which islands are best for a sailing itinerary?",
+            "What about provisioning and marina fees?",
+        ],
+    },
+    # GBP currency test
+    {
+        "name": "gbp_budget_trip",
+        "description": "Trip with budget specified in GBP",
+        "user_profile": {
+            "persona": "solo_explorer",
+            "experience_level": "intermediate",
+            "communication_style": "casual",
+            "decision_making": "decisive",
+        },
+        "goal": "Test budget handling with GBP currency",
+        "constraints": {
+            "budget": "£2000",
+            "dates": "October 2030",
+            "preferences": ["history", "museums"],
+            "party_size": "1 adult",
+        },
+        "turns": [
+            "I'm planning a solo trip from Edinburgh to Amsterdam",
+            "October 2030, maybe a week",
+            "My budget is about 2000 pounds",
+            "What can I do within this budget?",
+            "Show me hotels under 150 pounds per night",
+            "What about day trips from Amsterdam?",
         ],
     },
 ]

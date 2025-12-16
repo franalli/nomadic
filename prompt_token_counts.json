@@ -2,69 +2,9 @@
   "tokenizer_model": "gpt-4o-mini",
   "rows": [
     {
-      "file": "backend/app/prompts/monolith.txt",
-      "tokens": 3426,
-      "bytes": 14998
-    },
-    {
-      "file": "backend/app/prompts/required_fields.txt",
-      "tokens": 3426,
-      "bytes": 14656
-    },
-    {
-      "file": "backend/app/prompts/activities.txt",
-      "tokens": 1590,
-      "bytes": 7056
-    },
-    {
-      "file": "backend/app/prompts/hotels.txt",
-      "tokens": 961,
-      "bytes": 4080
-    },
-    {
-      "file": "backend/app/prompts/correction.txt",
-      "tokens": 958,
-      "bytes": 4511
-    },
-    {
-      "file": "backend/app/prompts/flights.txt",
-      "tokens": 873,
-      "bytes": 4008
-    },
-    {
-      "file": "backend/app/prompts/transport.txt",
-      "tokens": 862,
-      "bytes": 3967
-    },
-    {
       "file": "backend/app/prompts/router.txt",
-      "tokens": 776,
-      "bytes": 3239
-    },
-    {
-      "file": "backend/app/prompts/strategy_boating.txt",
-      "tokens": 654,
-      "bytes": 2793
-    },
-    {
-      "file": "backend/app/prompts/strategy_hiking.txt",
-      "tokens": 601,
-      "bytes": 2600
-    },
-    {
-      "file": "backend/app/prompts/strategy_diving.txt",
-      "tokens": 579,
-      "bytes": 2492
-    },
-    {
-      "file": "backend/app/prompts/strategy_skiing.txt",
-      "tokens": 557,
-      "bytes": 2399
-    },
-    {
-      "file": "backend/app/prompts/strategy_cycling.txt",
-      "tokens": 546,
-      "bytes": 2347
+      "tokens": 1073,
+      "bytes": 4350
     },
     {
       "file": "backend/app/prompts/response_polish.txt",
@@ -72,10 +12,130 @@
       "bytes": 2070
     },
     {
+      "file": "backend/app/prompts/required_fields_extract.txt",
+      "tokens": 425,
+      "bytes": 1930
+    },
+    {
+      "file": "backend/app/prompts/required_fields_confirm.txt",
+      "tokens": 422,
+      "bytes": 2020
+    },
+    {
+      "file": "backend/app/prompts/activities.txt",
+      "tokens": 406,
+      "bytes": 2086
+    },
+    {
+      "file": "backend/app/prompts/required_fields_ready.txt",
+      "tokens": 390,
+      "bytes": 1751
+    },
+    {
+      "file": "backend/app/prompts/correction.txt",
+      "tokens": 379,
+      "bytes": 1633
+    },
+    {
+      "file": "backend/app/prompts/required_fields.txt",
+      "tokens": 360,
+      "bytes": 1638
+    },
+    {
+      "file": "backend/app/prompts/flights.txt",
+      "tokens": 345,
+      "bytes": 1624
+    },
+    {
+      "file": "backend/app/prompts/_extraction_rules.txt",
+      "tokens": 343,
+      "bytes": 1423
+    },
+    {
+      "file": "backend/app/prompts/transport.txt",
+      "tokens": 334,
+      "bytes": 1628
+    },
+    {
+      "file": "backend/app/prompts/hotels.txt",
+      "tokens": 313,
+      "bytes": 1469
+    },
+    {
       "file": "backend/app/prompts/condense.txt",
       "tokens": 230,
       "bytes": 1028
+    },
+    {
+      "file": "backend/app/prompts/strategy_boating.txt",
+      "tokens": 213,
+      "bytes": 896
+    },
+    {
+      "file": "backend/app/prompts/strategy_cycling.txt",
+      "tokens": 207,
+      "bytes": 864
+    },
+    {
+      "file": "backend/app/prompts/strategy_hiking.txt",
+      "tokens": 203,
+      "bytes": 836
+    },
+    {
+      "file": "backend/app/prompts/strategy_diving.txt",
+      "tokens": 201,
+      "bytes": 858
+    },
+    {
+      "file": "backend/app/prompts/strategy_skiing.txt",
+      "tokens": 194,
+      "bytes": 827
+    },
+    {
+      "file": "backend/app/prompts/_strategy_base.txt",
+      "tokens": 172,
+      "bytes": 839
+    },
+    {
+      "file": "backend/app/prompts/_date_handling.txt",
+      "tokens": 162,
+      "bytes": 725
+    },
+    {
+      "file": "backend/app/prompts/_ready_state.txt",
+      "tokens": 147,
+      "bytes": 661
+    },
+    {
+      "file": "backend/app/prompts/_markdown_rules.txt",
+      "tokens": 127,
+      "bytes": 508
+    },
+    {
+      "file": "backend/app/prompts/_scope_specialist.txt",
+      "tokens": 113,
+      "bytes": 538
+    },
+    {
+      "file": "backend/app/prompts/_adapt_tone.txt",
+      "tokens": 90,
+      "bytes": 418
+    },
+    {
+      "file": "backend/app/prompts/_suggested_responses.txt",
+      "tokens": 66,
+      "bytes": 308
+    },
+    {
+      "file": "backend/app/prompts/_json_output.txt",
+      "tokens": 54,
+      "bytes": 218
+    },
+    {
+      "file": "backend/app/prompts/_never_invent.txt",
+      "tokens": 51,
+      "bytes": 260
     }
   ],
-  "total_tokens": 16509
+  "total_tokens": 7490
 }
