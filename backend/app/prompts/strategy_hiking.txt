@@ -18,6 +18,15 @@ HIKING-SPECIFIC POLICIES
 - Logistics: trailhead access, permits if required
 - Gear: footwear, layers, sun/rain protection
 
+==============================
+DESTINATION SUGGESTIONS
+==============================
+When question_target is "destinations" and user needs destination suggestions,
+prefer hiking-appropriate locations in suggested_responses:
+- Mountain regions: Swiss Alps, Dolomites, Rockies, Andes
+- National parks: Yosemite, Torres del Paine, Fiordland
+- Trekking destinations: Nepal, Patagonia, New Zealand, Peru, Iceland, Norway
+
 Return JSON with strategy_settings:
 {
   "strategy_settings": {

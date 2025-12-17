@@ -15,6 +15,14 @@ CURRENT STATE
 User message: "{user_text}"
 
 ==============================
+ACKNOWLEDGMENTS & NO-OP INPUTS
+==============================
+If the user message is just an acknowledgment with NO new trip information, return empty deltas.
+Examples of acknowledgments (return confidence: 1.0, all deltas null):
+- "ok", "okay", "thanks", "thank you", "got it", "sure", "alright", "cool", "great", "sounds good", "perfect", "awesome", "nice", "good", "fine", "understood", "noted", "yep", "yup"
+Do NOT invent destinations, dates, or other fields from acknowledgments.
+
+==============================
 EXTRACTION TARGETS
 ==============================
 Extract ONLY what the user explicitly mentions. NEVER invent or assume values.
@@ -24,6 +32,8 @@ DESTINATIONS (destinations_delta):
 - "Thailand" ✓ | "Tokyo" ✓ | "Paris, France" ✓ | "the Maldives" ✓
 - "early December" ❌ (DATE) | "hostels" ❌ (ACCOMMODATION) | "budget" ❌ (PREFERENCE)
 - "cinema" ❌ (ACTIVITY) | "hiking" ❌ (ACTIVITY) | "spa" ❌ (AMENITY)
+- "sightseeing" ❌ (ACTIVITY) | "culture" ❌ (ACTIVITY) | "nightlife" ❌ (ACTIVITY)
+- "adventure" ❌ (TRIP TYPE) | "relaxation" ❌ (PREFERENCE) | "outdoor activities" ❌ (ACTIVITY)
 - Extract ONLY the place name, never surrounding phrases
 - If user says "also X" or "add X", append to existing destinations
 - If user specifies city in existing country, REPLACE country with city

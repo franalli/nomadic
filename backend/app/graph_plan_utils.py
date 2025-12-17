@@ -11,7 +11,6 @@ This module provides:
 from __future__ import annotations
 
 import logging
-import re
 import unicodedata
 import uuid
 from datetime import datetime
@@ -189,11 +188,6 @@ def ensure_thread_id(thread_id: Any) -> str:
 
 
 # Backwards compatibility alias
-def validate_thread_id(thread_id: Any) -> bool:
-    """Check if thread_id is valid. Use is_valid_thread_id for clarity."""
-    return is_valid_thread_id(thread_id)
-
-
 # =============================================================================
 # Session State Sanitization
 # =============================================================================
@@ -755,129 +749,3 @@ def check_payload_size(request: Any) -> Optional[str]:
         )
 
     return None
-
-
-# =============================================================================
-# Date Ambiguity Detection
-# =============================================================================
-
-# Patterns that indicate ambiguous dates needing context
-AMBIGUOUS_DATE_PATTERNS = [
-    r"\bnext\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
-    r"\bthis\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b",
-    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+next\s+week\b",
-    r"\bnext\s+week(end)?\b",
-    r"\bthis\s+week(end)?\b",
-    r"\bin\s+\d+\s+(days?|weeks?)\b",
-]
-
-# Compiled patterns for efficiency
-_AMBIGUOUS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in AMBIGUOUS_DATE_PATTERNS]
-
-
-def is_date_ambiguous(date_str: Optional[str]) -> bool:
-    """
-    Check if a date string is ambiguous (needs context to resolve).
-
-    ISO format dates (YYYY-MM-DD) are never ambiguous.
-    Relative phrases like "next Friday" are ambiguous.
-
-    Args:
-        date_str: Date string to check.
-
-    Returns:
-        True if ambiguous, False if clear or None.
-    """
-    if date_str is None:
-        return False
-
-    if not isinstance(date_str, str):
-        return False
-
-    date_str = date_str.strip()
-    if not date_str:
-        return False
-
-    # ISO format is never ambiguous
-    if re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
-        return False
-
-    # Numeric day/month ambiguity: 01/02/2025 could be DD/MM or MM/DD.
-    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$", date_str)
-    if m:
-        a = int(m.group(1))
-        b = int(m.group(2))
-        # If both components could be months, and they differ, it's ambiguous.
-        if 1 <= a <= 12 and 1 <= b <= 12 and a != b:
-            return True
-
-    # Check for ambiguous patterns
-    for pattern in _AMBIGUOUS_PATTERNS:
-        if pattern.search(date_str):
-            return True
-
-    return False
-
-
-# =============================================================================
-# PII Redaction (Basic)
-# =============================================================================
-
-# Simple patterns for basic PII redaction
-EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
-PHONE_PATTERN = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
-
-
-def redact_pii(text: str) -> str:
-    """
-    Apply basic PII redaction to text.
-
-    Redacts:
-    - Email addresses
-    - Phone numbers
-
-    Args:
-        text: Text to redact.
-
-    Returns:
-        Text with PII redacted.
-    """
-    if not isinstance(text, str):
-        return str(text) if text else ""
-
-    text = EMAIL_PATTERN.sub("[EMAIL]", text)
-    text = PHONE_PATTERN.sub("[PHONE]", text)
-
-    return text
-
-
-# =============================================================================
-# Strategy Enable Check
-# =============================================================================
-
-
-def is_strategy_enabled(strategy_topic: Optional[str]) -> bool:
-    """
-    Check if a strategy module is enabled.
-
-    Args:
-        strategy_topic: Strategy topic name (boating, hiking, etc.).
-
-    Returns:
-        True if enabled, False otherwise.
-    """
-    if not strategy_topic:
-        return False
-
-    topic_lower = strategy_topic.lower()
-
-    flag_map = {
-        "boating": settings.enable_strategy_boating,
-        "hiking": settings.enable_strategy_hiking,
-        "diving": settings.enable_strategy_diving,
-        "skiing": settings.enable_strategy_skiing,
-        "cycling": settings.enable_strategy_cycling,
-    }
-
-    # Default to enabled if strategy not in map
-    return flag_map.get(topic_lower, True)

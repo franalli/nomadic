@@ -1,0 +1,896 @@
+{
+  "session_id": "20251217-084823",
+  "timestamp": "2025-12-17T08:48:23.259850",
+  "project_name": "nomadic-e2e-tests",
+  "langsmith_endpoint": "https://eu.api.smith.langchain.com",
+  "summary": {
+    "total_tests": 2,
+    "passed": 1,
+    "failed": 1,
+    "pass_rate": 0.5,
+    "total_duration_seconds": 109.17,
+    "failures_by_category": {
+      "quality_issue": 4,
+      "constraint_violation": 2,
+      "routing_error": 1,
+      "unknown": 2
+    }
+  },
+  "evaluator_breakdown": {
+    "quality_evaluator": {
+      "passed": 0,
+      "failed": 1
+    },
+    "constraint_evaluator": {
+      "passed": 1,
+      "failed": 0
+    },
+    "safety_evaluator": {
+      "passed": 2,
+      "failed": 0
+    },
+    "node_evaluator": {
+      "passed": 0,
+      "failed": 1
+    }
+  },
+  "outcomes": [
+    {
+      "test_name": "tests/e2e/test_e2e_pr_gate.py::TestPRGateEvaluation::test_golden_scenario_quality",
+      "scenario_id": "golden_simple_paris_trip",
+      "passed": false,
+      "duration_seconds": 80.55733370780945,
+      "evaluator_scores": {
+        "quality_evaluator": 0.5,
+        "constraint_evaluator": 0.75,
+        "safety_evaluator": 1.0,
+        "node_evaluator": 0.625
+      },
+      "failures": [
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "quality_evaluator",
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "feedback": "The assistant's responses were not consistently helpful or actionable. It failed to address the user's interest in museums, wine, and romantic restaurants, and did not provide any specific suggestions or guidance for these interests. Additionally, the assistant did not assist with flight information, which was a direct request from the user.",
+          "category": "quality_issue",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "quality_evaluator",
+          "criterion": "output_clarity",
+          "score": 0.6,
+          "feedback": "The responses were generally clear, but there were instances of confusion, such as the assistant's response to the user's interest in museums and wine, where it incorrectly mentioned 'Spa options.' This indicates a lack of clarity in understanding the user's request.",
+          "category": "quality_issue",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "quality_evaluator",
+          "criterion": "conversation_flow",
+          "score": 0.4,
+          "feedback": "The conversation flow was disrupted by the assistant's repeated questions and failure to address user requests. For example, it asked about the travel dates again after they were already provided, and it did not follow up on the user's interest in specific activities or restaurants.",
+          "category": "quality_issue",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "quality_evaluator",
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "feedback": "The level of detail was insufficient. The assistant did not provide any specific recommendations or details about romantic restaurants, museums, or wine activities, which were key interests of the user. It also did not address the user's request for flight assistance effectively.",
+          "category": "quality_issue",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "constraint_evaluator",
+          "criterion": "budget_adherence",
+          "score": 0.5,
+          "feedback": "The budget was correctly extracted, but there was no evidence of recommendations being made within the budget. The assistant did not provide any specific suggestions or confirm that options would fit within the $5000 budget.",
+          "category": "constraint_violation",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "constraint_evaluator",
+          "criterion": "preference_handling",
+          "score": 0.5,
+          "feedback": "User preferences for romantic restaurants, museums, and wine tours were mentioned but not addressed. The assistant incorrectly noted 'spa options' instead of the stated preferences.",
+          "category": "constraint_violation",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "node_evaluator",
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "feedback": "The routing decisions were not consistently appropriate. In Turn 1, the intent was incorrectly identified as 'hotels' when the user was discussing a romantic trip to Paris, which could involve multiple aspects like flights, hotels, and activities. Turn 3 repeated a question about the travel dates instead of acknowledging the budget information. Turn 4 incorrectly responded to a request for restaurant suggestions with spa options. Turn 5 failed to address the user's request for flight assistance, which should have been routed to a 'flights' intent.",
+          "category": "routing_error",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "node_evaluator",
+          "criterion": "error_handling",
+          "score": 0.5,
+          "feedback": "While no explicit errors were encountered, the assistant's responses in Turn 4 and Turn 5 did not appropriately handle the user's requests, leading to a breakdown in conversation flow. The assistant should have provided a more relevant response or indicated its limitations more clearly.",
+          "category": "unknown",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        },
+        {
+          "test_name": "test_golden_scenario_quality",
+          "scenario_id": "golden_simple_paris_trip",
+          "evaluator": "node_evaluator",
+          "criterion": "efficiency",
+          "score": 0.5,
+          "feedback": "The system was not efficient, as indicated by the high number of LLM calls (63) without any cache hits. This suggests that caching was not utilized effectively, leading to potentially unnecessary processing and longer response times.",
+          "category": "unknown",
+          "turn_number": 6,
+          "node_name": null,
+          "user_message": "And a nice boutique hotel in the Marais district?",
+          "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+          "trip_inputs_at_failure": {
+            "destinations": [
+              "Paris"
+            ],
+            "origin": "New York",
+            "start_date": "2030-03-15",
+            "end_date": "2030-03-20",
+            "adults": 2,
+            "budget": 5000.0,
+            "currency": "USD",
+            "booking_types": {
+              "activities": true,
+              "hotels": true
+            },
+            "flight_settings": {},
+            "hotel_settings": {
+              "location": "Marais"
+            },
+            "activity_settings": {
+              "categories": [
+                "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+                "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+              ]
+            },
+            "transport_settings": {},
+            "strategy_settings": {}
+          },
+          "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+          "error_type": null,
+          "error_message": null,
+          "traceback": null
+        }
+      ],
+      "run_ids": [
+        "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "019b2b48-b575-7322-8cde-a87d72f8905a",
+        "019b2b48-c34b-70e0-92a1-9ac4e0780ec8",
+        "019b2b48-d135-7001-86e8-fa44f108d156",
+        "019b2b48-e0de-7050-91be-462eb4ce607f",
+        "019b2b48-fe2d-7d31-af8e-9f5d801cf46f"
+      ]
+    },
+    {
+      "test_name": "tests/e2e/test_e2e_pr_gate.py::TestPRGateEvaluation::test_safety_never_fails",
+      "scenario_id": "pr_gate_simple_destination",
+      "passed": true,
+      "duration_seconds": 28.613421201705933,
+      "evaluator_scores": {
+        "safety_evaluator": 1.0
+      },
+      "failures": [],
+      "run_ids": [
+        "019b2b49-dfd0-7653-a3ad-ef5a23b7006e",
+        "019b2b49-f2a4-7b02-9b83-3e5c2eb814dc",
+        "019b2b4a-0238-7e20-85b8-5c8808e52905"
+      ]
+    }
+  ],
+  "failures_by_category": {
+    "quality_issue": [
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "quality_evaluator",
+        "criterion": "response_usefulness",
+        "score": 0.5,
+        "feedback": "The assistant's responses were not consistently helpful or actionable. It failed to address the user's interest in museums, wine, and romantic restaurants, and did not provide any specific suggestions or guidance for these interests. Additionally, the assistant did not assist with flight information, which was a direct request from the user.",
+        "category": "quality_issue",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "quality_evaluator",
+        "criterion": "output_clarity",
+        "score": 0.6,
+        "feedback": "The responses were generally clear, but there were instances of confusion, such as the assistant's response to the user's interest in museums and wine, where it incorrectly mentioned 'Spa options.' This indicates a lack of clarity in understanding the user's request.",
+        "category": "quality_issue",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "quality_evaluator",
+        "criterion": "conversation_flow",
+        "score": 0.4,
+        "feedback": "The conversation flow was disrupted by the assistant's repeated questions and failure to address user requests. For example, it asked about the travel dates again after they were already provided, and it did not follow up on the user's interest in specific activities or restaurants.",
+        "category": "quality_issue",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "quality_evaluator",
+        "criterion": "detail_appropriateness",
+        "score": 0.5,
+        "feedback": "The level of detail was insufficient. The assistant did not provide any specific recommendations or details about romantic restaurants, museums, or wine activities, which were key interests of the user. It also did not address the user's request for flight assistance effectively.",
+        "category": "quality_issue",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      }
+    ],
+    "constraint_violation": [
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "constraint_evaluator",
+        "criterion": "budget_adherence",
+        "score": 0.5,
+        "feedback": "The budget was correctly extracted, but there was no evidence of recommendations being made within the budget. The assistant did not provide any specific suggestions or confirm that options would fit within the $5000 budget.",
+        "category": "constraint_violation",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "constraint_evaluator",
+        "criterion": "preference_handling",
+        "score": 0.5,
+        "feedback": "User preferences for romantic restaurants, museums, and wine tours were mentioned but not addressed. The assistant incorrectly noted 'spa options' instead of the stated preferences.",
+        "category": "constraint_violation",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      }
+    ],
+    "routing_error": [
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "node_evaluator",
+        "criterion": "routing_accuracy",
+        "score": 0.5,
+        "feedback": "The routing decisions were not consistently appropriate. In Turn 1, the intent was incorrectly identified as 'hotels' when the user was discussing a romantic trip to Paris, which could involve multiple aspects like flights, hotels, and activities. Turn 3 repeated a question about the travel dates instead of acknowledging the budget information. Turn 4 incorrectly responded to a request for restaurant suggestions with spa options. Turn 5 failed to address the user's request for flight assistance, which should have been routed to a 'flights' intent.",
+        "category": "routing_error",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      }
+    ],
+    "unknown": [
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "node_evaluator",
+        "criterion": "error_handling",
+        "score": 0.5,
+        "feedback": "While no explicit errors were encountered, the assistant's responses in Turn 4 and Turn 5 did not appropriately handle the user's requests, leading to a breakdown in conversation flow. The assistant should have provided a more relevant response or indicated its limitations more clearly.",
+        "category": "unknown",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      },
+      {
+        "test_name": "test_golden_scenario_quality",
+        "scenario_id": "golden_simple_paris_trip",
+        "evaluator": "node_evaluator",
+        "criterion": "efficiency",
+        "score": 0.5,
+        "feedback": "The system was not efficient, as indicated by the high number of LLM calls (63) without any cache hits. This suggests that caching was not utilized effectively, leading to potentially unnecessary processing and longer response times.",
+        "category": "unknown",
+        "turn_number": 6,
+        "node_name": null,
+        "user_message": "And a nice boutique hotel in the Marais district?",
+        "assistant_response": "I see you're looking for a nice boutique hotel in the Marais district. To refine your preferences, could you please specify the minimum star rating you're considering for your hotel stay?",
+        "trip_inputs_at_failure": {
+          "destinations": [
+            "Paris"
+          ],
+          "origin": "New York",
+          "start_date": "2030-03-15",
+          "end_date": "2030-03-20",
+          "adults": 2,
+          "budget": 5000.0,
+          "currency": "USD",
+          "booking_types": {
+            "activities": true,
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "location": "Marais"
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf55 \u001b[1m\u001b[38;5;208m\ud83c\udf7d\ufe0f culinary",
+              "\ud83c\udf5b \u001b[1m\u001b[38;5;208m\ud83c\udf5b culture"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "langsmith_run_id": "019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "langsmith_url": "https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2b48-a52c-7fd2-a6f0-273bcd178530",
+        "error_type": null,
+        "error_message": null,
+        "traceback": null
+      }
+    ]
+  }
+}

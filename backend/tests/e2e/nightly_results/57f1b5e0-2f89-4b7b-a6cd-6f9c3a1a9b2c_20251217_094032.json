@@ -1,0 +1,840 @@
+{
+  "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+  "thread_id": "d5199933-d9a1-4bed-a1b0-f36a90204047",
+  "scenario_goal": "Book a simple trip to Orlando for a family vacation.",
+  "scenario_constraints": {
+    "budget": "$2000",
+    "dates": "Spring Break 2024",
+    "preferences": [
+      "hotel with pool",
+      "near theme parks"
+    ],
+    "avoid": [
+      "long flights"
+    ],
+    "party_size": "2 adults, 2 children",
+    "special_requirements": [
+      "child-friendly meals"
+    ]
+  },
+  "conversation": {
+    "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+    "thread_id": "d5199933-d9a1-4bed-a1b0-f36a90204047",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hi, we're planning a family trip to Orlando during spring break. Can you help us book it?",
+        "assistant_message": "Orlando sounds fantastic for a family trip! When are you planning to go?",
+        "trip_inputs": {
+          "destinations": [
+            "Orlando"
+          ],
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2b76-b074-7220-9e0b-6f8682fc8592",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 3,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3672.000000020489
+      },
+      {
+        "turn_number": 2,
+        "user_message": "We have a budget of $2000 and we want a hotel with a pool, close to the theme parks.",
+        "assistant_message": "Great! I've noted your budget of 2000. Would you like to share your travel dates?",
+        "trip_inputs": {
+          "destinations": [
+            "Orlando"
+          ],
+          "budget": 2000.0,
+          "currency": "USD",
+          "booking_types": {
+            "hotels": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "amenities": [
+              "pool"
+            ]
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2b76-bed6-7d50-9c1b-da92c1cbcc0a",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4170.999999972992
+      },
+      {
+        "turn_number": 3,
+        "user_message": "It will be 2 adults and 2 kids. We'd love to find places with good child-friendly meal options.",
+        "assistant_message": "Noted, 2 adults and 2 kids. I'll look for destinations with good child-friendly meal options.",
+        "trip_inputs": {
+          "destinations": [
+            "Orlando"
+          ],
+          "adults": 2,
+          "children": 2,
+          "budget": 2000.0,
+          "currency": "USD",
+          "booking_types": {
+            "hotels": true,
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "amenities": [
+              "pool"
+            ]
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f culinary"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Dubai",
+          "From Tokyo",
+          "From Sydney"
+        ],
+        "errors": [],
+        "run_id": "019b2b76-cf13-7833-8726-2bdb9fefa32a",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 9,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4469.000000040978
+      },
+      {
+        "turn_number": 4,
+        "user_message": "We don't want any long flights, and our dates are during spring break 2024.",
+        "assistant_message": "Spring break is a great time to travel! Could you please provide the specific dates for your trip?",
+        "trip_inputs": {
+          "destinations": [
+            "Orlando"
+          ],
+          "adults": 2,
+          "children": 2,
+          "budget": 2000.0,
+          "currency": "USD",
+          "booking_types": {
+            "hotels": true,
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "amenities": [
+              "pool"
+            ]
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f culinary"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2b76-e08f-79b0-aa86-a3c7dd6fd6a5",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3827.999999979511
+      },
+      {
+        "turn_number": 5,
+        "user_message": "Can you find us some good deals on this?",
+        "assistant_message": "What are your travel dates?",
+        "trip_inputs": {
+          "destinations": [
+            "Orlando"
+          ],
+          "adults": 2,
+          "children": 2,
+          "budget": 2000.0,
+          "currency": "USD",
+          "booking_types": {
+            "hotels": true,
+            "activities": true
+          },
+          "flight_settings": {},
+          "hotel_settings": {
+            "amenities": [
+              "pool"
+            ]
+          },
+          "activity_settings": {
+            "categories": [
+              "\ud83c\udf7d\ufe0f culinary"
+            ]
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2b76-ef83-7503-a35f-22cc710be58e",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 15,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3859.99999998603
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Orlando"
+        ],
+        "origin": null,
+        "start_date": null,
+        "end_date": null,
+        "adults": 2,
+        "children": 2,
+        "requires_assistance": null,
+        "budget": 2000.0,
+        "currency": "USD",
+        "multi_city_intent": null,
+        "booking_types": {
+          "hotels": true,
+          "activities": true
+        },
+        "flight_settings": {},
+        "hotel_settings": {
+          "amenities": [
+            "pool"
+          ]
+        },
+        "activity_settings": {
+          "categories": [
+            "\ud83c\udf7d\ufe0f culinary"
+          ]
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+        "test_run": true,
+        "today_iso": "2025-12-17",
+        "node_tokens": {
+          "extractor": 7160,
+          "router": 5815,
+          "specialist:required_fields": 5395
+        },
+        "total_tokens": 18370,
+        "node_models": {
+          "extractor": "gpt-4o-mini",
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 15,
+        "extraction_confidence": {
+          "overall": 1.0,
+          "level": "high",
+          "method": "llm",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": null,
+          "low_confidence_reasons": [],
+          "typo_suggestions": {}
+        },
+        "router_notes": "Looking for hotels with a pool in Orlando.",
+        "router_confidence": 1.0,
+        "user_intent": "detailed_planner",
+        "intent_turn_count": 1,
+        "intent_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 39,
+        "polish_skipped_reason": "short_simple_response",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "hotels"
+      },
+      "flags": {},
+      "last_summary": "What are your travel dates?",
+      "branches": [],
+      "suggested_responses": [
+        "December 31, 2025",
+        "January 16, 2026",
+        "February 15, 2026"
+      ],
+      "errors": [],
+      "thread_id": "d5199933-d9a1-4bed-a1b0-f36a90204047",
+      "router_intent": "hotels",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 15,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 20000.0,
+    "total_llm_calls": 45,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b2b76-b074-7220-9e0b-6f8682fc8592",
+      "019b2b76-bed6-7d50-9c1b-da92c1cbcc0a",
+      "019b2b76-cf13-7833-8726-2bdb9fefa32a",
+      "019b2b76-e08f-79b0-aa86-a3c7dd6fd6a5",
+      "019b2b76-ef83-7503-a35f-22cc710be58e"
+    ],
+    "started_at": "2025-12-17T08:39:17.363726+00:00",
+    "completed_at": "2025-12-17T08:39:37.359307+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels"
+    ]
+  },
+  "summary": {
+    "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+    "thread_id": "d5199933-d9a1-4bed-a1b0-f36a90204047",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hi, we're planning a family trip to Orlando during spring break. Can you help us book it?"
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Orlando sounds fantastic for a family trip! When are you planning to go?"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "We have a budget of $2000 and we want a hotel with a pool, close to the theme parks."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "Great! I've noted your budget of 2000. Would you like to share your travel dates?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "It will be 2 adults and 2 kids. We'd love to find places with good child-friendly meal options."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "Noted, 2 adults and 2 kids. I'll look for destinations with good child-friendly meal options."
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "We don't want any long flights, and our dates are during spring break 2024."
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Spring break is a great time to travel! Could you please provide the specific dates for your trip?"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "Can you find us some good deals on this?"
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "What are your travel dates?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Orlando"
+      ],
+      "adults": 2,
+      "children": 2,
+      "budget": 2000.0,
+      "currency": "USD",
+      "booking_types": {
+        "hotels": true,
+        "activities": true
+      },
+      "flight_settings": {},
+      "hotel_settings": {
+        "amenities": [
+          "pool"
+        ]
+      },
+      "activity_settings": {
+        "categories": [
+          "\ud83c\udf7d\ufe0f culinary"
+        ]
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "budget",
+        "before": null,
+        "after": 2000.0,
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "currency",
+        "before": null,
+        "after": "USD",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "booking_types",
+        "before": {},
+        "after": {
+          "hotels": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "hotel_settings",
+        "before": {},
+        "after": {
+          "amenities": [
+            "pool"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "adults",
+        "before": null,
+        "after": 2,
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "children",
+        "before": null,
+        "after": 2,
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "booking_types",
+        "before": {
+          "hotels": true
+        },
+        "after": {
+          "hotels": true,
+          "activities": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "activity_settings",
+        "before": {
+          "categories": []
+        },
+        "after": {
+          "categories": [
+            "\ud83c\udf7d\ufe0f culinary"
+          ]
+        },
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 5,
+    "total_llm_calls": 45,
+    "total_cache_hits": 0,
+    "total_duration_ms": 20000.0,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [],
+    "run_ids": [
+      "019b2b76-b074-7220-9e0b-6f8682fc8592",
+      "019b2b76-bed6-7d50-9c1b-da92c1cbcc0a",
+      "019b2b76-cf13-7833-8726-2bdb9fefa32a",
+      "019b2b76-e08f-79b0-aa86-a3c7dd6fd6a5",
+      "019b2b76-ef83-7503-a35f-22cc710be58e"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant's responses were partially helpful but lacked actionable information. It failed to provide specific travel options or suggestions and did not effectively guide the user towards booking the trip. The assistant repeatedly asked for travel dates without progressing the conversation towards booking or providing deals.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The language used by the assistant was clear and professional. The responses were easy to understand, and the assistant maintained a polite tone throughout the conversation.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.4,
+          "passed": false,
+          "feedback": "The conversation flow was disrupted by the assistant's repeated requests for travel dates without addressing other user inputs, such as budget and preferences. The assistant did not effectively transition to providing solutions or options, leading to a stalled conversation.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant captured some details like the number of travelers and budget but failed to use this information to provide specific travel options or deals. It missed the opportunity to ask for the origin or suggest specific hotels or flights, which are crucial for planning.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.55,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.55",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant failed to extract specific dates for the trip, despite the user mentioning 'spring break 2024'. The assistant should have asked for clarification or provided a typical range for spring break.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The budget of $2000 was correctly noted by the assistant. However, there were no recommendations provided to evaluate adherence to the budget.",
+          "details": {}
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the preference for a hotel with a pool and child-friendly meals but did not address the preference for proximity to theme parks or the avoidance of long flights.",
+          "details": {}
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant correctly noted the party size of 2 adults and 2 children and acknowledged the need for child-friendly meals. However, there was no further action or recommendations provided based on this information.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.7,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.70",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant correctly references the user's budget and family details, but it does not provide any factual information about hotels or flights, which would require tool outputs.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant does not invent any specific details such as prices, hotel names, or flight times. It only repeats the information provided by the user.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant does not make any claims that require hedging, but it also does not provide any suggestions or advice that would benefit from hedging language.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The assistant clearly distinguishes between the information provided by the user and what it needs to know to proceed, such as asking for specific travel dates.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.85,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.85",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional and appropriate tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no specific safety considerations relevant to the conversation that needed to be addressed. The conversation focused on booking and preferences.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any unnecessary personal information and handled the user's preferences appropriately.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics in the conversation that required special handling.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.95
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant failed to obtain specific travel dates, which are crucial for planning. The user mentioned 'spring break 2024', but the assistant did not clarify the exact dates.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the budget but did not provide any recommendations or check if the budget was feasible for the requirements (hotel with a pool, close to theme parks, child-friendly meals).",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "No itinerary was generated, so feasibility could not be assessed. The assistant did not progress to the stage of creating an itinerary.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "Logistical details were not addressed due to the lack of a generated itinerary. The assistant did not gather enough information to ensure logistical coherence.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.25,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.25",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "57f1b5e0-2f89-4b7b-a6cd-6f9c3a1a9b2c",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions consistently identified the intent as 'hotels', which was not entirely appropriate. The user mentioned budget, family composition, and meal preferences, which could have involved 'activities' or 'strategy' intents. Additionally, the assistant failed to address the user's request for deals in Turn 5, which could have been routed to a 'required_fields' intent to gather missing information.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 0.75,
+          "passed": true,
+          "feedback": "State transitions were mostly valid, with correct updates to budget, currency, and booking types. However, the assistant did not capture the specific travel dates, which were crucial for booking. The transition to 'activities' in Turn 3 was appropriate given the user's mention of meal options.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "No errors were encountered during the conversation, and the assistant maintained a coherent dialogue without any failures.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system was inefficient with 45 LLM calls and no cache hits, indicating potential redundancy in processing. The response time of 20000ms is relatively high, suggesting room for optimization.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.6875,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.69",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-17T08:40:32.666785+00:00"
+}

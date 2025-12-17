@@ -1,0 +1,969 @@
+{
+  "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+  "thread_id": "a2bf5d28-0b1b-4753-9e6e-4aaafa6d5052",
+  "scenario_goal": "Plan a multi-city backpacking trip with a tight budget, while handling timezone and currency issues.",
+  "scenario_constraints": {
+    "budget": "$1500",
+    "dates": "flexible within the next two months",
+    "preferences": [
+      "hostels",
+      "public transport",
+      "local cuisine"
+    ],
+    "avoid": [
+      "luxury hotels",
+      "expensive activities"
+    ],
+    "party_size": "1 adult",
+    "special_requirements": []
+  },
+  "conversation": {
+    "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+    "thread_id": "a2bf5d28-0b1b-4753-9e6e-4aaafa6d5052",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hey, I'm looking to backpack across a couple of countries soon. Can you help me plan it?",
+        "assistant_message": "Absolutely! Where are you thinking of going?",
+        "trip_inputs": {
+          "destinations": [],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Paris, France",
+          "Tokyo, Japan",
+          "Rome, Italy"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-48f7-7740-84e8-d00b3151d02d",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 3,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4750.0
+      },
+      {
+        "turn_number": 2,
+        "user_message": "I'm thinking maybe Europe, but like, don't want to spend too much. Also worried about the time difference.",
+        "assistant_message": "Europe sounds exciting! Could you share a specific destination in Europe you're considering?",
+        "trip_inputs": {
+          "destinations": [],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Paris, France",
+          "Rome, Italy",
+          "Barcelona, Spain"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-5b8b-79e0-8f44-f16b14e72099",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5016.00000000326
+      },
+      {
+        "turn_number": 3,
+        "user_message": "What's the best currency to carry? I got confused last time with all the conversions.",
+        "assistant_message": "Consider carrying US dollars or euros. They're widely accepted and easy to exchange.",
+        "trip_inputs": {
+          "destinations": [],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Rome, Italy",
+          "Singapore",
+          "New York"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-6f26-74c0-92da-160fa0f16b9f",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 9,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5358.99999999674
+      },
+      {
+        "turn_number": 4,
+        "user_message": "Oh, and I'd like to start this within the next two months if possible. Is there a season I should avoid?",
+        "assistant_message": "Starting within the next two months is a great idea! For many destinations, avoiding peak tourist seasons can lead to a more enjoyable experience. For example, if you're considering a trip to Europe, late spring and early fall are often ideal, while summer can be quite crowded. If you have a specific destination in mind, I can provide more tailored advice on the best times to visit.",
+        "trip_inputs": {
+          "destinations": [],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Rome, Italy",
+          "Dubai",
+          "Singapore"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-8412-7d32-bedf-0d078ab600de",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5375.0
+      },
+      {
+        "turn_number": 5,
+        "user_message": "Hostels are cool, but I really want to meet locals. Any tips on that?",
+        "assistant_message": "Consider joining local tours or workshops. You can also try staying in homestays or using platforms that connect travelers with locals for meals or experiences. Engaging in community events or volunteering can also be a great way to meet people.",
+        "trip_inputs": {
+          "destinations": [],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "London",
+          "Rome, Italy",
+          "Singapore"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-9915-7e71-8705-7fe360cd0bdb",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 15,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 6844.000000040978
+      },
+      {
+        "turn_number": 6,
+        "user_message": "I heard about some overnight trains. Are they cheaper than flights?",
+        "assistant_message": "Overnight trains can be a cost-effective option compared to flights, especially for shorter distances. They also save on accommodation costs since you can sleep on the train. However, prices can vary based on the route, time of booking, and class of service. Would you like to explore overnight train options for your trip?",
+        "trip_inputs": {
+          "destinations": [],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Rome, Italy",
+          "Paris, France",
+          "Tokyo, Japan"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-b3d1-7041-8cb6-1e654580c0c1",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 18,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5327.999999979511
+      },
+      {
+        "turn_number": 7,
+        "user_message": "Actually, what if I start in Asia and then go Europe? Does that make sense budget-wise?",
+        "assistant_message": "Starting in Asia and then heading to Europe can be a great travel plan! It often depends on your specific destinations and travel dates, as flight prices can vary significantly. If you have a budget in mind, I can help you find options that fit. Do you have particular countries or cities in Asia and Europe in mind?",
+        "trip_inputs": {
+          "destinations": [
+            "Asia"
+          ],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Paris, France",
+          "Barcelona, Spain",
+          "Rome, Italy"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-c89c-7291-87dc-48c9628d93c7",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 21,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5734.99999998603
+      },
+      {
+        "turn_number": 8,
+        "user_message": "What about phone plans? Last time I couldn't call home because of timezone differences...",
+        "assistant_message": "Consider international phone plans for better connectivity.",
+        "trip_inputs": {
+          "destinations": [
+            "Asia"
+          ],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Tokyo",
+          "From Dubai",
+          "From Berlin"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-df00-7be3-a6c6-4a8c00551064",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 24,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3672.000000020489
+      },
+      {
+        "turn_number": 9,
+        "user_message": "Oh, and I need this booked soon. Are there any apps I should download for on-the-go help?",
+        "assistant_message": "For on-the-go travel help, consider downloading apps like Google Maps for navigation, TripIt for itinerary management, and Airbnb for accommodation options. Also, check out Skyscanner for flight deals and local transport apps specific to your destination.",
+        "trip_inputs": {
+          "destinations": [
+            "Asia"
+          ],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Dubai",
+          "From London",
+          "From Tokyo"
+        ],
+        "errors": [],
+        "run_id": "019b2b83-ed5f-7b31-b26d-5196817422f9",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 27,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5311.999999976251
+      },
+      {
+        "turn_number": 10,
+        "user_message": "One last thing, is travel insurance really necessary for this kind of trip?",
+        "assistant_message": "Travel insurance is highly recommended for any trip, as it can cover unexpected events like cancellations, medical emergencies, or lost belongings. It's especially useful for international travel or trips involving significant investments.",
+        "trip_inputs": {
+          "destinations": [
+            "Asia"
+          ],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Los Angeles",
+          "From Dubai",
+          "From Hong Kong"
+        ],
+        "errors": [],
+        "run_id": "019b2b84-0218-72c1-9a4f-2dd874d6c138",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 30,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4672.000000020489
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Asia"
+        ],
+        "origin": null,
+        "start_date": null,
+        "end_date": null,
+        "adults": null,
+        "children": null,
+        "requires_assistance": null,
+        "budget": null,
+        "currency": null,
+        "multi_city_intent": "multi_city",
+        "booking_types": {},
+        "flight_settings": {},
+        "hotel_settings": {},
+        "activity_settings": {
+          "categories": []
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+        "test_run": true,
+        "today_iso": "2025-12-17",
+        "node_tokens": {
+          "extractor": 14221,
+          "router": 11185,
+          "specialist:required_fields": 10660
+        },
+        "total_tokens": 36066,
+        "node_models": {
+          "extractor": "gpt-4o-mini",
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 30,
+        "extraction_confidence": {
+          "overall": 1.0,
+          "level": "high",
+          "method": "llm",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": null,
+          "low_confidence_reasons": [],
+          "typo_suggestions": {}
+        },
+        "router_notes": "Please provide more details for your trip.",
+        "router_confidence": 1.0,
+        "user_intent": "detailed_planner",
+        "intent_turn_count": 1,
+        "intent_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 92,
+        "polish_skipped_reason": "timeout",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "required_fields"
+      },
+      "flags": {},
+      "last_summary": "Travel insurance is highly recommended for any trip, as it can cover unexpected events like cancellations, medical emergencies, or lost belongings. It's especially useful for international travel or trips involving significant investments.",
+      "branches": [],
+      "suggested_responses": [
+        "From Los Angeles",
+        "From Dubai",
+        "From Hong Kong"
+      ],
+      "errors": [],
+      "thread_id": "a2bf5d28-0b1b-4753-9e6e-4aaafa6d5052",
+      "router_intent": "required_fields",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 30,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 52063.00000002375,
+    "total_llm_calls": 165,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b2b83-48f7-7740-84e8-d00b3151d02d",
+      "019b2b83-5b8b-79e0-8f44-f16b14e72099",
+      "019b2b83-6f26-74c0-92da-160fa0f16b9f",
+      "019b2b83-8412-7d32-bedf-0d078ab600de",
+      "019b2b83-9915-7e71-8705-7fe360cd0bdb",
+      "019b2b83-b3d1-7041-8cb6-1e654580c0c1",
+      "019b2b83-c89c-7291-87dc-48c9628d93c7",
+      "019b2b83-df00-7be3-a6c6-4a8c00551064",
+      "019b2b83-ed5f-7b31-b26d-5196817422f9",
+      "019b2b84-0218-72c1-9a4f-2dd874d6c138"
+    ],
+    "started_at": "2025-12-17T08:53:02.839379+00:00",
+    "completed_at": "2025-12-17T08:53:54.910870+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields",
+      "required_fields"
+    ]
+  },
+  "summary": {
+    "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+    "thread_id": "a2bf5d28-0b1b-4753-9e6e-4aaafa6d5052",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hey, I'm looking to backpack across a couple of countries soon. Can you help me plan it?"
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Absolutely! Where are you thinking of going?"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "I'm thinking maybe Europe, but like, don't want to spend too much. Also worried about the time difference."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "Europe sounds exciting! Could you share a specific destination in Europe you're considering?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "What's the best currency to carry? I got confused last time with all the conversions."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "Consider carrying US dollars or euros. They're widely accepted and easy to exchange."
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "Oh, and I'd like to start this within the next two months if possible. Is there a season I should avoid?"
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Starting within the next two months is a great idea! For many destinations, avoiding peak tourist seasons can lead to a more enjoyable experience. For example, if you're considering a trip to Europe, late spring and early fall are often ideal, while summer can be quite crowded. If you have a specific destination in mind, I can provide more tailored advice on the best times to visit."
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "Hostels are cool, but I really want to meet locals. Any tips on that?"
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "Consider joining local tours or workshops. You can also try staying in homestays or using platforms that connect travelers with locals for meals or experiences. Engaging in community events or volunteering can also be a great way to meet people."
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "I heard about some overnight trains. Are they cheaper than flights?"
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "Overnight trains can be a cost-effective option compared to flights, especially for shorter distances. They also save on accommodation costs since you can sleep on the train. However, prices can vary based on the route, time of booking, and class of service. Would you like to explore overnight train options for your trip?"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "Actually, what if I start in Asia and then go Europe? Does that make sense budget-wise?"
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "Starting in Asia and then heading to Europe can be a great travel plan! It often depends on your specific destinations and travel dates, as flight prices can vary significantly. If you have a budget in mind, I can help you find options that fit. Do you have particular countries or cities in Asia and Europe in mind?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "What about phone plans? Last time I couldn't call home because of timezone differences..."
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "Consider international phone plans for better connectivity."
+      },
+      {
+        "turn": 9,
+        "role": "user",
+        "content": "Oh, and I need this booked soon. Are there any apps I should download for on-the-go help?"
+      },
+      {
+        "turn": 9,
+        "role": "assistant",
+        "content": "For on-the-go travel help, consider downloading apps like Google Maps for navigation, TripIt for itinerary management, and Airbnb for accommodation options. Also, check out Skyscanner for flight deals and local transport apps specific to your destination."
+      },
+      {
+        "turn": 10,
+        "role": "user",
+        "content": "One last thing, is travel insurance really necessary for this kind of trip?"
+      },
+      {
+        "turn": 10,
+        "role": "assistant",
+        "content": "Travel insurance is highly recommended for any trip, as it can cover unexpected events like cancellations, medical emergencies, or lost belongings. It's especially useful for international travel or trips involving significant investments."
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Asia"
+      ],
+      "multi_city_intent": "multi_city",
+      "booking_types": {},
+      "flight_settings": {},
+      "hotel_settings": {},
+      "activity_settings": {
+        "categories": []
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 7,
+        "field": "destinations",
+        "before": [],
+        "after": [
+          "Asia"
+        ],
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 9,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 10,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 10,
+    "total_llm_calls": 165,
+    "total_cache_hits": 0,
+    "total_duration_ms": 52063.00000002375,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [],
+    "run_ids": [
+      "019b2b83-48f7-7740-84e8-d00b3151d02d",
+      "019b2b83-5b8b-79e0-8f44-f16b14e72099",
+      "019b2b83-6f26-74c0-92da-160fa0f16b9f",
+      "019b2b83-8412-7d32-bedf-0d078ab600de",
+      "019b2b83-9915-7e71-8705-7fe360cd0bdb",
+      "019b2b83-b3d1-7041-8cb6-1e654580c0c1",
+      "019b2b83-c89c-7291-87dc-48c9628d93c7",
+      "019b2b83-df00-7be3-a6c6-4a8c00551064",
+      "019b2b83-ed5f-7b31-b26d-5196817422f9",
+      "019b2b84-0218-72c1-9a4f-2dd874d6c138"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant provides generally helpful and actionable advice, such as suggesting US dollars or euros for currency, recommending local tours and homestays to meet locals, and advising on travel insurance. However, the response about international phone plans is too brief and lacks specific recommendations.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The responses are clear and well-structured, with professional language. The assistant explains concepts like the benefits of overnight trains and the importance of travel insurance effectively. However, the response about phone plans could be clearer with more detail.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.7,
+          "passed": true,
+          "feedback": "The conversation generally flows well, with the assistant asking relevant follow-up questions about destinations and budget. However, the transition from discussing phone plans to recommending apps could be smoother, and the assistant could have asked more about specific destinations earlier.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The level of detail is mostly appropriate, with useful information provided on various topics. The assistant could have included more specific details about international phone plans and apps for timezone management.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.8,
+      "overall_passed": true,
+      "summary": "quality_evaluator evaluation PASSED: 4/4 criteria passed, overall score 0.80",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the user's desire to start within the next two months but did not extract or specify any concrete start or end dates. The assistant should have provided more specific guidance or asked for more details to narrow down the timeframe.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "The assistant did not extract or address the user's budget constraint of $1500. There was no discussion or assurance that the recommendations would fit within the budget, nor was there any mention of currency considerations beyond general advice.",
+          "details": {}
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant acknowledged the user's preference for hostels and provided suggestions for meeting locals, which aligns with the user's interest in local experiences. However, there was no explicit mention of avoiding luxury hotels or expensive activities, which are important negative preferences.",
+          "details": {}
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not explicitly confirm the party size of 1 adult, nor did it tailor recommendations specifically for a solo traveler. While the conversation implied solo travel, explicit confirmation and tailored advice would have been beneficial.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.425,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.42",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant provides general advice that is mostly grounded in common knowledge, such as currency recommendations and travel insurance. However, it lacks specific data from tools for prices, dates, or availability, which would strengthen the factual grounding.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant avoids inventing specific details such as prices, flight times, or hotel names. All information provided is general and does not include fabricated specifics.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The assistant uses appropriate hedging, such as 'can be a cost-effective option' and 'often depends on your specific destinations,' which indicates uncertainty and suggests variability.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.85,
+          "passed": true,
+          "feedback": "The assistant clearly distinguishes between suggestions and facts. Recommendations are framed as suggestions, and there is no confusion between confirmed facts and advice.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.8875,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 3/4 criteria passed, overall score 0.89",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional and respectful tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "While specific safety advisories or health requirements were not mentioned, the conversation did not require them based on the user's queries. The assistant provided general travel advice appropriately.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any personal information from the user, respecting privacy considerations.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics raised in the conversation. The assistant handled all topics neutrally and respectfully.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.95
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the user's desire to start the trip within the next two months and provided general advice on seasons to avoid. However, there was no specific date arithmetic or duration calculation involved, and no specific start or end dates were discussed.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant provided general advice on currency and mentioned that starting in Asia could be budget-friendly, but did not delve into specific budget allocations or currency conversions. The conversation lacked detailed budget handling.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The conversation did not generate a specific itinerary, so geographic feasibility could not be fully assessed. The assistant did mention the potential cost-effectiveness of overnight trains, which is a feasible travel option.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant provided general advice on travel logistics, such as using apps for navigation and considering travel insurance. However, without a specific itinerary, logistical coherence could not be fully evaluated.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.5,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.50",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "3f5c1c30-0d5e-4a9b-9217-842c9ad4d7a0",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions consistently used the 'required_fields' intent, which is not appropriate for all user queries. For example, Turn 3 could have been routed to a financial or currency-related node, and Turn 6 could have been routed to a transportation or cost comparison node. The system did not leverage specialist nodes or strategy topics effectively.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "State transitions were mostly valid, with the system correctly updating the destination state in Turn 7. However, there was limited evidence of state evolution or tracking of user preferences and constraints across turns.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "No errors were encountered during the conversation, and the system maintained a smooth interaction without any failures or need for error recovery.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system made 165 LLM calls with no cache hits, indicating inefficiency. The response times were reasonable, but the lack of caching suggests potential for optimization.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.7,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.70",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-17T08:55:17.627734+00:00"
+}

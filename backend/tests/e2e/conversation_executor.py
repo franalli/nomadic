@@ -50,6 +50,11 @@ class TurnResult:
     cache_hits: int = 0
     confidence_routing: Optional[str] = None
 
+    # Token and timing metrics
+    total_tokens: int = 0
+    node_tokens: Dict[str, int] = field(default_factory=dict)
+    llm_time_ms: float = 0.0
+
     # Timing
     duration_ms: float = 0.0
 
@@ -70,6 +75,9 @@ class TurnResult:
             "llm_calls_made": self.llm_calls_made,
             "cache_hits": self.cache_hits,
             "confidence_routing": self.confidence_routing,
+            "total_tokens": self.total_tokens,
+            "node_tokens": self.node_tokens,
+            "llm_time_ms": self.llm_time_ms,
             "duration_ms": self.duration_ms,
         }
 
@@ -85,6 +93,8 @@ class ConversationResult:
     total_duration_ms: float = 0.0
     total_llm_calls: int = 0
     total_cache_hits: int = 0
+    total_tokens: int = 0
+    total_llm_time_ms: float = 0.0
     errors_encountered: List[str] = field(default_factory=list)
 
     # LangSmith trace IDs for each turn (for trace correlation)
@@ -129,6 +139,8 @@ class ConversationResult:
             "total_duration_ms": self.total_duration_ms,
             "total_llm_calls": self.total_llm_calls,
             "total_cache_hits": self.total_cache_hits,
+            "total_tokens": self.total_tokens,
+            "total_llm_time_ms": self.total_llm_time_ms,
             "errors_encountered": self.errors_encountered,
             "run_ids": self.run_ids,
             "started_at": self.started_at,
@@ -200,7 +212,7 @@ class ConversationExecutor:
         return {
             "small": os.getenv("OPENAI_SMALL_MODEL", "gpt-4o-mini"),
             "medium": os.getenv("OPENAI_MEDIUM_MODEL", "gpt-4o-mini"),
-            "large": os.getenv("OPENAI_PLAN_MODEL", "gpt-4o"),
+            "large": os.getenv("OPENAI_PLAN_MODEL", "gpt-4o-mini"),
         }
 
     async def execute_scenario(
@@ -283,12 +295,17 @@ class ConversationExecutor:
                     llm_calls_made=resp_session.get("llm_calls_made", 0),
                     cache_hits=resp_session.get("cache_hits", 0),
                     confidence_routing=resp_session.get("confidence_routing"),
+                    total_tokens=resp_session.get("total_tokens", 0),
+                    node_tokens=resp_session.get("node_tokens", {}),
+                    llm_time_ms=resp_session.get("llm_time_ms", 0.0),
                     duration_ms=turn_duration,
                 )
 
                 result.turns.append(turn_result)
                 result.total_llm_calls += turn_result.llm_calls_made
                 result.total_cache_hits += turn_result.cache_hits
+                result.total_tokens += turn_result.total_tokens
+                result.total_llm_time_ms += turn_result.llm_time_ms
 
                 # Store run_id for trace correlation
                 if turn_run_id:

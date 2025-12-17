@@ -8,6 +8,7 @@ import os
 import random as _random_module
 import re
 from copy import deepcopy
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -221,6 +222,13 @@ def _increment_llm_calls(state: "GraphState") -> None:
     state.metadata = meta
 
 
+def _record_llm_time(state: "GraphState", duration_ms: float) -> None:
+    """Record LLM call duration in state metadata for observability."""
+    meta = state.metadata or {}
+    meta["llm_time_ms"] = meta.get("llm_time_ms", 0.0) + duration_ms
+    state.metadata = meta
+
+
 def _increment_cache_hits(state: "GraphState") -> None:
     """Increment the cache hit counter in state metadata for observability."""
     meta = state.metadata or {}
@@ -369,6 +377,81 @@ def clear_response_caches() -> int:
     return count
 
 
+def clear_all_caches() -> int:
+    """
+    Clear ALL caches including response caches, validation caches, and checkpointer.
+
+    This function should be called at the start of each test to ensure
+    complete isolation between tests. It clears:
+    - LLM response caches (_follow_up_cache, _ready_state_cache)
+    - Validation caches (place, flight, hotel, activity caches)
+    - MemorySaver checkpointer storage
+    - LRU caches (fuzzy_match_place, _load_prompt_cached)
+    - Date normalizer singleton (reset reference date)
+    - Prompt tracking set (_PROMPTS_LOADED)
+
+    Returns the total number of cache entries cleared.
+    """
+    global _date_normalizer
+    total_cleared = 0
+    cleared_caches = []  # Track which caches were cleared for debug logging
+
+    # Clear response caches
+    response_count = clear_response_caches()
+    total_cleared += response_count
+    if response_count > 0:
+        cleared_caches.append(f"response_caches: {response_count}")
+
+    # Clear validation caches
+    try:
+        from app.validation import clear_validation_caches
+
+        validation_count = clear_validation_caches()
+        total_cleared += validation_count
+        if validation_count > 0:
+            cleared_caches.append(f"validation_caches: {validation_count}")
+    except ImportError:
+        pass  # Validation module may not be available
+
+    # Clear checkpointer storage
+    try:
+        if hasattr(app, "checkpointer") and app.checkpointer is not None:
+            checkpointer = app.checkpointer
+            if hasattr(checkpointer, "storage"):
+                storage = getattr(checkpointer, "storage", None)
+                if storage is not None and isinstance(storage, dict):
+                    checkpoint_count = len(storage)
+                    storage.clear()
+                    total_cleared += checkpoint_count
+                    if checkpoint_count > 0:
+                        cleared_caches.append(f"checkpointer: {checkpoint_count}")
+                    _debug(f"Cleared {checkpoint_count} checkpointer entries")
+    except Exception as e:
+        _debug_error(f"Failed to clear checkpointer: {e}")
+
+    # Clear prompt LRU cache (32 entries max)
+    try:
+        cache_info = _load_prompt_cached.cache_info()
+        if cache_info.currsize > 0:
+            cleared_caches.append(f"prompt_cache: {cache_info.currsize}")
+            total_cleared += cache_info.currsize
+        _load_prompt_cached.cache_clear()
+    except AttributeError:
+        pass
+
+    # Clear prompt tracking set
+    if _PROMPTS_LOADED:
+        cleared_caches.append(f"prompts_loaded_set: {len(_PROMPTS_LOADED)}")
+        _PROMPTS_LOADED.clear()
+
+    # Reset date normalizer singleton with fresh reference date
+    _date_normalizer = DateNormalizer()
+    cleared_caches.append("date_normalizer: reset")
+
+    _debug(f"Cleared all caches: {total_cleared} total entries", caches_cleared=cleared_caches)
+    return total_cleared
+
+
 def response_cache_stats() -> dict[str, int]:
     """Return a snapshot of response cache sizes."""
     return {
@@ -487,6 +570,30 @@ DEFAULT_FLIGHT_SETTINGS = {"round_trip": True, "cabin_class": "economy", "direct
 DEFAULT_HOTEL_SETTINGS = {"min_stars": 0, "amenities": []}
 DEFAULT_ACTIVITY_SETTINGS = {"categories": []}
 DEFAULT_TRANSPORT_SETTINGS = {"car": False, "train": False, "bus": False}
+
+# =============================================================================
+# DESTINATION EXCLUDE WORDS
+# =============================================================================
+# Words that indicate a phrase-like destination that should be filtered out.
+# These are intent/action words, not actual places.
+_DEST_EXCLUDE_WORDS = frozenset(
+    {
+        "trip",
+        "vacation",
+        "holiday",
+        "getaway",
+        "tour",
+        "recommend",
+        "suggest",
+        "help",
+        "planning",
+        "visit",
+        "travel",
+        "go to",
+        "book",
+        "find",
+    }
+)
 
 # =============================================================================
 # ACTIVITY EMOJI MAPPING
@@ -717,9 +824,10 @@ _DEFAULT_ACTIVITY_EMOJI = "✨"
 
 def _normalize_activity_with_emoji(activity: str) -> str:
     """
-    Normalize an activity string to ensure it has an emoji prefix.
+    Normalize an activity string to ensure it has the correct emoji prefix.
 
-    - If the activity already starts with an emoji, return it as-is
+    - If the activity already starts with an emoji, validate it's correct for the activity type
+    - If the emoji is wrong, strip it and apply the correct one
     - Otherwise, look up the activity in the emoji map and add the appropriate emoji
     - If no match found, use the sparkle emoji as default
 
@@ -727,8 +835,10 @@ def _normalize_activity_with_emoji(activity: str) -> str:
         activity: The activity string (may or may not have emoji prefix)
 
     Returns:
-        The activity string with emoji prefix
+        The activity string with correct emoji prefix
     """
+    import re
+
     activity = activity.strip()
     if not activity:
         return activity
@@ -738,10 +848,34 @@ def _normalize_activity_with_emoji(activity: str) -> str:
     first_char = activity[0]
     # Check if first character is in emoji ranges (simplified check)
     if ord(first_char) > 0x1F00:
-        # Already has emoji prefix, return as-is
+        # Has emoji prefix - extract the text part to validate
+        # Find where the emoji ends (usually followed by space or the text)
+        text_part = activity[1:].lstrip()
+        if not text_part:
+            return activity
+
+        # Look up what the correct emoji should be for this activity
+        text_lower = text_part.lower()
+        correct_emoji = None
+
+        # Direct match in emoji map
+        if text_lower in _ACTIVITY_EMOJI_MAP:
+            correct_emoji = _ACTIVITY_EMOJI_MAP[text_lower]
+        else:
+            # Try partial matching - check if any keyword is contained in the activity
+            for keyword, emoji in _ACTIVITY_EMOJI_MAP.items():
+                if re.search(rf"\b{re.escape(keyword)}\b", text_lower):
+                    correct_emoji = emoji
+                    break
+
+        # If we found a correct emoji and it differs from current, fix it
+        if correct_emoji and first_char != correct_emoji:
+            return f"{correct_emoji} {text_part}"
+
+        # Emoji is correct or no match found, return as-is
         return activity
 
-    # Strip any leading/trailing whitespace and lowercase for lookup
+    # No emoji prefix - add appropriate one
     activity_lower = activity.lower()
 
     # Direct match in emoji map
@@ -983,10 +1117,14 @@ def _apply_llm_delta(
     skip_fields: Optional[set] = None,
 ) -> None:
     """
-    Apply an LLM-generated trip_inputs delta with normalization and ownership checking.
+    Apply an LLM-generated trip_inputs delta with RAW merge only.
 
-    This centralizes the delta application logic used by specialists and strategy nodes.
-    Each field is normalized appropriately before being written.
+    This function does MINIMAL processing - just merges values without normalization.
+    All normalization happens in normalize_inputs via TripInputNormalizer.
+
+    NOTE: Specialists do NOT re-extract basic trip fields.
+    See prompts/_scope_specialist.txt for prompt-level enforcement.
+    All normalization happens in normalize_inputs via TripInputNormalizer.
 
     Args:
         state: Current graph state
@@ -1006,19 +1144,11 @@ def _apply_llm_delta(
 
     for k, v in delta.items():
         # Map 'travelers' to 'adults' (LLM sometimes uses wrong field name)
-        # BUT only if the LLM didn't also specify children separately
         if k == "travelers" and isinstance(v, (int, str)):
-            travelers_count = _normalize_int(v)
-            # If LLM also returned 'children', it meant adults; otherwise skip
-            # (let specialized extraction patterns handle mixed family compositions)
             if "children" in delta or "adults" in delta:
-                # LLM was being specific, map travelers to adults
                 k = "adults"
-                v = travelers_count
                 _debug(f"Mapped LLM 'travelers' to 'adults': {v}", node=node_name)
             else:
-                # LLM just said "travelers" without breakdown - skip and let it be
-                # The user message context should guide proper extraction
                 _debug(
                     f"Skipping ambiguous 'travelers' field: {v} (no adults/children breakdown)",
                     node=node_name,
@@ -1030,29 +1160,37 @@ def _apply_llm_delta(
             _debug(f"Skipping unknown field from LLM: {k}", node=node_name)
             continue
 
-        # Skip explicitly excluded fields
+        # Skip explicitly excluded fields (with warning for observability)
         if k in skip_fields:
+            _debug(
+                f"⚠️ BLOCKED: field '{k}' from {node_name} (value: {repr(v)[:50]})",
+                node=node_name,
+                blocked_field=k,
+            )
             continue
 
-        if k == "destinations" and isinstance(v, list):
-            # Merge destinations, avoiding duplicates (case-insensitive)
-            # Also filter out phrase-like entries that contain intent words
+        # =====================================================================
+        # RAW MERGE ONLY - No normalization here!
+        # Normalization happens in normalize_inputs via TripInputNormalizer
+        # =====================================================================
+
+        if k == "destinations":
+            # Coerce string to list (LLM sometimes returns single destination as string)
+            if isinstance(v, str):
+                v = [v]
+                _debug(f"Coerced string destination to list: {v}", node=node_name)
+            if not isinstance(v, list):
+                _debug(f"Skipping invalid destinations type: {type(v).__name__}", node=node_name)
+                continue
+            # Simple merge - just add new destinations, skip exact duplicates
             existing_lower = {d.lower() for d in ti.destinations}
             new_destinations = list(ti.destinations)
             for d in v:
-                d_norm = _normalize_str(d)
-                if not d_norm:
-                    continue
-                # Skip phrase-like destinations containing intent keywords
-                d_lower = d_norm.lower()
-                if any(word in d_lower for word in _DEST_EXCLUDE_WORDS):
-                    _debug(f"Filtering phrase-like destination: {d_norm}", node=node_name)
-                    continue
-                if d_lower not in existing_lower:
-                    new_destinations.append(d_norm)
-                    existing_lower.add(d_lower)
-            # Deduplicate overlapping locations (e.g., "Paris" + "Marais district" → keep "Paris")
-            new_destinations = _deduplicate_destinations(new_destinations)
+                if isinstance(d, str) and d.strip():
+                    d_lower = d.strip().lower()
+                    if d_lower not in existing_lower:
+                        new_destinations.append(d.strip())
+                        existing_lower.add(d_lower)
             if new_destinations != ti.destinations:
                 updates["destinations"] = new_destinations
 
@@ -1063,30 +1201,51 @@ def _apply_llm_delta(
             "transport_settings",
             "booking_types",
         ):
-            # Normalize and merge booking fields
-            normalized = _normalize_booking_field(k, v) if isinstance(v, dict) else None
-            if normalized:
+            # Simple dict merge
+            if isinstance(v, dict):
                 existing = dict(getattr(ti, k, {}) or {})
-                existing.update(normalized)
+                existing.update(v)
                 updates[k] = existing
 
-        elif k == "start_date" or k == "end_date":
-            normalized_date = _normalize_date(v)
-            if normalized_date is not None:
-                updates[k] = normalized_date
+        elif k in ("start_date", "end_date", "origin", "currency", "multi_city_intent"):
+            # Pass through string fields as-is
+            if v is not None:
+                updates[k] = v
 
-        elif k == "currency":
-            updates[k] = _normalize_currency(v, default=DEFAULT_CURRENCY)
+        elif k in ("adults", "children"):
+            # Basic int coercion only
+            if isinstance(v, int):
+                updates[k] = v
+            elif isinstance(v, str):
+                try:
+                    updates[k] = int(v)
+                except ValueError:
+                    pass
 
-        elif k == "adults" or k == "children":
-            normalized_int = _clamp_traveler_value(_normalize_int(v))
-            if not _should_skip_field_update(k, normalized_int, getattr(ti, k)):
-                updates[k] = normalized_int
+        elif k == "budget":
+            # Accept int/float directly, try to parse strings
+            if isinstance(v, (int, float)):
+                updates[k] = float(v)
+            elif isinstance(v, str):
+                # Detect template literal bugs
+                if v.startswith("{") and v.endswith("}"):
+                    _debug(
+                        f"Dropping template literal budget: {v} (system bug)",
+                        node=node_name,
+                        level="warn",
+                    )
+                    continue
+                # Try simple numeric extraction
+                cleaned = re.sub(r"[^\d.]", "", v)
+                if cleaned:
+                    try:
+                        updates[k] = float(cleaned)
+                    except ValueError:
+                        pass
 
-        elif k == "multi_city_intent":
-            normalized_intent = _normalize_multi_city_intent(v)
-            if normalized_intent is not None:
-                updates[k] = normalized_intent
+        elif k == "requires_assistance":
+            if isinstance(v, bool):
+                updates[k] = v
 
         elif _should_skip_field_update(k, v, getattr(ti, k, None)):
             continue
@@ -1097,12 +1256,10 @@ def _apply_llm_delta(
     # Apply all updates via the helper
     if updates:
         _write_trip_inputs(state, node_name, **updates)
-        _debug(
-            "Applied LLM delta via _write_trip_inputs", node=node_name, fields=list(updates.keys())
-        )
+        _debug("Applied LLM delta (raw merge)", node=node_name, fields=list(updates.keys()))
 
-    # Auto-enable booking types based on the updated state
-    _auto_enable_booking_types(state.trip_inputs)
+    # NOTE: _auto_enable_booking_types is now called ONLY in validate_and_merge
+    # to avoid duplicate calls across the graph
 
 
 # =============================================================================
@@ -1373,14 +1530,6 @@ _GREETING_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Pattern: Acknowledgments (ok, thanks, got it, sure, etc.)
-_ACKNOWLEDGMENT_PATTERN = re.compile(
-    r"^(ok(ay)?|thanks?(\s+(you|so much|a lot))?|thank\s+you(\s+so much)?|"
-    r"got\s+it|sure|alright|cool|great|sounds?\s+good|perfect|"
-    r"awesome|nice|good|fine|understood|noted|yep|yup|roger)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
-
 # Pattern: Simple confirmations (yes, yeah, yep, yup)
 _YES_PATTERN = re.compile(
     r"^(yes|yeah|yep|yup|yea|ya|sure|ok(ay)?|alright|all\s+right|"
@@ -1396,40 +1545,6 @@ _NO_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Pattern: Off-topic queries (narrow, conservative patterns)
-_OFF_TOPIC_PATTERNS: List[tuple[re.Pattern, str]] = [
-    # Weather-only queries
-    (
-        re.compile(
-            r"^(?:what(?:'s| is) the )?weather\s+(?:like\s+)?(?:in|for|at)\s+\w+[\s\?\!\.]*$",
-            re.IGNORECASE,
-        ),
-        "weather",
-    ),
-    # Pure math/calculation
-    (
-        re.compile(r"^(?:what(?:'s| is)\s+)?\d+\s*[\+\-\*\/x×÷]\s*\d+[\s\?\=]*$", re.IGNORECASE),
-        "math",
-    ),
-    # General knowledge unrelated to travel
-    (
-        re.compile(
-            r"^(?:who|what|when|where)\s+(?:is|was|are|were)\s+(?:the\s+)?(?:president|capital|population|king|queen|ceo|founder)\b",
-            re.IGNORECASE,
-        ),
-        "general_knowledge",
-    ),
-    # Explicit non-travel requests
-    (
-        re.compile(
-            r"^(?:can you |please\s+)?(?:write|compose|draft)\s+"
-            r"(?:me\s+)?(?:a\s+)?(?:poem|song|story|essay|email|letter)\b",
-            re.IGNORECASE,
-        ),
-        "creative_writing",
-    ),
-]
-
 # Friendly greeting responses (randomized for variety)
 _GREETING_RESPONSES = [
     "Hi! 👋 Where are you looking to travel?",
@@ -1438,358 +1553,14 @@ _GREETING_RESPONSES = [
     "Hi there! Where would you like to go?",
 ]
 
-# Off-topic redirect responses
-_OFF_TOPIC_RESPONSES: Dict[str, str] = {
-    "weather": (
-        "I'm focused on trip planning—for weather, try a forecast site! "
-        "Now, where would you like to travel?"
-    ),
-    "math": "I'm your travel assistant, not a calculator! 😄 Where are you looking to go?",
-    "general_knowledge": "I specialize in travel planning! Tell me where you'd like to explore.",
-    "creative_writing": "I'm best at planning trips! Where would you like to travel?",
-}
-
-# Pending actions that can be triggered by yes/no confirmations
-_PENDING_ACTIONS = {
-    "generate_plan": "Triggering plan generation...",
-    "confirm_dates": "Dates confirmed.",
-    "confirm_travelers": "Travelers confirmed.",
-    "confirm_typo": "Typo correction confirmed.",
-}
-
-# Ambiguous destinations that need clarification (US state vs country, etc.)
-# These will trigger a clarification prompt instead of blindly accepting
-_AMBIGUOUS_DESTINATIONS: Dict[str, List[str]] = {
-    "georgia": ["Georgia (US state)", "Georgia (country)"],
-    "jordan": ["Jordan (country)", "Jordan (as a person's name?)"],
-    "florence": ["Florence, Italy", "Florence, South Carolina", "Florence, Alabama"],
-    "paris": ["Paris, France", "Paris, Texas"],
-    "berlin": ["Berlin, Germany", "Berlin, Connecticut", "Berlin, New Hampshire"],
-    "london": ["London, UK", "London, Ontario"],
-    "rome": ["Rome, Italy", "Rome, Georgia"],
-    "athens": ["Athens, Greece", "Athens, Georgia"],
-    "barcelona": ["Barcelona, Spain", "Barcelona, Venezuela"],
-    "valencia": ["Valencia, Spain", "Valencia, Venezuela", "Valencia, California"],
-    "cambridge": ["Cambridge, UK", "Cambridge, Massachusetts"],
-    "oxford": ["Oxford, UK", "Oxford, Mississippi"],
-    "sydney": ["Sydney, Australia", "Sydney, Nova Scotia"],
-    "melbourne": ["Melbourne, Australia", "Melbourne, Florida"],
-    "perth": ["Perth, Australia", "Perth, Scotland"],
-    "hamilton": ["Hamilton, Bermuda", "Hamilton, New Zealand", "Hamilton, Ontario"],
-    "santiago": ["Santiago, Chile", "Santiago de Compostela, Spain"],
-    "victoria": ["Victoria, BC", "Victoria, Australia", "Victoria Falls"],
-    "portland": ["Portland, Oregon", "Portland, Maine"],
-    "springfield": ["Springfield, Illinois", "Springfield, Massachusetts", "Springfield, Missouri"],
-    "columbus": ["Columbus, Ohio", "Columbus, Georgia"],
-    "jackson": ["Jackson, Mississippi", "Jackson Hole, Wyoming"],
-    "madison": ["Madison, Wisconsin", "Madison, Alabama"],
-    "richmond": ["Richmond, Virginia", "Richmond, California", "Richmond, UK"],
-}
-
-# Common non-place words that might be capitalized but aren't destinations
-_NON_DESTINATION_WORDS = frozenset(
-    [
-        "i",
-        "me",
-        "my",
-        "we",
-        "our",
-        "you",
-        "your",
-        "he",
-        "she",
-        "it",
-        "they",
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "but",
-        "if",
-        "then",
-        "so",
-        "yes",
-        "no",
-        "maybe",
-        "perhaps",
-        "soon",
-        "later",
-        "now",
-        "today",
-        "tomorrow",
-        "monday",
-        "tuesday",
-        "wednesday",
-        "thursday",
-        "friday",
-        "saturday",
-        "sunday",
-        "january",
-        "february",
-        "march",
-        "april",
-        "may",
-        "june",
-        "july",
-        "august",
-        "september",
-        "october",
-        "november",
-        "december",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-    ]
-)
-
-
-# =============================================================================
-# PRE-COMPILED PATTERNS (SHORT-CIRCUIT & FILTERING ONLY)
-# =============================================================================
-# Extraction is now handled by the LLM in the extractor node.
-# These patterns are only used for short-circuit detection and validation.
-
-# Words that should NOT be captured as destinations (intent keywords, accommodations, etc.)
-_DEST_EXCLUDE_WORDS = frozenset(
-    {
-        # Trip intent words
-        "trip",
-        "vacation",
-        "holiday",
-        "honeymoon",
-        "romantic",
-        "family",
-        "solo",
-        "quick",
-        "weekend",
-        "getaway",
-        "adventure",
-        "backpacking",
-        "tour",
-        "planning",
-        "booking",
-        "itinerary",
-        "journey",
-        "travel",
-        "travels",
-        # Accommodation words (often incorrectly extracted as destinations)
-        "hotel",
-        "hotels",
-        "hostel",
-        "hostels",
-        "resort",
-        "resorts",
-        "airbnb",
-        "motel",
-        "accommodation",
-        "accommodations",
-        "gym",
-        "pool",
-        "spa",
-        "wifi",
-        "amenity",
-        "amenities",
-        # Currency words (often incorrectly extracted)
-        "usd",
-        "eur",
-        "euro",
-        "euros",
-        "dollar",
-        "dollars",
-        "currency",
-        "payment",
-        "payments",
-        "budget",
-        # Schedule/timing words
-        "schedule",
-        "changes",
-        "change",
-        "case",
-        "minute",
-        "last",
-        "flexible",
-        "refundable",
-        # Preference/requirement words
-        "accessible",
-        "wheelchair",
-        "requirement",
-        "requirements",
-        "preference",
-        "preferences",
-        "need",
-        "needs",
-    }
-)
-
-# Short-circuit bare input patterns
-# More permissive pattern for bare destinations:
-# - Case insensitive (catches "patagonia" and "Patagonia")
-# - Allows accents (São Paulo, Zürich, Côte d'Azur)
-# - Allows apostrophes (St. John's, Hawai'i)
-# - Allows periods (St. Petersburg, U.S.A.)
-# - Min 2 chars, max 40 chars
-_BARE_DEST_PATTERN = re.compile(r"^[A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F\s\-,\.\'']+$")
-_BARE_DATE_PATTERN = re.compile(
-    r"^(today|tomorrow|next\s+(week|month|weekend)|this\s+(week|weekend|month)|"
-    r"in\s+\d+\s+(days?|weeks?|months?)|"
-    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
-    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
-    r"\s*\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|"
-    r"\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?|"
-    r"\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})[\s\.\,\!\?]*$",
-    re.IGNORECASE,
-)
-_BARE_SOLO_PATTERN = re.compile(r"^(just\s+me|solo|alone|myself|1)[\s\.\!\?]*$", re.IGNORECASE)
-_BARE_TRAVELERS_PATTERN = re.compile(
-    r"^(\d+)(?:\s*(?:adults?|people|travelers?|of us))?[\s\.\!\?]*$", re.IGNORECASE
-)
-_BARE_ORIGIN_PATTERN = re.compile(r"^(?:from\s+)?([A-Z][a-zA-Z\s\-,]+)[\s\.\!\?]*$", re.IGNORECASE)
-
-# =============================================================================
-# DESTINATION → ACTIVITY INFERENCE
-# =============================================================================
-# Some destinations strongly imply certain activities. When a user mentions
-# these destinations, we should also infer the associated activities.
-# This enables multi-faceted extraction: "Patagonia" → destination + hiking
-#
-# Format: destination_keyword → list of (activity_category, emoji)
-# Keywords are matched case-insensitively against destination names
-
-_DESTINATION_ACTIVITY_HINTS: Dict[str, List[str]] = {
-    # Hiking/Trekking destinations
-    "patagonia": ["🥾 hiking"],
-    "torres del paine": ["🥾 hiking"],
-    "everest": ["🥾 hiking", "🏔️ mountaineering"],
-    "kilimanjaro": ["🥾 hiking", "🏔️ mountaineering"],
-    "machu picchu": ["🥾 hiking", "🏛️ culture"],
-    "inca trail": ["🥾 hiking"],
-    "annapurna": ["🥾 hiking"],
-    "dolomites": ["🥾 hiking", "⛷️ skiing"],
-    "alps": ["🥾 hiking", "⛷️ skiing"],
-    "swiss alps": ["🥾 hiking", "⛷️ skiing"],
-    "appalachian": ["🥾 hiking"],
-    "grand canyon": ["🥾 hiking"],
-    "yosemite": ["🥾 hiking", "🧗 climbing"],
-    "zion": ["🥾 hiking"],
-    "banff": ["🥾 hiking", "⛷️ skiing"],
-    "rockies": ["🥾 hiking", "⛷️ skiing"],
-    "rocky mountains": ["🥾 hiking", "⛷️ skiing"],
-    "mt fuji": ["🥾 hiking"],
-    "mount fuji": ["🥾 hiking"],
-    # Diving/Beach destinations
-    "maldives": ["🤿 diving", "🏖️ beach"],
-    "great barrier reef": ["🤿 diving", "🏖️ beach"],
-    "red sea": ["🤿 diving"],
-    "bora bora": ["🤿 diving", "🏖️ beach"],
-    "fiji": ["🤿 diving", "🏖️ beach"],
-    "phuket": ["🤿 diving", "🏖️ beach"],
-    "bali": ["🤿 diving", "🏖️ beach", "🧘 wellness"],
-    "galapagos": ["🤿 diving", "🦎 wildlife"],
-    "raja ampat": ["🤿 diving"],
-    "cozumel": ["🤿 diving", "🏖️ beach"],
-    "bonaire": ["🤿 diving"],
-    "sipadan": ["🤿 diving"],
-    "palau": ["🤿 diving"],
-    # Skiing destinations
-    "aspen": ["⛷️ skiing"],
-    "vail": ["⛷️ skiing"],
-    "chamonix": ["⛷️ skiing", "🥾 hiking"],
-    "zermatt": ["⛷️ skiing", "🥾 hiking"],
-    "st. moritz": ["⛷️ skiing"],
-    "whistler": ["⛷️ skiing"],
-    "niseko": ["⛷️ skiing"],
-    "courchevel": ["⛷️ skiing"],
-    "verbier": ["⛷️ skiing"],
-    "innsbruck": ["⛷️ skiing"],
-    "jackson hole": ["⛷️ skiing"],
-    "park city": ["⛷️ skiing"],
-    # Safari/Wildlife destinations
-    "serengeti": ["🦁 safari", "🦎 wildlife"],
-    "masai mara": ["🦁 safari", "🦎 wildlife"],
-    "kruger": ["🦁 safari", "🦎 wildlife"],
-    "okavango": ["🦁 safari", "🦎 wildlife"],
-    "yellowstone": ["🦎 wildlife", "🥾 hiking"],
-    "amazon": ["🦎 wildlife", "🌴 jungle"],
-    "costa rica": ["🦎 wildlife", "🌴 jungle", "🏄 surfing"],
-    "borneo": ["🦎 wildlife", "🌴 jungle"],
-    # Surfing destinations
-    "hawaii": ["🏄 surfing", "🏖️ beach", "🥾 hiking"],
-    "oahu": ["🏄 surfing", "🏖️ beach"],
-    "maui": ["🏄 surfing", "🏖️ beach", "🥾 hiking"],
-    "pipeline": ["🏄 surfing"],
-    "north shore": ["🏄 surfing"],
-    "jeffreys bay": ["🏄 surfing"],
-    "gold coast": ["🏄 surfing", "🏖️ beach"],
-    "byron bay": ["🏄 surfing", "🏖️ beach"],
-    "mentawai": ["🏄 surfing"],
-    "uluwatu": ["🏄 surfing"],
-    # Cultural destinations (implicit culture/sightseeing)
-    "rome": ["🏛️ culture", "🍝 food"],
-    "florence": ["🏛️ culture", "🍝 food", "🎨 art"],
-    "paris": ["🏛️ culture", "🍝 food", "🎨 art"],
-    "kyoto": ["🏛️ culture", "🍜 food"],
-    "petra": ["🏛️ culture", "🥾 hiking"],
-    "angkor wat": ["🏛️ culture"],
-    "cairo": ["🏛️ culture"],
-    "athens": ["🏛️ culture"],
-    # Wine destinations
-    "napa": ["🍷 wine", "🍝 food"],
-    "napa valley": ["🍷 wine", "🍝 food"],
-    "bordeaux": ["🍷 wine", "🍝 food"],
-    "tuscany": ["🍷 wine", "🍝 food", "🏛️ culture"],
-    "mendoza": ["🍷 wine"],
-    "barossa": ["🍷 wine"],
-    "rioja": ["🍷 wine"],
-    # Wellness/Spa destinations
-    "sedona": ["🧘 wellness", "🥾 hiking"],
-    "ubud": ["🧘 wellness", "🏛️ culture"],
-    # Boating/Sailing
-    "greek islands": ["⛵ sailing", "🏖️ beach"],
-    "santorini": ["⛵ sailing", "🏖️ beach", "🏛️ culture"],
-    "mykonos": ["⛵ sailing", "🏖️ beach", "🎉 nightlife"],
-    "croatia": ["⛵ sailing", "🏖️ beach"],
-    "caribbean": ["⛵ sailing", "🏖️ beach"],
-    "virgin islands": ["⛵ sailing", "🏖️ beach"],
-    "whitsundays": ["⛵ sailing", "🏖️ beach"],
-}
-
-
-def _infer_activities_from_destination(destination: str) -> List[str]:
-    """
-    Infer implied activities from a destination name.
-
-    Returns a list of activity categories with emoji prefixes,
-    or an empty list if no activities are implied.
-    """
-    dest_lower = destination.lower().strip()
-
-    # Direct match
-    if dest_lower in _DESTINATION_ACTIVITY_HINTS:
-        return _DESTINATION_ACTIVITY_HINTS[dest_lower]
-
-    # Partial match (destination contains keyword or keyword contains destination)
-    for keyword, activities in _DESTINATION_ACTIVITY_HINTS.items():
-        if keyword in dest_lower or dest_lower in keyword:
-            return activities
-
-    return []
-
-
-def _check_ambiguous_destination(destination: str) -> Optional[List[str]]:
-    """
-    Check if a destination name is ambiguous.
-    Returns a list of clarification options if ambiguous, None otherwise.
-    """
-    dest_lower = destination.strip().lower()
-    return _AMBIGUOUS_DESTINATIONS.get(dest_lower)
+# Off-topic deflection responses (used when router detects non-travel queries)
+_OFF_TOPIC_DEFLECTIONS = [
+    "I'm here to help with travel planning! Where would you like to go?",
+    "That's outside my expertise—but I'd love to help plan your next trip! 🌍",
+    "I specialize in travel! Got a destination in mind?",
+    "I'm your travel assistant! Tell me where you'd like to explore.",
+    "That's not quite my area, but I'm great at planning adventures! Where to?",
+]
 
 
 def _debug_short_circuit_decision(
@@ -1840,7 +1611,6 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
     Returns None if the input should go through the normal LLM pipeline.
     """
     text_clean = text.strip()
-    text_lower = text_clean.lower()
     last_field = state.metadata.get("last_question_field")
 
     # Skip short-circuit if there's substantial content (>50 chars usually has travel info)
@@ -1922,15 +1692,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             "parsed": None,
         }
 
-    # 3. Acknowledgments (ok, thanks, got it)
-    if _ACKNOWLEDGMENT_PATTERN.match(text_clean):
-        _debug_short_circuit_decision(text, "acknowledgment", last_field, "TRIGGERED")
-        return {
-            "type": "acknowledgment",
-            "response": None,  # Will use _default_follow_up_question
-            "action": None,
-            "parsed": None,
-        }
+    # 3. Acknowledgments - REMOVED: Now handled by LLM extractor for better context awareness
 
     # 4. Simple confirmations (yes, yeah)
     if _YES_PATTERN.match(text_clean):
@@ -1972,235 +1734,11 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             "parsed": None,
         }
 
-    # 6. Off-topic detection (narrow patterns)
-    for pattern, topic in _OFF_TOPIC_PATTERNS:
-        if pattern.match(text_clean):
-            _debug_short_circuit_decision(
-                text, "off_topic", last_field, "TRIGGERED", reason=f"topic={topic}"
-            )
-            return {
-                "type": "off_topic",
-                "response": _OFF_TOPIC_RESPONSES.get(
-                    topic, "I'm your travel assistant! Where would you like to go?"
-                ),
-                "action": None,
-                "parsed": None,
-            }
+    # 6-10. Off-topic, bare inputs - REMOVED: Now handled by LLM for better accuracy
+    # Off-topic detection moved to router node with off_topic intent
+    # Bare destination/date/travelers/origin detection removed - too brittle
 
-    # 7. Simple date input - dates are unambiguous, detect BEFORE destination check
-    # This handles users proactively providing dates or clicking date suggestions
-    # Must come before destination check so "next week" is detected as date, not destination
-    if _BARE_DATE_PATTERN.match(text_clean):
-        # Determine which date field to set based on what's missing
-        target_field = "start_date"
-        if last_field in ("start_date", "end_date"):
-            target_field = last_field
-        elif state.trip_inputs.start_date and not state.trip_inputs.end_date:
-            target_field = "end_date"
-        parsed = {f"{target_field}_hint": text_clean}
-        _debug_short_circuit_decision(
-            text,
-            "bare_date",
-            last_field,
-            "TRIGGERED",
-            reason=f"target={target_field}",
-            parsed_data=parsed,
-        )
-        return {
-            "type": "bare_date",
-            "response": None,
-            "action": None,
-            "parsed": parsed,
-        }
-
-    # 8. Simple traveler input (if last question was about travelers)
-    # Must come before destination check so "2" is detected as travelers count when asked
-    if last_field == "adults":
-        # "just me", "solo", "alone", "myself", "1"
-        if _BARE_SOLO_PATTERN.match(text_clean):
-            parsed = {"adults_delta": 1, "children_delta": 0}
-            _debug_short_circuit_decision(
-                text,
-                "bare_travelers",
-                last_field,
-                "TRIGGERED",
-                reason="solo_pattern",
-                parsed_data=parsed,
-            )
-            return {
-                "type": "bare_travelers",
-                "response": None,
-                "action": None,
-                "parsed": parsed,
-            }
-        traveler_match = _BARE_TRAVELERS_PATTERN.match(text_clean)
-        if traveler_match:
-            parsed = {"adults_delta": int(traveler_match.group(1))}
-            _debug_short_circuit_decision(
-                text, "bare_travelers", last_field, "TRIGGERED", parsed_data=parsed
-            )
-            return {
-                "type": "bare_travelers",
-                "response": None,
-                "action": None,
-                "parsed": parsed,
-            }
-
-    # 9. Origin input (if last question was about origin)
-    # Must come before destination check so "London" is detected as origin when asked
-    if last_field == "origin" and 2 <= len(text_clean) <= 40:
-        # "from X" or just a city name
-        origin_match = _BARE_ORIGIN_PATTERN.match(text_clean)
-        if origin_match:
-            parsed = {"origin_delta": origin_match.group(1).strip()}
-            _debug_short_circuit_decision(
-                text, "bare_origin", last_field, "TRIGGERED", parsed_data=parsed
-            )
-            return {
-                "type": "bare_origin",
-                "response": None,
-                "action": None,
-                "parsed": parsed,
-            }
-
-    # 10. Bare destination input (single capitalized word/phrase, 2-30 chars)
-    # Detect if this looks like a place name even without prior destination question.
-    # Conditions:
-    #   - 2-30 chars, matches capitalized pattern
-    #   - No destinations set yet
-    #   - Either last question was about destinations OR input looks like a place name
-    #     (first turn heuristic: capitalized word(s) without common verbs/actions)
-    #   - NOT matching grammar-bound patterns (from/to, going to, etc.)
-    last_field = state.metadata.get("last_question_field")
-
-    # Skip bare destination for grammar-bound inputs that should go through regex extraction
-    _has_grammar_pattern = bool(
-        re.search(
-            r"\b(?:from|to|going|visiting|flying|travel(?:l?ing)?|trip)\b",
-            text_clean,
-            re.IGNORECASE,
-        )
-    )
-
-    if (
-        2 <= len(text_clean) <= 30
-        and not state.trip_inputs.destinations
-        and _BARE_DEST_PATTERN.match(text_clean)
-        and not _has_grammar_pattern  # Don't short-circuit grammar-bound inputs
-    ):
-        # Check if this looks like a place name (not a greeting, action word, etc.)
-        is_likely_place = last_field == "destinations" or (
-            # First-turn heuristic: capitalized, not common non-place words
-            text_clean[0].isupper()
-            and text_lower
-            not in (
-                "help",
-                "hi",
-                "hello",
-                "hey",
-                "please",
-                "thanks",
-                "thank",
-                "ok",
-                "okay",
-                "yes",
-                "no",
-                "sure",
-                "maybe",
-                "cancel",
-                "stop",
-                "wait",
-                "what",
-                "how",
-                "when",
-                "where",
-                "why",
-                "who",
-                "i",
-                "we",
-                "my",
-                "me",
-                "plan",
-                "trip",
-                "book",
-                "booking",
-                "travel",
-                "vacation",
-                "holiday",
-                "adventure",
-            )
-            and not text_lower.startswith(
-                (
-                    "i ",
-                    "we ",
-                    "my ",
-                    "can ",
-                    "could ",
-                    "would ",
-                    "flying ",
-                    "going ",
-                    "want ",
-                    "need ",
-                    "looking ",
-                )
-            )
-        )
-        if is_likely_place:
-            # Strip date-related suffixes from destination name
-            # e.g., "Patagonia in December" -> "Patagonia"
-            dest_name = text_clean
-            date_suffix_pattern = re.compile(
-                r"\s+(?:in|on|for|during|around|from|starting|leaving|departing)\s+"
-                r"(?:january|february|march|april|may|june|july|august|september|"
-                r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|"
-                r"today|tomorrow|next\s+week|next\s+month|this\s+weekend|\d{1,2}(?:st|nd|rd|th)?)",
-                re.IGNORECASE,
-            )
-            dest_match = date_suffix_pattern.split(dest_name)
-            if dest_match:
-                dest_name = dest_match[0].strip()
-
-            # Also handle date extraction from the suffix
-            date_hint = None
-            date_hint_match = re.search(
-                r"(?:in|on|for|during)\s+(january|february|march|april|may|june|july|august|"
-                r"september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec|"
-                r"today|tomorrow|next\s+week|next\s+month|this\s+weekend)",
-                text_clean,
-                re.IGNORECASE,
-            )
-            if date_hint_match:
-                date_hint = date_hint_match.group(1).lower()
-
-            # Infer activities from destination (multi-faceted extraction)
-            inferred_activities = _infer_activities_from_destination(dest_name)
-
-            parsed_data: Dict[str, Any] = {"destinations_delta": [dest_name]}
-
-            if date_hint:
-                parsed_data["start_date_hint"] = date_hint
-
-            if inferred_activities:
-                parsed_data["inferred_activity_categories"] = inferred_activities
-
-            _debug_short_circuit_decision(
-                text,
-                "bare_destination",
-                last_field,
-                "TRIGGERED",
-                reason="first_turn" if last_field != "destinations" else "direct_answer",
-                parsed_data=parsed_data,
-            )
-
-            # This looks like a destination answer - let it parse but mark for validation
-            return {
-                "type": "bare_destination",
-                "response": None,
-                "action": "validate_destination",
-                "parsed": parsed_data,
-            }
-
-    # No short-circuit detected - log for observability
+    # No short-circuit detected - let LLM handle it
     _debug_short_circuit_decision(
         text, None, last_field, "PATTERN_MISS", reason="no_pattern_matched"
     )
@@ -2577,29 +2115,521 @@ class DateNormalizer:
 _date_normalizer = DateNormalizer()
 
 
-def _relative_date_to_iso(text: Optional[str]) -> Optional[str]:
+# =============================================================================
+# NORMALIZATION ERROR
+# =============================================================================
+@dataclass
+class NormalizationError:
     """
-    Convert relative date expressions to ISO format dates.
+    Structured error from normalization with severity level.
 
-    Handles: "today", "tomorrow", "next week", "next month", "weekend"
+    Attributes:
+        field: The field name that had the error
+        message: Human-readable error message
+        severity: 'warning' for recoverable issues, 'error' for blocking issues
+        original_value: The original value that caused the error
     """
-    return _date_normalizer.relative_to_iso(text)
+
+    field: str
+    message: str
+    severity: Literal["warning", "error"]
+    original_value: Any = None
 
 
-def _compute_end_date_from_duration(start_date: Optional[str], duration_days: int) -> Optional[str]:
-    """Compute end_date from start_date and duration."""
-    return _date_normalizer.compute_end_from_duration(start_date, duration_days)
-
-
-def _normalize_date_with_info(value: Any) -> tuple[Optional[str], bool]:
+# =============================================================================
+# TRIP INPUT NORMALIZER (Unified normalization logic)
+# =============================================================================
+class TripInputNormalizer:
     """
-    Normalize various date formats to ISO format (YYYY-MM-DD).
+    Unified normalization for all trip inputs.
 
-    Returns a tuple of (iso_date, was_partial) where was_partial indicates
-    if the date was a partial date like "December 2025" that defaulted to
-    the 1st of the month.
+    Consolidates all normalization logic (dates, destinations, currency, travelers,
+    settings) into a single class. This is the ONLY place where normalization
+    should occur in the graph.
+
+    Usage:
+        normalizer = TripInputNormalizer()
+        updates, errors = normalizer.normalize_all(trip_inputs, deltas)
     """
-    return _date_normalizer.normalize_with_info(value)
+
+    # Extended currency symbol map (from graph_plan_utils.py - more complete)
+    CURRENCY_SYMBOL_MAP: Dict[str, str] = {
+        "$": "USD",
+        "€": "EUR",
+        "£": "GBP",
+        "¥": "JPY",
+        "₹": "INR",
+        "₩": "KRW",
+        "₽": "RUB",
+        "₺": "TRY",
+        "R$": "BRL",
+        "kr": "SEK",
+        "CHF": "CHF",
+        "A$": "AUD",
+        "C$": "CAD",
+        "NZ$": "NZD",
+        "HK$": "HKD",
+        "S$": "SGD",
+    }
+
+    # Extended ISO-4217 currency codes (from graph_plan_utils.py - 30 currencies)
+    SUPPORTED_CURRENCIES: frozenset = frozenset(
+        {
+            "USD",
+            "EUR",
+            "GBP",
+            "CAD",
+            "AUD",
+            "JPY",
+            "CHF",
+            "CNY",
+            "INR",
+            "MXN",
+            "BRL",
+            "KRW",
+            "SGD",
+            "HKD",
+            "NOK",
+            "SEK",
+            "DKK",
+            "NZD",
+            "ZAR",
+            "RUB",
+            "TRY",
+            "PLN",
+            "THB",
+            "MYR",
+            "IDR",
+            "PHP",
+            "CZK",
+            "ILS",
+            "AED",
+            "SAR",
+        }
+    )
+
+    def __init__(self, date_normalizer: Optional[DateNormalizer] = None):
+        """
+        Initialize with optional DateNormalizer instance.
+
+        Args:
+            date_normalizer: DateNormalizer instance, uses global singleton if None.
+        """
+        self._date_normalizer = date_normalizer or _date_normalizer
+
+    # -------------------------------------------------------------------------
+    # Date Normalization (delegates to DateNormalizer)
+    # -------------------------------------------------------------------------
+    def normalize_date(self, value: Any) -> Optional[str]:
+        """Normalize date to ISO format (YYYY-MM-DD)."""
+        return self._date_normalizer.normalize(value)
+
+    def normalize_date_with_info(self, value: Any) -> tuple[Optional[str], bool]:
+        """Normalize date, returning (iso_date, was_partial)."""
+        return self._date_normalizer.normalize_with_info(value)
+
+    def validate_date_range(
+        self,
+        start_date: Optional[str],
+        end_date: Optional[str],
+    ) -> tuple[Optional[str], Optional[str], List[NormalizationError]]:
+        """
+        Validate and fix date range issues.
+
+        Handles:
+        - Cross-year correction (Dec start → Jan/Feb end)
+        - Date auto-swap if end < start
+        - Past date warnings
+
+        Returns:
+            Tuple of (corrected_start, corrected_end, errors)
+        """
+        errors: List[NormalizationError] = []
+        corrected_start = start_date
+        corrected_end = end_date
+
+        if not start_date or not end_date:
+            return corrected_start, corrected_end, errors
+
+        start_dt = self._date_normalizer.parse_iso(start_date)
+        end_dt = self._date_normalizer.parse_iso(end_date)
+
+        if not start_dt or not end_dt:
+            return corrected_start, corrected_end, errors
+
+        # Cross-year correction: Dec start → Jan/Feb end likely means next year
+        if start_dt.month == 12 and end_dt.month in (1, 2) and end_dt.year == start_dt.year:
+            corrected_end_dt = end_dt.replace(year=start_dt.year + 1)
+            corrected_end = corrected_end_dt.strftime("%Y-%m-%d")
+            errors.append(
+                NormalizationError(
+                    field="end_date",
+                    message=f"Corrected cross-year date: {end_date} → {corrected_end}",
+                    severity="warning",
+                    original_value=end_date,
+                )
+            )
+            _debug(f"Corrected cross-year date range: {end_date} → {corrected_end}")
+            end_dt = corrected_end_dt
+
+        # Date auto-swap if end < start (after cross-year correction)
+        if end_dt < start_dt:
+            corrected_start, corrected_end = end_date, start_date
+            if corrected_end != end_date:  # Was already corrected
+                corrected_start = start_date
+                corrected_end = end_dt.strftime("%Y-%m-%d")
+            errors.append(
+                NormalizationError(
+                    field="dates",
+                    message=f"Swapped dates: start={start_date}, end={end_date}",
+                    severity="warning",
+                    original_value={"start_date": start_date, "end_date": end_date},
+                )
+            )
+            _debug(f"Auto-swapped dates: {start_date} ↔ {end_date}")
+
+        # Past date warnings
+        today = self._date_normalizer.today
+        if start_dt.date() < today:
+            errors.append(
+                NormalizationError(
+                    field="start_date",
+                    message=f"Start date {start_date} is in the past",
+                    severity="warning",
+                    original_value=start_date,
+                )
+            )
+
+        return corrected_start, corrected_end, errors
+
+    # -------------------------------------------------------------------------
+    # Currency Normalization
+    # -------------------------------------------------------------------------
+    def normalize_currency(self, value: Any, *, default: Optional[str] = None) -> Optional[str]:
+        """
+        Normalize currency to ISO-4217 code.
+
+        Maps symbols ($, €, £, etc.) to codes and validates against ISO-4217.
+        Uses extended set of 30 currencies.
+        """
+        if value is None:
+            return default
+
+        text = _normalize_str(value)
+        if not text:
+            return default
+
+        # Check if it's a symbol
+        if text in self.CURRENCY_SYMBOL_MAP:
+            return self.CURRENCY_SYMBOL_MAP[text]
+
+        # Uppercase and check against ISO codes
+        code = text.upper()
+        if code in self.SUPPORTED_CURRENCIES:
+            return code
+
+        # Check if symbol is part of value (e.g., "$100" -> extract $)
+        for symbol, symbol_code in self.CURRENCY_SYMBOL_MAP.items():
+            if text.startswith(symbol):
+                return symbol_code
+
+        return default
+
+    # -------------------------------------------------------------------------
+    # Traveler Normalization
+    # -------------------------------------------------------------------------
+    def clamp_travelers(self, value: Optional[int]) -> Optional[int]:
+        """Constrain traveler count to valid range [0, 20]."""
+        if value is None:
+            return None
+        return max(0, min(20, value))
+
+    def normalize_adults(self, value: Any) -> Optional[int]:
+        """Normalize adults count (min 1 when specified)."""
+        int_val = _normalize_int(value)
+        if int_val is None:
+            return None
+        return max(1, min(20, int_val))
+
+    def normalize_children(self, value: Any) -> Optional[int]:
+        """Normalize children count (min 0)."""
+        int_val = _normalize_int(value)
+        if int_val is None:
+            return None
+        return max(0, min(20, int_val))
+
+    # -------------------------------------------------------------------------
+    # Destination Normalization
+    # -------------------------------------------------------------------------
+    def normalize_destinations(
+        self,
+        destinations: List[str],
+        new_destinations: Optional[List[str]] = None,
+    ) -> tuple[List[str], List[NormalizationError]]:
+        """
+        Normalize and merge destinations.
+
+        - Applies synonym mapping (NYC → New York City)
+        - Filters phrase-like destinations containing excluded words
+        - Deduplicates case-insensitively
+        - Removes sublocations when parent exists
+
+        Args:
+            destinations: Existing destinations list
+            new_destinations: New destinations to merge (optional)
+
+        Returns:
+            Tuple of (normalized_destinations, errors)
+        """
+        errors: List[NormalizationError] = []
+        result = list(destinations)
+        existing_lower = {d.lower() for d in result}
+
+        if new_destinations:
+            for d in new_destinations:
+                d_norm = _normalize_str(d)
+                if not d_norm:
+                    continue
+
+                # Apply synonym normalization
+                d_norm = normalize_place_synonym(d_norm)
+                d_lower = d_norm.lower()
+
+                # Filter phrase-like destinations
+                if any(word in d_lower for word in _DEST_EXCLUDE_WORDS):
+                    errors.append(
+                        NormalizationError(
+                            field="destinations",
+                            message=f"Filtered phrase-like destination: {d_norm}",
+                            severity="warning",
+                            original_value=d,
+                        )
+                    )
+                    _debug(f"Filtering phrase-like destination: {d_norm}")
+                    continue
+
+                # Skip duplicates
+                if d_lower not in existing_lower:
+                    result.append(d_norm)
+                    existing_lower.add(d_lower)
+
+        # Deduplicate overlapping locations
+        result = _deduplicate_destinations(result)
+
+        return result, errors
+
+    # -------------------------------------------------------------------------
+    # Settings Normalization
+    # -------------------------------------------------------------------------
+    def merge_nested_settings(
+        self,
+        existing: Optional[Dict[str, Any]],
+        delta: Dict[str, Any],
+        list_fields: Optional[set] = None,
+    ) -> Dict[str, Any]:
+        """
+        Merge nested settings dict with special handling for list fields.
+
+        For list fields (like 'amenities'), extends rather than replaces.
+        """
+        list_fields = list_fields or {"amenities", "categories"}
+        result = dict(existing) if existing else {}
+
+        for key, value in delta.items():
+            if key in list_fields and isinstance(value, list):
+                # Extend list, avoiding duplicates
+                existing_list = result.get(key, [])
+                for item in value:
+                    if item not in existing_list:
+                        existing_list.append(item)
+                result[key] = existing_list
+            else:
+                result[key] = value
+
+        return result
+
+    # -------------------------------------------------------------------------
+    # Full Normalization Pass
+    # -------------------------------------------------------------------------
+    def normalize_all(
+        self,
+        trip_inputs: "TripInputs",
+        deltas: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], List[NormalizationError]]:
+        """
+        Single normalization pass for all trip inputs.
+
+        This is the ONLY place where normalization should occur.
+        Called from normalize_inputs node.
+
+        Args:
+            trip_inputs: Current TripInputs state
+            deltas: Dict of field deltas to apply (from extractor)
+
+        Returns:
+            Tuple of (updates_dict, errors_list)
+        """
+        _debug("TripInputNormalizer.normalize_all called - single normalization pass")
+
+        updates: Dict[str, Any] = {}
+        errors: List[NormalizationError] = []
+
+        # --- Origin ---
+        if "origin_delta" in deltas:
+            origin_raw = _normalize_str(deltas["origin_delta"])
+            if origin_raw:
+                updates["origin"] = normalize_place_synonym(origin_raw)
+
+        # --- Destinations ---
+        if "destinations_delta" in deltas:
+            dest_list = deltas["destinations_delta"]
+            if isinstance(dest_list, str):
+                dest_list = [dest_list]
+            if isinstance(dest_list, list):
+                normalized_dests, dest_errors = self.normalize_destinations(
+                    trip_inputs.destinations, dest_list
+                )
+                if normalized_dests != trip_inputs.destinations:
+                    updates["destinations"] = normalized_dests
+                errors.extend(dest_errors)
+
+        # --- Dates ---
+        partial_date_notifications: List[str] = []
+
+        if "start_date_hint" in deltas and not trip_inputs.start_date:
+            raw_hint = deltas["start_date_hint"]
+            iso_date, was_partial = self.normalize_date_with_info(raw_hint)
+            if iso_date:
+                updates["start_date"] = iso_date
+                if was_partial:
+                    partial_date_notifications.append(
+                        f"start_date set to first of month from '{raw_hint}'"
+                    )
+
+        if "end_date_hint" in deltas:
+            raw_hint = deltas["end_date_hint"]
+            iso_date, was_partial = self.normalize_date_with_info(raw_hint)
+            if iso_date:
+                updates["end_date"] = iso_date
+                if was_partial:
+                    partial_date_notifications.append(
+                        f"end_date set to first of month from '{raw_hint}'"
+                    )
+
+        # Duration-based end_date computation
+        if "duration_days_hint" in deltas and not trip_inputs.end_date:
+            start = updates.get("start_date") or trip_inputs.start_date
+            duration = _normalize_int(deltas["duration_days_hint"])
+            if start and duration and duration > 0:
+                end = self._date_normalizer.compute_end_from_duration(start, duration)
+                if end:
+                    updates["end_date"] = end
+                    updates["duration_days"] = duration
+
+        # Validate date range (cross-year, swap, past-date)
+        start = updates.get("start_date") or trip_inputs.start_date
+        end = updates.get("end_date") or trip_inputs.end_date
+        if start and end:
+            corrected_start, corrected_end, date_errors = self.validate_date_range(start, end)
+            if corrected_start != start:
+                updates["start_date"] = corrected_start
+            if corrected_end != end:
+                updates["end_date"] = corrected_end
+            errors.extend(date_errors)
+
+        # Store partial date notifications in metadata
+        if partial_date_notifications:
+            updates["_partial_date_notifications"] = partial_date_notifications
+
+        # --- Travelers ---
+        if "adults_delta" in deltas:
+            adults = self.normalize_adults(deltas["adults_delta"])
+            if adults is not None:
+                updates["adults"] = adults
+
+        if "children_delta" in deltas:
+            children = self.normalize_children(deltas["children_delta"])
+            if children is not None:
+                updates["children"] = children
+
+        if "requires_assistance_delta" in deltas:
+            updates["requires_assistance"] = deltas["requires_assistance_delta"]
+
+        # --- Budget & Currency ---
+        if "budget_delta" in deltas:
+            budget = _normalize_budget(deltas["budget_delta"])
+            if budget is not None:
+                updates["budget"] = budget
+
+        if "currency_delta" in deltas:
+            currency = self.normalize_currency(deltas["currency_delta"])
+            if currency:
+                updates["currency"] = currency
+        elif "budget_delta" in deltas and not trip_inputs.currency:
+            # Default currency if budget set but no currency
+            updates["currency"] = DEFAULT_CURRENCY
+
+        # --- Multi-city Intent ---
+        if "multi_city_intent_delta" in deltas:
+            intent = _normalize_multi_city_intent(deltas["multi_city_intent_delta"])
+            if intent:
+                updates["multi_city_intent"] = intent
+
+        # --- Settings (flight, hotel, transport, activity) ---
+        if "flight_settings_delta" in deltas:
+            delta = deltas["flight_settings_delta"]
+            if isinstance(delta, dict):
+                normalized = _normalize_booking_field("flight_settings", delta)
+                if normalized:
+                    merged = self.merge_nested_settings(trip_inputs.flight_settings, normalized)
+                    updates["flight_settings"] = merged
+
+        if "hotel_settings_delta" in deltas:
+            delta = deltas["hotel_settings_delta"]
+            if isinstance(delta, dict):
+                normalized = _normalize_booking_field("hotel_settings", delta)
+                if normalized:
+                    merged = self.merge_nested_settings(
+                        trip_inputs.hotel_settings, normalized, list_fields={"amenities"}
+                    )
+                    updates["hotel_settings"] = merged
+
+        if "transport_settings_delta" in deltas:
+            delta = deltas["transport_settings_delta"]
+            if isinstance(delta, dict):
+                normalized = _normalize_booking_field("transport_settings", delta)
+                if normalized:
+                    merged = self.merge_nested_settings(trip_inputs.transport_settings, normalized)
+                    updates["transport_settings"] = merged
+
+        if "activity_categories_delta" in deltas:
+            delta = deltas["activity_categories_delta"]
+            if isinstance(delta, list):
+                existing = trip_inputs.activity_settings or {}
+                existing_cats = existing.get("categories", [])
+                # Normalize activities with emojis and deduplicate
+                for cat in delta:
+                    normalized_cat = _normalize_activity_with_emoji(cat)
+                    if normalized_cat and normalized_cat not in existing_cats:
+                        existing_cats.append(normalized_cat)
+                existing_cats = _deduplicate_activities_case_insensitive(existing_cats)
+                updates["activity_settings"] = {"categories": existing_cats}
+
+        # --- Category Activation (booking types) ---
+        if "category_activation" in deltas:
+            activation = deltas["category_activation"]
+            if isinstance(activation, dict):
+                booking_types = dict(trip_inputs.booking_types or DEFAULT_BOOKING_TYPES)
+                for cat, enabled in activation.items():
+                    if cat in booking_types and isinstance(enabled, bool):
+                        booking_types[cat] = enabled
+                updates["booking_types"] = booking_types
+
+        return updates, errors
+
+
+# Singleton instance for default usage
+_trip_normalizer = TripInputNormalizer()
 
 
 def _normalize_date(value: Any) -> Optional[str]:
@@ -3415,46 +3445,57 @@ _ADVENTURE_DESTINATIONS = [
     "Peru",
 ]
 _BEACH_DESTINATIONS = [
-    "Bali, Indonesia",
-    "The Maldives",
-    "Cancun, Mexico",
-    "Phuket, Thailand",
+    "Bali",
+    "Maldives",
+    "Cancun",
+    "Phuket",
     "Hawaii",
     "Fiji",
     "Seychelles",
     "Caribbean",
 ]
 _CITY_DESTINATIONS = [
-    "Rome, Italy",
-    "Tokyo, Japan",
-    "Barcelona, Spain",
-    "Paris, France",
+    "Rome",
+    "Tokyo",
+    "Barcelona",
+    "Paris",
     "New York",
     "London",
     "Singapore",
     "Dubai",
 ]
 _FOOD_DESTINATIONS = [
-    "Paris, France",
-    "Tokyo, Japan",
-    "Bangkok, Thailand",
-    "Barcelona, Spain",
+    "Paris",
+    "Tokyo",
+    "Bangkok",
+    "Barcelona",
     "Mexico City",
-    "Bologna, Italy",
+    "Bologna",
     "Singapore",
-    "Lima, Peru",
+    "Lima",
 ]
 _SKIING_DESTINATIONS = [
-    "Chamonix, France",
-    "Aspen, Colorado",
-    "Zermatt, Switzerland",
-    "Niseko, Japan",
-    "Whistler, Canada",
+    "Chamonix",
+    "Aspen",
+    "Zermatt",
+    "Niseko",
+    "Whistler",
     "St. Moritz",
+    "Verbier",
+    "Courchevel",
 ]
 
+# Strategy topic to destination list mapping for fallback suggestions
+_STRATEGY_DESTINATION_MAP = {
+    "hiking": _ADVENTURE_DESTINATIONS,
+    "cycling": _ADVENTURE_DESTINATIONS,
+    "diving": _BEACH_DESTINATIONS,
+    "boating": _BEACH_DESTINATIONS,
+    "skiing": _SKIING_DESTINATIONS,
+}
+
 # Minimum relevance score threshold - suggestions below this are suppressed
-_SUGGESTION_RELEVANCE_THRESHOLD = 0.7
+_SUGGESTION_RELEVANCE_THRESHOLD = 0.5
 # Minimum number of suggestions to show - if fewer pass threshold, show none
 _MIN_SUGGESTIONS_TO_SHOW = 2
 
@@ -3674,8 +3715,13 @@ def _generate_contextual_suggestions(
             return [f"From {city}" for city in origins]
 
         elif question_target == "destinations":
+            # First check strategy_topic for topic-aware fallback
+            if state.strategy_topic and state.strategy_topic in _STRATEGY_DESTINATION_MAP:
+                dest_list = _STRATEGY_DESTINATION_MAP[state.strategy_topic]
+                return random.sample(dest_list, min(3, len(dest_list)))
+
             # Check user intent for context-aware suggestions
-            user_intent = state.metadata.get("user_intent_hint", "")
+            user_intent = state.metadata.get("user_intent", "")
             last_user_msg = ""
             for msg in reversed(state.chat_history):
                 if msg.get("role") == "user":
@@ -4510,6 +4556,9 @@ async def extractor(state: GraphState) -> GraphState:
         tokens = _estimate_prompt_tokens(tpl, state.parsed_inputs)
         _record_node_tokens(state, "extractor", tokens, model=llm_config["model_hint"])
 
+        import time as _time
+
+        _llm_start = _time.perf_counter()
         out = await call_llm_with_timeout(
             model=llm_config["model_hint"],
             prompt=tpl,
@@ -4517,6 +4566,7 @@ async def extractor(state: GraphState) -> GraphState:
             max_tokens=llm_config["max_tokens"],
             temperature=llm_config["temperature"],
         )
+        _record_llm_time(state, (_time.perf_counter() - _llm_start) * 1000)
         _increment_llm_calls(state)
         extracted = jloads_safe(out)
 
@@ -4623,8 +4673,13 @@ async def extractor(state: GraphState) -> GraphState:
 def normalize_inputs(state: GraphState) -> GraphState:
     """
     Apply normalization to extracted inputs and merge into trip_inputs.
-    This node runs after extractor and before router.
-    Uses _write_trip_inputs helper for state ownership enforcement.
+
+    This node runs after extractor and before router. It is the SINGLE location
+    where all normalization occurs in the graph. Uses TripInputNormalizer for
+    unified normalization logic.
+
+    NOTE: All normalization happens here. Specialists and validate_and_merge
+    should NOT duplicate normalization logic.
     """
     _debug_node_entry("normalize_inputs", state)
 
@@ -4643,134 +4698,55 @@ def normalize_inputs(state: GraphState) -> GraphState:
             _debug_node_exit("normalize_inputs", state)
             return state
 
-    parsed = state.parsed_inputs
+    parsed = state.parsed_inputs or {}
     ti = state.trip_inputs  # Read-only reference for reading current values
 
-    # Collect all updates to apply at once via _write_trip_inputs
-    updates: Dict[str, Any] = {}
+    # =========================================================================
+    # USE TripInputNormalizer FOR UNIFIED NORMALIZATION
+    # =========================================================================
+    # This is the SINGLE normalization pass. All field normalization, validation,
+    # and error collection happens here via TripInputNormalizer.
+    updates, norm_errors = _trip_normalizer.normalize_all(ti, parsed)
 
-    # Apply budget delta
-    if "budget_delta" in parsed:
-        bd = parsed["budget_delta"]
-        updates["budget"] = bd.get("budget")
-        updates["currency"] = bd.get("currency", DEFAULT_CURRENCY)
-
-    # Apply origin delta (with synonym normalization)
-    if "origin_delta" in parsed:
-        origin_raw = _normalize_str(parsed["origin_delta"])
-        updates["origin"] = normalize_place_synonym(origin_raw) if origin_raw else origin_raw
-
-    # Apply destinations delta (with synonym normalization and filtering)
-    if "destinations_delta" in parsed:
-        existing_lower = {d.lower() for d in ti.destinations}
-        new_destinations = list(ti.destinations)  # Copy existing
-        for d in parsed["destinations_delta"]:
-            d_norm = _normalize_str(d)
-            if not d_norm:
-                continue
-            # Apply synonym normalization (NYC → New York City, etc.)
-            d_norm = normalize_place_synonym(d_norm)
-            d_lower = d_norm.lower()
-            # Skip phrase-like destinations containing excluded words
-            if any(word in d_lower for word in _DEST_EXCLUDE_WORDS):
-                _debug(
-                    f"Filtering phrase-like destination (delta): {d_norm}", node="normalize_inputs"
-                )
-                continue
-            if d_lower not in existing_lower:
-                new_destinations.append(d_norm)
-                existing_lower.add(d_lower)
-        if new_destinations != ti.destinations:
-            updates["destinations"] = new_destinations
-        if new_destinations != ti.destinations:
-            updates["destinations"] = new_destinations
-
-    # Apply traveler deltas
-    if "adults_delta" in parsed:
-        updates["adults"] = _clamp_traveler_value(_normalize_int(parsed["adults_delta"]))
-    if "children_delta" in parsed:
-        updates["children"] = _clamp_traveler_value(_normalize_int(parsed["children_delta"]))
-    if "requires_assistance_delta" in parsed:
-        updates["requires_assistance"] = parsed["requires_assistance_delta"]
-
-    # Apply date hints (use _normalize_date_with_info to handle all date formats)
-    # Track partial date notifications for user feedback
-    partial_date_notifications: List[str] = []
-
-    if "start_date_hint" in parsed and not ti.start_date:
-        iso_date, was_partial = _normalize_date_with_info(parsed["start_date_hint"])
-        updates["start_date"] = iso_date
-        if was_partial and iso_date:
-            # Parse back to get readable format
-            dt = _parse_iso_date(iso_date)
-            if dt:
-                readable = dt.strftime("%B %d, %Y")
-                partial_date_notifications.append(
-                    (
-                        "I'll assume "
-                        f"{readable} "
-                        "for the start date—"
-                        "let me know if you meant a different day."
-                    )
-                )
-
-    if "end_date_hint" in parsed and not ti.end_date:
-        iso_date, was_partial = _normalize_date_with_info(parsed["end_date_hint"])
-        updates["end_date"] = iso_date
-        if was_partial and iso_date:
-            dt = _parse_iso_date(iso_date)
-            if dt:
-                readable = dt.strftime("%B %d, %Y")
-                partial_date_notifications.append(
-                    (
-                        "I'll assume "
-                        f"{readable} "
-                        "for the end date—"
-                        "let me know if you meant a different day."
-                    )
-                )
-
-    # Store partial date notifications in metadata for later use in response
+    # Handle partial date notifications (stored in updates by normalizer)
+    partial_date_notifications = updates.pop("_partial_date_notifications", None)
     if partial_date_notifications:
-        state.metadata["partial_date_notifications"] = partial_date_notifications
-        _debug("Partial date defaults applied", notifications=partial_date_notifications)
+        # Build human-readable notification messages
+        notifications = []
+        for notif in partial_date_notifications:
+            if "start_date" in notif:
+                start_iso = updates.get("start_date") or ti.start_date
+                if start_iso:
+                    dt = _parse_iso_date(start_iso)
+                    if dt:
+                        readable = dt.strftime("%B %d, %Y")
+                        notifications.append(
+                            f"I'll assume {readable} for the start date—"
+                            "let me know if you meant a different day."
+                        )
+            elif "end_date" in notif:
+                end_iso = updates.get("end_date") or ti.end_date
+                if end_iso:
+                    dt = _parse_iso_date(end_iso)
+                    if dt:
+                        readable = dt.strftime("%B %d, %Y")
+                        notifications.append(
+                            f"I'll assume {readable} for the end date—"
+                            "let me know if you meant a different day."
+                        )
+        if notifications:
+            state.metadata["partial_date_notifications"] = notifications
+            _debug("Partial date defaults applied", notifications=notifications)
 
-    # Apply duration to compute end_date if we have start_date but not end_date
-    start_for_duration = updates.get("start_date", ti.start_date)
-    end_for_duration = updates.get("end_date", ti.end_date)
-    if "duration_days" in parsed and start_for_duration and not end_for_duration:
-        updates["end_date"] = _compute_end_date_from_duration(
-            start_for_duration, parsed["duration_days"]
-        )
-
-    # Apply multi-city intent
-    if "multi_city_intent_delta" in parsed:
-        updates["multi_city_intent"] = parsed["multi_city_intent_delta"]
-
-    # Apply flight settings delta
-    if "flight_settings_delta" in parsed:
-        existing = dict(ti.flight_settings) if ti.flight_settings else {}
-        existing.update(parsed["flight_settings_delta"])
-        updates["flight_settings"] = existing
-
-    # Apply hotel settings delta
-    if "hotel_settings_delta" in parsed:
-        existing = dict(ti.hotel_settings) if ti.hotel_settings else {}
-        delta = parsed["hotel_settings_delta"]
-        if "amenities" in delta:
-            existing_amenities = existing.get("amenities", [])
-            for a in delta["amenities"]:
-                if a not in existing_amenities:
-                    existing_amenities.append(a)
-            delta["amenities"] = existing_amenities
-        existing.update(delta)
-        updates["hotel_settings"] = existing
-
-    # Apply transport settings delta
-    if "transport_settings_delta" in parsed:
-        existing = dict(ti.transport_settings) if ti.transport_settings else {}
-        existing.update(parsed["transport_settings_delta"])
-        updates["transport_settings"] = existing
+    # Store raw date hints for specialist nodes
+    if "start_date_hint" in parsed:
+        if "raw_date_hints" not in state.metadata:
+            state.metadata["raw_date_hints"] = {}
+        state.metadata["raw_date_hints"]["start_date"] = parsed["start_date_hint"]
+    if "end_date_hint" in parsed:
+        if "raw_date_hints" not in state.metadata:
+            state.metadata["raw_date_hints"] = {}
+        state.metadata["raw_date_hints"]["end_date"] = parsed["end_date_hint"]
 
     # Apply inferred activities from destination (multi-faceted extraction)
     # These are activities implied by the destination, e.g., "Patagonia" → hiking
@@ -4791,7 +4767,7 @@ def normalize_inputs(state: GraphState) -> GraphState:
         updates["activity_settings"] = existing_settings
 
         # Also enable activities booking type
-        existing_booking = dict(ti.booking_types) if ti.booking_types else {}
+        existing_booking = dict(updates.get("booking_types") or ti.booking_types or {})
         existing_booking["activities"] = True
         updates["booking_types"] = existing_booking
 
@@ -4807,97 +4783,17 @@ def normalize_inputs(state: GraphState) -> GraphState:
             "normalize_inputs applied updates via _write_trip_inputs", fields=list(updates.keys())
         )
 
-    # Get reference to updated trip_inputs for validation
-    ti = state.trip_inputs
-
-    # Auto-enable booking types based on settings (operates on updated ti)
-    _auto_enable_booking_types(ti)
-
-    # Normalize currency
-    if ti.currency:
-        normalized_currency = _normalize_currency(ti.currency, default=DEFAULT_CURRENCY)
-        if normalized_currency != ti.currency:
-            _write_trip_inputs(state, "normalize_inputs", currency=normalized_currency)
-    elif ti.budget is not None:
-        _write_trip_inputs(state, "normalize_inputs", currency=DEFAULT_CURRENCY)
-
-    # Re-fetch ti after potential currency updates
-    ti = state.trip_inputs
-
-    # =========================================================================
-    # LIGHTWEIGHT VALIDATION FOR SHORT-CIRCUIT PATHS
-    # Short-circuits bypass validate_and_merge, so we do basic sanity checks here
-    # =========================================================================
-    today_iso = state.metadata.get("today_iso", date.today().isoformat())
-    validation_warnings = []
-    validation_updates: Dict[str, Any] = {}
-
-    # Validate dates are not in the past (allow today)
-    if ti.start_date:
-        try:
-            start = date.fromisoformat(ti.start_date)
-            today = date.fromisoformat(today_iso)
-            if start < today:
-                validation_warnings.append(f"Start date {ti.start_date} is in the past")
-                # Don't clear - user may have intentionally set a past date for planning
-        except (ValueError, TypeError):
-            validation_warnings.append(f"Invalid start date format: {ti.start_date}")
-            validation_updates["start_date"] = None  # Clear invalid date
-
-    if ti.end_date:
-        try:
-            end = date.fromisoformat(ti.end_date)
-            today = date.fromisoformat(today_iso)
-            if end < today:
-                validation_warnings.append(f"End date {ti.end_date} is in the past")
-        except (ValueError, TypeError):
-            validation_warnings.append(f"Invalid end date format: {ti.end_date}")
-            validation_updates["end_date"] = None  # Clear invalid date
-
-    # Validate end_date is after start_date
-    if ti.start_date and ti.end_date:
-        try:
-            start = date.fromisoformat(ti.start_date)
-            end = date.fromisoformat(ti.end_date)
-            if end < start:
-                # Check if this is a valid cross-year range (Dec → Jan/Feb)
-                if start.month == 12 and end.month in (1, 2):
-                    # Cross-year range: end date should be next year
-                    corrected_end = end.replace(year=start.year + 1)
-                    validation_updates["end_date"] = corrected_end.isoformat()
-                    _debug(
-                        "Corrected cross-year date range",
-                        start=ti.start_date,
-                        original_end=ti.end_date,
-                        corrected_end=corrected_end.isoformat(),
-                    )
-                else:
-                    validation_warnings.append(
-                        f"End date {ti.end_date} is before start date {ti.start_date}"
-                    )
-        except (ValueError, TypeError):
-            pass  # Already handled above
-
-    # Validate traveler counts are in reasonable range
-    if ti.adults is not None and (ti.adults < 1 or ti.adults > 20):
-        validation_warnings.append(f"Unusual adult count: {ti.adults}")
-        validation_updates["adults"] = max(1, min(20, ti.adults))  # Clamp to valid range
-
-    if ti.children is not None and (ti.children < 0 or ti.children > 20):
-        validation_warnings.append(f"Unusual children count: {ti.children}")
-        validation_updates["children"] = max(0, min(20, ti.children))  # Clamp to valid range
-
-    # Validate budget is positive
-    if ti.budget is not None and isinstance(ti.budget, (int, float)) and ti.budget <= 0:
-        validation_warnings.append(f"Invalid budget: {ti.budget}")
-        validation_updates["budget"] = None  # Clear invalid budget
-
-    if validation_warnings:
-        _debug("Short-circuit validation warnings", warnings=validation_warnings)
-
-    # Apply validation corrections if any
-    if validation_updates:
-        _write_trip_inputs(state, "normalize_inputs", **validation_updates)
+    # Add normalization errors to state errors
+    if norm_errors:
+        for err in norm_errors:
+            state.errors.append(
+                {
+                    "field": err.field,
+                    "message": err.message,
+                    "severity": err.severity,
+                }
+            )
+        _debug(f"Normalization produced {len(norm_errors)} errors/warnings")
 
     _debug_node_exit("normalize_inputs", state)
     return state
@@ -4929,6 +4825,9 @@ async def router(state: GraphState) -> GraphState:
         tokens = _estimate_prompt_tokens(tpl, state.parsed_inputs)
         _record_node_tokens(state, "router", tokens, model=llm_config["model_hint"])
 
+        import time as _time
+
+        _llm_start = _time.perf_counter()
         out = await call_llm_with_timeout(
             model=llm_config["model_hint"],
             prompt=tpl,
@@ -4936,6 +4835,7 @@ async def router(state: GraphState) -> GraphState:
             max_tokens=llm_config["max_tokens"],
             temperature=llm_config["temperature"],
         )
+        _record_llm_time(state, (_time.perf_counter() - _llm_start) * 1000)
         _increment_llm_calls(state)
         j = jloads_safe(out)
         state.intent = j.get("intent") or "required_fields"
@@ -4943,6 +4843,14 @@ async def router(state: GraphState) -> GraphState:
         state.strategy_topic = topic if state.intent == "strategy" else None
         state.metadata["router_notes"] = j.get("notes", "")
         state.metadata["router_confidence"] = j.get("confidence", 1.0)
+
+        # Handle off-topic intent with friendly deflection
+        if state.intent == "off_topic":
+            state.last_summary = _random_module.choice(_OFF_TOPIC_DEFLECTIONS)
+            state.metadata["last_question_field"] = "destinations"
+            _debug("Off-topic detected, deflecting to travel", response=state.last_summary[:50])
+            _debug_node_exit("router", state)
+            return state
 
         # Capture refined user intent from router (if provided)
         router_user_intent = j.get("user_intent")
@@ -4994,10 +4902,11 @@ async def router(state: GraphState) -> GraphState:
 
 def _select_required_fields_prompt(state: GraphState) -> str:
     """
-    Select the appropriate split prompt for required_fields based on state.
+    Select the appropriate prompt for required_fields based on state.
 
-    Returns the phase-specific prompt with Jinja2 {% include %} support.
-    Uses split prompts for ~50% token reduction when available.
+    Returns either:
+    - required_fields_confirm: when typos/ambiguities need user confirmation
+    - required_fields: for all other cases (collecting missing fields or confirming ready state)
     """
     # Check for typos or ambiguous entities needing confirmation
     extraction_conf = state.metadata.get("extraction_confidence", {})
@@ -5007,21 +4916,18 @@ def _select_required_fields_prompt(state: GraphState) -> str:
         # Use confirmation prompt for typo/ambiguity resolution
         return load_prompt("required_fields_confirm")
 
-    # Check if all core fields are present (ready state)
-    ti = state.trip_inputs
-    if ti.destinations and ti.origin and ti.start_date:
-        # Use ready state prompt - fill in trip details
-        prompt = load_prompt("required_fields_ready")
-        dests = ", ".join(ti.destinations) if ti.destinations else ""
-        return (
-            prompt.replace("{destinations}", dests)
-            .replace("{origin}", ti.origin or "")
-            .replace("{start_date}", ti.start_date or "")
-            .replace("{end_date}", ti.end_date or "not specified")
+    # Check if budget needs clarification (qualitative value was dropped)
+    prompt = load_prompt("required_fields")
+    if state.metadata.get("budget_needs_clarification"):
+        # Clear the flag and inject budget question
+        state.metadata["budget_needs_clarification"] = False
+        state.question_target = "budget"
+        prompt += (
+            "\n\nIMPORTANT: The user provided a qualitative budget description."
+            " Ask them for an approximate budget in dollars/their currency."
         )
 
-    # Default: use extraction prompt
-    return load_prompt("required_fields_extract")
+    return prompt
 
 
 async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = True) -> GraphState:
@@ -5089,9 +4995,12 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
     _record_node_tokens(state, f"specialist:{name}", tokens, model=llm_config["model_hint"])
 
+    import time as _time
+
     for attempt in range(attempts):
         try:
             # Pass history as separate messages for better context
+            _llm_start = _time.perf_counter()
             out = await call_llm_with_timeout(
                 model=llm_config["model_hint"],
                 prompt=system_prompt,
@@ -5102,6 +5011,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 user_message=state.user_text,
                 top_p=llm_config["top_p"],
             )
+            _record_llm_time(state, (_time.perf_counter() - _llm_start) * 1000)
             _increment_llm_calls(state)
             j = jloads_safe(out)
 
@@ -5131,7 +5041,26 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     state.parsed_inputs["strategy_hint"] = strategy_hint
                     _debug(f"Captured strategy_hint from LLM: {strategy_hint}")
 
-            _apply_llm_delta(state, f"specialist:{name}", delta)
+            # Domain specialists (flights, hotels, activities, transport) should not overwrite
+            # core fields extracted by the extractor. Only required_fields and correction can
+            # modify these fields (required_fields for collection, correction for fixing
+            # infeasibility).
+            _CORE_FIELDS = {
+                "destinations",
+                "origin",
+                "start_date",
+                "end_date",
+                "adults",
+                "children",
+                "budget",
+                "currency",
+            }
+            # required_fields and correction can modify core fields; domain specialists cannot
+            if name in ("required_fields", "correction"):
+                skip_fields = None  # Allow all field modifications
+            else:
+                skip_fields = _CORE_FIELDS  # Block core field modifications
+            _apply_llm_delta(state, f"specialist:{name}", delta, skip_fields=skip_fields)
 
             # Validate the updated trip_inputs
             TRIP_VALIDATOR.validate(state.trip_inputs.model_dump())
@@ -5310,9 +5239,12 @@ async def strategy_node(state: GraphState) -> GraphState:
     tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
     _record_node_tokens(state, f"strategy:{topic}", tokens, model=llm_config["model_hint"])
 
+    import time as _time
+
     for attempt in range(attempts):
         try:
             # Pass history as separate messages for better context
+            _llm_start = _time.perf_counter()
             out = await call_llm_with_timeout(
                 model=llm_config["model_hint"],
                 prompt=system_prompt,
@@ -5323,6 +5255,7 @@ async def strategy_node(state: GraphState) -> GraphState:
                 user_message=state.user_text,
                 top_p=llm_config["top_p"],
             )
+            _record_llm_time(state, (_time.perf_counter() - _llm_start) * 1000)
             _increment_llm_calls(state)
             j = jloads_safe(out)
 
@@ -5337,9 +5270,21 @@ async def strategy_node(state: GraphState) -> GraphState:
                 current_ss[topic] = strategy_data
                 _write_trip_inputs(state, f"strategy:{topic}", strategy_settings=current_ss)
 
-            # Apply remaining trip_inputs delta using centralized helper (skip strategy_settings)
+            # Apply remaining trip_inputs delta using centralized helper
+            # Strategy nodes should NOT overwrite core fields - only activity_settings
             delta = j.get("trip_inputs", {}) or {}
-            _apply_llm_delta(state, f"strategy:{topic}", delta, skip_fields={"strategy_settings"})
+            _STRATEGY_SKIP_FIELDS = {
+                "strategy_settings",  # Handled specially above
+                "destinations",
+                "origin",
+                "start_date",
+                "end_date",
+                "adults",
+                "children",
+                "budget",
+                "currency",
+            }
+            _apply_llm_delta(state, f"strategy:{topic}", delta, skip_fields=_STRATEGY_SKIP_FIELDS)
 
             # Validate the updated trip_inputs
             TRIP_VALIDATOR.validate(state.trip_inputs.model_dump())
@@ -5422,117 +5367,28 @@ async def strategy_node(state: GraphState) -> GraphState:
 # -----------------------
 def validate_and_merge(state: GraphState) -> GraphState:
     """
-    Validate trip inputs and generate user-facing messages for issues.
-    Uses _write_trip_inputs helper for state ownership enforcement.
-    Ported from plan.py _validate_trip_inputs.
+    Compute ready_to_generate state and enable booking types.
+
+    NOTE: All normalization (dates, travelers, currency, destinations) now
+    happens in normalize_inputs via TripInputNormalizer. This node only:
+    1. Computes ready_to_generate based on required fields
+    2. Calls _auto_enable_booking_types (single call location)
+    3. Generates any final validation messages
     """
     _debug_node_entry("validate_and_merge", state)
 
     ti = state.trip_inputs  # Read-only reference
-    validation_messages: List[str] = []
-    today_iso = state.metadata.get("today_iso") or _today_iso()
-    today_dt = _parse_iso_date(today_iso)
-    updates: Dict[str, Any] = {}
 
-    # Validate and normalize dates
-    start_dt = _parse_iso_date(ti.start_date)
-    end_dt = _parse_iso_date(ti.end_date)
+    # =========================================================================
+    # AUTO-ENABLE BOOKING TYPES (single call location)
+    # =========================================================================
+    # This is the ONLY place where _auto_enable_booking_types is called.
+    # It was previously called in _apply_llm_delta and normalize_inputs too.
+    _auto_enable_booking_types(ti)
 
-    # Check for ISO format
-    if ti.start_date and not ISO.match(ti.start_date):
-        state.errors.append("Invalid start_date format")
-    if ti.end_date and not ISO.match(ti.end_date):
-        state.errors.append("Invalid end_date format")
-
-    # Auto-swap dates if end_date < start_date (unless it's a valid cross-year range)
-    if start_dt and end_dt and end_dt < start_dt:
-        # Check if this is a valid cross-year range (Dec → Jan/Feb)
-        if start_dt.month == 12 and end_dt.month in (1, 2):
-            # Cross-year range: end date should be next year, not swapped
-            corrected_end = end_dt.replace(year=start_dt.year + 1)
-            updates["end_date"] = corrected_end.strftime("%Y-%m-%d")
-            end_dt = corrected_end
-            _debug(
-                "Corrected cross-year date range in validate_and_merge",
-                start=ti.start_date,
-                corrected_end=updates["end_date"],
-            )
-        else:
-            # Not a cross-year range, swap dates
-            earliest = min(start_dt, end_dt)
-            latest = max(start_dt, end_dt)
-            updates["start_date"] = earliest.strftime("%Y-%m-%d")
-            updates["end_date"] = latest.strftime("%Y-%m-%d")
-            validation_messages.append(
-                "I reordered your dates so the trip starts before it ends. Does that look right?"
-            )
-            start_dt = earliest
-            end_dt = latest
-            _debug("Dates auto-swapped", start=updates["start_date"], end=updates["end_date"])
-
-    # Past date warnings
-    if start_dt and today_dt and start_dt < today_dt:
-        validation_messages.append("The start date is in the past. Want to update it?")
-    if end_dt and today_dt and end_dt < today_dt:
-        validation_messages.append("The end date is in the past. Want to update it?")
-
-    # Validate and clamp traveler counts
-    if ti.adults is not None:
-        clamped_adults = _clamp_traveler_value(ti.adults)
-        if ti.adults < 0:
-            validation_messages.append(
-                f"Adults count cannot be negative. I set it to {clamped_adults}."
-            )
-        if ti.adults != clamped_adults:
-            updates["adults"] = clamped_adults
-
-    if ti.children is not None:
-        clamped_children = _clamp_traveler_value(ti.children)
-        if ti.children < 0:
-            validation_messages.append(
-                f"Children count cannot be negative. I set it to {clamped_children}."
-            )
-        if ti.children != clamped_children:
-            updates["children"] = clamped_children
-
-    # Ensure requires_assistance is boolean
-    if ti.requires_assistance is not None and not isinstance(ti.requires_assistance, bool):
-        updates["requires_assistance"] = None
-
-    # Validate budget
-    if ti.budget is not None and isinstance(ti.budget, (int, float)) and ti.budget < 0:
-        updates["budget"] = None
-        validation_messages.append("Budget must be zero or higher. Please share an updated budget.")
-
-    # Normalize currency
-    if ti.currency:
-        normalized_currency = _normalize_currency(ti.currency)
-        if normalized_currency is None:
-            normalized_currency = DEFAULT_CURRENCY
-            validation_messages.append(f"I set the currency to {normalized_currency}.")
-        if normalized_currency != ti.currency:
-            updates["currency"] = normalized_currency
-    elif ti.budget is not None:
-        updates["currency"] = DEFAULT_CURRENCY
-
-    # Apply all updates via the helper
-    if updates:
-        _write_trip_inputs(state, "validate_and_merge", **updates)
-        _debug(
-            "validate_and_merge applied updates via _write_trip_inputs", fields=list(updates.keys())
-        )
-
-    # Auto-enable booking types based on settings (on updated state)
-    _auto_enable_booking_types(state.trip_inputs)
-
-    # Append validation messages to assistant message if any
-    if validation_messages and state.last_summary:
-        state.last_summary = state.last_summary + " " + " ".join(validation_messages)
-    elif validation_messages:
-        state.last_summary = " ".join(validation_messages)
-
-    # Compute missing fields and ready_to_generate (using updated state)
-    ti = state.trip_inputs  # Re-fetch after updates
+    # =========================================================================
+    # COMPUTE READY STATE
+    # =========================================================================
     # Only require: destinations, origin, start_date (matches plan.py)
     missing = _compute_missing_fields(ti.model_dump(exclude_none=True))
 
@@ -5545,7 +5401,7 @@ def validate_and_merge(state: GraphState) -> GraphState:
         "Validation complete",
         missing=missing,
         ready=state.ready_to_generate,
-        validation_msgs=len(validation_messages),
+        errors_count=len(state.errors),
     )
     _debug_node_exit("validate_and_merge", state)
     return state
@@ -5674,6 +5530,7 @@ async def response_polish(state: GraphState) -> GraphState:
         _increment_llm_calls(state)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
+        _record_llm_time(state, elapsed_ms)
         state.metadata["polish_duration_ms"] = round(elapsed_ms, 2)
 
         # Log warning if approaching timeout
@@ -6044,10 +5901,11 @@ def short_circuit_responder(state: GraphState) -> GraphState:
     Handle short-circuited inputs without LLM calls.
 
     This node is reached when the extractor detects a simple input pattern
-    (greeting, acknowledgment, yes/no, bare field input) that can be handled
-    with template-based responses instead of going through the full LLM pipeline.
+    (greeting or yes/no confirmation) that can be handled with template-based
+    responses instead of going through the full LLM pipeline.
 
-    Saves ~800 tokens per message.
+    Only handles: greeting, confirmation_yes, confirmation_no
+    All other input types (including acknowledgments, bare inputs) go through LLM.
     """
     _debug_node_entry("short_circuit_responder", state)
 
@@ -6065,9 +5923,8 @@ def short_circuit_responder(state: GraphState) -> GraphState:
 
     # Handle based on short-circuit type
     if sc_response:
-        # Use the pre-defined template response
+        # Use the pre-defined template response (greetings)
         state.last_summary = sc_response
-        # For greetings, we're asking about destinations
         if sc_type == "greeting":
             state.metadata["last_question_field"] = "destinations"
         _debug("Using template response", response=sc_response[:50])
@@ -6081,95 +5938,12 @@ def short_circuit_responder(state: GraphState) -> GraphState:
             _debug(f"Tracking question field: {asked_field}")
 
         if follow_up:
-            # For acknowledgments, add a brief prefix
-            if sc_type == "acknowledgment":
-                state.last_summary = follow_up
-            elif sc_type in ("confirmation_yes", "confirmation_no"):
+            if sc_type in ("confirmation_yes", "confirmation_no"):
                 if sc_action == "generate_plan":
                     # Plan generation was triggered - this will be handled by the graph
                     state.last_summary = "Generating your travel plan..."
                 else:
                     state.last_summary = follow_up
-            elif sc_type in ("bare_destination", "bare_origin", "bare_date", "bare_travelers"):
-                # Field was extracted - acknowledge and ask next question
-                if sc_type == "bare_destination":
-                    # Guard against empty destinations list
-                    dest_list = state.parsed_inputs.get("destinations_delta", [])
-                    dest = (
-                        dest_list[0]
-                        if dest_list
-                        else (
-                            state.trip_inputs.destinations[0]
-                            if state.trip_inputs.destinations
-                            else ""
-                        )
-                    )
-
-                    # Check for ambiguous destinations
-                    if sc_action == "validate_destination" and dest:
-                        ambiguous_options = _check_ambiguous_destination(dest)
-                        if ambiguous_options:
-                            # Ask for clarification instead of accepting blindly
-                            options_str = " or ".join(ambiguous_options[:3])
-                            state.last_summary = f"Did you mean {options_str}?"
-                            state.suggested_responses = ambiguous_options[:3]
-                            _debug_suggestions(
-                                state.suggested_responses, source="ambiguous_destination"
-                            )
-                            state.metadata["last_question_field"] = "destinations"
-                            # Don't apply the parsed destination - wait for clarification
-                            state.parsed_inputs.pop("destinations_delta", None)
-                            _debug(
-                                "Ambiguous destination detected",
-                                dest=dest,
-                                options=ambiguous_options,
-                            )
-                        else:
-                            # Not ambiguous - accept it
-                            state.last_summary = (
-                                f"{dest}—nice choice! {follow_up}"
-                                if follow_up
-                                else f"{dest}—great pick!"
-                            )
-                    else:
-                        state.last_summary = (
-                            f"{dest}—nice choice! {follow_up}"
-                            if follow_up
-                            else f"{dest}—great pick!"
-                        )
-                elif sc_type == "bare_origin":
-                    origin = (
-                        state.parsed_inputs.get("origin_delta") or state.trip_inputs.origin or ""
-                    )
-                    state.last_summary = (
-                        f"Got it, flying from {origin}. {follow_up}"
-                        if follow_up
-                        else f"Flying from {origin}."
-                    )
-                elif sc_type == "bare_date":
-                    # Check for partial date notifications
-                    partial_notifications = state.metadata.get("partial_date_notifications", [])
-                    if partial_notifications:
-                        # Include notification about defaulted date
-                        base_msg = partial_notifications[0]
-                        state.last_summary = f"{base_msg} {follow_up}" if follow_up else base_msg
-                    else:
-                        state.last_summary = f"Noted! {follow_up}" if follow_up else "Dates noted!"
-                elif sc_type == "bare_travelers":
-                    adults = state.parsed_inputs.get("adults_delta")
-                    # Guard against None or invalid values in template
-                    if adults is None:
-                        adults = state.trip_inputs.adults or 1
-                    if adults == 1:
-                        state.last_summary = (
-                            f"Solo trip—got it! {follow_up}" if follow_up else "Solo trip noted!"
-                        )
-                    else:
-                        state.last_summary = (
-                            f"{adults} travelers—noted! {follow_up}"
-                            if follow_up
-                            else f"{adults} travelers noted!"
-                        )
             else:
                 state.last_summary = follow_up
         else:
@@ -6465,6 +6239,15 @@ _graph.add_edge("short_circuit_responder", "summarize")
 
 def route_after_router(state: GraphState) -> str:
     # =========================================================================
+    # OFF-TOPIC HANDLING
+    # =========================================================================
+    # Off-topic queries have already been handled in the router node with a
+    # friendly deflection response. Skip to summarize to output the response.
+    if state.intent == "off_topic":
+        _debug("Routing off_topic to summarize")
+        return "summarize"
+
+    # =========================================================================
     # CONFIDENCE-BASED ROUTING
     # =========================================================================
     # Force required_fields for low confidence extractions
@@ -6601,6 +6384,7 @@ _graph.add_conditional_edges(
         "transport_node": "transport_node",
         "activities_node": "activities_node",
         "correction_node": "correction_node",
+        "summarize": "summarize",
     },
 )
 
@@ -6900,13 +6684,20 @@ async def run_turn(
     turn_thread_id = f"{thread_id}_{uuid4().hex[:8]}"
 
     # Build config with optional LangSmith tracing
-    # When LANGCHAIN_TRACING_V2=true (set by E2E tests), we use a LangChainTracer
-    # callback to capture the actual LangSmith run UUID for trace enrichment
-    tracing_enabled = os.getenv("LANGCHAIN_TRACING_V2", "false").lower() == "true"
+    # When LANGSMITH_TRACING=true in .env, we use a LangChainTracer callback
+    # to capture the actual LangSmith run UUID for trace enrichment
+    tracing_enabled = settings.langsmith_tracing_enabled and settings.langsmith_api_key
     tracer = None
     config: Dict[str, Any] = {"configurable": {"thread_id": turn_thread_id}}
 
     if tracing_enabled and LANGCHAIN_TRACER_AVAILABLE:
+        # Ensure LangChain env vars are set for the tracer to work
+        if settings.langsmith_api_key:
+            os.environ["LANGCHAIN_API_KEY"] = settings.langsmith_api_key
+            os.environ["LANGCHAIN_TRACING_V2"] = "true"
+            os.environ["LANGCHAIN_ENDPOINT"] = settings.langsmith_endpoint
+            os.environ["LANGCHAIN_PROJECT"] = settings.langsmith_project
+
         # Extract test metadata for trace tagging
         scenario_id = metadata.get("scenario_id", "")
         is_test_run = metadata.get("test_run", False)
@@ -6914,7 +6705,7 @@ async def run_turn(
         # Create tracer with tags for searchability
         # Note: LangChainTracer doesn't accept metadata param - we encode info in tags
         tracer = LangChainTracer(
-            project_name=os.getenv("LANGSMITH_PROJECT", "default"),
+            project_name=settings.langsmith_project,
             tags=[
                 "nomadic",
                 f"thread:{thread_id}",
@@ -6991,6 +6782,10 @@ async def run_turn(
             "llm_calls_made": result_meta.get("llm_calls_made", 0),
             "cache_hits": result_meta.get("cache_hits", 0),
             "confidence_routing": result_meta.get("confidence_routing"),
+            # Token and timing metrics for diagnostics
+            "total_tokens": result_meta.get("total_tokens", 0),
+            "node_tokens": result_meta.get("node_tokens", {}),
+            "llm_time_ms": result_meta.get("llm_time_ms", 0.0),
         },
     }
     return resp

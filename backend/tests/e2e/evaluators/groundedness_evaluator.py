@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from tests.e2e.config import get_threshold
 from tests.e2e.evaluators.base_evaluator import (
     BaseEvaluator,
     EvaluationCriteria,
@@ -26,7 +27,7 @@ class GroundednessEvaluator(BaseEvaluator):
 - Clear distinction between facts and suggestions"""
 
     criteria = [EvaluationCriteria.GROUNDEDNESS]
-    pass_threshold = 0.85  # Higher threshold - hallucinations erode user trust
+    pass_threshold = get_threshold("groundedness")
 
     def get_evaluation_prompt(
         self,

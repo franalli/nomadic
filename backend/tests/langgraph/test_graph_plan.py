@@ -434,12 +434,12 @@ class TestGraphPlanUtilities:
 
     def test_validate_thread_id(self):
         """Thread ID validation accepts valid UUIDs."""
-        from app.graph_plan_utils import validate_thread_id
+        from app.graph_plan_utils import is_valid_thread_id
 
-        assert validate_thread_id("550e8400-e29b-41d4-a716-446655440000")
-        assert not validate_thread_id("not-a-uuid")
-        assert not validate_thread_id("")
-        assert not validate_thread_id(None)
+        assert is_valid_thread_id("550e8400-e29b-41d4-a716-446655440000")
+        assert not is_valid_thread_id("not-a-uuid")
+        assert not is_valid_thread_id("")
+        assert not is_valid_thread_id(None)
 
     def test_truncate_assistant_message(self):
         """Assistant message truncation works correctly."""

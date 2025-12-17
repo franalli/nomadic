@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from tests.e2e.config import get_threshold
 from tests.e2e.evaluators.base_evaluator import (
     BaseEvaluator,
     EvaluationCriteria,
@@ -30,7 +31,7 @@ class NodeEvaluator(BaseEvaluator):
         EvaluationCriteria.STATE_TRANSITION_VALIDITY,
         EvaluationCriteria.ERROR_HANDLING,
     ]
-    pass_threshold = 0.75  # Technical correctness matters
+    pass_threshold = get_threshold("node")
 
     def get_evaluation_prompt(
         self,

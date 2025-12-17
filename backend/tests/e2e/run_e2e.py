@@ -11,8 +11,8 @@ Usage:
     # Run golden replay tests
     python -m tests.e2e.run_e2e --golden
 
-    # Run nightly tests (comprehensive)
-    python -m tests.e2e.run_e2e --nightly
+    # Run generated scenario tests (comprehensive)
+    python -m tests.e2e.run_e2e --generated
 
     # Run all tests
     python -m tests.e2e.run_e2e --all
@@ -37,16 +37,26 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+def _e2e_tracing_enabled() -> bool:
+    """Check if E2E LangSmith tracing is enabled."""
+    return os.getenv("LANGSMITH_E2E_TRACING", "false").lower() == "true" and bool(
+        os.getenv("LANGSMITH_API_KEY")
+    )
+
+
 def check_api_key():
     """Check that required API keys are set."""
     if not os.getenv("OPENAI_API_KEY"):
         print("❌ OPENAI_API_KEY not set. Please set it in your environment or .env file.")
         sys.exit(1)
 
-    if os.getenv("LANGSMITH_KEY"):
-        print("✅ LangSmith tracing enabled")
+    if _e2e_tracing_enabled():
+        print("✅ LangSmith E2E tracing enabled")
     else:
-        print("⚠️  LangSmith tracing disabled (LANGSMITH_KEY not set)")
+        print(
+            "⚠️  LangSmith E2E tracing disabled "
+            "(set LANGSMITH_E2E_TRACING=true and LANGSMITH_API_KEY)"
+        )
 
 
 async def run_pr_gate():
@@ -90,17 +100,17 @@ async def run_golden():
     return result == 0
 
 
-async def run_nightly():
-    """Run nightly tests."""
+async def run_generated():
+    """Run generated scenario tests."""
     import pytest
 
     print("\n" + "=" * 60)
-    print("Running Nightly E2E Tests (this may take a while)")
+    print("Running Generated Scenario E2E Tests (this may take a while)")
     print("=" * 60 + "\n")
 
     result = pytest.main(
         [
-            "tests/e2e/test_e2e_nightly.py",
+            "tests/e2e/test_e2e_generated.py",
             "-v",
             "--tb=short",
             "--export-diagnostics",
@@ -144,7 +154,7 @@ async def run_single_scenario(scenario_name: str):
 
     # Execute
     print("\n🚀 Executing scenario...")
-    executor = ConversationExecutor(enable_langsmith=bool(os.getenv("LANGSMITH_KEY")))
+    executor = ConversationExecutor(enable_langsmith=_e2e_tracing_enabled())
     result = await executor.execute_scenario(scenario)
 
     # Display results
@@ -161,9 +171,9 @@ async def run_single_scenario(scenario_name: str):
     print("\n🎯 Running evaluation...")
     evaluators = CompositeEvaluator(
         [
-            QualityEvaluator(model="gpt-4o"),
-            ConstraintEvaluator(model="gpt-4o"),
-            SafetyEvaluator(model="gpt-4o"),
+            QualityEvaluator(),
+            ConstraintEvaluator(),
+            SafetyEvaluator(),
         ]
     )
 
@@ -205,19 +215,19 @@ async def generate_and_evaluate(count: int):
 
     print(f"\n🎲 Generating {count} random scenarios...")
 
-    generator = ScenarioGenerator(model="gpt-4o", temperature=0.9)
+    generator = ScenarioGenerator(temperature=0.9)
     scenarios = await generator.generate_scenario_batch(count=count)
 
     print(f"✅ Generated {len(scenarios)} scenarios")
 
-    executor = ConversationExecutor(enable_langsmith=bool(os.getenv("LANGSMITH_KEY")))
+    executor = ConversationExecutor(enable_langsmith=_e2e_tracing_enabled())
     evaluators = CompositeEvaluator(
         [
-            QualityEvaluator(model="gpt-4o"),
-            ConstraintEvaluator(model="gpt-4o"),
-            GroundednessEvaluator(model="gpt-4o"),
-            SafetyEvaluator(model="gpt-4o"),
-            TravelLogicEvaluator(model="gpt-4o"),
+            QualityEvaluator(),
+            ConstraintEvaluator(),
+            GroundednessEvaluator(),
+            SafetyEvaluator(),
+            TravelLogicEvaluator(),
         ]
     )
 
@@ -304,7 +314,7 @@ async def main():
     parser = argparse.ArgumentParser(description="E2E Test Runner")
     parser.add_argument("--pr-gate", action="store_true", help="Run PR gate tests")
     parser.add_argument("--golden", action="store_true", help="Run golden replay tests")
-    parser.add_argument("--nightly", action="store_true", help="Run nightly tests")
+    parser.add_argument("--generated", action="store_true", help="Run generated scenario tests")
     parser.add_argument("--all", action="store_true", help="Run all tests")
     parser.add_argument("--scenario", type=str, help="Run a specific scenario by name")
     parser.add_argument("--generate", type=int, help="Generate and evaluate N scenarios")
@@ -333,9 +343,9 @@ async def main():
     elif args.all:
         success = await run_pr_gate() and await run_golden()
         if success:
-            success = await run_nightly()
-    elif args.nightly:
-        success = await run_nightly()
+            success = await run_generated()
+    elif args.generated:
+        success = await run_generated()
     elif args.golden:
         success = await run_golden()
     elif args.pr_gate:
@@ -344,6 +354,8 @@ async def main():
         # Default: run PR gate
         print("No test type specified. Running PR gate tests.")
         success = await run_pr_gate()
+
+    sys.exit(0 if success else 1)
 
     sys.exit(0 if success else 1)
 

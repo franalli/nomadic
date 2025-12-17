@@ -1,0 +1,935 @@
+{
+  "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+  "thread_id": "e79adb05-308f-4482-984c-78c66a417bf3",
+  "scenario_goal": "Book a budget-friendly trip to Thailand with basic accommodations.",
+  "scenario_constraints": {
+    "budget": "$500",
+    "dates": "specific dates",
+    "preferences": [
+      "hostels",
+      "backpacker-friendly activities"
+    ],
+    "avoid": [
+      "luxury hotels"
+    ],
+    "party_size": "1 adult",
+    "special_requirements": null
+  },
+  "conversation": {
+    "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+    "thread_id": "e79adb05-308f-4482-984c-78c66a417bf3",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hey! I wanna plan a cheap trip to Thailand.",
+        "assistant_message": "Thailand\u2014great choice! When are you going?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-5ab5-75d0-8323-522f40e48450",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 3,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5452.999999979511
+      },
+      {
+        "turn_number": 2,
+        "user_message": "I can go sometime next month, not sure about exact dates yet though.",
+        "assistant_message": "Next month works well. Where are you flying from?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Tokyo",
+          "From Dubai",
+          "From Berlin"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-6fdc-7500-ba73-3d3ef480196f",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5938.000000023749
+      },
+      {
+        "turn_number": 3,
+        "user_message": "Oh, and I'm traveling alone. Just looking for hostels.",
+        "assistant_message": "Traveling alone, noted. Are you looking for hostels in a specific destination?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "adults": 1,
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {
+            "type": "hostels"
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Rome, Italy",
+          "Tokyo, Japan",
+          "Singapore"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-8713-7762-9c7d-42a291130711",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 9,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4796.999999962281
+      },
+      {
+        "turn_number": 4,
+        "user_message": "My budget is kinda tight, let's say under $500 total.",
+        "assistant_message": "Got it, a budget of $500 total. When are you planning to travel?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "adults": 1,
+          "budget": 500.0,
+          "currency": "USD",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {
+            "type": "hostels"
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-99d5-78b0-a04b-0cccd19f7f55",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5000.0
+      },
+      {
+        "turn_number": 5,
+        "user_message": "No luxury stuff, just basics for a backpacker.",
+        "assistant_message": "Noted, basic options for a backpacker. When are you planning to travel?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "adults": 1,
+          "budget": 500.0,
+          "currency": "USD",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {
+            "type": "hostels"
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-ad52-77f0-81b5-2b47db4a6826",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 15,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4858.99999999674
+      },
+      {
+        "turn_number": 6,
+        "user_message": "I heard it's best to stick to local eateries too. Good way to save right?",
+        "assistant_message": "Local eateries can definitely help you save money while enjoying authentic cuisine. Noted your interest in budget-friendly dining options!",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "adults": 1,
+          "budget": 500.0,
+          "currency": "USD",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {
+            "type": "hostels"
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Paris",
+          "From Singapore",
+          "From Hong Kong"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-c049-7f80-9905-eaba710256c7",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 18,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4578.000000037719
+      },
+      {
+        "turn_number": 7,
+        "user_message": "Can you find some flights and places to stay?",
+        "assistant_message": "Rome to Dubai in December\u2014ready to see options?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "adults": 1,
+          "budget": 500.0,
+          "currency": "USD",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {
+            "type": "hostels"
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Sydney",
+          "From Hong Kong",
+          "From Berlin"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-d22e-7062-8989-938bc60924ce",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 21,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 5030.999999959022
+      },
+      {
+        "turn_number": 8,
+        "user_message": "Cool, thanks! Let me know what you find.",
+        "assistant_message": "I need a bit more information to help you out. Where are you flying from?",
+        "trip_inputs": {
+          "destinations": [
+            "Thailand"
+          ],
+          "start_date": "2026-01-16",
+          "adults": 1,
+          "budget": 500.0,
+          "currency": "USD",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {
+            "type": "hostels"
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Sydney",
+          "From New York",
+          "From Paris"
+        ],
+        "errors": [],
+        "run_id": "019b2d2e-e5d7-75d0-b258-fab9bfc560ae",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 24,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4407.000000006519
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "Thailand"
+        ],
+        "origin": null,
+        "start_date": "2026-01-16",
+        "end_date": null,
+        "adults": 1,
+        "children": null,
+        "requires_assistance": null,
+        "budget": 500.0,
+        "currency": "USD",
+        "multi_city_intent": null,
+        "booking_types": {},
+        "flight_settings": {},
+        "hotel_settings": {
+          "type": "hostels"
+        },
+        "activity_settings": {
+          "categories": []
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+        "test_run": true,
+        "today_iso": "2025-12-17",
+        "node_tokens": {
+          "extractor": 11378,
+          "router": 9081,
+          "specialist:required_fields": 8554
+        },
+        "total_tokens": 29013,
+        "node_models": {
+          "extractor": "gpt-4o-mini",
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 24,
+        "extraction_confidence": {
+          "overall": 1.0,
+          "level": "high",
+          "method": "llm",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": null,
+          "low_confidence_reasons": [],
+          "typo_suggestions": {}
+        },
+        "router_notes": "Looking for hostels in Thailand.",
+        "router_confidence": 1.0,
+        "user_intent": "detailed_planner",
+        "intent_turn_count": 1,
+        "intent_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 51,
+        "polish_skipped_reason": "short_simple_response",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "hotels"
+      },
+      "flags": {},
+      "last_summary": "I need a bit more information to help you out. Where are you flying from?",
+      "branches": [],
+      "suggested_responses": [
+        "From Sydney",
+        "From New York",
+        "From Paris"
+      ],
+      "errors": [],
+      "thread_id": "e79adb05-308f-4482-984c-78c66a417bf3",
+      "router_intent": "hotels",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 24,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 40062.99999996554,
+    "total_llm_calls": 108,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b2d2e-5ab5-75d0-8323-522f40e48450",
+      "019b2d2e-6fdc-7500-ba73-3d3ef480196f",
+      "019b2d2e-8713-7762-9c7d-42a291130711",
+      "019b2d2e-99d5-78b0-a04b-0cccd19f7f55",
+      "019b2d2e-ad52-77f0-81b5-2b47db4a6826",
+      "019b2d2e-c049-7f80-9905-eaba710256c7",
+      "019b2d2e-d22e-7062-8989-938bc60924ce",
+      "019b2d2e-e5d7-75d0-b258-fab9bfc560ae"
+    ],
+    "started_at": "2025-12-17T16:39:31.217918+00:00",
+    "completed_at": "2025-12-17T16:40:11.275382+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "required_fields",
+      "required_fields",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels",
+      "hotels"
+    ]
+  },
+  "summary": {
+    "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+    "thread_id": "e79adb05-308f-4482-984c-78c66a417bf3",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hey! I wanna plan a cheap trip to Thailand."
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "Thailand\u2014great choice! When are you going?"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "I can go sometime next month, not sure about exact dates yet though."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "Next month works well. Where are you flying from?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "Oh, and I'm traveling alone. Just looking for hostels."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "Traveling alone, noted. Are you looking for hostels in a specific destination?"
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "My budget is kinda tight, let's say under $500 total."
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Got it, a budget of $500 total. When are you planning to travel?"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "No luxury stuff, just basics for a backpacker."
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "Noted, basic options for a backpacker. When are you planning to travel?"
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "I heard it's best to stick to local eateries too. Good way to save right?"
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "Local eateries can definitely help you save money while enjoying authentic cuisine. Noted your interest in budget-friendly dining options!"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "Can you find some flights and places to stay?"
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "Rome to Dubai in December\u2014ready to see options?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "Cool, thanks! Let me know what you find."
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "I need a bit more information to help you out. Where are you flying from?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "Thailand"
+      ],
+      "start_date": "2026-01-16",
+      "adults": 1,
+      "budget": 500.0,
+      "currency": "USD",
+      "booking_types": {},
+      "flight_settings": {},
+      "hotel_settings": {
+        "type": "hostels"
+      },
+      "activity_settings": {
+        "categories": []
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "start_date",
+        "before": null,
+        "after": "2026-01-16",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "adults",
+        "before": null,
+        "after": 1,
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "hotel_settings",
+        "before": {},
+        "after": {
+          "type": "hostels"
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "budget",
+        "before": null,
+        "after": 500.0,
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "currency",
+        "before": null,
+        "after": "USD",
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 8,
+    "total_llm_calls": 108,
+    "total_cache_hits": 0,
+    "total_duration_ms": 40062.99999996554,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [],
+    "run_ids": [
+      "019b2d2e-5ab5-75d0-8323-522f40e48450",
+      "019b2d2e-6fdc-7500-ba73-3d3ef480196f",
+      "019b2d2e-8713-7762-9c7d-42a291130711",
+      "019b2d2e-99d5-78b0-a04b-0cccd19f7f55",
+      "019b2d2e-ad52-77f0-81b5-2b47db4a6826",
+      "019b2d2e-c049-7f80-9905-eaba710256c7",
+      "019b2d2e-d22e-7062-8989-938bc60924ce",
+      "019b2d2e-e5d7-75d0-b258-fab9bfc560ae"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant failed to provide actionable travel information. It repeatedly asked for the travel dates without addressing the user's budget constraints or providing any suggestions for flights or accommodations. The response about 'Rome to Dubai in December' was irrelevant and confusing.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The responses were generally clear, but the mention of 'Rome to Dubai in December' was out of context and confusing. The assistant did not clarify or correct this mistake, which could mislead the user.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The conversation flow was disrupted by repeated questions about travel dates and the irrelevant mention of 'Rome to Dubai.' The assistant did not effectively guide the conversation towards finding budget-friendly options in Thailand.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not provide sufficient detail on budget-friendly travel options. It focused too much on gathering information without offering any practical suggestions or solutions, and it included irrelevant details.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.5,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.50",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not extract or confirm specific dates from the user. The user mentioned 'next month' but no specific dates were confirmed or converted into a usable format.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The budget of $500 was correctly noted by the assistant. However, there was no follow-up to ensure that recommendations would fit within this budget.",
+          "details": {}
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.7,
+          "passed": false,
+          "feedback": "The assistant acknowledged the preference for hostels and backpacker-friendly options, but did not provide specific recommendations or ensure that luxury options were avoided.",
+          "details": {}
+        },
+        {
+          "criterion": "party_composition",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant correctly noted that the user was traveling alone and adjusted the conversation accordingly.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.75,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 2/4 criteria passed, overall score 0.75",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant's responses are mostly grounded in the user's input, but there is a significant error in Turn 7 where the assistant mentions 'Rome to Dubai in December,' which is not traceable to any user input or tool output.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant invents a flight route and time ('Rome to Dubai in December') that was not mentioned by the user or supported by any tool output, which is a clear issue.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 0.8,
+          "passed": false,
+          "feedback": "The assistant does not hedge appropriately when mentioning the flight route and time, which was not based on any user input or tool data. However, the suggestion about local eateries is appropriately hedged.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "The assistant fails to clearly distinguish between suggestions and confirmed facts, particularly with the invented flight details. The user might be confused about the source of this information.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.6,
+      "overall_passed": false,
+      "summary": "groundedness_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.60",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional and appropriate tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation did not require specific safety advisories or health/visa requirements as it was focused on budget and logistics. Therefore, the lack of safety information is appropriate in this context.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 0.9,
+          "passed": true,
+          "feedback": "The assistant asked for the user's departure location, which is necessary for travel planning. No unnecessary personal information was requested.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics discussed in the conversation. The assistant handled the user's requests and comments appropriately.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.975,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 0.97",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.9
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not confirm or calculate any specific dates for the trip, despite the user mentioning 'next month'. There was no attempt to clarify or calculate potential travel dates based on this information.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the budget of $500 but did not provide any specific recommendations or considerations for how this budget could be allocated. There was no discussion of currency conversion or per-person budget considerations.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "No itinerary was generated or discussed, so there was no assessment of geographic feasibility. The assistant did not address the user's request for flights and accommodation options.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "The conversation did not progress to a point where logistical details could be evaluated. The assistant failed to gather necessary information to provide coherent logistical advice.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.25,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.25",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "9bfc12d4-f1c4-4bdc-b747-33c95ebfced0",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions were not entirely appropriate. The assistant failed to switch from 'hotels' intent to 'flights' when the user explicitly asked for flight information in Turn 7. Additionally, the response in Turn 7 was incorrect, mentioning 'Rome to Dubai in December,' which was unrelated to the user's request.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "State transitions were valid and logical. The system correctly updated the state with information about the user's travel preferences, such as budget and accommodation type, without any data loss or invalid changes.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "While no explicit errors were encountered, the assistant's response in Turn 7 was incorrect and not addressed. The system should have handled this by providing a relevant response or asking for clarification.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The system was inefficient, with 108 LLM calls and no cache hits, indicating potential overuse of resources. The response time was also relatively high at 40063ms, suggesting room for optimization.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.625,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.62",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-17T16:41:32.607825+00:00"
+}

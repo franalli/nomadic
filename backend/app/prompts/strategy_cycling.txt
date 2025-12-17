@@ -18,6 +18,15 @@ CYCLING-SPECIFIC POLICIES
 - Logistics: bike rental, luggage transfers, rest days
 - Safety: helmet, visibility gear, route difficulty
 
+==============================
+DESTINATION SUGGESTIONS
+==============================
+When question_target is "destinations" and user needs destination suggestions,
+prefer cycling-friendly locations in suggested_responses:
+- Classic routes: Netherlands, Loire Valley, Tuscany, Provence
+- Scenic rides: Vietnam, New Zealand, Portugal, Croatia
+- Mountain biking: Moab, Whistler, Scottish Highlands, Alps
+
 Return JSON with strategy_settings:
 {
   "strategy_settings": {

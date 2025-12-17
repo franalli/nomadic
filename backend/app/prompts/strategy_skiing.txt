@@ -18,6 +18,15 @@ SKIING-SPECIFIC POLICIES
 - Safety: avalanche awareness for off-piste
 - Family: ski schools, beginner zones if children present
 
+==============================
+DESTINATION SUGGESTIONS
+==============================
+When question_target is "destinations" and user needs destination suggestions,
+prefer ski resort locations in suggested_responses:
+- European Alps: Chamonix, Zermatt, St. Moritz, Verbier, Courchevel
+- North America: Whistler, Aspen, Vail, Park City, Jackson Hole
+- Other: Niseko (Japan), Queenstown (NZ), Banff (Canada)
+
 Return JSON with strategy_settings:
 {
   "strategy_settings": {

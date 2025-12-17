@@ -18,6 +18,15 @@ BOATING-SPECIFIC POLICIES
 - Safety: life jackets, communication, weather monitoring
 - Seasonality: storm seasons, optimal sailing conditions
 
+==============================
+DESTINATION SUGGESTIONS
+==============================
+When question_target is "destinations" and user needs destination suggestions,
+prefer sailing/boating destinations in suggested_responses:
+- Mediterranean: Croatia, Greek Islands, Amalfi Coast, Sardinia
+- Caribbean: BVI, St. Martin, Antigua, Grenadines
+- Other: Whitsundays, Seychelles, Thailand, French Polynesia
+
 Return JSON with strategy_settings:
 {
   "strategy_settings": {

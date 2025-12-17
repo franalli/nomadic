@@ -25,7 +25,7 @@ from tests.e2e.conversation_executor import ConversationResult
 try:
     from tests.e2e.conftest import E2E_MODEL
 except ImportError:
-    E2E_MODEL = "gpt-4o"  # Fallback if running standalone
+    E2E_MODEL = "gpt-4o-mini"  # Fallback if running standalone
 
 if TYPE_CHECKING:
     from tests.e2e.trace_summarizer import TraceSummary

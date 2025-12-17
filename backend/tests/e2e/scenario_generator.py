@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 try:
     from tests.e2e.conftest import E2E_MODEL
 except ImportError:
-    E2E_MODEL = "gpt-4o"  # Fallback if running standalone
+    E2E_MODEL = "gpt-4o-mini"  # Fallback if running standalone
 
 # Difficulty levels for scenario generation
 DifficultyLevel = Literal["easy", "medium", "hard", "edge_case"]
@@ -568,7 +568,7 @@ GOLDEN_SCENARIOS = [
         },
         "turns": [
             "I need to get away this weekend. Flying out tomorrow.",
-            "Somewhere warm with a beach, dont care where exactly",
+            "Somewhere warm with a beach, maybe Florida or the Bahamas",
             "Budget is maybe 800 bucks total",
             "Just me, traveling solo",
             "What are my options for flights leaving Friday morning?",
@@ -747,7 +747,7 @@ GOLDEN_SCENARIOS = [
             "We're planning a big family reunion trip - three generations!",
             "It's my parents, my wife and I, and our three kids ages 5, 8, and 14.",
             "Grandpa uses a cane so we need to think about accessibility.",
-            "A cruise might work well since it has activities for everyone?",
+            "We're thinking Caribbean - maybe departing from Miami on a cruise.",
             "The kids want water slides, grandma wants the spa.",
             "We'd need connecting cabins or at least cabins close together.",
             "First week of August works for everyone's schedules.",

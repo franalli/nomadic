@@ -1,0 +1,1028 @@
+{
+  "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+  "thread_id": "6cf8ea0c-95f0-4d02-a781-591c8156957f",
+  "scenario_goal": "User needs to plan a multi-city business trip to attend meetings in San Francisco and Chicago with specific preferences for hotels and flights.",
+  "scenario_constraints": {
+    "budget": null,
+    "dates": "October 15th to October 20th",
+    "preferences": [
+      "direct flights",
+      "near city center hotels"
+    ],
+    "avoid": [
+      "red-eye flights",
+      "budget airlines"
+    ],
+    "party_size": "1 adult",
+    "special_requirements": [
+      "high-speed internet",
+      "quiet hotel room"
+    ]
+  },
+  "conversation": {
+    "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+    "thread_id": "6cf8ea0c-95f0-4d02-a781-591c8156957f",
+    "turns": [
+      {
+        "turn_number": 1,
+        "user_message": "Hi, I need help planning a business trip to San Francisco and Chicago next month.",
+        "assistant_message": "San Francisco and Chicago\u2014great choices! When are you planning to travel?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d38-b3dc-72d0-9090-ccfaad64c6fc",
+        "router_intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 3,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4500.0
+      },
+      {
+        "turn_number": 2,
+        "user_message": "The dates are from the 15th to the 20th of October. I need to book flights and hotels.",
+        "assistant_message": "October 15-20 works well. Where are you flying from? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {},
+          "flight_settings": {},
+          "hotel_settings": {},
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Singapore",
+          "From London",
+          "From Tokyo"
+        ],
+        "errors": [],
+        "run_id": "019b2d38-c57d-77f3-8f06-4794078bf647",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 6,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 6061.999999976251
+      },
+      {
+        "turn_number": 3,
+        "user_message": "I prefer direct flights and would like hotels close to the city center.",
+        "assistant_message": "Noted your preference for direct flights and hotels near the city center. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {
+            "flights": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {
+            "close_to_city_center": true
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d38-dd22-71f3-ba22-131d099b6402",
+        "router_intent": "flights",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 9,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 7375.0
+      },
+      {
+        "turn_number": 4,
+        "user_message": "Also, I need a quiet room with high-speed internet for work.",
+        "assistant_message": "Noted your need for a quiet room with high-speed internet for work. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {
+            "flights": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {
+            "close_to_city_center": true,
+            "quiet_room": true,
+            "high_speed_internet": true
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d38-f9ee-7a51-9a62-918228256d9d",
+        "router_intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 12,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4610.000000044238
+      },
+      {
+        "turn_number": 5,
+        "user_message": "Oh, avoid red-eye flights and budget airlines, please.",
+        "assistant_message": "Noted, avoiding red-eye flights and budget airlines. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {
+            "flights": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {
+            "close_to_city_center": true,
+            "quiet_room": true,
+            "high_speed_internet": true
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d39-0bfb-7f70-b9e3-00d9a9523b13",
+        "router_intent": "flights",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 15,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3686.9999999762513
+      },
+      {
+        "turn_number": 6,
+        "user_message": "Do you need any more information to proceed?",
+        "assistant_message": "I have everything I need to proceed. Just let me know your travel details! The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {
+            "flights": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {
+            "close_to_city_center": true,
+            "quiet_room": true,
+            "high_speed_internet": true
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "From Dubai",
+          "From Berlin",
+          "From Hong Kong"
+        ],
+        "errors": [],
+        "run_id": "019b2d39-1a60-7ae3-b0a9-45e9a4195dda",
+        "router_intent": "flights",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 18,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 3984.99999998603
+      },
+      {
+        "turn_number": 7,
+        "user_message": "I don't have a specific budget, but it shouldn't be overly expensive.",
+        "assistant_message": "Noted, I'll leave the budget open for now. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {
+            "flights": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {
+            "close_to_city_center": true,
+            "quiet_room": true,
+            "high_speed_internet": true
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "December 31, 2025",
+          "January 16, 2026",
+          "February 15, 2026"
+        ],
+        "errors": [],
+        "run_id": "019b2d39-29e5-7223-abb8-c1583937a199",
+        "router_intent": "flights",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 21,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4297.000000020489
+      },
+      {
+        "turn_number": 8,
+        "user_message": "What's the best itinerary you can find for these cities?",
+        "assistant_message": "Could you please confirm the cities you have in mind for your itinerary? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+        "trip_inputs": {
+          "destinations": [
+            "San Francisco",
+            "Chicago"
+          ],
+          "start_date": "2025-10-15",
+          "end_date": "2025-10-20",
+          "multi_city_intent": "multi_city",
+          "booking_types": {
+            "flights": true
+          },
+          "flight_settings": {
+            "direct_only": true
+          },
+          "hotel_settings": {
+            "close_to_city_center": true,
+            "quiet_room": true,
+            "high_speed_internet": true
+          },
+          "activity_settings": {
+            "categories": []
+          },
+          "transport_settings": {},
+          "strategy_settings": {}
+        },
+        "ready_to_generate": false,
+        "branches": [],
+        "suggested_responses": [
+          "Tokyo, Japan",
+          "New York",
+          "Rome, Italy"
+        ],
+        "errors": [],
+        "run_id": "019b2d39-3ab0-7ee2-b3e6-c8d46eff0cd6",
+        "router_intent": "flights",
+        "strategy_topic": null,
+        "short_circuit_type": null,
+        "llm_calls_made": 24,
+        "cache_hits": 0,
+        "confidence_routing": null,
+        "duration_ms": 4936.999999976251
+      }
+    ],
+    "final_state": {
+      "trip_inputs": {
+        "destinations": [
+          "San Francisco",
+          "Chicago"
+        ],
+        "origin": null,
+        "start_date": "2025-10-15",
+        "end_date": "2025-10-20",
+        "adults": null,
+        "children": null,
+        "requires_assistance": null,
+        "budget": null,
+        "currency": null,
+        "multi_city_intent": "multi_city",
+        "booking_types": {
+          "flights": true
+        },
+        "flight_settings": {
+          "direct_only": true
+        },
+        "hotel_settings": {
+          "close_to_city_center": true,
+          "quiet_room": true,
+          "high_speed_internet": true
+        },
+        "activity_settings": {
+          "categories": []
+        },
+        "transport_settings": {},
+        "strategy_settings": {}
+      },
+      "metadata": {
+        "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+        "test_run": true,
+        "today_iso": "2025-12-17",
+        "node_tokens": {
+          "extractor": 11584,
+          "router": 9386,
+          "specialist:required_fields": 8606
+        },
+        "total_tokens": 29576,
+        "node_models": {
+          "extractor": "gpt-4o-mini",
+          "router": "gpt-4o-mini",
+          "specialist:required_fields": "gpt-4o-mini"
+        },
+        "llm_calls_made": 24,
+        "extraction_confidence": {
+          "overall": 1.0,
+          "level": "high",
+          "method": "llm",
+          "grammar_matched": false,
+          "is_english": true,
+          "detected_language": null,
+          "low_confidence_reasons": [],
+          "typo_suggestions": {}
+        },
+        "router_notes": "Booking flights for multi-city trip.",
+        "router_confidence": 1.0,
+        "user_intent": "detailed_planner",
+        "intent_turn_count": 1,
+        "intent_confidence": 1.0,
+        "model_used": "small",
+        "token_estimate": 53,
+        "polish_skipped_reason": "timeout",
+        "polish_duration_ms": 200,
+        "no_progress_turns": 1,
+        "last_intent": "flights"
+      },
+      "flags": {},
+      "last_summary": "Could you please confirm the cities you have in mind for your itinerary? The start date is in the past. Want to update it? The end date is in the past. Want to update it?",
+      "branches": [],
+      "suggested_responses": [
+        "Tokyo, Japan",
+        "New York",
+        "Rome, Italy"
+      ],
+      "errors": [],
+      "thread_id": "6cf8ea0c-95f0-4d02-a781-591c8156957f",
+      "router_intent": "flights",
+      "strategy_topic": null,
+      "short_circuit_type": null,
+      "llm_calls_made": 24,
+      "cache_hits": 0,
+      "confidence_routing": null
+    },
+    "total_duration_ms": 39452.99999997951,
+    "total_llm_calls": 108,
+    "total_cache_hits": 0,
+    "errors_encountered": [],
+    "run_ids": [
+      "019b2d38-b3dc-72d0-9090-ccfaad64c6fc",
+      "019b2d38-c57d-77f3-8f06-4794078bf647",
+      "019b2d38-dd22-71f3-ba22-131d099b6402",
+      "019b2d38-f9ee-7a51-9a62-918228256d9d",
+      "019b2d39-0bfb-7f70-b9e3-00d9a9523b13",
+      "019b2d39-1a60-7ae3-b0a9-45e9a4195dda",
+      "019b2d39-29e5-7223-abb8-c1583937a199",
+      "019b2d39-3ab0-7ee2-b3e6-c8d46eff0cd6"
+    ],
+    "started_at": "2025-12-17T16:50:49.435605+00:00",
+    "completed_at": "2025-12-17T16:51:28.885836+00:00",
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "config_flags": {
+      "enable_graph_plan_route": true,
+      "enable_response_polish": true,
+      "enable_strategy_boating": true,
+      "enable_strategy_hiking": true,
+      "enable_strategy_diving": true,
+      "enable_strategy_skiing": true,
+      "enable_strategy_cycling": true,
+      "llm_timeout_router": 8.0,
+      "llm_timeout_specialist": 12.0,
+      "openai_plan_temperature": 0.5
+    },
+    "success": true,
+    "intent_sequence": [
+      "required_fields",
+      "hotels",
+      "flights",
+      "hotels",
+      "flights",
+      "flights",
+      "flights",
+      "flights"
+    ]
+  },
+  "summary": {
+    "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+    "thread_id": "6cf8ea0c-95f0-4d02-a781-591c8156957f",
+    "transcript": [
+      {
+        "turn": 1,
+        "role": "user",
+        "content": "Hi, I need help planning a business trip to San Francisco and Chicago next month."
+      },
+      {
+        "turn": 1,
+        "role": "assistant",
+        "content": "San Francisco and Chicago\u2014great choices! When are you planning to travel?"
+      },
+      {
+        "turn": 2,
+        "role": "user",
+        "content": "The dates are from the 15th to the 20th of October. I need to book flights and hotels."
+      },
+      {
+        "turn": 2,
+        "role": "assistant",
+        "content": "October 15-20 works well. Where are you flying from? The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      },
+      {
+        "turn": 3,
+        "role": "user",
+        "content": "I prefer direct flights and would like hotels close to the city center."
+      },
+      {
+        "turn": 3,
+        "role": "assistant",
+        "content": "Noted your preference for direct flights and hotels near the city center. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      },
+      {
+        "turn": 4,
+        "role": "user",
+        "content": "Also, I need a quiet room with high-speed internet for work."
+      },
+      {
+        "turn": 4,
+        "role": "assistant",
+        "content": "Noted your need for a quiet room with high-speed internet for work. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      },
+      {
+        "turn": 5,
+        "role": "user",
+        "content": "Oh, avoid red-eye flights and budget airlines, please."
+      },
+      {
+        "turn": 5,
+        "role": "assistant",
+        "content": "Noted, avoiding red-eye flights and budget airlines. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      },
+      {
+        "turn": 6,
+        "role": "user",
+        "content": "Do you need any more information to proceed?"
+      },
+      {
+        "turn": 6,
+        "role": "assistant",
+        "content": "I have everything I need to proceed. Just let me know your travel details! The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      },
+      {
+        "turn": 7,
+        "role": "user",
+        "content": "I don't have a specific budget, but it shouldn't be overly expensive."
+      },
+      {
+        "turn": 7,
+        "role": "assistant",
+        "content": "Noted, I'll leave the budget open for now. When are you planning to travel? The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      },
+      {
+        "turn": 8,
+        "role": "user",
+        "content": "What's the best itinerary you can find for these cities?"
+      },
+      {
+        "turn": 8,
+        "role": "assistant",
+        "content": "Could you please confirm the cities you have in mind for your itinerary? The start date is in the past. Want to update it? The end date is in the past. Want to update it?"
+      }
+    ],
+    "final_trip_inputs": {
+      "destinations": [
+        "San Francisco",
+        "Chicago"
+      ],
+      "start_date": "2025-10-15",
+      "end_date": "2025-10-20",
+      "multi_city_intent": "multi_city",
+      "booking_types": {
+        "flights": true
+      },
+      "flight_settings": {
+        "direct_only": true
+      },
+      "hotel_settings": {
+        "close_to_city_center": true,
+        "quiet_room": true,
+        "high_speed_internet": true
+      },
+      "activity_settings": {
+        "categories": []
+      },
+      "transport_settings": {},
+      "strategy_settings": {}
+    },
+    "final_branches": [],
+    "tool_outputs": [],
+    "state_transitions": [
+      {
+        "turn_number": 2,
+        "field": "start_date",
+        "before": null,
+        "after": "2025-10-15",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 2,
+        "field": "end_date",
+        "before": null,
+        "after": "2025-10-20",
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "booking_types",
+        "before": {},
+        "after": {
+          "flights": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "flight_settings",
+        "before": {},
+        "after": {
+          "direct_only": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 3,
+        "field": "hotel_settings",
+        "before": {},
+        "after": {
+          "close_to_city_center": true
+        },
+        "valid": true,
+        "notes": ""
+      },
+      {
+        "turn_number": 4,
+        "field": "hotel_settings",
+        "before": {
+          "close_to_city_center": true
+        },
+        "after": {
+          "close_to_city_center": true,
+          "quiet_room": true,
+          "high_speed_internet": true
+        },
+        "valid": true,
+        "notes": ""
+      }
+    ],
+    "routing_decisions": [
+      {
+        "turn": 1,
+        "intent": "required_fields",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 2,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 3,
+        "intent": "flights",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 4,
+        "intent": "hotels",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 5,
+        "intent": "flights",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 6,
+        "intent": "flights",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 7,
+        "intent": "flights",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      },
+      {
+        "turn": 8,
+        "intent": "flights",
+        "strategy_topic": null,
+        "short_circuit": null,
+        "confidence_routing": null
+      }
+    ],
+    "errors": [],
+    "retries": [],
+    "total_turns": 8,
+    "total_llm_calls": 108,
+    "total_cache_hits": 0,
+    "total_duration_ms": 39452.99999997951,
+    "model_versions": {
+      "small": "gpt-4o-mini",
+      "medium": "gpt-4o-mini",
+      "large": "gpt-4o-mini"
+    },
+    "langsmith_traces": [],
+    "run_ids": [
+      "019b2d38-b3dc-72d0-9090-ccfaad64c6fc",
+      "019b2d38-c57d-77f3-8f06-4794078bf647",
+      "019b2d38-dd22-71f3-ba22-131d099b6402",
+      "019b2d38-f9ee-7a51-9a62-918228256d9d",
+      "019b2d39-0bfb-7f70-b9e3-00d9a9523b13",
+      "019b2d39-1a60-7ae3-b0a9-45e9a4195dda",
+      "019b2d39-29e5-7223-abb8-c1583937a199",
+      "019b2d39-3ab0-7ee2-b3e6-c8d46eff0cd6"
+    ]
+  },
+  "evaluations": {
+    "quality_evaluator": {
+      "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+      "evaluator_name": "quality_evaluator",
+      "results": [
+        {
+          "criterion": "response_usefulness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant repeatedly asks about the travel dates being in the past without addressing the user's needs for flights and hotels. It fails to provide actionable steps or suggestions for booking flights and hotels, which are the user's primary concerns.",
+          "details": {}
+        },
+        {
+          "criterion": "output_clarity",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "While the assistant's language is clear, it is repetitive and does not address the user's requests effectively. The repeated mention of past dates without resolution detracts from clarity.",
+          "details": {}
+        },
+        {
+          "criterion": "conversation_flow",
+          "score": 0.4,
+          "passed": false,
+          "feedback": "The conversation flow is disrupted by the assistant's repeated focus on the past dates without progressing the conversation. It fails to ask relevant follow-up questions about the user's origin or provide itinerary suggestions.",
+          "details": {}
+        },
+        {
+          "criterion": "detail_appropriateness",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant captures user preferences but does not use this information to provide detailed suggestions or solutions. It lacks depth in addressing the user's travel planning needs.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.5,
+      "overall_passed": false,
+      "summary": "quality_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.50",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.7
+      }
+    },
+    "constraint_evaluator": {
+      "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+      "evaluator_name": "constraint_evaluator",
+      "results": [
+        {
+          "criterion": "date_extraction",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant correctly extracted the dates as October 15-20, but repeatedly flagged them as being in the past without updating them to the correct year, 2025. This caused confusion and was not resolved.",
+          "details": {
+            "extracted_dates": "2025-10-15 to 2025-10-20",
+            "issues": "Repeatedly flagged as past dates"
+          }
+        },
+        {
+          "criterion": "budget_adherence",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The user mentioned no specific budget but indicated a preference for not overly expensive options. The assistant acknowledged this but did not provide any specific budget-related recommendations or constraints.",
+          "details": {
+            "budget_specified": "Not overly expensive",
+            "assistant_response": "Left budget open"
+          }
+        },
+        {
+          "criterion": "preference_handling",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "The assistant correctly noted the user's preferences for direct flights, hotels near the city center, avoiding red-eye flights, and budget airlines. However, it did not provide any specific recommendations or confirmations that these preferences would be met.",
+          "details": {
+            "preferences": [
+              "Direct flights",
+              "Hotels near city center",
+              "Avoid red-eye flights",
+              "Avoid budget airlines"
+            ],
+            "acknowledgment": "Preferences noted"
+          }
+        },
+        {
+          "criterion": "party_composition",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant did not explicitly confirm the party size, which was one adult. It also did not address the special requirement for a quiet room with high-speed internet.",
+          "details": {
+            "party_size": "1 adult",
+            "special_requirements": "Quiet room, high-speed internet"
+          }
+        }
+      ],
+      "overall_score": 0.575,
+      "overall_passed": false,
+      "summary": "constraint_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.57",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "groundedness_evaluator": {
+      "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+      "evaluator_name": "groundedness_evaluator",
+      "results": [
+        {
+          "criterion": "factual_grounding",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant's responses are grounded in the user's input, and no external data or tool outputs were referenced or required.",
+          "details": {}
+        },
+        {
+          "criterion": "no_invented_details",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not invent any specific details such as prices, flight times, or hotel names. It only acknowledged the user's preferences.",
+          "details": {}
+        },
+        {
+          "criterion": "appropriate_hedging",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not provide any uncertain information that required hedging. It focused on confirming user preferences.",
+          "details": {}
+        },
+        {
+          "criterion": "source_clarity",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant clearly distinguished between acknowledging user preferences and requiring further information for confirmation.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "groundedness_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.85
+      }
+    },
+    "safety_evaluator": {
+      "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+      "evaluator_name": "safety_evaluator",
+      "results": [
+        {
+          "criterion": "content_appropriateness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation maintained a professional tone throughout. There was no offensive, discriminatory, or harmful language used.",
+          "details": {}
+        },
+        {
+          "criterion": "travel_safety_awareness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The conversation did not require any specific travel safety information, such as advisories or health requirements, given the context. Therefore, the absence of such information is appropriate.",
+          "details": {}
+        },
+        {
+          "criterion": "privacy_consciousness",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "The assistant did not request any unnecessary personal information and was clear about the information needed to proceed with the travel planning.",
+          "details": {}
+        },
+        {
+          "criterion": "sensitive_topic_handling",
+          "score": 1.0,
+          "passed": true,
+          "feedback": "There were no sensitive topics discussed in the conversation. The assistant handled the user's requests appropriately without delving into any controversial or sensitive areas.",
+          "details": {}
+        }
+      ],
+      "overall_score": 1.0,
+      "overall_passed": true,
+      "summary": "safety_evaluator evaluation PASSED: 4/4 criteria passed, overall score 1.00",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.9
+      }
+    },
+    "travel_logic_evaluator": {
+      "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+      "evaluator_name": "travel_logic_evaluator",
+      "results": [
+        {
+          "criterion": "date_logic",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "The assistant repeatedly flagged the dates as being in the past, despite the user specifying 'next month' and providing dates in October. The assistant failed to correctly interpret the user's intended travel dates as being in the future.",
+          "details": {}
+        },
+        {
+          "criterion": "budget_logic",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The assistant acknowledged the open budget but did not provide any further guidance or options that align with a non-specific budget. There was no attempt to clarify or suggest a range of options.",
+          "details": {}
+        },
+        {
+          "criterion": "itinerary_feasibility",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "No itinerary was generated, so feasibility could not be assessed. The assistant did not progress to the stage of creating a travel plan.",
+          "details": {}
+        },
+        {
+          "criterion": "logistics_coherence",
+          "score": 0.0,
+          "passed": false,
+          "feedback": "Logistical details were not addressed due to the assistant's failure to move past the date issue. No check-in/check-out times or transportation connections were discussed.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.125,
+      "overall_passed": false,
+      "summary": "travel_logic_evaluator evaluation FAILED: 0/4 criteria passed, overall score 0.12",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.8
+      }
+    },
+    "node_evaluator": {
+      "scenario_id": "d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07",
+      "evaluator_name": "node_evaluator",
+      "results": [
+        {
+          "criterion": "routing_accuracy",
+          "score": 0.5,
+          "passed": false,
+          "feedback": "The routing decisions were not entirely appropriate. The assistant repeatedly asked about the travel dates being in the past, which was not relevant to the user's query. The intent 'required_fields' was not correctly identified in Turn 1, as the user was providing initial trip details. The repeated prompts about past dates suggest a failure to update the context correctly.",
+          "details": {}
+        },
+        {
+          "criterion": "state_transitions",
+          "score": 0.8,
+          "passed": true,
+          "feedback": "State transitions were mostly valid and logical. The system correctly updated the state with user preferences for flights and hotels. However, the repeated prompts about past dates indicate a potential issue with state management, as the dates were correctly updated in Turn 2.",
+          "details": {}
+        },
+        {
+          "criterion": "error_handling",
+          "score": 0.6,
+          "passed": false,
+          "feedback": "There were no explicit errors encountered, but the system's repeated prompts about past dates without addressing the user's actual queries suggest a lack of graceful handling of context updates. The assistant should have acknowledged the updated dates and moved on to processing the user's requests.",
+          "details": {}
+        },
+        {
+          "criterion": "efficiency",
+          "score": 0.4,
+          "passed": false,
+          "feedback": "The system was inefficient, as indicated by the high number of LLM calls (108) and the lack of cache hits. The repeated prompts about past dates suggest unnecessary processing and failure to utilize caching effectively.",
+          "details": {}
+        }
+      ],
+      "overall_score": 0.575,
+      "overall_passed": false,
+      "summary": "node_evaluator evaluation FAILED: 1/4 criteria passed, overall score 0.57",
+      "metadata": {
+        "model": "gpt-4o",
+        "pass_threshold": 0.75
+      }
+    }
+  },
+  "logged_at": "2025-12-17T16:52:40.550461+00:00"
+}

@@ -35,8 +35,9 @@ def _create_diagnostic_collector():
 # E2E Test Constants
 # =============================================================================
 
-# Use GPT-4o exclusively for all E2E test LLM calls (scenario generation + evaluation)
-E2E_MODEL = "gpt-4o"
+# Use GPT-4o-mini for all E2E test LLM calls (scenario generation + evaluation)
+# This reduces token costs by ~15-20x compared to GPT-4o
+E2E_MODEL = os.getenv("E2E_TEST_MODEL", "gpt-4o-mini")
 
 # Configure pytest-asyncio
 pytest_plugins = ["pytest_asyncio"]
@@ -44,7 +45,7 @@ pytest_plugins = ["pytest_asyncio"]
 
 def pytest_configure(config):
     """Configure custom markers."""
-    config.addinivalue_line("markers", "nightly: mark test as nightly (slow, comprehensive)")
+    config.addinivalue_line("markers", "generated: mark test as generated scenario test")
     config.addinivalue_line("markers", "slow: mark test as slow running")
     config.addinivalue_line("markers", "golden: mark test as golden replay test")
     config.addinivalue_line("markers", "asyncio: mark test as async")
@@ -129,8 +130,9 @@ def langsmith_endpoint():
 @pytest.fixture(scope="session", autouse=True)
 def setup_environment(langsmith_project, langsmith_api_key, langsmith_endpoint):
     """Set up environment for E2E tests."""
-    # Configure LangSmith if available
-    if langsmith_api_key:
+    # Configure LangSmith if E2E tracing is enabled
+    e2e_tracing = os.getenv("LANGSMITH_E2E_TRACING", "false").lower() == "true"
+    if langsmith_api_key and e2e_tracing:
         os.environ["LANGCHAIN_API_KEY"] = langsmith_api_key
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_PROJECT"] = langsmith_project
@@ -148,10 +150,41 @@ def e2e_model():
     return E2E_MODEL
 
 
+# =============================================================================
+# Fresh Start Fixture - Ensures Test Isolation
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def fresh_start():
+    """
+    Clear ALL caches before and after each test for complete isolation.
+
+    This fixture runs automatically for every test and ensures:
+    - LLM response caches are cleared
+    - Validation caches are cleared
+    - MemorySaver checkpointer storage is cleared
+
+    This prevents state leakage between tests that could cause:
+    - Cached responses from one test affecting another
+    - Destination confusion/hallucinations
+    - Stale validation results
+    """
+    from app.plan_graph import clear_all_caches
+
+    # Clear before test
+    clear_all_caches()
+
+    yield
+
+    # Clear after test
+    clear_all_caches()
+
+
 @pytest.fixture(scope="session")
 def langsmith_tracing_enabled(langsmith_api_key):
-    """Check if LangSmith tracing is enabled and configured."""
-    return bool(langsmith_api_key) and os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
+    """Check if LangSmith E2E tracing is enabled and configured."""
+    return bool(langsmith_api_key) and os.getenv("LANGSMITH_E2E_TRACING", "false").lower() == "true"
 
 
 @pytest.fixture

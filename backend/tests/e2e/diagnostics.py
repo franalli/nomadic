@@ -101,6 +101,11 @@ class TestOutcome:
     failures: List[DiagnosticFailure] = field(default_factory=list)
     run_ids: List[str] = field(default_factory=list)
 
+    # Token and timing metrics
+    total_tokens: int = 0
+    total_llm_calls: int = 0
+    total_llm_time_ms: float = 0.0
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "test_name": self.test_name,
@@ -110,6 +115,9 @@ class TestOutcome:
             "evaluator_scores": self.evaluator_scores,
             "failures": [f.to_dict() for f in self.failures],
             "run_ids": self.run_ids,
+            "total_tokens": self.total_tokens,
+            "total_llm_calls": self.total_llm_calls,
+            "total_llm_time_ms": self.total_llm_time_ms,
         }
 
 
@@ -203,6 +211,11 @@ class DiagnosticReport:
     failed_tests: int = 0
     total_duration_seconds: float = 0.0
 
+    # Aggregated token and timing metrics
+    total_tokens: int = 0
+    total_llm_calls: int = 0
+    total_llm_time_ms: float = 0.0
+
     def __post_init__(self):
         if not self.timestamp:
             self.timestamp = datetime.now().isoformat()
@@ -214,6 +227,11 @@ class DiagnosticReport:
         self.outcomes.append(outcome)
         self.total_tests += 1
         self.total_duration_seconds += outcome.duration_seconds
+
+        # Accumulate token and timing metrics
+        self.total_tokens += outcome.total_tokens
+        self.total_llm_calls += outcome.total_llm_calls
+        self.total_llm_time_ms += outcome.total_llm_time_ms
 
         if outcome.passed:
             self.passed_tests += 1
@@ -238,6 +256,16 @@ class DiagnosticReport:
             "failures_by_category": {
                 cat: len(failures) for cat, failures in self.failures_by_category.items()
             },
+            # Token and timing metrics
+            "total_tokens": self.total_tokens,
+            "total_llm_calls": self.total_llm_calls,
+            "total_llm_time_ms": round(self.total_llm_time_ms, 2),
+            "avg_tokens_per_test": (
+                round(self.total_tokens / self.total_tests, 1) if self.total_tests else 0
+            ),
+            "avg_llm_time_ms_per_test": (
+                round(self.total_llm_time_ms / self.total_tests, 2) if self.total_tests else 0
+            ),
         }
 
     def get_evaluator_breakdown(self) -> Dict[str, Dict[str, int]]:
@@ -364,6 +392,22 @@ class DiagnosticReport:
         print(f"Tests: {stats['passed']}/{stats['total_tests']} passed ({stats['pass_rate']:.1%})")
         print(f"Duration: {stats['total_duration_seconds']:.2f}s")
 
+        # Token and timing metrics
+        if stats.get("total_llm_calls", 0) > 0:
+            print("\n🪙 LLM Metrics:")
+            tokens_msg = (
+                f"   Tokens: {stats['total_tokens']:,} total "
+                f"({stats['avg_tokens_per_test']:,.0f} avg/test)"
+            )
+            print(tokens_msg)
+            print(f"   LLM Calls: {stats['total_llm_calls']:,}")
+            if stats.get("total_llm_time_ms", 0) > 0:
+                time_msg = (
+                    f"   LLM Time: {stats['total_llm_time_ms']:,.0f}ms "
+                    f"({stats['avg_llm_time_ms_per_test']:,.0f}ms avg/test)"
+                )
+                print(time_msg)
+
         # Evaluator breakdown
         evaluator_stats = self.get_evaluator_breakdown()
         if evaluator_stats and self.failed_tests > 0:
@@ -431,6 +475,9 @@ class DiagnosticCollector:
         evaluator_scores: Optional[Dict[str, float]] = None,
         failures: Optional[List[DiagnosticFailure]] = None,
         run_ids: Optional[List[str]] = None,
+        total_tokens: int = 0,
+        total_llm_calls: int = 0,
+        total_llm_time_ms: float = 0.0,
     ) -> None:
         """Record the outcome of the current test."""
         import time
@@ -457,6 +504,9 @@ class DiagnosticCollector:
             evaluator_scores=evaluator_scores or {},
             failures=failures or [],
             run_ids=run_ids or [],
+            total_tokens=total_tokens,
+            total_llm_calls=total_llm_calls,
+            total_llm_time_ms=total_llm_time_ms,
         )
 
         self.report.add_outcome(outcome)
@@ -661,6 +711,10 @@ def record_evaluation_outcome(
     evaluation_reports: Dict[str, Any],
     run_ids: Optional[List[str]] = None,
     trace_summary: Optional[Any] = None,
+    total_tokens: int = 0,
+    total_llm_calls: int = 0,
+    total_llm_time_ms: float = 0.0,
+    conversation_result: Optional[Any] = None,
 ) -> None:
     """
     Convenience function to record an evaluation outcome to the global collector.
@@ -671,7 +725,22 @@ def record_evaluation_outcome(
         evaluation_reports: Dict mapping evaluator names to EvaluationReport objects
         run_ids: List of LangSmith run IDs for trace linking
         trace_summary: Optional TraceSummary with enriched trace data for context
+        total_tokens: Total tokens used across all turns (overridden by
+            conversation_result if provided)
+        total_llm_calls: Total LLM calls made across all turns (overridden by
+            conversation_result if provided)
+        total_llm_time_ms: Total LLM time in milliseconds (overridden by
+            conversation_result if provided)
+        conversation_result: Optional ConversationResult to auto-extract metrics from
     """
+    # Auto-extract metrics from conversation_result if provided
+    if conversation_result is not None:
+        total_tokens = getattr(conversation_result, "total_tokens", 0) or total_tokens
+        total_llm_calls = getattr(conversation_result, "total_llm_calls", 0) or total_llm_calls
+        total_llm_time_ms = (
+            getattr(conversation_result, "total_llm_time_ms", 0.0) or total_llm_time_ms
+        )
+
     collector = get_diagnostic_collector()
 
     # Extract evaluator scores
@@ -706,4 +775,7 @@ def record_evaluation_outcome(
         evaluator_scores=evaluator_scores,
         failures=failures,
         run_ids=run_ids,
+        total_tokens=total_tokens,
+        total_llm_calls=total_llm_calls,
+        total_llm_time_ms=total_llm_time_ms,
     )

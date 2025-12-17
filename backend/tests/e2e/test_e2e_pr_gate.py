@@ -30,13 +30,19 @@ pytestmark = pytest.mark.skipif(
 # =============================================================================
 
 
+def _e2e_tracing_enabled() -> bool:
+    """Check if E2E LangSmith tracing is enabled."""
+    return os.getenv("LANGSMITH_E2E_TRACING", "false").lower() == "true" and bool(
+        os.getenv("LANGSMITH_API_KEY")
+    )
+
+
 @pytest.fixture(scope="module")
 def enable_langsmith():
     """Enable LangSmith tracing for the test module."""
     from app.config import configure_langsmith_tracing
 
-    # Only enable if API key is available
-    if os.getenv("LANGSMITH_KEY"):
+    if _e2e_tracing_enabled():
         configure_langsmith_tracing(enabled=True, project="nomadic-pr-gate-tests")
 
     yield
@@ -48,7 +54,7 @@ def conversation_executor(enable_langsmith):
     from tests.e2e.conversation_executor import ConversationExecutor
 
     return ConversationExecutor(
-        enable_langsmith=bool(os.getenv("LANGSMITH_KEY")),
+        enable_langsmith=_e2e_tracing_enabled(),
         langsmith_project="nomadic-pr-gate-tests",
     )
 

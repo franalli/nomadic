@@ -18,6 +18,15 @@ DIVING-SPECIFIC POLICIES
 - Operators: shore vs boat diving based on experience
 - Group matching: beginners vs advanced separation if needed
 
+==============================
+DESTINATION SUGGESTIONS
+==============================
+When question_target is "destinations" and user needs destination suggestions,
+prefer diving-appropriate locations in suggested_responses:
+- Coral reefs: Great Barrier Reef, Red Sea, Maldives, Raja Ampat
+- Island destinations: Bali, Phuket, Cozumel, Bonaire, Fiji
+- Marine life hotspots: Galápagos, Palau, Komodo, Sipadan
+
 Return JSON with strategy_settings:
 {
   "strategy_settings": {

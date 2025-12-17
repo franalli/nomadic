@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from tests.e2e.config import get_threshold
 from tests.e2e.evaluators.base_evaluator import (
     BaseEvaluator,
     EvaluationCriteria,
@@ -26,7 +27,7 @@ class ConstraintEvaluator(BaseEvaluator):
 - Party size and composition handled correctly"""
 
     criteria = [EvaluationCriteria.CONSTRAINT_ADHERENCE]
-    pass_threshold = 0.8  # Ignoring user constraints is frustrating
+    pass_threshold = get_threshold("constraint")
 
     def get_evaluation_prompt(
         self,

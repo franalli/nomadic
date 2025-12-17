@@ -18,8 +18,7 @@ from app.plan_graph import (
     GraphState,
     TripInputs,
     _normalize_date,
-    _normalize_date_with_info,
-    _relative_date_to_iso,
+    _trip_normalizer,
     normalize_inputs,
 )
 
@@ -158,7 +157,7 @@ class TestPartialDates:
     )
     def test_partial_dates_flag_as_partial(self, input_date: str):
         """Test that partial dates are flagged as such."""
-        iso_date, was_partial = _normalize_date_with_info(input_date)
+        iso_date, was_partial = _trip_normalizer.normalize_date_with_info(input_date)
         assert iso_date is not None, f"Failed to parse '{input_date}'"
         assert was_partial is True, f"'{input_date}' should be flagged as partial"
 
@@ -173,7 +172,7 @@ class TestPartialDates:
     )
     def test_complete_dates_not_flagged_as_partial(self, input_date: str):
         """Test that complete dates are NOT flagged as partial."""
-        iso_date, was_partial = _normalize_date_with_info(input_date)
+        iso_date, was_partial = _trip_normalizer.normalize_date_with_info(input_date)
         assert iso_date is not None, f"Failed to parse '{input_date}'"
         assert was_partial is False, f"'{input_date}' should NOT be flagged as partial"
 
@@ -183,25 +182,25 @@ class TestRelativeDates:
 
     def test_today(self):
         """Test 'today' converts to today's date."""
-        result = _relative_date_to_iso("today")
+        result = _normalize_date("today")
         expected = datetime.now(UTC).date().strftime("%Y-%m-%d")
         assert result == expected
 
     def test_tomorrow(self):
         """Test 'tomorrow' converts to tomorrow's date."""
-        result = _relative_date_to_iso("tomorrow")
+        result = _normalize_date("tomorrow")
         expected = (datetime.now(UTC).date() + timedelta(days=1)).strftime("%Y-%m-%d")
         assert result == expected
 
     def test_next_week(self):
         """Test 'next week' converts to 7 days from now."""
-        result = _relative_date_to_iso("next week")
+        result = _normalize_date("next week")
         expected = (datetime.now(UTC).date() + timedelta(days=7)).strftime("%Y-%m-%d")
         assert result == expected
 
     def test_next_month(self):
         """Test 'next month' converts to 30 days from now."""
-        result = _relative_date_to_iso("next month")
+        result = _normalize_date("next month")
         expected = (datetime.now(UTC).date() + timedelta(days=30)).strftime("%Y-%m-%d")
         assert result == expected
 
