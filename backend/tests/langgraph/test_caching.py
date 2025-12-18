@@ -201,7 +201,7 @@ class TestLoadPromptCache:
     def test_load_prompt_different_prompts(self):
         """Different prompts should load different content."""
         router_prompt = load_prompt("router")
-        required_fields_prompt = load_prompt("required_fields_extract")
+        required_fields_prompt = load_prompt("required_fields")
 
         assert router_prompt != required_fields_prompt
 

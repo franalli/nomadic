@@ -78,6 +78,7 @@ export const normalizeBudgetInput = (budget?: string | number | null): string | 
 /**
  * Format a budget value for display (e.g., "$3,000").
  * Returns the numeric formatted value if parseable, otherwise the normalized string.
+ * Currency symbols synced with backend CURRENCY_SYMBOL_MAP in graph_plan_utils.py
  */
 const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: '$',
@@ -86,6 +87,16 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   CAD: 'CA$',
   AUD: 'A$',
   JPY: '¥',
+  CHF: 'CHF',
+  CNY: '¥',
+  INR: '₹',
+  KRW: '₩',
+  MXN: 'MX$',
+  NZD: 'NZ$',
+  SEK: 'kr',
+  SGD: 'S$',
+  HKD: 'HK$',
+  BRL: 'R$',
 };
 
 export const formatBudgetDisplay = (
@@ -255,6 +266,7 @@ const ACTIVITY_EMOJI_MAP: Record<string, string> = {
   rave: '🎵',
   // Movies/film
   movies: '🎬',
+  film: '🎬',
   'film festival': '🎬',
   premiere: '🎬',
   cinema: '🎬',
@@ -390,13 +402,23 @@ export const normalizeActivityWithEmoji = (activity: string): string => {
     }
   }
 
-  // Try partial matching - check if any keyword is contained in the activity
+  // Try partial matching - prioritize earliest position and longest keyword
+  let bestMatch: { pos: number; length: number; emoji: string } | null = null;
   for (const [keyword, emoji] of Object.entries(ACTIVITY_EMOJI_MAP)) {
-    // Only match if keyword is a complete word in the activity
     const regex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-    if (regex.test(activityLower)) {
-      return `${emoji} ${trimmed}`;
+    const match = regex.exec(activityLower);
+    if (match) {
+      const pos = match.index;
+      const length = keyword.length;
+      // Earlier position wins, then longer keyword wins
+      if (!bestMatch || pos < bestMatch.pos || (pos === bestMatch.pos && length > bestMatch.length)) {
+        bestMatch = { pos, length, emoji };
+      }
     }
+  }
+
+  if (bestMatch) {
+    return `${bestMatch.emoji} ${trimmed}`;
   }
 
   // No match found, use default sparkle emoji
@@ -405,16 +427,26 @@ export const normalizeActivityWithEmoji = (activity: string): string => {
 
 /**
  * Extract the text portion of an activity string (after the emoji).
+ * Uses Intl.Segmenter for proper grapheme cluster handling of multi-codepoint emojis.
  */
 const getActivityTextPortion = (activity: string): string => {
   const text = activity.trim();
-  // Find where the actual text starts (after emoji and space)
-  for (let i = 0; i < text.length; i++) {
-    const codePoint = text.codePointAt(i) ?? 0;
-    if (codePoint < 0x1f00 && text[i] !== ' ') {
-      return text.slice(i).trim().toLowerCase();
-    } else if (text[i] === ' ' && i > 0) {
-      return text.slice(i + 1).trim().toLowerCase();
+  if (!text) return '';
+
+  // Check if first character is in emoji range
+  const firstCodePoint = text.codePointAt(0) ?? 0;
+  if (firstCodePoint > 0x1f00) {
+    // Use Intl.Segmenter for proper grapheme handling (handles ZWJ sequences, variation selectors, etc.)
+    const segmenter = new Intl.Segmenter('en', { granularity: 'grapheme' });
+    const segments = [...segmenter.segment(text)];
+    if (segments.length > 1) {
+      // Skip the first grapheme (emoji) and return the rest
+      return segments
+        .slice(1)
+        .map((s) => s.segment)
+        .join('')
+        .trim()
+        .toLowerCase();
     }
   }
   return text.toLowerCase();

@@ -94,7 +94,7 @@ Update the trip input field [FIELD_NAME] ([FIELD_TYPE]): [DESCRIPTION]
 Follow the trip inputs update checklist - update all locations:
 
 Backend schemas (schemas.py): DocumentTripInputs, DocumentTripInputsPatch, DocumentBranch
-LLM integration (plan.py): \_TRIP_INPUT_FIELDS, system prompt, validation, normalization, dict building, branch construction
+LLM integration (plan_graph.py): \_TRIP_INPUT_FIELDS, system prompt, validation, normalization, dict building, branch construction
 CRUD (crud_document.py): mergeable_fields, cascade logic in apply_user_patch and apply_planner_update
 Tile service if needed (tile_service/models.py, service.py, mock_provider.py)
 Frontend types (types/document.ts): DocumentTripInputs, DocumentBranch

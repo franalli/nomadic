@@ -39,9 +39,6 @@ def _create_diagnostic_collector():
 # This reduces token costs by ~15-20x compared to GPT-4o
 E2E_MODEL = os.getenv("E2E_TEST_MODEL", "gpt-4o-mini")
 
-# Configure pytest-asyncio
-pytest_plugins = ["pytest_asyncio"]
-
 
 def pytest_configure(config):
     """Configure custom markers."""

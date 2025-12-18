@@ -378,19 +378,6 @@ class TestExtractorShortCircuits:
         mock_llm.assert_not_called()
         assert result.flags.get("short_circuit") == "greeting"
 
-    @pytest.mark.asyncio
-    async def test_acknowledgment_short_circuit(self):
-        """Acknowledgments should short-circuit without calling LLM."""
-        # "thanks" alone matches the acknowledgment pattern
-        state = make_state("thanks")
-
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
-            result = await extractor(state)
-
-        # LLM should NOT be called for acknowledgments
-        mock_llm.assert_not_called()
-        assert result.flags.get("short_circuit") == "acknowledgment"
-
 
 class TestExtractorConfidence:
     """Tests for LLM confidence reporting."""

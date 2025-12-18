@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     # =============================================================================
     # Feature flags
     enable_graph_plan_route: bool = False  # Enable /v1/graph_plan route
-    graph_fallback_to_legacy: bool = False  # Fallback to legacy planner on provider failure
 
     # Route configuration
     graph_plan_route_timeout_ms: int = 15000  # Overall route timeout in milliseconds

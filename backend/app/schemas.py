@@ -288,7 +288,7 @@ class PlanDocumentData(BaseModel):
     trip_inputs: DocumentTripInputs = Field(default_factory=DocumentTripInputs)
     branches: List[DocumentBranch] = Field(default_factory=list)
     tiles: Dict[str, Tile] = Field(default_factory=dict)  # tile_id -> Tile
-    # Chat fields (populated when returning from /v1/plan, not persisted)
+    # Chat fields (populated when returning from /v1/graph_plan, not persisted)
     assistant_message: Optional[str] = None
     assistant_message_id: Optional[str] = None
     # Ready to generate flag - when all fields are complete but user hasn't clicked generate yet
@@ -407,7 +407,6 @@ class GraphPlanObservability(BaseModel):
     model_used: Optional[str] = None
     router_intent: Optional[str] = None
     strategy_topic: Optional[str] = None
-    fallback_to_legacy: bool = False
     today_iso: Optional[str] = None
     ready_to_generate_prev: bool = False
     ready_to_generate_now: bool = False
@@ -436,16 +435,3 @@ class GraphPlanResponse(BaseModel):
 
     # Observability (optional, all fields have defaults)
     observability: Optional[GraphPlanObservability] = None
-
-
-class GraphPlanErrorResponse(BaseModel):
-    """Error response from /v1/graph_plan endpoint."""
-
-    error_code: str
-    detail: str
-    request_id: str
-
-    # For VERSION_CONFLICT (409)
-    server_doc_version: Optional[int] = None
-    client_doc_version: Optional[int] = None
-    retry_after_ms: Optional[int] = None

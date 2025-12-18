@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import grapheme
 from cachetools import TTLCache
 from jinja2 import Environment, FileSystemLoader
 from jsonschema import Draft7Validator
@@ -202,11 +203,18 @@ def _debug_node_entry(node_name: str, state: "GraphState") -> None:
 def _debug_node_exit(node_name: str, state: "GraphState") -> None:
     """Log exit from a graph node."""
     if _DEBUG_LOG:
-        _debug(
-            f"<<< EXITING {node_name}",
-            ready=state.ready_to_generate,
-            errors=len(state.errors),
-            branches=len(state.branches),
+        emoji = _NODE_EMOJIS.get(node_name, "🚀")
+        extras = " ".join(
+            f"{k}={v}"
+            for k, v in {
+                "ready": state.ready_to_generate,
+                "errors": len(state.errors),
+                "branches": len(state.branches),
+            }.items()
+        )
+        print(
+            f"[PLAN_GRAPH DEBUG] {emoji}{emoji}{emoji} "
+            f"EXITING {node_name} {emoji}{emoji}{emoji} {extras}"
         )
 
 
@@ -731,6 +739,7 @@ _ACTIVITY_EMOJI_MAP: Dict[str, str] = {
     "rave": "🎵",
     # Movies/film
     "movies": "🎬",
+    "film": "🎬",
     "film festival": "🎬",
     "premiere": "🎬",
     "cinema": "🎬",
@@ -844,13 +853,14 @@ def _normalize_activity_with_emoji(activity: str) -> str:
         return activity
 
     # Check if the activity already starts with an emoji
-    # Emojis are typically in certain Unicode ranges
-    first_char = activity[0]
+    # Use grapheme.slice to handle multi-codepoint emojis (e.g., 🥾, 🤿, 👨‍👩‍👧)
+    first_grapheme = grapheme.slice(activity, 0, 1)
+    first_code_point = ord(activity[0]) if activity else 0
     # Check if first character is in emoji ranges (simplified check)
-    if ord(first_char) > 0x1F00:
+    if first_code_point > 0x1F00:
         # Has emoji prefix - extract the text part to validate
-        # Find where the emoji ends (usually followed by space or the text)
-        text_part = activity[1:].lstrip()
+        # Use grapheme.slice to skip the full grapheme (handles multi-codepoint emojis)
+        text_part = grapheme.slice(activity, 1, None).lstrip()
         if not text_part:
             return activity
 
@@ -862,14 +872,21 @@ def _normalize_activity_with_emoji(activity: str) -> str:
         if text_lower in _ACTIVITY_EMOJI_MAP:
             correct_emoji = _ACTIVITY_EMOJI_MAP[text_lower]
         else:
-            # Try partial matching - check if any keyword is contained in the activity
+            # Try partial matching - prioritize earliest position and longest keyword
+            best_match: tuple[int, int, str] | None = None
             for keyword, emoji in _ACTIVITY_EMOJI_MAP.items():
-                if re.search(rf"\b{re.escape(keyword)}\b", text_lower):
-                    correct_emoji = emoji
-                    break
+                match = re.search(rf"\b{re.escape(keyword)}\b", text_lower)
+                if match:
+                    pos = match.start()
+                    length = len(keyword)
+                    if best_match is None or (pos, -length) < (best_match[0], best_match[1]):
+                        best_match = (pos, -length, emoji)
+            if best_match:
+                correct_emoji = best_match[2]
 
         # If we found a correct emoji and it differs from current, fix it
-        if correct_emoji and first_char != correct_emoji:
+        # Use first_grapheme (not first_char) for proper multi-codepoint emoji comparison
+        if correct_emoji and first_grapheme != correct_emoji:
             return f"{correct_emoji} {text_part}"
 
         # Emoji is correct or no match found, return as-is
@@ -892,14 +909,21 @@ def _normalize_activity_with_emoji(activity: str) -> str:
                 return f"{emoji} {activity}"
 
     # Try partial matching - check if any keyword is contained in the activity
-    for keyword, emoji in _ACTIVITY_EMOJI_MAP.items():
-        # Only match if keyword is a complete word in the activity
-        if keyword in activity_lower:
-            # Check word boundaries
-            import re
+    # Prioritize by: 1) earliest position in string, 2) longest keyword (more specific)
+    import re
 
-            if re.search(rf"\b{re.escape(keyword)}\b", activity_lower):
-                return f"{emoji} {activity}"
+    best_match: tuple[int, int, str] | None = None  # (position, -length, emoji)
+    for keyword, emoji in _ACTIVITY_EMOJI_MAP.items():
+        match = re.search(rf"\b{re.escape(keyword)}\b", activity_lower)
+        if match:
+            pos = match.start()
+            length = len(keyword)
+            # Compare: earlier position wins, then longer keyword wins
+            if best_match is None or (pos, -length) < (best_match[0], best_match[1]):
+                best_match = (pos, -length, emoji)
+
+    if best_match:
+        return f"{best_match[2]} {activity}"
 
     # No match found, use default sparkle emoji
     return f"{_DEFAULT_ACTIVITY_EMOJI} {activity}"
@@ -923,20 +947,18 @@ def _deduplicate_activities_case_insensitive(categories: List[str]) -> List[str]
 
     for cat in categories:
         # Extract the text part after emoji for comparison
-        # Emojis are typically followed by a space
         text = cat.strip()
-        # Find where the actual text starts (after emoji and space)
-        text_start = 0
-        for i, char in enumerate(text):
-            if ord(char) < 0x1F00 and char != " ":
-                text_start = i
-                break
-            elif char == " " and i > 0:
-                text_start = i + 1
-                break
+        if not text:
+            continue
 
-        # Get the text portion for comparison
-        text_portion = text[text_start:].strip().lower()
+        # Check if first grapheme is an emoji and skip it
+        first_grapheme = grapheme.slice(text, 0, 1)
+        first_code_point = ord(first_grapheme[0]) if first_grapheme else 0
+        if first_code_point > 0x1F00:
+            # Skip the emoji grapheme using grapheme.slice for multi-codepoint emoji support
+            text_portion = grapheme.slice(text, 1, None).strip().lower()
+        else:
+            text_portion = text.lower()
 
         if text_portion and text_portion not in seen_lower:
             seen_lower.add(text_portion)
@@ -1201,10 +1223,33 @@ def _apply_llm_delta(
             "transport_settings",
             "booking_types",
         ):
-            # Simple dict merge
+            # Simple dict merge with normalization for activity categories
             if isinstance(v, dict):
                 existing = dict(getattr(ti, k, {}) or {})
-                existing.update(v)
+                # For activity_settings, normalize the categories to fix emojis
+                if k == "activity_settings" and "categories" in v:
+                    raw_categories = v.get("categories", [])
+                    if isinstance(raw_categories, list):
+                        normalized = _normalize_booking_field(
+                            "activity_settings", {"categories": raw_categories}
+                        )
+                        if normalized and "categories" in normalized:
+                            existing_cats = list(existing.get("categories", []))
+                            for cat in normalized["categories"]:
+                                if cat not in existing_cats:
+                                    existing_cats.append(cat)
+                            # Deduplicate case-insensitively
+                            existing["categories"] = _deduplicate_activities_case_insensitive(
+                                existing_cats
+                            )
+                        # Copy other activity_settings fields if present
+                        for ak, av in v.items():
+                            if ak != "categories":
+                                existing[ak] = av
+                    else:
+                        existing.update(v)
+                else:
+                    existing.update(v)
                 updates[k] = existing
 
         elif k in ("start_date", "end_date", "origin", "currency", "multi_city_intent"):
@@ -2606,13 +2651,15 @@ class TripInputNormalizer:
             delta = deltas["activity_categories_delta"]
             if isinstance(delta, list):
                 existing = trip_inputs.activity_settings or {}
-                existing_cats = existing.get("categories", [])
-                # Normalize activities with emojis and deduplicate
-                for cat in delta:
-                    normalized_cat = _normalize_activity_with_emoji(cat)
-                    if normalized_cat and normalized_cat not in existing_cats:
-                        existing_cats.append(normalized_cat)
-                existing_cats = _deduplicate_activities_case_insensitive(existing_cats)
+                existing_cats = list(existing.get("categories", []))
+                # Normalize via _normalize_booking_field for consistency
+                normalized = _normalize_booking_field("activity_settings", {"categories": delta})
+                if normalized and "categories" in normalized:
+                    for cat in normalized["categories"]:
+                        if cat not in existing_cats:
+                            existing_cats.append(cat)
+                    # Deduplicate case-insensitively
+                    existing_cats = _deduplicate_activities_case_insensitive(existing_cats)
                 updates["activity_settings"] = {"categories": existing_cats}
 
         # --- Category Activation (booking types) ---
@@ -3029,28 +3076,6 @@ def _compute_missing_fields(trip_inputs: dict) -> List[str]:
         elif trip_inputs.get(field) is None:
             missing.append(field)
     return missing
-
-
-def _infer_question_target_from_missing(state: "GraphState") -> Optional[str]:
-    """Infer question_target from missing required fields.
-
-    When an LLM doesn't provide a question_target, we infer it from the
-    first missing required field. This enables contextual suggestion
-    generation even when the LLM response doesn't include question_target.
-
-    Args:
-        state: Current graph state
-
-    Returns:
-        The first missing required field as question_target, or None if all
-        required fields are present.
-    """
-    ti = state.trip_inputs
-    missing = _compute_missing_fields(ti.model_dump(exclude_none=True))
-    if missing:
-        # Return the first missing field as the question_target
-        return missing[0]
-    return None
 
 
 def _default_follow_up_question(
@@ -4755,11 +4780,12 @@ def normalize_inputs(state: GraphState) -> GraphState:
         existing_settings = dict(ti.activity_settings) if ti.activity_settings else {}
         existing_cats = list(existing_settings.get("categories", []))
 
-        for cat in inferred:
-            # Normalize activity with emoji prefix
-            normalized_cat = _normalize_activity_with_emoji(cat)
-            if normalized_cat not in existing_cats:
-                existing_cats.append(normalized_cat)
+        # Normalize via _normalize_booking_field for consistency
+        normalized = _normalize_booking_field("activity_settings", {"categories": inferred})
+        if normalized and "categories" in normalized:
+            for cat in normalized["categories"]:
+                if cat not in existing_cats:
+                    existing_cats.append(cat)
 
         # Deduplicate case-insensitively after merge
         existing_cats = _deduplicate_activities_case_insensitive(existing_cats)
@@ -5080,16 +5106,6 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             else:
                 state.question_target = None
 
-            # Fallback: infer question_target from missing fields if LLM didn't provide one
-            if state.question_target is None:
-                inferred_target = _infer_question_target_from_missing(state)
-                if inferred_target:
-                    state.question_target = inferred_target
-                    _debug(
-                        "Inferred question_target from missing fields",
-                        target=inferred_target,
-                    )
-
             # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
             state.suggested_responses = _get_suggestions_with_fallback(
@@ -5303,16 +5319,6 @@ async def strategy_node(state: GraphState) -> GraphState:
             else:
                 state.question_target = None
 
-            # Fallback: infer question_target from missing fields if LLM didn't provide one
-            if state.question_target is None:
-                inferred_target = _infer_question_target_from_missing(state)
-                if inferred_target:
-                    state.question_target = inferred_target
-                    _debug(
-                        "Inferred question_target from missing fields",
-                        target=inferred_target,
-                    )
-
             # Filter suggested responses with relevance scoring
             raw_suggestions = j.get("suggested_responses", []) or []
             state.suggested_responses = _get_suggestions_with_fallback(
@@ -5469,9 +5475,16 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     # Check if message is long enough to benefit from formatting
     is_long_enough = len(msg) >= _POLISH_MIN_LENGTH
 
+    # Very short, potentially abrupt responses should still be polished
+    # These often come from specialist nodes and sound robotic
+    is_very_short = len(msg) < 80
+    looks_abrupt = msg.rstrip().endswith(".") and "!" not in msg and "?" not in msg
+
     # Only polish if the content would benefit from it
+    # Exception: very short abrupt responses should be polished to sound more natural
     if not has_list_content and not is_long_enough:
-        return True, "short_simple_response"
+        if not (is_very_short and looks_abrupt):
+            return True, "short_simple_response"
 
     # Message already seems warm AND well-formatted (has emoji, formatting, reasonable length)
     has_emoji = any(c in msg for c in "✈️🏨🎉🌴☀️😊👍🎊🗺️📍✨🌟💫🎯")
@@ -6345,20 +6358,27 @@ def route_after_router(state: GraphState) -> str:
             state.metadata["deferred_intent"] = original_intent
             if original_topic:
                 state.metadata["deferred_strategy_topic"] = original_topic
-            _debug(
-                "Deferring intent until core fields extracted",
-                deferred_intent=original_intent,
-                deferred_topic=original_topic,
-                destinations=bool(ti.destinations),
-                origin=bool(ti.origin),
-                start_date=bool(ti.start_date),
+            (
+                print(
+                    f"[PLAN_GRAPH DEBUG] 🧭 Deferring intent until core fields extracted "
+                    f"deferred_intent={original_intent} deferred_topic={original_topic} "
+                    f"destinations={bool(ti.destinations)} origin={bool(ti.origin)} "
+                    f"start_date={bool(ti.start_date)}"
+                )
+                if _DEBUG_LOG
+                else None
             )
         else:
-            _debug(
-                "Forcing required_fields route due to missing core fields",
-                destinations=bool(ti.destinations),
-                origin=bool(ti.origin),
-                start_date=bool(ti.start_date),
+            (
+                print(
+                    "[PLAN_GRAPH DEBUG] 🧭 Forcing required_fields route "
+                    "due to missing core fields "
+                    f"destinations={bool(ti.destinations)} "
+                    f"origin={bool(ti.origin)} "
+                    f"start_date={bool(ti.start_date)}"
+                )
+                if _DEBUG_LOG
+                else None
             )
         return "required_fields_node"
 

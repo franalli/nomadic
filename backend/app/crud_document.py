@@ -755,45 +755,6 @@ def apply_planner_update_sync(
     return save_document_data_sync(db, doc=doc, data=data, updated_by="planner")
 
 
-def add_tiles_to_branch_sync(
-    db: Session,
-    *,
-    doc: models.PlanDocument,
-    branch_id: str,
-    tiles: list[TileSchema],
-    updated_by: UpdatedBy = "planner",
-) -> models.PlanDocument:
-    """
-    Add tiles to a specific branch and update the document (sync).
-    Used when fetching tiles for a non-primary branch.
-    """
-    data = get_document_data(doc)
-
-    # Find the branch
-    branch_idx = next((i for i, b in enumerate(data.branches) if b.id == branch_id), None)
-    if branch_idx is None:
-        return doc  # Branch not found, no-op
-
-    branch = data.branches[branch_idx]
-
-    # Add tiles to document
-    tiles_dict = {t.id: t for t in tiles}
-    data.tiles = merge_tiles(data.tiles, tiles_dict)
-
-    # Categorize tile IDs by type
-    for tile in tiles:
-        if tile.type == "hotel" and tile.id not in branch.tiles.stays:
-            branch.tiles.stays.append(tile.id)
-        elif tile.type == "flight" and tile.id not in branch.tiles.flights:
-            branch.tiles.flights.append(tile.id)
-        elif tile.type == "activity" and tile.id not in branch.tiles.activities:
-            branch.tiles.activities.append(tile.id)
-
-    data.branches[branch_idx] = branch
-
-    return save_document_data_sync(db, doc=doc, data=data, updated_by=updated_by)
-
-
 async def add_tiles_to_branch(
     db: AsyncSession,
     *,

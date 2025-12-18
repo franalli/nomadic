@@ -160,7 +160,7 @@ type DocumentState = {
     tileId?: string
   ) => Promise<void>;
 
-  // Set document from plan response (when /v1/plan returns new document)
+  // Set document from graph plan response (when /v1/graph_plan returns new document)
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
   // Clear sparkle for a field when user interacts with it

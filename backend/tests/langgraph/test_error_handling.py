@@ -19,7 +19,6 @@ from app.plan_graph import (
     TripInputs,
     _detect_short_circuit,
     _truncate_to_balanced_json,
-    extractor,
     jloads_safe,
 )
 
@@ -122,91 +121,6 @@ class TestTruncateToBalancedJson:
         assert result == json_str
 
 
-class TestExtractorEdgeCases:
-    """Tests for extractor edge cases."""
-
-    def test_empty_user_text(self):
-        """Empty user text should not crash."""
-        state = GraphState(
-            user_text="",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-    def test_very_long_user_text(self):
-        """Very long user text should be handled."""
-        long_text = "I want to go to Paris " * 1000  # ~22000 chars
-        state = GraphState(
-            user_text=long_text,
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-        # Should still extract Paris
-        assert "Paris" in state.parsed_inputs.get("destinations_delta", []) or True
-
-    def test_unicode_everywhere(self):
-        """Unicode characters throughout should be handled."""
-        state = GraphState(
-            user_text="旅行から東京へ São Paulo Zürich Côte d'Azur 🌍✈️",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-    def test_special_characters(self):
-        """Special characters should not crash."""
-        state = GraphState(
-            user_text="Trip to Paris!!! <script>alert('xss')</script> $$$",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-    def test_only_numbers(self):
-        """Numbers only input should be handled."""
-        state = GraphState(
-            user_text="12345",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-    def test_only_punctuation(self):
-        """Punctuation only input should be handled."""
-        state = GraphState(
-            user_text="!@#$%^&*()",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-
 class TestShortCircuitEdgeCases:
     """Tests for short-circuit edge cases."""
 
@@ -267,34 +181,6 @@ class TestTripInputsNullValues:
 class TestStateConsistency:
     """Tests for state consistency across operations."""
 
-    def test_metadata_preserved(self):
-        """Metadata should be preserved through extractor."""
-        state = GraphState(
-            user_text="hello",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={"custom_key": "custom_value"},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state.metadata.get("custom_key") == "custom_value"
-
-    def test_chat_history_not_modified(self):
-        """Chat history should not be unexpectedly modified by extractor."""
-        original_history = [{"role": "user", "content": "hello"}]
-        state = GraphState(
-            user_text="hi",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=original_history.copy(),
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        # History should still have original entry
-        assert len(state.chat_history) >= 1
-
     def test_flags_initialized(self):
         """Flags should be properly initialized."""
         state = GraphState(
@@ -312,60 +198,3 @@ class TestStateConsistency:
         )
         assert hasattr(state, "errors")
         assert isinstance(state.errors, list)
-
-
-class TestInputSanitization:
-    """Tests for input sanitization."""
-
-    def test_html_not_executed(self):
-        """HTML/script tags should be treated as text."""
-        state = GraphState(
-            user_text="<script>alert('xss')</script> go to Paris",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        # Should extract Paris, not execute script
-        assert state is not None
-
-    def test_sql_injection_safe(self):
-        """SQL-like input should be treated as text."""
-        state = GraphState(
-            user_text="'; DROP TABLE trips; -- go to Paris",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-    def test_newlines_handled(self):
-        """Newlines in input should be handled."""
-        state = GraphState(
-            user_text="Going to\nParis\nnext week",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None
-
-    def test_tabs_handled(self):
-        """Tabs in input should be handled."""
-        state = GraphState(
-            user_text="Going\tto\tParis",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        state = extractor(state)
-        assert state is not None

@@ -3,7 +3,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,12 +26,9 @@ from app.crud_trip import (
     fetch_chat_history,
     get_latest_trip_context_for_session,
     get_or_create_session,
-    get_or_create_session_sync,
     get_session_by_token,
     get_session_by_token_sync,
     record_chat_message,
-    rotate_session_sync,
-    should_rotate_session_sync,
 )
 from app.db import get_async_db, get_db
 from app.graph_plan_utils import (
@@ -50,10 +47,7 @@ from app.middleware import (
     SessionMiddleware,
     clear_session_cookies,
     get_session_from_request,
-    set_new_session_cookies,
 )
-from app.middleware.session import _generate_csrf_token
-from app.plan import plan_trip
 from app.plan_graph import (
     checkpoint_stats,
     clear_all_checkpoints,
@@ -78,7 +72,6 @@ from app.schemas import (
     PlanDocumentData,
     PlanDocumentPatch,
     PlanDocumentResponse,
-    PlanRequest,
     TilesSearchRequest,
     TripInputValidationRequest,
     TripInputValidationResponse,
@@ -337,7 +330,6 @@ async def graph_plan_endpoint(
     - Feature flag gating (ENABLE_GRAPH_PLAN_ROUTE)
     - Payload size validation
     - Optimistic concurrency via document versioning
-    - Fallback to legacy planner on failure (GRAPH_FALLBACK_TO_LEGACY)
     - Cache-Control: no-store to prevent caching of personalized responses
     """
     # --- Feature flag gate ---
@@ -467,19 +459,6 @@ async def graph_plan_endpoint(
         logger.info(f"[{request_id}] Graph planner succeeded (LangGraph path)")
     except TimeoutError:
         logger.error(f"[{request_id}] run_turn timed out")
-        if settings.graph_fallback_to_legacy:
-            logger.info(f"[{request_id}] Falling back to legacy planner (reason: timeout)")
-            return _fallback_to_legacy(
-                request,
-                response,
-                req,
-                session_id,
-                request_id,
-                document_data,
-                document_version,
-                today_iso,
-                ready_to_generate_prev,
-            )
         raise HTTPException(
             status_code=504,
             detail={
@@ -489,19 +468,6 @@ async def graph_plan_endpoint(
         ) from None
     except Exception as e:
         logger.error(f"[{request_id}] run_turn failed: {e}")
-        if settings.graph_fallback_to_legacy:
-            logger.info(f"[{request_id}] Falling back to legacy planner (reason: {e})")
-            return _fallback_to_legacy(
-                request,
-                response,
-                req,
-                session_id,
-                request_id,
-                document_data,
-                document_version,
-                today_iso,
-                ready_to_generate_prev,
-            )
         raise HTTPException(
             status_code=500,
             detail={
@@ -641,7 +607,6 @@ async def graph_plan_endpoint(
         model_used=result.get("session_state", {}).get("metadata", {}).get("model_used"),
         router_intent=result.get("session_state", {}).get("router_intent"),
         strategy_topic=result.get("session_state", {}).get("strategy_topic"),
-        fallback_to_legacy=False,
         today_iso=today_iso,
         ready_to_generate_prev=ready_to_generate_prev,
         ready_to_generate_now=ready_to_generate_now,
@@ -896,120 +861,6 @@ async def graph_plan_stream_endpoint(
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
-
-
-def _fallback_to_legacy(
-    request: Request,
-    response: Response,
-    req: GraphPlanRequest,
-    session_id: str,
-    request_id: str,
-    document_data: Any,
-    document_version: Optional[int],
-    today_iso: str,
-    ready_to_generate_prev: bool,
-) -> GraphPlanResponse:
-    """
-    Fallback to the legacy planner when graph planning fails.
-
-    Converts the GraphPlanRequest to a PlanRequest and calls plan_trip,
-    then wraps the result in a GraphPlanResponse.
-
-    Note: Creates its own sync database session since plan_trip requires sync Session.
-    """
-    logger.info(f"[{request_id}] Falling back to legacy planner")
-
-    # Get a sync database session for the legacy planner
-    db_gen = get_db()
-    db = next(db_gen)
-
-    try:
-        # Convert GraphPlanRequest to PlanRequest
-        # Note: PlanRequest only has 'message' and optional 'timezone' fields
-        legacy_req = PlanRequest(
-            message=req.message,
-            timezone=None,
-        )
-
-        # Call the legacy planner
-        result = plan_trip(db, session_id, legacy_req)
-
-        # Build document for response using the legacy planner output if available
-        response_document = getattr(result, "document", None) or document_data or PlanDocumentData()
-        ready_to_generate_now = False
-        trip_inputs = {}
-        if getattr(result, "document", None):
-            trip_inputs = result.document.trip_inputs.model_dump()
-            ready_to_generate_now = result.document.ready_to_generate
-        elif response_document:
-            # Fallback to response_document values when legacy output missing
-            trip_inputs = response_document.trip_inputs.model_dump()
-            ready_to_generate_now = response_document.ready_to_generate
-
-        # Convert PlanDocumentResponse to GraphPlanResponse
-        return GraphPlanResponse(
-            document=response_document,
-            session_state={
-                "trip_inputs": trip_inputs,
-            },
-            version=getattr(result, "version", None) or document_version or 1,
-            updated_by="planner",
-            updated_at=datetime.now().isoformat(),
-            changes_made=True,
-            request_id=request_id,
-            observability=GraphPlanObservability(
-                tokens=GraphPlanTokens(prompt=0, completion=0, total=0),
-                fallback_to_legacy=True,
-                today_iso=today_iso,
-                ready_to_generate_prev=ready_to_generate_prev,
-                ready_to_generate_now=ready_to_generate_now,
-            ),
-        )
-    except Exception as e:
-        logger.error(f"[{request_id}] Legacy fallback also failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "error_code": GraphPlanErrorCode.LLM_ERROR,
-                "message": "Both graph and legacy planners failed",
-            },
-        ) from e
-
-
-@app.post("/v1/plan", response_model=PlanDocumentResponse)
-def plan(
-    request: Request,
-    response: Response,
-    req: PlanRequest,
-    db: Session = db_dependency,
-):
-    """
-    Chat-like planning endpoint:
-    message + preferences -> branches via LLM -> tiles for primary branch.
-    Returns the full plan document with branches, tiles, and chat response.
-
-    Session rotation:
-    After the first trip context is created, the session token is rotated
-    to prevent session fixation attacks. New cookies are set on the response.
-    """
-    session_id = get_session_from_request(request)
-    try:
-        result = plan_trip(db, session_id, req)
-
-        # Check if we should rotate the session (after first trip creation)
-        db_session = get_or_create_session_sync(db, session_id)
-        if should_rotate_session_sync(db, session=db_session):
-            # Rotate the session token
-            rotated_session = rotate_session_sync(db, old_session=db_session)
-            db.commit()
-
-            # Set new cookies with the rotated session token
-            new_csrf = _generate_csrf_token()
-            set_new_session_cookies(response, rotated_session.session_token, new_csrf)
-
-        return result
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/v1/session", status_code=204)

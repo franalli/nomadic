@@ -27,11 +27,9 @@ BENCHMARK_AVAILABLE = importlib.util.find_spec("pytest_benchmark") is not None
 from app.plan_graph import (
     GraphState,
     TripInputs,
-    _calculate_extraction_confidence,
     _compute_cache_key,
     _detect_short_circuit,
     _get_core_fields_state,
-    extractor,
     jloads_safe,
     load_prompt,
     route_after_normalize,
@@ -39,50 +37,6 @@ from app.plan_graph import (
 
 # Skip all tests if pytest-benchmark not installed
 pytestmark = pytest.mark.skipif(not BENCHMARK_AVAILABLE, reason="pytest-benchmark not installed")
-
-
-class TestExtractorPerformance:
-    """Benchmark tests for extractor function."""
-
-    def test_extractor_simple_input(self, benchmark):
-        """Extractor should process simple input quickly (<50ms)."""
-        state = GraphState(
-            user_text="I want to go to Paris",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        result = benchmark(extractor, state)
-        assert result is not None
-
-    def test_extractor_complex_input(self, benchmark):
-        """Extractor should handle complex input reasonably."""
-        state = GraphState(
-            user_text="I want to fly business class from London to Tokyo next week, "
-            "family of 4 with a budget of $10000, looking for 5-star hotels with pool",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        result = benchmark(extractor, state)
-        assert result is not None
-
-    def test_extractor_multi_destination(self, benchmark):
-        """Extractor with multiple destinations."""
-        state = GraphState(
-            user_text="Trip from Rome to Paris, London, and Barcelona",
-            trip_inputs=TripInputs(),
-            parsed_inputs={},
-            chat_history=[],
-            metadata={},
-            thread_id="test",
-        )
-        result = benchmark(extractor, state)
-        assert result is not None
 
 
 class TestShortCircuitPerformance:
@@ -94,12 +48,6 @@ class TestShortCircuitPerformance:
         result = benchmark(_detect_short_circuit, "hi", state)
         assert result is not None
         assert result["type"] == "greeting"
-
-    def test_short_circuit_acknowledgment(self, benchmark):
-        """Acknowledgment detection should be very fast."""
-        state = GraphState(user_text="", trip_inputs=TripInputs(), metadata={})
-        result = benchmark(_detect_short_circuit, "thanks", state)
-        assert result is not None
 
     def test_short_circuit_confirmation(self, benchmark):
         """Confirmation with pending action should be fast."""
@@ -165,38 +113,6 @@ class TestRoutingPerformance:
         assert result in ("required_fields_node", "router")
 
 
-class TestConfidenceCalculationPerformance:
-    """Benchmark tests for confidence calculation (<10ms target)."""
-
-    def test_confidence_simple(self, benchmark):
-        """Simple confidence calculation should be fast."""
-        parsed = {"destinations_delta": ["Paris"], "origin_delta": "London"}
-        result = benchmark(
-            _calculate_extraction_confidence,
-            parsed,
-            "from London to Paris",
-            "regex",
-            True,
-        )
-        assert result is not None
-        assert hasattr(result, "overall")
-
-    def test_confidence_complex(self, benchmark):
-        """Complex confidence with multiple entities should be reasonable."""
-        parsed = {
-            "destinations_delta": ["Paris", "London", "Barcelona"],
-            "origin_delta": "New York",
-        }
-        result = benchmark(
-            _calculate_extraction_confidence,
-            parsed,
-            "from New York to Paris, London, and Barcelona",
-            "regex",
-            True,
-        )
-        assert result is not None
-
-
 class TestCachePerformance:
     """Benchmark tests for caching operations (<1ms target)."""
 
@@ -250,29 +166,3 @@ class TestJsonParsingPerformance:
         json_str = '{"assistant_message": "Hello!", "incomplete'
         result = benchmark(jloads_safe, json_str)
         assert isinstance(result, dict)
-
-
-class TestEndToEndPerformance:
-    """End-to-end performance tests (with mocked LLM)."""
-
-    def test_extractor_to_routing_flow(self, benchmark):
-        """Full extractor + routing flow should be fast."""
-
-        def flow():
-            state = GraphState(
-                user_text="I want to go to Paris from London next week",
-                trip_inputs=TripInputs(),
-                parsed_inputs={},
-                chat_history=[],
-                metadata={},
-                thread_id="test",
-                flags={},
-            )
-            state = extractor(state)
-            route = route_after_normalize(state)
-            return state, route
-
-        result = benchmark(flow)
-        state, route = result
-        assert state is not None
-        assert route in ("router", "short_circuit_responder", "required_fields_node")

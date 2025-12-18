@@ -32,20 +32,6 @@ except ZoneInfoNotFoundError:
     logger.warning("Time zone Europe/Amsterdam not found; falling back to UTC")
     SERVER_TZ = ZoneInfo("UTC")
 
-# Allowed keys in session_state (everything else is dropped)
-ALLOWED_SESSION_STATE_KEYS: Set[str] = {
-    "thread_id",
-    "trip_inputs",
-    "metadata",
-    "flags",
-    "last_summary",
-    "branches",
-    "suggested_responses",
-    "errors",
-    "router_intent",
-    "strategy_topic",
-}
-
 # ISO-4217 currency codes we accept
 ISO_4217_CURRENCIES: Set[str] = {
     "USD",
@@ -98,22 +84,6 @@ CURRENCY_SYMBOL_MAP: Dict[str, str] = {
     "NZ$": "NZD",
     "HK$": "HKD",
     "S$": "SGD",
-}
-
-# Maximum payload size (200KB)
-MAX_PAYLOAD_SIZE_BYTES = 200 * 1024
-
-# Fields that can be explicitly set to null by the UI
-EXPLICIT_NULL_FIELDS: Set[str] = {
-    "origin",
-    "start_date",
-    "end_date",
-    "adults",
-    "children",
-    "requires_assistance",
-    "budget",
-    "currency",
-    "multi_city_intent",
 }
 
 

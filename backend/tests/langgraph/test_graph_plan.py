@@ -8,7 +8,6 @@ Tests include:
 - Session state handling
 - today_iso injection
 - Optimistic concurrency
-- Fallback to legacy planner
 - Error handling
 """
 
@@ -318,68 +317,6 @@ class TestGraphPlanObservability:
         obs = data.get("observability", {})
         assert "request_id" in data
         assert "tokens" in obs
-
-
-class TestGraphPlanFallback:
-    """Tests for legacy planner fallback."""
-
-    def test_fallback_on_error(self, client):
-        """Falls back to legacy planner when graph planner fails."""
-        # Ensure fallback is enabled
-        original_fallback = settings.graph_fallback_to_legacy
-        settings.graph_fallback_to_legacy = True
-
-        with patch("app.main.run_turn") as mock_run_turn:
-            mock_run_turn.side_effect = Exception("Graph planner failed")
-
-            with patch("app.main.plan_trip") as mock_plan_trip:
-                from app.schemas import PlanDocumentData, PlanDocumentResponse
-
-                # Mock legacy planner response (PlanDocumentResponse shape)
-                mock_plan_trip.return_value = PlanDocumentResponse(
-                    version=1,
-                    updated_by="planner",
-                    document=PlanDocumentData(
-                        assistant_message="Fallback response",
-                        branches=[],
-                        ready_to_generate=False,
-                    ),
-                    updated_at=datetime.now(UTC).isoformat(),
-                    changes_made=True,
-                )
-
-                response = client.post(
-                    "/v1/graph_plan",
-                    json={"message": "Test"},
-                    headers={"X-CSRF-Token": "test-csrf-token"},
-                )
-
-                # Should succeed using fallback
-                assert response.status_code == 200
-                data = response.json()
-                assert data.get("observability", {}).get("fallback_to_legacy") is True
-
-        settings.graph_fallback_to_legacy = original_fallback
-
-    def test_no_fallback_when_disabled(self, client):
-        """Returns 500 when fallback is disabled and graph planner fails."""
-        original_fallback = settings.graph_fallback_to_legacy
-        settings.graph_fallback_to_legacy = False
-
-        with patch("app.main.run_turn") as mock_run_turn:
-            mock_run_turn.side_effect = Exception("Graph planner failed")
-
-            response = client.post(
-                "/v1/graph_plan",
-                json={"message": "Test"},
-                headers={"X-CSRF-Token": "test-csrf-token"},
-            )
-
-            assert response.status_code == 500
-            data = response.json()
-            assert data["detail"]["error_code"] == GraphPlanErrorCode.LLM_ERROR
-
-        settings.graph_fallback_to_legacy = original_fallback
 
 
 class TestGraphPlanOptimisticConcurrency:
