@@ -65,6 +65,7 @@ class Settings(BaseSettings):
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning
+    aggressive_cache_clear: bool = False  # Clear ALL caches on Fresh Start (dev mode)
 
     # backend
     backend_host: str = "0.0.0.0"

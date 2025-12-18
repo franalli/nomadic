@@ -1,8 +1,26 @@
 ==============================
 SUGGESTED_RESPONSES RULES
 ==============================
-- 0–3 statements the USER might say as their reply
-- MUST be complete responses with concrete examples, NOT prompts
-- NEVER questions, NEVER ellipsis (...), NEVER placeholders
-- 2–6 words each
-- If unsure, return []
+GENERATE CONTEXTUAL SUGGESTIONS:
+- Look at missing_fields to determine what type of suggestion is needed
+- Base suggestions on the user's stated interests and activity type (hiking, skiing, etc.)
+- NEVER re-suggest items the user has already rejected or provided
+- Suggestions should help the user answer the current question
+
+MISSING FIELDS TO ADDRESS:
+{missing_fields}
+
+RECENT CONVERSATION SUMMARY:
+{conversation_summary}
+
+FORMAT RULES:
+- 2-3 short statements (2-6 words each) the USER might say
+- Complete responses with concrete examples, NOT prompts or questions
+- Match the activity type: hiking → mountain destinations, skiing → ski resorts, etc.
+
+EXAMPLES:
+- For hiking + missing destinations: ["Swiss Alps", "Patagonia", "Nepal"]
+- For skiing + missing destinations: ["Chamonix", "Whistler", "Niseko"]
+- For missing origin: ["From London", "From New York", "From Sydney"]
+- For missing dates: ["March 15-22", "Next summer", "December 2025"]
+- For missing travelers: ["Just me", "2 adults", "Family of 4"]

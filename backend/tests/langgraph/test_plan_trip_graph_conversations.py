@@ -20,10 +20,10 @@ from app.schemas import PlanRequest  # noqa: E402
 from tests.llm_stub import llm_json_for_prompt  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def _db_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    # Use a per-module temp DB to avoid leaking state into other tests.
-    return tmp_path_factory.mktemp("plan_trip_graph_conversations") / "test.db"
+@pytest.fixture(scope="function")
+def _db_path(tmp_path: Path) -> Path:
+    # Use a per-test temp DB for complete isolation.
+    return tmp_path / "test.db"
 
 
 class _EmptyTilesResponse:
@@ -75,7 +75,7 @@ def _disable_response_polish():
         settings.enable_response_polish = original
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def _setup_db(_db_path: Path):
     engine = create_engine(
         f"sqlite+pysqlite:///{_db_path.as_posix()}",

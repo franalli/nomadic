@@ -368,14 +368,30 @@ const startsWithEmoji = (str: string): boolean => {
 };
 
 /**
+ * Strip ANSI escape codes and control characters from a string.
+ */
+const stripControlChars = (text: string): string => {
+  // Remove ANSI escape sequences (ESC[ and CSI)
+  // eslint-disable-next-line no-control-regex
+  const withoutAnsi = text.replace(/(\x1b|\x9b)\[[0-9;:]*[A-Za-z]/g, '');
+  // Remove non-printable control characters (except space, tab, newline)
+  // eslint-disable-next-line no-control-regex
+  return withoutAnsi.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
+};
+
+/**
  * Normalize an activity string to ensure it has an emoji prefix.
  *
+ * - Strips ANSI escape codes and control characters
+ * - Applies NFC Unicode normalization to fix decomposed emoji codepoints
  * - If the activity already starts with an emoji, return it as-is
  * - Otherwise, look up the activity in the emoji map and add the appropriate emoji
  * - If no match found, use the sparkle emoji as default
  */
 export const normalizeActivityWithEmoji = (activity: string): string => {
-  const trimmed = activity.trim();
+  // Strip control characters and normalize Unicode
+  const sanitized = stripControlChars(activity).normalize('NFC');
+  const trimmed = sanitized.trim();
   if (!trimmed) return trimmed;
 
   // Check if already has emoji prefix

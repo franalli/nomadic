@@ -365,6 +365,97 @@ def llm_json_for_prompt(
             "suggested_responses": ["Relaxed pace", "Packed schedule"],
         }
 
+    # Extractor prompt - extract trip details from user message
+    if "EXTRACTION NODE" in prompt or "Role: Extract ALL trip planning details" in prompt:
+        msg = (user_message or "").lower()
+        result: Dict[str, Any] = {
+            "confidence": 0.9,
+            "destinations_delta": None,
+            "origin_delta": None,
+            "start_date_hint": None,
+            "end_date_hint": None,
+            "duration_days": None,
+            "adults_delta": None,
+            "children_delta": None,
+            "budget_delta": None,
+            "currency_delta": None,
+            "notes_delta": None,
+            "strategy_hint": None,
+            "category_activation": [],
+            "multi_city_intent_delta": None,
+        }
+
+        # Extract destinations
+        dest_patterns = [
+            r"\b(?:to|visit|in)\s+([A-Z][a-zA-Z\s]+?)(?:\s+(?:for|from|in|on)|[,.]|$)",
+            r"\b([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)?)\b",
+        ]
+        for pattern in dest_patterns:
+            match = re.search(pattern, user_message or "", re.I)
+            if match:
+                dest = match.group(1).strip()
+                if dest.lower() not in ["i", "a", "the", "my", "we", "from", "for", "and"]:
+                    result["destinations_delta"] = [dest]
+                    break
+
+        # Extract origin
+        origin_match = re.search(
+            r"\bfrom\s+([A-Z][a-zA-Z\s]+?)(?:\s+to|\s*$|[,.])", user_message or "", re.I
+        )
+        if origin_match:
+            result["origin_delta"] = origin_match.group(1).strip()
+
+        # Extract dates (ISO format)
+        iso_dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", user_message or "")
+        if len(iso_dates) >= 2:
+            result["start_date_hint"] = iso_dates[0]
+            result["end_date_hint"] = iso_dates[1]
+        elif len(iso_dates) == 1:
+            result["start_date_hint"] = iso_dates[0]
+
+        # Extract travelers
+        adults_match = re.search(r"(\d+)\s*adults?", msg)
+        if adults_match:
+            result["adults_delta"] = int(adults_match.group(1))
+
+        children_match = re.search(r"(\d+)\s*(?:kids?|children)", msg)
+        if children_match:
+            result["children_delta"] = int(children_match.group(1))
+
+        # Detect strategy hints
+        if any(k in msg for k in ["hike", "hiking", "trek"]):
+            result["strategy_hint"] = "hiking"
+        elif any(k in msg for k in ["dive", "diving", "scuba", "snorkel"]):
+            result["strategy_hint"] = "diving"
+        elif any(k in msg for k in ["ski", "skiing", "snowboard"]):
+            result["strategy_hint"] = "skiing"
+        elif any(k in msg for k in ["boat", "sail", "yacht", "cruise"]):
+            result["strategy_hint"] = "boating"
+        elif any(k in msg for k in ["bike", "cycling", "biking"]):
+            result["strategy_hint"] = "cycling"
+
+        # Detect category activations
+        if any(k in msg for k in ["flight", "fly", "flying"]):
+            result["category_activation"].append("flights")
+        if any(k in msg for k in ["hotel", "stay", "accommodation"]):
+            result["category_activation"].append("hotels")
+        if any(k in msg for k in ["car", "train", "bus", "transport"]):
+            result["category_activation"].append("transport")
+        if any(k in msg for k in ["activity", "activities", "tour", "museum"]):
+            result["category_activation"].append("activities")
+
+        return result
+
+    # Condense prompt - shorten a long message
+    if "Message condenser" in prompt or "condense a message" in prompt:
+        # Extract the original message and return a shortened version
+        original = _extract_between(prompt, "Original message to condense:", "Target length:")
+        if not original:
+            original = _extract_between(prompt, "message}", "{target_length")
+        # Return a condensed version (just take first portion)
+        condensed = original.strip()[:200] + "..." if len(original) > 200 else original.strip()
+        return {"condensed_message": condensed}
+
     # Default safe response
     return {
         "assistant_message": "Where would you like to go?",

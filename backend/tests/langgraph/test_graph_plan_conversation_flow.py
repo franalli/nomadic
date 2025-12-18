@@ -18,10 +18,10 @@ from app.main import app  # noqa: E402
 from tests.llm_stub import llm_json_for_prompt  # noqa: E402
 
 
-@pytest.fixture(scope="module")
-def _db_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    # Use a per-module temp DB to avoid leaking state into other tests.
-    return tmp_path_factory.mktemp("graph_plan_conversation_flow") / "test.db"
+@pytest.fixture(scope="function")
+def _db_path(tmp_path: Path) -> Path:
+    # Use a per-test temp DB for complete isolation.
+    return tmp_path / "test.db"
 
 
 class _EmptyTilesResponse:
@@ -112,7 +112,7 @@ def _enable_route_and_disable_polish():
         settings.enable_response_polish = original_polish
 
 
-@pytest.fixture(scope="module", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def _setup_db_file(_db_path: Path):
     engine = create_engine(
         f"sqlite+pysqlite:///{_db_path.as_posix()}",
@@ -124,7 +124,7 @@ def _setup_db_file(_db_path: Path):
     yield
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def _async_session_maker(_db_path: Path):
     async_url = f"sqlite+aiosqlite:///{_db_path.as_posix()}"
     engine = create_async_engine(async_url, future=True, echo=False)

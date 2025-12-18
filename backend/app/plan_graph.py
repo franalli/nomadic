@@ -319,9 +319,8 @@ def _set_confidence_routing(state: "GraphState", routing: str) -> None:
 _RESPONSE_CACHE_TTL = int(os.getenv("RESPONSE_CACHE_TTL_SECONDS", "3600"))  # 1 hour default
 _RESPONSE_CACHE_MAXSIZE = int(os.getenv("RESPONSE_CACHE_MAXSIZE", "200"))
 
-# Response caches by type
+# Response cache for LLM responses
 _follow_up_cache: TTLCache = TTLCache(maxsize=_RESPONSE_CACHE_MAXSIZE, ttl=_RESPONSE_CACHE_TTL)
-_ready_state_cache: TTLCache = TTLCache(maxsize=100, ttl=_RESPONSE_CACHE_TTL)
 
 
 def _compute_cache_key(
@@ -359,11 +358,20 @@ def _get_core_fields_state(trip_inputs: "TripInputs") -> str:
     )
 
 
-def _get_cached_response(cache: TTLCache, key: str) -> Optional[Dict[str, Any]]:
-    """Try to get a cached response."""
+def _hash_user_text(text: str) -> str:
+    """Hash first 100 chars + length for cache key stability."""
+    return hashlib.md5((text[:100] + str(len(text))).encode()).hexdigest()
+
+
+def _get_cached_response(
+    cache: TTLCache, key: str, state: Optional["GraphState"] = None
+) -> Optional[Dict[str, Any]]:
+    """Try to get a cached response. Increments cache hit counter if state provided."""
     result = cache.get(key)
     if result is not None:
         _debug_cache_hit("response_cache", key[:16])
+        if state is not None:
+            _increment_cache_hits(state)
     return result
 
 
@@ -378,9 +386,8 @@ def clear_response_caches() -> int:
 
     Returns the number of entries that were cleared.
     """
-    count = len(_follow_up_cache) + len(_ready_state_cache)
+    count = len(_follow_up_cache)
     _follow_up_cache.clear()
-    _ready_state_cache.clear()
     _debug(f"Cleared response caches: {count} entries")
     return count
 
@@ -391,7 +398,7 @@ def clear_all_caches() -> int:
 
     This function should be called at the start of each test to ensure
     complete isolation between tests. It clears:
-    - LLM response caches (_follow_up_cache, _ready_state_cache)
+    - LLM response cache (_follow_up_cache)
     - Validation caches (place, flight, hotel, activity caches)
     - MemorySaver checkpointer storage
     - LRU caches (fuzzy_match_place, _load_prompt_cached)
@@ -447,6 +454,17 @@ def clear_all_caches() -> int:
     except AttributeError:
         pass
 
+    # Clear Jinja2 template cache
+    try:
+        if hasattr(_JINJA_ENV, "cache") and _JINJA_ENV.cache:
+            jinja_count = len(_JINJA_ENV.cache)
+            _JINJA_ENV.cache.clear()
+            if jinja_count > 0:
+                cleared_caches.append(f"jinja_cache: {jinja_count}")
+                total_cleared += jinja_count
+    except Exception:
+        pass
+
     # Clear prompt tracking set
     if _PROMPTS_LOADED:
         cleared_caches.append(f"prompts_loaded_set: {len(_PROMPTS_LOADED)}")
@@ -464,7 +482,6 @@ def response_cache_stats() -> dict[str, int]:
     """Return a snapshot of response cache sizes."""
     return {
         "follow_up": len(_follow_up_cache),
-        "ready_state": len(_ready_state_cache),
     }
 
 
@@ -830,11 +847,27 @@ _ACTIVITY_EMOJI_MAP: Dict[str, str] = {
 # Default emoji for activities that don't match any known category
 _DEFAULT_ACTIVITY_EMOJI = "✨"
 
+# Regex pattern to strip ANSI escape codes (color, bold, etc.)
+# Handles both ESC (\x1b) and CSI (\x9b) control sequences
+_ANSI_ESCAPE_PATTERN = re.compile(r"(\x1b|\x9b)\[[0-9;:]*[A-Za-z]")
+
+
+def _strip_ansi_codes(text: str) -> str:
+    """Strip ANSI escape codes from a string."""
+    return _ANSI_ESCAPE_PATTERN.sub("", text)
+
+
+def _strip_non_printable(text: str) -> str:
+    """Remove non-printable characters except spaces."""
+    return "".join(c for c in text if c.isprintable() or c.isspace())
+
 
 def _normalize_activity_with_emoji(activity: str) -> str:
     """
     Normalize an activity string to ensure it has the correct emoji prefix.
 
+    - Strips ANSI escape codes from the input
+    - Applies NFC Unicode normalization to fix decomposed emoji codepoints
     - If the activity already starts with an emoji, validate it's correct for the activity type
     - If the emoji is wrong, strip it and apply the correct one
     - Otherwise, look up the activity in the emoji map and add the appropriate emoji
@@ -847,50 +880,76 @@ def _normalize_activity_with_emoji(activity: str) -> str:
         The activity string with correct emoji prefix
     """
     import re
+    import unicodedata
 
     activity = activity.strip()
     if not activity:
         return activity
 
+    # Strip ANSI escape codes (e.g., bold, color formatting from terminals)
+    activity = _strip_ansi_codes(activity)
+
+    # Apply NFC normalization to combine decomposed emoji codepoints
+    # This fixes the "9bf" issue on Windows where NFD characters get split
+    activity = unicodedata.normalize("NFC", activity)
+
     # Check if the activity already starts with an emoji
     # Use grapheme.slice to handle multi-codepoint emojis (e.g., 🥾, 🤿, 👨‍👩‍👧)
     first_grapheme = grapheme.slice(activity, 0, 1)
-    first_code_point = ord(activity[0]) if activity else 0
+    first_code_point = ord(first_grapheme[0]) if first_grapheme else 0
     # Check if first character is in emoji ranges (simplified check)
     if first_code_point > 0x1F00:
         # Has emoji prefix - extract the text part to validate
         # Use grapheme.slice to skip the full grapheme (handles multi-codepoint emojis)
         text_part = grapheme.slice(activity, 1, None).lstrip()
+        # Also strip ANSI codes from the text part after emoji
+        text_part = _strip_ansi_codes(text_part)
+        # Strip non-printable characters that may corrupt the text
+        text_part = _strip_non_printable(text_part)
         if not text_part:
-            return activity
+            return _strip_non_printable(activity)
 
         # Look up what the correct emoji should be for this activity
         text_lower = text_part.lower()
         correct_emoji = None
+        matched_keyword = None
 
         # Direct match in emoji map
         if text_lower in _ACTIVITY_EMOJI_MAP:
             correct_emoji = _ACTIVITY_EMOJI_MAP[text_lower]
+            matched_keyword = text_lower
         else:
             # Try partial matching - prioritize earliest position and longest keyword
-            best_match: tuple[int, int, str] | None = None
+            best_match: tuple[int, int, str, str] | None = None
             for keyword, emoji in _ACTIVITY_EMOJI_MAP.items():
                 match = re.search(rf"\b{re.escape(keyword)}\b", text_lower)
                 if match:
                     pos = match.start()
                     length = len(keyword)
                     if best_match is None or (pos, -length) < (best_match[0], best_match[1]):
-                        best_match = (pos, -length, emoji)
+                        best_match = (pos, -length, emoji, keyword)
             if best_match:
                 correct_emoji = best_match[2]
+                matched_keyword = best_match[3]
+
+        # If we found a matching activity keyword, rebuild the string cleanly
+        # This removes any garbage characters between emoji and activity text
+        if correct_emoji and matched_keyword:
+            # Extract just the matched keyword (preserving original case)
+            match = re.search(rf"\b{re.escape(matched_keyword)}\b", text_part, re.IGNORECASE)
+            if match:
+                clean_activity_text = text_part[match.start() :]
+                result = f"{correct_emoji} {clean_activity_text}"
+                return _strip_non_printable(result)
 
         # If we found a correct emoji and it differs from current, fix it
         # Use first_grapheme (not first_char) for proper multi-codepoint emoji comparison
         if correct_emoji and first_grapheme != correct_emoji:
-            return f"{correct_emoji} {text_part}"
+            result = f"{correct_emoji} {text_part}"
+            return _strip_non_printable(result)
 
         # Emoji is correct or no match found, return as-is
-        return activity
+        return _strip_non_printable(activity)
 
     # No emoji prefix - add appropriate one
     activity_lower = activity.lower()
@@ -898,7 +957,8 @@ def _normalize_activity_with_emoji(activity: str) -> str:
     # Direct match in emoji map
     if activity_lower in _ACTIVITY_EMOJI_MAP:
         emoji = _ACTIVITY_EMOJI_MAP[activity_lower]
-        return f"{emoji} {activity}"
+        result = f"{emoji} {activity}"
+        return _strip_non_printable(result)
 
     # Try matching with common suffixes removed
     for suffix in [" activities", " tours", " experiences"]:
@@ -906,7 +966,8 @@ def _normalize_activity_with_emoji(activity: str) -> str:
             base = activity_lower[: -len(suffix)]
             if base in _ACTIVITY_EMOJI_MAP:
                 emoji = _ACTIVITY_EMOJI_MAP[base]
-                return f"{emoji} {activity}"
+                result = f"{emoji} {activity}"
+                return _strip_non_printable(result)
 
     # Try partial matching - check if any keyword is contained in the activity
     # Prioritize by: 1) earliest position in string, 2) longest keyword (more specific)
@@ -923,10 +984,12 @@ def _normalize_activity_with_emoji(activity: str) -> str:
                 best_match = (pos, -length, emoji)
 
     if best_match:
-        return f"{best_match[2]} {activity}"
+        result = f"{best_match[2]} {activity}"
+        return _strip_non_printable(result)
 
     # No match found, use default sparkle emoji
-    return f"{_DEFAULT_ACTIVITY_EMOJI} {activity}"
+    result = f"{_DEFAULT_ACTIVITY_EMOJI} {activity}"
+    return _strip_non_printable(result)
 
 
 def _deduplicate_activities_case_insensitive(categories: List[str]) -> List[str]:
@@ -951,6 +1014,9 @@ def _deduplicate_activities_case_insensitive(categories: List[str]) -> List[str]
         if not text:
             continue
 
+        # Strip ANSI escape codes before processing
+        text = _strip_ansi_codes(text)
+
         # Check if first grapheme is an emoji and skip it
         first_grapheme = grapheme.slice(text, 0, 1)
         first_code_point = ord(first_grapheme[0]) if first_grapheme else 0
@@ -960,9 +1026,16 @@ def _deduplicate_activities_case_insensitive(categories: List[str]) -> List[str]
         else:
             text_portion = text.lower()
 
+        # Also strip any remaining ANSI codes from text_portion for clean comparison
+        text_portion = _strip_ansi_codes(text_portion)
+
         if text_portion and text_portion not in seen_lower:
             seen_lower.add(text_portion)
-            deduped.append(cat)
+            # Store the cleaned version (with ANSI codes stripped)
+            if cat != text:
+                deduped.append(text)  # Use cleaned version
+            else:
+                deduped.append(cat)
 
     return deduped
 
@@ -1493,37 +1566,37 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     },
     "required_fields": {
         "model_hint": "small",
-        "temperature": 0.2,  # Deterministic extraction
+        "temperature": 0.3,  # Slightly creative for warm phrasing
         "max_tokens": 512,  # Reduced from 1024 - typical output ~200-400 tokens
         "top_p": None,
     },
     "flights": {
         "model_hint": "small",
-        "temperature": 0.2,
+        "temperature": 0.3,  # Slightly creative for warm phrasing
         "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "hotels": {
         "model_hint": "small",
-        "temperature": 0.2,
+        "temperature": 0.3,  # Slightly creative for warm phrasing
         "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "transport": {
         "model_hint": "small",
-        "temperature": 0.2,
+        "temperature": 0.3,  # Slightly creative for warm phrasing
         "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "activities": {
         "model_hint": "small",
-        "temperature": 0.2,
+        "temperature": 0.3,  # Slightly creative for warm phrasing
         "max_tokens": 512,  # Reduced from 1024 - typical output ~150-300 tokens
         "top_p": None,
     },
     "correction": {
         "model_hint": "small",
-        "temperature": 0.2,
+        "temperature": 0.3,  # Slightly creative for warm phrasing
         "max_tokens": 512,  # Reduced from 1024 - typical output ~200-350 tokens
         "top_p": None,
     },
@@ -3402,6 +3475,79 @@ def _is_low_quality_suggestion(text: str) -> bool:
     return False
 
 
+def _generate_conversation_summary(
+    chat_history: List[Dict[str, str]],
+    max_turns: int = 5,
+) -> str:
+    """Generate a natural language summary of recent conversation for suggestion context.
+
+    Args:
+        chat_history: List of {role, content} message dicts
+        max_turns: Maximum number of turns to include (default 5)
+
+    Returns:
+        Natural language summary of recent conversation context
+    """
+    if not chat_history:
+        return "No prior conversation."
+
+    # Get the last N exchanges (user + assistant pairs count as 1 turn)
+    recent_messages = chat_history[-(max_turns * 2) :]
+
+    if not recent_messages:
+        return "No prior conversation."
+
+    # Build natural language summary
+    summary_parts = []
+    for msg in recent_messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "").strip()
+        if not content:
+            continue
+
+        # Truncate long messages
+        if len(content) > 150:
+            content = content[:147] + "..."
+
+        if role == "user":
+            summary_parts.append(f'User said: "{content}"')
+        elif role == "assistant":
+            summary_parts.append(f'Assistant replied: "{content}"')
+
+    if not summary_parts:
+        return "No prior conversation."
+
+    return " → ".join(summary_parts)
+
+
+def _get_missing_fields_summary(state: "GraphState") -> str:
+    """Get a summary of missing required fields for prompt injection.
+
+    Args:
+        state: Current graph state
+
+    Returns:
+        Comma-separated list of missing fields or "none"
+    """
+    ti = state.trip_inputs
+    missing = []
+
+    if not ti.destinations:
+        missing.append("destinations")
+    if not ti.origin:
+        missing.append("origin")
+    if not ti.start_date:
+        missing.append("start_date")
+    if not ti.end_date:
+        missing.append("end_date")
+    if ti.adults is None:
+        missing.append("travelers (adults)")
+    if ti.budget is None:
+        missing.append("budget")
+
+    return ", ".join(missing) if missing else "none - all required fields collected"
+
+
 def _filter_suggested_responses(responses: List[Any]) -> List[str]:
     """Filter suggested responses: remove questions, low-quality, limit to 3, handle dict format."""
     result = []
@@ -3443,81 +3589,6 @@ def _filter_suggested_responses(responses: List[Any]) -> List[str]:
 
     return result
 
-
-# Universal cities for dynamic origin suggestions
-_UNIVERSAL_ORIGIN_CITIES = [
-    "London",
-    "New York",
-    "Paris",
-    "Tokyo",
-    "Dubai",
-    "Sydney",
-    "Los Angeles",
-    "Singapore",
-    "Hong Kong",
-    "Berlin",
-]
-
-# Intent-aware destination suggestions
-_ADVENTURE_DESTINATIONS = [
-    "Swiss Alps",
-    "Patagonia",
-    "Nepal",
-    "New Zealand",
-    "Costa Rica",
-    "Iceland",
-    "Norway",
-    "Peru",
-]
-_BEACH_DESTINATIONS = [
-    "Bali",
-    "Maldives",
-    "Cancun",
-    "Phuket",
-    "Hawaii",
-    "Fiji",
-    "Seychelles",
-    "Caribbean",
-]
-_CITY_DESTINATIONS = [
-    "Rome",
-    "Tokyo",
-    "Barcelona",
-    "Paris",
-    "New York",
-    "London",
-    "Singapore",
-    "Dubai",
-]
-_FOOD_DESTINATIONS = [
-    "Paris",
-    "Tokyo",
-    "Bangkok",
-    "Barcelona",
-    "Mexico City",
-    "Bologna",
-    "Singapore",
-    "Lima",
-]
-_SKIING_DESTINATIONS = [
-    "Chamonix",
-    "Aspen",
-    "Zermatt",
-    "Niseko",
-    "Whistler",
-    "St. Moritz",
-    "Verbier",
-    "Courchevel",
-]
-
-# Strategy topic to destination list mapping for fallback suggestions
-_STRATEGY_DESTINATION_MAP = {
-    "hiking": _ADVENTURE_DESTINATIONS,
-    "cycling": _ADVENTURE_DESTINATIONS,
-    "diving": _BEACH_DESTINATIONS,
-    "boating": _BEACH_DESTINATIONS,
-    "skiing": _SKIING_DESTINATIONS,
-}
 
 # Minimum relevance score threshold - suggestions below this are suppressed
 _SUGGESTION_RELEVANCE_THRESHOLD = 0.5
@@ -3717,117 +3788,21 @@ def _score_suggestion_relevance(
     return 0.5
 
 
-def _generate_contextual_suggestions(
-    state: "GraphState",
-    question_target: Optional[str] = None,
-) -> List[str]:
-    """Generate high-quality contextual suggestions based on question_target.
-
-    Args:
-        state: Current graph state
-        question_target: What field the assistant is asking about
-
-    Returns 2-3 actionable suggestions in user voice.
-    """
-    import random
-
+def _infer_question_target_from_missing(state: "GraphState") -> Optional[str]:
+    """Infer question_target from missing required fields when LLM doesn't provide one."""
     ti = state.trip_inputs
-
-    # If we have a question_target, generate suggestions for that field
-    if question_target:
-        if question_target == "origin":
-            origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
-            return [f"From {city}" for city in origins]
-
-        elif question_target == "destinations":
-            # First check strategy_topic for topic-aware fallback
-            if state.strategy_topic and state.strategy_topic in _STRATEGY_DESTINATION_MAP:
-                dest_list = _STRATEGY_DESTINATION_MAP[state.strategy_topic]
-                return random.sample(dest_list, min(3, len(dest_list)))
-
-            # Check user intent for context-aware suggestions
-            user_intent = state.metadata.get("user_intent", "")
-            last_user_msg = ""
-            for msg in reversed(state.chat_history):
-                if msg.get("role") == "user":
-                    last_user_msg = msg.get("content", "").lower()
-                    break
-
-            # Adventure/hiking
-            if user_intent == "adventurous" or any(
-                word in last_user_msg
-                for word in ["hike", "hiking", "mountain", "adventure", "trek"]
-            ):
-                return random.sample(_ADVENTURE_DESTINATIONS, min(3, len(_ADVENTURE_DESTINATIONS)))
-            # Beach-related
-            elif any(
-                word in last_user_msg
-                for word in ["beach", "ocean", "sea", "tropical", "island", "relax"]
-            ):
-                return random.sample(_BEACH_DESTINATIONS, min(3, len(_BEACH_DESTINATIONS)))
-            # City/culture
-            elif any(
-                word in last_user_msg for word in ["city", "culture", "museum", "history", "art"]
-            ):
-                return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
-            # Food/culinary
-            elif any(
-                word in last_user_msg for word in ["food", "culinary", "wine", "gastronomy", "eat"]
-            ):
-                return random.sample(_FOOD_DESTINATIONS, min(3, len(_FOOD_DESTINATIONS)))
-            # Skiing/winter
-            elif any(word in last_user_msg for word in ["ski", "snow", "winter", "slopes"]):
-                return random.sample(_SKIING_DESTINATIONS, min(3, len(_SKIING_DESTINATIONS)))
-            # Generic popular destinations
-            else:
-                return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
-
-        elif question_target in ("start_date", "end_date", "dates"):
-            # Generate specific bookable dates
-            from datetime import datetime, timedelta
-
-            today = datetime.now()
-            two_weeks = today + timedelta(days=14)
-            one_month = today + timedelta(days=30)
-            two_months = today + timedelta(days=60)
-            return [
-                two_weeks.strftime("%B %d, %Y"),
-                one_month.strftime("%B %d, %Y"),
-                two_months.strftime("%B %d, %Y"),
-            ]
-
-        elif question_target in ("adults", "travelers"):
-            return ["Just me", "2 adults", "Family of 4"]
-
-        elif question_target == "budget":
-            return ["Around $2000", "Mid-range budget", "Luxury trip"]
-
-        elif question_target == "activities":
-            return ["Sightseeing and culture", "Beach and relaxation", "Adventure activities"]
-
-        elif question_target == "general":
-            # Generic helpful suggestions based on what's missing
-            if not ti.destinations:
-                return random.sample(_CITY_DESTINATIONS, min(3, len(_CITY_DESTINATIONS)))
-            elif not ti.origin:
-                origins = random.sample(_UNIVERSAL_ORIGIN_CITIES, 3)
-                return [f"From {city}" for city in origins]
-            elif not ti.start_date:
-                from datetime import datetime, timedelta
-
-                today = datetime.now()
-                two_weeks = today + timedelta(days=14)
-                one_month = today + timedelta(days=30)
-                return [
-                    two_weeks.strftime("%B %d, %Y"),
-                    one_month.strftime("%B %d, %Y"),
-                ]
-            else:
-                return ["Looks good, generate my plan", "Add more details", "Change dates"]
-
-    # Fallback: No question_target - use legacy priority-based logic
-    # but return empty to avoid mismatched suggestions
-    return []
+    # Priority order for missing fields
+    if not ti.destinations:
+        return "destinations"
+    if not ti.origin:
+        return "origin"
+    if not ti.start_date:
+        return "dates"
+    if ti.adults is None:
+        return "travelers"
+    if ti.budget is None:
+        return "budget"
+    return None
 
 
 def _get_suggestions_with_fallback(
@@ -3845,24 +3820,28 @@ def _get_suggestions_with_fallback(
     Returns:
         List of relevant suggestions (may be empty if none are relevant)
     """
+    # Infer question_target from missing fields if not provided
+    effective_target = question_target
+    if not effective_target:
+        effective_target = _infer_question_target_from_missing(state)
+        if effective_target:
+            _debug(f"Inferred question_target from missing fields: {effective_target}")
+
     filtered = _filter_suggested_responses(raw_suggestions)
 
     if not filtered:
-        # No LLM suggestions - try contextual generation
-        if question_target:
-            contextual = _generate_contextual_suggestions(state, question_target)
-            return contextual[:3]
-        # No question_target - return empty rather than bad suggestions
+        # No LLM suggestions - return empty (no static fallbacks)
+        _debug("No LLM suggestions - returning empty")
         return []
 
     # Score each suggestion for relevance
     user_intent = state.metadata.get("user_intent_hint")
     scored_suggestions = []
     for suggestion in filtered:
-        score = _score_suggestion_relevance(suggestion, question_target, user_intent)
+        score = _score_suggestion_relevance(suggestion, effective_target, user_intent)
         scored_suggestions.append((suggestion, score))
         if _DEBUG_LOG:
-            _debug(f"Suggestion score: '{suggestion}' -> {score:.2f} (target={question_target})")
+            _debug(f"Suggestion score: '{suggestion}' -> {score:.2f} (target={effective_target})")
 
     # Filter by threshold
     passing = [s for s, score in scored_suggestions if score >= _SUGGESTION_RELEVANCE_THRESHOLD]
@@ -3870,14 +3849,9 @@ def _get_suggestions_with_fallback(
     # If not enough pass, suppress entirely (better no suggestions than bad ones)
     if len(passing) < _MIN_SUGGESTIONS_TO_SHOW:
         _debug(
-            f"Suppressing suggestions: only {len(passing)} passed threshold "
-            f"(need {_MIN_SUGGESTIONS_TO_SHOW})"
+            f"⚠️ Suppressing suggestions: only {len(passing)}/{_MIN_SUGGESTIONS_TO_SHOW} passed "
+            f"threshold={_SUGGESTION_RELEVANCE_THRESHOLD:.2f}"
         )
-        # Try contextual fallback
-        if question_target:
-            contextual = _generate_contextual_suggestions(state, question_target)
-            if len(contextual) >= _MIN_SUGGESTIONS_TO_SHOW:
-                return contextual[:3]
         return []
 
     return passing[:3]
@@ -4838,6 +4812,23 @@ async def router(state: GraphState) -> GraphState:
     # Get per-node LLM configuration
     llm_config = _get_node_llm_config("router")
 
+    # Check cache first - router decisions are stable for same inputs
+    core_fields = _get_core_fields_state(state.trip_inputs)
+    user_text_hash = _hash_user_text(state.user_text or "")
+    cache_key = _compute_cache_key("router", core_fields, "", user_text_hash)
+    cached = _get_cached_response(_follow_up_cache, cache_key, state)
+    if cached is not None:
+        _debug_cache_hit("router", cache_key[:16])
+        state.intent = cached.get("intent") or "required_fields"
+        state.strategy_topic = cached.get("strategy_topic")
+        state.metadata["router_notes"] = cached.get("notes", "")
+        state.metadata["router_confidence"] = cached.get("confidence", 1.0)
+        if cached.get("user_intent"):
+            state.metadata["user_intent"] = cached["user_intent"]
+        _debug("Router cache hit", intent=state.intent, topic=state.strategy_topic)
+        _debug_node_exit("router", state)
+        return state
+
     try:
         prompt = load_prompt("router")
         # Include user intent hint from extractor for router to refine
@@ -4869,6 +4860,19 @@ async def router(state: GraphState) -> GraphState:
         state.strategy_topic = topic if state.intent == "strategy" else None
         state.metadata["router_notes"] = j.get("notes", "")
         state.metadata["router_confidence"] = j.get("confidence", 1.0)
+
+        # Cache the router result for future identical requests
+        _set_cached_response(
+            _follow_up_cache,
+            cache_key,
+            {
+                "intent": state.intent,
+                "strategy_topic": state.strategy_topic,
+                "notes": state.metadata.get("router_notes", ""),
+                "confidence": state.metadata.get("router_confidence", 1.0),
+                "user_intent": j.get("user_intent"),
+            },
+        )
 
         # Handle off-topic intent with friendly deflection
         if state.intent == "off_topic":
@@ -4970,6 +4974,25 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     # Get per-node LLM configuration
     llm_config = _get_node_llm_config(name)
 
+    # Cache check for required_fields node - follow-up questions are stable for same state
+    cache_key: Optional[str] = None
+    if name == "required_fields":
+        core_fields = _get_core_fields_state(state.trip_inputs)
+        user_intent = state.metadata.get("user_intent", "detailed_planner")
+        cache_key = _compute_cache_key("required_fields", core_fields, user_intent, "")
+        cached = _get_cached_response(_follow_up_cache, cache_key, state)
+        if cached is not None:
+            _debug_cache_hit("required_fields", cache_key[:16])
+            state.last_summary = cached.get("assistant_message", "")
+            state.question_target = cached.get("question_target")
+            state.suggested_responses = cached.get("suggested_responses", [])
+            _debug(
+                "Required fields cache hit",
+                message=state.last_summary[:50] if state.last_summary else "",
+            )
+            _debug_node_exit(f"specialist:{name}", state)
+            return state
+
     # Get today's date for prompt injection
     today_iso = state.metadata.get("today_iso") or _today_iso()
 
@@ -5011,6 +5034,8 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
         .replace(
             "{extraction_sources}", json.dumps(extraction_sources) if extraction_sources else "{}"
         )
+        .replace("{missing_fields}", _get_missing_fields_summary(state))
+        .replace("{conversation_summary}", _generate_conversation_summary(state.chat_history))
     )
 
     # Determine timeout based on model type
@@ -5108,6 +5133,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
 
             # Filter suggested responses with contextual fallback
             raw_suggestions = j.get("suggested_responses", []) or []
+            _debug(f"Raw LLM suggested_responses: {raw_suggestions}")
             state.suggested_responses = _get_suggestions_with_fallback(
                 raw_suggestions, state, state.question_target
             )
@@ -5131,6 +5157,18 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
 
             state.metadata["model_used"] = llm_config["model_hint"]
             state.metadata["token_estimate"] = _count_tokens(out)
+
+            # Cache the response for required_fields node
+            if name == "required_fields" and cache_key is not None:
+                _set_cached_response(
+                    _follow_up_cache,
+                    cache_key,
+                    {
+                        "assistant_message": state.last_summary,
+                        "question_target": state.question_target,
+                        "suggested_responses": state.suggested_responses,
+                    },
+                )
 
             _debug(
                 f"Specialist {name} completed",
@@ -5250,6 +5288,8 @@ async def strategy_node(state: GraphState) -> GraphState:
         prompt.replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
         .replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
         .replace("{topic}", topic)
+        .replace("{missing_fields}", _get_missing_fields_summary(state))
+        .replace("{conversation_summary}", _generate_conversation_summary(state.chat_history))
     )
 
     tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
@@ -5321,6 +5361,7 @@ async def strategy_node(state: GraphState) -> GraphState:
 
             # Filter suggested responses with relevance scoring
             raw_suggestions = j.get("suggested_responses", []) or []
+            _debug(f"Raw LLM suggested_responses: {raw_suggestions}")
             state.suggested_responses = _get_suggestions_with_fallback(
                 raw_suggestions, state, state.question_target
             )
@@ -5417,7 +5458,7 @@ def validate_and_merge(state: GraphState) -> GraphState:
 # Response polish node (for natural conversational tone)
 # -----------------------
 # Minimum length threshold for polishing (chars)
-_POLISH_MIN_LENGTH = 200
+_POLISH_MIN_LENGTH = 100
 
 # Patterns that indicate content would benefit from polish formatting
 _POLISH_LIST_PATTERNS = (
@@ -5439,6 +5480,7 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     Polish is applied ONLY for:
     - Responses containing lists (bullet points, numbered items)
     - Longer responses (>200 chars) that would benefit from formatting
+    - Medium-length responses that look robotic/dry (no warmth indicators)
 
     This keeps polish targeted at content that needs structure,
     while avoiding latency for simple responses.
@@ -5459,11 +5501,7 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     if not s.last_summary:
         return True, "no_message"
 
-    # Quick booking intent - prioritize speed over polish
-    if s.metadata.get("user_intent") == "quick_booking":
-        return True, "quick_booking"
-
-    # Frustrated user - avoid perceived delays
+    # Frustrated user - avoid perceived delays, but prompts now include warmth
     if s.metadata.get("user_tone") == "frustrated":
         return True, "frustrated_user"
 
@@ -5475,23 +5513,32 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     # Check if message is long enough to benefit from formatting
     is_long_enough = len(msg) >= _POLISH_MIN_LENGTH
 
+    # Check for warmth indicators - if missing, message may sound robotic
+    has_emoji = any(c in msg for c in "✈️🏨🎉🌴☀️😊👍🎊🗺️📍✨🌟💫🎯🥾🌊⛷️🚴🤿")
+    has_exclamation = "!" in msg
+    has_bold = "**" in msg  # Already has markdown bold formatting
+    has_question_mark = "?" in msg
+
+    # Message already seems warm AND well-formatted
+    if has_emoji and has_exclamation and has_bold and len(msg) > 50:
+        return True, "already_formatted"
+
     # Very short, potentially abrupt responses should still be polished
     # These often come from specialist nodes and sound robotic
     is_very_short = len(msg) < 80
-    looks_abrupt = msg.rstrip().endswith(".") and "!" not in msg and "?" not in msg
+    looks_abrupt = msg.rstrip().endswith(".") and not has_exclamation and not has_question_mark
 
-    # Only polish if the content would benefit from it
-    # Exception: very short abrupt responses should be polished to sound more natural
+    # Medium-length dry responses (80-200 chars) without warmth indicators should be polished
+    # These often come from strategy/specialist nodes and sound robotic
+    is_medium_length = 80 <= len(msg) < _POLISH_MIN_LENGTH
+    looks_dry = not has_emoji and not has_exclamation
+
+    # Only skip polish if the content truly doesn't need it
     if not has_list_content and not is_long_enough:
-        if not (is_very_short and looks_abrupt):
+        # Polish if: very short + abrupt, OR medium-length + dry
+        should_polish = (is_very_short and looks_abrupt) or (is_medium_length and looks_dry)
+        if not should_polish:
             return True, "short_simple_response"
-
-    # Message already seems warm AND well-formatted (has emoji, formatting, reasonable length)
-    has_emoji = any(c in msg for c in "✈️🏨🎉🌴☀️😊👍🎊🗺️📍✨🌟💫🎯")
-    has_exclamation = "!" in msg
-    has_bold = "**" in msg  # Already has markdown bold formatting
-    if has_emoji and has_exclamation and has_bold and len(msg) > 50:
-        return True, "already_formatted"
 
     return False, ""
 
@@ -5970,9 +6017,10 @@ def short_circuit_responder(state: GraphState) -> GraphState:
 
     # Always regenerate contextual suggestions to match the current question
     # (Previous suggestions may be stale from a different question)
+    # Note: We no longer use static fallback suggestions - LLM generates them
     question_target = state.metadata.get("last_question_field")
     state.question_target = question_target
-    state.suggested_responses = _generate_contextual_suggestions(state, question_target)
+    state.suggested_responses = []  # LLM will generate context-aware suggestions
     _debug_suggestions(state.suggested_responses, source="short_circuit_responder")
 
     # Set intent for logging purposes

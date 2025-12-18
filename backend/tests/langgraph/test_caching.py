@@ -23,7 +23,6 @@ from app.plan_graph import (
     _get_core_fields_state,
     _increment_cache_hits,
     _increment_llm_calls,
-    _ready_state_cache,
     _set_cached_response,
     load_prompt,
 )
@@ -225,12 +224,6 @@ class TestGlobalCacheInstances:
         from cachetools import TTLCache
 
         assert isinstance(_follow_up_cache, TTLCache)
-
-    def test_ready_state_cache_exists(self):
-        """_ready_state_cache should be a TTLCache instance."""
-        from cachetools import TTLCache
-
-        assert isinstance(_ready_state_cache, TTLCache)
 
     def test_caches_have_reasonable_settings(self):
         """Caches should have reasonable maxsize and TTL."""

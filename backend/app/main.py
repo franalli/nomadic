@@ -50,6 +50,7 @@ from app.middleware import (
 )
 from app.plan_graph import (
     checkpoint_stats,
+    clear_all_caches,
     clear_all_checkpoints,
     clear_response_caches,
     clear_session_checkpoint,
@@ -880,8 +881,11 @@ def reset_session(
     if session_id:
         clear_session_checkpoint(session_id)
 
-    # Clear response caches (preserves rate limiting for security)
-    clear_response_caches()
+    # Clear response caches (or all caches in dev mode)
+    if settings.aggressive_cache_clear:
+        clear_all_caches()  # Clear everything including validation caches
+    else:
+        clear_response_caches()  # Preserve validation cache in production
 
     # Prune stale checkpoints to prevent memory overflow
     prune_stale_checkpoints()

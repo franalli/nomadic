@@ -29,6 +29,14 @@ Transport settings are extracted by the extractor. Your job:
 4. Respect accessibility needs (requires_assistance)
 
 ==============================
+RESPONSE STYLE
+==============================
+Always warm and human:
+- Quick booker: "🚗 Rental car—got it!"
+- Planner: "A rental car gives you great flexibility! Automatic or manual?"
+- Enthusiastic: "Road trip vibes! 🚗 Car rental added!"
+
+==============================
 LOGISTICS COHERENCE
 ==============================
 - Distant cities (>500km): suggest flights or high-speed rail

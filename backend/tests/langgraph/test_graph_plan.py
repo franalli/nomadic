@@ -37,53 +37,84 @@ from app.db import Base, get_async_db, get_db  # noqa: E402  pylint: disable=C04
 from app.main import app  # noqa: E402  pylint: disable=C0413
 from app.schemas import GraphPlanErrorCode  # noqa: E402  pylint: disable=C0413
 
-TEST_DB_PATH = BACKEND_DIR / "test_graph_plan_pytest.db"
-TEST_DATABASE_URL = f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}"
-ASYNC_TEST_DATABASE_URL = f"sqlite+aiosqlite:///{TEST_DB_PATH.as_posix()}"
-engine = create_engine(
-    TEST_DATABASE_URL,
-    future=True,
-    connect_args={"check_same_thread": False, "timeout": 30},
-)
-async_engine = create_async_engine(
-    ASYNC_TEST_DATABASE_URL,
-    future=True,
-    echo=False,
-)
-TestingSessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
-    future=True,
-)
 
-AsyncTestingSessionLocal = async_sessionmaker(
-    bind=async_engine,
-    class_=AsyncSession,
-    autoflush=False,
-    expire_on_commit=False,
-)
+@pytest.fixture(scope="function")
+def _db_path(tmp_path: Path) -> Path:
+    """Use a per-test temp DB for complete isolation."""
+    return tmp_path / "test_graph_plan.db"
 
 
-def override_get_db():
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+@pytest.fixture(scope="function")
+def _engines(_db_path: Path):
+    """Create sync and async engines per-test."""
+    db_url = f"sqlite+pysqlite:///{_db_path.as_posix()}"
+    async_db_url = f"sqlite+aiosqlite:///{_db_path.as_posix()}"
+
+    sync_engine = create_engine(
+        db_url,
+        future=True,
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+    async_eng = create_async_engine(
+        async_db_url,
+        future=True,
+        echo=False,
+    )
+
+    yield {"sync": sync_engine, "async": async_eng}
+
+    sync_engine.dispose()
+    import asyncio
+
+    asyncio.run(async_eng.dispose())
 
 
-async def override_get_async_db():
-    async with AsyncTestingSessionLocal() as db:
+@pytest.fixture(scope="function")
+def _session_makers(_engines):
+    """Create session makers per-test."""
+    sync_maker = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=_engines["sync"],
+        future=True,
+    )
+    async_maker = async_sessionmaker(
+        bind=_engines["async"],
+        class_=AsyncSession,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+    return {"sync": sync_maker, "async": async_maker}
+
+
+@pytest.fixture(scope="function", autouse=True)
+def setup_database(_engines, _session_makers):
+    """Create test database and tables per-test."""
+    Base.metadata.create_all(bind=_engines["sync"])
+
+    def override_get_db():
+        db = _session_makers["sync"]()
         try:
             yield db
         finally:
-            await db.close()
+            db.close()
+
+    async def override_get_async_db():
+        async with _session_makers["async"]() as db:
+            try:
+                yield db
+            finally:
+                await db.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_async_db] = override_get_async_db
+    yield
+    app.dependency_overrides.clear()
 
 
-def seed_session(session_token: str = "test-session-123") -> dict:
+def _seed_session(session_maker, session_token: str = "test-session-123") -> dict:
     """Create a test session."""
-    with TestingSessionLocal() as db:
+    with session_maker() as db:
         existing = (
             db.query(models.Session).filter(models.Session.session_token == session_token).first()
         )
@@ -108,28 +139,10 @@ def seed_session(session_token: str = "test-session-123") -> dict:
         }
 
 
-@pytest.fixture(scope="module", autouse=True)
-def setup_database():
-    """Create test database and tables."""
-    if TEST_DB_PATH.exists():
-        TEST_DB_PATH.unlink()
-    Base.metadata.create_all(bind=engine)
-    app.dependency_overrides[get_db] = override_get_db
-    app.dependency_overrides[get_async_db] = override_get_async_db
-    yield
-    app.dependency_overrides.clear()
-    engine.dispose()
-    import asyncio
-
-    asyncio.run(async_engine.dispose())
-    if TEST_DB_PATH.exists():
-        TEST_DB_PATH.unlink()
-
-
 @pytest.fixture
-def client():
+def client(_session_makers):
     """Test client with session cookie."""
-    session_data = seed_session()
+    session_data = _seed_session(_session_makers["sync"])
     with TestClient(app) as client:
         # Cookie names are set by SessionMiddleware in app.middleware.session
         client.cookies.set("session_id", session_data["session_token"])

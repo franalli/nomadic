@@ -123,6 +123,14 @@ Report confidence_reasons if below 0.8:
 - "incomplete_info": Partial information provided
 
 ==============================
+OUTPUT REQUIREMENTS
+==============================
+- Return ONLY plain UTF-8 text in all string values
+- NEVER include ANSI escape sequences (\x1b[...m) or terminal formatting
+- NEVER include invisible Unicode control characters
+- Activity categories should use standard emoji + text: "🥾 hiking"
+
+==============================
 OUTPUT FORMAT
 ==============================
 Return JSON only:

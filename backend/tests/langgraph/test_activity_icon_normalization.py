@@ -25,7 +25,9 @@ def _load_normalizer():
     return plan_graph
 
 
-_normalize_activity_with_emoji = _load_normalizer()._normalize_activity_with_emoji
+_plan_graph = _load_normalizer()
+_normalize_activity_with_emoji = _plan_graph._normalize_activity_with_emoji
+_deduplicate_activities_case_insensitive = _plan_graph._deduplicate_activities_case_insensitive
 
 
 class TestMultiCodepointEmojis:
@@ -157,3 +159,101 @@ class TestGraphemeHandling:
 
         emoji = "🤿"
         assert grapheme.length(emoji) == 1, f"🤿 should be 1 grapheme, got {grapheme.length(emoji)}"
+
+
+class TestAnsiCodeStripping:
+    """Test that ANSI escape codes are properly stripped from activities."""
+
+    def test_ansi_bold_stripped(self):
+        """ANSI bold code should be stripped and activity normalized."""
+        result = _normalize_activity_with_emoji("\x1b[1mhiking")
+        assert result == "🥾 hiking", f"Expected '🥾 hiking' but got '{result}'"
+        assert "\x1b" not in result, f"ANSI code not stripped: '{result}'"
+
+    def test_ansi_color_stripped(self):
+        """ANSI color codes should be stripped and activity normalized."""
+        result = _normalize_activity_with_emoji("\x1b[38;5;208mhiking")
+        assert result == "🥾 hiking", f"Expected '🥾 hiking' but got '{result}'"
+        assert "\x1b" not in result, f"ANSI code not stripped: '{result}'"
+
+    def test_ansi_bold_and_color_stripped(self):
+        """Multiple ANSI codes should be stripped."""
+        result = _normalize_activity_with_emoji("\x1b[1m\x1b[38;5;208mhiking")
+        assert result == "🥾 hiking", f"Expected '🥾 hiking' but got '{result}'"
+        assert "\x1b" not in result, f"ANSI code not stripped: '{result}'"
+
+    def test_ansi_after_emoji_stripped(self):
+        """ANSI codes after emoji should be stripped."""
+        result = _normalize_activity_with_emoji("🥾 \x1b[1mhiking")
+        assert result == "🥾 hiking", f"Expected '🥾 hiking' but got '{result}'"
+        assert "\x1b" not in result, f"ANSI code not stripped: '{result}'"
+
+    def test_ansi_with_unknown_activity(self):
+        """ANSI codes with unknown activity should be stripped and default emoji added."""
+        result = _normalize_activity_with_emoji("\x1b[1mzorbing")
+        assert result == "✨ zorbing", f"Expected '✨ zorbing' but got '{result}'"
+        assert "\x1b" not in result, f"ANSI code not stripped: '{result}'"
+
+
+class TestGarbageCharacterStripping:
+    """Test that garbage characters between emoji and activity text are removed."""
+
+    def test_hex_garbage_between_emoji_and_text(self):
+        """Garbage like '9b6' between emoji and text should be stripped."""
+        result = _normalize_activity_with_emoji("🥾 9b6 hiking")
+        assert result == "🥾 hiking", f"Expected '🥾 hiking' but got '{result}'"
+
+    def test_multiple_garbage_fragments(self):
+        """Multiple garbage fragments should be stripped."""
+        result = _normalize_activity_with_emoji("🥾 9bf 9be hiking")
+        assert result == "🥾 hiking", f"Expected '🥾 hiking' but got '{result}'"
+
+    def test_garbage_with_diving(self):
+        """Garbage should be stripped for diving too."""
+        result = _normalize_activity_with_emoji("🤿 abc123 diving")
+        assert result == "🤿 diving", f"Expected '🤿 diving' but got '{result}'"
+
+    def test_no_garbage_in_result(self):
+        """Result should never contain hex-like garbage patterns."""
+        result = _normalize_activity_with_emoji("🥾 9b6 hiking")
+        assert "9b6" not in result, f"Garbage '9b6' found in result: '{result}'"
+        assert "9bf" not in result, f"Garbage '9bf' found in result: '{result}'"
+        assert "9be" not in result, f"Garbage '9be' found in result: '{result}'"
+
+
+class TestDeduplicationWithAnsiCodes:
+    """Test that deduplication properly handles ANSI codes in activity strings."""
+
+    def test_deduplicate_with_ansi_duplicate(self):
+        """Deduplication should treat ANSI-coded activity as duplicate of clean version."""
+        categories = ["🥾 hiking", "\x1b[1mhiking"]
+        result = _deduplicate_activities_case_insensitive(categories)
+        assert len(result) == 1, f"Expected 1 result, got {len(result)}: {result}"
+        assert result[0] == "🥾 hiking", f"Expected '🥾 hiking' but got '{result[0]}'"
+
+    def test_deduplicate_ansi_with_emoji(self):
+        """ANSI codes after emoji should be handled in deduplication."""
+        categories = ["🥾 hiking", "✨ \x1b[1mhiking"]
+        result = _deduplicate_activities_case_insensitive(categories)
+        assert len(result) == 1, f"Expected 1 result, got {len(result)}: {result}"
+
+    def test_deduplicate_strips_ansi_from_result(self):
+        """Result should not contain ANSI codes."""
+        categories = ["\x1b[1m\x1b[38;5;208mhiking"]
+        result = _deduplicate_activities_case_insensitive(categories)
+        assert len(result) == 1
+        assert "\x1b" not in result[0], f"ANSI code in result: '{result[0]}'"
+
+    def test_deduplicate_multiple_ansi_activities(self):
+        """Multiple activities with ANSI codes should be properly deduplicated."""
+        categories = [
+            "🥾 hiking",
+            "\x1b[1mhiking",
+            "🤿 diving",
+            "\x1b[38;5;208mdiving",
+        ]
+        result = _deduplicate_activities_case_insensitive(categories)
+        assert len(result) == 2, f"Expected 2 results, got {len(result)}: {result}"
+        # Check no ANSI codes in results
+        for r in result:
+            assert "\x1b" not in r, f"ANSI code in result: '{r}'"
