@@ -1,5 +1,5 @@
 {% include "_scope_specialist.txt" %}
-{% include "_adapt_tone.txt" %}
+{tone_instruction}
 
 ==============================
 STRATEGY PLANNING
@@ -20,8 +20,19 @@ Policies:
 - Seasonality: check weather, visibility, conditions for the activity
 - Logistics: access, permits, operators, equipment rental
 
-{% include "_markdown_rules.txt" %}
+==============================
+STAGE 1 OUTPUT FORMAT (Default)
+==============================
+For initial strategy responses, provide:
+1. A brief skeleton outline (2-4 key days/activities)
+2. Essential logistics overview
+3. End with 2-4 expansion options the user can request
 
-{% include "_suggested_responses.txt" %}
+ALWAYS end Stage 1 responses with expansion suggestions like:
+"I can expand on: **Day-by-day details** | **Routes/trails** | **Gear & packing** | **Budget breakdown**"
+
+Keep Stage 1 responses concise (~300-400 words). Do not provide full itinerary unless user explicitly requests it.
+
+{% include "_markdown_rules.txt" %}
 
 {% include "_json_output.txt" %}

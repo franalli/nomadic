@@ -45,6 +45,7 @@ class TurnResult:
     # Observability metrics
     router_intent: Optional[str] = None
     strategy_topic: Optional[str] = None
+    strategy_stage: Optional[str] = None  # "1" or "2" for shortlist vs full itinerary
     short_circuit_type: Optional[str] = None
     llm_calls_made: int = 0
     cache_hits: int = 0
@@ -71,6 +72,7 @@ class TurnResult:
             "run_id": self.run_id,
             "router_intent": self.router_intent,
             "strategy_topic": self.strategy_topic,
+            "strategy_stage": self.strategy_stage,
             "short_circuit_type": self.short_circuit_type,
             "llm_calls_made": self.llm_calls_made,
             "cache_hits": self.cache_hits,
@@ -105,6 +107,9 @@ class ConversationResult:
     completed_at: str = ""
     model_versions: Dict[str, str] = field(default_factory=dict)
     config_flags: Dict[str, Any] = field(default_factory=dict)
+
+    # Graph stats captured after scenario execution
+    graph_stats: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -147,6 +152,7 @@ class ConversationResult:
             "completed_at": self.completed_at,
             "model_versions": self.model_versions,
             "config_flags": self.config_flags,
+            "graph_stats": self.graph_stats,
             "success": self.success,
             "intent_sequence": self.intent_sequence,
         }
@@ -165,6 +171,8 @@ class ConversationExecutor:
         self.langsmith_project = langsmith_project
         self.capture_config_flags = capture_config_flags
         self._run_turn = None  # Lazy import
+        self._reset_graph_stats = None  # Lazy import
+        self._get_graph_stats = None  # Lazy import
 
     def _get_run_turn(self):
         """Lazy import of run_turn to avoid circular imports."""
@@ -173,6 +181,15 @@ class ConversationExecutor:
 
             self._run_turn = run_turn
         return self._run_turn
+
+    def _get_stats_functions(self):
+        """Lazy import of stats functions to avoid circular imports."""
+        if self._reset_graph_stats is None:
+            from app.plan_graph import get_graph_stats, reset_graph_stats
+
+            self._reset_graph_stats = reset_graph_stats
+            self._get_graph_stats = get_graph_stats
+        return self._reset_graph_stats, self._get_graph_stats
 
     def _setup_langsmith(self, scenario_id: str) -> None:
         """Configure LangSmith tracing for this execution."""
@@ -233,6 +250,10 @@ class ConversationExecutor:
             ConversationResult with all turn results and final state
         """
         run_turn = self._get_run_turn()
+        reset_graph_stats, get_graph_stats = self._get_stats_functions()
+
+        # Reset graph stats before scenario execution for clean metrics
+        reset_graph_stats()
 
         thread_id = str(uuid4())
         started_at = datetime.now(timezone.utc).isoformat()
@@ -291,6 +312,7 @@ class ConversationExecutor:
                     run_id=turn_run_id,
                     router_intent=resp_session.get("router_intent"),
                     strategy_topic=resp_session.get("strategy_topic"),
+                    strategy_stage=resp_session.get("strategy_stage"),
                     short_circuit_type=resp_session.get("short_circuit_type"),
                     llm_calls_made=resp_session.get("llm_calls_made", 0),
                     cache_hits=resp_session.get("cache_hits", 0),
@@ -340,6 +362,9 @@ class ConversationExecutor:
         result.total_duration_ms = total_duration
         result.completed_at = datetime.now(timezone.utc).isoformat()
         result.final_state = session_state
+
+        # Capture graph stats after scenario execution
+        result.graph_stats = get_graph_stats()
 
         return result
 

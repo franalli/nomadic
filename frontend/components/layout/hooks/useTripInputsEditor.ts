@@ -24,6 +24,11 @@ export interface TripInputsEditorOptions {
   onToast: (message: string, type?: ToastType) => void;
 }
 
+export interface ValidationError {
+  field: 'origin' | 'destination';
+  message: string;
+}
+
 export interface TripInputsEditorState {
   tripInputsDraft: TripInputsDraft;
   editingField: keyof TripInputsDraft | null;
@@ -37,6 +42,8 @@ export interface TripInputsEditorState {
   // Pending values shown during validation (not persisted)
   pendingOrigin: string | null;
   pendingDestination: string | null;
+  // Inline validation error for display below fields
+  validationError: ValidationError | null;
 }
 
 export interface TripInputsEditorActions {
@@ -61,6 +68,7 @@ export interface TripInputsEditorActions {
   handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
   handleRemoveDestination: (index: number) => Promise<void>;
+  clearValidationError: () => void;
   resetDraft: () => void;
 }
 
@@ -98,6 +106,8 @@ export function useTripInputsEditor(
   // Pending values shown during validation (not persisted, discarded on rejection)
   const [pendingOrigin, setPendingOrigin] = useState<string | null>(null);
   const [pendingDestination, setPendingDestination] = useState<string | null>(null);
+  // Inline validation error for display below fields
+  const [validationError, setValidationError] = useState<ValidationError | null>(null);
 
   // Sync tripInputsDraft when store trip_inputs changes
   // Always sync destinations (they're modified by bot, not inline editing)
@@ -257,6 +267,9 @@ export function useTripInputsEditor(
       const trimmedOrigin = origin.trim();
       if (!trimmedOrigin) return;
 
+      // Clear any previous validation error for this field
+      setValidationError(null);
+
       // Show pending value immediately (not stored anywhere)
       setPendingOrigin(trimmedOrigin);
       setOriginInput('');
@@ -268,9 +281,10 @@ export function useTripInputsEditor(
         const result = await validateTripInput('origin', trimmedOrigin);
 
         if (!result.is_valid) {
-          // Invalid origin - discard pending value and show error toast
+          // Invalid origin - discard pending value and show inline error
           setPendingOrigin(null);
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid location.';
+          setValidationError({ field: 'origin', message: errorMsg });
           onToast(`Invalid origin: ${errorMsg}`, 'error');
           setValidationLoading(null);
           return;
@@ -421,6 +435,9 @@ export function useTripInputsEditor(
 
       const currentDestinations = tripInputs.destinations ?? [];
 
+      // Clear any previous validation error for this field
+      setValidationError(null);
+
       // Show pending value immediately (not stored anywhere)
       setPendingDestination(trimmedDestination);
       setDestinationInput('');
@@ -432,9 +449,10 @@ export function useTripInputsEditor(
         const result = await validateTripInput('destination', trimmedDestination);
 
         if (!result.is_valid) {
-          // Invalid destination - discard pending value and show error toast
+          // Invalid destination - discard pending value and show inline error
           setPendingDestination(null);
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid destination.';
+          setValidationError({ field: 'destination', message: errorMsg });
           onToast(`Invalid destination: ${errorMsg}`, 'error');
           setValidationLoading(null);
           return;
@@ -576,6 +594,8 @@ export function useTripInputsEditor(
     // Reset pending values
     setPendingOrigin(null);
     setPendingDestination(null);
+    // Reset validation errors
+    setValidationError(null);
   }, []);
 
   return {
@@ -592,6 +612,9 @@ export function useTripInputsEditor(
     // Pending values (shown during validation)
     pendingOrigin,
     pendingDestination,
+    // Inline validation error
+    validationError,
+    clearValidationError: () => setValidationError(null),
     // State setters
     setTripInputsDraft,
     setEditingField,

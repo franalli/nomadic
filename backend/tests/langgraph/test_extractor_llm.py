@@ -4,6 +4,11 @@ Integration tests for LLM-based extraction.
 These tests verify that the LLM extractor correctly extracts trip inputs
 from natural language user messages. Tests use mocked LLM responses to
 ensure deterministic behavior.
+
+NOTE: These tests patch `_try_initial_message_extraction` to return None,
+forcing the LLM code path. This is because the current architecture uses
+zero-LLM extraction for simple inputs that match known patterns, which
+would bypass the mocked LLM and cause test failures.
 """
 
 # ruff: noqa: E402
@@ -11,6 +16,7 @@ ensure deterministic behavior.
 import json
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict
 from unittest.mock import AsyncMock, patch
@@ -29,6 +35,19 @@ from app.plan_graph import (
     TripInputs,
     extractor,
 )
+
+
+@contextmanager
+def force_llm_path():
+    """
+    Context manager that bypasses zero-LLM initial extraction.
+
+    The extractor uses `_try_initial_message_extraction` for simple inputs
+    (e.g., "I want to go to Paris") which bypasses the LLM entirely.
+    To test the LLM code path, we patch this function to return None.
+    """
+    with patch("app.plan_graph._try_initial_message_extraction", return_value=None):
+        yield
 
 
 def make_state(user_text: str, **kwargs) -> GraphState:
@@ -63,7 +82,10 @@ class TestExtractorDestinations:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -86,7 +108,10 @@ class TestExtractorDestinations:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -106,7 +131,10 @@ class TestExtractorDestinations:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -132,7 +160,10 @@ class TestExtractorOrigin:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -158,7 +189,10 @@ class TestExtractorDates:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -180,7 +214,10 @@ class TestExtractorDates:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -205,7 +242,10 @@ class TestExtractorTravelers:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -226,7 +266,10 @@ class TestExtractorTravelers:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -251,7 +294,10 @@ class TestExtractorBudget:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -278,7 +324,10 @@ class TestExtractorActivities:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -300,7 +349,10 @@ class TestExtractorActivities:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -328,7 +380,10 @@ class TestExtractorSettings:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -354,7 +409,10 @@ class TestExtractorSettings:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -397,7 +455,10 @@ class TestExtractorConfidence:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -418,7 +479,10 @@ class TestExtractorConfidence:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -436,7 +500,10 @@ class TestExtractorTimeout:
         """LLM timeout should result in low confidence."""
         state = make_state("Trip to Tokyo")
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.side_effect = TimeoutError("LLM timeout")
             result = await extractor(state)
 
@@ -463,7 +530,10 @@ class TestExtractorEdgeCases:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 
@@ -497,7 +567,10 @@ class TestExtractorEdgeCases:
             }
         )
 
-        with patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm:
+        with (
+            force_llm_path(),
+            patch("app.plan_graph.call_llm_with_timeout", new_callable=AsyncMock) as mock_llm,
+        ):
             mock_llm.return_value = llm_response
             result = await extractor(state)
 

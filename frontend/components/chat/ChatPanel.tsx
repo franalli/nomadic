@@ -49,6 +49,44 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
   },
 ];
 
+// Helper to generate specific error messages based on error type
+function getErrorMessage(error: Error): string {
+  const message = error.message?.toLowerCase() ?? '';
+
+  // Network/connection errors
+  if (message.includes('network') || message.includes('fetch') || message.includes('failed to fetch')) {
+    return "Couldn't connect to the server. Please check your internet connection and try again.";
+  }
+
+  // Timeout errors
+  if (message.includes('timeout') || message.includes('timed out')) {
+    return "The request took too long. Try a simpler query or check your connection.";
+  }
+
+  // Rate limiting
+  if (message.includes('rate limit') || message.includes('too many requests') || message.includes('429')) {
+    return "You're sending requests too quickly. Please wait a moment before trying again.";
+  }
+
+  // Authentication errors
+  if (message.includes('unauthorized') || message.includes('401') || message.includes('authentication')) {
+    return "Session expired. Please refresh the page and try again.";
+  }
+
+  // Server errors
+  if (message.includes('500') || message.includes('internal server') || message.includes('server error')) {
+    return "Something went wrong on our end. Please try again in a few moments.";
+  }
+
+  // Validation errors (from backend)
+  if (message.includes('invalid') || message.includes('validation')) {
+    return "There was an issue with your request. Try rephrasing or adjusting your trip details.";
+  }
+
+  // Default fallback
+  return "I ran into an issue planning your trip. Try again or adjust your message.";
+}
+
 // Typing indicator component - extracted to module level to prevent recreation
 const TypingIndicator = () => (
   <div className="text-left message-enter">
@@ -511,15 +549,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setStreamingMessageId(null);
               console.error('Failed to plan trip', error);
 
-              // Replace streaming message with error message
+              // Replace streaming message with specific error message
+              const errorMessage = getErrorMessage(error);
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === streamingMsgId
                     ? {
                         ...msg,
                         id: `a_err_${Date.now()}`,
-                        content:
-                          'I ran into an error planning this trip. Try again in a moment or tweak your message.',
+                        content: errorMessage,
                       }
                     : msg
                 )

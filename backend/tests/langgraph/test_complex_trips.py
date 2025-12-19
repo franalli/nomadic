@@ -13,6 +13,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+from datetime import date, timedelta
+
 import pytest
 
 from app.plan_graph import (
@@ -22,6 +24,8 @@ from app.plan_graph import (
     _normalize_multi_city_intent,
     route_after_required_fields,
 )
+
+FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 
 
 class TestMultiCityIntent:
@@ -84,7 +88,7 @@ class TestDeferredIntents:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             metadata={},  # No deferred_intent
         )
@@ -98,7 +102,7 @@ class TestDeferredIntents:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             last_summary="I've noted your trip details.",
             chat_history=[],
@@ -116,7 +120,7 @@ class TestDeferredIntents:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             last_summary="Trip noted.",
             chat_history=[],
@@ -132,7 +136,7 @@ class TestDeferredIntents:
             trip_inputs=TripInputs(
                 destinations=["Chamonix"],
                 origin="Milan",
-                start_date="2025-07-01",
+                start_date=FUTURE_DATE,
             ),
             last_summary="Hiking trip noted.",
             chat_history=[],
@@ -168,7 +172,7 @@ class TestDeferredIntents:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             last_summary="I've noted your dates.",
             chat_history=[],

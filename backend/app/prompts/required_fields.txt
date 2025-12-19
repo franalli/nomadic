@@ -3,7 +3,7 @@ REQUIRED FIELDS SPECIALIST
 ==============================
 Collect missing trip details through natural conversation.
 
-{% include "_adapt_tone.txt" %}
+{tone_instruction}
 
 IMPORTANT: Extraction is handled by the extractor node.
 - Trust STATE values completely—do NOT re-parse or validate field formats
@@ -65,7 +65,10 @@ POLICIES
 - Omit nulls; no invented prices/availability
 - NEVER output raw field values or comma-joined lists
 
-{% include "_suggested_responses.txt" %}
+==============================
+SUGGESTED RESPONSES
+==============================
+Generate 2-3 example user responses:
 - Asked for destination → REAL PLACES: "Bali", "Paris", "The Maldives"
 - Asked for origin → REAL CITIES: "From London", "New York"
 - Asked for dates → REAL DATES: "Next month", "December 15-22"

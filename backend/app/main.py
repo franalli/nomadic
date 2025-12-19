@@ -55,6 +55,7 @@ from app.plan_graph import (
     clear_response_caches,
     clear_session_checkpoint,
     condense_long_message,
+    get_graph_stats,
     prune_stale_checkpoints,
     response_cache_stats,
     run_turn,
@@ -248,6 +249,34 @@ def admin_fresh_start():
             "after": checkpoint_stats(),
         },
     }
+
+
+@app.get("/v1/admin/graph-stats")
+def admin_graph_stats():
+    """
+    Get comprehensive graph statistics for observability.
+
+    Returns routing decisions, template usage, and cache performance metrics.
+    Useful for monitoring token savings and optimization effectiveness.
+
+    Response:
+    {
+        "routing": {
+            "keyword_bypasses": int,  # Router skipped via keyword heuristic
+            "router_calls": int,      # Router LLM was invoked
+            "negation_defers": int,   # Keyword was negated, deferred to router
+            "keyword_bypass_rate": float
+        },
+        "templates": {
+            "template_hits": int,    # Template found and used
+            "template_misses": int,  # No template, fell back to LLM
+            "template_hit_rate": float
+        },
+        "extractor_cache": {...},
+        "strategy_cache": {...}
+    }
+    """
+    return get_graph_stats()
 
 
 @app.post("/v1/admin/clear-all-checkpoints")

@@ -3,13 +3,42 @@
 Provides:
 - Automatic cache clearing (inherited from parent conftest.py)
 - Prompt-to-stub coverage validation
+- Graph stats reset between tests
+- Future date constants for tests
 """
 
 from __future__ import annotations
 
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+
+from app.plan_graph import reset_graph_stats
+
+
+# =============================================================================
+# Future Date Constants for Tests
+# =============================================================================
+# Tests should use these to avoid infeasibility detection for past dates
+def get_future_date(days_ahead: int = 30) -> str:
+    """Get an ISO date string for a future date."""
+    return (date.today() + timedelta(days=days_ahead)).isoformat()
+
+
+# Common future date constants (30 days ahead to avoid infeasibility)
+FUTURE_DATE = get_future_date(30)  # e.g., "2026-01-18"
+FUTURE_END_DATE = get_future_date(40)  # e.g., "2026-01-28"
+
+
+@pytest.fixture(autouse=True)
+def auto_reset_graph_stats():
+    """Reset graph stats before each test to prevent pollution."""
+    reset_graph_stats()
+    yield
+    # Optional: reset after test as well for cleaner state
+    reset_graph_stats()
+
 
 # =============================================================================
 # Prompt-Stub Coverage Validation
@@ -24,7 +53,6 @@ _PARTIAL_PROMPTS = frozenset(
         "_never_invent",
         "_scope_specialist",
         "_strategy_base",
-        "_suggested_responses",
     ]
 )
 
@@ -52,8 +80,11 @@ _STUB_PROMPT_HANDLERS = {
     "strategy_cycling": "SCOPE:",
     # Extractor
     "extractor": "EXTRACTION NODE",
+    "extractor_light": "EXTRACTION NODE",  # Uses same handler as full extractor
     # Condense
     "condense": "Message condenser",
+    # Missing fields guard
+    "missing_fields_guard": "missing_fields_guard",
 }
 
 

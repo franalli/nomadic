@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     response_polish_timeout_ms: int = 200  # Hard timeout cap for polish node (ms)
     response_polish_warn_threshold_ms: int = 150  # Log warning if polish exceeds this (ms)
 
+    # LQA (Last Question Answer) pre-pass configuration
+    lqa_max_length: int = 50  # Max input length for LQA pre-pass (chars)
+
+    # Short-circuit configuration
+    short_circuit_max_length: int = 200  # Max input length for short-circuit patterns (chars)
+
     # LLM timeouts (in seconds)
     llm_timeout_extractor: float = 6.0  # Extractor should be fast
     llm_timeout_router: float = 8.0

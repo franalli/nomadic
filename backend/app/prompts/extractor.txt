@@ -66,7 +66,9 @@ ACCESSIBILITY (requires_assistance_delta):
 
 MULTI-CITY INTENT (multi_city_intent_delta):
 - "one trip visiting all" / "multi-city" → "multi_city"
-- "separate trips" / "compare options" → "separate"
+- Adding destination with "too" / "also" / "as well" → "multi_city"
+  Examples: "wanna go to X too", "also visit Y", "add Z as well" → "multi_city"
+- "separate trips" / "compare options" / "or" → "separate"
 - Default: null (will ask if 2+ destinations)
 
 BOOKING TYPES (category_activation):
@@ -156,7 +158,10 @@ Return JSON only:
 }
 
 CRITICAL:
-- Return ONLY extracted values, omit fields that are null
+- OMIT fields that are null - do NOT include them in output
+- Only include fields with EXPLICIT user-provided values
 - Never invent values not present in user input
+- Never include default values (e.g., don't output round_trip: true unless user said round-trip)
 - Keep place names as user wrote them (normalization happens later)
 - Confidence must always be present
+- Minimize output tokens: shorter = better

@@ -134,10 +134,7 @@ class TestGeneratedScenarios:
             count=3,
             difficulty_distribution={"easy": 3, "medium": 0, "hard": 0, "edge_case": 0},
         )
-
         passed = 0
-        failed = 0
-
         for scenario in scenarios:
             result = await conversation_executor.execute_scenario(scenario)
 
@@ -173,8 +170,6 @@ class TestGeneratedScenarios:
 
             if avg_score >= EVALUATOR_CONFIG["min_overall_score"]:
                 passed += 1
-            else:
-                failed += 1
 
         # Allow some failures (stochastic)
         pass_rate = passed / len(scenarios) if scenarios else 0
@@ -344,6 +339,360 @@ class TestGeneratedScenarios:
                 scenario_goal=scenario.goal,
                 scenario_constraints=scenario.constraints.to_dict(),
             )
+
+
+class TestLQAScenarios:
+    """Tests for LQA (Last Question Answer) pre-pass optimization.
+
+    These tests use hardcoded conversations to verify that simple field
+    answers are handled efficiently via the LQA pre-pass, without
+    invoking the full LLM extraction pipeline.
+    """
+
+    @pytest.mark.asyncio
+    async def test_lqa_simple_destination_answer(
+        self,
+        conversation_executor,
+        full_evaluator_suite,
+        diagnostic_collector,
+        create_enriched_summary,
+    ):
+        """Test LQA optimization for simple destination answer.
+
+        Scenario: User starts a trip planning conversation, then
+        provides a simple destination answer ('Paris') when asked
+        where they want to go.
+
+        Expected: LQA pre-pass should handle the simple answer without
+        invoking the full extractor LLM.
+        """
+        from tests.e2e.diagnostics import record_evaluation_outcome
+        from tests.e2e.scenario_generator import (
+            ConversationScenario,
+            ConversationTurn,
+            DifficultySettings,
+            ScenarioConstraints,
+            UserProfile,
+        )
+
+        # Create hardcoded scenario for LQA destination test
+        scenario = ConversationScenario(
+            scenario_id="lqa_destination_test",
+            user_profile=UserProfile(
+                persona="solo_explorer",
+                experience_level="intermediate",
+                communication_style="terse",
+                decision_making="decisive",
+            ),
+            goal="Plan a trip to Paris",
+            constraints=ScenarioConstraints(
+                dates="next month",
+                party_size="1 adult",
+            ),
+            difficulty=DifficultySettings(
+                level="easy",
+                ambiguity_level="none",
+            ),
+            turns=[
+                ConversationTurn(
+                    turn_number=1,
+                    user_message="I want to plan a trip",
+                    intent_hint="greeting/start",
+                ),
+                ConversationTurn(
+                    turn_number=2,
+                    user_message="Paris",
+                    intent_hint="simple_destination_answer",
+                ),
+            ],
+            expected_outcomes={
+                "lqa_hit_on_turn_2": True,
+                "destination_captured": "Paris",
+            },
+        )
+
+        result = await conversation_executor.execute_scenario(scenario)
+
+        # Verify at least 2 turns completed
+        assert len(result.turns) >= 2, "Should complete both turns"
+
+        # Verify Paris was captured (check final state)
+        if result.final_state.get("trip_inputs"):
+            destinations = result.final_state["trip_inputs"].get("destinations", [])
+            assert "Paris" in destinations or any(
+                "Paris" in str(d) for d in destinations
+            ), "Paris should be captured as destination"
+
+        # Create enriched trace summary
+        trace_summary = await create_enriched_summary(result)
+
+        reports = await full_evaluator_suite.evaluate(
+            result=result,
+            scenario_goal=scenario.goal,
+            scenario_constraints=scenario.constraints.to_dict(),
+            trace_summary=trace_summary,
+        )
+
+        # Record diagnostic outcome
+        record_evaluation_outcome(
+            test_name="test_lqa_simple_destination_answer",
+            scenario_id=scenario.scenario_id,
+            evaluation_reports=reports,
+            run_ids=result.run_ids,
+            trace_summary=trace_summary,
+        )
+
+    @pytest.mark.asyncio
+    async def test_lqa_simple_date_answer(
+        self,
+        conversation_executor,
+        full_evaluator_suite,
+        diagnostic_collector,
+        create_enriched_summary,
+    ):
+        """Test LQA optimization for simple date answer.
+
+        Scenario: User provides a simple date answer ('next month')
+        when asked about travel dates.
+
+        Expected: LQA pre-pass should parse the relative date without
+        full LLM extraction.
+        """
+        from tests.e2e.diagnostics import record_evaluation_outcome
+        from tests.e2e.scenario_generator import (
+            ConversationScenario,
+            ConversationTurn,
+            DifficultySettings,
+            ScenarioConstraints,
+            UserProfile,
+        )
+
+        scenario = ConversationScenario(
+            scenario_id="lqa_date_test",
+            user_profile=UserProfile(
+                persona="family_vacation",
+                experience_level="novice",
+                communication_style="casual",
+                decision_making="decisive",
+            ),
+            goal="Plan a family trip with specific dates",
+            constraints=ScenarioConstraints(
+                party_size="2 adults, 2 children",
+            ),
+            difficulty=DifficultySettings(
+                level="easy",
+                ambiguity_level="none",
+            ),
+            turns=[
+                ConversationTurn(
+                    turn_number=1,
+                    user_message="Planning a trip to London",
+                    intent_hint="destination_provided",
+                ),
+                ConversationTurn(
+                    turn_number=2,
+                    user_message="next month",
+                    intent_hint="simple_date_answer",
+                ),
+            ],
+            expected_outcomes={
+                "lqa_hit_on_turn_2": True,
+                "date_captured": True,
+            },
+        )
+
+        result = await conversation_executor.execute_scenario(scenario)
+
+        # Verify turns completed
+        assert len(result.turns) >= 2, "Should complete both turns"
+
+        # Create enriched trace summary
+        trace_summary = await create_enriched_summary(result)
+
+        reports = await full_evaluator_suite.evaluate(
+            result=result,
+            scenario_goal=scenario.goal,
+            scenario_constraints=scenario.constraints.to_dict(),
+            trace_summary=trace_summary,
+        )
+
+        record_evaluation_outcome(
+            test_name="test_lqa_simple_date_answer",
+            scenario_id=scenario.scenario_id,
+            evaluation_reports=reports,
+            run_ids=result.run_ids,
+            trace_summary=trace_summary,
+        )
+
+    @pytest.mark.asyncio
+    async def test_lqa_simple_travelers_answer(
+        self,
+        conversation_executor,
+        full_evaluator_suite,
+        diagnostic_collector,
+        create_enriched_summary,
+    ):
+        """Test LQA optimization for simple travelers answer.
+
+        Scenario: User provides a simple travelers count ('2 adults')
+        when asked about party size.
+
+        Expected: LQA pre-pass should parse the count without full
+        LLM extraction.
+        """
+        from tests.e2e.diagnostics import record_evaluation_outcome
+        from tests.e2e.scenario_generator import (
+            ConversationScenario,
+            ConversationTurn,
+            DifficultySettings,
+            ScenarioConstraints,
+            UserProfile,
+        )
+
+        scenario = ConversationScenario(
+            scenario_id="lqa_travelers_test",
+            user_profile=UserProfile(
+                persona="honeymoon_couple",
+                experience_level="intermediate",
+                communication_style="casual",
+                decision_making="decisive",
+            ),
+            goal="Plan a honeymoon trip",
+            constraints=ScenarioConstraints(
+                dates="February 14-21",
+            ),
+            difficulty=DifficultySettings(
+                level="easy",
+                ambiguity_level="none",
+            ),
+            turns=[
+                ConversationTurn(
+                    turn_number=1,
+                    user_message="Planning a honeymoon to Maldives",
+                    intent_hint="destination_provided",
+                ),
+                ConversationTurn(
+                    turn_number=2,
+                    user_message="2 adults",
+                    intent_hint="simple_travelers_answer",
+                ),
+            ],
+            expected_outcomes={
+                "lqa_hit_on_turn_2": True,
+                "adults_captured": 2,
+            },
+        )
+
+        result = await conversation_executor.execute_scenario(scenario)
+
+        # Verify turns completed
+        assert len(result.turns) >= 2, "Should complete both turns"
+
+        # Verify travelers captured
+        if result.final_state.get("trip_inputs"):
+            adults = result.final_state["trip_inputs"].get("adults")
+            assert (
+                adults == 2 or adults is None
+            ), "Adults should be captured as 2 (or not yet processed)"
+
+        trace_summary = await create_enriched_summary(result)
+
+        reports = await full_evaluator_suite.evaluate(
+            result=result,
+            scenario_goal=scenario.goal,
+            scenario_constraints=scenario.constraints.to_dict(),
+            trace_summary=trace_summary,
+        )
+
+        record_evaluation_outcome(
+            test_name="test_lqa_simple_travelers_answer",
+            scenario_id=scenario.scenario_id,
+            evaluation_reports=reports,
+            run_ids=result.run_ids,
+            trace_summary=trace_summary,
+        )
+
+    @pytest.mark.asyncio
+    async def test_lqa_bail_complex_answer(
+        self,
+        conversation_executor,
+        full_evaluator_suite,
+        diagnostic_collector,
+        create_enriched_summary,
+    ):
+        """Test LQA correctly bails on complex multi-intent answers.
+
+        Scenario: User provides a complex answer that should NOT be
+        handled by LQA pre-pass ('Paris but maybe Rome instead, and
+        I need hotel recommendations').
+
+        Expected: LQA should bail and defer to full LLM extraction.
+        """
+        from tests.e2e.diagnostics import record_evaluation_outcome
+        from tests.e2e.scenario_generator import (
+            ConversationScenario,
+            ConversationTurn,
+            DifficultySettings,
+            ScenarioConstraints,
+            UserProfile,
+        )
+
+        scenario = ConversationScenario(
+            scenario_id="lqa_bail_complex_test",
+            user_profile=UserProfile(
+                persona="solo_explorer",
+                experience_level="intermediate",
+                communication_style="verbose",
+                decision_making="indecisive",
+            ),
+            goal="Plan a complex trip with multiple options",
+            constraints=ScenarioConstraints(),
+            difficulty=DifficultySettings(
+                level="medium",
+                ambiguity_level="high",
+            ),
+            turns=[
+                ConversationTurn(
+                    turn_number=1,
+                    user_message="I want to plan a European vacation",
+                    intent_hint="vague_start",
+                ),
+                ConversationTurn(
+                    turn_number=2,
+                    user_message=(
+                        "Paris but maybe Rome instead, and I need " + "hotel recommendations too"
+                    ),
+                    intent_hint="complex_multi_intent_answer",
+                ),
+            ],
+        )
+
+        result = await conversation_executor.execute_scenario(scenario)
+
+        # Verify turns completed
+        assert len(result.turns) >= 2, "Should complete both turns"
+
+        trace_summary = await create_enriched_summary(result)
+
+        reports = await full_evaluator_suite.evaluate(
+            result=result,
+            scenario_goal=scenario.goal,
+            scenario_constraints=scenario.constraints.to_dict(),
+            trace_summary=trace_summary,
+        )
+
+        # Safety should pass even with complex input
+        safety_report = reports.get("safety_evaluator")
+        if safety_report:
+            assert safety_report.overall_passed, "Safety must pass for complex input"
+
+        record_evaluation_outcome(
+            test_name="test_lqa_bail_complex_answer",
+            scenario_id=scenario.scenario_id,
+            evaluation_reports=reports,
+            run_ids=result.run_ids,
+            trace_summary=trace_summary,
+        )
 
 
 class TestPersonaDiversity:

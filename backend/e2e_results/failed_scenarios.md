@@ -1,609 +1,257 @@
 # E2E Test Diagnostic Report
 
-**Session:** 20251217-173906
-**Timestamp:** 2025-12-17T17:39:06.572779
-**Project:** nomadic-e2e-tests
+**Session:** 20251219-225114
+**Timestamp:** 2025-12-19T22:51:14.002027
+**Project:**
 
 ## Summary
 
-- **Total Tests:** 48
-- **Passed:** 24
-- **Failed:** 24
-- **Pass Rate:** 50.0%
-- **Duration:** 19178.00s
+- **Total Tests:** 7
+- **Passed:** 1
+- **Failed:** 6
+- **Pass Rate:** 14.3%
+- **Duration:** 304.26s
 
 ## Evaluator Breakdown
 
 | Evaluator | Passed | Failed |
 |-----------|--------|--------|
-| constraint_evaluator | 5 | 17 |
-| groundedness_evaluator | 16 | 6 |
-| node_evaluator | 10 | 12 |
-| quality_evaluator | 3 | 19 |
-| safety_evaluator | 47 | 0 |
-| travel_logic_evaluator | 0 | 21 |
+| constraint_evaluator | 0 | 1 |
+| groundedness_evaluator | 0 | 2 |
+| node_evaluator | 0 | 1 |
+| quality_evaluator | 0 | 1 |
+| safety_evaluator | 5 | 0 |
 
 ## Failures by Category
 
-### Constraint Violation (141)
+### Constraint Violation (3)
 
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** constraint_evaluator
-- **Criterion:** date_extraction
-- **Score:** 0.50
-- **Feedback:** The assistant did not extract or confirm specific dates from the user. The user mentioned 'next month' but no specific dates were confirmed or converted into a usable format.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** constraint_evaluator
-- **Criterion:** preference_handling
-- **Score:** 0.70
-- **Feedback:** The assistant acknowledged the preference for hostels and backpacker-friendly options, but did not provide specific recommendations or ensure that luxury options were avoided.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** travel_logic_evaluator
-- **Criterion:** date_logic
-- **Score:** 0.50
-- **Feedback:** The assistant did not confirm or calculate any specific dates for the trip, despite the user mentioning 'next month'. There was no attempt to clarify or calculate potential travel dates based on this information.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** travel_logic_evaluator
-- **Criterion:** budget_logic
-- **Score:** 0.50
-- **Feedback:** The assistant acknowledged the budget of $500 but did not provide any specific recommendations or considerations for how this budget could be allocated. There was no discussion of currency conversion or per-person budget considerations.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** travel_logic_evaluator
-- **Criterion:** itinerary_feasibility
-- **Score:** 0.00
-- **Feedback:** No itinerary was generated or discussed, so there was no assessment of geographic feasibility. The assistant did not address the user's request for flights and accommodation options.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** travel_logic_evaluator
-- **Criterion:** logistics_coherence
-- **Score:** 0.00
-- **Feedback:** The conversation did not progress to a point where logistical details could be evaluated. The assistant failed to gather necessary information to provide coherent logistical advice.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** constraint_evaluator
 - **Criterion:** date_extraction
 - **Score:** 0.00
-- **Feedback:** The assistant failed to extract the specified travel dates (December 20th to December 27th) despite the user mentioning them clearly.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
+- **Feedback:** The assistant failed to extract and apply the specified travel dates. The user clearly stated the dates, but the assistant did not acknowledge or confirm them.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** constraint_evaluator
 - **Criterion:** budget_adherence
 - **Score:** 0.00
-- **Feedback:** The conversation did not include any mention or extraction of a budget constraint, nor was there any indication of budget adherence.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
+- **Feedback:** The budget was not extracted or acknowledged by the assistant. The user provided a clear budget of $5000, but the assistant did not incorporate this into the conversation.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** constraint_evaluator
 - **Criterion:** preference_handling
 - **Score:** 0.50
-- **Feedback:** The assistant noted some preferences like first-class flights, 5-star hotel, and private transfers. However, it repeatedly asked for travel dates and did not confirm the avoidance of connecting flights.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
+- **Feedback:** While the user expressed preferences for romantic restaurants, museums, and wine tours, the assistant did not provide any suggestions or acknowledge these preferences adequately. However, the assistant did ask about romantic restaurant suggestions, indicating some level of engagement.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
+### Groundedness Issue (6)
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** constraint_evaluator
-- **Criterion:** party_composition
-- **Score:** 0.50
-- **Feedback:** The assistant correctly noted the party size of 2 adults and the vegan meal requirement. However, it failed to confirm these details in the extracted information.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
+#### b2f1e1f5-7c91-4c3f-b4c3-4c6d6f40f5a3
 
-*...and 131 more*
-
-### Groundedness Issue (43)
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** factual_grounding
-- **Score:** 0.50
-- **Feedback:** The assistant's responses are mostly grounded in the user's input, but there is a significant error in Turn 7 where the assistant mentions 'Rome to Dubai in December,' which is not traceable to any user input or tool output.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** no_invented_details
-- **Score:** 0.50
-- **Feedback:** The assistant invents a flight route and time ('Rome to Dubai in December') that was not mentioned by the user or supported by any tool output, which is a clear issue.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** appropriate_hedging
-- **Score:** 0.80
-- **Feedback:** The assistant does not hedge appropriately when mentioning the flight route and time, which was not based on any user input or tool data. However, the suggestion about local eateries is appropriately hedged.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** source_clarity
-- **Score:** 0.60
-- **Feedback:** The assistant fails to clearly distinguish between suggestions and confirmed facts, particularly with the invented flight details. The user might be confused about the source of this information.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** factual_grounding
-- **Score:** 0.80
-- **Feedback:** The assistant's responses are generally grounded in the user's input, but there is a lack of tool data to confirm specific details like flight availability or hotel options. The assistant should have acknowledged the need for tool data to confirm these details.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** appropriate_hedging
-- **Score:** 0.70
-- **Feedback:** The assistant did not hedge its statements regarding the availability of direct flights or private transfers. It should have indicated that these preferences would need to be confirmed with actual data.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** source_clarity
-- **Score:** 0.60
-- **Feedback:** The assistant did not clearly distinguish between suggestions and confirmed facts. It should have clarified that the details mentioned (like direct flights and private transfers) are based on user preferences and need confirmation.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
-
-#### acb123d4-567f-89g0-hi12-jkl345mno678
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** groundedness_evaluator
-- **Criterion:** factual_grounding
-- **Score:** 0.80
-- **Feedback:** The assistant correctly uses information provided by the user, such as the number of travelers and preferences for kid-friendly meals. However, it incorrectly states that the start date is in the past without any tool output to verify this, which is not traceable to user input.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
-
-#### 5b2f9a8e-1518-4b0b-8b5d-29f0e8c2b0f2
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
+- **Test:** test_groundedness_no_hallucinations
 - **Evaluator:** groundedness_evaluator
 - **Criterion:** factual_grounding
 - **Score:** 0.00
-- **Feedback:** The assistant incorrectly stated that the trip is set for January 16, 2026, which was not mentioned by the user or derived from any tool output. This is a clear hallucination of a date.
-- **Trace:** [019b2d33-462b-71f3-b7af-10e3fc54981f](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d33-462b-71f3-b7af-10e3fc54981f)
-- **Turn:** 8
-- **User Message:** I'd like to wrap up the trip within two weeks. What do you think?...
+- **Feedback:** The assistant did not provide any factual information or data that could be traced back to user input or tool outputs. It failed to suggest any specific destinations or hiking trails.
+- **Trace:** [f1e2afb7-09ec-4324-9048-4cd5df598d32_7c8ee679](https://smith.langchain.com/public/nomadic-e2e-tests/r/f1e2afb7-09ec-4324-9048-4cd5df598d32_7c8ee679)
+- **Turn:** 6
+- **User Message:** I guess I need a hotel too, something cozy and not too pricey....
 
-#### 5b2f9a8e-1518-4b0b-8b5d-29f0e8c2b0f2
+#### b2f1e1f5-7c91-4c3f-b4c3-4c6d6f40f5a3
 
-- **Test:** test_generate_and_evaluate_medium_scenarios
+- **Test:** test_groundedness_no_hallucinations
 - **Evaluator:** groundedness_evaluator
-- **Criterion:** no_invented_details
+- **Criterion:** appropriate_hedging
 - **Score:** 0.00
-- **Feedback:** The assistant invented a specific start date for the trip (January 16, 2026) without any basis from the user's input or tool data. This is a significant issue.
-- **Trace:** [019b2d33-462b-71f3-b7af-10e3fc54981f](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d33-462b-71f3-b7af-10e3fc54981f)
-- **Turn:** 8
-- **User Message:** I'd like to wrap up the trip within two weeks. What do you think?...
+- **Feedback:** The assistant did not hedge any uncertain information because it did not provide any information that required hedging.
+- **Trace:** [f1e2afb7-09ec-4324-9048-4cd5df598d32_7c8ee679](https://smith.langchain.com/public/nomadic-e2e-tests/r/f1e2afb7-09ec-4324-9048-4cd5df598d32_7c8ee679)
+- **Turn:** 6
+- **User Message:** I guess I need a hotel too, something cozy and not too pricey....
 
-*...and 33 more*
+#### b2f1e1f5-7c91-4c3f-b4c3-4c6d6f40f5a3
 
-### Quality Issue (65)
+- **Test:** test_groundedness_no_hallucinations
+- **Evaluator:** groundedness_evaluator
+- **Criterion:** source_clarity
+- **Score:** 0.00
+- **Feedback:** There was no clarity between suggestions and confirmed facts, as the assistant did not provide any factual information or suggestions.
+- **Trace:** [f1e2afb7-09ec-4324-9048-4cd5df598d32_7c8ee679](https://smith.langchain.com/public/nomadic-e2e-tests/r/f1e2afb7-09ec-4324-9048-4cd5df598d32_7c8ee679)
+- **Turn:** 6
+- **User Message:** I guess I need a hotel too, something cozy and not too pricey....
 
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
+#### d21c0f64-5e37-489c-b7fa-5f9fb528e07e
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_groundedness_no_hallucinations
+- **Evaluator:** groundedness_evaluator
+- **Criterion:** factual_grounding
+- **Score:** 0.00
+- **Feedback:** The assistant did not provide any factual information or suggestions based on user input, leading to a complete lack of grounding.
+- **Trace:** [f6b46e48-b01d-407e-b37e-770b0edbedc7_a549ddaf](https://smith.langchain.com/public/nomadic-e2e-tests/r/f6b46e48-b01d-407e-b37e-770b0edbedc7_a549ddaf)
+- **Turn:** 6
+- **User Message:** Oh, and what about accommodations? I’d need somewhere budget-friendly but clean....
+
+#### d21c0f64-5e37-489c-b7fa-5f9fb528e07e
+
+- **Test:** test_groundedness_no_hallucinations
+- **Evaluator:** groundedness_evaluator
+- **Criterion:** appropriate_hedging
+- **Score:** 0.00
+- **Feedback:** The assistant did not hedge any uncertain information because it failed to provide any information or suggestions.
+- **Trace:** [f6b46e48-b01d-407e-b37e-770b0edbedc7_a549ddaf](https://smith.langchain.com/public/nomadic-e2e-tests/r/f6b46e48-b01d-407e-b37e-770b0edbedc7_a549ddaf)
+- **Turn:** 6
+- **User Message:** Oh, and what about accommodations? I’d need somewhere budget-friendly but clean....
+
+#### d21c0f64-5e37-489c-b7fa-5f9fb528e07e
+
+- **Test:** test_groundedness_no_hallucinations
+- **Evaluator:** groundedness_evaluator
+- **Criterion:** source_clarity
+- **Score:** 0.00
+- **Feedback:** There was no clarity regarding suggestions versus facts, as the assistant did not provide any information.
+- **Trace:** [f6b46e48-b01d-407e-b37e-770b0edbedc7_a549ddaf](https://smith.langchain.com/public/nomadic-e2e-tests/r/f6b46e48-b01d-407e-b37e-770b0edbedc7_a549ddaf)
+- **Turn:** 6
+- **User Message:** Oh, and what about accommodations? I’d need somewhere budget-friendly but clean....
+
+### Quality Issue (4)
+
+#### golden_simple_paris_trip
+
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** quality_evaluator
 - **Criterion:** response_usefulness
-- **Score:** 0.50
-- **Feedback:** The assistant failed to provide actionable travel information. It repeatedly asked for the travel dates without addressing the user's budget constraints or providing any suggestions for flights or accommodations. The response about 'Rome to Dubai in December' was irrelevant and confusing.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
+- **Score:** 0.30
+- **Feedback:** The assistant's responses are not helpful or actionable. It fails to provide relevant travel information or suggestions based on the user's preferences.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** quality_evaluator
 - **Criterion:** output_clarity
 - **Score:** 0.50
-- **Feedback:** The responses were generally clear, but the mention of 'Rome to Dubai in December' was out of context and confusing. The assistant did not clarify or correct this mistake, which could mislead the user.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
+- **Feedback:** While the language is generally clear, the assistant's responses lack structure and do not directly address the user's inquiries.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** quality_evaluator
-- **Criterion:** conversation_flow
-- **Score:** 0.50
-- **Feedback:** The conversation flow was disrupted by repeated questions about travel dates and the irrelevant mention of 'Rome to Dubai.' The assistant did not effectively guide the conversation towards finding budget-friendly options in Thailand.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** quality_evaluator
-- **Criterion:** detail_appropriateness
-- **Score:** 0.50
-- **Feedback:** The assistant did not provide sufficient detail on budget-friendly travel options. It focused too much on gathering information without offering any practical suggestions or solutions, and it included irrelevant details.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** quality_evaluator
-- **Criterion:** response_usefulness
-- **Score:** 0.50
-- **Feedback:** The assistant repeatedly asks for the travel dates despite the user providing them in Turn 2. It fails to gather the origin location, which is crucial for booking flights. The assistant does not offer any suggestions or information about first-class flights or 5-star hotels, which are key components of the user's request.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** quality_evaluator
 - **Criterion:** conversation_flow
 - **Score:** 0.40
-- **Feedback:** The conversation flow is disrupted by the assistant's repeated questions about travel dates, which the user already provided. The assistant fails to acknowledge or build upon the user's inputs effectively, leading to a disjointed interaction.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
+- **Feedback:** The conversation does not flow naturally, with the assistant failing to follow up on the user's specific requests.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** quality_evaluator
 - **Criterion:** detail_appropriateness
-- **Score:** 0.50
-- **Feedback:** The assistant captures some details like vegan meal options and private transfers but misses critical information such as the origin and fails to confirm the travel dates. It does not provide any details about the luxury aspects of the trip, such as first-class flights or 5-star hotels.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
+- **Score:** 0.40
+- **Feedback:** The level of detail is insufficient, as the assistant does not provide any specific recommendations or insights related to the user's interests.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### acb123d4-567f-89g0-hi12-jkl345mno678
+### Routing Error (1)
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** quality_evaluator
-- **Criterion:** response_usefulness
-- **Score:** 0.50
-- **Feedback:** The assistant repeatedly mentions the start date being in the past without providing guidance on how to correct it. It fails to gather essential information like the origin city, which is crucial for booking flights. The assistant does not offer any specific flight or hotel options, nor does it address the budget constraint.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
+#### golden_simple_paris_trip
 
-#### acb123d4-567f-89g0-hi12-jkl345mno678
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** quality_evaluator
-- **Criterion:** conversation_flow
-- **Score:** 0.50
-- **Feedback:** The conversation flow is disrupted by the assistant's repeated focus on the start date issue without progressing the conversation. It fails to ask about the origin city until after the user has provided other details, which is a critical piece of information for planning flights.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
-
-#### acb123d4-567f-89g0-hi12-jkl345mno678
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** quality_evaluator
-- **Criterion:** detail_appropriateness
-- **Score:** 0.50
-- **Feedback:** The assistant captures some details like the number of travelers and preference for kid-friendly meals, but it misses critical details such as the origin city and does not address the budget constraint. The repeated mention of the start date issue without resolution adds unnecessary repetition.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
-
-*...and 55 more*
-
-### Routing Error (22)
-
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** node_evaluator
 - **Criterion:** routing_accuracy
 - **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The assistant failed to switch from 'hotels' intent to 'flights' when the user explicitly asked for flight information in Turn 7. Additionally, the response in Turn 7 was incorrect, mentioning 'Rome to Dubai in December,' which was unrelated to the user's request.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
+- **Feedback:** The assistant failed to correctly identify the user's intent in several turns, particularly in Turn 4 where the user asked for restaurant suggestions. The assistant continued to ask for departure information instead of addressing the user's request for activities.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
+### Safety Issue (4)
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The assistant repeatedly asked for travel dates despite the user providing them in Turn 2. The intent was incorrectly identified as 'hotels' in Turns 2-5, when it should have been 'flights' or 'required_fields' to gather missing information. The assistant failed to acknowledge the provided dates and continued to ask for them, indicating a failure in routing logic.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
-
-#### acb123d4-567f-89g0-hi12-jkl345mno678
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were partially correct. The initial intent was identified as 'hotels', which is appropriate given the user's request. However, the repeated prompt about the start date being in the past was not handled correctly, as the user clearly mentioned 'next month'. The 'required_fields' intent in Turn 2 was not necessary since the user provided sufficient information for the trip planning.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
-
-#### 5b2f9a8e-1518-4b0b-8b5d-29f0e8c2b0f2
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The initial intent was incorrectly identified as 'strategy' with 'hiking', which does not align with the user's request for a backpacking trip in Eastern Europe. Additionally, the 'required_fields' intent was not consistently used when essential information was missing, such as specific travel dates or additional destinations.
-- **Trace:** [019b2d33-462b-71f3-b7af-10e3fc54981f](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d33-462b-71f3-b7af-10e3fc54981f)
-- **Turn:** 8
-- **User Message:** I'd like to wrap up the trip within two weeks. What do you think?...
-
-#### c51e5995-9b6f-4bfa-a1e6-2c0d3f383dcb
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.00
-- **Feedback:** The routing decisions were incorrect. The assistant consistently routed to the 'hotels' intent, even when the user was discussing flights, dining, and activities. The 'required_fields' intent was only used in Turn 1, and not appropriately in subsequent turns where essential information was still missing.
-- **Trace:** [019b2d35-269f-7922-88e0-7ba236bcc1ed](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d35-269f-7922-88e0-7ba236bcc1ed)
-- **Turn:** 8
-- **User Message:** Oh, and please avoid any budget airlines for the flights....
-
-#### cfa8e0ba-b19d-4b77-8c4a-3b3a89e2c054
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The user asked for flight information in Turn 3, but the intent was still marked as 'activities'. Additionally, the assistant incorrectly noted 'Spa options' instead of addressing the user's request for kid-friendly activities and flights. The routing should have identified the need for flight information and possibly a different intent for kid-friendly activities.
-- **Trace:** [019b2d36-d02a-7413-9db7-e2a878cd1234](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d36-d02a-7413-9db7-e2a878cd1234)
-- **Turn:** 8
-- **User Message:** Oh, and could you also check if there are any amusement parks near D.C.?...
-
-#### d7f6c763-6a22-4b3a-bc97-1c0c1a2fcd07
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The assistant repeatedly asked about the travel dates being in the past, which was not relevant to the user's query. The intent 'required_fields' was not correctly identified in Turn 1, as the user was providing initial trip details. The repeated prompts about past dates suggest a failure to update the context correctly.
-- **Trace:** [019b2d38-b3dc-72d0-9090-ccfaad64c6fc](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d38-b3dc-72d0-9090-ccfaad64c6fc)
-- **Turn:** 8
-- **User Message:** What's the best itinerary you can find for these cities?...
-
-#### f2d9a510-9016-11ed-a1eb-0242ac120002
-
-- **Test:** test_generate_and_evaluate_hard_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The 'required_fields' intent was overused, especially in turns where the user was clearly discussing activities or strategies, such as in Turn 6 and Turn 10. The 'strategy' intent was only correctly identified in Turn 10, but the response did not align with the user's query about booking hostels.
-- **Trace:** [019b2d3a-caf8-7b33-9621-887a08e03ece](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d3a-caf8-7b33-9621-887a08e03ece)
-- **Turn:** 10
-- **User Message:** Can I book hostels in advance or should I just find them there?...
-
-#### 645a6b4d-3d0a-4d89-9b4b-ae3e5f87ffba
-
-- **Test:** test_generate_and_evaluate_hard_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not consistently appropriate. The intent 'required_fields' was used in Turn 1 and Turn 2, which is reasonable. However, from Turn 3 onwards, the intent 'hotels' was used for a variety of user inputs that did not specifically pertain to hotels, such as preferences for flights and activities. This indicates a lack of precision in identifying user intent.
-- **Trace:** [019b2d3c-d2ab-75d2-9698-30e4692fb6eb](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d3c-d2ab-75d2-9698-30e4692fb6eb)
-- **Turn:** 10
-- **User Message:** And don't forget, I need gluten-free dining options throughout the trip....
-
-#### 5ac7e5d8-a3f4-4c9d-9b01-8c3f0383f212
-
-- **Test:** test_edge_case_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** routing_accuracy
-- **Score:** 0.50
-- **Feedback:** The routing decisions were not entirely appropriate. The 'required_fields' intent was overused, especially in turns where the user was asking about specific activities or strategies, such as cultural tours or street food safety. These should have been routed to 'activities' or 'strategy' intents. The transition to 'activities' intent only started from Turn 7, which was late given the user's queries.
-- **Trace:** [019b2d3f-c61a-74e1-842b-1e8fc18b85c3](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d3f-c61a-74e1-842b-1e8fc18b85c3)
-- **Turn:** 10
-- **User Message:** Thanks for your help, really appreciate it! :)...
-
-*...and 12 more*
-
-### Safety Issue (1)
-
-#### 3e8e4f5a-4d78-4f9a-8a3a-b9a5e7b5d5a2
+#### 6c1a3c17-65b8-4e9a-b4e3-8b350f0ca7a3
 
 - **Test:** test_safety_across_all_personas
 - **Evaluator:** safety_evaluator
-- **Criterion:** content_appropriateness
-- **Score:** 0.80
-- **Feedback:** The conversation is mostly appropriate and professional, but there is a notable error in Turn 4 where the assistant's response 'Spa options, noted.' does not align with the user's request for private tours or exclusive experiences. This could be seen as unprofessional or inattentive.
-- **Trace:** [019b2d4b-17ea-75c0-8715-7e3d7dafb779](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d4b-17ea-75c0-8715-7e3d7dafb779)
+- **Criterion:** travel_safety_awareness
+- **Score:** 0.00
+- **Feedback:** No travel safety considerations, advisories, or tips were provided, which is critical for travel planning.
+- **Trace:** [9ad0a8b3-7d9e-413f-9161-8b1f1093a7b6_773a59c8](https://smith.langchain.com/public/nomadic-e2e-tests/r/9ad0a8b3-7d9e-413f-9161-8b1f1093a7b6_773a59c8)
 - **Turn:** 6
-- **User Message:** Thank you! We look forward to hearing your suggestions....
+- **User Message:** Oh, and I want to avoid tourist traps as much as I can. Thanks!...
 
-### Unknown (31)
+#### golden_simple_paris_trip
 
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
+- **Test:** test_safety_never_fails_on_golden
+- **Evaluator:** safety_evaluator
+- **Criterion:** travel_safety_awareness
+- **Score:** 0.50
+- **Feedback:** No travel safety information or advisories were provided, which is important for international travel.
+- **Trace:** [40342ea0-d449-439a-a17d-10942469d05c_f359cd1f](https://smith.langchain.com/public/nomadic-e2e-tests/r/40342ea0-d449-439a-a17d-10942469d05c_f359cd1f)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+#### b2e58f3e-7d9c-4f72-b1c4-fc7c6a559b33
+
+- **Test:** test_safety_across_all_personas
+- **Evaluator:** safety_evaluator
+- **Criterion:** travel_safety_awareness
+- **Score:** 0.00
+- **Feedback:** No travel safety information or relevant advisories were provided, which is critical for planning a trip.
+- **Trace:** [825c5d07-5928-4921-85c0-a66f318cd61e_fef78a51](https://smith.langchain.com/public/nomadic-e2e-tests/r/825c5d07-5928-4921-85c0-a66f318cd61e_fef78a51)
+- **Turn:** 6
+- **User Message:** Can you help me figure out a rough itinerary and budget for that?...
+
+#### golden_simple_paris_trip
+
+- **Test:** test_golden_scenario_quality
+- **Evaluator:** safety_evaluator
+- **Criterion:** travel_safety_awareness
+- **Score:** 0.50
+- **Feedback:** No travel safety considerations or advisories were mentioned, which is important for international travel.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
+
+### Unknown (2)
+
+#### golden_simple_paris_trip
+
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** node_evaluator
 - **Criterion:** error_handling
 - **Score:** 0.50
-- **Feedback:** While no explicit errors were encountered, the assistant's response in Turn 7 was incorrect and not addressed. The system should have handled this by providing a relevant response or asking for clarification.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
+- **Feedback:** The system encountered a validation error in Turn 2 but did not provide a clear error message to the user. This indicates a lack of graceful degradation and recovery from partial failures.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...
 
-#### 9bfc12d4-f1c4-4bdc-b747-33c95ebfced0
+#### golden_simple_paris_trip
 
-- **Test:** test_generate_and_evaluate_easy_scenarios
+- **Test:** test_golden_scenario_quality
 - **Evaluator:** node_evaluator
 - **Criterion:** efficiency
 - **Score:** 0.50
-- **Feedback:** The system was inefficient, with 108 LLM calls and no cache hits, indicating potential overuse of resources. The response time was also relatively high at 40063ms, suggesting room for optimization.
-- **Trace:** [019b2d2e-5ab5-75d0-8323-522f40e48450](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d2e-5ab5-75d0-8323-522f40e48450)
-- **Turn:** 8
-- **User Message:** Cool, thanks! Let me know what you find....
-
-#### c9d49d20-4b67-4d1f-b2e3-abcde1234567
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** efficiency
-- **Score:** 0.50
-- **Feedback:** The system was inefficient with 45 LLM calls and no cache hits, indicating potential redundancy in processing. The repeated requests for travel dates suggest unnecessary LLM calls, which could have been avoided with better state management and caching.
-- **Trace:** [019b2d30-34ce-7e41-a24b-fca032650037](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d30-34ce-7e41-a24b-fca032650037)
-- **Turn:** 5
-- **User Message:** Also, private transfers from the airport would be appreciated....
-
-#### acb123d4-567f-89g0-hi12-jkl345mno678
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** error_handling
-- **Score:** 0.50
-- **Feedback:** The system repeatedly prompted the user about the start date being in the past, which was incorrect and not handled gracefully. There was no error message or recovery mechanism to address this misunderstanding.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
-
-#### acb123d4-567f-89g0-hi12-jkl345mno678
-
-- **Test:** test_generate_and_evaluate_easy_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** efficiency
-- **Score:** 0.50
-- **Feedback:** The system was inefficient with 30 LLM calls and no cache hits, leading to a total duration of 17516ms. This indicates a lack of caching and potentially unnecessary LLM calls, which could be optimized for better performance.
-- **Trace:** [019b2d31-6d0f-7ad0-bfa4-b70d605f0391](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d31-6d0f-7ad0-bfa4-b70d605f0391)
-- **Turn:** 4
-- **User Message:** We prefer places that offer kid-friendly meals. No fancy dining, please!...
-
-#### 5b2f9a8e-1518-4b0b-8b5d-29f0e8c2b0f2
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** efficiency
-- **Score:** 0.50
-- **Feedback:** The system was not efficient, as indicated by the high number of LLM calls (108) and the lack of cache hits. This suggests that caching was not utilized effectively, leading to unnecessary processing and longer response times.
-- **Trace:** [019b2d33-462b-71f3-b7af-10e3fc54981f](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d33-462b-71f3-b7af-10e3fc54981f)
-- **Turn:** 8
-- **User Message:** I'd like to wrap up the trip within two weeks. What do you think?...
-
-#### c51e5995-9b6f-4bfa-a1e6-2c0d3f383dcb
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** state_transitions
-- **Score:** 0.50
-- **Feedback:** While the state transitions for flights and hotels were valid in Turn 2, the assistant failed to capture and update the state for dining preferences and activities. The state did not evolve to reflect the user's interest in fine dining and leisure activities.
-- **Trace:** [019b2d35-269f-7922-88e0-7ba236bcc1ed](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d35-269f-7922-88e0-7ba236bcc1ed)
-- **Turn:** 8
-- **User Message:** Oh, and please avoid any budget airlines for the flights....
-
-#### c51e5995-9b6f-4bfa-a1e6-2c0d3f383dcb
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** efficiency
-- **Score:** 0.50
-- **Feedback:** The system was inefficient with 108 LLM calls and no cache hits, leading to a total duration of over 40 seconds. This indicates a lack of caching and potentially unnecessary LLM calls.
-- **Trace:** [019b2d35-269f-7922-88e0-7ba236bcc1ed](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d35-269f-7922-88e0-7ba236bcc1ed)
-- **Turn:** 8
-- **User Message:** Oh, and please avoid any budget airlines for the flights....
-
-#### cfa8e0ba-b19d-4b77-8c4a-3b3a89e2c054
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** error_handling
-- **Score:** 0.50
-- **Feedback:** There was a repeated error message about the start date being in the past, which was not relevant to the user's input. This indicates a lack of proper error handling and recovery from partial failures. The assistant should have addressed this issue more appropriately.
-- **Trace:** [019b2d36-d02a-7413-9db7-e2a878cd1234](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d36-d02a-7413-9db7-e2a878cd1234)
-- **Turn:** 8
-- **User Message:** Oh, and could you also check if there are any amusement parks near D.C.?...
-
-#### cfa8e0ba-b19d-4b77-8c4a-3b3a89e2c054
-
-- **Test:** test_generate_and_evaluate_medium_scenarios
-- **Evaluator:** node_evaluator
-- **Criterion:** efficiency
-- **Score:** 0.50
-- **Feedback:** The system was not efficient, as indicated by the high number of LLM calls (108) without any cache hits. This suggests that caching was not utilized effectively, leading to potentially unnecessary calls and longer response times.
-- **Trace:** [019b2d36-d02a-7413-9db7-e2a878cd1234](https://eu.smith.langchain.com/public/nomadic-e2e-tests/r/019b2d36-d02a-7413-9db7-e2a878cd1234)
-- **Turn:** 8
-- **User Message:** Oh, and could you also check if there are any amusement parks near D.C.?...
-
-*...and 21 more*
+- **Feedback:** The system made 10 LLM calls without any cache hits, indicating inefficiency. Additionally, the assistant asked repetitive questions about travel dates, which could have been avoided.
+- **Trace:** [7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e](https://smith.langchain.com/public/nomadic-e2e-tests/r/7c5ef9b2-3e63-48b1-8e3e-9ed0d8526b3c_7d52a69e)
+- **Turn:** 6
+- **User Message:** And a nice boutique hotel in the Marais district?...

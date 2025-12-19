@@ -22,6 +22,8 @@ export interface InlineEditPillProps {
   isLLMUpdated?: boolean;
   /** Called when user clicks on the pill to acknowledge the LLM update */
   onAcknowledge?: () => void;
+  /** Whether this field has a validation error */
+  hasError?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,6 +37,7 @@ function InlineEditPillInner({
   className,
   isLLMUpdated = false,
   onAcknowledge,
+  hasError = false,
 }: InlineEditPillProps) {
   const handleClick = () => {
     if (isLLMUpdated && onAcknowledge) {
@@ -49,6 +52,7 @@ function InlineEditPillInner({
         'bg-gradient-to-b from-card to-muted/20 border border-border/50',
         'shadow-pill h-full',
         isLLMUpdated && 'border-accent/40 shadow-pill-accent',
+        hasError && 'border-destructive/50 bg-destructive/5',
         className
       )}
       onClick={handleClick}

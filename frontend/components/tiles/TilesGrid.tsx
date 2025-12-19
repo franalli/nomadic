@@ -1,12 +1,32 @@
 'use client';
 
-import { Plane, Sparkles, TentTree } from 'lucide-react';
+import { AlertCircle, Plane, RotateCcw, Sparkles, TentTree } from 'lucide-react';
 import { type ElementType, memo, useMemo, useState } from 'react';
 
 import { TileCard } from '@/components/tiles/TileCard';
+import { Skeleton } from '@/components/ui/skeleton';
 import { isActivityType, isFlightType } from '@/lib/utils';
 import type { DocumentBranch } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
+
+// Skeleton component for tile cards
+const TileCardSkeleton = memo(function TileCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-border/40 bg-card overflow-hidden shadow-lg">
+      {/* Image skeleton */}
+      <Skeleton className="h-32 w-full rounded-none" />
+      {/* Content skeleton */}
+      <div className="p-3 space-y-2">
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-3 w-1/2" />
+        <div className="flex justify-between items-center pt-2">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-8 w-8 rounded-full" />
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export type TileTabKey = 'stays' | 'flights' | 'activities';
 
@@ -45,6 +65,12 @@ type TilesGridProps = {
   onTileToggle?: (tile: Tile, tab: TileTabKey) => void;
   forcedTab?: TileTabKey;
   hideTabSwitcher?: boolean;
+  /** Show skeleton loaders while tiles are loading */
+  isLoading?: boolean;
+  /** Indicates tiles failed to load (show error state with retry) */
+  loadError?: boolean;
+  /** Callback to retry loading tiles */
+  onRetry?: () => void;
 };
 
 export const TilesGrid = memo(function TilesGrid({
@@ -54,6 +80,9 @@ export const TilesGrid = memo(function TilesGrid({
   onTileToggle,
   forcedTab,
   hideTabSwitcher = false,
+  isLoading = false,
+  loadError = false,
+  onRetry,
 }: TilesGridProps) {
   const [activeTab, setActiveTab] = useState<TileTabKey>(forcedTab ?? 'stays');
   const effectiveTab = forcedTab ?? activeTab;
@@ -145,7 +174,37 @@ export const TilesGrid = memo(function TilesGrid({
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {filteredTiles.length === 0 ? (
+        {isLoading ? (
+          // Show skeleton loaders while loading
+          <>
+            <TileCardSkeleton />
+            <TileCardSkeleton />
+            <TileCardSkeleton />
+          </>
+        ) : loadError ? (
+          // Show error state with retry button
+          <div className="border-destructive/30 bg-destructive/5 text-foreground rounded-xl border border-dashed p-4 shadow-inner sm:col-span-2 xl:col-span-3">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm font-medium">Failed to load {TAB_CONFIG[effectiveTab].label.toLowerCase()}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  There was a problem fetching options. Please try again.
+                </p>
+              </div>
+              {onRetry && (
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  Retry
+                </button>
+              )}
+            </div>
+          </div>
+        ) : filteredTiles.length === 0 ? (
           <div className="border-accent/30 bg-accent/5 text-muted-foreground rounded-xl border border-dashed p-4 text-sm shadow-inner sm:col-span-2 xl:col-span-3">
             {TAB_CONFIG[effectiveTab].emptyMessage}
           </div>

@@ -1,0 +1,67 @@
+==============================
+LIGHT EXTRACTION NODE
+==============================
+Role: Quick extraction of core trip details only.
+Parse user text for destinations, origin, dates, and travelers.
+This is a fast-path extraction for early turns.
+
+Today's date: {today}
+
+User message: "{user_text}"
+
+==============================
+ACKNOWLEDGMENTS
+==============================
+If the user message is just an acknowledgment with NO trip info, return empty:
+- "ok", "thanks", "got it", "sure", "sounds good" → all fields null, confidence: 1.0
+
+==============================
+EXTRACTION TARGETS (CORE ONLY)
+==============================
+Extract ONLY what the user explicitly mentions. NEVER invent values.
+
+DESTINATIONS (destinations_delta):
+- Real place names only: "Paris", "Tokyo", "Thailand", "Swiss Alps"
+- NOT activities: "hiking", "diving", "beach" are NOT destinations
+- NOT preferences: "budget", "luxury", "adventure" are NOT destinations
+
+ORIGIN (origin_delta):
+- Departure city: "flying from NYC" → "NYC"
+
+DATES (start_date_hint, end_date_hint, duration_days):
+- "next week", "December 15", "March 10-17"
+- "for 5 days" → duration_days: 5
+
+TRAVELERS (adults_delta, children_delta):
+- "solo" → adults: 1
+- "couple" → adults: 2
+- "family of 4" → adults: 2, children: 2
+
+BUDGET (budget_delta):
+- Numbers only: "$2000" → {budget: 2000, currency: "USD"}
+- "budget trip" or "luxury" → DO NOT extract (preferences, not amounts)
+
+==============================
+CONFIDENCE (0.0-1.0)
+==============================
+- 1.0: Clear, explicit values
+- 0.8: Standard phrasing
+- 0.6: Some inference needed
+- 0.4: Ambiguous
+- 0.2: Guessing
+
+==============================
+OUTPUT FORMAT (JSON only, max 128 tokens)
+==============================
+{
+  "destinations_delta": ["Place"] or null,
+  "origin_delta": "City" or null,
+  "start_date_hint": "date" or null,
+  "end_date_hint": "date" or null,
+  "duration_days": number or null,
+  "adults_delta": number or null,
+  "children_delta": number or null,
+  "budget_delta": {"budget": number, "currency": "USD"} or null,
+  "confidence": 0.8,
+  "confidence_reasons": []
+}

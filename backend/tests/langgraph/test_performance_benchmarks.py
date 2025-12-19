@@ -24,6 +24,8 @@ import pytest
 # Check if pytest-benchmark is available
 BENCHMARK_AVAILABLE = importlib.util.find_spec("pytest_benchmark") is not None
 
+from datetime import date, timedelta
+
 from app.plan_graph import (
     GraphState,
     TripInputs,
@@ -34,6 +36,8 @@ from app.plan_graph import (
     load_prompt,
     route_after_normalize,
 )
+
+FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 
 # Skip all tests if pytest-benchmark not installed
 pytestmark = pytest.mark.skipif(not BENCHMARK_AVAILABLE, reason="pytest-benchmark not installed")
@@ -78,7 +82,8 @@ class TestRoutingPerformance:
             metadata={},
         )
         result = benchmark(route_after_normalize, state)
-        assert result == "router"
+        # With no core fields, CORE_COLLECTION gate routes to required_fields_node
+        assert result == "required_fields_node"
 
     def test_route_after_normalize_with_short_circuit(self, benchmark):
         """Short-circuit routing should be fast."""
@@ -98,7 +103,7 @@ class TestRoutingPerformance:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={},
             metadata={

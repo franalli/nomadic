@@ -56,6 +56,13 @@ class TestMultiCityIntentIntegration:
             ("Plan a multi-city itinerary for Tokyo and Kyoto", "multi_city"),
             ("I want to do it all together", "multi_city"),
             ("Can I visit both cities?", "multi_city"),
+            # Additive phrases that should trigger multi_city (AND logic)
+            ("i wanna go to armenia too bruh", "multi_city"),
+            ("also visit Paris", "multi_city"),
+            ("add Barcelona as well", "multi_city"),
+            ("and also go to Tokyo", "multi_city"),
+            ("can we go to Rome too", "multi_city"),
+            ("let's visit Tokyo too", "multi_city"),
             # Phrases that should trigger separate (OR logic)
             ("compare destinations", "separate"),
             ("compare them", "separate"),

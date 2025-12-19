@@ -36,6 +36,123 @@ class FailureCategory(str, Enum):
 
 
 @dataclass
+class ThresholdCheck:
+    """Result of a threshold check against env-configured targets."""
+
+    metric_name: str
+    actual_value: float
+    target_value: float
+    passed: bool
+    description: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "metric_name": self.metric_name,
+            "actual_value": self.actual_value,
+            "target_value": self.target_value,
+            "passed": self.passed,
+            "description": self.description,
+        }
+
+
+def check_thresholds_from_stats(graph_stats: Dict[str, Any]) -> List[ThresholdCheck]:
+    """
+    Check graph stats against env-configured thresholds.
+
+    Uses ROUTER_CALL_RATE_TARGET and TEMPLATE_HIT_RATE_TARGET from environment.
+    Returns a list of ThresholdCheck results.
+    """
+    checks: List[ThresholdCheck] = []
+
+    # Get target thresholds from environment
+    router_call_rate_target = float(os.getenv("ROUTER_CALL_RATE_TARGET", "0.30"))
+    template_hit_rate_target = float(os.getenv("TEMPLATE_HIT_RATE_TARGET", "0.85"))
+
+    # Extract routing stats
+    routing_stats = graph_stats.get("routing", {})
+    total_turns = routing_stats.get("total_turns", 0)
+
+    if total_turns > 0:
+        # Check router call rate (lower is better - we want short-circuits)
+        router_calls = routing_stats.get("router_calls", 0)
+        router_call_rate = router_calls / total_turns
+        checks.append(
+            ThresholdCheck(
+                metric_name="router_call_rate",
+                actual_value=round(router_call_rate, 3),
+                target_value=router_call_rate_target,
+                passed=router_call_rate <= router_call_rate_target,
+                description=(
+                    f"Router called {router_calls}/{total_turns} turns "
+                    + f"({router_call_rate:.1%})"
+                ),
+            )
+        )
+
+    # Check template hit rate (higher is better)
+    template_stats = graph_stats.get("template", {})
+    template_attempts = template_stats.get("attempts", 0)
+    template_hits = template_stats.get("hits", 0)
+
+    if template_attempts > 0:
+        template_hit_rate = template_hits / template_attempts
+        checks.append(
+            ThresholdCheck(
+                metric_name="template_hit_rate",
+                actual_value=round(template_hit_rate, 3),
+                target_value=template_hit_rate_target,
+                passed=template_hit_rate >= template_hit_rate_target,
+                description=(
+                    f"Template hit {template_hits}/{template_attempts} attempts "
+                    + f"({template_hit_rate:.1%})"
+                ),
+            )
+        )
+
+    # Check cache hit rates (informational, no hard threshold)
+    extractor_stats = graph_stats.get("extractor", {})
+    extractor_total = extractor_stats.get("full_calls", 0) + extractor_stats.get("light_calls", 0)
+    extractor_cache_hits = extractor_stats.get("cache_hits", 0)
+
+    if extractor_total > 0:
+        cache_rate = extractor_cache_hits / (extractor_total + extractor_cache_hits)
+        checks.append(
+            ThresholdCheck(
+                metric_name="extractor_cache_rate",
+                actual_value=round(cache_rate, 3),
+                target_value=0.0,  # Informational only
+                passed=True,  # Always passes (informational)
+                description=(
+                    f"Extractor cache hit {extractor_cache_hits}/"
+                    + f"{extractor_total + extractor_cache_hits} ({cache_rate:.1%})"
+                ),
+            )
+        )
+
+    strategy_stats = graph_stats.get("strategy", {})
+    strategy_cache_hits = strategy_stats.get("cache_hits", 0)
+    strategy_calls = strategy_stats.get("calls", 0)
+
+    if strategy_calls > 0 or strategy_cache_hits > 0:
+        total_strategy = strategy_calls + strategy_cache_hits
+        strategy_cache_rate = strategy_cache_hits / total_strategy if total_strategy > 0 else 0
+        checks.append(
+            ThresholdCheck(
+                metric_name="strategy_cache_rate",
+                actual_value=round(strategy_cache_rate, 3),
+                target_value=0.0,  # Informational only
+                passed=True,  # Always passes (informational)
+                description=(
+                    f"Strategy cache hit {strategy_cache_hits}/{total_strategy} "
+                    + f"({strategy_cache_rate:.1%})"
+                ),
+            )
+        )
+
+    return checks
+
+
+@dataclass
 class DiagnosticFailure:
     """Detailed information about a single test failure."""
 
@@ -216,6 +333,12 @@ class DiagnosticReport:
     total_llm_calls: int = 0
     total_llm_time_ms: float = 0.0
 
+    # Aggregated graph stats from all scenarios
+    aggregated_graph_stats: Dict[str, Any] = field(default_factory=dict)
+
+    # Threshold checks against env-configured targets
+    threshold_checks: List[ThresholdCheck] = field(default_factory=list)
+
     def __post_init__(self):
         if not self.timestamp:
             self.timestamp = datetime.now().isoformat()
@@ -295,6 +418,15 @@ class DiagnosticReport:
         all_failures.sort(key=lambda f: f.score)
         return all_failures[:n]
 
+    def set_graph_stats(self, graph_stats: Dict[str, Any]) -> None:
+        """Set aggregated graph stats and run threshold checks."""
+        self.aggregated_graph_stats = graph_stats
+        self.threshold_checks = check_thresholds_from_stats(graph_stats)
+
+    def get_failed_threshold_checks(self) -> List[ThresholdCheck]:
+        """Get threshold checks that failed."""
+        return [c for c in self.threshold_checks if not c.passed]
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -309,6 +441,8 @@ class DiagnosticReport:
                 cat: [f.to_dict() for f in failures]
                 for cat, failures in self.failures_by_category.items()
             },
+            "aggregated_graph_stats": self.aggregated_graph_stats,
+            "threshold_checks": [c.to_dict() for c in self.threshold_checks],
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -422,6 +556,28 @@ class DiagnosticReport:
             print("\n📋 Failures by Category:")
             for category, failures in sorted(self.failures_by_category.items()):
                 print(f"   • {category.replace('_', ' ').title()}: {len(failures)}")
+
+        # Threshold checks
+        if self.threshold_checks:
+            failed_checks = self.get_failed_threshold_checks()
+            if failed_checks:
+                print("\n⚠️  Threshold Checks FAILED:")
+                for check in failed_checks:
+                    print(
+                        f"   ❌ {check.metric_name}: {check.actual_value:.1%} "
+                        f"vs target {check.target_value:.1%}"
+                    )
+                    print(f"      {check.description}")
+            else:
+                print("\n✅ All Threshold Checks Passed:")
+            # Show all checks
+            for check in self.threshold_checks:
+                icon = "✅" if check.passed else "❌"
+                if check.target_value > 0:  # Skip informational checks
+                    print(
+                        f"   {icon} {check.metric_name}: {check.actual_value:.3f} "
+                        f"(target: {check.target_value:.2f})"
+                    )
 
         # Top 3 failures
         top_failures = self.get_top_failures(3)
@@ -537,6 +693,10 @@ class DiagnosticCollector:
             passed=False,
             failures=[failure],
         )
+
+    def set_graph_stats(self, graph_stats: Dict[str, Any]) -> None:
+        """Set aggregated graph stats and run threshold checks."""
+        self.report.set_graph_stats(graph_stats)
 
     def export(self, output_dir: str = "e2e_results") -> Dict[str, str]:
         """

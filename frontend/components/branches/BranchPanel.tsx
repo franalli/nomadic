@@ -9,10 +9,34 @@ import {
   TilesGrid,
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
+import { Skeleton } from '@/components/ui/skeleton';
 import { DETAIL_PRESETS } from '@/lib/mocks';
 import { formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
+
+// Skeleton component for branch cards
+const BranchCardSkeleton = memo(function BranchCardSkeleton() {
+  return (
+    <div className="rounded-2xl border border-border/40 bg-card overflow-hidden shadow-lg">
+      {/* Hero image skeleton */}
+      <Skeleton className="h-40 w-full rounded-none" />
+      {/* Content skeleton */}
+      <div className="p-4 space-y-3">
+        <div className="flex justify-between items-start">
+          <Skeleton className="h-5 w-16 rounded-full" />
+          <Skeleton className="h-5 w-24 rounded-full" />
+        </div>
+        <Skeleton className="h-6 w-3/4" />
+        <Skeleton className="h-4 w-full" />
+        <div className="flex justify-between items-center pt-2">
+          <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-4 w-20" />
+        </div>
+      </div>
+    </div>
+  );
+});
 
 type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
 
@@ -70,6 +94,8 @@ type BranchPanelProps = {
   onBookTrip?: (branchId: string) => void;
   canBookTrip?: boolean;
   tripInputs?: DocumentTripInputs | null;
+  /** Show skeleton loaders while branches are loading */
+  isLoading?: boolean;
 };
 
 export const BranchPanel = memo(function BranchPanel({
@@ -85,6 +111,7 @@ export const BranchPanel = memo(function BranchPanel({
   onBookTrip,
   canBookTrip = true,
   tripInputs,
+  isLoading = false,
 }: BranchPanelProps) {
   const hasBranches = branches.length > 0;
   const selected = hasBranches
@@ -235,6 +262,22 @@ export const BranchPanel = memo(function BranchPanel({
     tilesByTab,
     tripInputs,
   ]);
+
+  // Show skeleton loaders while loading
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-24" />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <BranchCardSkeleton />
+            <BranchCardSkeleton />
+            <BranchCardSkeleton />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!hasBranches) {
     return (
@@ -594,6 +637,20 @@ export const BranchPanel = memo(function BranchPanel({
             }
           }}
           disabled={!canBookTrip || !selected}
+          title={
+            !selected
+              ? 'Select a trip option above to continue'
+              : !canBookTrip
+                ? 'Complete your trip details to enable booking'
+                : undefined
+          }
+          aria-label={
+            !selected
+              ? 'Book Your Trip - Select a trip option first'
+              : !canBookTrip
+                ? 'Book Your Trip - Complete trip details first'
+                : 'Book Your Trip'
+          }
           className={`focus-visible:outline-primary rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             !canBookTrip || !selected
               ? 'bg-muted text-muted-foreground cursor-not-allowed shadow-inner'

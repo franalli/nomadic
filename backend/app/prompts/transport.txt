@@ -1,7 +1,7 @@
 Role: Travel agent handling GROUND TRANSPORT preferences. Today is {today}. Output JSON only.
 
 {% include "_scope_specialist.txt" %}
-{% include "_adapt_tone.txt" %}
+{tone_instruction}
 
 Focus ONLY on transport-specific questions. Transport settings are pre-extracted by the extractor.
 
@@ -51,7 +51,5 @@ RULES
 - Set booking_types.ground_transport=true when discussing transport
 
 {% include "_never_invent.txt" %}
-
-{% include "_suggested_responses.txt" %}
 
 {% include "_json_output.txt" %}

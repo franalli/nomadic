@@ -14,15 +14,20 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+from datetime import date, timedelta
+
 from app.plan_graph import (
     CONFIDENCE_THRESHOLD_SKIP_ROUTER,
     GraphState,
     TripInputs,
     route_after_extractor,
+    route_after_lqa_prepass,
     route_after_normalize,
     route_after_required_fields,
     route_after_router,
 )
+
+FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 
 
 class TestRouteAfterExtractor:
@@ -58,7 +63,7 @@ class TestRouteAfterExtractor:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={"generate_plan": True},
             metadata={},
@@ -78,7 +83,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={"short_circuit": "greeting"},
             metadata={
@@ -98,7 +103,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={},
             metadata={
@@ -111,16 +116,19 @@ class TestRouteAfterNormalize:
         )
         result = route_after_normalize(state)
         assert result == "required_fields_node"
-        assert state.metadata.get("confidence_routing") == "high_confidence_bypass"
+        # Confidence routing now uses "high_confidence:X.XX" format
+        conf_routing = state.metadata.get("confidence_routing", "")
+        assert conf_routing.startswith("high_confidence:")
 
     def test_bypass_blocked_by_intent_keywords(self):
-        """Input with intent keywords should go to router."""
+        """Input with intent keywords should route directly to appropriate node
+        (not generic router)."""
         state = GraphState(
             user_text="what about hiking?",
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={},
             metadata={
@@ -132,7 +140,9 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # New behavior: deterministic keyword router goes directly to strategy_node
+        # (skipping the LLM router entirely)
+        assert result == "strategy_node"
 
     def test_bypass_blocked_by_long_input(self):
         """Long input (>30 chars) should go to router."""
@@ -141,7 +151,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={},
             metadata={
@@ -162,7 +172,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Pariz"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             flags={},
             metadata={
@@ -177,7 +187,8 @@ class TestRouteAfterNormalize:
         assert result == "router"
 
     def test_bypass_blocked_by_incomplete_fields(self):
-        """Incomplete core fields should go to router."""
+        """Incomplete core fields should route to required_fields_node
+        (via CORE_COLLECTION gate)."""
         state = GraphState(
             user_text="ok",
             trip_inputs=TripInputs(
@@ -194,10 +205,11 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # New behavior: CORE_COLLECTION gate catches missing fields before reaching router
+        assert result == "required_fields_node"
 
     def test_default_routes_to_router(self):
-        """Default case should route to router."""
+        """Default case with no core fields should route to required_fields_node."""
         state = GraphState(
             user_text="I want to plan a trip to Tokyo",
             trip_inputs=TripInputs(),
@@ -205,7 +217,8 @@ class TestRouteAfterNormalize:
             metadata={},
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # New behavior: CORE_COLLECTION gate catches missing core fields
+        assert result == "required_fields_node"
 
 
 class TestRouteAfterRouter:
@@ -263,7 +276,7 @@ class TestRouteAfterRouter:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             intent="flights",
             parsed_inputs={
@@ -322,7 +335,7 @@ class TestRouteAfterRequiredFields:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             metadata={},
         )
@@ -336,7 +349,7 @@ class TestRouteAfterRequiredFields:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             last_summary="Trip noted.",
             chat_history=[],
@@ -358,3 +371,93 @@ class TestRouteAfterRequiredFields:
         result = route_after_required_fields(state)
         assert result == "validate_and_merge"
         assert "deferred_intent" not in state.metadata
+
+
+class TestRouteAfterLqaPrepass:
+    """Tests for route_after_lqa_prepass routing function.
+
+    This routing function decides whether to skip the extractor
+    (when LQA successfully parsed a simple answer) or fall through
+    to the extractor (when LQA bailed out).
+    """
+
+    def test_lqa_hit_routes_to_normalize_inputs(self):
+        """LQA hit should route directly to normalize_inputs, skipping extractor."""
+        state = GraphState(
+            user_text="Paris",
+            trip_inputs=TripInputs(),
+            flags={"lqa_prepass": True},
+            parsed_inputs={"destinations_delta": ["Paris"]},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "normalize_inputs"
+
+    def test_lqa_bail_routes_to_extractor(self):
+        """LQA bail should route to extractor for full extraction."""
+        state = GraphState(
+            user_text="I want to go to Paris and book hotels",
+            trip_inputs=TripInputs(),
+            flags={"lqa_prepass": False, "lqa_bail_reason": "multi_intent"},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "extractor"
+
+    def test_missing_lqa_flag_routes_to_extractor(self):
+        """Missing lqa_prepass flag should default to extractor."""
+        state = GraphState(
+            user_text="Paris",
+            trip_inputs=TripInputs(),
+            flags={},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "extractor"
+
+    def test_lqa_hit_with_parsed_origin(self):
+        """LQA hit with origin parsed should route to normalize_inputs."""
+        state = GraphState(
+            user_text="from London",
+            trip_inputs=TripInputs(),
+            flags={"lqa_prepass": True},
+            parsed_inputs={"origin_delta": "London"},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "normalize_inputs"
+
+    def test_lqa_hit_with_parsed_travelers(self):
+        """LQA hit with travelers parsed should route to normalize_inputs."""
+        state = GraphState(
+            user_text="2 adults",
+            trip_inputs=TripInputs(),
+            flags={"lqa_prepass": True},
+            parsed_inputs={"adults_delta": 2},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "normalize_inputs"
+
+    def test_lqa_bail_too_long_routes_to_extractor(self):
+        """LQA bail due to too long input should route to extractor."""
+        long_text = "I want to go to Paris and visit all the museums and eat croissants"
+        state = GraphState(
+            user_text=long_text,
+            trip_inputs=TripInputs(),
+            flags={"lqa_prepass": False, "lqa_bail_reason": "too_long"},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "extractor"
+
+    def test_lqa_bail_negation_routes_to_extractor(self):
+        """LQA bail due to negation should route to extractor."""
+        state = GraphState(
+            user_text="not Paris, somewhere else",
+            trip_inputs=TripInputs(),
+            flags={"lqa_prepass": False, "lqa_bail_reason": "negation"},
+            metadata={},
+        )
+        result = route_after_lqa_prepass(state)
+        assert result == "extractor"

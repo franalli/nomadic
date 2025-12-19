@@ -14,6 +14,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+from datetime import date, timedelta
+
 from app.plan_graph import (
     GraphState,
     TripInputs,
@@ -26,6 +28,9 @@ from app.plan_graph import (
     _set_cached_response,
     load_prompt,
 )
+
+FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
+FUTURE_END_DATE = (date.today() + timedelta(days=40)).isoformat()
 
 
 class TestComputeCacheKey:
@@ -72,14 +77,14 @@ class TestGetCoreFieldsState:
         trip_inputs = TripInputs(
             destinations=["Paris", "London"],
             origin="New York",
-            start_date="2025-06-01",
-            end_date="2025-06-15",
+            start_date=FUTURE_DATE,
+            end_date=FUTURE_END_DATE,
         )
         state = _get_core_fields_state(trip_inputs)
         assert "Paris" in state
         assert "London" in state
         assert "New York" in state
-        assert "2025-06-01" in state
+        assert FUTURE_DATE in state
         assert "true" in state.lower() or "True" in state  # has_end_date
 
     def test_destinations_sorted_for_consistency(self):

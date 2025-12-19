@@ -191,6 +191,8 @@ export function NomadicLanding() {
     originInputExpanded,
     pendingOrigin,
     pendingDestination,
+    validationError,
+    clearValidationError,
     setTripInputsDraft,
     setEditingField,
     setSelectedLocationBadge,
@@ -324,6 +326,8 @@ export function NomadicLanding() {
         destinationInputExpanded={destinationInputExpanded}
         pendingOrigin={pendingOrigin}
         pendingDestination={pendingDestination}
+        validationError={validationError}
+        onClearValidationError={clearValidationError}
         onStartEditingField={handleStartEditingField}
         onFieldChange={handleFieldChange}
         onCommitField={handleCommitField}

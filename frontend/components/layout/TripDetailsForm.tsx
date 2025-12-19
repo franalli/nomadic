@@ -145,6 +145,10 @@ export interface TripDetailsFormProps {
   pendingOrigin: string | null;
   pendingDestination: string | null;
 
+  // Inline validation errors
+  validationError: { field: 'origin' | 'destination'; message: string } | null;
+  onClearValidationError: () => void;
+
   // Callbacks for editing
   onStartEditingField: (field: keyof TripInputsDraft) => void;
   onFieldChange: (field: keyof TripInputsDraft, value: string) => void;
@@ -230,6 +234,8 @@ function TripDetailsFormInner({
   destinationInputExpanded: _destinationInputExpanded,
   pendingOrigin,
   pendingDestination,
+  validationError,
+  onClearValidationError,
   onStartEditingField: _onStartEditingField,
   onFieldChange,
   onCommitField,
@@ -329,78 +335,104 @@ function TripDetailsFormInner({
       {/* Row 1: Always-visible inline editing pills */}
       <div className="grid grid-cols-3 gap-3 items-stretch">
         {/* From field - inline */}
-        <InlineEditPill
-          label="From"
-          icon={MapPin}
-          isLLMUpdated={isFieldLLMUpdated('origin')}
-          onAcknowledge={() => acknowledgeField('origin')}
-        >
-          {hasOrigin && !pendingOrigin ? (
-            <LocationBadge
-              type="origin"
-              value={tripInputs.origin!}
-              isSelected={selectedLocationBadge === 'origin'}
-              onSelect={onSelectLocationBadge}
-              onRemove={onRemoveOrigin}
-            />
-          ) : pendingOrigin ? (
-            <div className="inline-flex items-center gap-1.5 animate-pulse">
-              <Loader2 className="h-3 w-3 text-primary animate-spin" />
-              <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
-            </div>
-          ) : (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (originInput.trim()) {
-                  onSetOrigin(originInput);
-                  setOriginInput('');
-                }
-              }}
-              className="flex-1"
-            >
-              <input
-                type="text"
-                value={originInput}
-                onChange={(e) => setOriginInput(e.target.value)}
-                placeholder="Enter city..."
-                className="w-full bg-transparent border-none text-sm placeholder:text-muted-foreground/50 focus:outline-none"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (originInput.trim()) {
-                      onSetOrigin(originInput);
-                      setOriginInput('');
-                    }
+        <div className="flex flex-col gap-1">
+          <InlineEditPill
+            label="From"
+            icon={MapPin}
+            isLLMUpdated={isFieldLLMUpdated('origin')}
+            onAcknowledge={() => acknowledgeField('origin')}
+            hasError={validationError?.field === 'origin'}
+          >
+            {hasOrigin && !pendingOrigin ? (
+              <LocationBadge
+                type="origin"
+                value={tripInputs.origin!}
+                isSelected={selectedLocationBadge === 'origin'}
+                onSelect={onSelectLocationBadge}
+                onRemove={onRemoveOrigin}
+              />
+            ) : pendingOrigin ? (
+              <div className="inline-flex items-center gap-1.5 animate-pulse">
+                <Loader2 className="h-3 w-3 text-primary animate-spin" />
+                <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
+              </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (originInput.trim()) {
+                    onSetOrigin(originInput);
+                    setOriginInput('');
                   }
                 }}
-              />
-            </form>
+                className="flex-1"
+              >
+                <input
+                  type="text"
+                  value={originInput}
+                  onChange={(e) => {
+                    setOriginInput(e.target.value);
+                    if (validationError?.field === 'origin') onClearValidationError();
+                  }}
+                  placeholder="Enter city..."
+                  className={`w-full bg-transparent border-none text-sm placeholder:text-muted-foreground/50 focus:outline-none ${
+                    validationError?.field === 'origin' ? 'text-destructive' : ''
+                  }`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (originInput.trim()) {
+                        onSetOrigin(originInput);
+                        setOriginInput('');
+                      }
+                    }
+                  }}
+                />
+              </form>
+            )}
+          </InlineEditPill>
+          {validationError?.field === 'origin' && (
+            <p className="text-[11px] text-destructive flex items-center gap-1 px-2">
+              <AlertCircle className="h-3 w-3 flex-shrink-0" />
+              <span>{validationError.message}</span>
+            </p>
           )}
-        </InlineEditPill>
+        </div>
 
         {/* Where to field - inline with truncation */}
-        <InlineEditPill
-          label="Where to"
-          icon={MapPin}
-          isLLMUpdated={isFieldLLMUpdated('destinations')}
-          onAcknowledge={() => acknowledgeField('destinations')}
-        >
-          <TruncatedDestinationList
-            destinations={tripInputs.destinations ?? []}
-            maxVisible={2}
-            selectedBadge={selectedLocationBadge}
-            onSelectBadge={onSelectLocationBadge}
-            onRemoveDestination={onRemoveDestination}
-            destinationInput={destinationInput}
-            setDestinationInput={setDestinationInput}
-            onAddDestination={onAddDestination}
-            hasDestination={hasDestination}
-            pendingDestination={pendingDestination}
-            multiCityIntent={tripInputs.multi_city_intent}
-            onToggleMultiCity={onToggleMultiCity}
-          />
-        </InlineEditPill>
+        <div className="flex flex-col gap-1">
+          <InlineEditPill
+            label="Where to"
+            icon={MapPin}
+            isLLMUpdated={isFieldLLMUpdated('destinations')}
+            onAcknowledge={() => acknowledgeField('destinations')}
+            hasError={validationError?.field === 'destination'}
+          >
+            <TruncatedDestinationList
+              destinations={tripInputs.destinations ?? []}
+              maxVisible={2}
+              selectedBadge={selectedLocationBadge}
+              onSelectBadge={onSelectLocationBadge}
+              onRemoveDestination={onRemoveDestination}
+              destinationInput={destinationInput}
+              setDestinationInput={(v) => {
+                setDestinationInput(v);
+                if (validationError?.field === 'destination') onClearValidationError();
+              }}
+              onAddDestination={onAddDestination}
+              hasDestination={hasDestination}
+              pendingDestination={pendingDestination}
+              multiCityIntent={tripInputs.multi_city_intent}
+              onToggleMultiCity={onToggleMultiCity}
+            />
+          </InlineEditPill>
+          {validationError?.field === 'destination' && (
+            <p className="text-[11px] text-destructive flex items-center gap-1 px-2">
+              <AlertCircle className="h-3 w-3 flex-shrink-0" />
+              <span>{validationError.message}</span>
+            </p>
+          )}
+        </div>
 
         {/* Dates field - inline with calendar popover */}
         <InlineEditPill

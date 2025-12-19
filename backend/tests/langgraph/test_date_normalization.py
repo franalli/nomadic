@@ -7,6 +7,7 @@ Tests cover:
 - US formats (12-28-2025, 12/28/2025)
 - Partial dates (December 2025)
 - Relative dates (tomorrow, next week)
+- Date ranges (December 20-27)
 - Edge cases and error handling
 """
 
@@ -17,6 +18,7 @@ import pytest
 from app.plan_graph import (
     GraphState,
     TripInputs,
+    _date_normalizer,
     _normalize_date,
     _trip_normalizer,
     normalize_inputs,
@@ -175,6 +177,53 @@ class TestPartialDates:
         iso_date, was_partial = _trip_normalizer.normalize_date_with_info(input_date)
         assert iso_date is not None, f"Failed to parse '{input_date}'"
         assert was_partial is False, f"'{input_date}' should NOT be flagged as partial"
+
+
+class TestDateRangeParsing:
+    """Test date range parsing (e.g., 'December 20-27')."""
+
+    @pytest.mark.parametrize(
+        "input_range,expected_start,expected_end",
+        [
+            # Month first format
+            ("December 20-27", "2025-12-20", "2025-12-27"),
+            ("Dec 20-27", "2025-12-20", "2025-12-27"),
+            ("January 5-12", "2026-01-05", "2026-01-12"),
+            ("Jan 5-12", "2026-01-05", "2026-01-12"),
+            # With year
+            ("December 20-27, 2025", "2025-12-20", "2025-12-27"),
+            ("January 5-12, 2026", "2026-01-05", "2026-01-12"),
+            # Day first format
+            ("20-27 December", "2025-12-20", "2025-12-27"),
+            ("5-12 January", "2026-01-05", "2026-01-12"),
+            # With ordinal suffixes
+            ("December 20th-27th", "2025-12-20", "2025-12-27"),
+            ("March 1st-7th", "2026-03-01", "2026-03-07"),
+            # With 'to' separator
+            ("December 20 to 27", "2025-12-20", "2025-12-27"),
+        ],
+    )
+    def test_date_range_parsing(self, input_range: str, expected_start: str, expected_end: str):
+        """Test parsing of date ranges like 'December 20-27'."""
+        start, end = _date_normalizer.parse_date_range(input_range)
+        assert start == expected_start, f"Start date mismatch for '{input_range}'"
+        assert end == expected_end, f"End date mismatch for '{input_range}'"
+
+    @pytest.mark.parametrize(
+        "input_text",
+        [
+            "December 25",  # Single date, not a range
+            "next week",  # Relative date
+            "2025-12-20",  # ISO format
+            "Paris",  # Not a date
+            "I want to go to Rome",  # Sentence
+        ],
+    )
+    def test_non_range_inputs_return_none(self, input_text: str):
+        """Test that non-range inputs return (None, None)."""
+        start, end = _date_normalizer.parse_date_range(input_text)
+        assert start is None, f"Expected None for start with '{input_text}'"
+        assert end is None, f"Expected None for end with '{input_text}'"
 
 
 class TestRelativeDates:

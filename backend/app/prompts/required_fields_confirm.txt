@@ -51,6 +51,4 @@ QUESTION_TARGET FIELD
 Set question_target to indicate what your question/confirmation is asking about:
 - "destinations" | "origin" | "dates" | "travelers" | "budget" | "activities" | "general" | null
 
-{% include "_suggested_responses.txt" %}
-
 {% include "_json_output.txt" %}

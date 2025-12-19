@@ -14,6 +14,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+from datetime import date, timedelta
+
 from app.plan_graph import (
     CONFIDENCE_THRESHOLD_SKIP_ROUTER,
     GraphState,
@@ -21,6 +23,8 @@ from app.plan_graph import (
     _apply_typo_corrections,
     route_after_normalize,
 )
+
+FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 
 
 class TestRouteAfterNormalize:
@@ -45,7 +49,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             metadata={
                 "extraction_confidence": {
@@ -57,17 +61,20 @@ class TestRouteAfterNormalize:
         )
         result = route_after_normalize(state)
         assert result == "required_fields_node"
-        assert state.metadata.get("confidence_routing") == "high_confidence_bypass"
-        assert state.intent == "required_fields"
+        # Confidence routing now uses "high_confidence:X.XX" format
+        conf_routing = state.metadata.get("confidence_routing", "")
+        assert conf_routing.startswith("high_confidence:")
+        # Note: state.intent is set in normalize_inputs node, not in routing function
+        # When testing routing in isolation, intent is not set on state
 
     def test_no_bypass_with_intent_keywords(self):
-        """Input with intent keywords should go to router even with high confidence."""
+        """Input with intent keywords routes directly to appropriate node (not generic router)."""
         state = GraphState(
             user_text="what about hiking?",  # Has intent keyword
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             metadata={
                 "extraction_confidence": {
@@ -78,8 +85,8 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "router"
-        assert "router:" in state.metadata.get("confidence_routing", "")
+        # New behavior: deterministic keyword router goes directly to strategy_node
+        assert result == "strategy_node"
 
     def test_no_bypass_with_long_input(self):
         """Long input should go to router even with high confidence."""
@@ -88,7 +95,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             metadata={
                 "extraction_confidence": {
@@ -108,7 +115,7 @@ class TestRouteAfterNormalize:
             trip_inputs=TripInputs(
                 destinations=["Pariz"],
                 origin="London",
-                start_date="2025-06-01",
+                start_date=FUTURE_DATE,
             ),
             metadata={
                 "extraction_confidence": {
@@ -122,7 +129,8 @@ class TestRouteAfterNormalize:
         assert result == "router"
 
     def test_no_bypass_when_core_fields_incomplete(self):
-        """Incomplete core fields should go to router."""
+        """Incomplete core fields should route to required_fields_node
+        (via CORE_COLLECTION gate)."""
         state = GraphState(
             user_text="ok",
             trip_inputs=TripInputs(
@@ -139,17 +147,19 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # New behavior: CORE_COLLECTION gate catches missing fields
+        assert result == "required_fields_node"
 
     def test_default_routes_to_router(self):
-        """Default case should route to router."""
+        """Default case with missing core fields should route to required_fields_node."""
         state = GraphState(
             user_text="I want to plan a trip",
             trip_inputs=TripInputs(),
             metadata={},
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # New behavior: CORE_COLLECTION gate catches missing core fields
+        assert result == "required_fields_node"
 
 
 class TestApplyTypoCorrections:

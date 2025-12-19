@@ -1,0 +1,37 @@
+Role: Generate ONE warm question for missing trip info. Output JSON only.
+
+{tone_instruction}
+
+Missing: {missing_fields}
+Current trip: {trip_inputs}
+
+==============================
+RULES
+==============================
+- Ask about the FIRST missing field only
+- Keep question under 15 words
+- Generate exactly 3 realistic user responses as suggestions
+- Suggestions must be example ANSWERS, not instructions
+
+==============================
+FIELD-SPECIFIC QUESTIONS
+==============================
+destinations missing → "Where are you dreaming of going?"
+origin missing → "Where will you be flying from?"
+start_date missing → "When are you looking to travel?"
+
+==============================
+SUGGESTION EXAMPLES
+==============================
+For destinations: ["Bali, Indonesia", "Paris, France", "The Maldives"]
+For origin: ["New York", "London", "Los Angeles"]
+For dates: ["Next month", "December 20-27", "First week of January"]
+
+==============================
+OUTPUT FORMAT (strict JSON)
+==============================
+{
+  "assistant_message": "Your warm question here",
+  "suggested_responses": ["Answer 1", "Answer 2", "Answer 3"],
+  "question_target": "destinations" | "origin" | "dates"
+}

@@ -7,12 +7,14 @@ import json
 import os
 import random as _random_module
 import re
+import time
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from enum import Enum, IntEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -42,6 +44,7 @@ from app.crud_trip import (
 )
 from app.known_places import (
     KNOWN_COUNTRIES,
+    is_known_place,
     normalize_place_synonym,
 )
 from app.schemas import (
@@ -223,6 +226,705 @@ def _debug_node_exit(node_name: str, state: "GraphState") -> None:
 # =============================================================================
 
 
+# Gate Precedence Enum - explicit ordering of routing gates
+# Lower values = higher priority (checked first)
+class GatePrecedence(IntEnum):
+    """
+    Explicit ordering of routing gates in _route_after_extraction().
+    Gates are checked in priority order; first match wins.
+    """
+
+    SHORT_CIRCUIT = 1  # Greeting, acknowledgment, off-topic
+    FAST_PATH = 2  # Direct field updates (fast-path extraction)
+    CORE_COLLECTION = 3  # Core fields missing → required_fields
+    HIGH_CONFIDENCE = 4  # High conf + short input + no intent keywords
+    QUESTION_KEYWORD = 4.5  # Phase 6: Question-word + domain keyword combo
+    KEYWORD_HEURISTIC = 5  # Unambiguous domain keywords
+    SCORING_ROUTER = 6  # Phase 3: Multi-signal scoring deterministic router
+    ROUTER_LLM = 99  # Default: invoke router LLM
+
+
+# =============================================================================
+# GATE EVALUATOR (Phase 6 Consolidation)
+# =============================================================================
+# Centralized gate evaluation logic. All routing decisions go through here.
+
+
+@dataclass
+class GateResult:
+    """Result of gate evaluation - computed once per routing decision."""
+
+    gate_fired: GatePrecedence
+    destination: str  # Node to route to
+    reason: str  # Human-readable explanation
+    skipped_gates: List[str] = field(default_factory=list)  # Gates evaluated but not fired
+    eval_time_ms: float = 0.0  # Time taken to evaluate all gates
+    # For mutating state in the router function
+    intent: Optional[str] = None
+    strategy_topic: Optional[str] = None
+    question_target: Optional[str] = None
+    metadata_updates: Dict[str, Any] = field(default_factory=dict)
+
+
+class GateEvaluator:
+    """
+    Centralized gate evaluator for routing decisions.
+
+    All routing gates are evaluated here in priority order.
+    Nodes should read the GateResult from state rather than re-deriving conditions.
+    """
+
+    # Phase 6: Question words that, combined with domain keywords, indicate clear intent
+    QUESTION_WORDS = frozenset(
+        {
+            "what",
+            "which",
+            "how",
+            "where",
+            "when",
+            "can",
+            "could",
+            "should",
+            "do",
+            "does",
+            "are",
+            "is",
+        }
+    )
+
+    # Domain keywords for question-word combo detection
+    DOMAIN_KEYWORDS = {
+        "flights": {"flight", "flights", "flying", "fly", "airline", "airlines", "airport"},
+        "hotels": {
+            "hotel",
+            "hotels",
+            "stay",
+            "accommodation",
+            "lodging",
+            "room",
+            "rooms",
+            "resort",
+        },
+        "transport": {
+            "transport",
+            "train",
+            "trains",
+            "bus",
+            "car rental",
+            "rental car",
+            "drive",
+            "driving",
+        },
+        "activities": {
+            "activity",
+            "activities",
+            "things to do",
+            "tour",
+            "tours",
+            "excursion",
+            "sightseeing",
+        },
+    }
+
+    @classmethod
+    def evaluate(cls, state: "GraphState") -> GateResult:
+        """
+        Evaluate all gates and return the result.
+
+        This is the ONLY place where routing decisions should be made.
+
+        Args:
+            state: Current graph state
+
+        Returns:
+            GateResult with gate_fired, destination, and metadata
+        """
+        start_time = time.perf_counter()
+        skipped_gates = []
+
+        # Extract commonly used values
+        user_text = state.user_text or ""
+        user_text_lower = user_text.lower()
+        ti = state.trip_inputs
+        flags = state.flags
+        extraction_conf = state.metadata.get("extraction_confidence", {})
+
+        # Use TripReadiness for consistent missing-fields computation
+        readiness = compute_trip_readiness(ti)
+
+        # Gate 0: GENERATE_REQUESTED
+        # When user triggers plan generation (e.g., "GENERATE_PLAN_NOW"), route
+        # directly to generate handling. This takes priority over everything else.
+        if flags.get("generate_requested"):
+            return cls._build_result(
+                gate=GatePrecedence.SHORT_CIRCUIT,  # High priority
+                destination="generate_responder",
+                reason="generate_requested",
+                start_time=start_time,
+                skipped=skipped_gates,
+                metadata_updates={
+                    "router_path": "generate_requested",
+                    "router_bypassed": True,
+                },
+            )
+        skipped_gates.append("GENERATE_REQUESTED")
+
+        # Gate 1: SHORT_CIRCUIT
+        if flags.get("short_circuit"):
+            sc_type = flags.get("short_circuit")
+            return cls._build_result(
+                gate=GatePrecedence.SHORT_CIRCUIT,
+                destination="short_circuit_responder",
+                reason=f"short_circuit:{sc_type}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                metadata_updates={"router_path": f"short_circuit:{sc_type}"},
+            )
+        skipped_gates.append("SHORT_CIRCUIT")
+
+        # Gate 1b: INFEASIBILITY_DETECTION
+        # Import here to avoid circular dependency (function defined later)
+        has_infeasibility, infeasibility_type = _has_infeasibility_signals(user_text, state)
+        if has_infeasibility:
+            return cls._build_result(
+                gate=GatePrecedence.SHORT_CIRCUIT,  # Same priority as short_circuit
+                destination="correction_node",
+                reason=f"infeasibility:{infeasibility_type}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent="correction_needed",
+                metadata_updates={
+                    "router_path": f"infeasibility_detection:{infeasibility_type}",
+                    "router_bypassed": True,
+                    "router_bypass_reason": f"infeasibility:{infeasibility_type}",
+                },
+            )
+        skipped_gates.append("INFEASIBILITY_DETECTION")
+
+        # Gate 2: FAST_PATH
+        if flags.get("fast_path"):
+            fp_field = flags.get("fast_path_field", "unknown")
+            return cls._build_result(
+                gate=GatePrecedence.FAST_PATH,
+                destination="required_fields_node",
+                reason=f"fast_path:{fp_field}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent="required_fields",
+                metadata_updates={"router_path": f"fast_path:{fp_field}"},
+            )
+        skipped_gates.append("FAST_PATH")
+
+        # Gate 3: CORE_COLLECTION
+        if not readiness.core_complete:
+            # Determine question_target from readiness
+            question_target = readiness.question_target
+
+            # Infer strategy_topic from activity_settings if present
+            activity_categories = ti.activity_settings.get("categories", [])
+            strategy_topics = {"hiking", "skiing", "diving", "cycling", "boating"}
+            inferred_topic = None
+            for cat in activity_categories:
+                if cat.lower() in strategy_topics:
+                    inferred_topic = cat.lower()
+                    break
+
+            return cls._build_result(
+                gate=GatePrecedence.CORE_COLLECTION,
+                destination="required_fields_node",
+                reason=f"missing:{','.join(readiness.missing_core)}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent="required_fields",
+                question_target=question_target,
+                strategy_topic=inferred_topic,
+                metadata_updates={
+                    "router_path": "core_fields_gate",
+                    "router_bypassed": True,
+                    "router_bypass_reason": f"missing:{','.join(readiness.missing_core)}",
+                },
+            )
+        skipped_gates.append("CORE_COLLECTION")
+
+        # Gate 4: HIGH_CONFIDENCE
+        conf_level = extraction_conf.get("level", "medium")
+        conf_overall = extraction_conf.get("overall", 0.5)
+        no_typos = not extraction_conf.get("typo_suggestions", {})
+        is_short_input = len(user_text.strip()) <= 30
+
+        # Check for intent keywords that would require routing
+        intent_keywords = (
+            "cycling",
+            "hiking",
+            "diving",
+            "skiing",
+            "boating",
+            "flight",
+            "flights",
+            "hotel",
+            "hotels",
+            "boutique",
+            "accommodation",
+            "stay",
+            "where to stay",
+            "transport",
+            "train",
+            "car rental",
+            "activity",
+            "activities",
+            "things to do",
+            "how",
+            "what",
+            "when",
+            "where",
+            "should",
+            "recommend",
+            "suggest",
+            "find",
+            "book",
+            # Flight preference keywords (should route to flights specialist)
+            "direct",
+            "nonstop",
+            "business",
+            "first class",
+            "economy",
+            "cabin",
+            "layover",
+            # Hotel preference keywords (should route to hotels specialist)
+            "star",
+            "amenities",
+            "breakfast",
+            "gym",
+            "pool",
+            "spa",
+        )
+        has_intent_keywords = any(kw in user_text_lower for kw in intent_keywords)
+
+        # Phase 6: Relaxed threshold from 0.92 to 0.88 for short inputs
+        conf_threshold = 0.88 if is_short_input else CONFIDENCE_THRESHOLD_SKIP_ROUTER
+
+        if (
+            conf_overall >= conf_threshold
+            and readiness.core_complete
+            and no_typos
+            and conf_level == "high"
+            and is_short_input
+            and not has_intent_keywords
+        ):
+            return cls._build_result(
+                gate=GatePrecedence.HIGH_CONFIDENCE,
+                destination="required_fields_node",
+                reason=f"high_confidence:{conf_overall:.2f}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent="required_fields",
+                metadata_updates={
+                    "router_path": "high_confidence_bypass",
+                    "router_bypassed": True,
+                },
+            )
+        skipped_gates.append("HIGH_CONFIDENCE")
+
+        # Gate 4.5 (Phase 6): QUESTION_KEYWORD combo
+        # "What hotels...", "Which flights...", "How do I get transport..."
+        question_keyword_result = cls._check_question_keyword_combo(user_text_lower)
+        if question_keyword_result:
+            intent_name, destination = question_keyword_result
+            return cls._build_result(
+                gate=GatePrecedence.QUESTION_KEYWORD,
+                destination=destination,
+                reason=f"question_keyword:{intent_name}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent=intent_name,
+                metadata_updates={
+                    "router_path": f"question_keyword:{intent_name}",
+                    "router_bypassed": True,
+                    "router_bypass_reason": f"question_keyword:{intent_name}",
+                },
+            )
+        skipped_gates.append("QUESTION_KEYWORD")
+
+        # Gate 5: KEYWORD_HEURISTIC
+        # Import _detect_intent_from_keywords (defined later in file)
+        keyword_intent = _detect_intent_from_keywords(user_text_lower)
+        if keyword_intent:
+            intent_name, strategy_topic = keyword_intent
+            # Map intent to destination
+            destination_map = {
+                "strategy": "strategy_node",
+                "flights": "flights_node",
+                "hotels": "hotels_node",
+                "transport": "transport_node",
+                "activities": "activities_node",
+            }
+            destination = destination_map.get(intent_name, "required_fields_node")
+
+            return cls._build_result(
+                gate=GatePrecedence.KEYWORD_HEURISTIC,
+                destination=destination,
+                reason=f"keyword:{intent_name}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent=intent_name,
+                strategy_topic=strategy_topic,
+                metadata_updates={
+                    "router_path": f"keyword_heuristic:{intent_name}",
+                    "router_bypassed": True,
+                    "router_bypass_reason": f"keyword:{intent_name}",
+                },
+            )
+        skipped_gates.append("KEYWORD_HEURISTIC")
+
+        # Gate 6 (Phase 3): SCORING_ROUTER
+        # Multi-signal scoring for cases where keyword heuristic alone isn't enough
+        # but combined signals are reliable enough to bypass router LLM
+        scoring_result = _try_deterministic_router(user_text, state)
+        if scoring_result and scoring_result.should_bypass:
+            destination_map = {
+                "strategy": "strategy_node",
+                "flights": "flights_node",
+                "hotels": "hotels_node",
+                "transport": "transport_node",
+                "activities": "activities_node",
+            }
+            destination = destination_map.get(scoring_result.intent, "required_fields_node")
+
+            return cls._build_result(
+                gate=GatePrecedence.SCORING_ROUTER,
+                destination=destination,
+                reason=f"scoring:{scoring_result.intent}:{scoring_result.score}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                intent=scoring_result.intent,
+                strategy_topic=scoring_result.strategy_topic,
+                metadata_updates={
+                    "router_path": f"scoring_router:{scoring_result.intent}",
+                    "router_bypassed": True,
+                    "router_bypass_reason": f"score:{scoring_result.score}",
+                    "scoring_signals": scoring_result.signals,
+                },
+            )
+        skipped_gates.append("SCORING_ROUTER")
+
+        # Gate 99: ROUTER_LLM (default fallback)
+        return cls._build_result(
+            gate=GatePrecedence.ROUTER_LLM,
+            destination="router",
+            reason="no_gate_matched",
+            start_time=start_time,
+            skipped=skipped_gates,
+            metadata_updates={
+                "router_path": "llm",
+                "why_not_bypassed": "no_gate_matched",
+            },
+        )
+
+    @classmethod
+    def _check_question_keyword_combo(cls, text_lower: str) -> Optional[tuple[str, str]]:
+        """
+        Phase 6: Check for question-word + domain keyword combinations.
+
+        Examples:
+        - "What hotels are available?" → hotels_node
+        - "Which flights should I take?" → flights_node
+        - "How do I get around?" → transport_node
+
+        Returns:
+            (intent_name, destination_node) if match, None otherwise
+        """
+        words = text_lower.split()
+        if not words:
+            return None
+
+        # Check if starts with question word
+        first_word = words[0].rstrip("?.,")
+        if first_word not in cls.QUESTION_WORDS:
+            return None
+
+        # Check for domain keywords
+        for intent_name, keywords in cls.DOMAIN_KEYWORDS.items():
+            if any(kw in text_lower for kw in keywords):
+                destination_map = {
+                    "flights": "flights_node",
+                    "hotels": "hotels_node",
+                    "transport": "transport_node",
+                    "activities": "activities_node",
+                }
+                return (intent_name, destination_map[intent_name])
+
+        return None
+
+    @classmethod
+    def _build_result(
+        cls,
+        gate: GatePrecedence,
+        destination: str,
+        reason: str,
+        start_time: float,
+        skipped: List[str],
+        intent: Optional[str] = None,
+        strategy_topic: Optional[str] = None,
+        question_target: Optional[str] = None,
+        metadata_updates: Optional[Dict[str, Any]] = None,
+    ) -> GateResult:
+        """Build a GateResult with timing information."""
+        eval_time_ms = (time.perf_counter() - start_time) * 1000
+        _record_gate_latency(eval_time_ms)
+
+        return GateResult(
+            gate_fired=gate,
+            destination=destination,
+            reason=reason,
+            skipped_gates=skipped,
+            eval_time_ms=eval_time_ms,
+            intent=intent,
+            strategy_topic=strategy_topic,
+            question_target=question_target,
+            metadata_updates=metadata_updates or {},
+        )
+
+
+# Module-level stats for routing decisions (exposed via get_graph_stats)
+_routing_stats = {
+    "keyword_bypasses": 0,  # Router skipped via keyword heuristic
+    "router_calls": 0,  # Router LLM was invoked
+    "negation_defers": 0,  # Keyword was negated, deferred to router
+    "core_fields_gate_bypasses": 0,  # CORE_FIELDS_GATE triggered
+    "high_conf_bypasses": 0,  # High-confidence bypass triggered
+    "positive_intent_bypasses": 0,  # Positive intent + keyword bypass
+    "noop_gate_triggered": 0,  # No-op gate for vague affirmations
+    "total_turns": 0,  # Total routing decisions made
+    "normal_collection_path": 0,  # extractor→router→required_fields path
+}
+
+# Module-level stats for template usage (exposed via get_graph_stats)
+_template_stats = {
+    "template_hits": 0,  # Template found and used
+    "template_misses": 0,  # No template, fell back to LLM
+    "low_conf_accepted": 0,  # Harmless low-conf field accepted
+    "suggestions_generated": 0,  # SuggestionBuilder invocations
+}
+
+# =============================================================================
+# STRATEGY EXPANSION TIERS (Phase 1: Token Optimization)
+# =============================================================================
+
+
+class StrategyExpansionTarget(str, Enum):
+    """Expansion targets for strategy Stage 2 section-based expansion."""
+
+    ITINERARY_OUTLINE = "itinerary_outline"  # High-level day-by-day skeleton
+    DAY_DETAILS = "day_details"  # Detailed breakdown for specific day(s)
+    ROUTES_TRAILS = "routes_trails"  # Specific routes, trails, or paths
+    LOGISTICS = "logistics"  # Transport, transfers, timing
+    BUDGET = "budget"  # Cost breakdown, money-saving tips
+    GEAR_PACKING = "gear_packing"  # Equipment, packing list
+    CONTINGENCIES = "contingencies"  # Weather backup, rest days, alternatives
+    FULL_EXPANSION = "full_expansion"  # Complete detailed itinerary (legacy Stage 2)
+
+
+class StrategyTier(str, Enum):
+    """Output tier for strategy responses, controlling max_tokens."""
+
+    OUTLINE = "outline"  # 512 tokens - Stage 1 shortlist + skeleton
+    SECTION = "section"  # 768 tokens - Single section expansion
+    FULL = "full"  # 2048 tokens - Complete expansion (user must explicitly request)
+
+
+# Map tiers to max_tokens
+STRATEGY_TIER_MAX_TOKENS = {
+    StrategyTier.OUTLINE: 512,
+    StrategyTier.SECTION: 768,
+    StrategyTier.FULL: 2048,
+}
+
+
+# Module-level stats for strategy node (exposed via get_graph_stats)
+_strategy_stats = {
+    "stage1_calls": 0,  # Stage 1 (shortlist) invocations
+    "stage2_calls": 0,  # Stage 2 (full itinerary) invocations
+    # Tier-based tracking
+    "tier_outline": 0,  # OUTLINE tier calls
+    "tier_section": 0,  # SECTION tier calls
+    "tier_full": 0,  # FULL tier calls
+    # Section-based tracking
+    "section_day_details": 0,
+    "section_routes": 0,
+    "section_logistics": 0,
+    "section_budget": 0,
+    "section_gear": 0,
+    "section_contingencies": 0,
+}
+
+# Module-level stats for response polish (exposed via get_graph_stats)
+_polish_stats = {
+    "deterministic_polish": 0,  # Rule-based polish applied
+    "llm_polish": 0,  # LLM polish invoked
+    "polish_skipped": 0,  # No polish needed
+}
+
+# Module-level stats for extractor mode selection (exposed via get_graph_stats)
+_extractor_stats = {
+    "light_mode": 0,  # Light extractor (128 tokens)
+    "full_mode": 0,  # Full extractor (400 tokens)
+    "dense_input_chars": 0,  # Triggered by char count
+    "dense_input_sentences": 0,  # Triggered by sentence count
+    "dense_input_commas": 0,  # Triggered by comma list
+    "dense_input_keywords": 0,  # Triggered by settings keywords
+    # Phase 2: Two-factor trigger tracking
+    "full_by_multifactor": 0,  # FULL triggered by 2+ signals
+    "full_by_settings_keywords": 0,  # FULL triggered by settings keywords
+    "full_by_near_ready": 0,  # FULL triggered by near-ready state
+    "full_by_structured_list": 0,  # FULL triggered by comma/multi-dest list
+    "full_by_long_input": 0,  # FULL triggered by long input
+    "full_by_multi_sentence": 0,  # FULL triggered by multi-sentence
+    "full_rejected_single_factor": 0,  # FULL rejected (only 1 signal)
+}
+
+# Phase 5: Gate evaluation stats for observability
+# Tracks which gates fire most frequently and in what order
+_gate_stats = {
+    "short_circuit_fired": 0,  # SHORT_CIRCUIT gate
+    "infeasibility_fired": 0,  # INFEASIBILITY_DETECTION gate
+    "fast_path_fired": 0,  # FAST_PATH gate
+    "core_collection_fired": 0,  # CORE_COLLECTION gate
+    "high_confidence_fired": 0,  # HIGH_CONFIDENCE gate
+    "keyword_heuristic_fired": 0,  # KEYWORD_HEURISTIC gate
+    "question_keyword_fired": 0,  # Phase 6: Question-word + keyword combo gate
+    "scoring_router_fired": 0,  # Phase 3: Scoring-based deterministic router
+    "router_llm_fired": 0,  # ROUTER_LLM fallback
+    "total_gate_evaluations": 0,  # Total routing decisions
+}
+
+# Phase 7: LQA (Last Question Answer) pre-pass stats for observability
+# Tracks how often the LQA pre-pass succeeds in parsing simple answers
+_lqa_stats = {
+    "attempts": 0,  # Total LQA pre-pass invocations
+    "hits": 0,  # Successful deterministic extraction (extractor skipped)
+    "bails": 0,  # Fell through to extractor
+    # Bail reasons breakdown
+    "bail_pending_action": 0,  # pending_action was set
+    "bail_no_question_target": 0,  # No question_target set
+    "bail_too_long": 0,  # Input exceeded lqa_max_length
+    "bail_multi_intent": 0,  # Multi-intent pattern detected
+    "bail_negation": 0,  # Negation/correction pattern detected
+    "bail_validation_fail": 0,  # Field validation failed
+}
+
+# =============================================================================
+# PHASE 3: ROUTER OPTIMIZATION STATS
+# =============================================================================
+# Tracks deterministic router bypass rate and cache normalization effectiveness.
+_router_stats = {
+    "deterministic_bypasses": 0,  # Router LLM avoided via scoring
+    "scoring_fallback_to_llm": 0,  # Score too low, fell to LLM
+    "cache_normalization_hits": 0,  # Cache hit after normalizing confirmation
+}
+
+# =============================================================================
+# CONFIRMATION NORMALIZATION FOR CACHE KEY
+# =============================================================================
+# Map equivalent confirmation variants to a canonical form for cache key stability.
+# This improves cache hit rate: "ok", "okay", "yes", "sure" → "[CONFIRM]"
+_CONFIRMATION_VARIANTS = frozenset(
+    {
+        "ok",
+        "okay",
+        "o.k.",
+        "o.k",
+        "yes",
+        "yep",
+        "yeah",
+        "yea",
+        "yup",
+        "sure",
+        "sure thing",
+        "sounds good",
+        "sounds great",
+        "looks good",
+        "looks great",
+        "perfect",
+        "great",
+        "fine",
+        "alright",
+        "all right",
+        "good",
+        "nice",
+        "cool",
+        "got it",
+        "gotcha",
+        "understood",
+        "thanks",
+        "thank you",
+        "thx",
+        "proceed",
+        "go ahead",
+        "let's do it",
+        "do it",
+    }
+)
+
+
+def _normalize_user_text_for_cache(text: str) -> str:
+    """
+    Normalize user text for cache key computation.
+
+    Maps equivalent confirmation variants to a canonical form to improve
+    cache hit rate. For example, "ok", "okay", "yes", "sure" all map to "[CONFIRM]".
+
+    Args:
+        text: Raw user text
+
+    Returns:
+        Normalized text (canonical form for confirmations, stripped lowercase otherwise)
+    """
+    stripped = text.strip().lower()
+    # Strip common suffixes like "!" or "."
+    stripped = stripped.rstrip("!.?")
+
+    # Check for exact confirmation match
+    if stripped in _CONFIRMATION_VARIANTS:
+        return "[CONFIRM]"
+
+    # Return stripped lowercase for hashing
+    return stripped
+
+
+# Phase 6: Gate evaluation latency tracking (in milliseconds)
+_gate_latency_samples: List[float] = []
+_GATE_LATENCY_MAX_SAMPLES = 1000  # Keep last N samples for percentile calculation
+
+
+def _record_gate_latency(duration_ms: float) -> None:
+    """Record gate evaluation latency sample."""
+    global _gate_latency_samples
+    _gate_latency_samples.append(duration_ms)
+    # Keep bounded
+    if len(_gate_latency_samples) > _GATE_LATENCY_MAX_SAMPLES:
+        _gate_latency_samples = _gate_latency_samples[-_GATE_LATENCY_MAX_SAMPLES:]
+
+
+def _get_gate_latency_percentiles() -> Dict[str, float]:
+    """Calculate gate evaluation latency percentiles."""
+    if not _gate_latency_samples:
+        return {"p50_ms": 0.0, "p95_ms": 0.0, "p99_ms": 0.0, "avg_ms": 0.0}
+
+    sorted_samples = sorted(_gate_latency_samples)
+    n = len(sorted_samples)
+
+    def percentile(p: float) -> float:
+        idx = int(n * p / 100)
+        return sorted_samples[min(idx, n - 1)]
+
+    return {
+        "p50_ms": round(percentile(50), 3),
+        "p95_ms": round(percentile(95), 3),
+        "p99_ms": round(percentile(99), 3),
+        "avg_ms": round(sum(sorted_samples) / n, 3),
+    }
+
+
 def _increment_llm_calls(state: "GraphState") -> None:
     """Increment the LLM call counter in state metadata for observability."""
     meta = state.metadata or {}
@@ -310,6 +1012,478 @@ def _set_confidence_routing(state: "GraphState", routing: str) -> None:
 
 
 # =============================================================================
+# KEYWORD HEURISTICS FOR ROUTER BYPASS
+# =============================================================================
+# Binary keyword matching to bypass router LLM for unambiguous intents.
+# This saves ~1000 tokens per call when intent is obvious from user text.
+
+# Mapping from keywords to (intent_name, strategy_topic)
+# strategy_topic is only set for strategy-related keywords
+_KEYWORD_TO_INTENT: dict[str, tuple[str, str | None]] = {
+    # Hotel keywords
+    "hotel": ("hotels", None),
+    "hotels": ("hotels", None),
+    "accommodation": ("hotels", None),
+    "accommodations": ("hotels", None),
+    "stay": ("hotels", None),
+    "lodging": ("hotels", None),
+    "hostel": ("hotels", None),
+    "airbnb": ("hotels", None),
+    "booking": ("hotels", None),
+    # Hotel preference keywords (route to hotels for settings updates)
+    "star": ("hotels", None),
+    "breakfast": ("hotels", None),
+    "amenities": ("hotels", None),
+    "gym": ("hotels", None),
+    "pool": ("hotels", None),
+    "spa": ("hotels", None),
+    # Flight keywords
+    "flight": ("flights", None),
+    "flights": ("flights", None),
+    "fly": ("flights", None),
+    "flying": ("flights", None),
+    "plane": ("flights", None),
+    "airplane": ("flights", None),
+    "airline": ("flights", None),
+    "airport": ("flights", None),
+    # Flight preference keywords (route to flights for settings updates)
+    "direct": ("flights", None),
+    "nonstop": ("flights", None),
+    "business class": ("flights", None),
+    "first class": ("flights", None),
+    "economy class": ("flights", None),
+    "cabin class": ("flights", None),
+    "layover": ("flights", None),
+    "one-way": ("flights", None),
+    "round-trip": ("flights", None),
+    # Transport keywords
+    "transport": ("transport", None),
+    "transportation": ("transport", None),
+    "train": ("transport", None),
+    "bus": ("transport", None),
+    "taxi": ("transport", None),
+    "uber": ("transport", None),
+    "rental car": ("transport", None),
+    "car rental": ("transport", None),
+    "ferry": ("transport", None),
+    # Activity keywords
+    "activity": ("activities", None),
+    "activities": ("activities", None),
+    "things to do": ("activities", None),
+    "attractions": ("activities", None),
+    "sightseeing": ("activities", None),
+    "tour": ("activities", None),
+    "tours": ("activities", None),
+    "museum": ("activities", None),
+    "restaurant": ("activities", None),
+    "restaurants": ("activities", None),
+    # Strategy keywords (with topics)
+    "hiking": ("strategy", "hiking"),
+    "hike": ("strategy", "hiking"),
+    "trek": ("strategy", "hiking"),
+    "trekking": ("strategy", "hiking"),
+    "trail": ("strategy", "hiking"),
+    "mountain": ("strategy", "hiking"),
+    "diving": ("strategy", "diving"),
+    "scuba": ("strategy", "diving"),
+    "snorkeling": ("strategy", "diving"),
+    "underwater": ("strategy", "diving"),
+    "skiing": ("strategy", "skiing"),
+    "ski": ("strategy", "skiing"),
+    "snowboard": ("strategy", "skiing"),
+    "snowboarding": ("strategy", "skiing"),
+    "slopes": ("strategy", "skiing"),
+    "cycling": ("strategy", "cycling"),
+    "bike": ("strategy", "cycling"),
+    "biking": ("strategy", "cycling"),
+    "bicycle": ("strategy", "cycling"),
+    "boating": ("strategy", "boating"),
+    "boat": ("strategy", "boating"),
+    "sailing": ("strategy", "boating"),
+    "yacht": ("strategy", "boating"),
+    "kayak": ("strategy", "boating"),
+    "kayaking": ("strategy", "boating"),
+}
+
+# Keywords that are ambiguous and should NOT trigger keyword bypass
+# (user might mean something else, defer to router LLM)
+_AMBIGUOUS_KEYWORDS = frozenset(
+    {
+        "book",  # Could be hotel booking or "read a book"
+        "trip",  # General planning, not specific
+        "travel",  # General planning
+        "vacation",  # General planning
+        "help",  # General assistance
+        "plan",  # General planning
+        "itinerary",  # General planning
+    }
+)
+
+# Negation patterns that should cause keyword bypass to defer to router LLM
+# Example: "I don't want a hotel" should NOT route to hotels specialist
+_NEGATION_PATTERNS = frozenset(
+    {
+        "don't",
+        "dont",
+        "do not",
+        "no ",
+        "not ",
+        "skip",
+        "without",
+        "avoid",
+        "don't need",
+        "dont need",
+        "don't want",
+        "dont want",
+        "not interested",
+        "cancel",
+    }
+)
+
+# Positive intent patterns that strengthen keyword bypass confidence
+# When positive intent + domain keyword detected, bypass router with high confidence
+# Example: "I want to find a hotel" → positive intent + hotel = strong bypass
+_POSITIVE_INTENT_PATTERNS = frozenset(
+    {
+        "i want",
+        "i need",
+        "i'd like",
+        "i would like",
+        "looking for",
+        "find me",
+        "find a",
+        "search for",
+        "show me",
+        "get me",
+        "can you find",
+        "can you show",
+        "help me find",
+        "recommend",
+        "suggest",
+        # Phase 5 additions for higher bypass rate
+        "compare",
+        "options for",
+        "recommend me",
+        "itinerary for",
+        "road trip",
+        "multi-city",
+        "multi city",
+        "plan a",
+        "planning a",
+        "book a",
+        "arrange",
+    }
+)
+
+
+def _has_positive_intent(text: str) -> Optional[str]:
+    """
+    Check if text contains a positive intent pattern.
+
+    Args:
+        text: Lowercase user text
+
+    Returns:
+        The matched pattern if found, None otherwise
+    """
+    for pattern in _POSITIVE_INTENT_PATTERNS:
+        if pattern in text:
+            return pattern
+    return None
+
+
+def _is_keyword_negated(text: str, keyword: str, window: int = 20) -> bool:
+    """
+    Check if a keyword is negated in the text.
+
+    Looks for negation patterns within `window` characters before the keyword.
+    Examples:
+        "I don't want a hotel" + "hotel" → True (negated)
+        "I want a hotel" + "hotel" → False (not negated)
+        "no flights please" + "flight" → True (negated)
+
+    Args:
+        text: Lowercase user text
+        keyword: The keyword to check for negation
+        window: Number of characters before keyword to search for negation
+
+    Returns:
+        True if keyword appears to be negated, False otherwise
+    """
+    keyword_pos = text.find(keyword)
+    if keyword_pos == -1:
+        return False
+
+    # Get the window of text before the keyword
+    start_pos = max(0, keyword_pos - window)
+    prefix = text[start_pos:keyword_pos]
+
+    # Check for any negation pattern in the prefix
+    for neg in _NEGATION_PATTERNS:
+        if neg in prefix:
+            return True
+
+    return False
+
+
+def _detect_intent_from_keywords(user_text_lower: str) -> tuple[str, str | None] | None:
+    """
+    Detect user intent from unambiguous keywords in the text.
+
+    Returns:
+        Tuple of (intent_name, strategy_topic) if unambiguous match found,
+        None if no clear match (should fall through to router LLM).
+
+    This implements binary matching: either we have a clear match or we don't.
+    No confidence scoring needed - the keywords are chosen to be unambiguous.
+
+    Negation detection: If a keyword is negated (e.g., "I don't want a hotel"),
+    we skip that keyword and continue checking others. If no un-negated keyword
+    is found, we defer to router LLM.
+
+    Positive intent: If positive intent pattern detected (e.g., "I want to find"),
+    combined with a domain keyword, we increase bypass confidence.
+    """
+    # Check for ambiguous keywords that should defer to router
+    for ambig in _AMBIGUOUS_KEYWORDS:
+        if ambig in user_text_lower:
+            # Don't bypass router if ambiguous term present
+            return None
+
+    # Check for positive intent patterns (strengthens bypass confidence)
+    positive_intent_match = _has_positive_intent(user_text_lower)
+
+    # Check for exact keyword matches
+    # We check longer phrases first to avoid partial matches
+    for keyword, (intent, topic) in sorted(
+        _KEYWORD_TO_INTENT.items(),
+        key=lambda x: len(x[0]),
+        reverse=True,  # Longer keywords first
+    ):
+        if keyword in user_text_lower:
+            # Check if keyword is negated - if so, skip it and defer to router
+            if _is_keyword_negated(user_text_lower, keyword):
+                _routing_stats["negation_defers"] += 1
+                _debug(
+                    "🚫 NEGATION_DETECTED: keyword negated, deferred to router",
+                    keyword=keyword,
+                    text_snippet=user_text_lower[:50],
+                )
+                continue
+
+            # If positive intent detected, log with higher confidence
+            if positive_intent_match:
+                _routing_stats["positive_intent_bypasses"] += 1
+                _debug(
+                    "✅ POSITIVE_INTENT_BYPASS: strong intent + keyword match",
+                    pattern=positive_intent_match,
+                    keyword=keyword,
+                    intent=intent,
+                    tokens_saved="~1000 (router LLM call avoided)",
+                )
+            return (intent, topic)
+
+    return None
+
+
+# =============================================================================
+# SCORING-BASED DETERMINISTIC ROUTER (Phase 3 Token Optimization)
+# =============================================================================
+# Multi-signal scoring to bypass router LLM for high-confidence intents.
+# Each signal contributes points; if total >= threshold, bypass router.
+# This catches cases where keyword heuristic alone isn't enough but
+# multiple weaker signals together are reliable.
+
+# Scoring thresholds
+_ROUTER_BYPASS_THRESHOLD = 3  # Minimum score to bypass router LLM
+_ROUTER_HIGH_CONFIDENCE_THRESHOLD = 5  # Score for very high confidence
+
+# Signal weights for intent scoring
+_INTENT_SIGNAL_WEIGHTS = {
+    # Core signals (each worth 2 points)
+    "keyword_match": 2,  # Domain keyword present
+    "positive_intent": 2,  # "I want to...", "find me..."
+    "question_pattern": 2,  # "what hotels", "which flights"
+    # Supporting signals (each worth 1 point)
+    "explicit_booking_type": 1,  # booking_types has intent enabled
+    "recent_intent_match": 1,  # Same intent in previous turn
+    "category_activation": 1,  # activity_settings has matching category
+    # Negative signals (reduce score)
+    "ambiguous_keyword": -2,  # "trip", "travel", "help"
+    "negation_detected": -3,  # "don't want", "no flights"
+    "question_word_only": -1,  # Question word but no domain keyword
+}
+
+
+@dataclass
+class RouterScoringResult:
+    """Result from scoring-based deterministic router."""
+
+    intent: Optional[str]
+    strategy_topic: Optional[str]
+    score: int
+    signals: List[str]
+    should_bypass: bool = False
+
+    def __post_init__(self):
+        self.should_bypass = self.score >= _ROUTER_BYPASS_THRESHOLD
+
+
+def _try_deterministic_router(
+    user_text: str,
+    state: "GraphState",
+) -> Optional[RouterScoringResult]:
+    """
+    Attempt to determine intent without LLM using multi-signal scoring.
+
+    This is more sophisticated than keyword heuristic - it scores multiple
+    signals and only bypasses router if combined score exceeds threshold.
+
+    Args:
+        user_text: User input text
+        state: Current graph state
+
+    Returns:
+        RouterScoringResult if score >= threshold, None to fall through to LLM
+    """
+    text_lower = user_text.lower().strip()
+    ti = state.trip_inputs
+    signals: List[str] = []
+    score = 0
+    detected_intent: Optional[str] = None
+    detected_topic: Optional[str] = None
+
+    # =========================================================================
+    # SIGNAL 1: Ambiguous keyword detection (negative signal)
+    # =========================================================================
+    for ambig in _AMBIGUOUS_KEYWORDS:
+        if ambig in text_lower:
+            score += _INTENT_SIGNAL_WEIGHTS["ambiguous_keyword"]
+            signals.append(f"ambiguous:{ambig}")
+            break  # One ambiguous keyword is enough to penalize
+
+    # =========================================================================
+    # SIGNAL 2: Negation detection (strong negative signal)
+    # =========================================================================
+    for neg in _NEGATION_PATTERNS:
+        if neg in text_lower:
+            score += _INTENT_SIGNAL_WEIGHTS["negation_detected"]
+            signals.append(f"negation:{neg}")
+            break  # One negation is enough
+
+    # =========================================================================
+    # SIGNAL 3: Keyword match (core positive signal)
+    # =========================================================================
+    for keyword, (intent, topic) in sorted(
+        _KEYWORD_TO_INTENT.items(),
+        key=lambda x: len(x[0]),
+        reverse=True,
+    ):
+        if keyword in text_lower:
+            # Skip if keyword is negated
+            if _is_keyword_negated(text_lower, keyword):
+                continue
+            score += _INTENT_SIGNAL_WEIGHTS["keyword_match"]
+            signals.append(f"keyword:{keyword}")
+            detected_intent = intent
+            detected_topic = topic
+            break  # Use first (longest) match
+
+    # =========================================================================
+    # SIGNAL 4: Positive intent pattern (core positive signal)
+    # =========================================================================
+    positive_match = _has_positive_intent(text_lower)
+    if positive_match:
+        score += _INTENT_SIGNAL_WEIGHTS["positive_intent"]
+        signals.append(f"positive:{positive_match}")
+
+    # =========================================================================
+    # SIGNAL 5: Question pattern with domain keyword (core positive signal)
+    # =========================================================================
+    question_keyword_result = GateEvaluator._check_question_keyword_combo(text_lower)
+    if question_keyword_result:
+        score += _INTENT_SIGNAL_WEIGHTS["question_pattern"]
+        intent_name, _ = question_keyword_result
+        signals.append(f"question:{intent_name}")
+        if detected_intent is None:
+            detected_intent = intent_name
+    elif any(text_lower.startswith(qw) for qw in ("what ", "which ", "how ", "where ", "when ")):
+        # Question word without domain keyword - weak signal
+        score += _INTENT_SIGNAL_WEIGHTS["question_word_only"]
+        signals.append("question_word_only")
+
+    # =========================================================================
+    # SIGNAL 6: Explicit booking type enabled (supporting signal)
+    # =========================================================================
+    booking_types = ti.booking_types or {}
+    if detected_intent:
+        intent_to_booking = {
+            "flights": "flights",
+            "hotels": "hotels",
+            "activities": "activities",
+            "transport": "transport",
+        }
+        booking_key = intent_to_booking.get(detected_intent)
+        if booking_key and booking_types.get(booking_key):
+            score += _INTENT_SIGNAL_WEIGHTS["explicit_booking_type"]
+            signals.append(f"booking_type:{booking_key}")
+
+    # =========================================================================
+    # SIGNAL 7: Recent intent match (supporting signal)
+    # =========================================================================
+    last_intent = state.metadata.get("last_intent")
+    if last_intent and detected_intent and last_intent == detected_intent:
+        score += _INTENT_SIGNAL_WEIGHTS["recent_intent_match"]
+        signals.append(f"recent_intent:{last_intent}")
+
+    # =========================================================================
+    # SIGNAL 8: Category activation (supporting signal for activities/strategy)
+    # =========================================================================
+    activity_categories = ti.activity_settings.get("categories", [])
+    if detected_intent == "strategy" and detected_topic:
+        if detected_topic in [c.lower() for c in activity_categories]:
+            score += _INTENT_SIGNAL_WEIGHTS["category_activation"]
+            signals.append(f"category:{detected_topic}")
+    elif detected_intent == "activities" and activity_categories:
+        score += _INTENT_SIGNAL_WEIGHTS["category_activation"]
+        signals.append(f"categories:{len(activity_categories)}")
+
+    # =========================================================================
+    # DECISION: Score threshold check
+    # =========================================================================
+    if score >= _ROUTER_BYPASS_THRESHOLD and detected_intent:
+        _router_stats["deterministic_bypasses"] += 1
+        _debug(
+            "🎯 DETERMINISTIC_ROUTER: Bypassing LLM via scoring",
+            intent=detected_intent,
+            topic=detected_topic,
+            score=score,
+            threshold=_ROUTER_BYPASS_THRESHOLD,
+            signals=signals,
+            tokens_saved="~1000",
+        )
+        return RouterScoringResult(
+            intent=detected_intent,
+            strategy_topic=detected_topic,
+            score=score,
+            signals=signals,
+            should_bypass=True,
+        )
+
+    # Score too low - fall through to LLM
+    if score > 0:
+        _router_stats["scoring_fallback_to_llm"] += 1
+        _debug(
+            "🎲 DETERMINISTIC_ROUTER: Score below threshold, falling to LLM",
+            score=score,
+            threshold=_ROUTER_BYPASS_THRESHOLD,
+            signals=signals,
+        )
+
+    return None
+
+
+# =============================================================================
 # LLM RESPONSE CACHING (TTLCache)
 # =============================================================================
 # Cache LLM responses for common patterns to reduce API calls and latency.
@@ -321,6 +1495,382 @@ _RESPONSE_CACHE_MAXSIZE = int(os.getenv("RESPONSE_CACHE_MAXSIZE", "200"))
 
 # Response cache for LLM responses
 _follow_up_cache: TTLCache = TTLCache(maxsize=_RESPONSE_CACHE_MAXSIZE, ttl=_RESPONSE_CACHE_TTL)
+
+# =============================================================================
+# EXTRACTOR CACHE (Turn-level caching with hit tracking)
+# =============================================================================
+# Cache extractor LLM results for identical inputs within a session.
+# Short TTL (60s) since extraction context changes frequently.
+# Key: (session_id, user_text_hash, core_fields_hash)
+
+_EXTRACTOR_CACHE_TTL = int(os.getenv("EXTRACTOR_CACHE_TTL_SECONDS", "60"))  # 60s default
+_EXTRACTOR_CACHE_MAXSIZE = int(os.getenv("EXTRACTOR_CACHE_MAXSIZE", "100"))
+
+# Extractor result cache
+_extractor_cache: TTLCache = TTLCache(maxsize=_EXTRACTOR_CACHE_MAXSIZE, ttl=_EXTRACTOR_CACHE_TTL)
+
+# Hit rate tracking for observability
+_extractor_cache_stats = {"hits": 0, "misses": 0}
+
+
+def _compute_extractor_cache_key(
+    session_id: str,
+    user_text: str,
+    core_fields_hash: str,
+    extractor_mode: str,
+) -> str:
+    """
+    Compute cache key for extractor LLM results.
+
+    Args:
+        session_id: The session ID (conversation ID)
+        user_text: The user's input text
+        core_fields_hash: Hash of core trip fields (dest, origin, date)
+        extractor_mode: "light" or "full"
+
+    Returns:
+        MD5 hash string for cache lookup
+    """
+    # Hash user text for stability
+    text_hash = hashlib.md5(user_text.encode()).hexdigest()[:16]
+    key_parts = f"extractor|{session_id}|{text_hash}|{core_fields_hash}|{extractor_mode}"
+    return hashlib.md5(key_parts.encode()).hexdigest()
+
+
+def _get_extractor_cached(
+    session_id: str,
+    user_text: str,
+    core_fields_hash: str,
+    extractor_mode: str,
+    state: Optional["GraphState"] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Try to get cached extractor result.
+
+    Returns:
+        Cached extraction dict or None if not cached.
+        On hit, also increments hit counter and state cache_hits.
+    """
+    key = _compute_extractor_cache_key(session_id, user_text, core_fields_hash, extractor_mode)
+    result = _extractor_cache.get(key)
+
+    if result is not None:
+        _extractor_cache_stats["hits"] += 1
+        _debug_cache_hit("extractor_cache", key[:16])
+        if state is not None:
+            _increment_cache_hits(state)
+            state.metadata["extractor_cache_hit"] = True
+        return result
+
+    _extractor_cache_stats["misses"] += 1
+    return None
+
+
+def _set_extractor_cached(
+    session_id: str,
+    user_text: str,
+    core_fields_hash: str,
+    extractor_mode: str,
+    result: Dict[str, Any],
+) -> None:
+    """Cache an extractor LLM result."""
+    key = _compute_extractor_cache_key(session_id, user_text, core_fields_hash, extractor_mode)
+    _extractor_cache[key] = result
+
+
+def get_extractor_cache_stats() -> Dict[str, Any]:
+    """
+    Get extractor cache hit rate statistics.
+
+    Returns:
+        Dict with hits, misses, hit_rate, and cache_size
+    """
+    hits = _extractor_cache_stats["hits"]
+    misses = _extractor_cache_stats["misses"]
+    total = hits + misses
+    hit_rate = hits / total if total > 0 else 0.0
+
+    return {
+        "hits": hits,
+        "misses": misses,
+        "hit_rate": hit_rate,
+        "cache_size": len(_extractor_cache),
+        "max_size": _EXTRACTOR_CACHE_MAXSIZE,
+        "ttl_seconds": _EXTRACTOR_CACHE_TTL,
+    }
+
+
+# =============================================================================
+# STRATEGY CACHE (5-min TTL, topic-keyed)
+# =============================================================================
+# Cache strategy node LLM results for repeated queries about same topic.
+# Key: (session_id, topic, core_fields_hash, user_text_hash)
+# Longer TTL since strategy advice is more stable than extraction.
+
+_STRATEGY_CACHE_TTL = int(os.getenv("STRATEGY_CACHE_TTL_SECONDS", "300"))  # 5 min default
+_STRATEGY_CACHE_MAXSIZE = int(os.getenv("STRATEGY_CACHE_MAXSIZE", "50"))
+
+# Strategy result cache
+_strategy_cache: TTLCache = TTLCache(maxsize=_STRATEGY_CACHE_MAXSIZE, ttl=_STRATEGY_CACHE_TTL)
+
+# Hit rate tracking
+_strategy_cache_stats = {"hits": 0, "misses": 0}
+
+
+def _compute_strategy_cache_key(
+    session_id: str,
+    topic: str,
+    core_fields_hash: str,
+    user_text_hash: str,
+    section_id: Optional[str] = None,
+) -> str:
+    """
+    Compute cache key for strategy LLM results.
+
+    Args:
+        session_id: The session ID (conversation ID)
+        topic: The strategy topic (hiking, diving, etc.)
+        core_fields_hash: Hash of core trip fields
+        user_text_hash: Hash of user text
+        section_id: Optional expansion section (day_details, routes, etc.)
+
+    Returns:
+        MD5 hash string for cache lookup
+    """
+    section_part = section_id or "stage1"
+    key_parts = f"strategy|{session_id}|{topic}|{section_part}|{core_fields_hash}|{user_text_hash}"
+    return hashlib.md5(key_parts.encode()).hexdigest()
+
+
+def _get_strategy_cached(
+    session_id: str,
+    topic: str,
+    core_fields_hash: str,
+    user_text_hash: str,
+    state: Optional["GraphState"] = None,
+    section_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Try to get cached strategy result.
+
+    Returns:
+        Cached strategy response dict or None if not cached.
+    """
+    key = _compute_strategy_cache_key(
+        session_id, topic, core_fields_hash, user_text_hash, section_id
+    )
+    result = _strategy_cache.get(key)
+
+    if result is not None:
+        _strategy_cache_stats["hits"] += 1
+        _debug_cache_hit("strategy_cache", key[:16])
+        if state is not None:
+            _increment_cache_hits(state)
+            state.metadata["strategy_cache_hit"] = True
+        return result
+
+    _strategy_cache_stats["misses"] += 1
+    return None
+
+
+def _set_strategy_cached(
+    session_id: str,
+    topic: str,
+    core_fields_hash: str,
+    user_text_hash: str,
+    result: Dict[str, Any],
+    section_id: Optional[str] = None,
+) -> None:
+    """Cache a strategy LLM result."""
+    key = _compute_strategy_cache_key(
+        session_id, topic, core_fields_hash, user_text_hash, section_id
+    )
+    _strategy_cache[key] = result
+
+
+def get_strategy_cache_stats() -> Dict[str, Any]:
+    """
+    Get strategy cache hit rate statistics.
+
+    Returns:
+        Dict with hits, misses, hit_rate, and cache_size
+    """
+    hits = _strategy_cache_stats["hits"]
+    misses = _strategy_cache_stats["misses"]
+    total = hits + misses
+    hit_rate = hits / total if total > 0 else 0.0
+
+    return {
+        "hits": hits,
+        "misses": misses,
+        "hit_rate": hit_rate,
+        "cache_size": len(_strategy_cache),
+        "max_size": _STRATEGY_CACHE_MAXSIZE,
+        "ttl_seconds": _STRATEGY_CACHE_TTL,
+    }
+
+
+def reset_graph_stats() -> None:
+    """
+    Reset all graph statistics to initial zero values.
+
+    Used by E2E tests to get per-scenario metrics instead of cumulative stats.
+    No thread locking - assumes sequential test execution (asyncio-safe).
+    """
+    global _gate_latency_samples
+
+    # Reset routing stats
+    for key in _routing_stats:
+        _routing_stats[key] = 0
+
+    # Reset template stats
+    for key in _template_stats:
+        _template_stats[key] = 0
+
+    # Reset strategy stats
+    for key in _strategy_stats:
+        _strategy_stats[key] = 0
+
+    # Reset polish stats
+    for key in _polish_stats:
+        _polish_stats[key] = 0
+
+    # Reset extractor stats
+    for key in _extractor_stats:
+        _extractor_stats[key] = 0
+
+    # Reset gate stats
+    for key in _gate_stats:
+        _gate_stats[key] = 0
+
+    # Reset LQA stats
+    for key in _lqa_stats:
+        _lqa_stats[key] = 0
+
+    # Reset router optimization stats (Phase 3)
+    for key in _router_stats:
+        _router_stats[key] = 0
+
+    # Reset gate latency samples
+    _gate_latency_samples = []
+
+    # Reset cache hit counters
+    _extractor_cache_stats["hits"] = 0
+    _extractor_cache_stats["misses"] = 0
+    _strategy_cache_stats["hits"] = 0
+    _strategy_cache_stats["misses"] = 0
+
+
+def get_graph_stats() -> Dict[str, Any]:
+    """
+    Get comprehensive graph statistics for observability.
+
+    Returns:
+        Dict with routing stats, template stats, strategy stats, polish stats,
+        extractor stats, and all cache stats merged.
+
+        Key metrics for validating design intent:
+        - router_call_rate: Should be < 30% (most routes via gates)
+        - template_hit_rate: Should be > 85% (templates dominate)
+        - stage_split_ratio: Should be > 3:1 (most strategy stays at Stage 1)
+    """
+    # Calculate derived rates for routing
+    total_turns = _routing_stats["total_turns"]
+    router_call_rate = _routing_stats["router_calls"] / total_turns if total_turns > 0 else 0.0
+    routing_total = _routing_stats["keyword_bypasses"] + _routing_stats["router_calls"]
+    keyword_bypass_rate = (
+        _routing_stats["keyword_bypasses"] / routing_total if routing_total > 0 else 0.0
+    )
+
+    # Calculate derived rates for templates
+    template_total = _template_stats["template_hits"] + _template_stats["template_misses"]
+    template_hit_rate = (
+        _template_stats["template_hits"] / template_total if template_total > 0 else 0.0
+    )
+
+    stage_split_ratio = (
+        _strategy_stats["stage1_calls"] / _strategy_stats["stage2_calls"]
+        if _strategy_stats["stage2_calls"] > 0
+        else float(_strategy_stats["stage1_calls"]) if _strategy_stats["stage1_calls"] > 0 else 0.0
+    )
+
+    # Calculate polish rates
+    polish_total = (
+        _polish_stats["deterministic_polish"]
+        + _polish_stats["llm_polish"]
+        + _polish_stats["polish_skipped"]
+    )
+    llm_polish_rate = _polish_stats["llm_polish"] / polish_total if polish_total > 0 else 0.0
+
+    # Phase 5: Calculate gate firing rates
+    gate_total = _gate_stats["total_gate_evaluations"]
+    zero_llm_rate = (
+        (
+            _gate_stats["short_circuit_fired"]
+            + _gate_stats["infeasibility_fired"]
+            + _gate_stats["fast_path_fired"]
+        )
+        / gate_total
+        if gate_total > 0
+        else 0.0
+    )
+
+    return {
+        "routing": {
+            **_routing_stats,
+            "router_call_rate": round(router_call_rate, 3),
+            "keyword_bypass_rate": round(keyword_bypass_rate, 3),
+        },
+        "templates": {
+            **_template_stats,
+            "template_hit_rate": round(template_hit_rate, 3),
+        },
+        "strategy": {
+            **_strategy_stats,
+            "stage_split_ratio": round(stage_split_ratio, 2),
+        },
+        "polish": {
+            **_polish_stats,
+            "llm_polish_rate": round(llm_polish_rate, 3),
+        },
+        "extractor": {
+            **_extractor_stats,
+        },
+        "gates": {
+            **_gate_stats,
+            "zero_llm_rate": round(zero_llm_rate, 3),
+            **_get_gate_latency_percentiles(),  # Phase 6: latency tracking
+        },
+        "lqa": {
+            **_lqa_stats,
+            "hit_rate": (
+                round(_lqa_stats["hits"] / _lqa_stats["attempts"], 3)
+                if _lqa_stats["attempts"] > 0
+                else 0.0
+            ),
+        },
+        "router_optimization": {
+            **_router_stats,
+            "deterministic_bypass_rate": (
+                round(
+                    _router_stats["deterministic_bypasses"]
+                    / (
+                        _router_stats["deterministic_bypasses"]
+                        + _router_stats["scoring_fallback_to_llm"]
+                    ),
+                    3,
+                )
+                if (
+                    _router_stats["deterministic_bypasses"]
+                    + _router_stats["scoring_fallback_to_llm"]
+                )
+                > 0
+                else 0.0
+            ),
+        },
+        "extractor_cache": get_extractor_cache_stats(),
+        "strategy_cache": get_strategy_cache_stats(),
+    }
 
 
 def _compute_cache_key(
@@ -358,8 +1908,23 @@ def _get_core_fields_state(trip_inputs: "TripInputs") -> str:
     )
 
 
-def _hash_user_text(text: str) -> str:
-    """Hash first 100 chars + length for cache key stability."""
+def _hash_user_text(text: str, normalize: bool = True) -> str:
+    """
+    Hash user text for cache key stability.
+
+    Args:
+        text: User input text
+        normalize: If True, normalize confirmations to canonical form
+
+    Returns:
+        MD5 hash string
+    """
+    if normalize:
+        normalized = _normalize_user_text_for_cache(text)
+        # Track cache normalization for observability
+        if normalized == "[CONFIRM]":
+            _router_stats["cache_normalization_hits"] += 1
+        return hashlib.md5((normalized[:100] + str(len(normalized))).encode()).hexdigest()
     return hashlib.md5((text[:100] + str(len(text))).encode()).hexdigest()
 
 
@@ -388,8 +1953,32 @@ def clear_response_caches() -> int:
     """
     count = len(_follow_up_cache)
     _follow_up_cache.clear()
-    _debug(f"Cleared response caches: {count} entries")
-    return count
+
+    # Also clear extractor cache
+    extractor_count = len(_extractor_cache)
+    _extractor_cache.clear()
+
+    # Reset extractor cache stats
+    _extractor_cache_stats["hits"] = 0
+    _extractor_cache_stats["misses"] = 0
+
+    # Also clear strategy cache
+    strategy_count = len(_strategy_cache)
+    _strategy_cache.clear()
+
+    # Reset strategy cache stats
+    _strategy_cache_stats["hits"] = 0
+    _strategy_cache_stats["misses"] = 0
+
+    total = count + extractor_count + strategy_count
+    _debug(
+        (
+            "Cleared response caches: "
+            f"{total} entries (follow_up: {count}, extractor: {extractor_count}, "
+            f"strategy: {strategy_count})"
+        )
+    )
+    return total
 
 
 def clear_all_caches() -> int:
@@ -1187,19 +2776,19 @@ def _write_trip_inputs(
     """
     ti = state.trip_inputs.model_copy(deep=True)
 
-    for field, value in updates.items():
-        field_path = f"trip_inputs.{field}"
+    for field_name, value in updates.items():
+        field_path = f"trip_inputs.{field_name}"
         _check_state_ownership(node_name, field_path)
 
         # Handle nested dict updates (e.g., booking_types, flight_settings)
-        if hasattr(ti, field):
-            current = getattr(ti, field)
+        if hasattr(ti, field_name):
+            current = getattr(ti, field_name)
             if isinstance(current, dict) and isinstance(value, dict):
                 # Merge dict updates
                 merged = {**current, **value}
-                setattr(ti, field, merged)
+                setattr(ti, field_name, merged)
             else:
-                setattr(ti, field, value)
+                setattr(ti, field_name, value)
 
     state.trip_inputs = ti
     return state
@@ -1296,6 +2885,18 @@ def _apply_llm_delta(
             "transport_settings",
             "booking_types",
         ):
+            # Block flight/hotel settings from domain specialists until destination + dates exist
+            # Required_fields and correction specialists are allowed to set these
+            if k in ("flight_settings", "hotel_settings"):
+                is_domain_specialist = node_name in ("specialist:flights", "specialist:hotels")
+                if is_domain_specialist and (not ti.destinations or not ti.start_date):
+                    _debug(
+                        f"⚠️ BLOCKED {k} delta: missing destination/dates",
+                        node=node_name,
+                        has_destinations=bool(ti.destinations),
+                        has_start_date=bool(ti.start_date),
+                    )
+                    continue
             # Simple dict merge with normalization for activity categories
             if isinstance(v, dict):
                 existing = dict(getattr(ti, k, {}) or {})
@@ -1448,8 +3049,6 @@ USER_TONE_PATTERNS = {
             re.compile(r"\b(ugh|again\??|still|already\s+told|not\s+working)\b", re.I),
             re.compile(r"\b(confused|frustrat|annoying|wrong|doesn\'t\s+work)\b", re.I),
         ],
-        # Also detect very short replies as potential frustration
-        "max_length": 15,  # Very short replies may indicate frustration
     },
     "neutral": {
         "patterns": [],  # Default
@@ -1507,12 +3106,6 @@ def _detect_user_tone(text: str) -> str:
         if pattern.search(text_lower):
             return "frustrated"
 
-    # Check for very short replies (potential frustration)
-    max_len = USER_TONE_PATTERNS["frustrated"].get("max_length", 15)
-    if len(text.strip()) <= max_len and len(text.split()) <= 3:
-        # Short reply - could be frustration, but mark as neutral unless other signals
-        pass
-
     return "neutral"
 
 
@@ -1545,6 +3138,251 @@ def _should_override_persisted_intent(
 
 
 # =============================================================================
+# TONE ADAPTER
+# =============================================================================
+# Replaces _adapt_tone.txt prompt include with a code-computed instruction.
+# Saves ~150-200 tokens per LLM call by inlining a single-line instruction
+# instead of a multi-line prompt template.
+
+
+class ToneAdapter:
+    """
+    Generates tone/intent-aware instructions for LLM prompts.
+
+    Replaces the {% include "_adapt_tone.txt" %} pattern with a computed
+    single-line instruction, reducing token usage from ~150 to ~20 tokens.
+
+    Usage:
+        instruction = ToneAdapter.get_instruction("quick_booking", "neutral")
+        # Returns: "TONE: Be brief but friendly. Keep responses short and efficient."
+
+    Available user_intent values (from USER_INTENT_ARCHETYPES):
+        - quick_booking: Fast booking, minimal questions ("just flights", "book now")
+        - short_trip: Weekend getaway or brief trip ("weekend", "2-3 days")
+        - adventurous: Unique experiences, hidden gems ("explore", "off beaten path")
+        - undecided: Needs guidance ("not sure", "help me decide")
+        - detailed_planner: Default - comprehensive planning with all details
+
+    Available user_tone values (from USER_TONE_PATTERNS):
+        - neutral: Default, no special handling
+        - enthusiastic: User shows excitement ("can't wait!", "amazing!")
+        - frustrated: User shows frustration ("ugh", "again?", "not working")
+        - curious: User is asking questions, exploring options
+    """
+
+    # Intent-specific tone instructions (condensed from former _adapt_tone.txt)
+    _INTENT_INSTRUCTIONS = {
+        "quick_booking": "Be brief but friendly. Keep responses short and efficient.",
+        "detailed_planner": "Be helpful with details. Provide context when useful.",
+        "adventurous": "Match their energy! Use emojis sparingly. Be enthusiastic.",
+        "undecided": "Be a helpful guide. Suggest options gently.",
+        "short_trip": "Acknowledge time constraints. Focus on efficiency.",
+    }
+
+    # Tone modifiers (appended to intent instruction)
+    _TONE_MODIFIERS = {
+        "frustrated": " Be calm, direct, and helpful. No fluff.",
+        "enthusiastic": " Mirror their excitement!",
+        "neutral": "",  # No modifier needed
+        "curious": " Be informative and engaging.",
+    }
+
+    @classmethod
+    def get_instruction(cls, user_intent: str, user_tone: str) -> str:
+        """
+        Get a single-line tone instruction for the LLM prompt.
+
+        Args:
+            user_intent: One of: quick_booking, detailed_planner, adventurous,
+                         undecided, short_trip. Defaults to warm professional.
+            user_tone: One of: neutral, frustrated, enthusiastic, curious.
+
+        Returns:
+            A single-line instruction string (~20 tokens) prefixed with "TONE:".
+            Example: "TONE: Be brief but friendly. Keep responses short and efficient."
+        """
+        # Get base instruction from intent
+        base = cls._INTENT_INSTRUCTIONS.get(
+            user_intent, "Be warm and professional. Keep it conversational."
+        )
+
+        # Add tone modifier
+        modifier = cls._TONE_MODIFIERS.get(user_tone, "")
+
+        instruction = f"TONE: {base}{modifier}"
+
+        _debug(
+            "ToneAdapter",
+            intent=user_intent,
+            tone=user_tone,
+            instruction_len=len(instruction),
+        )
+
+        return instruction
+
+
+# =============================================================================
+# SUGGESTION BUILDER
+# =============================================================================
+# Replaces _suggested_responses.txt prompt include with code-computed suggestions.
+# Saves ~66 tokens per LLM call by providing contextual suggestions directly
+# instead of relying on LLM to generate them.
+
+
+class SuggestionBuilder:
+    """
+    Generates contextual suggested responses for specialist nodes.
+
+    Replaces the {% include "_suggested_responses.txt" %} pattern with
+    pre-computed suggestions based on node type, strategy topic, and current state.
+
+    This saves ~66 tokens per call and provides more consistent suggestions.
+
+    Usage:
+        suggestions = SuggestionBuilder.for_specialist("hotels", "hiking", state)
+        # Returns: ["Mountain lodge", "Boutique hotel", "Eco-friendly stay"]
+    """
+
+    # Default suggestions by specialist type
+    _SPECIALIST_DEFAULTS = {
+        "flights": ["Direct flights only", "Flexible dates", "Budget airlines OK"],
+        "hotels": ["Central location", "Quiet area", "Near attractions"],
+        "activities": ["Outdoor activities", "Cultural experiences", "Food tours"],
+        "transport": ["Rental car", "Public transport", "Private transfers"],
+        "correction": ["Change dates", "Different hotel", "Add activity"],
+    }
+
+    # Strategy-topic-specific suggestions
+    _STRATEGY_TOPIC_SUGGESTIONS = {
+        "hiking": {
+            "flights": ["Early morning arrival", "Extra luggage for gear", "Flexible return"],
+            "hotels": ["Mountain lodge", "Trailhead access", "Hiker-friendly"],
+            "activities": ["Guided hike", "Multi-day trek", "Day hikes only"],
+            "transport": ["4WD rental", "Shuttle to trailheads", "Self-drive"],
+        },
+        "skiing": {
+            "flights": ["Weekend flights", "Early arrival", "Ski bag included"],
+            "hotels": ["Ski-in/ski-out", "Near lifts", "Chalet rental"],
+            "activities": ["Ski lessons", "Off-piste guiding", "Après-ski"],
+            "transport": ["Shuttle from airport", "Car rental", "Resort transfer"],
+        },
+        "diving": {
+            "flights": ["Morning arrival", "Dive gear allowance", "Island hopper"],
+            "hotels": ["Dive resort", "Beachfront", "With dive center"],
+            "activities": ["PADI certification", "Night dives", "Reef snorkeling"],
+            "transport": ["Boat transfers", "Island taxi", "Resort pickup"],
+        },
+        "boating": {
+            "flights": ["Arrive day before", "Flexible dates", "Marina proximity"],
+            "hotels": ["Marina-side", "Yacht club", "Waterfront hotel"],
+            "activities": ["Skippered charter", "Sailing lessons", "Island hopping"],
+            "transport": ["Airport to marina", "Water taxi", "Car not needed"],
+        },
+        "cycling": {
+            "flights": ["Bike box allowance", "Early arrival", "Flexible return"],
+            "hotels": ["Bike-friendly", "Secure storage", "Near bike routes"],
+            "activities": ["Guided tour", "Self-guided route", "E-bike rental"],
+            "transport": ["Bike rental on arrival", "Support vehicle", "Train + bike"],
+        },
+    }
+
+    # Missing field suggestions (used when state.question_target is set)
+    _MISSING_FIELD_SUGGESTIONS = {
+        "destinations": {
+            "default": ["Paris, France", "Tokyo, Japan", "Barcelona, Spain"],
+            "hiking": ["Swiss Alps", "Patagonia", "Nepal"],
+            "skiing": ["Chamonix", "Whistler", "Niseko"],
+            "diving": ["Maldives", "Red Sea", "Great Barrier Reef"],
+            "boating": ["Greek Islands", "Croatia", "Caribbean"],
+            "cycling": ["Tuscany", "Netherlands", "Loire Valley"],
+        },
+        "origin": ["London", "New York", "Los Angeles"],
+        "dates": ["Next month", "March 15-22", "First week of summer"],
+        "travelers": ["Just me", "2 adults", "Family of 4"],
+        "budget": ["Around $2000", "Flexible budget", "Budget-friendly"],
+    }
+
+    @classmethod
+    def for_specialist(
+        cls,
+        specialist_name: str,
+        strategy_topic: Optional[str],
+        state: "GraphState",
+    ) -> List[str]:
+        """
+        Get contextual suggestions for a specialist node.
+
+        Args:
+            specialist_name: One of: flights, hotels, activities, transport, correction
+            strategy_topic: Optional topic like hiking, skiing, diving, boating, cycling
+            state: Current graph state (used to check question_target, existing values)
+
+        Returns:
+            List of 2-3 short suggestion strings
+        """
+        # Priority 1: If there's a missing field question, suggest answers for that
+        question_target = state.question_target
+        if question_target and question_target in cls._MISSING_FIELD_SUGGESTIONS:
+            field_suggestions = cls._MISSING_FIELD_SUGGESTIONS[question_target]
+            if isinstance(field_suggestions, dict):
+                # Use topic-specific suggestions if available
+                suggestions = field_suggestions.get(
+                    strategy_topic, field_suggestions.get("default", [])
+                )[:3]
+            else:
+                suggestions = field_suggestions[:3]
+            _template_stats["suggestions_generated"] += 1
+            _debug(
+                "💡 SUGGESTIONS: generated for missing field",
+                specialist=specialist_name,
+                question_target=question_target,
+                count=len(suggestions),
+            )
+            return suggestions
+
+        # Priority 2: Topic-specific suggestions for this specialist
+        if strategy_topic and strategy_topic in cls._STRATEGY_TOPIC_SUGGESTIONS:
+            topic_suggestions = cls._STRATEGY_TOPIC_SUGGESTIONS[strategy_topic]
+            if specialist_name in topic_suggestions:
+                suggestions = topic_suggestions[specialist_name][:3]
+                _template_stats["suggestions_generated"] += 1
+                _debug(
+                    "💡 SUGGESTIONS: generated for topic",
+                    specialist=specialist_name,
+                    topic=strategy_topic,
+                    count=len(suggestions),
+                )
+                return suggestions
+
+        # Priority 3: Default suggestions for this specialist
+        suggestions = cls._SPECIALIST_DEFAULTS.get(specialist_name, [])[:3]
+        if suggestions:
+            _template_stats["suggestions_generated"] += 1
+            _debug(
+                "💡 SUGGESTIONS: generated defaults",
+                specialist=specialist_name,
+                count=len(suggestions),
+            )
+        return suggestions
+
+    @classmethod
+    def get_suggestions_json(
+        cls,
+        specialist_name: str,
+        strategy_topic: Optional[str],
+        state: "GraphState",
+    ) -> str:
+        """
+        Get suggestions as a JSON array string for prompt injection.
+
+        Returns:
+            JSON array string like '["Option 1", "Option 2", "Option 3"]'
+        """
+        suggestions = cls.for_specialist(specialist_name, strategy_topic, state)
+        return json.dumps(suggestions)
+
+
+# =============================================================================
 # PER-NODE LLM CONFIGURATION
 # =============================================================================
 # Each node can have its own LLM parameters optimized for its task.
@@ -1555,7 +3393,13 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "extractor": {
         "model_hint": "small",
         "temperature": 0.1,  # Very deterministic for extraction
-        "max_tokens": 512,  # Structured JSON output
+        "max_tokens": 400,  # Capped from 512 for token savings
+        "top_p": None,
+    },
+    "extractor_light": {
+        "model_hint": "small",
+        "temperature": 0.1,  # Very deterministic for extraction
+        "max_tokens": 128,  # Minimal output for core fields only
         "top_p": None,
     },
     "router": {
@@ -1567,7 +3411,7 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "required_fields": {
         "model_hint": "small",
         "temperature": 0.3,  # Slightly creative for warm phrasing
-        "max_tokens": 512,  # Reduced from 1024 - typical output ~200-400 tokens
+        "max_tokens": 256,  # Phase 5: Reduced from 512; fallback never uses full 512
         "top_p": None,
     },
     "flights": {
@@ -1603,13 +3447,31 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "strategy": {
         "model_hint": "medium",
         "temperature": 0.3,  # Slightly creative for topic advice
-        "max_tokens": 2048,  # Deep planning needs more space
+        "max_tokens": 2048,  # Deep planning needs more space (used for stage 2)
+        "top_p": None,
+    },
+    "strategy_stage1": {
+        "model_hint": "medium",
+        "temperature": 0.3,  # Slightly creative for topic advice
+        "max_tokens": 512,  # Stage 1: shortlist + skeleton only
+        "top_p": None,
+    },
+    "strategy_stage2": {
+        "model_hint": "medium",
+        "temperature": 0.3,  # Slightly creative for topic advice
+        "max_tokens": 2048,  # Stage 2: full detailed itinerary
         "top_p": None,
     },
     "response_polish": {
         "model_hint": "small",
         "temperature": 0.4,  # Slightly creative for natural tone
         "max_tokens": 512,  # Must accommodate full polished messages from specialists
+        "top_p": None,
+    },
+    "missing_fields_guard": {
+        "model_hint": "small",
+        "temperature": 0.3,  # Slightly creative for warm phrasing
+        "max_tokens": 100,  # Very short output - just question + 3 suggestions
         "top_p": None,
     },
 }
@@ -1681,6 +3543,833 @@ _OFF_TOPIC_DEFLECTIONS = [
 ]
 
 
+# =============================================================================
+# EXTRACTOR MODE SELECTION (Light vs Full)
+# =============================================================================
+# Light extraction (~128 tokens) is used for early turns with simple input.
+# Full extraction (~512 tokens) is used for dense input or when nearing ready_to_generate.
+
+# Keywords indicating dense input requiring full extraction
+# Topic keywords - used for routing/strategy detection, NOT for triggering FULL extraction mode
+# These are intents/themes, not concrete booking preferences
+_TOPIC_KEYWORDS = frozenset(
+    [
+        # Strategy/activity topics
+        "hiking",
+        "diving",
+        "skiing",
+        "cycling",
+        "boating",
+        "snorkeling",
+        "surfing",
+        "climbing",
+        "trekking",
+        "safari",
+        "cruise",
+        # Trip style/intent
+        "adventure",
+        "relaxation",
+        "beach",
+        "mountain",
+        "city break",
+        "road trip",
+        "honeymoon",
+        "backpacking",
+        "luxury",
+        "budget-friendly",
+    ]
+)
+
+# Settings keywords - concrete booking preferences that require FULL extraction mode
+# These indicate the user is specifying detailed preferences
+_DENSE_INPUT_KEYWORDS = frozenset(
+    [
+        # Flight settings
+        "direct",
+        "nonstop",
+        "non-stop",
+        "business",
+        "first class",
+        "economy",
+        "one-way",
+        "round-trip",
+        "round trip",
+        "layover",
+        "stopover",
+        "cabin",
+        # Hotel settings
+        "star",
+        "stars",
+        "boutique",
+        "resort",
+        "hostel",
+        "airbnb",
+        "pool",
+        "spa",
+        "gym",
+        "amenities",
+        "breakfast",
+        "wifi",
+        "parking",
+        # Transport settings
+        "car rental",
+        "rent a car",
+        "train",
+        "bus",
+        "ferry",
+        "taxi",
+        "uber",
+        "transfer",
+        # Generic activity keywords (not strategy topics)
+        "tour",
+        "museum",
+    ]
+)
+
+# Patterns indicating complex/dense input
+_COMMA_LIST_PATTERN = re.compile(r",\s*(?:and\s+)?[A-Z][a-z]+", re.IGNORECASE)
+_MULTI_DESTINATION_PATTERN = re.compile(r"\b(?:and|then|also|plus)\s+[A-Z][a-z]+", re.IGNORECASE)
+
+
+def _is_dense_input(text: str, state: "GraphState") -> tuple[bool, str]:
+    """
+    Determine if user input requires full extraction (vs light extraction).
+
+    PHASE 2 OPTIMIZATION: Two-factor requirement for FULL mode.
+    FULL extraction requires 2+ independent signals to prevent misfires
+    from single-factor triggers (e.g., one keyword or just being long).
+
+    Returns (is_dense, reason) where:
+    - is_dense: True if full extraction needed (2+ factors present)
+    - reason: Explanation for debug logging
+
+    Signal categories (need 2+ from different categories):
+    1. SETTINGS_KEYWORDS: Flight/hotel/transport/activity preferences
+    2. STRUCTURED_LIST: Comma-separated or multi-destination phrases
+    3. NEAR_READY: 2+ core fields already complete
+    4. LONG_INPUT: >280 chars suggests complex request
+    5. MULTI_SENTENCE: 3+ sentences suggests complex multi-part request
+
+    Special case: Core-collection precondition
+    If core fields are missing, require user to provide 2+ concrete core values
+    in the same message to trigger FULL. This prevents FULL on simple turns.
+    """
+    text_lower = text.lower()
+
+    # Track which signals are present
+    signals: dict[str, bool] = {
+        "settings_keywords": False,
+        "structured_list": False,
+        "near_ready": False,
+        "long_input": False,
+        "multi_sentence": False,
+    }
+    signal_details: dict[str, str] = {}
+
+    # 1. Check for settings keywords (booking preferences, NOT topic/strategy keywords)
+    settings_matches = [kw for kw in _DENSE_INPUT_KEYWORDS if kw in text_lower]
+    topic_matches = [kw for kw in _TOPIC_KEYWORDS if kw in text_lower]
+
+    # Log topic keywords for debugging (they affect routing, not extraction mode)
+    if topic_matches:
+        _debug(
+            "📊 TOPIC_KEYWORDS: detected (routing only, not triggering FULL mode)",
+            topic_keywords=topic_matches[:3],
+        )
+
+    if settings_matches:
+        signals["settings_keywords"] = True
+        signal_details["settings_keywords"] = ",".join(settings_matches[:3])
+        _extractor_stats["dense_input_keywords"] += 1
+
+    # 2. Check for structured list (comma-separated or multi-destination)
+    comma_count = text.count(",")
+    has_comma_list = comma_count >= 2 and _COMMA_LIST_PATTERN.search(text)
+    multi_dest_matches = _MULTI_DESTINATION_PATTERN.findall(text)
+    has_multi_dest = len(multi_dest_matches) >= 2
+
+    if has_comma_list or has_multi_dest:
+        signals["structured_list"] = True
+        if has_comma_list:
+            signal_details["structured_list"] = f"{comma_count}_commas"
+            _extractor_stats["dense_input_commas"] += 1
+        else:
+            signal_details["structured_list"] = f"{len(multi_dest_matches)}_multi_dest"
+
+    # 3. Check if nearing ready_to_generate (2+ core fields complete)
+    ti = state.trip_inputs
+    core_complete_count = sum(
+        [
+            bool(ti.destinations),
+            bool(ti.origin),
+            bool(ti.start_date),
+        ]
+    )
+    if core_complete_count >= 2:
+        signals["near_ready"] = True
+        signal_details["near_ready"] = f"{core_complete_count}/3_core"
+
+    # 4. Check for very long input
+    if len(text) > 280:
+        signals["long_input"] = True
+        signal_details["long_input"] = f"{len(text)}_chars"
+        _extractor_stats["dense_input_chars"] += 1
+
+    # 5. Check for 3+ sentences
+    sentence_count = len(re.findall(r"[.!?]+", text))
+    if sentence_count >= 3:
+        signals["multi_sentence"] = True
+        signal_details["multi_sentence"] = f"{sentence_count}_sentences"
+        _extractor_stats["dense_input_sentences"] += 1
+
+    # Count active signals
+    active_signals = [name for name, active in signals.items() if active]
+    signal_count = len(active_signals)
+
+    # ==========================================================================
+    # TWO-FACTOR DECISION: Require 2+ signals for FULL mode
+    # ==========================================================================
+    if signal_count >= 2:
+        # Multi-factor trigger - definitely use FULL
+        reason = f"multifactor:{'+'.join(active_signals)}"
+        _extractor_stats["full_mode"] += 1
+        _extractor_stats["full_by_multifactor"] += 1
+        _debug(
+            "📊 DENSE_INPUT: FULL mode (2+ factors)",
+            trigger_reason="multifactor",
+            signals=active_signals,
+            details=signal_details,
+        )
+        return True, reason
+
+    elif signal_count == 1:
+        # Single factor - apply core-collection precondition
+        single_signal = active_signals[0]
+
+        # EXCEPTION 1: near_ready always triggers FULL (user is close to done)
+        if single_signal == "near_ready":
+            reason = f"near_ready:{signal_details['near_ready']}"
+            _extractor_stats["full_mode"] += 1
+            _extractor_stats["full_by_near_ready"] += 1
+            _debug(
+                "📊 DENSE_INPUT: FULL mode (near-ready exception)",
+                trigger_reason="near_ready",
+                core_fields=core_complete_count,
+            )
+            return True, reason
+
+        # EXCEPTION 2: settings_keywords with 3+ matches is strong signal
+        if single_signal == "settings_keywords" and len(settings_matches) >= 3:
+            reason = f"settings_keywords:{signal_details['settings_keywords']}"
+            _extractor_stats["full_mode"] += 1
+            _extractor_stats["full_by_settings_keywords"] += 1
+            _debug(
+                "📊 DENSE_INPUT: FULL mode (3+ settings keywords)",
+                trigger_reason="settings_keywords",
+                keywords=settings_matches[:5],
+            )
+            return True, reason
+
+        # Otherwise, single factor is not enough - use LIGHT
+        _extractor_stats["light_mode"] += 1
+        _extractor_stats["full_rejected_single_factor"] += 1
+        _debug(
+            "📊 DENSE_INPUT: LIGHT mode (single factor rejected)",
+            rejected_signal=single_signal,
+            details=signal_details.get(single_signal, ""),
+        )
+        return False, f"single_factor_rejected:{single_signal}"
+
+    # No signals - use LIGHT
+    _extractor_stats["light_mode"] += 1
+    _debug("Extractor mode: LIGHT", input_len=len(text), core_fields=core_complete_count)
+    return False, "simple_input"
+
+
+# =============================================================================
+# PHASE 7: LQA (LAST QUESTION ANSWER) PRE-PASS
+# =============================================================================
+# Zero-LLM pre-pass that runs BEFORE extractor. When the system just asked
+# for a specific field and the user gives a simple answer, we can parse it
+# deterministically and skip extractor entirely. This is the highest-impact
+# token savings for the common pattern:
+#   Assistant: "Where are you flying from?"
+#   User: "Amsterdam"
+# Instead of ~544 input tokens for light extractor, we use 0 tokens.
+
+# Bail patterns: Multi-intent or correction signals that need full extraction
+_LQA_BAIL_PATTERNS = [
+    re.compile(r"\b(also|and\s+book|plus|as\s+well)\b", re.IGNORECASE),  # Multi-intent
+    re.compile(r"[,;].*[,;]", re.IGNORECASE),  # Multiple delimiters
+    re.compile(r"\b(not|instead|change|actually|but)\b", re.IGNORECASE),  # Negation/correction
+]
+
+
+def _parse_destination_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """Parse a destination answer. Returns parsed dict or None."""
+    # First check if the raw text is a known place
+    if is_known_place(text):
+        # If so, normalize it for consistency
+        normalized = normalize_place_synonym(text)
+        return {"destinations_delta": [normalized]}
+    # Also try the normalized version (in case synonym maps to different casing)
+    normalized = normalize_place_synonym(text)
+    if is_known_place(normalized):
+        return {"destinations_delta": [normalized]}
+    return None
+
+
+def _parse_origin_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """Parse an origin answer, handling 'from X' prefix. Returns parsed dict or None."""
+    # Try with "from" prefix first
+    origin_match = _ORIGIN_PREFIX_PATTERN.match(text)
+    if origin_match:
+        origin_text = origin_match.group(2).strip()
+    else:
+        origin_text = text
+
+    # First check if the raw text is a known place
+    if is_known_place(origin_text):
+        # If so, normalize it for consistency
+        normalized = normalize_place_synonym(origin_text)
+        return {"origin_delta": normalized}
+    # Also try the normalized version (in case synonym maps to different casing)
+    normalized = normalize_place_synonym(origin_text)
+    if is_known_place(normalized):
+        return {"origin_delta": normalized}
+    return None
+
+
+def _parse_date_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """Parse a date answer. Returns parsed dict or None."""
+    iso_date = _date_normalizer.normalize(text)
+    if iso_date:
+        return {"start_date_hint": iso_date}
+    return None
+
+
+def _parse_travelers_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """Parse a travelers answer. Returns parsed dict or None."""
+    travelers_match = _TRAVELERS_PATTERN.match(text)
+    if travelers_match:
+        # Extract number of adults
+        if "just" in text.lower() or "solo" in text.lower() or text.lower() in ("me", "myself"):
+            adults = 1
+        elif travelers_match.group(1):  # "2 adults", "3 people"
+            adults = int(travelers_match.group(1))
+        elif travelers_match.group(3):  # "family of 4"
+            adults = int(travelers_match.group(3))
+        elif travelers_match.group(4):  # "4 of us"
+            adults = int(travelers_match.group(4))
+        else:
+            adults = 1  # Default
+        return {"adults_delta": adults}
+    return None
+
+
+def _parse_budget_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """Parse a budget answer. Returns parsed dict or None."""
+    budget_match = _BUDGET_PATTERN.match(text)
+    if budget_match:
+        amount_str = budget_match.group(1)
+        # Handle "k" suffix (e.g., "2k" -> 2000)
+        if amount_str.lower().endswith("k"):
+            amount = float(amount_str[:-1]) * 1000
+        else:
+            # Remove commas and convert
+            amount = float(amount_str.replace(",", ""))
+        return {"budget_delta": amount}
+    return None
+
+
+def _parse_duration_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """Parse a duration answer. Returns parsed dict or None."""
+    duration_match = _DURATION_PATTERN.match(text)
+    if duration_match:
+        # Parse the number (could be word or digit)
+        num_str = duration_match.group(1).lower()
+        if num_str in _WORD_TO_NUMBER:
+            num = _WORD_TO_NUMBER[num_str]
+        else:
+            num = int(num_str)
+
+        unit = duration_match.group(2).lower()
+        # Convert to days
+        if "week" in unit:
+            days = num * 7
+        else:
+            days = num  # days or nights treated the same
+
+        return {"duration_days": days}
+    return None
+
+
+# Mapping from question_target to parser function
+_LQA_FIELD_PARSERS: Dict[str, Callable[[str, "GraphState"], Optional[Dict[str, Any]]]] = {
+    "destinations": _parse_destination_answer,
+    "origin": _parse_origin_answer,
+    "dates": _parse_date_answer,
+    "start_date": _parse_date_answer,
+    "end_date": _parse_date_answer,
+    "travelers": _parse_travelers_answer,
+    "budget": _parse_budget_answer,
+    "duration": _parse_duration_answer,
+}
+
+
+def lqa_prepass(state: "GraphState") -> "GraphState":
+    """
+    LQA (Last Question Answer) pre-pass node.
+
+    Runs BEFORE extractor to deterministically parse simple answers to the
+    last question asked. If successful, sets parsed_inputs and flags so
+    extractor can be skipped entirely.
+
+    Bail conditions (falls through to extractor):
+    - pending_action is set (short-circuit should handle)
+    - No question_target/last_question_field set
+    - Input exceeds lqa_max_length
+    - Multi-intent or negation patterns detected
+    - Field validation fails
+
+    Returns:
+        Updated state with flags["lqa_prepass"] = True/False
+    """
+    _debug_node_entry("lqa_prepass", state)
+    _lqa_stats["attempts"] += 1
+
+    text = (state.user_text or "").strip()
+
+    # -------------------------------------------------------------------------
+    # BAIL 1: Pending action (defer to short-circuit handling in extractor)
+    # -------------------------------------------------------------------------
+    pending_action = state.metadata.get("pending_action")
+    if pending_action:
+        _lqa_stats["bails"] += 1
+        _lqa_stats["bail_pending_action"] += 1
+        state.flags["lqa_prepass"] = False
+        state.flags["lqa_bail_reason"] = "pending_action"
+        _debug("[LQA] BAIL: pending_action set", action=pending_action)
+        _debug_node_exit("lqa_prepass", state)
+        return state
+
+    # -------------------------------------------------------------------------
+    # BAIL 2: No question_target (can't know what field to parse)
+    # -------------------------------------------------------------------------
+    question_target = state.question_target or state.metadata.get("last_question_field")
+    if not question_target:
+        _lqa_stats["bails"] += 1
+        _lqa_stats["bail_no_question_target"] += 1
+        state.flags["lqa_prepass"] = False
+        state.flags["lqa_bail_reason"] = "no_question_target"
+        _debug("[LQA] BAIL: no question_target set")
+        _debug_node_exit("lqa_prepass", state)
+        return state
+
+    # -------------------------------------------------------------------------
+    # BAIL 3: Input too long
+    # -------------------------------------------------------------------------
+    if len(text) > settings.lqa_max_length:
+        _lqa_stats["bails"] += 1
+        _lqa_stats["bail_too_long"] += 1
+        state.flags["lqa_prepass"] = False
+        state.flags["lqa_bail_reason"] = "too_long"
+        _debug(
+            "[LQA] BAIL: input too long",
+            length=len(text),
+            max=settings.lqa_max_length,
+        )
+        _debug_node_exit("lqa_prepass", state)
+        return state
+
+    # -------------------------------------------------------------------------
+    # BAIL 4: Multi-intent or negation patterns
+    # -------------------------------------------------------------------------
+    for i, pattern in enumerate(_LQA_BAIL_PATTERNS):
+        if pattern.search(text):
+            bail_types = ["multi_intent", "multi_intent", "negation"]
+            bail_type = bail_types[i] if i < len(bail_types) else "multi_intent"
+            _lqa_stats["bails"] += 1
+            _lqa_stats[f"bail_{bail_type}"] += 1
+            state.flags["lqa_prepass"] = False
+            state.flags["lqa_bail_reason"] = bail_type
+            _debug(
+                f"[LQA] BAIL: {bail_type} pattern detected",
+                pattern_idx=i,
+                text=text[:30],
+            )
+            _debug_node_exit("lqa_prepass", state)
+            return state
+
+    # -------------------------------------------------------------------------
+    # BAIL 5: No parser for this question_target
+    # -------------------------------------------------------------------------
+    parser = _LQA_FIELD_PARSERS.get(question_target)
+    if not parser:
+        _lqa_stats["bails"] += 1
+        _lqa_stats["bail_validation_fail"] += 1
+        state.flags["lqa_prepass"] = False
+        state.flags["lqa_bail_reason"] = "unhandled_field"
+        _debug("[LQA] BAIL: no parser for question_target", target=question_target)
+        _debug_node_exit("lqa_prepass", state)
+        return state
+
+    # -------------------------------------------------------------------------
+    # ATTEMPT PARSING
+    # -------------------------------------------------------------------------
+    parsed = parser(text, state)
+    if parsed is None:
+        _lqa_stats["bails"] += 1
+        _lqa_stats["bail_validation_fail"] += 1
+        state.flags["lqa_prepass"] = False
+        state.flags["lqa_bail_reason"] = "validation_fail"
+        _debug(
+            "[LQA] BAIL: validation failed",
+            target=question_target,
+            text=text[:30],
+        )
+        _debug_node_exit("lqa_prepass", state)
+        return state
+
+    # -------------------------------------------------------------------------
+    # SUCCESS: Set parsed_inputs and flags
+    # -------------------------------------------------------------------------
+    _lqa_stats["hits"] += 1
+    state.flags["lqa_prepass"] = True
+    state.flags["lqa_field"] = question_target
+    state.parsed_inputs = parsed
+
+    # Clear question_target after successfully answering it, so required_fields
+    # will ask about the next missing field instead of repeating the same question
+    state.question_target = None
+
+    # Set high confidence since we matched deterministically
+    state.metadata["extraction_confidence"] = {
+        "overall": 0.95,
+        "level": "high",
+        "method": "lqa_prepass",
+        "grammar_matched": True,
+        "is_english": True,
+        "detected_language": None,
+        "low_confidence_reasons": [],
+        "typo_suggestions": {},
+    }
+
+    # Record path trace for metrics
+    state.metadata["extraction_path"] = f"lqa:{question_target}"
+
+    _debug(
+        "[LQA] HIT: parsed successfully",
+        target=question_target,
+        parsed=parsed,
+        text=text[:30],
+    )
+    _debug_node_exit("lqa_prepass", state)
+    return state
+
+
+# =============================================================================
+# FAST-PATH EXTRACTOR PATTERNS (Token-saving short-circuits)
+# =============================================================================
+# These patterns enable bypassing the LLM extractor when the user provides
+# a simple, unambiguous answer to a specific question (question_target).
+#
+# REQUIREMENTS for fast-path triggering (ALL must be true):
+# 1. question_target is set (system just asked for a specific field)
+# 2. len(text) < 30 (short answer, likely direct response)
+# 3. Matches strict regex for field type
+# 4. No sentence-ending punctuation that suggests a sentence (!?.)
+
+# Maximum length for fast-path consideration
+_FAST_PATH_MAX_LENGTH = 30
+
+# Pattern: Sentence-ending punctuation (reject these - likely sentences)
+_SENTENCE_ENDING_PATTERN = re.compile(r"[!?]\s*$")
+
+# Pattern: Origin prefix (e.g., "from London", "leaving from NYC")
+_ORIGIN_PREFIX_PATTERN = re.compile(
+    r"^(from|leaving\s+from|departing\s+from|flying\s+from|starting\s+from)\s+(.+)$",
+    re.IGNORECASE,
+)
+
+# Pattern: Travelers (e.g., "2 adults", "just me", "3 people", "family of 4")
+_TRAVELERS_PATTERN = re.compile(
+    r"^(?:just\s+me|only\s+me|me|myself|solo|"
+    r"(\d+)\s*(adult|person|people|guest|traveler|pax)s?|"
+    r"(?:family\s+of|group\s+of)\s+(\d+)|"
+    r"(\d+)\s*(?:of\s+us|traveling))$",
+    re.IGNORECASE,
+)
+
+# Phase 5: Pattern for budget (e.g., "$2000", "2k", "around 3000 euros", "about 5000")
+_BUDGET_PATTERN = re.compile(
+    r"^(?:around|about|approximately|roughly|~)?\s*"  # Optional prefix
+    r"(?:\$|€|£|USD|EUR|GBP|CAD|AUD)?\s*"  # Optional currency symbol/code before
+    r"(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k)"  # Amount (with optional commas, decimals, or k suffix)
+    r"\s*(?:\$|€|£|USD|EUR|GBP|CAD|AUD|dollars|euros|pounds)?"  # Optional currency after
+    r"(?:\s*(?:budget|total|max|maximum))?$",  # Optional suffix
+    re.IGNORECASE,
+)
+
+# Phase 5: Pattern for duration (e.g., "7 days", "one week", "10 nights", "2 weeks")
+_DURATION_PATTERN = re.compile(
+    r"^(?:(?:for\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"\s*(day|days|night|nights|week|weeks))"
+    r"(?:\s*(?:trip|vacation|holiday))?$",
+    re.IGNORECASE,
+)
+
+# Word-to-number mapping for duration parsing
+_WORD_TO_NUMBER = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+
+
+# NOTE: _debug_fast_path_decision and _try_fast_path_extraction have been removed.
+# Their functionality is now handled by the lqa_prepass node which runs BEFORE
+# extractor, providing better token savings by skipping extractor entirely.
+# The shared field parsing logic is now in _LQA_FIELD_PARSERS and individual
+# _parse_*_answer() functions above.
+
+
+# =============================================================================
+# PHASE 6: ZERO-LLM INITIAL MESSAGE EXTRACTION
+# =============================================================================
+# Handle simple initial messages like "I want to go to Paris" or
+# "2 adults, Paris, next month" without LLM even when question_target is not set.
+# This extends fast-path to work on first turn, saving ~1145 tokens.
+
+# Pattern: "I want to go to X", "trip to X", "visit X", "travel to X"
+_INITIAL_DESTINATION_PATTERN = re.compile(
+    r"(?:i\s+want\s+to\s+(?:go\s+to|visit|travel\s+to)|"
+    r"(?:trip|vacation|holiday)\s+to|"
+    r"planning\s+(?:a\s+)?(?:trip|vacation|holiday)\s+to|"
+    r"going\s+to|"
+    r"let'?s\s+go\s+to)\s+(.+?)(?:\s+(?:from|next|in|for|with)\b|[.!?,]|$)",
+    re.IGNORECASE,
+)
+
+# Pattern: "from X to Y" or "X to Y"
+_ORIGIN_DESTINATION_PATTERN = re.compile(
+    r"(?:from\s+)?(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)",
+    re.IGNORECASE,
+)
+
+# Pattern: Multi-field simple input like "2 adults, Paris, next month"
+# Handles comma-separated values that each match a field pattern
+_MULTI_FIELD_PATTERN = re.compile(
+    r"^(?:(\d+)\s*(?:adult|people|person|traveler)s?(?:\s*,\s*|\s+and\s+|\s+)?)?"
+    r"(\w+(?:\s+\w+)?)?(?:\s*,\s*|\s+)?"
+    r"(next\s+(?:week|month)|in\s+\w+|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*(?:\s+\d+)?)?",
+    re.IGNORECASE,
+)
+
+
+def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """
+    Phase 6: Attempt zero-LLM extraction for initial messages.
+
+    Unlike fast-path which requires question_target, this handles first-turn
+    messages that clearly express trip intent with recognizable patterns.
+
+    Examples handled:
+    - "I want to go to Paris" → destinations: [Paris]
+    - "Trip to Rome from London" → destinations: [Rome], origin: London
+    - "2 adults, Barcelona, next month" → adults: 2, destinations: [Barcelona], dates
+    - "Paris" (when it's clearly a destination) → destinations: [Paris]
+
+    Requirements:
+    - Input must be relatively short (<100 chars)
+    - Must match at least one field pattern
+    - Extracted place names must be known places
+
+    Args:
+        text: User input text
+        state: Current graph state
+
+    Returns:
+        Dict with parsed data if extraction succeeds, None otherwise.
+        Dict format: {
+            "type": "initial_extraction",
+            "fields": [list of extracted field names],
+            "parsed": {...},  # Parsed data to merge into parsed_inputs
+        }
+    """
+    text_clean = text.strip()
+
+    # Gate: Only process short-to-medium inputs (first turn messages)
+    if len(text_clean) > 100:
+        _debug(f"[INITIAL_EXTRACT] MISS: text too long ({len(text_clean)} > 100)")
+        return None
+
+    # Gate: Skip if question_target is set (fast-path should handle those)
+    question_target = state.question_target or state.metadata.get("last_question_field")
+    if question_target:
+        _debug(f"[INITIAL_EXTRACT] MISS: question_target set ({question_target})")
+        return None
+
+    # Gate: Skip if we already have core fields (not first turn)
+    readiness = compute_trip_readiness(state.trip_inputs)
+    if readiness.core_complete:
+        _debug("[INITIAL_EXTRACT] MISS: core fields already complete")
+        return None
+
+    parsed: Dict[str, Any] = {}
+    fields_extracted: List[str] = []
+
+    # Try pattern 1: "I want to go to X", "trip to X", etc.
+    dest_match = _INITIAL_DESTINATION_PATTERN.search(text_clean)
+    if dest_match:
+        dest_text = dest_match.group(1).strip()
+        normalized = normalize_place_synonym(dest_text)
+        if is_known_place(normalized):
+            parsed["destinations_delta"] = [normalized]
+            fields_extracted.append("destinations")
+            _debug(f"[INITIAL_EXTRACT] Pattern 1 matched: destinations={normalized}")
+
+    # Try pattern 2: "from X to Y" or "X to Y"
+    if not parsed.get("destinations_delta"):
+        origin_dest_match = _ORIGIN_DESTINATION_PATTERN.search(text_clean)
+        if origin_dest_match:
+            origin_text = origin_dest_match.group(1).strip()
+            dest_text = origin_dest_match.group(2).strip()
+
+            origin_norm = normalize_place_synonym(origin_text)
+            dest_norm = normalize_place_synonym(dest_text)
+
+            if is_known_place(dest_norm):
+                parsed["destinations_delta"] = [dest_norm]
+                fields_extracted.append("destinations")
+                _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: destinations={dest_norm}")
+
+            if is_known_place(origin_norm) and origin_norm != dest_norm:
+                parsed["origin_delta"] = origin_norm
+                fields_extracted.append("origin")
+                _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: origin={origin_norm}")
+
+    # Try pattern 3: Multi-field comma-separated input
+    multi_match = _MULTI_FIELD_PATTERN.match(text_clean)
+    if multi_match:
+        # Extract travelers
+        travelers_str = multi_match.group(1)
+        if travelers_str and not parsed.get("adults_delta"):
+            parsed["adults_delta"] = int(travelers_str)
+            fields_extracted.append("travelers")
+            _debug(f"[INITIAL_EXTRACT] Pattern 3 matched: adults={travelers_str}")
+
+        # Extract destination (if not already found)
+        place_str = multi_match.group(2)
+        if place_str and not parsed.get("destinations_delta"):
+            normalized = normalize_place_synonym(place_str.strip())
+            if is_known_place(normalized):
+                parsed["destinations_delta"] = [normalized]
+                fields_extracted.append("destinations")
+                _debug(f"[INITIAL_EXTRACT] Pattern 3 matched: destinations={normalized}")
+
+        # Extract date hint
+        date_str = multi_match.group(3)
+        if date_str:
+            iso_date = _date_normalizer.normalize(date_str)
+            if iso_date:
+                parsed["start_date_hint"] = iso_date
+                fields_extracted.append("dates")
+                _debug(f"[INITIAL_EXTRACT] Pattern 3 matched: dates={iso_date}")
+
+    # Try bare city name (single word or two words that's a known place)
+    if not parsed.get("destinations_delta"):
+        # Check if the entire input (or first significant part) is a known place
+        words = text_clean.split()
+        for i in range(min(3, len(words)), 0, -1):
+            candidate = " ".join(words[:i])
+            # Remove trailing punctuation
+            candidate = candidate.rstrip(".,!?")
+            normalized = normalize_place_synonym(candidate)
+            if is_known_place(normalized):
+                parsed["destinations_delta"] = [normalized]
+                fields_extracted.append("destinations")
+                _debug(f"[INITIAL_EXTRACT] Bare city matched: destinations={normalized}")
+                break
+
+    # Try extracting flight settings from the message
+    text_lower = text_clean.lower()
+    flight_settings: Dict[str, Any] = {}
+
+    # One-way flight detection
+    if "one-way" in text_lower or "one way" in text_lower or "oneway" in text_lower:
+        flight_settings["round_trip"] = False
+        _debug("[INITIAL_EXTRACT] Flight setting: round_trip=False (one-way)")
+
+    # Direct/nonstop flight
+    if "direct" in text_lower or "nonstop" in text_lower or "non-stop" in text_lower:
+        flight_settings["direct_only"] = True
+        _debug("[INITIAL_EXTRACT] Flight setting: direct_only=True")
+
+    # Cabin class
+    if "business class" in text_lower or "business-class" in text_lower:
+        flight_settings["cabin_class"] = "business"
+        _debug("[INITIAL_EXTRACT] Flight setting: cabin_class=business")
+    elif "first class" in text_lower or "first-class" in text_lower:
+        flight_settings["cabin_class"] = "first"
+        _debug("[INITIAL_EXTRACT] Flight setting: cabin_class=first")
+
+    if flight_settings:
+        parsed["flight_settings_delta"] = flight_settings
+        fields_extracted.append("flight_settings")
+
+    # Return result if we extracted at least one field
+    if fields_extracted:
+        _debug(
+            f"[INITIAL_EXTRACT] HIT: extracted {len(fields_extracted)} fields",
+            fields=fields_extracted,
+            parsed=parsed,
+        )
+        return {
+            "type": "initial_extraction",
+            "fields": fields_extracted,
+            "parsed": parsed,
+        }
+
+    _debug(f"[INITIAL_EXTRACT] MISS: no patterns matched for '{text_clean[:50]}'")
+    return None
+
+
+def _debug_length_audit(
+    context: str,
+    text: str,
+    threshold: int,
+    decision: str,
+) -> None:
+    """
+    Log structured length measurement data for short-circuit auditing.
+
+    Format: [LENGTH_AUDIT] context="..." len=X threshold=Y decision=PASS/FAIL
+
+    Args:
+        context: Description of where the measurement is happening.
+        text: The text being measured (will be shown truncated).
+        threshold: The threshold value being compared against.
+        decision: PASS (under threshold) or FAIL (over threshold).
+    """
+    if not _DEBUG_LOG:
+        return
+    actual_len = len(text)
+    truncated = text[:30] + "..." if len(text) > 30 else text
+    print(
+        f'[LENGTH_AUDIT] context="{context}" '
+        f'input="{truncated}" '
+        f"len={actual_len} threshold={threshold} decision={decision}"
+    )
+
+
 def _debug_short_circuit_decision(
     input_text: str,
     detected_type: Optional[str],
@@ -1716,6 +4405,104 @@ def _debug_short_circuit_decision(
     _debug(" ".join(parts))
 
 
+# =============================================================================
+# DETERMINISTIC INFEASIBILITY DETECTION (Phase 5)
+# =============================================================================
+# Detect obvious infeasibility signals without LLM - route directly to correction.
+# This saves ~1000 tokens by avoiding router LLM when correction is clearly needed.
+
+# Infeasibility patterns that can be detected deterministically
+_INFEASIBILITY_SIGNALS: dict[str, re.Pattern] = {
+    # Dates in the past (explicit correction language)
+    "dates_past": re.compile(
+        r"\b(yesterday|last\s+week|last\s+month|already\s+passed|already\s+gone|"
+        r"was\s+supposed\s+to|should\s+have\s+been|missed\s+the\s+date)\b",
+        re.IGNORECASE,
+    ),
+    # Skiing in summer (seasonal impossibility)
+    "skiing_summer": re.compile(
+        r"\bski(ing)?\b.*\b(june|july|august|summer)\b|\b(june|july|august|summer)\b.*\bski(ing)?\b",
+        re.IGNORECASE,
+    ),
+    # Beach in winter for northern destinations
+    "beach_winter": re.compile(
+        r"\bbeach\b.*\b(december|january|february|winter)\b.*\b(norway|sweden|finland|iceland|alaska|canada)\b|"
+        r"\b(norway|sweden|finland|iceland|alaska|canada)\b.*\bbeach\b.*\b(december|january|february|winter)\b",
+        re.IGNORECASE,
+    ),
+    # Beach in landlocked countries (geographic impossibility)
+    "beach_landlocked": re.compile(
+        r"\bbeach\b.*\b(switzerland|austria|czech|hungary|serbia|slovakia|luxembourg|liechtenstein|"
+        r"andorra|vatican|san\s+marino|bolivia|paraguay|mongolia|nepal|bhutan|laos|kazakhstan|"
+        r"uzbekistan|turkmenistan|kyrgyzstan|tajikistan|afghanistan|rwanda|burundi|uganda|zambia|"
+        r"zimbabwe|botswana|malawi|lesotho|eswatini|ethiopia|chad|niger|mali|burkina\s+faso|"
+        r"central\s+african|south\s+sudan)\b|"
+        r"\b(switzerland|austria|czech|hungary|serbia|slovakia|luxembourg|liechtenstein|"
+        r"andorra|bolivia|paraguay|mongolia|nepal|bhutan)\b.*\bbeach\b",
+        re.IGNORECASE,
+    ),
+    # Impossible same-day intercontinental
+    "same_day_impossible": re.compile(
+        r"\bsame\s+day\b.*\b(tokyo|sydney|australia|japan|new\s+zealand)\b.*\b(london|paris|new\s+york|europe|america)\b|"
+        r"\b(london|paris|new\s+york|europe|america)\b.*\bsame\s+day\b.*\b(tokyo|sydney|australia|japan|new\s+zealand)\b",
+        re.IGNORECASE,
+    ),
+    # Explicit correction language from user
+    "explicit_correction": re.compile(
+        r"\b(that's\s+wrong|that's\s+incorrect|you\s+made\s+a\s+mistake|"
+        r"fix\s+this|correct\s+this|change\s+this|that\s+won't\s+work|"
+        r"not\s+possible|impossible|can't\s+do\s+that|won't\s+work)\b",
+        re.IGNORECASE,
+    ),
+}
+
+
+def _has_infeasibility_signals(text: str, state: "GraphState") -> tuple[bool, str | None]:
+    """
+    Detect deterministic infeasibility signals in user text.
+
+    This function checks for patterns that clearly indicate the user is
+    reporting an infeasibility or requesting a correction, allowing us
+    to route directly to correction_node without invoking router LLM.
+
+    Args:
+        text: User input text
+        state: Current graph state (for context like current dates/destinations)
+
+    Returns:
+        (has_signal, signal_type) - tuple of whether signal detected and which type
+    """
+    text_lower = text.lower()
+
+    # Check each infeasibility pattern
+    for signal_type, pattern in _INFEASIBILITY_SIGNALS.items():
+        if pattern.search(text_lower):
+            _debug(
+                "🔧 INFEASIBILITY_SIGNAL detected",
+                signal_type=signal_type,
+                text_preview=text[:50],
+            )
+            return True, signal_type
+
+    # Check if start_date is in the past (deterministic check)
+    ti = state.trip_inputs
+    if ti.start_date:
+        try:
+            start = datetime.fromisoformat(ti.start_date).date()
+            today = date.today()
+            if start < today:
+                _debug(
+                    "🔧 INFEASIBILITY_SIGNAL: start_date in past",
+                    start_date=ti.start_date,
+                    today=str(today),
+                )
+                return True, "dates_in_past"
+        except (ValueError, TypeError):
+            pass
+
+    return False, None
+
+
 def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
     """
     Detect if user input can be short-circuited without LLM calls.
@@ -1731,8 +4518,16 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
     text_clean = text.strip()
     last_field = state.metadata.get("last_question_field")
 
-    # Skip short-circuit if there's substantial content (>50 chars usually has travel info)
-    if len(text_clean) > 50:
+    # Audit: log actual length measurement for observability
+    _debug_length_audit(
+        context="short_circuit_entry",
+        text=text_clean,
+        threshold=settings.short_circuit_max_length,
+        decision="FAIL" if len(text_clean) > settings.short_circuit_max_length else "PASS",
+    )
+
+    # Skip short-circuit if there's substantial content (configurable, default 200 chars)
+    if len(text_clean) > settings.short_circuit_max_length:
         _debug_short_circuit_decision(text, None, last_field, "BYPASSED", reason="input_too_long")
         return None
 
@@ -2063,6 +4858,7 @@ class DateNormalizer:
         iso_date = normalizer.normalize("next week")
         iso_date, was_partial = normalizer.normalize_with_info("December 2025")
         end_date = normalizer.compute_end_from_duration("2025-01-01", 7)
+        start, end = normalizer.parse_date_range("December 20-27")
     """
 
     # Pre-compiled patterns (class-level for efficiency)
@@ -2074,12 +4870,30 @@ class DateNormalizer:
     )
     _ISO_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+    # Date range patterns: "December 20-27", "Dec 20-27", "20-27 December", etc.
+    _DATE_RANGE_PATTERNS = [
+        # "December 20-27" or "Dec 20-27" (optionally with year)
+        re.compile(
+            r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+            r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+"
+            r"(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$",
+            re.IGNORECASE,
+        ),
+        # "20-27 December" or "20-27 Dec" (optionally with year)
+        re.compile(
+            r"^(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?\s+"
+            r"(january|february|march|april|may|june|july|august|september|october|november|december"
+            r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s*(\d{4}))?$",
+            re.IGNORECASE,
+        ),
+    ]
+
     # Relative date keywords
     _TODAY_WORDS = frozenset({"today", "tonight", "now"})
 
-    # Supported date formats
+    # Supported date formats (ordered by specificity - 4-digit year first)
     _DATE_FORMATS = (
-        "%Y-%m-%d",  # 2025-12-28
+        "%Y-%m-%d",  # 2025-12-28 (ISO)
         "%d-%m-%Y",  # 28-12-2025
         "%d/%m/%Y",  # 28/12/2025
         "%m/%d/%Y",  # 12/28/2025 (US format)
@@ -2092,6 +4906,11 @@ class DateNormalizer:
         "%b %d %Y",  # Dec 28 2025 (no comma)
         "%d %B, %Y",  # 28 December, 2025
         "%d %b, %Y",  # 28 Dec, 2025
+        # 2-digit year formats (less common but still used)
+        "%d-%m-%y",  # 28-12-25
+        "%d/%m/%y",  # 28/12/25
+        "%m/%d/%y",  # 12/28/25 (US format)
+        "%m-%d-%y",  # 12-28-25 (US dash format)
     )
 
     def __init__(self, reference_date: Optional[date] = None):
@@ -2201,6 +5020,82 @@ class DateNormalizer:
             return datetime.strptime(text, "%Y-%m-%d")
         except ValueError:
             return None
+
+    def parse_date_range(self, value: Any) -> tuple[Optional[str], Optional[str]]:
+        """
+        Parse a date range expression into start and end dates.
+
+        Handles formats like:
+        - "December 20-27" → ("2025-12-20", "2025-12-27")
+        - "Dec 20-27" → ("2025-12-20", "2025-12-27")
+        - "December 20-27, 2025" → ("2025-12-20", "2025-12-27")
+        - "20-27 December" → ("2025-12-20", "2025-12-27")
+
+        If no year is specified, uses current year (or next year if month is past).
+
+        Returns:
+            Tuple of (start_date_iso, end_date_iso), or (None, None) if not a range.
+        """
+        text = _normalize_str(value)
+        if not text:
+            return None, None
+
+        text_clean = text.strip()
+
+        for pattern in self._DATE_RANGE_PATTERNS:
+            match = pattern.match(text_clean)
+            if match:
+                groups = match.groups()
+
+                # Pattern 1: "December 20-27" → (month, start_day, end_day, year?)
+                # Pattern 2: "20-27 December" → (start_day, end_day, month, year?)
+                if groups[0].isdigit():
+                    # Pattern 2: start_day, end_day, month, year
+                    start_day = int(groups[0])
+                    end_day = int(groups[1])
+                    month_str = groups[2]
+                    year_str = groups[3] if len(groups) > 3 else None
+                else:
+                    # Pattern 1: month, start_day, end_day, year
+                    month_str = groups[0]
+                    start_day = int(groups[1])
+                    end_day = int(groups[2])
+                    year_str = groups[3] if len(groups) > 3 else None
+
+                # Parse month name to number
+                try:
+                    month_dt = datetime.strptime(month_str[:3], "%b")
+                    month_num = month_dt.month
+                except ValueError:
+                    continue
+
+                # Determine year
+                if year_str:
+                    year = int(year_str)
+                else:
+                    # Use current year, or next year if month is in the past
+                    today = self._reference
+                    year = today.year
+                    if month_num < today.month or (
+                        month_num == today.month and end_day < today.day
+                    ):
+                        year += 1
+
+                # Build ISO dates
+                try:
+                    start_iso = f"{year:04d}-{month_num:02d}-{start_day:02d}"
+                    end_iso = f"{year:04d}-{month_num:02d}-{end_day:02d}"
+
+                    # Validate dates are real
+                    datetime.strptime(start_iso, "%Y-%m-%d")
+                    datetime.strptime(end_iso, "%Y-%m-%d")
+
+                    return start_iso, end_iso
+                except ValueError:
+                    # Invalid day for month
+                    continue
+
+        return None, None
 
     def compute_end_from_duration(
         self, start_date: Optional[str], duration_days: int
@@ -2614,15 +5509,31 @@ class TripInputNormalizer:
         # --- Dates ---
         partial_date_notifications: List[str] = []
 
+        # First, try to parse date ranges from start_date_hint (e.g., "December 20-27")
+        # This handles cases where LLM sends the range as a single hint
         if "start_date_hint" in deltas and not trip_inputs.start_date:
             raw_hint = deltas["start_date_hint"]
-            iso_date, was_partial = self.normalize_date_with_info(raw_hint)
-            if iso_date:
-                updates["start_date"] = iso_date
-                if was_partial:
-                    partial_date_notifications.append(
-                        f"start_date set to first of month from '{raw_hint}'"
-                    )
+
+            # Try parsing as a date range first
+            range_start, range_end = self._date_normalizer.parse_date_range(raw_hint)
+            if range_start and range_end:
+                updates["start_date"] = range_start
+                updates["end_date"] = range_end
+                _debug(
+                    "Parsed date range from start_date_hint",
+                    raw=raw_hint,
+                    start=range_start,
+                    end=range_end,
+                )
+            else:
+                # Fall back to single date parsing
+                iso_date, was_partial = self.normalize_date_with_info(raw_hint)
+                if iso_date:
+                    updates["start_date"] = iso_date
+                    if was_partial:
+                        partial_date_notifications.append(
+                            f"start_date set to first of month from '{raw_hint}'"
+                        )
 
         if "end_date_hint" in deltas:
             raw_hint = deltas["end_date_hint"]
@@ -2871,6 +5782,20 @@ def _normalize_multi_city_intent(value: Any) -> Optional[str]:
         "do both",
     )
 
+    # Additive phrases that imply combining destinations (AND logic)
+    # These require checking the full phrase pattern, not just substring
+    additive_patterns = (
+        r"\btoo\b",  # "go to X too", "visit X too"
+        r"\balso\b",  # "also visit X", "also go to X"
+        r"\bas well\b",  # "visit X as well"
+        r"\band\s+also\b",  # "and also X"
+    )
+    import re as _re_inner
+
+    for pattern in additive_patterns:
+        if _re_inner.search(pattern, normalized):
+            return "multi_city"
+
     if "not separate" not in normalized:
         for phrase in separate_phrases:
             if phrase in normalized:
@@ -2920,17 +5845,6 @@ def _should_skip_field_update(field: str, value: Any, current_value: Any) -> boo
 # =============================================================================
 # BOOKING AUTO-ENABLE LOGIC (ported from plan.py)
 # =============================================================================
-
-
-def _ensure_booking_types(trip_inputs: dict) -> dict:
-    """Guarantee booking_types exists with all keys."""
-    existing = trip_inputs.get("booking_types")
-    if not isinstance(existing, dict):
-        existing = dict(DEFAULT_BOOKING_TYPES)
-    else:
-        existing = {**DEFAULT_BOOKING_TYPES, **existing}
-    trip_inputs["booking_types"] = existing
-    return existing
 
 
 def _should_enable_booking_for_flights(flight_settings: dict | None) -> bool:
@@ -3138,32 +6052,170 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
 # =============================================================================
 
 
-def _compute_missing_fields(trip_inputs: dict) -> List[str]:
-    """Compute the list of missing REQUIRED trip input fields."""
-    missing = []
-    for field in _REQUIRED_TRIP_INPUT_FIELDS:
-        if field == "destinations":
-            val = trip_inputs.get(field, [])
-            if not val or (isinstance(val, list) and len(val) == 0):
-                missing.append(field)
-        elif trip_inputs.get(field) is None:
-            missing.append(field)
-    return missing
+# =============================================================================
+# TRIP READINESS (Phase 6 Consolidation)
+# =============================================================================
+# Single canonical computation for missing fields, question target, and readiness.
+# All nodes MUST use this instead of computing missing fields inline.
 
 
-def _default_follow_up_question(
+@dataclass
+class TripReadiness:
+    """
+    Canonical trip readiness state - computed once, used everywhere.
+
+    This consolidates _compute_missing_fields, _has_required_core_fields,
+    and _get_missing_fields_summary into a single authoritative computation.
+    """
+
+    # Core required fields (destinations, origin, start_date)
+    missing_core: List[str] = field(default_factory=list)
+    # All required fields (core + end_date + adults + budget)
+    missing_all: List[str] = field(default_factory=list)
+    # Which field to ask about next (priority order)
+    question_target: Optional[str] = None
+    # Whether all core fields are present
+    core_complete: bool = False
+    # Whether ready to generate plan
+    ready_to_generate: bool = False
+    # Human-readable summary for prompt injection
+    missing_summary: str = "none - all required fields collected"
+
+    @property
+    def has_destinations(self) -> bool:
+        return "destinations" not in self.missing_core
+
+    @property
+    def has_origin(self) -> bool:
+        return "origin" not in self.missing_core
+
+    @property
+    def has_dates(self) -> bool:
+        return "start_date" not in self.missing_core
+
+
+def compute_trip_readiness(trip_inputs: "TripInputs") -> TripReadiness:
+    """
+    Compute canonical trip readiness state.
+
+    This is the ONLY function that should compute missing fields.
+    All nodes must use this instead of inline checks.
+
+    Args:
+        trip_inputs: Current trip inputs (TripInputs object or dict)
+
+    Returns:
+        TripReadiness with all computed fields
+    """
+    # Handle both TripInputs object and dict
+    if hasattr(trip_inputs, "destinations"):
+        # TripInputs object
+        ti = trip_inputs
+        destinations = ti.destinations
+        origin = ti.origin
+        start_date = ti.start_date
+        end_date = ti.end_date
+        adults = ti.adults
+        budget = ti.budget
+    else:
+        # Dict
+        destinations = trip_inputs.get("destinations", [])
+        origin = trip_inputs.get("origin")
+        start_date = trip_inputs.get("start_date")
+        end_date = trip_inputs.get("end_date")
+        adults = trip_inputs.get("adults")
+        budget = trip_inputs.get("budget")
+
+    # Compute missing core fields
+    missing_core = []
+    if not destinations or (isinstance(destinations, list) and len(destinations) == 0):
+        missing_core.append("destinations")
+    if not origin:
+        missing_core.append("origin")
+    if not start_date:
+        missing_core.append("start_date")
+
+    # Compute all missing fields (core + optional but useful)
+    missing_all = list(missing_core)
+    if not end_date:
+        missing_all.append("end_date")
+    if adults is None:
+        missing_all.append("travelers (adults)")
+    if budget is None:
+        missing_all.append("budget")
+
+    # Determine question target (priority order)
+    question_target = None
+    if missing_core:
+        question_target = missing_core[0]
+        # Normalize "start_date" to "dates" for user-facing questions
+        if question_target == "start_date":
+            question_target = "dates"
+    elif missing_all:
+        # All core complete, ask about optional fields
+        first_optional = [
+            f for f in missing_all if f not in ["destinations", "origin", "start_date"]
+        ]
+        if first_optional:
+            field = first_optional[0]
+            # Normalize field names for user-facing
+            if field == "travelers (adults)":
+                question_target = "travelers"
+            else:
+                question_target = field
+
+    # Compute readiness
+    core_complete = len(missing_core) == 0
+    ready_to_generate = core_complete  # Only core fields required
+
+    # Build summary string
+    if missing_all:
+        missing_summary = ", ".join(missing_all)
+    else:
+        missing_summary = "none - all required fields collected"
+
+    return TripReadiness(
+        missing_core=missing_core,
+        missing_all=missing_all,
+        question_target=question_target,
+        core_complete=core_complete,
+        ready_to_generate=ready_to_generate,
+        missing_summary=missing_summary,
+    )
+
+
+def _has_required_core_fields(state: "GraphState") -> tuple[bool, List[str]]:
+    """
+    Check if required core fields (destinations, origin, start_date) are present.
+
+    DEPRECATED: Use compute_trip_readiness() instead.
+
+    Args:
+        state: Current graph state
+
+    Returns:
+        Tuple of (has_all_fields: bool, missing_fields: List[str])
+    """
+    readiness = compute_trip_readiness(state.trip_inputs)
+    return (readiness.core_complete, readiness.missing_core)
+
+
+def _default_follow_up_with_field(
     missing_fields: List[str],
     user_intent: str = "detailed_planner",
     user_tone: str = "neutral",
     trip_inputs: Optional[dict] = None,
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """
-    Get the default question to ask for the next missing field.
+    Get the default question and the field being asked about.
     Adapts phrasing based on user intent, tone, and existing trip context.
     Professional and natural—matches user energy without overdoing it.
+
+    Returns a tuple of (question, field_name) for tracking which field
+    was last asked, enabling context-aware clarification responses.
     """
     if not missing_fields:
-        return None
+        return None, None
 
     trip_inputs = trip_inputs or {}
     destinations = trip_inputs.get("destinations", [])
@@ -3245,69 +6297,15 @@ def _default_follow_up_question(
         prompts = base_prompts
 
     # Find first missing required field
-    for field in _REQUIRED_TRIP_INPUT_FIELDS:
-        if field in missing_fields:
-            question = prompts.get(field, base_prompts.get(field))
+    for required_field in _REQUIRED_TRIP_INPUT_FIELDS:
+        if required_field in missing_fields:
+            question = prompts.get(required_field, base_prompts.get(required_field))
             if question:
                 # Adjust for frustrated tone - be more direct, skip embellishments
                 if user_tone == "frustrated":
                     # Use simpler, direct phrasing
-                    question = quick_prompts.get(field, question)
-                return question
-    return None
-
-
-def _default_follow_up_with_field(
-    missing_fields: List[str],
-    user_intent: str = "detailed_planner",
-    user_tone: str = "neutral",
-    trip_inputs: Optional[dict] = None,
-) -> tuple[Optional[str], Optional[str]]:
-    """
-    Get the default question and the field being asked about.
-
-    Returns a tuple of (question, field_name) for tracking which field
-    was last asked, enabling context-aware clarification responses.
-    """
-    if not missing_fields:
-        return None, None
-
-    trip_inputs = trip_inputs or {}
-    destinations = trip_inputs.get("destinations", [])
-    dest_name = destinations[0] if destinations else None
-
-    def _dest_prefix(template_with: str, template_without: str) -> str:
-        if dest_name:
-            return template_with.replace("{dest}", dest_name)
-        return template_without
-
-    # Base prompts (only required fields)
-    base_prompts = {
-        "destinations": "Where are you looking to go?",
-        "origin": "Where are you flying from?",
-        "start_date": _dest_prefix(
-            "When are you heading to {dest}?", "When are you looking to travel?"
-        ),
-    }
-
-    quick_prompts = {
-        "destinations": "Where to?",
-        "origin": "Flying from?",
-        "start_date": "When?",
-    }
-
-    if user_intent == "quick_booking":
-        prompts = quick_prompts
-    else:
-        prompts = base_prompts
-
-    for field in _REQUIRED_TRIP_INPUT_FIELDS:
-        if field in missing_fields:
-            question = prompts.get(field, base_prompts.get(field))
-            if question:
-                if user_tone == "frustrated":
-                    question = quick_prompts.get(field, question)
-                return question, field
+                    question = quick_prompts.get(required_field, question)
+                return question, required_field
     return None, None
 
 
@@ -3523,29 +6521,16 @@ def _generate_conversation_summary(
 def _get_missing_fields_summary(state: "GraphState") -> str:
     """Get a summary of missing required fields for prompt injection.
 
+    DEPRECATED: Use compute_trip_readiness().missing_summary instead.
+
     Args:
         state: Current graph state
 
     Returns:
         Comma-separated list of missing fields or "none"
     """
-    ti = state.trip_inputs
-    missing = []
-
-    if not ti.destinations:
-        missing.append("destinations")
-    if not ti.origin:
-        missing.append("origin")
-    if not ti.start_date:
-        missing.append("start_date")
-    if not ti.end_date:
-        missing.append("end_date")
-    if ti.adults is None:
-        missing.append("travelers (adults)")
-    if ti.budget is None:
-        missing.append("budget")
-
-    return ", ".join(missing) if missing else "none - all required fields collected"
+    readiness = compute_trip_readiness(state.trip_inputs)
+    return readiness.missing_summary
 
 
 def _filter_suggested_responses(responses: List[Any]) -> List[str]:
@@ -3858,50 +6843,6 @@ def _get_suggestions_with_fallback(
 
 
 # -----------------------
-# Confidence Scoring Types
-# -----------------------
-class EntityConfidence(BaseModel):
-    """Confidence information for a single extracted entity."""
-
-    value: str  # The extracted value (e.g., "Paris")
-    confidence: float = Field(ge=0.0, le=1.0)  # 0.0 to 1.0
-    extraction_method: str = "unknown"  # "regex", "spacy", "llm", "hybrid"
-    needs_confirmation: bool = False  # Whether to ask user to confirm
-    fuzzy_suggestion: Optional[str] = None  # Suggested correction if typo detected
-    ambiguity_type: Optional[str] = None  # e.g., "country/person_name"
-
-
-class ExtractionConfidence(BaseModel):
-    """Overall confidence scoring for extracted data."""
-
-    overall: float = Field(default=0.5, ge=0.0, le=1.0)
-    level: str = "medium"  # "high", "medium", "low"
-
-    # Per-field confidence
-    destinations: List[EntityConfidence] = Field(default_factory=list)
-    origin: Optional[EntityConfidence] = None
-    dates: Optional[float] = None
-
-    # Metadata
-    extraction_method: str = "unknown"  # Primary method used
-    detected_language: Optional[str] = None
-    language_confidence: Optional[float] = None
-    is_english: bool = True
-
-    # Reasons for low confidence
-    low_confidence_reasons: List[str] = Field(default_factory=list)
-
-    # Fuzzy match suggestions for typos
-    typo_suggestions: Dict[str, str] = Field(default_factory=dict)  # original -> suggested
-
-
-# Confidence thresholds
-CONFIDENCE_THRESHOLD_HIGH = 0.80  # Skip to router, no confirmation needed
-CONFIDENCE_THRESHOLD_MEDIUM = 0.50  # Proceed but may need confirmation
-# Below 0.50 = Low confidence, force LLM extraction
-
-
-# -----------------------
 # Models & schema
 # -----------------------
 class TripInputs(BaseModel):
@@ -3972,6 +6913,175 @@ class GraphState(BaseModel):
     question_target: Optional[str] = (
         None  # destinations|origin|dates|travelers|budget|activities|general
     )
+    # Two-stage strategy: True when stage 1 complete, waiting for user to expand
+    pending_strategy_expansion: bool = False
+    # Session ID for caching purposes
+    session_id: Optional[str] = None
+    # Strategy expansion tier (outline/section/full) for token budget control
+    strategy_expansion_tier: Optional[str] = None  # StrategyTier value
+    # Strategy expansion target (which section to expand)
+    strategy_expansion_target: Optional[str] = None  # StrategyExpansionTarget value
+
+
+# =============================================================================
+# STRATEGY EXPANSION DETECTION (Phase 1: Section-based expansion)
+# =============================================================================
+# Maps user phrases to specific expansion targets and output tiers.
+# Section expansions use SECTION tier (768 tokens), full requests use FULL tier (2048).
+
+# Patterns that trigger FULL tier (user explicitly wants everything)
+_FULL_EXPANSION_TRIGGERS = frozenset(
+    {
+        "full itinerary",
+        "full plan",
+        "complete itinerary",
+        "complete plan",
+        "everything",
+        "all the details",
+        "the whole thing",
+        "entire itinerary",
+        "detailed plan",  # "detailed" implies comprehensive
+    }
+)
+
+# Section-specific patterns -> (StrategyExpansionTarget, StrategyTier)
+_SECTION_EXPANSION_PATTERNS: Dict[str, Tuple["StrategyExpansionTarget", "StrategyTier"]] = {
+    # Day details
+    "day 1": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "day 2": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "day 3": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "day 4": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "day 5": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "first day": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "second day": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "third day": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "expand day": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "day-by-day": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "daily breakdown": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    "daily schedule": (StrategyExpansionTarget.DAY_DETAILS, StrategyTier.SECTION),
+    # Routes and trails
+    "routes": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    "trails": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    "trail": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    "hikes": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    "paths": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    "route options": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    "alternative routes": (StrategyExpansionTarget.ROUTES_TRAILS, StrategyTier.SECTION),
+    # Logistics
+    "logistics": (StrategyExpansionTarget.LOGISTICS, StrategyTier.SECTION),
+    "transport": (StrategyExpansionTarget.LOGISTICS, StrategyTier.SECTION),
+    "transfers": (StrategyExpansionTarget.LOGISTICS, StrategyTier.SECTION),
+    "getting there": (StrategyExpansionTarget.LOGISTICS, StrategyTier.SECTION),
+    "how to get": (StrategyExpansionTarget.LOGISTICS, StrategyTier.SECTION),
+    "timing": (StrategyExpansionTarget.LOGISTICS, StrategyTier.SECTION),
+    # Budget
+    "budget": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "cost": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "costs": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "price": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "pricing": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "money": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "expenses": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    "cost breakdown": (StrategyExpansionTarget.BUDGET, StrategyTier.SECTION),
+    # Gear and packing
+    "gear": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "equipment": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "packing": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "pack list": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "packing list": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "what to bring": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "what to pack": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    "rental gear": (StrategyExpansionTarget.GEAR_PACKING, StrategyTier.SECTION),
+    # Contingencies
+    "contingencies": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "backup": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "backup plan": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "weather": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "rain plan": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "rest days": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "alternatives": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+    "if it rains": (StrategyExpansionTarget.CONTINGENCIES, StrategyTier.SECTION),
+}
+
+# Generic expansion phrases (default to ITINERARY_OUTLINE at SECTION tier)
+_GENERIC_EXPANSION_TRIGGERS = frozenset(
+    {
+        "expand",
+        "show details",
+        "show more details",
+        "tell me more",
+        "more details",
+        "elaborate",
+        "go deeper",
+        "give me more",
+    }
+)
+
+
+@dataclass
+class StrategyExpansionResult:
+    """Result of parsing user text for strategy expansion intent."""
+
+    is_expansion: bool
+    target: Optional[StrategyExpansionTarget] = None
+    tier: Optional[StrategyTier] = None
+    matched_phrase: Optional[str] = None
+
+
+def _is_strategy_expansion_request(
+    text: str,
+) -> StrategyExpansionResult:
+    """
+    Parse user text for strategy expansion intent.
+
+    Returns structured result with:
+    - is_expansion: Whether user is requesting expansion
+    - target: Which section to expand (DAY_DETAILS, ROUTES, BUDGET, etc.)
+    - tier: Output tier (SECTION=768 tokens, FULL=2048 tokens)
+
+    Only triggers on explicit phrases to avoid false positives.
+    Implicit confirmations like "yes" or "let's do it" do NOT trigger expansion.
+
+    Args:
+        text: User text (will be lowercased)
+
+    Returns:
+        StrategyExpansionResult with expansion details
+    """
+    text_lower = text.lower().strip()
+
+    # Check for FULL tier triggers first (user wants everything)
+    for trigger in _FULL_EXPANSION_TRIGGERS:
+        if trigger in text_lower:
+            return StrategyExpansionResult(
+                is_expansion=True,
+                target=StrategyExpansionTarget.FULL_EXPANSION,
+                tier=StrategyTier.FULL,
+                matched_phrase=trigger,
+            )
+
+    # Check for section-specific patterns
+    for pattern, (target, tier) in _SECTION_EXPANSION_PATTERNS.items():
+        if pattern in text_lower:
+            return StrategyExpansionResult(
+                is_expansion=True,
+                target=target,
+                tier=tier,
+                matched_phrase=pattern,
+            )
+
+    # Check for generic expansion triggers (default to ITINERARY_OUTLINE)
+    for trigger in _GENERIC_EXPANSION_TRIGGERS:
+        if trigger in text_lower:
+            return StrategyExpansionResult(
+                is_expansion=True,
+                target=StrategyExpansionTarget.ITINERARY_OUTLINE,
+                tier=StrategyTier.SECTION,
+                matched_phrase=trigger,
+            )
+
+    # No expansion detected
+    return StrategyExpansionResult(is_expansion=False)
 
 
 TRIP_JSON_SCHEMA = {
@@ -3997,6 +7107,56 @@ INVALID_JSON_HINT = (
     "\n\nIMPORTANT: Your previous response was not valid JSON. "
     "Please respond with ONLY valid JSON."
 )
+
+# =============================================================================
+# PHASE 5: STRATEGY STAGE 1 OPTIMIZATION
+# =============================================================================
+# Strip verbose includes from Stage 1 prompts to reduce token count.
+# Also add budget/season sanity checklist to prevent correction triggers.
+
+# Patterns to strip from Stage 1 prompts (content from these includes is verbose)
+_STAGE1_STRIP_PATTERNS = [
+    # _scope_specialist.txt content (lines 1-17, ~150 tokens)
+    (
+        r"={10,}\nSCOPE: SPECIALIST ONLY\n={10,}.*?YOUR ROLE:.*?"
+        r"Trust pre-extracted values from the extractor\n"
+    ),
+    # _markdown_rules.txt content (~120 tokens)
+    (r"={10,}\nMARKDOWN FORMATTING\n={10,}.*?" r"Don't over-format short responses\n"),
+]
+
+# Budget/season sanity checklist for Stage 1 (~50 tokens, saves ~1000 by avoiding correction)
+_STAGE1_SANITY_CHECKLIST = """
+
+STAGE 1 SANITY CHECKLIST (flag issues immediately, don't plan around them):
+- Season mismatch: skiing in June-August, beach in Nordic winter
+- Budget impossibility: luxury on <$100/day, multi-week on <$500 total
+- Date impossibility: start_date in past, end_date before start_date
+- Geographic impossibility: landlocked country for diving/sailing
+If ANY apply: set "infeasibility_warning" in response and explain briefly.
+"""
+
+
+def _strip_stage1_includes(prompt: str) -> str:
+    """
+    Strip verbose include content from prompt for Stage 1 strategy.
+
+    Stage 1 only needs shortlist + skeleton - not full formatting rules
+    or scope reminders. This saves ~150-270 tokens per call.
+
+    Args:
+        prompt: Full prompt with all includes rendered
+
+    Returns:
+        Stripped prompt with verbose sections removed
+    """
+    import re as _re
+
+    result = prompt
+    for pattern in _STAGE1_STRIP_PATTERNS:
+        result = _re.sub(pattern, "", result, flags=_re.DOTALL | _re.IGNORECASE)
+    return result
+
 
 # -----------------------
 # Strategy registry (plug-in)
@@ -4058,6 +7218,235 @@ def clear_prompt_cache() -> None:
     _load_prompt_cached.cache_clear()
     _PROMPTS_LOADED.clear()
     _JINJA_ENV.cache.clear() if hasattr(_JINJA_ENV, "cache") and _JINJA_ENV.cache else None
+
+
+# =============================================================================
+# PHASE 6: CONDITIONAL INCLUDE STRIPPING FOR SPECIALISTS
+# =============================================================================
+# Strip _scope_specialist.txt and _never_invent.txt when gates already verified
+# domain. Keep _json_output.txt always. Saves ~138w (~184 tokens) per call.
+
+# Include content markers for stripping (approximate content patterns)
+_SCOPE_SPECIALIST_MARKER = "IMPORTANT"  # First word of _scope_specialist.txt
+_NEVER_INVENT_MARKER = "Never invent"  # Key phrase in _never_invent.txt
+
+# Cache for stripped prompts
+_STRIPPED_PROMPTS_CACHE: Dict[str, str] = {}
+
+
+def _strip_specialist_includes(
+    prompt: str,
+    gate_verified: bool,
+    is_follow_up: bool,
+) -> str:
+    """
+    Phase 6: Strip unnecessary includes from specialist prompts.
+
+    Args:
+        prompt: The loaded prompt text (with includes already rendered)
+        gate_verified: True if routing gate already verified domain
+        is_follow_up: True if user is answering a question (low invention risk)
+
+    Returns:
+        Prompt with unnecessary includes stripped
+    """
+    if not gate_verified and not is_follow_up:
+        return prompt
+
+    stripped = prompt
+    tokens_saved = 0
+
+    # Strip _scope_specialist content when gate verified domain
+    # This ~100 word block enforces domain scope, but gate already verified it
+    if gate_verified:
+        # Find and remove the scope specialist block
+        # Pattern: "IMPORTANT" block that ends before next major section
+        scope_patterns = [
+            # Pattern 1: IMPORTANT block
+            r"IMPORTANT[:\s].*?(?=\n\n[A-Z]|\n\n#|\Z)",
+            # Pattern 2: "Stay focused on" directive
+            r"Stay focused on \w+ only\..*?(?=\n\n|\Z)",
+            # Pattern 3: Domain-specific warning
+            r"Do NOT provide .* recommendations\..*?(?=\n\n|\Z)",
+        ]
+        for pattern in scope_patterns:
+            match = re.search(pattern, stripped, re.DOTALL | re.IGNORECASE)
+            if match:
+                before_len = len(stripped)
+                stripped = stripped[: match.start()] + stripped[match.end() :]
+                tokens_saved += (before_len - len(stripped)) // 4
+                break
+
+    # Strip _never_invent content when user is answering a question
+    # This ~38 word block prevents hallucination, but low risk for follow-ups
+    if is_follow_up:
+        never_invent_pattern = r"Never invent.*?(?=\n\n|\Z)"
+        match = re.search(never_invent_pattern, stripped, re.DOTALL | re.IGNORECASE)
+        if match:
+            before_len = len(stripped)
+            stripped = stripped[: match.start()] + stripped[match.end() :]
+            tokens_saved += (before_len - len(stripped)) // 4
+
+    if tokens_saved > 0:
+        _debug(
+            "🔪 INCLUDE_STRIP: stripped includes",
+            gate_verified=gate_verified,
+            is_follow_up=is_follow_up,
+            tokens_saved=tokens_saved,
+        )
+
+    return stripped.strip()
+
+
+def load_specialist_prompt(
+    name: str,
+    state: "GraphState",
+) -> str:
+    """
+    Load specialist prompt with conditional include stripping.
+
+    Phase 6: Strips _scope_specialist and _never_invent when safe:
+    - _scope_specialist: Omit when routing gate verified domain
+    - _never_invent: Omit for follow-up turns (user answering questions)
+    - _json_output: Always keep (prevents malformed responses)
+
+    Args:
+        name: Prompt name (flights, hotels, transport, activities)
+        state: Current graph state for context
+
+    Returns:
+        Prompt text, possibly with includes stripped
+    """
+    # Load base prompt with all includes
+    prompt = load_prompt(name)
+
+    # Determine if we can strip includes
+    metadata = state.metadata or {}
+
+    # Gate verified = routing was done by KEYWORD_HEURISTIC or QUESTION_KEYWORD gate
+    gate_verified = metadata.get("router_bypassed", False) and metadata.get("first_gate_fired") in (
+        "KEYWORD_HEURISTIC",
+        "QUESTION_KEYWORD",
+        GatePrecedence.KEYWORD_HEURISTIC.name,
+        GatePrecedence.QUESTION_KEYWORD.name,
+    )
+
+    # Follow-up = user is answering a question (low hallucination risk)
+    question_target = state.question_target or metadata.get("last_question_field")
+    is_follow_up = question_target is not None
+
+    # Only strip for domain specialists
+    _STRIPPABLE_SPECIALISTS = {"flights", "hotels", "transport", "activities"}
+    if name not in _STRIPPABLE_SPECIALISTS:
+        return prompt
+
+    # Apply stripping
+    stripped = _strip_specialist_includes(prompt, gate_verified, is_follow_up)
+
+    return stripped
+
+
+# =============================================================================
+# REQUIRED FIELDS TEMPLATES (Token-saving template-based responses)
+# =============================================================================
+# Cache for the loaded templates
+_REQUIRED_FIELDS_TEMPLATES: Optional[Dict[str, Any]] = None
+
+
+def _load_required_fields_templates() -> Dict[str, Any]:
+    """Load required fields templates from JSON file with caching."""
+    global _REQUIRED_FIELDS_TEMPLATES
+    if _REQUIRED_FIELDS_TEMPLATES is not None:
+        return _REQUIRED_FIELDS_TEMPLATES
+
+    template_path = Path(__file__).parent / "prompts" / "required_fields_templates.json"
+    try:
+        with open(template_path, "r", encoding="utf-8") as f:
+            _REQUIRED_FIELDS_TEMPLATES = json.load(f)
+        _debug("Loaded required_fields_templates.json")
+    except Exception as e:
+        _debug_error("Failed to load required_fields_templates.json", error=str(e))
+        _REQUIRED_FIELDS_TEMPLATES = {}
+
+    return _REQUIRED_FIELDS_TEMPLATES
+
+
+def _get_template_response(
+    question_target: str,
+    strategy_topic: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get a template-based response for a missing field.
+
+    Returns a dict with:
+        - question: str
+        - suggestions: List[str]
+
+    Returns None if no template available for the question_target.
+    """
+    templates = _load_required_fields_templates()
+    field_templates = templates.get(question_target)
+
+    if not field_templates:
+        _debug(f"No template for question_target: {question_target}")
+        return None
+
+    # Pick a random question for variety
+    questions = field_templates.get("questions", [])
+    if not questions:
+        return None
+    question = _random_module.choice(questions)
+
+    # Get suggestions - prefer strategy-specific if available
+    suggestions_map = field_templates.get("suggestions", {})
+    if strategy_topic and strategy_topic in suggestions_map:
+        suggestions = suggestions_map[strategy_topic]
+    else:
+        suggestions = suggestions_map.get("default", [])
+
+    return {
+        "question": question,
+        "suggestions": suggestions[:3],  # Max 3 suggestions
+    }
+
+
+def _is_simple_missing_field(
+    question_target: str,
+    state: "GraphState",
+) -> bool:
+    """
+    Check if the missing field is simple (no ambiguity) and can use template.
+
+    Returns False if there's ambiguity that requires LLM:
+    - Multiple destinations detected but need disambiguation
+    - Vague date like "next spring" that needs clarification
+    - Conflicting origin (user mentioned multiple places)
+    - Typo suggestions that need confirmation
+
+    Returns True if we can use a simple template question.
+    """
+    extraction_conf = state.metadata.get("extraction_confidence", {})
+
+    # If there are typo suggestions, we need LLM to ask about them
+    if extraction_conf.get("typo_suggestions"):
+        _debug("Ambiguity detected: typo_suggestions present")
+        return False
+
+    # If confidence is low, we might need LLM for clarification
+    if extraction_conf.get("level") == "low":
+        _debug("Ambiguity detected: low extraction confidence")
+        return False
+
+    # Check for specific ambiguity reasons
+    low_confidence_reasons = extraction_conf.get("low_confidence_reasons") or []
+    ambiguity_keywords = ["ambiguous", "unclear", "multiple", "conflict", "vague"]
+    for reason in low_confidence_reasons:
+        if any(kw in reason.lower() for kw in ambiguity_keywords):
+            _debug(f"Ambiguity detected: {reason}")
+            return False
+
+    # Simple case - no ambiguity detected
+    return True
 
 
 # Model size to actual model name mapping
@@ -4442,6 +7831,198 @@ def ti_short(ti: TripInputs) -> Dict[str, Any]:
     return ti.model_dump(exclude_none=True)
 
 
+# =============================================================================
+# STATE VIEW BUILDER
+# =============================================================================
+# Provides minimal state views for different node types to reduce token usage.
+# Instead of passing full trip_inputs (~50+ fields), each node gets only what it needs.
+
+
+class StateViewBuilder:
+    """
+    Builds minimal state views for LLM prompts to reduce token usage.
+
+    Each node type gets a tailored view containing only the fields it needs:
+    - Router: core fields + flags for intent classification
+    - Required fields: core fields + missing fields + context for questions
+    - Specialists: core fields (read-only) + their specific settings
+    - Strategy: destinations + dates + activity categories + strategy settings
+    """
+
+    @staticmethod
+    def for_router(state: "GraphState") -> Dict[str, Any]:
+        """
+        Minimal view for router node (~5-10 fields instead of ~50).
+        Router only needs to classify intent, not full trip details.
+        """
+        ti = state.trip_inputs
+        view = {
+            "destinations": ti.destinations or [],
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "has_dates": bool(ti.start_date),
+            "has_budget": bool(ti.budget),
+            "has_travelers": bool(ti.adults),
+            "activity_categories": ti.activity_settings.get("categories", []),
+        }
+        _debug(
+            "StateView:router",
+            field_count=len([v for v in view.values() if v]),
+            view_keys=list(view.keys()),
+        )
+        return view
+
+    @staticmethod
+    def for_required_fields(state: "GraphState") -> Dict[str, Any]:
+        """
+        Minimal view for required_fields node (~10 fields).
+        Only needs core fields and context for asking questions.
+        """
+        ti = state.trip_inputs
+        view = {
+            "destinations": ti.destinations or [],
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "adults": ti.adults,
+            "budget": ti.budget,
+            "currency": ti.currency,
+        }
+        _debug(
+            "StateView:required_fields",
+            field_count=len([v for v in view.values() if v]),
+        )
+        return view
+
+    @staticmethod
+    def for_specialist(state: "GraphState", specialist_type: str) -> Dict[str, Any]:
+        """
+        Minimal view for domain specialists (flights, hotels, transport, activities).
+        Core fields (read-only) + their specific settings block.
+        """
+        ti = state.trip_inputs
+
+        # Core fields all specialists need (read-only context)
+        view = {
+            "destinations": ti.destinations or [],
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "adults": ti.adults,
+            "children": ti.children,
+            "budget": ti.budget,
+        }
+
+        # Add specialist-specific settings
+        if specialist_type == "flights":
+            view["flight_settings"] = ti.flight_settings or {}
+        elif specialist_type == "hotels":
+            view["hotel_settings"] = ti.hotel_settings or {}
+        elif specialist_type == "transport":
+            view["transport_settings"] = ti.transport_settings or {}
+        elif specialist_type == "activities":
+            view["activity_settings"] = ti.activity_settings or {}
+
+        _debug(
+            f"StateView:{specialist_type}",
+            field_count=len([v for v in view.values() if v]),
+        )
+        return view
+
+    @staticmethod
+    def for_strategy(state: "GraphState") -> Dict[str, Any]:
+        """
+        Minimal view for strategy node.
+        Destinations + dates + activity context + strategy settings.
+        """
+        ti = state.trip_inputs
+        view = {
+            "destinations": ti.destinations or [],
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "adults": ti.adults,
+            "children": ti.children,
+            "activity_categories": ti.activity_settings.get("categories", []),
+            "strategy_settings": ti.strategy_settings or {},
+        }
+        _debug(
+            "StateView:strategy",
+            field_count=len([v for v in view.values() if v]),
+        )
+        return view
+
+    @staticmethod
+    def for_correction(state: "GraphState") -> Dict[str, Any]:
+        """
+        Minimal view for correction node.
+        Core fields only - infeasibility context is in user_text.
+        """
+        ti = state.trip_inputs
+        view = {
+            "destinations": ti.destinations or [],
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "adults": ti.adults,
+        }
+        _debug(
+            "StateView:correction",
+            field_count=len([v for v in view.values() if v]),
+        )
+        return view
+
+    # -------------------------------------------------------------------------
+    # Phase 6: Runtime Validation
+    # -------------------------------------------------------------------------
+    # Maximum acceptable field count for a state view.
+    # Full TripInputs has ~50 fields; views should have <20.
+    _MAX_VIEW_FIELDS = 20
+    # Warning threshold (will log warning but not fail)
+    _WARN_VIEW_FIELDS = 15
+
+    @classmethod
+    def validate_view(cls, view: Dict[str, Any], node_name: str) -> None:
+        """
+        Validate that a state view is minimal enough.
+
+        Phase 6: Fail-fast if a node accidentally passes full trip_inputs.
+        This catches regressions where nodes bypass StateViewBuilder.
+
+        Args:
+            view: The state view dictionary
+            node_name: Name of the node for error messages
+
+        Raises:
+            ValueError: If view exceeds maximum field count
+        """
+        field_count = len(view)
+
+        # Count nested fields too (settings dicts)
+        nested_count = sum(len(v) if isinstance(v, dict) else 0 for v in view.values())
+        total_fields = field_count + nested_count
+
+        if total_fields > cls._MAX_VIEW_FIELDS:
+            # Log full details for debugging
+            _debug(
+                f"StateView:VALIDATION_FAILED:{node_name}",
+                total_fields=total_fields,
+                top_level_fields=field_count,
+                nested_fields=nested_count,
+                view_keys=list(view.keys()),
+            )
+            raise ValueError(
+                f"StateView for {node_name} has {total_fields} fields "
+                f"(max {cls._MAX_VIEW_FIELDS}). Use StateViewBuilder methods "
+                "instead of passing full trip_inputs."
+            )
+        elif total_fields > cls._WARN_VIEW_FIELDS:
+            _debug(
+                f"StateView:WARN:{node_name}",
+                total_fields=total_fields,
+                message="View approaching maximum field count",
+            )
+
+
 def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
     """Record an LLM failure and provide a conversational fallback message."""
     failures = state.metadata.get("validator_failures", 0) + 1
@@ -4451,10 +8032,12 @@ def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
     # Always provide a user-facing message - be conversational
     # Use the default follow-up question based on missing fields, adapted to user intent/tone
     trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
-    missing = _compute_missing_fields(trip_inputs_dict)
+    missing = compute_trip_readiness(trip_inputs_dict).missing_core
     user_intent = state.metadata.get("user_intent", "detailed_planner")
     user_tone = state.metadata.get("user_tone", "neutral")
-    fallback_msg = _default_follow_up_question(missing, user_intent, user_tone, trip_inputs_dict)
+    fallback_msg, _ = _default_follow_up_with_field(
+        missing, user_intent, user_tone, trip_inputs_dict
+    )
     if fallback_msg:
         state.last_summary = fallback_msg
     else:
@@ -4462,6 +8045,33 @@ def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
 
     state.ready_to_generate = False
     return state
+
+
+# Strategy topic detection patterns - use word boundaries to avoid false positives
+# e.g., "skippered" should not match "ski"
+_STRATEGY_TOPIC_PATTERNS = {
+    "hiking": re.compile(r"\b(?:hik(?:e|ing)|trek(?:king)?)\b", re.IGNORECASE),
+    "diving": re.compile(r"\b(?:div(?:e|ing)|scuba|snorkel(?:ing)?)\b", re.IGNORECASE),
+    "skiing": re.compile(r"\b(?:ski(?:ing)?|snowboard(?:ing)?)\b", re.IGNORECASE),
+    "cycling": re.compile(r"\b(?:cycl(?:e|ing)|bik(?:e|ing)|bicycle)\b", re.IGNORECASE),
+    "boating": re.compile(r"\b(?:boat(?:ing)?|sail(?:ing)?|yacht(?:ing)?)\b", re.IGNORECASE),
+}
+
+
+def _detect_strategy_topic_from_text(text: str) -> Optional[str]:
+    """
+    Detect strategy topic from user text using word boundary patterns.
+
+    Returns the first matched topic or None.
+    Uses regex word boundaries to avoid false positives like 'skippered' matching 'ski'.
+    """
+    if not text:
+        return None
+
+    for topic, pattern in _STRATEGY_TOPIC_PATTERNS.items():
+        if pattern.search(text):
+            return topic
+    return None
 
 
 # -----------------------
@@ -4538,22 +8148,139 @@ async def extractor(state: GraphState) -> GraphState:
         return state
 
     # =========================================================================
-    # LLM-BASED EXTRACTION
-    # All trip input extraction is performed by the LLM for robust NLU.
+    # NOTE: Fast-path extraction is now handled by lqa_prepass node which runs
+    # BEFORE extractor. If we reach here, either LQA wasn't applicable or it
+    # bailed, so we proceed directly to initial message extraction or LLM.
     # =========================================================================
-    llm_config = _get_node_llm_config("extractor")
+
+    # =========================================================================
+    # PHASE 6: ZERO-LLM INITIAL MESSAGE EXTRACTION
+    # Handle simple initial messages like "I want to go to Paris" or
+    # "2 adults, Paris, next month" without LLM even when question_target is not set.
+    # Saves ~1145 tokens on first turn for simple requests.
+    # =========================================================================
+    initial_result = _try_initial_message_extraction(text, state)
+    if initial_result:
+        init_fields = initial_result["fields"]
+        init_parsed = initial_result["parsed"]
+        _debug(
+            f"Zero-LLM initial extraction success: {init_fields}",
+            parsed=init_parsed,
+            input=text[:50] if len(text) > 50 else text,
+        )
+
+        # Set fast-path flag for routing (reuse same routing path)
+        state.flags["fast_path"] = True
+        state.flags["fast_path_field"] = init_fields[0] if init_fields else "multi"
+
+        # Merge parsed data
+        parsed.update(init_parsed)
+
+        # Set high confidence since we matched deterministically
+        state.metadata["extraction_confidence"] = {
+            "overall": 0.92,
+            "level": "high",
+            "method": "initial_extraction",
+            "grammar_matched": True,
+            "is_english": True,
+            "detected_language": None,
+            "low_confidence_reasons": [],
+            "typo_suggestions": {},
+        }
+
+        # Record path trace for metrics
+        state.metadata["extraction_path"] = f"initial:{','.join(init_fields)}"
+
+        # Set strategy_topic from user text before returning (for topic-aware suggestions)
+        if not state.strategy_topic and text:
+            state.strategy_topic = _detect_strategy_topic_from_text(text)
+            if state.strategy_topic:
+                _debug(
+                    "Strategy topic set from user text (initial extraction path)",
+                    topic=state.strategy_topic,
+                )
+
+        state.parsed_inputs = parsed
+        _debug_node_exit("extractor", state)
+        return state
+
+    # =========================================================================
+    # LLM-BASED EXTRACTION (Light or Full mode)
+    # Light mode: Core fields only (~128 tokens) - used for early/simple turns
+    # Full mode: All fields (~400 tokens) - used for dense input or near-ready
+    # =========================================================================
+
+    # Determine extraction mode
+    is_dense, dense_reason = _is_dense_input(text, state)
+    extractor_mode = "full" if is_dense else "light"
+
+    # Record path trace for metrics
+    state.metadata["extraction_path"] = f"llm:{extractor_mode}"
+    state.metadata["extractor_mode"] = extractor_mode
+    state.metadata["extractor_mode_reason"] = dense_reason
+
+    # =========================================================================
+    # EXTRACTOR CACHE CHECK (60s TTL, turn-level dedup)
+    # Key: (session_id, user_text, core_fields_hash, mode)
+    # Saves ~500-1000 tokens when user sends identical message
+    # =========================================================================
+    session_id = state.session_id or "unknown"
+    core_fields_hash = _get_core_fields_state(state.trip_inputs)
+
+    cached_extraction = _get_extractor_cached(
+        session_id, text, core_fields_hash, extractor_mode, state
+    )
+    if cached_extraction is not None:
+        _debug(
+            "📦 EXTRACTOR_CACHE_HIT: Using cached extraction",
+            mode=extractor_mode,
+            cache_key_prefix=f"{session_id[:8]}...",
+            tokens_saved="~500-1000 (LLM call avoided)",
+        )
+        # Restore cached state
+        state.parsed_inputs = cached_extraction.get("parsed", {})
+        state.metadata["extraction_confidence"] = cached_extraction.get("confidence", {})
+        state.metadata["extraction_path"] = f"cache:{extractor_mode}"
+        _debug_node_exit("extractor", state)
+        return state
+
+    # Select config and prompt based on mode
+    if extractor_mode == "light":
+        llm_config = _get_node_llm_config("extractor_light")
+        prompt_name = "extractor_light"
+        _debug(
+            "Extractor using LIGHT mode",
+            reason=dense_reason,
+            max_tokens=llm_config["max_tokens"],
+        )
+    else:
+        llm_config = _get_node_llm_config("extractor")
+        prompt_name = "extractor"
+        _debug(
+            "Extractor using FULL mode",
+            reason=dense_reason,
+            max_tokens=llm_config["max_tokens"],
+        )
+
     today_iso = state.metadata.get("today_iso") or _today_iso()
 
     try:
-        prompt = load_prompt("extractor")
-        tpl = (
-            prompt.replace("{today}", today_iso)
-            .replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
-            .replace("{user_text}", text)
-        )
+        prompt = load_prompt(prompt_name)
+
+        # Light mode uses simpler template (no trip_inputs context needed)
+        if extractor_mode == "light":
+            tpl = prompt.replace("{today}", today_iso).replace("{user_text}", text)
+        else:
+            tpl = (
+                prompt.replace("{today}", today_iso)
+                .replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
+                .replace("{user_text}", text)
+            )
 
         tokens = _estimate_prompt_tokens(tpl, state.parsed_inputs)
-        _record_node_tokens(state, "extractor", tokens, model=llm_config["model_hint"])
+        _record_node_tokens(
+            state, f"extractor:{extractor_mode}", tokens, model=llm_config["model_hint"]
+        )
 
         import time as _time
 
@@ -4606,7 +8333,7 @@ async def extractor(state: GraphState) -> GraphState:
 
         # Store LLM-reported confidence in metadata
         confidence_score = extracted.get("confidence", 0.8)
-        confidence_reasons = extracted.get("confidence_reasons", [])
+        confidence_reasons = extracted.get("confidence_reasons") or []
 
         # Determine confidence level based on score
         if confidence_score >= 0.8:
@@ -4626,6 +8353,18 @@ async def extractor(state: GraphState) -> GraphState:
             "low_confidence_reasons": confidence_reasons,
             "typo_suggestions": {},
         }
+
+        # Cache the extraction result for future identical requests (60s TTL)
+        _set_extractor_cached(
+            session_id,
+            text,
+            core_fields_hash,
+            extractor_mode,
+            {
+                "parsed": parsed,
+                "confidence": state.metadata["extraction_confidence"],
+            },
+        )
 
         _debug(
             "Extraction confidence calculated",
@@ -4662,6 +8401,35 @@ async def extractor(state: GraphState) -> GraphState:
         }
 
     state.parsed_inputs = parsed
+
+    # =========================================================================
+    # EARLY STRATEGY_TOPIC DETECTION
+    # Set strategy_topic from activity_settings or user text keywords so
+    # templates can use topic-aware suggestions on first turn.
+    # =========================================================================
+    if not state.strategy_topic:
+        # First try to derive from activity_settings categories
+        categories = getattr(state.trip_inputs.activity_settings, "categories", None) or []
+        for cat in categories:
+            detected = _detect_strategy_topic_from_text(cat)
+            if detected:
+                state.strategy_topic = detected
+                _debug(
+                    "Strategy topic set from activity_settings",
+                    topic=detected,
+                    category=cat,
+                )
+                break
+
+        # If still not set, check user text for topic keywords (with word boundaries)
+        if not state.strategy_topic and text:
+            state.strategy_topic = _detect_strategy_topic_from_text(text)
+            if state.strategy_topic:
+                _debug(
+                    "Strategy topic set from user text",
+                    topic=state.strategy_topic,
+                )
+
     _debug_node_exit("extractor", state)
     return state
 
@@ -4699,6 +8467,23 @@ def normalize_inputs(state: GraphState) -> GraphState:
 
     parsed = state.parsed_inputs or {}
     ti = state.trip_inputs  # Read-only reference for reading current values
+
+    # =========================================================================
+    # FALLBACK: Parse user_text directly for date ranges if LLM missed it
+    # =========================================================================
+    # If no dates were extracted but user_text looks like a date range, parse it
+    user_text = state.user_text or ""
+    if not parsed.get("start_date_hint") and not ti.start_date:
+        range_start, range_end = _date_normalizer.parse_date_range(user_text.strip())
+        if range_start and range_end:
+            parsed["start_date_hint"] = range_start
+            parsed["end_date_hint"] = range_end
+            _debug(
+                "Fallback: parsed date range from user_text",
+                user_text=user_text,
+                start=range_start,
+                end=range_end,
+            )
 
     # =========================================================================
     # USE TripInputNormalizer FOR UNIFIED NORMALIZATION
@@ -4776,6 +8561,36 @@ def normalize_inputs(state: GraphState) -> GraphState:
             categories=existing_cats,
         )
 
+    # =========================================================================
+    # AUTO-INFER MULTI_CITY_INTENT FROM USER TEXT
+    # =========================================================================
+    # If user adds a destination with "too", "also", "as well", infer multi_city intent
+    # This catches cases like "i wanna go to armenia too bruh"
+    if "destinations" in updates and not updates.get("multi_city_intent"):
+        new_dests = updates.get("destinations", [])
+        old_dests = ti.destinations or []
+        # Check if we're adding destinations (count increased) and result is 2+
+        if len(new_dests) > len(old_dests) and len(new_dests) >= 2:
+            # Check if multi_city_intent is not already set on trip_inputs
+            if not ti.multi_city_intent:
+                # Check user text for additive phrases
+                user_text_lower = (state.user_text or "").lower()
+                additive_patterns = [
+                    r"\btoo\b",  # "go to X too", "visit X too"
+                    r"\balso\b",  # "also visit X", "also go to X"
+                    r"\bas well\b",  # "visit X as well"
+                    r"\band\s+also\b",  # "and also X"
+                ]
+                for pattern in additive_patterns:
+                    if re.search(pattern, user_text_lower):
+                        updates["multi_city_intent"] = "multi_city"
+                        _debug(
+                            "Auto-inferred multi_city_intent from additive phrase in user text",
+                            pattern=pattern,
+                            user_text=state.user_text,
+                        )
+                        break
+
     # Apply all updates via the helper (this does ownership checking and deep copy)
     if updates:
         _write_trip_inputs(state, "normalize_inputs", **updates)
@@ -4794,6 +8609,37 @@ def normalize_inputs(state: GraphState) -> GraphState:
                 }
             )
         _debug(f"Normalization produced {len(norm_errors)} errors/warnings")
+
+    # =========================================================================
+    # PRE-COMPUTE GATE EVALUATION (for routing and observability)
+    # =========================================================================
+    # Perform gate evaluation here in the node (where state mutations persist)
+    # rather than in the routing function (where mutations are lost).
+    # Store results in metadata for route_after_normalize to read.
+    gate_result = GateEvaluator.evaluate(state)
+
+    # Apply state mutations that would otherwise be lost in routing function
+    if gate_result.intent:
+        state.intent = gate_result.intent
+    if gate_result.strategy_topic:
+        state.strategy_topic = gate_result.strategy_topic
+    if gate_result.question_target:
+        state.question_target = gate_result.question_target
+
+    # Store gate result in metadata for routing function to use
+    state.metadata["_gate_result_destination"] = gate_result.destination
+    state.metadata["_gate_result_gate_fired"] = (
+        gate_result.gate_fired.name
+        if hasattr(gate_result.gate_fired, "name")
+        else str(gate_result.gate_fired)
+    )
+    state.metadata["_gate_result_reason"] = gate_result.reason
+    state.metadata["_gate_result_eval_time_ms"] = gate_result.eval_time_ms
+    state.metadata["_gate_result_skipped_gates"] = gate_result.skipped_gates
+
+    # Apply metadata updates from gate result
+    for key, value in gate_result.metadata_updates.items():
+        state.metadata[key] = value
 
     _debug_node_exit("normalize_inputs", state)
     return state
@@ -4823,6 +8669,7 @@ async def router(state: GraphState) -> GraphState:
         state.strategy_topic = cached.get("strategy_topic")
         state.metadata["router_notes"] = cached.get("notes", "")
         state.metadata["router_confidence"] = cached.get("confidence", 1.0)
+        state.metadata["router_path"] = "cache"
         if cached.get("user_intent"):
             state.metadata["user_intent"] = cached["user_intent"]
         _debug("Router cache hit", intent=state.intent, topic=state.strategy_topic)
@@ -4833,9 +8680,13 @@ async def router(state: GraphState) -> GraphState:
         prompt = load_prompt("router")
         # Include user intent hint from extractor for router to refine
         user_intent_hint = state.metadata.get("user_intent_hint", "")
+
+        # Use minimal state view for router (saves ~75% tokens vs full trip_inputs)
+        router_state_view = StateViewBuilder.for_router(state)
+
         tpl = (
             prompt.replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
-            .replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
+            .replace("{trip_inputs}", json.dumps(router_state_view))
             .replace("{user_intent_hint}", user_intent_hint or "none")
         )
 
@@ -4960,6 +8811,156 @@ def _select_required_fields_prompt(state: GraphState) -> str:
     return prompt
 
 
+async def _invoke_missing_fields_guard(state: GraphState, missing_fields: List[str]) -> bool:
+    """
+    Invoke the lightweight missing_fields_guard prompt to generate a question.
+
+    This is called when a domain specialist is entered but core fields are missing.
+    Uses a small model for minimal latency.
+
+    Args:
+        state: Current graph state (will be mutated with response)
+        missing_fields: List of missing core field names
+
+    Returns:
+        True if guard was successful and state was updated, False on error
+    """
+    llm_config = _get_node_llm_config("missing_fields_guard")
+
+    # Generate tone instruction using ToneAdapter (replaces _adapt_tone.txt include)
+    user_intent = state.metadata.get("user_intent", "detailed_planner")
+    user_tone = state.metadata.get("user_tone", "neutral")
+    tone_instruction = ToneAdapter.get_instruction(user_intent, user_tone)
+
+    prompt = load_prompt("missing_fields_guard")
+    system_prompt = (
+        prompt.replace("{missing_fields}", ", ".join(missing_fields))
+        .replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
+        .replace("{tone_instruction}", tone_instruction)
+    )
+
+    tokens = _count_tokens(system_prompt)
+    _record_node_tokens(state, "missing_fields_guard", tokens, model=llm_config["model_hint"])
+
+    import time as _time
+
+    try:
+        _llm_start = _time.perf_counter()
+        out = await call_llm_with_timeout(
+            model=llm_config["model_hint"],
+            prompt=system_prompt,
+            timeout_seconds=settings.llm_timeout_specialist,
+            max_tokens=llm_config["max_tokens"],
+            temperature=llm_config["temperature"],
+            history=[],
+            user_message="",
+            top_p=llm_config["top_p"],
+        )
+        _record_llm_time(state, (_time.perf_counter() - _llm_start) * 1000)
+        _increment_llm_calls(state)
+
+        j = jloads_safe(out)
+
+        state.last_summary = j.get("assistant_message", "Where would you like to go?")
+        state.suggested_responses = j.get("suggested_responses", [])[:3]
+        state.question_target = j.get(
+            "question_target", missing_fields[0] if missing_fields else None
+        )
+
+        # Map question_target to last_question_field for short-circuit context
+        target_to_field = {
+            "destinations": "destinations",
+            "origin": "origin",
+            "dates": "start_date",
+            "start_date": "start_date",
+        }
+        state.metadata["last_question_field"] = target_to_field.get(
+            state.question_target, state.question_target
+        )
+
+        _debug(
+            "Missing fields guard response",
+            message=state.last_summary[:50] if state.last_summary else "",
+            suggestions=state.suggested_responses,
+        )
+        return True
+
+    except Exception as e:
+        _debug_error("Missing fields guard failed", error=str(e))
+        # Fallback to a simple question
+        if "destinations" in missing_fields:
+            state.last_summary = "Where are you looking to go?"
+            state.suggested_responses = ["Bali, Indonesia", "Paris, France", "Tokyo, Japan"]
+            state.question_target = "destinations"
+        elif "origin" in missing_fields:
+            state.last_summary = "Where will you be flying from?"
+            state.suggested_responses = ["New York", "London", "Los Angeles"]
+            state.question_target = "origin"
+        else:
+            state.last_summary = "When are you looking to travel?"
+            state.suggested_responses = ["Next month", "December 20-27", "First week of January"]
+            state.question_target = "dates"
+        return True
+
+
+# Vague affirmations that don't provide actionable information
+# Used by no-op specialist gate to skip LLM when user just confirms without details
+_VAGUE_AFFIRMATIONS = frozenset(
+    {
+        "ok",
+        "okay",
+        "sure",
+        "yes",
+        "yep",
+        "yeah",
+        "sounds good",
+        "sounds great",
+        "looks good",
+        "looks great",
+        "perfect",
+        "great",
+        "fine",
+        "alright",
+        "good",
+        "nice",
+        "cool",
+        "maybe",
+        "i guess",
+        "i think so",
+        "that works",
+        "works for me",
+    }
+)
+
+
+def _is_vague_affirmation(text: str) -> bool:
+    """
+    Check if user text is a vague affirmation without actionable content.
+
+    Vague affirmations like "sounds good", "okay", "sure" don't provide new
+    information for specialists to process. When there are no pending missing
+    fields, we can skip the LLM call entirely.
+
+    Args:
+        text: User text (will be lowercased and stripped)
+
+    Returns:
+        True if text is a vague affirmation, False otherwise
+    """
+    normalized = text.lower().strip()
+    # Check exact match
+    if normalized in _VAGUE_AFFIRMATIONS:
+        return True
+    # Check if it's a very short confirmation (1-2 words, < 15 chars)
+    words = normalized.split()
+    if len(words) <= 2 and len(normalized) < 15:
+        # Check if any word is an affirmation
+        for word in words:
+            if word in _VAGUE_AFFIRMATIONS:
+                return True
+    return False
+
+
 async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = True) -> GraphState:
     """
     Shared handler for specialist nodes with JSON retry logic.
@@ -4971,12 +8972,209 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     """
     _debug_node_entry(f"specialist:{name}", state)
 
+    # =========================================================================
+    # HARD GATE: Block ALL domain specialists if core fields are missing
+    # =========================================================================
+    # This is a HARD GATE - no exceptions. Specialists should never run without
+    # core fields (destinations, origin, start_date). This saves ~1000-2000 tokens
+    # per specialist call that would otherwise be wasted.
+    #
+    # The gate applies to:
+    # - flights, hotels, activities, transport: Domain specialists
+    # - strategy: Strategy planning specialist
+    #
+    # Exempt:
+    # - required_fields: Collects the core fields
+    # - correction: Must run even without core fields to address infeasibilities
+    _GUARDED_SPECIALISTS = {
+        "flights",
+        "hotels",
+        "activities",
+        "transport",
+        "strategy",
+    }
+    if name in _GUARDED_SPECIALISTS:
+        has_core, missing_core = _has_required_core_fields(state)
+        if not has_core:
+            _debug(
+                f"🚫 SPECIALIST_GATE: {name} BLOCKED (core fields missing)",
+                specialist=name,
+                missing=missing_core,
+                tokens_saved=f"~1000-2000 ({name} LLM call avoided)",
+            )
+            state.metadata["specialist_gate_triggered"] = name
+            state.metadata["specialist_gate_missing"] = missing_core
+
+            # Use small prompt to generate a warm question with suggestions
+            guard_result = await _invoke_missing_fields_guard(state, missing_core)
+            if guard_result:
+                _debug_node_exit(f"specialist:{name}", state)
+                return state
+
+    # =========================================================================
+    # NO-OP SPECIALIST GATE: Skip LLM for vague affirmations
+    # =========================================================================
+    # When user says "sounds good", "okay", "sure" etc. without providing new
+    # information, and there are no pending missing_fields, skip the LLM call.
+    # This saves ~800-1500 tokens on confirmatory exchanges.
+    _NOOP_GATE_SPECIALISTS = {"flights", "hotels", "activities", "transport"}
+    if name in _NOOP_GATE_SPECIALISTS:
+        user_text = state.user_text or ""
+        missing_fields = compute_trip_readiness(
+            state.trip_inputs.model_dump(exclude_none=True)
+        ).missing_core
+
+        if _is_vague_affirmation(user_text) and not missing_fields:
+            _routing_stats["noop_gate_triggered"] += 1
+            _debug(
+                f"⏭️ NO-OP GATE: {name} skipped (vague affirmation, no missing fields)",
+                specialist=name,
+                user_text=user_text[:30],
+                tokens_saved="~800-1500 (specialist LLM call avoided)",
+            )
+            state.metadata["noop_gate_triggered"] = name
+            state.last_summary = (
+                "Great! Is there anything else you'd like to add or should I proceed with the plan?"
+            )
+            state.suggested_responses = [
+                "Proceed with plan",
+                "Add more details",
+                "Change something",
+            ]
+            _debug_node_exit(f"specialist:{name}", state)
+            return state
+
     # Get per-node LLM configuration
     llm_config = _get_node_llm_config(name)
 
-    # Cache check for required_fields node - follow-up questions are stable for same state
-    cache_key: Optional[str] = None
+    # =========================================================================
+    # REQUIRED_FIELDS: TEMPLATE-FIRST APPROACH
+    # =========================================================================
+    # Templates are the PRIMARY path for required_fields. LLM is fallback only.
+    # This saves ~900-1500 tokens per turn on simple field collection.
     if name == "required_fields":
+        # Determine question_target based on missing fields
+        question_target = state.question_target or state.metadata.get("last_question_field")
+        if not question_target:
+            ti = state.trip_inputs
+            if not ti.destinations:
+                question_target = "destinations"
+            elif not ti.origin:
+                question_target = "origin"
+            elif not ti.start_date:
+                question_target = "dates"
+            elif not ti.adults:
+                question_target = "travelers"
+
+        # Check for conditions that REQUIRE LLM (template cannot handle):
+        extraction_conf = state.metadata.get("extraction_confidence", {})
+        requires_llm = False
+        llm_reason = None
+        conf_overall = extraction_conf.get("overall", 0.5)
+
+        # 1. Typo suggestions need LLM to ask for confirmation - BUT only if low confidence
+        # If typos detected but confidence is high, user likely knows what they meant
+        if extraction_conf.get("typo_suggestions"):
+            if conf_overall < 0.5:
+                requires_llm = True
+                llm_reason = "typo_suggestions_low_conf"
+                _debug(
+                    "🔄 LLM_FALLBACK: typo suggestions with low confidence",
+                    typos=list(extraction_conf.get("typo_suggestions", {}).keys())[:2],
+                    confidence=f"{conf_overall:.2f}",
+                )
+            else:
+                # High confidence with typos - use template, user likely knows what they want
+                _debug(
+                    "📋 TEMPLATE_SAFE: typo suggestions but high confidence",
+                    confidence=f"{conf_overall:.2f}",
+                )
+
+        # 2. Low confidence needs LLM for clarification - BUT only for complex cases
+        # "Harmless low confidence" for simple core fields can use templates
+        elif extraction_conf.get("level") == "low":
+            # Simple core fields (destinations, origin, dates, travelers) are safe
+            # to handle with templates even at low confidence
+            harmless_fields = {"destinations", "origin", "dates", "travelers"}
+            if question_target not in harmless_fields:
+                requires_llm = True
+                llm_reason = "low_confidence_complex_field"
+            else:
+                # Harmless low confidence - use template, track it
+                _template_stats["low_conf_accepted"] += 1
+                _debug(
+                    "📋 HARMLESS_LOW_CONF: accepted without LLM",
+                    field=question_target,
+                    confidence_level="low",
+                    tokens_saved="~900-1500 (required_fields LLM avoided)",
+                )
+
+        # 3. Multi-city ambiguity needs LLM
+        elif state.trip_inputs.destinations and len(state.trip_inputs.destinations) > 1:
+            multi_city_intent = state.trip_inputs.multi_city_intent
+            if not multi_city_intent:
+                requires_llm = True
+                llm_reason = "multi_city_ambiguity"
+
+        # 4. Ambiguity keywords in confidence reasons (excluding "vague" - too broad)
+        low_confidence_reasons = extraction_conf.get("low_confidence_reasons") or []
+        ambiguity_keywords = ["ambiguous", "unclear", "multiple", "conflict"]
+        if any(
+            any(kw in reason.lower() for kw in ambiguity_keywords)
+            for reason in low_confidence_reasons
+        ):
+            requires_llm = True
+            llm_reason = f"ambiguity_detected:{low_confidence_reasons[0][:30]}"
+
+        if not requires_llm and question_target:
+            # TEMPLATE PATH: Use template for simple field questions
+            template_response = _get_template_response(question_target, state.strategy_topic)
+            if template_response:
+                _template_stats["template_hits"] += 1
+                state.last_summary = template_response["question"]
+                state.suggested_responses = template_response["suggestions"]
+                state.question_target = question_target
+
+                # Map question_target to last_question_field for fast-path context
+                target_to_field = {
+                    "destinations": "destinations",
+                    "origin": "origin",
+                    "dates": "dates",
+                    "travelers": "travelers",
+                    "budget": "budget",
+                }
+                state.metadata["last_question_field"] = target_to_field.get(
+                    question_target, question_target
+                )
+                state.metadata["from_template"] = True  # Flag for response_polish to skip
+
+                _debug(
+                    "✅ TEMPLATE PATH: Required fields using template (LLM BYPASSED)",
+                    question_target=question_target,
+                    question=state.last_summary,
+                    suggestions=state.suggested_responses,
+                    tokens_saved="~900-1500 (required_fields LLM call avoided)",
+                )
+                state.metadata["required_fields_path"] = f"template:{question_target}"
+                _debug_node_exit(f"specialist:{name}", state)
+                return state
+            else:
+                _template_stats["template_misses"] += 1
+                _debug(
+                    "Template not found for target, falling through to LLM",
+                    question_target=question_target,
+                )
+                llm_reason = f"no_template_for:{question_target}"
+
+        if requires_llm:
+            _debug(
+                "⚠️ LLM PATH: Required fields requires LLM",
+                reason=llm_reason,
+                question_target=question_target,
+            )
+
+        # Cache check (only if we're going to LLM anyway)
+        cache_key: Optional[str] = None
         core_fields = _get_core_fields_state(state.trip_inputs)
         user_intent = state.metadata.get("user_intent", "detailed_planner")
         cache_key = _compute_cache_key("required_fields", core_fields, user_intent, "")
@@ -4990,8 +9188,11 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 "Required fields cache hit",
                 message=state.last_summary[:50] if state.last_summary else "",
             )
+            state.metadata["required_fields_path"] = "cache"
             _debug_node_exit(f"specialist:{name}", state)
             return state
+    else:
+        cache_key = None
 
     # Get today's date for prompt injection
     today_iso = state.metadata.get("today_iso") or _today_iso()
@@ -5018,17 +9219,68 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
     ti = state.trip_inputs
 
     # Use split prompts for required_fields to reduce token usage
+    # Phase 6: Use load_specialist_prompt for domain specialists (conditional stripping)
+    specialist_types = {"flights", "hotels", "transport", "activities"}
     if name == "required_fields":
         prompt = _select_required_fields_prompt(state)
+    elif name in specialist_types:
+        prompt = load_specialist_prompt(name, state)
     else:
         prompt = load_prompt(name)
 
+    # =========================================================================
+    # STATE VIEW: Use minimal state views to reduce token usage
+    # =========================================================================
+    # Instead of passing full trip_inputs (~50 fields), pass only what the node needs.
+    if name == "required_fields":
+        state_view = StateViewBuilder.for_required_fields(state)
+        view_type = "required_fields"
+    elif name in specialist_types:
+        state_view = StateViewBuilder.for_specialist(state, name)
+        view_type = name
+    elif name == "strategy":
+        state_view = StateViewBuilder.for_strategy(state)
+        view_type = "strategy"
+    elif name == "correction":
+        # Correction needs core fields + all settings for conflict detection
+        state_view = StateViewBuilder.for_correction(state)
+        view_type = "correction"
+    else:
+        # Fallback to full state for unknown nodes - this should be avoided
+        state_view = ti_short(state.trip_inputs)
+        view_type = "full"
+        _debug(
+            f"StateView:FALLBACK:{name}",
+            message="Using full state view - consider adding dedicated builder method",
+        )
+
+    # Phase 6: Validate state view size to catch regressions
+    StateViewBuilder.validate_view(state_view, name)
+
+    # Calculate token savings
+    full_state_size = len(json.dumps(ti_short(state.trip_inputs)))
+    view_size = len(json.dumps(state_view))
+    tokens_saved_estimate = (full_state_size - view_size) // 4  # ~4 chars per token
+
+    _debug(
+        f"StateView applied: {view_type}",
+        full_size=full_state_size,
+        view_size=view_size,
+        tokens_saved_estimate=tokens_saved_estimate,
+    )
+
+    # Generate tone instruction using ToneAdapter (replaces _adapt_tone.txt include)
+    user_intent = state.metadata.get("user_intent", "detailed_planner")
+    user_tone = state.metadata.get("user_tone", "neutral")
+    tone_instruction = ToneAdapter.get_instruction(user_intent, user_tone)
+
     system_prompt = (
-        prompt.replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
+        prompt.replace("{trip_inputs}", json.dumps(state_view))
         .replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
         .replace("{today}", today_iso)
-        .replace("{user_intent_hint}", state.metadata.get("user_intent", "detailed_planner"))
-        .replace("{user_tone}", state.metadata.get("user_tone", "neutral"))
+        .replace("{user_intent_hint}", user_intent)
+        .replace("{user_tone}", user_tone)
+        .replace("{tone_instruction}", tone_instruction)
         .replace("{extraction_confidence}", confidence_level)
         .replace("{typo_suggestions}", json.dumps(typo_suggestions) if typo_suggestions else "none")
         .replace(
@@ -5106,11 +9358,43 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 "budget",
                 "currency",
             }
-            # required_fields and correction can modify core fields; domain specialists cannot
-            if name in ("required_fields", "correction"):
+
+            # Correction node can only modify core fields + specific correction-relevant fields
+            # This prevents over-broad changes from correction requests
+            _CORRECTION_ALLOWED_FIELDS = {
+                "destinations",
+                "origin",
+                "start_date",
+                "end_date",
+                "adults",
+                "children",
+                "budget",
+                "currency",
+                # Allow removal of specific settings if user explicitly rejects
+                "flight_settings",
+                "hotel_settings",
+                "transport_settings",
+                "activity_settings",
+            }
+
+            # Fields that correction should NEVER modify (to prevent scope creep)
+            _CORRECTION_SKIP_FIELDS = {
+                "strategy_settings",  # Strategy is complex, shouldn't be corrected inline
+                "booking_types",  # Auto-managed, not user-correctable
+            }
+
+            # required_fields can modify all fields; correction has restricted scope
+            if name == "required_fields":
                 skip_fields = None  # Allow all field modifications
+            elif name == "correction":
+                skip_fields = _CORRECTION_SKIP_FIELDS  # Block specific fields
+                _debug(
+                    "Correction node field permissions",
+                    allowed="core + settings",
+                    blocked=list(_CORRECTION_SKIP_FIELDS),
+                )
             else:
-                skip_fields = _CORE_FIELDS  # Block core field modifications
+                skip_fields = _CORE_FIELDS  # Domain specialists: block core fields
             _apply_llm_delta(state, f"specialist:{name}", delta, skip_fields=skip_fields)
 
             # Validate the updated trip_inputs
@@ -5169,6 +9453,8 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                         "suggested_responses": state.suggested_responses,
                     },
                 )
+                # Record path trace for required_fields
+                state.metadata["required_fields_path"] = "llm"
 
             _debug(
                 f"Specialist {name} completed",
@@ -5249,6 +9535,68 @@ async def strategy_node(state: GraphState) -> GraphState:
     topic = state.strategy_topic or "boating"
     _debug("Strategy topic", topic=topic)
 
+    # =========================================================================
+    # NODE GUARD 1: Block strategy if core fields are missing
+    # =========================================================================
+    # Strategy nodes need destination context to provide relevant advice.
+    # This guard catches cases where routing exemption allowed strategy through.
+    has_core, missing_core = _has_required_core_fields(state)
+    if not has_core:
+        _debug(
+            "⚠️ Node guard triggered: missing core fields for strategy",
+            strategy=topic,
+            missing=missing_core,
+        )
+        # Use small prompt to generate a warm question with suggestions
+        guard_result = await _invoke_missing_fields_guard(state, missing_core)
+        if guard_result:
+            _debug_node_exit("strategy_node", state)
+            return state
+
+    # =========================================================================
+    # NODE GUARD 2: Verify strategy topic relevance
+    # =========================================================================
+    # Only invoke strategy LLM if user text actually contains strategy-related terms.
+    # This prevents wasted tokens when router incorrectly routes to strategy.
+    user_text_lower = (state.user_text or "").lower()
+    strategy_keywords = {
+        "hiking": {"hike", "hiking", "trek", "trekking", "trail", "mountain", "climb"},
+        "diving": {"dive", "diving", "scuba", "snorkel", "snorkeling", "underwater"},
+        "skiing": {"ski", "skiing", "snowboard", "snowboarding", "slopes", "powder"},
+        "cycling": {"bike", "biking", "bicycle", "cycling", "ride", "pedal"},
+        "boating": {"boat", "boating", "sail", "sailing", "yacht", "kayak", "canoe"},
+    }
+    topic_keywords = strategy_keywords.get(topic, set())
+    has_strategy_keyword = any(kw in user_text_lower for kw in topic_keywords)
+
+    # Also check if strategy was explicitly routed via keyword heuristic
+    was_keyword_routed = state.metadata.get("router_path", "").startswith("keyword_heuristic:")
+
+    if not has_strategy_keyword and not was_keyword_routed:
+        # Strategy was routed but user text doesn't mention the topic
+        # This likely means router made an error - fallback to required_fields
+        _debug(
+            "⚠️ Strategy relevance gate: topic keywords not found in user text",
+            topic=topic,
+            user_text_preview=user_text_lower[:50],
+            action="falling back to required_fields",
+        )
+        state.metadata["strategy_gate_fallback"] = True
+        state.metadata["strategy_gate_reason"] = f"no_{topic}_keywords"
+        # Instead of wasting strategy LLM, give a helpful response
+        state.last_summary = (
+            f"I'd be happy to help with {topic} planning! "
+            f"Can you tell me more about what kind of {topic} experience you're looking for?"
+        )
+        state.suggested_responses = [
+            f"Beginner-friendly {topic}",
+            f"Advanced {topic} spots",
+            "Equipment rental info",
+        ]
+        _debug_suggestions(state.suggested_responses, source="strategy_node:relevance_gate")
+        _debug_node_exit("strategy_node", state)
+        return state
+
     # Check feature flag - if disabled, fallback to activities-lite
     if not _is_strategy_enabled(topic):
         _debug(f"Strategy {topic} is disabled, falling back to activities")
@@ -5275,22 +9623,162 @@ async def strategy_node(state: GraphState) -> GraphState:
         _debug_node_exit("strategy_node", state)
         return state
 
-    # Get per-node LLM configuration for strategy
-    llm_config = _get_node_llm_config("strategy")
+    # =========================================================================
+    # THREE-TIER STRATEGY LOGIC (Phase 1: Token Optimization)
+    # =========================================================================
+    # Stage 1 (OUTLINE tier): Returns shortlist + skeleton (max_tokens 512)
+    #   Sets pending_strategy_expansion = True, ends with expansion suggestions
+    # Stage 2 (SECTION tier): Expands single section (max_tokens 768)
+    #   User asks about specific topic: day details, routes, budget, gear, etc.
+    # Stage 2 (FULL tier): Complete detailed itinerary (max_tokens 2048)
+    #   Only when user explicitly requests "full itinerary", "everything", etc.
+    #
+    # Stage 2 triggers only on explicit phrases - NOT on implicit confirmations.
+    expansion_result = _is_strategy_expansion_request(state.user_text or "")
+    is_stage2 = state.pending_strategy_expansion and expansion_result.is_expansion
+
+    if is_stage2:
+        # Stage 2: User explicitly asked for expansion
+        # Determine tier based on expansion target
+        expansion_tier = expansion_result.tier or StrategyTier.SECTION
+        expansion_target = expansion_result.target or StrategyExpansionTarget.ITINERARY_OUTLINE
+
+        # Get max_tokens for this tier
+        max_tokens = STRATEGY_TIER_MAX_TOKENS.get(expansion_tier, 768)
+
+        # Use stage2 config but override max_tokens based on tier
+        llm_config = _get_node_llm_config("strategy_stage2")
+        llm_config["max_output_tokens"] = max_tokens
+
+        stage_name = "stage2"
+        _strategy_stats["stage2_calls"] += 1
+
+        # Track tier-specific stats
+        if expansion_tier == StrategyTier.FULL:
+            _strategy_stats["tier_full"] += 1
+        else:
+            _strategy_stats["tier_section"] += 1
+
+        # Track section-specific stats
+        section_stat_map = {
+            StrategyExpansionTarget.DAY_DETAILS: "section_day_details",
+            StrategyExpansionTarget.ROUTES_TRAILS: "section_routes",
+            StrategyExpansionTarget.LOGISTICS: "section_logistics",
+            StrategyExpansionTarget.BUDGET: "section_budget",
+            StrategyExpansionTarget.GEAR_PACKING: "section_gear",
+            StrategyExpansionTarget.CONTINGENCIES: "section_contingencies",
+        }
+        if expansion_target in section_stat_map:
+            _strategy_stats[section_stat_map[expansion_target]] += 1
+
+        # Store tier/target in state for caching and session persistence
+        state.strategy_expansion_tier = expansion_tier.value
+        state.strategy_expansion_target = expansion_target.value
+
+        _debug(
+            "🔍 STRATEGY STAGE 2: Section expansion",
+            topic=topic,
+            tier=expansion_tier.value,
+            target=expansion_target.value,
+            max_tokens=max_tokens,
+            matched_phrase=expansion_result.matched_phrase,
+            stage="2",
+        )
+    else:
+        # Stage 1: Initial strategy response (shortlist + skeleton)
+        llm_config = _get_node_llm_config("strategy_stage1")
+        stage_name = "stage1"
+        expansion_tier = StrategyTier.OUTLINE
+        expansion_target = None
+        _strategy_stats["stage1_calls"] += 1
+        _strategy_stats["tier_outline"] += 1
+        _debug(
+            "📋 STRATEGY STAGE 1: Generating shortlist + skeleton",
+            topic=topic,
+            pending_expansion=state.pending_strategy_expansion,
+            stage="1",
+        )
 
     # Use timeout and retry logic
     timeout = settings.llm_timeout_specialist
     attempts = settings.llm_max_retries
     last_error = None
 
+    # Generate tone instruction using ToneAdapter (replaces _adapt_tone.txt include)
+    user_intent = state.metadata.get("user_intent", "detailed_planner")
+    user_tone = state.metadata.get("user_tone", "neutral")
+    tone_instruction = ToneAdapter.get_instruction(user_intent, user_tone)
+
     prompt = load_prompt(prompt_name)
+
+    # Phase 5: For Stage 1, strip verbose includes (_scope_specialist, _markdown_rules)
+    # to reduce token count. Stage 1 only needs shortlist + skeleton, not full formatting.
+    if not is_stage2:
+        prompt = _strip_stage1_includes(prompt)
+        # Add budget/season sanity checklist for Stage 1 to prevent correction triggers
+        prompt = prompt + _STAGE1_SANITY_CHECKLIST
+    elif expansion_target and expansion_target != StrategyExpansionTarget.FULL_EXPANSION:
+        # Stage 2 section expansion: Add focus instruction to prompt
+        section_focus = (
+            "\n\nFOCUS: User requested expansion of **"
+            f"{expansion_target.value.replace('_', ' ')}"
+            "** section only. Provide detailed content for this section. "
+            "Do not repeat the full itinerary.\n"
+        )
+        prompt = prompt + section_focus
+
+    # Use minimal state view for strategy (saves ~75% tokens vs full trip_inputs)
+    strategy_state_view = StateViewBuilder.for_strategy(state)
+
     system_prompt = (
-        prompt.replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
+        prompt.replace("{trip_inputs}", json.dumps(strategy_state_view))
         .replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
         .replace("{topic}", topic)
         .replace("{missing_fields}", _get_missing_fields_summary(state))
         .replace("{conversation_summary}", _generate_conversation_summary(state.chat_history))
+        .replace("{tone_instruction}", tone_instruction)
     )
+
+    # =========================================================================
+    # STRATEGY CACHE CHECK (5-min TTL, topic + section keyed)
+    # Key: (session_id, topic, section_id, core_fields_hash, user_text_hash)
+    # Saves ~2000-3000 tokens when user asks similar strategy questions
+    # Section-level caching prevents re-rendering when user tweaks one detail
+    # =========================================================================
+    session_id = state.session_id or "unknown"
+    core_fields_hash = _get_core_fields_state(state.trip_inputs)
+    user_text_hash = _hash_user_text(state.user_text or "")
+    # Use section_id for Stage 2 expansions, None for Stage 1
+    section_id = expansion_target.value if (is_stage2 and expansion_target) else None
+
+    cached_strategy = _get_strategy_cached(
+        session_id, topic, core_fields_hash, user_text_hash, state, section_id
+    )
+    if cached_strategy is not None:
+        _debug(
+            "📦 STRATEGY_CACHE_HIT: Using cached strategy response",
+            topic=topic,
+            session=f"{session_id[:8]}...",
+            tokens_saved="~2000-3000 (strategy LLM call avoided)",
+        )
+        # Restore cached state
+        state.last_summary = cached_strategy.get("assistant_message", "")
+        state.suggested_responses = cached_strategy.get("suggested_responses", [])
+        state.question_target = cached_strategy.get("question_target")
+
+        # Apply cached strategy_settings
+        if cached_strategy.get("strategy_settings"):
+            current_ss = (
+                dict(state.trip_inputs.strategy_settings)
+                if state.trip_inputs.strategy_settings
+                else {}
+            )
+            current_ss[topic] = cached_strategy["strategy_settings"]
+            _write_trip_inputs(state, f"strategy:{topic}:cache", strategy_settings=current_ss)
+
+        state.metadata["strategy_path"] = f"cache:{topic}"
+        _debug_node_exit("strategy_node", state)
+        return state
 
     tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
     _record_node_tokens(state, f"strategy:{topic}", tokens, model=llm_config["model_hint"])
@@ -5385,6 +9873,48 @@ async def strategy_node(state: GraphState) -> GraphState:
 
             state.metadata["model_used"] = llm_config["model_hint"]
             state.metadata["token_estimate"] = _count_tokens(out)
+            state.metadata["strategy_stage"] = stage_name
+
+            # =========================================================================
+            # TWO-STAGE EXPANSION STATE MANAGEMENT
+            # =========================================================================
+            if stage_name == "stage1":
+                # Stage 1 complete: Set pending expansion flag
+                state.pending_strategy_expansion = True
+                # Add expansion prompt to suggestions
+                if "Show more details" not in state.suggested_responses:
+                    state.suggested_responses = ["Show more details"] + state.suggested_responses[
+                        :2
+                    ]
+                _debug(
+                    "📋 STRATEGY STAGE 1 COMPLETE: pending_strategy_expansion=True",
+                    topic=topic,
+                )
+            elif stage_name == "stage2":
+                # Stage 2 complete: Clear pending expansion flag
+                state.pending_strategy_expansion = False
+                _debug(
+                    "🔍 STRATEGY STAGE 2 COMPLETE: Full itinerary delivered",
+                    topic=topic,
+                )
+
+            # Cache the strategy result for future identical requests (5-min TTL)
+            # Use section_id for section-level caching on Stage 2 expansions
+            _set_strategy_cached(
+                session_id,
+                topic,
+                core_fields_hash,
+                user_text_hash,
+                {
+                    "assistant_message": state.last_summary,
+                    "suggested_responses": state.suggested_responses,
+                    "question_target": state.question_target,
+                    "strategy_settings": j.get("strategy_settings", {}),
+                    "expansion_tier": expansion_tier.value if expansion_tier else None,
+                    "expansion_target": expansion_target.value if expansion_target else None,
+                },
+                section_id,
+            )
 
             _debug_node_exit("strategy_node", state)
             return state
@@ -5437,12 +9967,18 @@ def validate_and_merge(state: GraphState) -> GraphState:
     # COMPUTE READY STATE
     # =========================================================================
     # Only require: destinations, origin, start_date (matches plan.py)
-    missing = _compute_missing_fields(ti.model_dump(exclude_none=True))
+    missing = compute_trip_readiness(ti.model_dump(exclude_none=True)).missing_core
 
-    # ready_to_generate: all required fields complete
-    state.ready_to_generate = bool(
-        not state.errors and not missing and ti.destinations and ti.origin and ti.start_date
-    )
+    # Check if user explicitly requested generation (should be respected)
+    if state.flags.get("generate_requested") and ti.destinations:
+        # User explicitly asked to generate and we have destinations
+        # Respect their request even with partial data
+        state.ready_to_generate = True
+    else:
+        # ready_to_generate: all required fields complete
+        state.ready_to_generate = bool(
+            not state.errors and not missing and ti.destinations and ti.origin and ti.start_date
+        )
 
     _debug(
         "Validation complete",
@@ -5477,13 +10013,25 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     Determine if response polishing should be skipped.
     Returns (should_skip, reason).
 
-    Polish is applied ONLY for:
+    Phase 5: Tightened conditions to push LLM polish rate below 10%.
+    Phase 6: Further tightened - skip more aggressively.
+
+    Polish is SKIPPED for:
+    - Feature disabled
+    - Short-circuit/template responses (already polished)
+    - Cached responses
+    - Fast-path responses
+    - Initial extraction responses (Phase 6)
+    - Frustrated users (avoid delays)
+    - Already formatted messages (emoji + exclamation + bold)
+    - Very short messages (<100 chars) that have any warmth indicator
+    - Messages that end with ? and have any warmth (questions don't need polish)
+    - Template-generated warm questions (Phase 6)
+
+    Polish is APPLIED for:
     - Responses containing lists (bullet points, numbered items)
     - Longer responses (>200 chars) that would benefit from formatting
-    - Medium-length responses that look robotic/dry (no warmth indicators)
-
-    This keeps polish targeted at content that needs structure,
-    while avoiding latency for simple responses.
+    - Medium-length dry responses without warmth indicators
     """
     # Check feature flag
     if not settings.enable_response_polish:
@@ -5497,6 +10045,19 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     if s.flags.get("skip_polish"):
         return True, "cache_hit"
 
+    # Phase 5: Fast-path responses are simple confirmations, skip polish
+    if s.flags.get("fast_path"):
+        return True, "fast_path"
+
+    # Phase 6: Initial extraction responses (zero-LLM) are handled deterministically
+    extraction_path = s.metadata.get("extraction_path", "")
+    if extraction_path.startswith("initial:"):
+        return True, "initial_extraction"
+
+    # Phase 5: Template responses are already warm
+    if s.metadata.get("template_used"):
+        return True, "template_response"
+
     # No message to polish
     if not s.last_summary:
         return True, "no_message"
@@ -5506,6 +10067,28 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
         return True, "frustrated_user"
 
     msg = s.last_summary
+
+    # Phase 6: Messages under 100 chars with ANY warmth indicator - skip
+    if len(msg) < 100:
+        has_warmth = "!" in msg or "?" in msg or "😊" in msg or "✨" in msg
+        if has_warmth:
+            return True, "short_with_warmth"
+
+    # Phase 6: Questions ending with ? - skip if any warmth indicators
+    if msg.rstrip().endswith("?"):
+        has_emoji = any(c in msg for c in "✈️🏨🎉🌴☀️😊👍🎊🗺️📍✨🌟💫🎯🥾🌊⛷️🚴🤿")
+        has_any_warmth = (
+            has_emoji
+            or "!" in msg
+            or any(w in msg.lower() for w in ["great", "wonderful", "perfect", "love", "excited"])
+        )
+        if has_any_warmth:
+            return True, "question_with_warmth"
+
+    # Phase 6: Template-generated warm questions (from required_fields templates)
+    required_fields_path = s.metadata.get("required_fields_path", "")
+    if required_fields_path == "template" and msg.rstrip().endswith("?"):
+        return True, "template_question"
 
     # Check if message contains list-like content that would benefit from polish
     has_list_content = any(pattern in msg.lower() for pattern in _POLISH_LIST_PATTERNS)
@@ -5522,6 +10105,11 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     # Message already seems warm AND well-formatted
     if has_emoji and has_exclamation and has_bold and len(msg) > 50:
         return True, "already_formatted"
+
+    # Phase 6: Message has multiple warmth indicators - likely already good
+    warmth_count = sum([has_emoji, has_exclamation, has_question_mark, has_bold])
+    if warmth_count >= 2 and len(msg) < 150:
+        return True, "multiple_warmth_indicators"
 
     # Very short, potentially abrupt responses should still be polished
     # These often come from specialist nodes and sound robotic
@@ -5543,6 +10131,96 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     return False, ""
 
 
+# =============================================================================
+# DETERMINISTIC POLISH (Token-saving warmth injection)
+# =============================================================================
+# Apply simple deterministic rules to add warmth before falling back to LLM.
+# This saves ~200-400 tokens per message that can be polished rule-based.
+
+# Warm openers to prepend to dry messages
+_WARM_OPENERS = [
+    "Great choice! ",
+    "Sounds wonderful! ",
+    "Perfect! ",
+    "Excellent! ",
+    "Love it! ",
+    "That's exciting! ",
+]
+
+# Warm closers to append to messages ending abruptly
+_WARM_CLOSERS = [
+    " Let me know if you'd like more details!",
+    " Happy to help with more specifics!",
+    " Just say the word if you need anything else!",
+    " Feel free to ask if you have questions!",
+]
+
+
+def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
+    """
+    Try to polish message deterministically without LLM.
+
+    Returns:
+        Polished message if deterministic rules apply, None if LLM needed.
+
+    Deterministic polish handles:
+    1. Messages that are already warm (just clean up formatting)
+    2. Short messages that need a warm opener/closer
+    3. Messages with common patterns that can be rule-enhanced
+    """
+    if not msg:
+        return None
+
+    # Check warmth indicators
+    has_exclamation = "!" in msg
+    has_question = "?" in msg
+
+    # Already warm enough - just ensure clean ending
+    if has_exclamation and has_question:
+        return None  # Already conversational
+
+    # Very short dry messages (<100 chars) - add warm opener
+    if len(msg) < 100 and not has_exclamation:
+        # Don't modify if it's a question
+        if not has_question:
+            # Use deterministic selection based on message hash for consistency
+            opener_idx = hash(msg) % len(_WARM_OPENERS)
+            opener = _WARM_OPENERS[opener_idx]
+
+            # Make first char lowercase if prepending
+            if msg[0].isupper() and not msg.startswith(("I ", "I'")):
+                msg_lower_first = msg[0].lower() + msg[1:]
+                polished = opener + msg_lower_first
+            else:
+                polished = opener + msg
+
+            _debug(
+                "Deterministic polish: warm opener added",
+                original_len=len(msg),
+                polished_len=len(polished),
+            )
+            state.metadata["polish_method"] = "deterministic:opener"
+            return polished
+
+    # Messages ending with period but no warmth - add warm closer
+    if msg.rstrip().endswith(".") and not has_exclamation and not has_question:
+        if len(msg) < 150:  # Only for shorter messages
+            closer_idx = hash(msg) % len(_WARM_CLOSERS)
+            closer = _WARM_CLOSERS[closer_idx]
+            polished = msg.rstrip(".") + "!" + closer
+
+            _debug(
+                "Deterministic polish: warm closer added",
+                original_len=len(msg),
+                polished_len=len(polished),
+            )
+            state.metadata["polish_method"] = "deterministic:closer"
+            return polished
+
+    # Can't deterministically polish - fall through to LLM
+    return None
+
+
 async def response_polish(state: GraphState) -> GraphState:
     """
     Polish the assistant message for a more natural, travel-agent-like tone.
@@ -5556,10 +10234,32 @@ async def response_polish(state: GraphState) -> GraphState:
     should_skip, skip_reason = _should_skip_polish(state)
     if should_skip:
         state.metadata["polish_skipped_reason"] = skip_reason
+        _polish_stats["polish_skipped"] += 1
         _debug(f"Response polish skipped: {skip_reason}")
         _debug_node_exit("response_polish", state)
         return state
 
+    # =========================================================================
+    # DETERMINISTIC POLISH FIRST (Token-saving)
+    # =========================================================================
+    # Try simple rule-based polish before calling LLM.
+    # This saves ~200-400 tokens per message that can be polished deterministically.
+    deterministic_result = _try_deterministic_polish(state.last_summary, state)
+    if deterministic_result is not None:
+        state.last_summary = deterministic_result
+        _polish_stats["deterministic_polish"] += 1
+        _debug(
+            "📝 DETERMINISTIC_POLISH: LLM call avoided",
+            method=state.metadata.get("polish_method", "deterministic"),
+            tokens_saved="~200-400",
+        )
+        _debug_node_exit("response_polish", state)
+        return state
+
+    # =========================================================================
+    # LLM-BASED POLISH (fallback for complex messages)
+    # =========================================================================
+    _polish_stats["llm_polish"] += 1
     # Get per-node LLM configuration
     llm_config = _get_node_llm_config("response_polish")
 
@@ -5592,6 +10292,7 @@ async def response_polish(state: GraphState) -> GraphState:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         _record_llm_time(state, elapsed_ms)
         state.metadata["polish_duration_ms"] = round(elapsed_ms, 2)
+        state.metadata["polish_method"] = "llm"
 
         # Log warning if approaching timeout
         if elapsed_ms > settings.response_polish_warn_threshold_ms:
@@ -5745,7 +10446,7 @@ def summarize(state: GraphState) -> GraphState:
     # If no assistant message, generate a default follow-up question
     if not state.last_summary:
         trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
-        missing = _compute_missing_fields(trip_inputs_dict)
+        missing = compute_trip_readiness(trip_inputs_dict).missing_core
         _debug(
             "Summarize fallback triggered",
             missing=missing,
@@ -5954,6 +10655,74 @@ def tile_search(state: GraphState) -> GraphState:
 
 
 # -----------------------
+# Generate responder (handles GENERATE_PLAN_NOW trigger)
+# -----------------------
+def generate_responder(state: GraphState) -> GraphState:
+    """
+    Handle explicit plan generation requests.
+
+    This node is reached when the user triggers plan generation
+    (e.g., "GENERATE_PLAN_NOW" or confirmation of generate action).
+
+    It creates default branches from trip_inputs and sets ready_to_generate=True.
+    When the user explicitly requests generation, we proceed even with partial data.
+    """
+    _debug_node_entry("generate_responder", state)
+
+    ti = state.trip_inputs
+
+    # Minimum requirement: at least destinations must be set
+    # When user explicitly requests generation, we're more lenient
+    if not ti.destinations or len(ti.destinations) == 0:
+        # Absolutely cannot generate without destinations
+        state.last_summary = (
+            "I need at least a destination to generate your plan. Where would you like to go?"
+        )
+        state.question_target = "destinations"
+        state.ready_to_generate = False
+        _debug("Generate blocked - no destinations")
+        _debug_node_exit("generate_responder", state)
+        return state
+
+    # All core fields complete - create branches and set ready
+    state.ready_to_generate = True
+    state.last_summary = "Great! Generating your travel plan now..."
+
+    # Create a default branch from trip_inputs
+    fallback_inputs = ti.model_dump(exclude_none=True)
+    default_branch = {
+        "id": uuid4().hex[:8],
+        "label": f"{ti.destinations[0]} Trip" if ti.destinations else "Your Trip",
+        "destinations": ti.destinations or [],
+        "origin": ti.origin,
+        "start_date": ti.start_date,
+        "end_date": ti.end_date,
+        "adults": ti.adults,
+        "children": ti.children,
+        "booking_types": ti.booking_types,
+        "flight_settings": ti.flight_settings,
+        "hotel_settings": ti.hotel_settings,
+        "transport_settings": ti.transport_settings,
+        "activity_settings": ti.activity_settings,
+    }
+
+    normalized = _normalize_branch_spec(default_branch, fallback_inputs)
+    if normalized:
+        state.branches = [normalized]
+    else:
+        # Fallback to the raw branch if normalization fails
+        state.branches = [default_branch]
+
+    _debug(
+        "Generate responder complete",
+        ready=state.ready_to_generate,
+        branches=len(state.branches),
+    )
+    _debug_node_exit("generate_responder", state)
+    return state
+
+
+# -----------------------
 # Short-circuit responder (lightweight node for simple inputs)
 # -----------------------
 def short_circuit_responder(state: GraphState) -> GraphState:
@@ -5977,7 +10746,7 @@ def short_circuit_responder(state: GraphState) -> GraphState:
 
     # Get trip context for generating follow-up questions
     trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
-    missing = _compute_missing_fields(trip_inputs_dict)
+    missing = compute_trip_readiness(trip_inputs_dict).missing_core
     user_intent = state.metadata.get("user_intent", "detailed_planner")
     user_tone = state.metadata.get("user_tone", "neutral")
 
@@ -6037,102 +10806,93 @@ def route_after_normalize(state: GraphState) -> str:
     """
     Route after normalize_inputs completes.
 
-    Routing priority:
-    1. Short-circuit detected → short_circuit_responder (no LLM)
-    2. High confidence extraction + core fields present + no new content → skip router
-       and go directly to required_fields_node for confirmation (saves router LLM call)
-    3. Default → router (LLM determines intent)
+    Phase 6: Uses centralized GateEvaluator for all routing decisions.
+    Gate evaluation is done once and results are applied to state.
 
-    Note: The bypass is conservative - it only triggers when the user input appears
-    to be a simple confirmation/acknowledgment with no new intent-bearing content.
+    Routing priority (via GateEvaluator):
+    1. SHORT_CIRCUIT → short_circuit_responder (no LLM)
+    2. INFEASIBILITY_DETECTION → correction_node (no LLM)
+    3. FAST_PATH → required_fields_node (no LLM)
+    4. CORE_COLLECTION → required_fields_node (no LLM)
+    5. HIGH_CONFIDENCE → required_fields_node (no LLM)
+    6. QUESTION_KEYWORD → specialist nodes (no LLM) [Phase 6]
+    7. KEYWORD_HEURISTIC → specialist nodes (no LLM)
+    8. ROUTER_LLM → router (LLM fallback)
     """
-    # 1. Short-circuit takes priority
-    if state.flags.get("short_circuit"):
-        sc_type = state.flags.get("short_circuit")
-        _debug("Routing to short_circuit_responder", type=sc_type)
-        _set_confidence_routing(state, f"short_circuit:{sc_type}")
-        return "short_circuit_responder"
+    # Track total turns for observability
+    _routing_stats["total_turns"] += 1
+    _gate_stats["total_gate_evaluations"] += 1
 
-    # 2. High-confidence router bypass (CONSERVATIVE)
-    # Only bypass when:
-    # - Very high extraction confidence
-    # - Core fields already complete
-    # - No typos detected
-    # - User input is short (likely just confirmation, not new request)
-    # - No strategy/activity keywords that would require routing
-    extraction_conf = state.metadata.get("extraction_confidence", {})
-    conf_level = extraction_conf.get("level", "medium")
-    conf_overall = extraction_conf.get("overall", 0.5)
+    # =========================================================================
+    # READ PRE-COMPUTED GATE RESULT FROM normalize_inputs
+    # =========================================================================
+    # Gate evaluation is now done in normalize_inputs where state mutations persist.
+    # We read the cached result here to avoid re-computing and to ensure consistency.
+    destination = state.metadata.get("_gate_result_destination")
+    gate_fired_name = state.metadata.get("_gate_result_gate_fired")
+    reason = state.metadata.get("_gate_result_reason", "")
+    eval_time_ms = state.metadata.get("_gate_result_eval_time_ms", 0.0)
+    skipped_gates = state.metadata.get("_gate_result_skipped_gates", [])
 
-    ti = state.trip_inputs
-    core_fields_complete = ti.destinations and ti.origin and ti.start_date
-    no_typos = not extraction_conf.get("typo_suggestions", {})
-
-    # Only bypass for very short inputs (confirmations) that don't contain new intent
-    user_text = state.user_text or ""
-    is_short_input = len(user_text.strip()) <= 30
-
-    # Check for strategy/intent keywords that would require routing
-    # These keywords indicate the user wants a specific specialist, not just confirmation
-    intent_keywords = (
-        # Strategy topics
-        "cycling",
-        "hiking",
-        "diving",
-        "skiing",
-        "boating",
-        # Specialist categories
-        "flight",
-        "flights",
-        "hotel",
-        "hotels",
-        "boutique",
-        "accommodation",
-        "stay",
-        "where to stay",
-        "transport",
-        "train",
-        "car rental",
-        "activity",
-        "activities",
-        "things to do",
-        # Question words
-        "how",
-        "what",
-        "when",
-        "where",
-        "should",
-        "recommend",
-        "suggest",
-        "find",
-        "book",
-    )
-    has_intent_keywords = any(kw in user_text.lower() for kw in intent_keywords)
-
-    if (
-        conf_overall >= CONFIDENCE_THRESHOLD_SKIP_ROUTER
-        and core_fields_complete
-        and no_typos
-        and conf_level == "high"
-        and is_short_input
-        and not has_intent_keywords
-    ):
-        _debug(
-            "High-confidence router bypass",
-            confidence=f"{conf_overall:.2f}",
-            destinations=ti.destinations,
-            origin=ti.origin,
-            start_date=ti.start_date,
-            user_text_len=len(user_text.strip()),
+    # Fallback if gate result not pre-computed (shouldn't happen in normal flow)
+    if not destination:
+        result = GateEvaluator.evaluate(state)
+        destination = result.destination
+        gate_fired_name = (
+            result.gate_fired.name if hasattr(result.gate_fired, "name") else str(result.gate_fired)
         )
-        _set_confidence_routing(state, "high_confidence_bypass")
-        # Set intent directly to skip router LLM call
-        state.intent = "required_fields"
-        return "required_fields_node"
+        reason = result.reason
+        eval_time_ms = result.eval_time_ms
+        skipped_gates = result.skipped_gates
 
-    # 3. Default: use router to determine intent
-    _set_confidence_routing(state, f"router:{conf_level}")
-    return "router"
+    # Update gate-specific stats
+    gate_stat_map = {
+        "SHORT_CIRCUIT": "short_circuit_fired",
+        "FAST_PATH": "fast_path_fired",
+        "CORE_COLLECTION": "core_collection_fired",
+        "HIGH_CONFIDENCE": "high_confidence_fired",
+        "QUESTION_KEYWORD": "question_keyword_fired",
+        "KEYWORD_HEURISTIC": "keyword_heuristic_fired",
+        "SCORING_ROUTER": "scoring_router_fired",
+        "ROUTER_LLM": "router_llm_fired",
+    }
+
+    # Handle infeasibility (uses SHORT_CIRCUIT priority but different stat)
+    if "infeasibility" in reason:
+        _gate_stats["infeasibility_fired"] += 1
+        _routing_stats["core_fields_gate_bypasses"] += 1
+    elif gate_fired_name in gate_stat_map:
+        _gate_stats[gate_stat_map[gate_fired_name]] += 1
+
+    # Update routing stats based on gate
+    if gate_fired_name == "ROUTER_LLM":
+        _routing_stats["router_calls"] += 1
+    elif gate_fired_name == "CORE_COLLECTION":
+        _routing_stats["core_fields_gate_bypasses"] += 1
+    elif gate_fired_name == "HIGH_CONFIDENCE":
+        _routing_stats["high_conf_bypasses"] += 1
+    elif gate_fired_name in ("KEYWORD_HEURISTIC", "QUESTION_KEYWORD", "SCORING_ROUTER"):
+        _routing_stats["keyword_bypasses"] += 1
+
+    # Store first_gate_fired for observability (may already be set by normalize_inputs)
+    if "first_gate_fired" not in state.metadata:
+        state.metadata["first_gate_fired"] = gate_fired_name
+    state.metadata["gate_eval_time_ms"] = eval_time_ms
+    state.metadata["skipped_gates"] = skipped_gates
+
+    # Set confidence routing for stats
+    _set_confidence_routing(state, reason)
+
+    # Debug logging
+    _debug(
+        f"🚦 GATE_EVAL: {gate_fired_name}",
+        destination=destination,
+        reason=reason,
+        eval_time_ms=f"{eval_time_ms:.2f}",
+        skipped=len(skipped_gates),
+    )
+
+    return destination
 
 
 # -----------------------
@@ -6229,6 +10989,7 @@ def route_after_branch_postprocess(state: GraphState) -> str:
 _graph = StateGraph(GraphState)
 _graph.add_node("extractor", extractor)
 _graph.add_node("normalize_inputs", normalize_inputs)
+_graph.add_node("generate_responder", generate_responder)
 _graph.add_node("short_circuit_responder", short_circuit_responder)
 _graph.add_node("router", router)
 _graph.add_node("required_fields_node", required_fields_node)
@@ -6243,6 +11004,24 @@ _graph.add_node("branch_postprocess", branch_postprocess)
 _graph.add_node("tile_search", tile_search)
 _graph.add_node("summarize", summarize)
 _graph.add_node("response_polish", response_polish)
+_graph.add_node("lqa_prepass", lqa_prepass)  # Phase 7: LQA pre-pass before extractor
+
+
+# Routing function after lqa_prepass - determines if extractor can be skipped
+def route_after_lqa_prepass(state: GraphState) -> str:
+    """
+    Route after LQA pre-pass.
+
+    If LQA successfully parsed the user's answer (flags["lqa_prepass"] == True),
+    skip extractor entirely and go directly to normalize_inputs.
+
+    Otherwise, fall through to extractor for full extraction.
+    """
+    if state.flags.get("lqa_prepass"):
+        _debug("[LQA] Routing: LQA hit, skipping extractor → normalize_inputs")
+        return "normalize_inputs"
+    _debug("[LQA] Routing: LQA bail, falling through → extractor")
+    return "extractor"
 
 
 # Routing function after extractor - fast-path for pure short-circuits
@@ -6270,8 +11049,20 @@ def route_after_extractor(state: GraphState) -> str:
     return "normalize_inputs"
 
 
-# Flow: START → extractor → (conditional) normalize_inputs or short_circuit_responder
-_graph.add_edge(START, "extractor")
+# Flow: START → lqa_prepass → (conditional) normalize_inputs or extractor
+# LQA pre-pass attempts zero-LLM parsing of simple answers to the last question.
+# If successful, extractor is skipped entirely, saving ~500-2000 tokens.
+_graph.add_edge(START, "lqa_prepass")
+
+# Conditional edge after lqa_prepass: hit → normalize_inputs, bail → extractor
+_graph.add_conditional_edges(
+    "lqa_prepass",
+    route_after_lqa_prepass,
+    {
+        "normalize_inputs": "normalize_inputs",
+        "extractor": "extractor",
+    },
+)
 
 # Conditional edge after extractor: fast-path for pure short-circuits
 _graph.add_conditional_edges(
@@ -6283,16 +11074,28 @@ _graph.add_conditional_edges(
     },
 )
 
-# Conditional edge: normalize_inputs → router OR short_circuit_responder OR required_fields_node
+# Conditional edge: normalize_inputs → router OR short_circuit_responder OR specialist nodes
+# GateEvaluator can route directly to specialist nodes via KEYWORD_HEURISTIC, QUESTION_KEYWORD,
+# or SCORING_ROUTER gates, bypassing the router LLM entirely.
 _graph.add_conditional_edges(
     "normalize_inputs",
     route_after_normalize,
     {
         "router": "router",
+        "generate_responder": "generate_responder",
         "short_circuit_responder": "short_circuit_responder",
         "required_fields_node": "required_fields_node",
+        "flights_node": "flights_node",
+        "hotels_node": "hotels_node",
+        "transport_node": "transport_node",
+        "activities_node": "activities_node",
+        "strategy_node": "strategy_node",
+        "correction_node": "correction_node",
     },
 )
+
+# generate_responder → validate_and_merge (process branches)
+_graph.add_edge("generate_responder", "validate_and_merge")
 
 # short_circuit_responder → summarize (bypass validate_and_merge, branch_postprocess)
 _graph.add_edge("short_circuit_responder", "summarize")
@@ -6309,7 +11112,36 @@ def route_after_router(state: GraphState) -> str:
         return "summarize"
 
     # =========================================================================
-    # CONFIDENCE-BASED ROUTING
+    # ROUTER CONFIDENCE THRESHOLD
+    # =========================================================================
+    # If router returned low confidence (<0.3), don't trust the intent.
+    # Fall back to required_fields which has better contextual understanding.
+    # This saves wasted specialist calls when router is uncertain.
+    ROUTER_CONFIDENCE_THRESHOLD = 0.3
+    router_confidence = state.metadata.get("router_confidence", 1.0)
+
+    if router_confidence < ROUTER_CONFIDENCE_THRESHOLD and state.intent not in (
+        "required_fields",
+        "correction_needed",
+        "off_topic",
+    ):
+        _debug(
+            "🎯 ROUTER_LOW_CONFIDENCE: Falling back to required_fields",
+            router_confidence=f"{router_confidence:.2f}",
+            threshold=ROUTER_CONFIDENCE_THRESHOLD,
+            original_intent=state.intent,
+            reason="Router uncertain about intent - using required_fields for safety",
+        )
+        # Store original intent in case we want to revisit
+        state.metadata["router_low_confidence_fallback"] = True
+        state.metadata["router_original_intent"] = state.intent
+        if state.strategy_topic:
+            state.metadata["router_original_topic"] = state.strategy_topic
+        state.intent = "required_fields"
+        return "required_fields_node"
+
+    # =========================================================================
+    # EXTRACTION CONFIDENCE-BASED ROUTING
     # =========================================================================
     # Force required_fields for low confidence extractions
     # This allows the LLM to validate/correct entities like typos or non-English
@@ -6341,7 +11173,7 @@ def route_after_router(state: GraphState) -> str:
         and not meaningful_turn_update
         and state.intent not in ("correction_needed", "required_fields")
     ):
-        low_reasons = extraction_conf.get("low_confidence_reasons", [])
+        low_reasons = extraction_conf.get("low_confidence_reasons") or []
         state.metadata["force_required_fields_reason"] = "low_extraction_confidence"
         state.metadata["deferred_intent"] = state.intent
         if state.strategy_topic:
@@ -6383,11 +11215,8 @@ def route_after_router(state: GraphState) -> str:
         )
         return "required_fields_node"
 
-    # Strategy intents (skiing, hiking, diving, etc.) can proceed immediately
-    # once detected - they provide activity-specific guidance even without
-    # destination/origin/dates being set.
-    if state.intent == "strategy":
-        return "strategy_node"
+    # NOTE: Strategy exemption removed - strategy nodes now also require core fields.
+    # The node guard in strategy_node provides a fallback if this routing is bypassed.
 
     # CRITICAL: Force required_fields when core fields are missing
     # This ensures destination extraction happens even when router detects
@@ -6438,6 +11267,7 @@ def route_after_router(state: GraphState) -> str:
         "transport": "transport_node",
         "activities": "activities_node",
         "correction_needed": "correction_node",
+        "strategy": "strategy_node",
     }.get(intent, "required_fields_node")
 
 
@@ -6745,6 +11575,9 @@ async def run_turn(
         chat_history=deepcopy(
             session_state.get("chat_history", [])
         ),  # Pass chat history for LLM context
+        # Persist strategy expansion context across turns
+        strategy_expansion_tier=session_state.get("strategy_expansion_tier"),
+        strategy_expansion_target=session_state.get("strategy_expansion_target"),
     )
 
     # Use a unique thread_id per turn to prevent LangGraph from restoring stale checkpoint state
@@ -6854,6 +11687,9 @@ async def run_turn(
             "total_tokens": result_meta.get("total_tokens", 0),
             "node_tokens": result_meta.get("node_tokens", {}),
             "llm_time_ms": result_meta.get("llm_time_ms", 0.0),
+            # Strategy expansion context for tier-based token optimization
+            "strategy_expansion_tier": getattr(result, "strategy_expansion_tier", None),
+            "strategy_expansion_target": getattr(result, "strategy_expansion_target", None),
         },
     }
     return resp
@@ -6937,6 +11773,13 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
         suggested_responses=deepcopy(session_state.get("suggested_responses", [])),
         errors=deepcopy(session_state.get("errors", [])),
         chat_history=deepcopy(session_state.get("chat_history", [])),
+        # Persist question_target across turns for LQA to intercept direct answers
+        question_target=session_state.get("question_target"),
+        # Persist strategy_topic for topic-aware template suggestions
+        strategy_topic=session_state.get("strategy_topic"),
+        # Persist strategy expansion context across turns
+        strategy_expansion_tier=session_state.get("strategy_expansion_tier"),
+        strategy_expansion_target=session_state.get("strategy_expansion_target"),
     )
 
     # Use a unique thread_id per turn
@@ -7020,10 +11863,14 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
             "thread_id": thread_id,
             "router_intent": getattr(result, "intent", None),
             "strategy_topic": getattr(result, "strategy_topic", None),
+            "question_target": getattr(result, "question_target", None),
             "short_circuit_type": result_flags.get("short_circuit"),
             "llm_calls_made": result_meta.get("llm_calls_made", 0),
             "cache_hits": result_meta.get("cache_hits", 0),
             "confidence_routing": result_meta.get("confidence_routing"),
+            # Strategy expansion context for tier-based token optimization
+            "strategy_expansion_tier": getattr(result, "strategy_expansion_tier", None),
+            "strategy_expansion_target": getattr(result, "strategy_expansion_target", None),
         },
     }
 
@@ -7125,7 +11972,7 @@ def _trip_inputs_to_document(ti: TripInputs) -> DocumentTripInputs:
         budget=int(ti.budget) if ti.budget else None,
         currency=ti.currency or DEFAULT_CURRENCY,
         multi_city_intent=ti.multi_city_intent,
-        missing_fields=_compute_missing_fields(ti.model_dump(exclude_none=True)),
+        missing_fields=compute_trip_readiness(ti.model_dump(exclude_none=True)).missing_core,
         # Booking preferences - match plan.py behavior
         booking_types=booking_types,
         flight_settings=flight_settings,
