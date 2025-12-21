@@ -1,6 +1,6 @@
+import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import List
@@ -56,6 +56,7 @@ from app.plan_graph import (
     clear_session_checkpoint,
     condense_long_message,
     get_graph_stats,
+    prewarm_prompts,
     prune_stale_checkpoints,
     response_cache_stats,
     run_turn,
@@ -85,21 +86,28 @@ from app.validation import cache_stats, clear_cache, prewarm_cache, validate_inp
 logger = logging.getLogger(__name__)
 
 
-APP_NAME = os.getenv("APP_NAME", "Nomadic Backend")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan hooks.
 
     Used instead of deprecated @app.on_event handlers.
+    Pre-warms caches and compiles templates to eliminate cold-start latency.
     """
-    count = prewarm_cache()
-    print(f"[Validation] Pre-warmed cache with {count} entries")
+    # Prewarm validation cache
+    validation_count = prewarm_cache()
+    print(f"[Validation] Pre-warmed cache with {validation_count} entries")
+
+    # Prewarm prompts and templates (Jinja2 compilation)
+    warmup_stats = prewarm_prompts()
+    print(
+        f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
+        f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
+    )
+
     yield
 
 
-app = FastAPI(title=APP_NAME, lifespan=lifespan)
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 # Sync DB dependency for legacy endpoints and migrations
 db_dependency = Depends(get_db)
@@ -482,11 +490,27 @@ async def graph_plan_endpoint(
     # Note: We intentionally do not reject relative date phrases (e.g., "next week").
     # The planner should handle them contextually using today_iso.
 
-    # --- Call run_turn with timeout ---
+    # --- Call run_turn with route-level timeout ---
+    route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
     try:
-        # run_turn is async; timeout is handled within plan_graph.py
-        result = await run_turn(req.message, session_state)
+        # Wrap run_turn in asyncio.wait_for for route-level timeout protection
+        result = await asyncio.wait_for(
+            run_turn(req.message, session_state),
+            timeout=route_timeout_seconds,
+        )
         logger.info(f"[{request_id}] Graph planner succeeded (LangGraph path)")
+    except asyncio.TimeoutError:
+        logger.error(
+            f"[{request_id}] Route timeout after {route_timeout_seconds}s "
+            f"(session_id={session_id})"
+        )
+        raise HTTPException(
+            status_code=504,
+            detail={
+                "error_code": GraphPlanErrorCode.LLM_TIMEOUT,
+                "message": f"Planning request timed out after {route_timeout_seconds}s",
+            },
+        ) from None
     except TimeoutError:
         logger.error(f"[{request_id}] run_turn timed out")
         raise HTTPException(
@@ -761,10 +785,27 @@ async def graph_plan_stream_endpoint(
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to load document for session: {e}")
 
-            # Stream tokens from run_turn_streaming
+            # Stream tokens from run_turn_streaming with per-event timeout
+            # Use route timeout for total stream duration protection
+            route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
             final_result = None
             token_count = 0
+            stream_start = asyncio.get_event_loop().time()
+
             async for event in run_turn_streaming(req.message, session_state):
+                # Check if we've exceeded total stream timeout
+                elapsed = asyncio.get_event_loop().time() - stream_start
+                if elapsed > route_timeout_seconds:
+                    logger.error(
+                        f"[{request_id}] Stream timeout after {elapsed:.1f}s "
+                        f"(limit: {route_timeout_seconds}s)"
+                    )
+                    timeout_payload = json.dumps(
+                        {"type": "error", "message": f"Stream timed out after {elapsed:.1f}s"}
+                    )
+                    yield f"event: error\ndata: {timeout_payload}\n\n"
+                    return
+
                 if event["type"] == "token":
                     token_count += 1
                     if token_count <= 5 or token_count % 50 == 0:

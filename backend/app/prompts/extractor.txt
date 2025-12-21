@@ -54,6 +54,8 @@ TRAVELERS (adults_delta, children_delta):
 - "couple" / "two of us" → adults: 2
 - "family of 4" → adults: 2, children: 2
 - "3 adults, 2 kids" → adults: 3, children: 2
+- "for the kids" / "with the kids" / "our kids" → children: 1 (at least, infer)
+- "family trip" / "family vacation" → adults: 2, children: 1 (assume family has children)
 
 BUDGET (budget_delta):
 - Must be a NUMBER, never a boolean or adjective

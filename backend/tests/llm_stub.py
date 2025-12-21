@@ -671,15 +671,20 @@ def llm_json_for_prompt(
         # it's embedded in the prompt template. Extract it from the prompt if needed.
         effective_user_message = user_message
         if not effective_user_message:
-            # Try to extract from LIGHT prompt format: User message: "..."
-            match = re.search(r'User message:\s*"([^"]+)"', prompt)
+            # Try to extract from LIGHT prompt format: User: "..." (actual format)
+            match = re.search(r'User:\s*"([^"]+)"', prompt)
             if match:
                 effective_user_message = match.group(1)
             else:
-                # Try to extract from FULL prompt format: USER_TEXT: ...
-                match = re.search(r"USER_TEXT:\s*(.+?)(?:\n|$)", prompt)
+                # Fallback: User message: "..." (older format)
+                match = re.search(r'User message:\s*"([^"]+)"', prompt)
                 if match:
-                    effective_user_message = match.group(1).strip()
+                    effective_user_message = match.group(1)
+                else:
+                    # Try to extract from FULL prompt format: USER_TEXT: ...
+                    match = re.search(r"USER_TEXT:\s*(.+?)(?:\n|$)", prompt)
+                    if match:
+                        effective_user_message = match.group(1).strip()
 
         msg = (effective_user_message or "").lower()
         result: Dict[str, Any] = {

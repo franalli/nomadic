@@ -60,8 +60,11 @@ class TestDateRangeValidation:
 
         future_start = (date.today() + timedelta(days=30)).isoformat()
         future_end = (date.today() + timedelta(days=35)).isoformat()
-        start, end, errors = _trip_normalizer.validate_date_range(future_start, future_end)
+        start, end, errors, needs_clarify = _trip_normalizer.validate_date_range(
+            future_start, future_end
+        )
         assert not errors
+        assert not needs_clarify
         assert start == future_start
         assert end == future_end
 
@@ -77,7 +80,9 @@ class TestDateRangeValidation:
         earlier_date = (date.today() + timedelta(days=30)).isoformat()
         later_date = (date.today() + timedelta(days=35)).isoformat()
         # Pass later before earlier (swapped order)
-        start, end, errors = _trip_normalizer.validate_date_range(later_date, earlier_date)
+        start, end, errors, needs_clarify = _trip_normalizer.validate_date_range(
+            later_date, earlier_date
+        )
         # A warning should be generated for date swap
         assert any(e.severity == "warning" for e in errors)
         assert any("swap" in e.message.lower() for e in errors)
@@ -91,7 +96,7 @@ class TestDateRangeValidation:
             start_year = current_year + 1
         else:
             start_year = current_year + 1
-        start, end, errors = _trip_normalizer.validate_date_range(
+        start, end, errors, needs_clarify = _trip_normalizer.validate_date_range(
             f"{start_year}-12-28", f"{start_year}-01-05"
         )
         # End date should be corrected to next year
@@ -99,11 +104,18 @@ class TestDateRangeValidation:
         assert any(e.severity == "warning" for e in errors)
 
     def test_past_start_date_warning(self):
-        """Past start date generates warning."""
+        """Past/straddle dates generate appropriate errors.
+
+        Note: When a date range straddles today in the same year,
+        AMBIGUOUS_YEAR takes precedence over past date warning.
+        """
         past_date = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
         future_date = (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%d")
-        _, _, errors = _trip_normalizer.validate_date_range(past_date, future_date)
-        assert any("past" in e.message.lower() for e in errors)
+        _, _, errors, needs_clarify = _trip_normalizer.validate_date_range(past_date, future_date)
+        # Either past warning or straddles-today error is acceptable
+        assert any(
+            "past" in e.message.lower() or "straddles" in e.message.lower() for e in errors
+        ), f"Expected past or straddles error, got: {errors}"
 
 
 class TestCurrencyNormalization:
@@ -315,14 +327,24 @@ class TestNormalizeAll:
         assert "London" in updates.get("destinations", [])
 
     def test_normalize_all_collects_errors(self):
-        """normalize_all collects all errors."""
+        """normalize_all collects all errors.
+
+        Note: When a date range straddles today (start < today < end) in the same year,
+        the system triggers clarification mode with AMBIGUOUS_YEAR error rather than
+        just warning about the past date. This test verifies errors ARE collected.
+        """
         ti = TripInputs()
         past = (datetime.now() - timedelta(days=5)).strftime("%Y-%m-%d")
         future = (datetime.now() + timedelta(days=10)).strftime("%Y-%m-%d")
         deltas = {"start_date_hint": past, "end_date_hint": future}
         updates, errors = _trip_normalizer.normalize_all(ti, deltas)
-        # Should have warning for past date
-        assert any("past" in e.message.lower() for e in errors)
+        # Should have an error - either "past" warning or "straddles" ambiguity error
+        assert len(errors) > 0, "Expected at least one error for past/straddle dates"
+        # When date range straddles today, ambiguity error takes precedence
+        has_date_error = any(
+            "past" in e.message.lower() or "straddles" in e.message.lower() for e in errors
+        )
+        assert has_date_error, f"Expected past or straddles error, got: {errors}"
 
     def test_normalize_all_idempotent(self):
         """Running normalize_all twice gives same result."""

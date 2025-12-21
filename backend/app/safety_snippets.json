@@ -1,0 +1,202 @@
+{
+  "_version": "1.0.0",
+  "_description": "Travel safety snippets by destination region, optionally conditioned on origin region",
+  "_notes": [
+    "Never claim definitive requirements - use 'check entry requirements' wording",
+    "Snippets are 1-2 lines max, appended to assistant response",
+    "Update this file to expand coverage without code changes"
+  ],
+
+  "regions": {
+    "EU_Schengen": {
+      "default": {
+        "entry": "Check entry requirements; depending on nationality you may need a visa or travel authorization for the Schengen area.",
+        "health": "EU health insurance card (EHIC) covers EU citizens; others should arrange travel insurance.",
+        "safety": "Emergency: 112 (EU-wide). Check gov travel advisories before departure.",
+        "logistics": "Euro (€) in most countries. Type C/F plugs (230V)."
+      },
+      "by_origin_region": {
+        "US": {
+          "entry": "🛂 US citizens: No visa needed for <90 days, but ETIAS authorization will be required (check current status). Valid passport required.",
+          "health": "Travel health insurance recommended—US insurance often has limited EU coverage."
+        },
+        "UK": {
+          "entry": "🛂 UK citizens: No visa needed for <90 days post-Brexit. Valid passport required (ID cards no longer accepted).",
+          "health": "GHIC/EHIC may provide limited coverage; travel insurance recommended."
+        }
+      }
+    },
+
+    "UK": {
+      "default": {
+        "entry": "Check UK visa requirements based on your nationality; some need Electronic Travel Authorisation (ETA).",
+        "health": "NHS emergency care available but travel insurance strongly recommended.",
+        "safety": "Emergency: 999. Check gov.uk/foreign-travel-advice before travel.",
+        "logistics": "British Pound (£). Type G plugs (230V)."
+      },
+      "by_origin_region": {
+        "US": {
+          "entry": "🛂 US citizens: ETA required from 2025 for visa-free travel. Valid passport required.",
+          "health": "US health insurance usually has limited UK coverage—travel insurance recommended."
+        },
+        "EU_Schengen": {
+          "entry": "🛂 EU citizens: Visa-free for <6 months. Valid passport required (ID cards not accepted).",
+          "health": "EHIC no longer valid in UK; travel insurance recommended."
+        }
+      }
+    },
+
+    "US": {
+      "default": {
+        "entry": "Most visitors need ESTA (Visa Waiver) or visa. Apply at least 72 hours before travel.",
+        "health": "No public healthcare—travel/health insurance essential. Check CDC recommendations.",
+        "safety": "Emergency: 911. Check travel.state.gov for current advisories.",
+        "logistics": "US Dollar ($). Type A/B plugs (120V)."
+      },
+      "by_origin_region": {
+        "EU_Schengen": {
+          "entry": "🛂 EU citizens: ESTA required ($21, valid 2 years). Apply at esta.cbp.dhs.gov at least 72h before travel.",
+          "health": "EU health insurance not valid—travel insurance essential for US medical costs."
+        },
+        "UK": {
+          "entry": "🛂 UK citizens: ESTA required ($21, valid 2 years). Apply at esta.cbp.dhs.gov at least 72h before travel.",
+          "health": "NHS not valid in US—travel insurance essential for US medical costs."
+        }
+      }
+    },
+
+    "Canada": {
+      "default": {
+        "entry": "Most visitors need eTA or visa. Check requirements based on nationality.",
+        "health": "Provincial healthcare varies; travel insurance recommended for visitors.",
+        "safety": "Emergency: 911. Check travel.gc.ca for advisories.",
+        "logistics": "Canadian Dollar (CAD). Type A/B plugs (120V)."
+      },
+      "by_origin_region": {
+        "US": {
+          "entry": "🛂 US citizens: No visa/eTA needed. Valid passport required.",
+          "health": "US insurance may have limited coverage—check your plan or get travel insurance."
+        }
+      }
+    },
+
+    "Australia_NZ": {
+      "default": {
+        "entry": "Most visitors need eTA (Australia) or NZeTA (New Zealand). Check requirements.",
+        "health": "Travel insurance recommended; some reciprocal healthcare agreements exist.",
+        "safety": "Emergency: 000 (AU) / 111 (NZ). Check smartraveller.gov.au or safetravel.govt.nz.",
+        "logistics": "AUD/NZD. Type I plugs (230V)."
+      },
+      "by_origin_region": {
+        "US": {
+          "entry": "🛂 US citizens: eTA required for Australia (~$15). NZeTA required for NZ (~$12). Valid passport required.",
+          "health": "US insurance usually has limited coverage—travel insurance recommended for remote areas."
+        },
+        "UK": {
+          "entry": "🛂 UK citizens: eTA required for Australia. NZeTA required for NZ. Valid passport required.",
+          "health": "Reciprocal healthcare with UK covers some emergency care; travel insurance still recommended."
+        }
+      }
+    },
+
+    "Japan": {
+      "default": {
+        "entry": "Visa requirements vary. Many nationalities get 90-day visa-free entry.",
+        "health": "High-quality healthcare but expensive without insurance. Travel insurance recommended.",
+        "safety": "Emergency: 110 (police) / 119 (fire/ambulance). Very low crime rate.",
+        "logistics": "Japanese Yen (¥). Type A/B plugs (100V—device compatibility varies)."
+      },
+      "by_origin_region": {
+        "US": {
+          "entry": "🛂 US citizens: Visa-free for 90 days. Valid passport required. Visit Japan Web registration recommended.",
+          "health": "US insurance often has limited Japan coverage—travel insurance recommended."
+        },
+        "EU_Schengen": {
+          "entry": "🛂 EU citizens: Visa-free for 90 days. Valid passport required.",
+          "health": "Travel insurance recommended—EU coverage not valid in Japan."
+        }
+      }
+    },
+
+    "SE_Asia": {
+      "default": {
+        "entry": "Visa requirements vary by country. Check specific requirements for Thailand, Vietnam, Indonesia, etc.",
+        "health": "Check CDC/WHO for vaccination recommendations. Travel/medical insurance essential.",
+        "safety": "Check gov travel advisories. Be aware of local customs and laws.",
+        "logistics": "Local currencies vary. Mix of plug types—universal adapter recommended."
+      },
+      "by_origin_region": {
+        "US": {
+          "entry": "🛂 Check visa requirements per country. Thailand: 30-day visa-free. Vietnam: e-visa or visa required. Indonesia: 30-day visa on arrival.",
+          "health": "Hepatitis A/B, typhoid vaccines often recommended. Malaria prophylaxis for some areas."
+        }
+      }
+    }
+  },
+
+  "country_to_region": {
+    "France": "EU_Schengen",
+    "Germany": "EU_Schengen",
+    "Italy": "EU_Schengen",
+    "Spain": "EU_Schengen",
+    "Netherlands": "EU_Schengen",
+    "Belgium": "EU_Schengen",
+    "Austria": "EU_Schengen",
+    "Switzerland": "EU_Schengen",
+    "Portugal": "EU_Schengen",
+    "Greece": "EU_Schengen",
+    "Czech Republic": "EU_Schengen",
+    "Poland": "EU_Schengen",
+    "Hungary": "EU_Schengen",
+    "Sweden": "EU_Schengen",
+    "Norway": "EU_Schengen",
+    "Denmark": "EU_Schengen",
+    "Finland": "EU_Schengen",
+    "Iceland": "EU_Schengen",
+
+    "United Kingdom": "UK",
+    "England": "UK",
+    "Scotland": "UK",
+    "Wales": "UK",
+    "Northern Ireland": "UK",
+    "London": "UK",
+    "Edinburgh": "UK",
+
+    "United States": "US",
+    "USA": "US",
+    "New York": "US",
+    "Los Angeles": "US",
+    "San Francisco": "US",
+    "Miami": "US",
+    "Las Vegas": "US",
+    "Chicago": "US",
+    "Hawaii": "US",
+
+    "Canada": "Canada",
+    "Toronto": "Canada",
+    "Vancouver": "Canada",
+    "Montreal": "Canada",
+
+    "Australia": "Australia_NZ",
+    "Sydney": "Australia_NZ",
+    "Melbourne": "Australia_NZ",
+    "New Zealand": "Australia_NZ",
+    "Auckland": "Australia_NZ",
+
+    "Japan": "Japan",
+    "Tokyo": "Japan",
+    "Kyoto": "Japan",
+    "Osaka": "Japan",
+
+    "Thailand": "SE_Asia",
+    "Bangkok": "SE_Asia",
+    "Phuket": "SE_Asia",
+    "Vietnam": "SE_Asia",
+    "Indonesia": "SE_Asia",
+    "Bali": "SE_Asia",
+    "Singapore": "SE_Asia",
+    "Malaysia": "SE_Asia",
+    "Philippines": "SE_Asia",
+    "Cambodia": "SE_Asia"
+  }
+}

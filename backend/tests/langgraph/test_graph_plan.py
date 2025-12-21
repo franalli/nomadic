@@ -438,19 +438,6 @@ class TestGraphPlanUtilities:
         # Currency should be uppercase
         assert normalized["currency"] == "USD"
 
-    @pytest.mark.skip(reason="is_date_ambiguous function was removed from graph_plan_utils")
-    def test_is_date_ambiguous(self):
-        """Date ambiguity detection works."""
-        from app.graph_plan_utils import is_date_ambiguous
-
-        # Ambiguous dates
-        assert is_date_ambiguous("01/02/2025")  # DD/MM or MM/DD?
-        assert is_date_ambiguous("02-03-2025")
-
-        # Non-ambiguous dates
-        assert not is_date_ambiguous("2025-01-15")  # ISO format
-        assert not is_date_ambiguous("January 15, 2025")
-
     def test_validate_suggested_responses(self):
         """Suggested responses validation works."""
         from app.graph_plan_utils import validate_suggested_responses

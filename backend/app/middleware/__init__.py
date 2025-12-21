@@ -5,7 +5,6 @@ from app.middleware.session import (
     SessionMiddleware,
     clear_session_cookies,
     get_session_from_request,
-    set_new_session_cookies,
 )
 
 __all__ = [
@@ -13,5 +12,4 @@ __all__ = [
     "CSRFMiddleware",
     "get_session_from_request",
     "clear_session_cookies",
-    "set_new_session_cookies",
 ]

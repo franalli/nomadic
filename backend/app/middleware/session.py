@@ -244,27 +244,3 @@ def clear_session_cookies(response: Response) -> Response:
     )
 
     return response
-
-
-def set_new_session_cookies(response: Response, session_id: str, csrf_token: str) -> Response:
-    """
-    Set new session and CSRF cookies on a response.
-
-    Use this when rotating a session after login or privilege change.
-    """
-    cookie_kwargs = _get_cookie_kwargs()
-
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session_id,
-        httponly=True,
-        **cookie_kwargs,
-    )
-    response.set_cookie(
-        key=CSRF_COOKIE_NAME,
-        value=csrf_token,
-        httponly=False,
-        **cookie_kwargs,
-    )
-
-    return response

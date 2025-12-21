@@ -367,17 +367,32 @@ class TestLqaParserEdgeCases:
         assert result is not None
 
     def test_parse_date_month_day(self):
-        """Should parse month + day format like December 15.
-
-        Note: This pattern may not be implemented yet.
-        """
-        import pytest
-
+        """Should parse month + day format like December 15."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_date_answer("December 15", state)
-        if result is None:
-            pytest.skip("Month + day parsing not yet implemented")
-        assert "start_date_hint" in result or "dates_raw" in result
+        assert result is not None
+        assert "start_date_hint" in result
+
+    def test_parse_date_first_week_of_month(self):
+        """Should parse 'first week of January' as a date range."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_date_answer("First week of January", state)
+        assert result is not None
+        assert "start_date_hint" in result
+        assert "end_date_hint" in result
+        # First week of January should be Jan 1-7
+        assert result["start_date_hint"].endswith("-01-01")
+        assert result["end_date_hint"].endswith("-01-07")
+
+    def test_parse_date_last_week_of_month(self):
+        """Should parse 'last week of December' as a date range."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_date_answer("last week of December", state)
+        assert result is not None
+        assert "start_date_hint" in result
+        assert "end_date_hint" in result
+        # Last week of December should be Dec 25-31
+        assert result["end_date_hint"].endswith("-12-31")
 
     def test_parse_budget_euro_symbol(self):
         """Should parse euro symbol budgets like €2000."""
@@ -387,16 +402,10 @@ class TestLqaParserEdgeCases:
         assert result["budget_delta"] == 2000.0
 
     def test_parse_budget_thousand_word(self):
-        """Should parse 'thousand' in budget like 5 thousand.
-
-        Note: This pattern may not be implemented yet.
-        """
-        import pytest
-
+        """Should parse 'thousand' in budget like 5 thousand."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_budget_answer("5 thousand", state)
-        if result is None:
-            pytest.skip("'thousand' word parsing not yet implemented")
+        assert result is not None
         assert result["budget_delta"] == 5000.0
 
     def test_parse_budget_gbp_symbol(self):
@@ -407,30 +416,19 @@ class TestLqaParserEdgeCases:
         assert result["budget_delta"] == 1500.0
 
     def test_parse_travelers_couple(self):
-        """Should parse 'couple' as 2 adults.
-
-        Note: This pattern may not be implemented yet.
-        """
-        import pytest
-
+        """Should parse 'couple' as 2 adults."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_travelers_answer("a couple", state)
-        if result is None:
-            pytest.skip("'couple' parsing not yet implemented")
+        assert result is not None
         assert result["adults_delta"] == 2
 
     def test_parse_travelers_with_children(self):
-        """Should parse travelers with children like '2 adults and 2 kids'.
-
-        Note: This pattern may not be implemented yet.
-        """
-        import pytest
-
+        """Should parse travelers with children like '2 adults and 2 kids'."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_travelers_answer("2 adults and 2 kids", state)
-        if result is None:
-            pytest.skip("Adults + kids parsing not yet implemented")
+        assert result is not None
         assert result.get("adults_delta") == 2
+        assert result.get("children_delta") == 2
 
     def test_parse_duration_weekend(self):
         """Should parse 'weekend' as short duration."""
@@ -440,16 +438,10 @@ class TestLqaParserEdgeCases:
         # This is an edge case that may need implementation
 
     def test_parse_destination_with_article(self):
-        """Should parse destination with article like 'the Netherlands'.
-
-        Note: This pattern may not be implemented yet.
-        """
-        import pytest
-
+        """Should parse destination with article like 'the Netherlands'."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_destination_answer("the Netherlands", state)
-        if result is None:
-            pytest.skip("Article stripping not yet implemented")
+        assert result is not None
         assert "Netherlands" in result["destinations_delta"][0]
 
 

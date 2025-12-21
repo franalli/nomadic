@@ -226,6 +226,41 @@ class TestDateRangeParsing:
         assert end is None, f"Expected None for end with '{input_text}'"
 
 
+class TestWeekOfMonthParsing:
+    """Test 'first/second/third/fourth/last week of [month]' parsing."""
+
+    @pytest.mark.parametrize(
+        "input_text,expected_start,expected_end",
+        [
+            # First week of various months
+            ("First week of January", "2026-01-01", "2026-01-07"),
+            ("first week of January", "2026-01-01", "2026-01-07"),
+            ("First week of Jan", "2026-01-01", "2026-01-07"),
+            ("1st week of January", "2026-01-01", "2026-01-07"),
+            # Second week
+            ("Second week of March", "2026-03-08", "2026-03-14"),
+            ("2nd week of March", "2026-03-08", "2026-03-14"),
+            # Third week
+            ("Third week of June", "2026-06-15", "2026-06-21"),
+            ("3rd week of June", "2026-06-15", "2026-06-21"),
+            # Fourth week
+            ("Fourth week of September", "2026-09-22", "2026-09-28"),
+            ("4th week of September", "2026-09-22", "2026-09-28"),
+            # Last week
+            ("Last week of December", "2025-12-25", "2025-12-31"),
+            ("last week of December", "2025-12-25", "2025-12-31"),
+            # With explicit year
+            ("First week of January 2027", "2027-01-01", "2027-01-07"),
+            ("First week of January, 2027", "2027-01-01", "2027-01-07"),
+        ],
+    )
+    def test_week_of_month_parsing(self, input_text: str, expected_start: str, expected_end: str):
+        """Test parsing of 'first/second/third/fourth/last week of [month]'."""
+        start, end = _date_normalizer.parse_date_range(input_text)
+        assert start == expected_start, f"Start date mismatch for '{input_text}'"
+        assert end == expected_end, f"End date mismatch for '{input_text}'"
+
+
 class TestRelativeDates:
     """Test relative date expressions."""
 

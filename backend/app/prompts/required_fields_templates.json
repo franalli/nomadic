@@ -40,6 +40,19 @@
     }
   },
 
+  "dates_clarify": {
+    "_description": "Used when date range is ambiguous (straddles today or year unclear)",
+    "questions": [
+      "I got {date_range}, but which year did you mean?",
+      "Did you mean {date_range} this year or next?",
+      "Just to confirm - is that {date_range} in {current_year} or {next_year}?"
+    ],
+    "suggestions": {
+      "default": ["This {month} ({current_year})", "Next {month} ({next_year})"],
+      "explicit_year": ["{current_year}", "{next_year}"]
+    }
+  },
+
   "travelers": {
     "questions": [
       "How many people will be traveling?",

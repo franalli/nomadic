@@ -47,6 +47,9 @@ class Settings(BaseSettings):
 
     # Response polish node configuration
     enable_response_polish: bool = True  # Enable response polishing for natural tone
+    enable_response_polish_mvp: bool = (
+        False  # MVP mode: disable LLM polish, keep deterministic only
+    )
     response_polish_timeout_ms: int = 200  # Hard timeout cap for polish node (ms)
     response_polish_warn_threshold_ms: int = 150  # Log warning if polish exceeds this (ms)
 
@@ -65,23 +68,41 @@ class Settings(BaseSettings):
     plan_chat_history_limit: int = 20  # Max messages to include in context
     openai_plan_max_tokens: int = 800  # Token limit for LLM response
     openai_plan_temperature: float = 0.5  # Response creativity (lower = more consistent)
-    openai_plan_top_p: float = 0.95  # Nucleus sampling threshold
     llm_max_retries: int = 3  # Retry count for API errors
     openai_plan_seed: int | None = None  # Optional seed for reproducibility
+    openai_plan_model: str = "gpt-4o-mini"  # Model for planning
+    openai_small_model: str = "gpt-4o-mini"  # Small model for simple tasks
+    openai_medium_model: str = "gpt-4o-mini"  # Medium model for moderate tasks
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning
     aggressive_cache_clear: bool = False  # Clear ALL caches on Fresh Start (dev mode)
+    precise_token_count: bool = False  # Use tiktoken for precise token counting
 
     # backend
     backend_host: str = "0.0.0.0"
     backend_port: int = 8000
+    app_name: str = "Nomadic Backend"  # Application name for OpenAPI docs
 
     # database
     database_url: str = os.getenv("DATABASE_URL", "")
 
     # external APIs
     openai_api_key: str | None = None
+
+    # =============================================================================
+    # Cache Configuration
+    # =============================================================================
+    response_cache_ttl_seconds: int = 3600  # TTL for cached LLM responses (1 hour)
+    response_cache_maxsize: int = 200  # Max entries in response cache
+    checkpoint_ttl_hours: int = 24  # Hours before idle checkpoints are purged
+
+    # =============================================================================
+    # Trip Planning Configuration
+    # =============================================================================
+    default_trip_currency: str = "USD"  # Default currency for trip budgets
+    auto_correct_typo_threshold: int = 100  # Levenshtein distance for typo correction
+    confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
 
     # Validation cache settings
     validation_cache_size: int = 1000
@@ -102,6 +123,79 @@ class Settings(BaseSettings):
     frontend_origin: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
     # Cookie domain for subdomain sharing (e.g., ".nomadic.com"), or None for same-origin
     cookie_domain: str | None = os.getenv("COOKIE_DOMAIN", None)
+
+    # =============================================================================
+    # E2E Test Configuration
+    # =============================================================================
+    e2e_test_model: str = "gpt-4o-mini"  # Model for E2E tests
+    router_call_rate_target: float = 0.30  # Target % of turns using LLM router
+    template_hit_rate_target: float = 0.85  # Target % of turns hitting templates
+
+    # =============================================================================
+    # State Integrity Configuration
+    # =============================================================================
+    # Enable invariant checking (compute/log state violations)
+    state_invariants_enabled: bool = True
+    # Restore from snapshot on state regression (false = reconcile prompt only)
+    state_snapshot_restore_enabled: bool = True
+
+    # =============================================================================
+    # Loop Guard Configuration
+    # =============================================================================
+    loop_guard_enabled: bool = True  # Enable loop guard mitigation actions
+    loop_guard_shadow_mode: bool = False  # Enforce loop prevention
+    loop_guard_shadow_audit: bool = False  # Log "would-trigger" events for parameter tuning
+    loop_guard_threshold: int = (
+        1  # Same field asked N times in window triggers loop (lowered to 1 for faster detection)
+    )
+    loop_guard_window_turns: int = 3  # Turns to check for repeated questions
+    loop_guard_extended_window_turns: int = 6  # Extended window (gated by no-progress)
+    loop_guard_no_progress_turns: int = 2  # Turns with no progress before triggering
+    loop_guard_forced_route_cooldown_turns: int = 2  # Cooldown between forced routes
+    loop_guard_max_triggers_per_convo: int = 3  # Max triggers per conversation
+    loop_guard_require_no_progress_for_extended: bool = True  # Require no-progress for window=6
+
+    # =============================================================================
+    # Specialist Pre-Core Mode Configuration
+    # =============================================================================
+    # When enabled, specialist nodes (hotels, flights, activities) can be routed to
+    # even before core fields are fully collected, if the user's intent is clear.
+    # The specialist will acknowledge intent and ask for minimal missing fields inline.
+    specialist_pre_core_enabled: bool = True
+
+    # =============================================================================
+    # Default Adults Configuration
+    # =============================================================================
+    # When enabled, after core fields (destination, dates) are collected but adults
+    # is still missing, default to adults=1 with metadata marker instead of asking.
+    default_adults_enabled: bool = True
+
+    # =============================================================================
+    # Turn Journal Configuration
+    # =============================================================================
+    turn_journal_max_turns: int = 20  # Max turns in ring buffer
+
+    # =============================================================================
+    # Extractor Cache Configuration
+    # =============================================================================
+    extractor_cache_ttl_seconds: int = 60  # TTL for extractor cache entries
+    extractor_cache_maxsize: int = 100  # Max entries in extractor cache
+
+    # =============================================================================
+    # Strategy Cache Configuration
+    # =============================================================================
+    strategy_cache_ttl_seconds: int = 300  # TTL for strategy cache (5 min)
+    strategy_cache_maxsize: int = 50  # Max entries in strategy cache
+
+    # =============================================================================
+    # First-Turn Optimization: Strategy Bootstrap Bypass
+    # =============================================================================
+    # Enable deterministic bypass of extractor for strategy pre-core prompts
+    enable_strategy_bootstrap_bypass: bool = True
+    # A/B test sample rate (0.0-1.0): fraction of sessions using bypass
+    strategy_bootstrap_bypass_sample_rate: float = 1.0
+    # Disable automatic cache clearing in production (allow only on deploy/admin)
+    disable_autoclear_caches_in_prod: bool = True
 
     # =============================================================================
     # LangSmith Tracing Configuration

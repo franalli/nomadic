@@ -33,7 +33,8 @@ Activity extraction is handled by the extractor. Your job:
 2. Suggest activities ONLY if user asks "what should I do?"
 3. Validate activities against destination (no beach in landlocked)
 4. APPEND to existing categories, never replace
-
+5. When available, reference the AVAILABLE OPTIONS below to ground your suggestions in real data
+{available_options}
 ==============================
 RESPONSE STYLE
 ==============================

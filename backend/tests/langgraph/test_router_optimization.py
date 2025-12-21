@@ -220,17 +220,20 @@ class TestGateEvaluatorIntegration:
         assert result.gate_fired == GatePrecedence.KEYWORD_HEURISTIC
 
     def test_core_collection_blocks_scoring_router(self):
-        """CORE_COLLECTION should fire before SCORING_ROUTER when fields missing."""
+        """With pre-core specialist enabled, hotel keyword fires SPECIALIST_PRE_CORE.
+
+        When core fields are missing and a specialist keyword is detected,
+        the SPECIALIST_PRE_CORE gate fires (which routes to the specialist in
+        pre-core mode to still answer the question while asking for missing fields).
+        """
         state = make_state(
             user_text="I want to find a hotel",
             trip_inputs={},  # No core fields
         )
         result = GateEvaluator.evaluate(state)
-        assert result.gate_fired == GatePrecedence.CORE_COLLECTION
-        assert (
-            "SCORING_ROUTER" in result.skipped_gates
-            or result.gate_fired.value < GatePrecedence.SCORING_ROUTER.value
-        )
+        # With specialist_pre_core_enabled, hotel keyword triggers pre-core routing
+        assert result.gate_fired == GatePrecedence.SPECIALIST_PRE_CORE
+        assert result.metadata_updates.get("pre_core_mode") is True
 
 
 # =============================================================================

@@ -10,6 +10,21 @@ from __future__ import annotations
 import pytest
 
 
+def pytest_collection_modifyitems(session, config, items):
+    """Reorder tests: DB first, then langgraph."""
+    db_tests = []
+    langgraph_tests = []
+
+    for item in items:
+        path_str = str(item.fspath)
+        if "langgraph" in path_str:
+            langgraph_tests.append(item)
+        else:
+            db_tests.append(item)
+
+    items[:] = db_tests + langgraph_tests
+
+
 @pytest.fixture(autouse=True)
 def clear_all_plan_graph_caches():
     """
