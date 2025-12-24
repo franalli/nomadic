@@ -41,6 +41,8 @@ export interface SplitLayoutViewProps {
   isGenerating: boolean;
   /** Whether branches are ready to display */
   hasBranchesReady: boolean;
+  /** Trip details form content to display below the hero */
+  tripDetailsContent?: React.ReactNode;
 }
 
 /**
@@ -54,6 +56,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   typedTagline,
   isGenerating,
   hasBranchesReady,
+  tripDetailsContent,
 }: SplitLayoutViewProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
 
@@ -124,6 +127,15 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         <div className="min-h-screen">
           {/* Hero section (condensed) */}
           <HeroSection typedTagline={typedTagline} variant="compact" />
+
+          {/* Trip details form - editable trip inputs below hero */}
+          {tripDetailsContent && (
+            <div className="bg-muted/30 border-b border-border/30 px-4 py-4 lg:px-6 w-full">
+              <div className="w-full">
+                {tripDetailsContent}
+              </div>
+            </div>
+          )}
 
           {/* Show loader when generating, branches when ready */}
           <section className="bg-background px-4 pb-14 pt-6 lg:px-6">

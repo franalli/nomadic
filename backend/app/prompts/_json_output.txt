@@ -1,4 +1,6 @@
-Return JSON:
+Return your response as JSON wrapped in a markdown code block:
+```json
 {"assistant_message":"...", "trip_inputs":{...}, "ready_to_generate":false, "branches":[], "suggested_responses":["Suggestion1", "Suggestion2", "Suggestion3"], "question_target":"destinations|origin|dates|travelers|budget|activities|general|null"}
+```
 
 suggested_responses: Provide 2-3 relevant suggestions matching the question_target and activity type. Examples: for hiking+destinations → ["Swiss Alps", "Patagonia", "Nepal"]

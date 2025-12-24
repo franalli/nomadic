@@ -3,6 +3,27 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 TileType = Literal["flight", "hotel", "activity"]
+
+
+# =============================================================================
+# Error Record for structured error handling
+# =============================================================================
+
+
+class ErrorRecord(BaseModel):
+    """
+    Structured error record for consistent error handling across the graph.
+
+    Used in GraphState.errors to replace string errors with machine-readable
+    structured errors that support blocking error detection and routing decisions.
+    """
+
+    code: str  # Machine-readable error code (e.g., "DATE_AMBIGUOUS_YEAR", "LLM_FAILED")
+    node: str  # Node name where error occurred
+    severity: Literal["blocking", "warning", "info"] = "warning"
+    message: str  # Human-readable error message
+
+
 AvailabilityStatus = Literal["available", "low", "unknown", "not_available"]
 UpdatedBy = Literal["user", "planner"]
 ChatRole = Literal["user", "assistant"]

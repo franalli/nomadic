@@ -68,9 +68,10 @@ class TestStrategyPreCoreValueDetection:
         ti = TripInputs()  # Empty - no destinations
         readiness = compute_trip_readiness(ti)
         extraction_conf = {}
+        metadata = {}  # No active question - won't trigger suppression
 
         result = GateEvaluator._check_strategy_pre_core_value(
-            input_text.lower(), ti, readiness, extraction_conf
+            input_text.lower(), ti, readiness, extraction_conf, metadata
         )
 
         assert result is not None, f"Expected topic '{expected_topic}' for '{input_text}'"
@@ -143,9 +144,10 @@ class TestQuestionTargetPriority:
         ti = TripInputs()  # No destinations, no dates
         readiness = compute_trip_readiness(ti)
         extraction_conf = {}
+        metadata = {}  # No active question - won't trigger suppression
 
         result = GateEvaluator._check_strategy_pre_core_value(
-            "plan a hiking adventure", ti, readiness, extraction_conf
+            "plan a hiking adventure", ti, readiness, extraction_conf, metadata
         )
 
         assert result is not None
@@ -157,9 +159,10 @@ class TestQuestionTargetPriority:
         ti = TripInputs(start_date="2025-06-01")  # Has dates, no origin
         readiness = compute_trip_readiness(ti)
         extraction_conf = {}
+        metadata = {}  # No active question - won't trigger suppression
 
         result = GateEvaluator._check_strategy_pre_core_value(
-            "plan a hiking adventure", ti, readiness, extraction_conf
+            "plan a hiking adventure", ti, readiness, extraction_conf, metadata
         )
 
         assert result is not None
@@ -171,9 +174,10 @@ class TestQuestionTargetPriority:
         ti = TripInputs(start_date="2025-06-01", origin="London")
         readiness = compute_trip_readiness(ti)
         extraction_conf = {}
+        metadata = {}  # No active question - won't trigger suppression
 
         result = GateEvaluator._check_strategy_pre_core_value(
-            "plan a hiking adventure", ti, readiness, extraction_conf
+            "plan a hiking adventure", ti, readiness, extraction_conf, metadata
         )
 
         assert result is not None

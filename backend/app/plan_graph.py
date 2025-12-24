@@ -46,6 +46,50 @@ from app.known_places import (
     KNOWN_COUNTRIES,
     is_known_place,
     normalize_place_synonym,
+    normalize_place_with_fuzzy,
+)
+from app.pattern_matching import (
+    # Utility patterns
+    ANSI_ESCAPE_PATTERN,
+    ARTICLE_PREFIX_PATTERN,
+    # Flight patterns
+    BUDGET_PATTERN,
+    # Transport patterns
+    COMMA_LIST_PATTERN,
+    # Date patterns
+    DENSE_INPUT_KEYWORDS,
+    DURATION_PATTERN,
+    # Activity patterns
+    FAMILY_COMPOSITION_PATTERN,
+    GREETING_BLOCKLIST,
+    GREETING_PATTERN,
+    # Hotel patterns
+    INFEASIBILITY_SIGNALS,
+    # Destination patterns
+    INITIAL_DESTINATION_PATTERN,
+    INLINE_BUDGET_PATTERN,
+    INLINE_TRAVELERS_PATTERN,
+    LQA_BAIL_PATTERNS,
+    MULTI_DESTINATION_PATTERN,
+    MULTI_FIELD_PATTERN,
+    NO_BUDGET_PHRASES,
+    NO_PATTERN,
+    ORIGIN_DESTINATION_PATTERN,
+    ORIGIN_PREFIX_PATTERN,
+    PLACE_SEPARATORS_PATTERN,
+    RELATIVE_DATE_PATTERNS,
+    SEASON_PATTERN,
+    SENTENCE_ENDING_PATTERN,
+    SENTENCE_VERB_PATTERN,
+    TOPIC_KEYWORDS,
+    TRAVELERS_MICRO_PATTERNS,
+    TRAVELERS_PATTERN,
+    TRAVELERS_WITH_KIDS_PATTERN,
+    WORD_TO_NUMBER,
+    YES_PATTERN,
+    # Helper functions
+    is_traveler_detail_answer,
+    text_is_compatible_with_target,
 )
 from app.schemas import (
     ActivitySettings,
@@ -53,6 +97,7 @@ from app.schemas import (
     BranchTileIds,
     DocumentBranch,
     DocumentTripInputs,
+    ErrorRecord,
     FlightSettings,
     HotelSettings,
     PlanDocumentData,
@@ -518,8 +563,16 @@ def _debug_cache_hit(cache_name: str, key: str = "", value_preview: str = "") ->
         )
 
 
-def _debug_node_entry(node_name: str, state: "GraphState") -> None:
-    """Log entry into a graph node."""
+def _debug_node_entry(node_name: str, state: "GraphState") -> str:
+    """
+    Log entry into a graph node and record in journal.
+
+    Returns:
+        event_guid for this node execution
+    """
+    # Record in journal (performs tripwire checks)
+    event_guid = record_node_run(state, node_name)
+
     if _DEBUG_LOG:
         ti = state.trip_inputs
         # Get emoji for node, or default rocket
@@ -540,9 +593,14 @@ def _debug_node_entry(node_name: str, state: "GraphState") -> None:
             f"ENTERING {node_name} {emoji}{emoji}{emoji} {extras}"
         )
 
+    return event_guid
+
 
 def _debug_node_exit(node_name: str, state: "GraphState") -> None:
-    """Log exit from a graph node."""
+    """Log exit from a graph node and update journal."""
+    # Update journal entry with final LLM count
+    update_node_exit(state, node_name)
+
     if _DEBUG_LOG:
         emoji = _NODE_EMOJIS.get(node_name, "🚀")
         extras = " ".join(
@@ -560,6 +618,302 @@ def _debug_node_exit(node_name: str, state: "GraphState") -> None:
 
 
 # =============================================================================
+# V12: EXECUTION INSTRUMENTATION (Node Journal, Tripwires, Response Guard)
+# =============================================================================
+# Provides durable observability for duplicate node detection and prevention.
+# Three duplication classes:
+#   A. Same node executed twice in one turn (true cycle)
+#   B. Multiple nodes wrote user-facing response (double-writer)
+#   C. Logging/tracing artifact (events duplicated, execution not)
+
+# Maximum steps per turn before abort (safety tripwire)
+MAX_STEPS_PER_TURN: int = 25
+
+# Nodes allowed to execute more than once per turn (explicit allowlist)
+# Empty by default - no node should run twice in a healthy graph
+MULTI_EXEC_ALLOWLIST: frozenset = frozenset()
+
+
+class DuplicationClass(str, Enum):
+    """Classification of duplication detected in a turn."""
+
+    NONE = "none"  # No duplication
+    SAME_NODE_TWICE = "class_a"  # Same node ran twice (true cycle)
+    DOUBLE_WRITER = "class_b"  # Multiple nodes wrote response
+    LOGGING_ARTIFACT = "class_c"  # Same event logged twice (not real dupe)
+
+
+@dataclass
+class NodeRunEntry:
+    """Single entry in the per-turn node execution journal."""
+
+    seq: int  # Monotonic sequence number
+    node_name: str  # Name of node executed
+    event_guid: str  # Unique GUID for this execution
+    router_decision: Optional[str] = None  # Edge/condition that led here
+    question_target: Optional[str] = None  # Active question target
+    missing_fields: Optional[List[str]] = None  # Missing core fields at entry
+    produced_response: bool = False  # Did this node write assistant response?
+    llm_calls_before: int = 0  # LLM call count before node
+    llm_calls_after: int = 0  # LLM call count after node
+    timestamp_ms: float = 0.0  # Timestamp for timing analysis
+
+
+def init_turn_instrumentation(metadata: Dict[str, Any]) -> str:
+    """
+    Initialize per-turn instrumentation in metadata.
+
+    Sets up:
+    - node_run_journal: Append-only list of NodeRunEntry dicts
+    - visited_nodes: Set of nodes executed this turn
+    - step_count: Counter for tripwire
+    - response_claimed_by: Guard for single response writer
+    - turn_canary: UUID to verify state mutations persist
+
+    Returns:
+        turn_canary UUID for validation
+    """
+    turn_canary = uuid4().hex
+    metadata["node_run_journal"] = []
+    metadata["visited_nodes"] = set()
+    metadata["step_count"] = 0
+    metadata["response_claimed_by"] = None
+    metadata["turn_canary"] = turn_canary
+    metadata["mutation_counter"] = 0
+    return turn_canary
+
+
+def record_node_run(
+    state: "GraphState",
+    node_name: str,
+    *,
+    router_decision: Optional[str] = None,
+) -> str:
+    """
+    Record a node execution in the journal and perform tripwire checks.
+
+    Call this at the START of each node (after _debug_node_entry).
+
+    Returns:
+        event_guid for this execution
+
+    Raises:
+        RuntimeError: If tripwire triggered (max steps or repeat node)
+    """
+    meta = state.metadata
+    event_guid = uuid4().hex[:12]
+
+    # Initialize if missing (defensive)
+    if "node_run_journal" not in meta:
+        init_turn_instrumentation(meta)
+
+    # Increment step counter
+    meta["step_count"] = meta.get("step_count", 0) + 1
+    step_count = meta["step_count"]
+
+    # Tripwire: max steps exceeded
+    if step_count > MAX_STEPS_PER_TURN:
+        journal = meta.get("node_run_journal", [])
+        _debug_error(
+            "TRIPWIRE: Max steps exceeded",
+            step_count=step_count,
+            max_steps=MAX_STEPS_PER_TURN,
+            journal_length=len(journal),
+        )
+        # Don't raise - log and continue to avoid breaking production
+        # but mark in metadata for observability
+        meta["tripwire_triggered"] = "max_steps"
+
+    # Tripwire: same node executed twice (unless in allowlist)
+    visited = meta.get("visited_nodes", set())
+    if node_name in visited and node_name not in MULTI_EXEC_ALLOWLIST:
+        journal = meta.get("node_run_journal", [])
+        _debug_error(
+            "TRIPWIRE: Node executed twice",
+            node=node_name,
+            step_count=step_count,
+            previous_executions=[e for e in journal if e.get("node_name") == node_name],
+        )
+        meta["tripwire_triggered"] = f"repeat_node:{node_name}"
+        meta["duplication_class"] = DuplicationClass.SAME_NODE_TWICE.value
+
+    # Add to visited set
+    if isinstance(visited, set):
+        visited.add(node_name)
+        meta["visited_nodes"] = visited
+
+    # Increment mutation counter (canary check)
+    meta["mutation_counter"] = meta.get("mutation_counter", 0) + 1
+
+    # Get current state for journal entry
+    readiness = compute_trip_readiness(state.trip_inputs)
+    llm_calls = meta.get("llm_calls_this_turn", 0)
+
+    # Create journal entry
+    entry = NodeRunEntry(
+        seq=step_count,
+        node_name=node_name,
+        event_guid=event_guid,
+        router_decision=router_decision or meta.get("routing_reason"),
+        question_target=state.question_target,
+        missing_fields=readiness.missing_core[:3] if readiness.missing_core else None,
+        produced_response=False,  # Updated by claim_response_writer
+        llm_calls_before=llm_calls,
+        llm_calls_after=llm_calls,  # Updated at node exit
+        timestamp_ms=time.time() * 1000,
+    )
+
+    # Append to journal (as dict for JSON serialization)
+    meta["node_run_journal"].append(asdict(entry))
+
+    return event_guid
+
+
+def claim_response_writer(state: "GraphState", node_name: str) -> bool:
+    """
+    Attempt to claim response writer for this turn.
+
+    Enforces single-response-writer invariant: only one node should set
+    the user-facing assistant_response per turn.
+
+    Args:
+        state: Current graph state
+        node_name: Node attempting to write response
+
+    Returns:
+        True if claim successful (this node can write)
+        False if already claimed by another node (should skip write)
+    """
+    meta = state.metadata
+    current_writer = meta.get("response_claimed_by")
+
+    if current_writer is None:
+        # First writer - claim it
+        meta["response_claimed_by"] = node_name
+        # Update journal entry for this node
+        journal = meta.get("node_run_journal", [])
+        for entry in reversed(journal):
+            if entry.get("node_name") == node_name:
+                entry["produced_response"] = True
+                break
+        return True
+
+    if current_writer == node_name:
+        # Same node re-claiming (e.g., during polish) - allowed
+        return True
+
+    # Different node trying to write - block and log
+    _debug(
+        "Response writer blocked",
+        attempting_node=node_name,
+        claimed_by=current_writer,
+    )
+    meta["duplication_class"] = DuplicationClass.DOUBLE_WRITER.value
+    meta.setdefault("blocked_writers", []).append(node_name)
+    return False
+
+
+def update_node_exit(state: "GraphState", node_name: str) -> None:
+    """
+    Update journal entry on node exit with final LLM call count.
+
+    Call this at the END of each node (before _debug_node_exit).
+    """
+    meta = state.metadata
+    journal = meta.get("node_run_journal", [])
+    llm_calls = meta.get("llm_calls_this_turn", 0)
+
+    # Update the most recent entry for this node
+    for entry in reversed(journal):
+        if entry.get("node_name") == node_name:
+            entry["llm_calls_after"] = llm_calls
+            break
+
+
+def classify_turn_duplication(state: "GraphState") -> DuplicationClass:
+    """
+    Analyze the turn journal and classify any duplication detected.
+
+    Call this at end-of-turn to get final classification.
+    """
+    meta = state.metadata
+
+    # Check for explicitly set duplication class
+    if "duplication_class" in meta:
+        return DuplicationClass(meta["duplication_class"])
+
+    journal = meta.get("node_run_journal", [])
+    if not journal:
+        return DuplicationClass.NONE
+
+    # Check for same node appearing twice
+    node_counts: Dict[str, int] = {}
+    for entry in journal:
+        node = entry.get("node_name", "unknown")
+        node_counts[node] = node_counts.get(node, 0) + 1
+
+    for node, count in node_counts.items():
+        if count > 1 and node not in MULTI_EXEC_ALLOWLIST:
+            return DuplicationClass.SAME_NODE_TWICE
+
+    # Check for multiple response writers
+    writers = [e for e in journal if e.get("produced_response")]
+    if len(writers) > 1:
+        return DuplicationClass.DOUBLE_WRITER
+
+    return DuplicationClass.NONE
+
+
+def dump_turn_journal(state: "GraphState") -> None:
+    """
+    Dump the turn journal to debug log at end-of-turn.
+
+    Includes duplication classification and summary statistics.
+    """
+    if not _DEBUG_LOG:
+        return
+
+    meta = state.metadata
+    journal = meta.get("node_run_journal", [])
+
+    if not journal:
+        return
+
+    # Compute statistics
+    duplication = classify_turn_duplication(state)
+    step_count = meta.get("step_count", 0)
+    total_llm_calls = meta.get("llm_calls_this_turn", 0)
+    tripwire = meta.get("tripwire_triggered")
+
+    # Node sequence
+    node_seq = " → ".join(e.get("node_name", "?") for e in journal)
+
+    _debug(
+        "TURN_JOURNAL_SUMMARY",
+        step_count=step_count,
+        duplication_class=duplication.value,
+        llm_calls=total_llm_calls,
+        tripwire=tripwire or "none",
+        node_sequence=node_seq[:200],
+    )
+
+    # If duplication detected, dump full journal for debugging
+    if duplication != DuplicationClass.NONE:
+        _debug_error(
+            "Duplication detected - full journal",
+            duplication_class=duplication.value,
+        )
+        for entry in journal:
+            _debug(
+                f"  [{entry.get('seq')}] {entry.get('node_name')}",
+                guid=entry.get("event_guid"),
+                llm_before=entry.get("llm_calls_before"),
+                llm_after=entry.get("llm_calls_after"),
+                produced_response=entry.get("produced_response"),
+            )
+
+
+# =============================================================================
 # OBSERVABILITY HELPERS
 # =============================================================================
 
@@ -572,20 +926,26 @@ class GatePrecedence(IntEnum):
     Gates are checked in priority order; first match wins.
 
     Gate Ordering Rationale:
-    - SHORT_CIRCUIT: Highest priority for greetings/confirmations
+    - READY_NO_FIELDS: Highest priority - plan is ready, no fields to ask
+    - SHORT_CIRCUIT: High priority for greetings/confirmations
     - FAST_PATH: Bootstrap optimization (turn 1 only when strategy_bootstrap_active)
     - SPECIALIST_PRE_CORE: Domain keywords before core complete
     - STRATEGY_TOPIC_SWITCH: Mid-session topic changes (e.g., adding "diving")
-    - STRATEGY_PRE_CORE_VALUE: First-turn strategy value-first responses
+    - STRATEGY_PRE_CORE_VALUE: First-turn strategy value-first (no destinations)
+    - STRATEGY_PRE_CORE_VALUE_WITH_DEST: Strategy + destination known → value-first + ask dates
     - CORE_COLLECTION: Collect missing core fields
     - Remaining gates for various heuristic routing
     """
 
+    READY_NO_FIELDS = 0  # Plan ready, missing_all empty, no blocking errors
     SHORT_CIRCUIT = 1  # Greeting, acknowledgment, off-topic
     FAST_PATH = 2  # Direct field updates (bootstrap only when strategy_bootstrap_active)
     SPECIALIST_PRE_CORE = 3  # Specialist keyword when core fields missing (pre-core mode)
     STRATEGY_TOPIC_SWITCH = 4  # Mid-session strategy topic change (e.g., "diving")
-    STRATEGY_PRE_CORE_VALUE = 5  # Strategy topic detected + core missing → value-first response
+    STRATEGY_PRE_CORE_VALUE = 5  # Strategy topic detected + NO destinations → value-first response
+    STRATEGY_PRE_CORE_VALUE_WITH_DEST = (
+        55  # Strategy topic + destinations known → value-first + ask dates
+    )
     CORE_COLLECTION = 6  # Core fields missing → required_fields
     HIGH_CONFIDENCE = 7  # High conf + short input + no intent keywords
     QUESTION_KEYWORD = 8  # Phase 6: Question-word + domain keyword combo
@@ -686,8 +1046,8 @@ class RoutingDecisionFinal:
     # Redirect reason if executed_node != gate_result.destination
     # Values: "llm_budget_blocked", "blocking_errors", "missing_core", "guard_redirect"
     redirect_reason: Optional[str] = None
-    # Response provenance (template, llm, codegen, etc.)
-    response_provenance: str = "unknown"
+    # Response generation provenance (template, llm, codegen, etc.)
+    response_generation_provenance: str = "unknown"
     # Canonical question_target at end of turn
     question_target_out: Optional[str] = None
     # Canonical field names actually written by _write_trip_inputs (stable sorted)
@@ -804,14 +1164,19 @@ class GateEvaluator:
             has_blocking_date_errors = False
             if state.errors:
                 for err in state.errors:
-                    if (
+                    if isinstance(err, ErrorRecord):
+                        # New structured error format
+                        if err.severity == "blocking" or err.code in DATE_BLOCKING_ERROR_CODES:
+                            has_blocking_date_errors = True
+                            break
+                    elif (
                         isinstance(err, NormalizationError)
                         and err.code in DATE_BLOCKING_ERROR_CODES
                     ):
                         has_blocking_date_errors = True
                         break
                     # Also check string errors for backwards compatibility
-                    if isinstance(err, str) and any(
+                    elif isinstance(err, str) and any(
                         code in err for code in DATE_BLOCKING_ERROR_CODES
                     ):
                         has_blocking_date_errors = True
@@ -1102,7 +1467,7 @@ class GateEvaluator:
         # 3. No destination entities extracted
         # 4. User did NOT explicitly ask for "questions only"
         strategy_pre_core_result = cls._check_strategy_pre_core_value(
-            user_text_lower, ti, readiness, extraction_conf
+            user_text_lower, ti, readiness, extraction_conf, state.metadata
         )
         if strategy_pre_core_result:
             topic, question_target = strategy_pre_core_result
@@ -1127,9 +1492,117 @@ class GateEvaluator:
             )
         skipped_gates.append("STRATEGY_PRE_CORE_VALUE")
 
+        # =====================================================================
+        # Gate 4.5: STRATEGY_PRE_CORE_VALUE_WITH_DEST
+        # =====================================================================
+        # Route to strategy_node (stage 0, destination-known mode) when:
+        # 1. Strategy topic detected (hiking, skiing, diving, cycling, boating)
+        # 2. Core fields are missing (not readiness.core_complete)
+        # 3. Destinations ARE present (e.g., "diving in Maldives")
+        # 4. Turn 1 or last_strategy_topic is None (fresh strategy request)
+        # 5. No blocking date errors exist
+        # 6. User did NOT explicitly ask for "questions only"
+        # 7. NOT (question_target set AND input is compatible with target) [OWNERSHIP]
+        # 8. NOT (stage0 already completed for this topic+destination) [LIFECYCLE]
+        #
+        # This gate provides value-first response with destination-specific
+        # guidance and then asks for dates (not origin).
+        # =====================================================================
+        strategy_pre_core_dest_result = cls._check_strategy_pre_core_value_with_dest(
+            user_text_lower,
+            ti,
+            readiness,
+            state.metadata,
+            state.turn_number,
+            user_text=user_text,
+            question_target=state.question_target,
+        )
+        if strategy_pre_core_dest_result:
+            topic = strategy_pre_core_dest_result
+            return cls._build_result(
+                gate=GatePrecedence.STRATEGY_PRE_CORE_VALUE_WITH_DEST,
+                destination="strategy_node",
+                reason=f"strategy_pre_core_value_with_dest:{topic}",
+                start_time=start_time,
+                skipped=skipped_gates,
+                state=state,
+                intent="strategy",
+                strategy_topic=topic,
+                question_target="dates",  # Always ask dates when destination known
+                metadata_updates={
+                    "router_path": f"strategy_pre_core_value_with_dest:{topic}",
+                    "router_bypassed": True,
+                    "router_bypass_reason": f"strategy_pre_core_value_with_dest:{topic}",
+                    "pre_core_mode": True,
+                    "strategy_stage": 0,
+                    "strategy_dest_known": True,
+                    "prefer_dates_first": True,
+                    "missing_core_fields": readiness.missing_core,
+                },
+            )
+        skipped_gates.append("STRATEGY_PRE_CORE_VALUE_WITH_DEST")
+
+        # =====================================================================
         # Gate 5: CORE_COLLECTION
-        # HARD CAP: Never route to required_fields when missing_core is empty
-        # and there are no blocking errors. This prevents question churn.
+        # =====================================================================
+        # v6 HARD INVARIANT: Never route to required_fields when missing_all == []
+        # This prevents question churn and stale response cascades.
+        #
+        # Gate fires when:
+        # 1. has_blocking_errors (date clarification needed), OR
+        # 2. core_complete == False (core fields missing)
+        #
+        # Gate is BLOCKED when:
+        # - missing_all == [] (no fields to ask about)
+        # - ready_to_generate == True
+        # =====================================================================
+
+        # Store readiness in metadata for downstream use (compute once, reuse)
+        state.metadata["readiness_pre"] = {
+            "core_complete": readiness.core_complete,
+            "ready_to_generate": readiness.ready_to_generate,
+            "missing_core": readiness.missing_core,
+            "missing_all": readiness.missing_all,
+            "has_blocking_errors": readiness.has_blocking_errors,
+            "blocking_errors": readiness.blocking_errors,
+            "question_target": readiness.question_target,
+        }
+
+        # =====================================================================
+        # READY_NO_FIELDS INVARIANT (v7 Final v5)
+        # =====================================================================
+        # HARD EARLY RETURN: When plan is ready with no fields to ask,
+        # route directly to summarize. This blocks ALL lower-precedence gates
+        # (HIGH_CONFIDENCE, CORE_COLLECTION, etc.) from routing to required_fields.
+        # =====================================================================
+        date_clarify_mode = state.metadata.get("date_clarify_mode", False)
+        if (
+            len(readiness.missing_all) == 0
+            and not readiness.has_blocking_errors
+            and not date_clarify_mode
+        ):
+            _debug(
+                "GATE READY_NO_FIELDS: plan ready, routing to summarize",
+                core_complete=readiness.core_complete,
+                ready_to_generate=readiness.ready_to_generate,
+            )
+            return cls._build_result(
+                gate=GatePrecedence.READY_NO_FIELDS,
+                destination="summarize",
+                reason="ready_no_required_fields",
+                start_time=start_time,
+                skipped=skipped_gates,
+                state=state,
+                question_target=None,  # Clear stale question_target
+                metadata_updates={
+                    "router_path": "ready_no_required_fields",
+                    "router_bypassed": True,
+                    "plan_just_became_ready": True,  # Signal to clear stale state
+                    "question_target": None,  # Clear in metadata SSoT too
+                },
+            )
+
+        # CORE_COLLECTION gate continues if we have blocking errors or missing fields
         if readiness.has_blocking_errors:
             # Blocking date errors - force date clarification
             return cls._build_result(
@@ -1147,8 +1620,7 @@ class GateEvaluator:
                     "date_clarify_mode": True,
                 },
             )
-
-        if not readiness.core_complete:
+        elif not readiness.core_complete and len(readiness.missing_all) > 0:
             # Determine question_target from readiness
             question_target = readiness.question_target
 
@@ -1664,6 +2136,146 @@ class GateEvaluator:
 
         return None
 
+    # Month-to-month range pattern for detecting date-like input
+    # Matches: "June to November", "March through October", "Jan-Dec"
+    _MONTH_TO_MONTH_PATTERN = re.compile(
+        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
+        r"\s*(?:to|through|-|–|—)\s*"
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
+        re.IGNORECASE,
+    )
+
+    # Single month pattern: "November", "next June"
+    _SINGLE_MONTH_PATTERN = re.compile(
+        r"^(?:next\s+|this\s+)?(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def text_is_compatible_with_target(cls, user_text: str, question_target: Optional[str]) -> bool:
+        """
+        Check if user_text looks like an answer to the given question_target.
+
+        This is used to determine if a user is answering a pending question
+        (e.g., providing dates when question_target="dates") vs making a new
+        request (e.g., topic switch).
+
+        Args:
+            user_text: The user's input text
+            question_target: The current question target ("dates", "origin", etc.)
+
+        Returns:
+            True if the text appears to be answering the question_target
+        """
+        if not question_target or not user_text:
+            return False
+
+        text_lower = user_text.strip().lower()
+        text_stripped = user_text.strip()
+
+        if question_target in ("dates", "start_date"):
+            # Check for month-to-month range ("June to November")
+            if cls._MONTH_TO_MONTH_PATTERN.match(text_stripped):
+                return True
+            # Check for single month ("November", "next June")
+            if cls._SINGLE_MONTH_PATTERN.match(text_stripped):
+                return True
+            # Check for season words
+            season_words = {
+                "spring",
+                "summer",
+                "fall",
+                "autumn",
+                "winter",
+                "next month",
+                "this month",
+                "next week",
+                "this week",
+                "next year",
+                "flexible",
+                "whenever",
+                "anytime",
+            }
+            if any(sw in text_lower for sw in season_words):
+                return True
+            # Check for relative date phrases
+            if re.search(
+                r"\b(in|around|by|before|after)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)",
+                text_lower,
+            ):
+                return True
+            # Check for date-like numbers
+            if re.search(r"\b(\d{1,2}[/.-]\d{1,2}|\d{4}|\d{1,2}(?:st|nd|rd|th))\b", text_lower):
+                return True
+
+        elif question_target == "origin":
+            # Check if looks like a city/place name (capitalized, no strategy keywords)
+            # Avoid false positives on strategy keywords
+            strategy_keywords = set()
+            for kws in cls.STRATEGY_INTENT_KEYWORDS.values():
+                strategy_keywords.update(kws)
+            if not any(kw in text_lower for kw in strategy_keywords):
+                # Simple heuristic: short input that's capitalized or known place
+                if len(text_stripped) < 50 and (
+                    text_stripped[0].isupper() or is_known_place(text_stripped)
+                ):
+                    return True
+
+        elif question_target == "destinations":
+            # Similar to origin but allow multiple places
+            if is_known_place(text_stripped):
+                return True
+
+        elif question_target == "travelers":
+            # Look for number patterns
+            traveler_pattern = (
+                r"\b("
+                r"\d+|one|two|three|four|five|six|seven|eight|nine|ten|"
+                r"couple|family|solo|alone|just me"
+                r")\b"
+            )
+            if re.search(traveler_pattern, text_lower):
+                return True
+
+        elif question_target == "budget":
+            # Look for currency/budget patterns
+            if re.search(
+                r"\b(\$|€|£|\d+|budget|cheap|luxury|mid-range|moderate|flexible)\b", text_lower
+            ):
+                return True
+
+        return False
+
+    @classmethod
+    def _compute_stage0_signature(
+        cls, topic: str, destinations: List[str], origin: Optional[str] = None
+    ) -> str:
+        """
+        Compute a unique signature for stage0 completion tracking.
+
+        This signature is used to prevent stage0 from re-running for the same
+        topic+destination+origin combination, while still allowing it to run when
+        destinations or origin change.
+
+        Args:
+            topic: Strategy topic (hiking, diving, etc.)
+            destinations: List of destination strings
+            origin: Origin city/location (optional)
+
+        Returns:
+            String signature like "hiking:abc123"
+        """
+        import hashlib
+
+        dest_str = "|".join(sorted(d.lower().strip() for d in destinations)) if destinations else ""
+        origin_str = origin.lower().strip() if origin else ""
+        combined = f"{dest_str}|{origin_str}"
+        combined_hash = hashlib.md5(combined.encode()).hexdigest()[:8]
+        return f"{topic}:{combined_hash}"
+
     # Phrases indicating user wants only questions (bypass strategy_pre_core_value)
     QUESTIONS_ONLY_PHRASES = frozenset(
         {
@@ -1712,6 +2324,50 @@ class GateEvaluator:
         "cycling": {"bike", "biking", "bicycle", "cycling", "cycle", "ride", "pedal"},
     }
 
+    # =========================================================================
+    # SHARED SUPPRESSION PREDICATE: Bridge Suppression for Active Question Answer
+    # =========================================================================
+    @classmethod
+    def _should_suppress_strategy_for_active_question_answer(cls, metadata: Dict[str, Any]) -> bool:
+        """
+        Check if strategy gates should be suppressed because user just answered
+        the active question this turn.
+
+        This is a shared predicate used by ALL strategy gate checks to ensure
+        consistent bridge suppression behavior. When the user answers a core
+        field question (e.g., destinations), we want to collect the next core
+        field before generating strategy content.
+
+        Returns True when:
+        - answered_question_target_this_turn matches active_question_target
+        - answered_question_id_this_turn matches active_question_id
+
+        This prevents strategy gates from firing immediately after the user
+        answers a core field question (e.g., destinations), allowing the
+        system to ask for the next core field first (e.g., dates).
+        """
+        answered_target = metadata.get("answered_question_target_this_turn")
+        answered_qid = metadata.get("answered_question_id_this_turn")
+        active_target = metadata.get("active_question_target")
+        active_qid = metadata.get("active_question_id")
+
+        if not answered_target or answered_qid is None or active_qid is None:
+            return False
+
+        should_suppress = answered_target == active_target and answered_qid == active_qid
+
+        if should_suppress:
+            _debug(
+                "Strategy gate suppressed: bridge suppression active",
+                answered_target=answered_target,
+                answered_qid=answered_qid,
+                active_target=active_target,
+                active_qid=active_qid,
+                reason="active question just answered, bridge to next core field",
+            )
+
+        return should_suppress
+
     @classmethod
     def _check_strategy_pre_core_value(
         cls,
@@ -1719,6 +2375,7 @@ class GateEvaluator:
         ti: "TripInputs",
         readiness: "TripReadiness",
         extraction_conf: Dict[str, Any],
+        metadata: Dict[str, Any],
     ) -> Optional[tuple[str, str]]:
         """
         Check if we should route to strategy_node stage 0 for value-first response.
@@ -1728,10 +2385,17 @@ class GateEvaluator:
         2. Core fields are missing (not readiness.core_complete)
         3. No destination entities extracted
         4. User did NOT explicitly ask for "questions only"
+        5. User did NOT just answer an active question (bridge suppression)
 
         Returns:
             (strategy_topic, question_target) if should fire, None otherwise
         """
+        # =====================================================================
+        # BRIDGE SUPPRESSION: Don't fire when user just answered active question
+        # =====================================================================
+        if cls._should_suppress_strategy_for_active_question_answer(metadata):
+            return None
+
         # Guard: must have core fields missing
         if readiness.core_complete:
             return None
@@ -1788,6 +2452,168 @@ class GateEvaluator:
         return (detected_topic, question_target)
 
     @classmethod
+    def _check_strategy_pre_core_value_with_dest(
+        cls,
+        text_lower: str,
+        ti: "TripInputs",
+        readiness: "TripReadiness",
+        metadata: Dict[str, Any],
+        turn_number: int,
+        *,
+        user_text: str = "",
+        question_target: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Check if we should route to strategy_node stage 0 with destination-known mode.
+
+        This gate fires when user provides both strategy topic AND destination
+        (e.g., "diving in Maldives") but is missing other core fields.
+
+        Fires when:
+        1. Strategy topic detected (hiking, skiing, diving, cycling, boating)
+        2. Core fields are missing (not readiness.core_complete)
+        3. Destinations ARE present
+        4. Turn 1 OR last_strategy_topic is None (fresh strategy request)
+        5. No blocking date errors exist
+        6. Not in date_clarify_mode
+        7. User did NOT explicitly ask for "questions only"
+        8. NOT (question_target set AND input is compatible with target) [OWNERSHIP]
+        9. NOT (stage0 already completed for this topic+destination) [LIFECYCLE]
+        10. NOT (user just answered active question) [BRIDGE SUPPRESSION]
+
+        Returns:
+            strategy_topic if should fire, None otherwise
+        """
+        # =====================================================================
+        # BRIDGE SUPPRESSION: Don't fire when user just answered active question
+        # =====================================================================
+        # This is the primary suppression for the "destination answer" turn.
+        # When user clicks "Patagonia" suggestion or types a destination answer,
+        # we want to ask for dates next, not generate strategy content.
+        # =====================================================================
+        if cls._should_suppress_strategy_for_active_question_answer(metadata):
+            return None
+
+        # Guard: must have core fields missing
+        if readiness.core_complete:
+            return None
+
+        # Guard: must HAVE destinations (this is the key difference from
+        # _check_strategy_pre_core_value)
+        if not ti.destinations:
+            return None
+
+        # =====================================================================
+        # OWNERSHIP SUPPRESSION (P0 fix for stage0 loop)
+        # =====================================================================
+        # If question_target is set and user input looks like an answer to that
+        # question, do NOT fire this gate. Let the answer-collection path handle it.
+        # This prevents stage0 from trampling date/origin collection.
+        # =====================================================================
+        if question_target and cls.text_is_compatible_with_target(user_text, question_target):
+            _debug(
+                "strategy_pre_core_value_with_dest skipped: ownership suppression",
+                question_target=question_target,
+                user_text_preview=user_text[:50] if user_text else "",
+                reason="input compatible with question_target",
+            )
+            return None
+
+        # =====================================================================
+        # LIFECYCLE SUPPRESSION (P0 fix for stage0 loop)
+        # =====================================================================
+        # If stage0 already completed for this topic+destinations combination,
+        # do NOT fire again. This prevents re-running stage0 when user answers
+        # the date question.
+        # =====================================================================
+        # Detect topic first to compute signature
+        detected_topic = None
+        for topic, keywords in cls.STRATEGY_INTENT_KEYWORDS.items():
+            if any(kw in text_lower for kw in keywords):
+                detected_topic = topic
+                break
+        if not detected_topic:
+            activity_categories = ti.activity_settings.get("categories", [])
+            for cat in activity_categories:
+                if cat.lower() in cls.STRATEGY_TOPICS:
+                    detected_topic = cat.lower()
+                    break
+
+        if detected_topic:
+            current_sig = cls._compute_stage0_signature(detected_topic, ti.destinations, ti.origin)
+            completed_sig = metadata.get("stage0_completed_sig")
+            if completed_sig == current_sig:
+                _debug(
+                    "strategy_pre_core_value_with_dest skipped: lifecycle suppression",
+                    current_sig=current_sig,
+                    completed_sig=completed_sig,
+                    reason="stage0 already completed for this topic+destinations+origin",
+                )
+                return None
+
+        # Guard: must be turn 1 or fresh strategy request (legacy check, now secondary)
+        last_strategy_topic = metadata.get("last_strategy_topic")
+        if turn_number > 1 and last_strategy_topic is not None:
+            # Only skip if lifecycle suppression didn't already handle it
+            # and this isn't a topic switch
+            if detected_topic == last_strategy_topic:
+                _debug(
+                    "strategy_pre_core_value_with_dest skipped: not turn 1 and topic exists",
+                    turn_number=turn_number,
+                    last_strategy_topic=last_strategy_topic,
+                )
+                return None
+
+        # Guard: no blocking date errors (dates clarification owns routing)
+        if readiness.has_blocking_errors:
+            _debug(
+                "strategy_pre_core_value_with_dest skipped: blocking errors",
+                blocking_errors=readiness.blocking_errors,
+            )
+            return None
+
+        # Guard: not in date_clarify_mode
+        if metadata.get("date_clarify_mode"):
+            _debug("strategy_pre_core_value_with_dest skipped: date_clarify_mode")
+            return None
+
+        # Guard: check for "questions only" phrases - user wants to be asked
+        for phrase in cls.QUESTIONS_ONLY_PHRASES:
+            if phrase in text_lower:
+                _debug(
+                    "strategy_pre_core_value_with_dest bypassed: questions_only phrase",
+                    phrase=phrase,
+                )
+                return None
+
+        # Detect strategy topic from user text
+        detected_topic = None
+        for topic, keywords in cls.STRATEGY_INTENT_KEYWORDS.items():
+            if any(kw in text_lower for kw in keywords):
+                detected_topic = topic
+                break
+
+        # Also check activity_settings for inferred topic
+        if not detected_topic:
+            activity_categories = ti.activity_settings.get("categories", [])
+            for cat in activity_categories:
+                if cat.lower() in cls.STRATEGY_TOPICS:
+                    detected_topic = cat.lower()
+                    break
+
+        if not detected_topic:
+            return None
+
+        _debug(
+            "strategy_pre_core_value_with_dest triggered",
+            topic=detected_topic,
+            destinations=ti.destinations,
+            missing_core=readiness.missing_core,
+        )
+
+        return detected_topic
+
+    @classmethod
     def _check_strategy_topic_switch(
         cls,
         text_lower: str,
@@ -1827,6 +2653,12 @@ class GateEvaluator:
                 topic=auto_fire_topic,
             )
             return (auto_fire_topic, "auto_fire_pending")
+
+        # =====================================================================
+        # BRIDGE SUPPRESSION: Don't fire when user just answered active question
+        # =====================================================================
+        if cls._should_suppress_strategy_for_active_question_answer(metadata):
+            return None
 
         # =====================================================================
         # TURN 1 GUARD: Topic switch is for mid-session changes, not first turn
@@ -2839,17 +3671,451 @@ def _try_deterministic_router(
 
 
 # =============================================================================
-# LLM RESPONSE CACHING (TTLCache)
+# LLM RESPONSE CACHING (TTLCache) - v6 HARDENED CACHING
 # =============================================================================
 # Cache LLM responses for common patterns to reduce API calls and latency.
 # Uses in-memory TTLCache - suitable for single-instance deployments.
+#
+# v6 HARDENING: Node-scoped caches with full thread/question isolation to prevent
+# stale response cascades. Each cache entry stores a CachePayload with enough
+# context for validity checking on read.
+
+# Cache versioning for invalidation on schema/logic changes
+CACHE_SCHEMA_VERSION = 1  # Bump on payload format changes
+NODE_LOGIC_VERSION = {
+    "required_fields": 1,  # Bump when required_fields logic changes
+    "router": 1,  # Bump when router logic changes
+}
+
+
+# Compute prompt bundle hash at module load for cache invalidation
+def _compute_prompt_bundle_hash() -> str:
+    """
+    Compute stable hash of prompt templates for cache invalidation.
+
+    Hash normalized raw prompt sources (not rendered) for stability.
+    """
+    prompt_files = ["required_fields.txt", "router.txt"]
+    prompt_dir = Path(__file__).parent / "prompts"
+    content_parts = []
+    for pf in sorted(prompt_files):
+        fpath = prompt_dir / pf
+        if fpath.exists():
+            raw = fpath.read_bytes()
+            # Normalize: CRLF -> LF, strip trailing whitespace per line
+            text = raw.decode("utf-8", errors="replace")
+            normalized = "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").split("\n"))
+            content_parts.append(f"{pf}:{hashlib.md5(normalized.encode()).hexdigest()}")
+    return hashlib.md5("|".join(content_parts).encode()).hexdigest()[:16]
+
+
+PROMPT_BUNDLE_HASH = _compute_prompt_bundle_hash()
+
+# Build ID for cross-deploy cache isolation (use git SHA or fallback)
+PLANNER_BUILD_ID = os.environ.get("GIT_SHA", os.environ.get("BUILD_ID", "dev"))[:12]
+
+
+@dataclass
+class CachePayload:
+    """
+    Structured cache payload with full context for validity checking.
+
+    Stores enough information to validate applicability on read and
+    provide meaningful discard diagnostics.
+    """
+
+    # Response data
+    assistant_message: str
+    question_target: Optional[str]  # Canonical string, not raw object
+    suggested_responses: List[str]
+    suggestion_kind: Optional[str]  # travelers/dates/destinations/budget/etc
+    suggestion_question_id: Optional[int]
+
+    # Context for validity checking
+    thread_id: str
+    user_text_hash: str
+    answered_question_target: Optional[str]  # What question this answers
+    answered_missing_all: List[str]  # Missing fields when cached
+    core_hash: str
+    ready_state_at_write: bool
+    intent: Optional[str]
+    model_id: str
+
+    # Hashes for diagnostics (avoid logging large text)
+    last_summary_hash: str
+    response_text_hash: str
+    suggestions_hash: str
+
+    # Metadata
+    created_at: float  # time.time()
+    provenance: str = "cached"  # Always "cached" for cache entries
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict for cache storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CachePayload":
+        """Reconstruct from dict."""
+        return cls(**data)
+
 
 # Cache configuration via settings
 _RESPONSE_CACHE_TTL = settings.response_cache_ttl_seconds
 _RESPONSE_CACHE_MAXSIZE = settings.response_cache_maxsize
 
-# Response cache for LLM responses
+# Legacy shared cache (deprecated, kept for backwards compatibility)
 _follow_up_cache: TTLCache = TTLCache(maxsize=_RESPONSE_CACHE_MAXSIZE, ttl=_RESPONSE_CACHE_TTL)
+
+# v6: Node-scoped caches for thread isolation
+_required_fields_cache: TTLCache = TTLCache(maxsize=100, ttl=30)  # 30s TTL for question responses
+_router_cache: TTLCache = TTLCache(maxsize=100, ttl=30)
+
+# Cache stats per node
+_cache_stats: Dict[str, Dict[str, int]] = {
+    "required_fields": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
+    "router": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
+}
+
+
+def _get_node_cache(node_name: str) -> TTLCache:
+    """Get the cache for a specific node."""
+    if node_name == "required_fields":
+        return _required_fields_cache
+    elif node_name == "router":
+        return _router_cache
+    else:
+        # Fallback to shared cache for unknown nodes
+        return _follow_up_cache
+
+
+def _compute_cache_key_v6(
+    node_name: str,
+    thread_id: str,
+    user_text_hash: str,
+    question_target: Optional[str],
+    question_id: Optional[int],
+    missing_all: List[str],
+    intent: Optional[str],
+    core_hash: str,
+    ready_state: bool,
+    model_id: str,
+) -> str:
+    """
+    Compute hardened cache key with full thread/question isolation.
+
+    Key components (all required for hit):
+    - node_name: Node-scoped namespace
+    - thread_id: Session isolation
+    - user_text_hash: Input isolation
+    - question_target + question_id: Question instance isolation
+    - missing_all: State isolation
+    - intent: Intent isolation
+    - core_hash: Core fields isolation
+    - ready_state: Ready state isolation
+    - model_id: Model isolation
+    - CACHE_SCHEMA_VERSION: Schema version
+    - NODE_LOGIC_VERSION[node]: Logic version
+    - PROMPT_BUNDLE_HASH: Prompt version
+    - PLANNER_BUILD_ID: Build version
+
+    IMPORTANT: question_target is canonicalized to string, never raw object.
+    """
+    # Canonicalize question_target to string
+    qt_str = str(question_target) if question_target else "none"
+    qid_str = str(question_id) if question_id else "0"
+    missing_str = ",".join(sorted(missing_all)) if missing_all else "none"
+    intent_str = intent or "none"
+    ready_str = "1" if ready_state else "0"
+    node_version = NODE_LOGIC_VERSION.get(node_name, 0)
+
+    key_parts = (
+        f"{node_name}|{thread_id}|{user_text_hash}|{qt_str}:{qid_str}|"
+        f"{missing_str}|{intent_str}|{core_hash}|{ready_str}|{model_id}|"
+        f"v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+    )
+    return hashlib.md5(key_parts.encode()).hexdigest()
+
+
+def _validate_cache_payload(
+    payload: CachePayload,
+    state: "GraphState",
+    current_question_target: Optional[str],
+    current_question_id: Optional[int],
+    current_missing_all: List[str],
+    current_core_hash: str,
+    current_ready_state: bool,
+    node_name: str,
+) -> Tuple[bool, Optional[str]]:
+    """
+    Validate cached payload is applicable to current turn.
+
+    Enforces hard constraints:
+    - Same thread_id
+    - Same user_text_hash
+    - Same question_target (canonical)
+    - Same question_id (if available)
+    - Same missing_all (sorted)
+    - Same core_hash
+    - Same ready_state
+
+    Returns:
+        (is_valid, discard_reason) - reason is None if valid
+    """
+    thread_id = state.metadata.get("thread_id", state.session_id or "")
+    user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+
+    # Hard constraint: same thread
+    if payload.thread_id != thread_id:
+        return False, "thread_mismatch"
+
+    # Hard constraint: same user_text (prevents cross-input pollution)
+    if payload.user_text_hash != user_text_hash:
+        return False, "user_text_mismatch"
+
+    # Hard constraint: same question_target
+    if payload.answered_question_target != current_question_target:
+        return (
+            False,
+            f"question_target_mismatch:{payload.answered_question_target}!={current_question_target}",
+        )
+
+    # Hard constraint: same question_id (if we have one)
+    if current_question_id is not None and payload.suggestion_question_id != current_question_id:
+        return (
+            False,
+            f"question_id_mismatch:{payload.suggestion_question_id}!={current_question_id}",
+        )
+
+    # Hard constraint: same missing_all
+    payload_missing = sorted(payload.answered_missing_all)
+    current_missing = sorted(current_missing_all)
+    if payload_missing != current_missing:
+        return False, f"missing_all_mismatch:{len(payload_missing)}!={len(current_missing)}"
+
+    # Hard constraint: same core_hash
+    if payload.core_hash != current_core_hash:
+        return False, "core_hash_mismatch"
+
+    # Hard constraint: same ready_state (never serve not-ready response when ready)
+    if payload.ready_state_at_write != current_ready_state:
+        return False, f"ready_state_mismatch:{payload.ready_state_at_write}!={current_ready_state}"
+
+    # Suggestion contract check: suggestion_kind must match question_target category
+    if payload.suggestion_kind and current_question_target:
+        qt_category = _get_question_target_category(current_question_target)
+        if payload.suggestion_kind != qt_category:
+            return False, f"suggestion_contract_violation:{payload.suggestion_kind}!={qt_category}"
+
+    return True, None
+
+
+def _get_question_target_category(question_target: Optional[str]) -> Optional[str]:
+    """Map question_target to suggestion category for contract validation."""
+    if not question_target:
+        return None
+    qt_lower = question_target.lower()
+    if qt_lower in ("dates", "start_date", "end_date"):
+        return "dates"
+    elif qt_lower in ("destinations", "origin"):
+        return "places"
+    elif qt_lower in ("travelers", "adults"):
+        return "travelers"
+    elif qt_lower == "budget":
+        return "budget"
+    return qt_lower
+
+
+def _evict_cache_entry(cache: TTLCache, key: str, node_name: str, reason: str) -> None:
+    """Evict a cache entry and log the reason."""
+    if key in cache:
+        del cache[key]
+        _cache_stats[node_name]["evictions"] += 1
+        _debug(
+            "CACHE_EVICT",
+            node=node_name,
+            key_prefix=key[:16],
+            reason=reason,
+        )
+
+
+def get_cached_response_v6(
+    node_name: str,
+    state: "GraphState",
+    current_question_target: Optional[str],
+    current_question_id: Optional[int],
+    current_missing_all: List[str],
+    current_ready_state: bool,
+) -> Optional[CachePayload]:
+    """
+    Get cached response with full validity checking.
+
+    On invalid payload: evicts entry and returns None.
+    On valid payload: sets provenance to "cached" and returns payload.
+
+    Returns:
+        CachePayload if valid hit, None if miss or invalid
+    """
+    cache = _get_node_cache(node_name)
+    thread_id = state.metadata.get("thread_id", state.session_id or "")
+    user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+    core_hash = _get_core_fields_state(state.trip_inputs)
+    model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
+    intent = state.intent
+
+    # Compute cache key
+    cache_key = _compute_cache_key_v6(
+        node_name=node_name,
+        thread_id=thread_id,
+        user_text_hash=user_text_hash,
+        question_target=current_question_target,
+        question_id=current_question_id,
+        missing_all=current_missing_all,
+        intent=intent,
+        core_hash=core_hash,
+        ready_state=current_ready_state,
+        model_id=model_id,
+    )
+
+    cached_data = cache.get(cache_key)
+    if cached_data is None:
+        _cache_stats[node_name]["misses"] += 1
+        return None
+
+    # Reconstruct payload
+    try:
+        payload = CachePayload.from_dict(cached_data)
+    except (TypeError, KeyError) as e:
+        _debug("CACHE_PAYLOAD_CORRUPT", node=node_name, error=str(e))
+        _evict_cache_entry(cache, cache_key, node_name, f"corrupt_payload:{e}")
+        _cache_stats[node_name]["discards"] += 1
+        return None
+
+    # Validate payload applicability
+    is_valid, discard_reason = _validate_cache_payload(
+        payload=payload,
+        state=state,
+        current_question_target=current_question_target,
+        current_question_id=current_question_id,
+        current_missing_all=current_missing_all,
+        current_core_hash=core_hash,
+        current_ready_state=current_ready_state,
+        node_name=node_name,
+    )
+
+    if not is_valid:
+        # Evict invalid entry (don't leave poisoned entries)
+        _evict_cache_entry(cache, cache_key, node_name, discard_reason or "unknown")
+        _cache_stats[node_name]["discards"] += 1
+        _debug(
+            "CACHE_DISCARD",
+            node=node_name,
+            key_prefix=cache_key[:16],
+            reason=discard_reason,
+            # Log hashes, not large text
+            payload_summary_hash=payload.last_summary_hash[:8],
+            payload_question_target=payload.answered_question_target,
+        )
+        return None
+
+    # Valid hit
+    _cache_stats[node_name]["hits"] += 1
+    _debug_cache_hit(node_name, cache_key[:16])
+    _increment_cache_hits(state)
+
+    # Set parse provenance to "cached"
+    set_parse_provenance_once(state, "cached", f"cache_hit:{node_name}")
+
+    return payload
+
+
+def set_cached_response_v6(
+    node_name: str,
+    state: "GraphState",
+    assistant_message: str,
+    question_target: Optional[str],
+    suggested_responses: List[str],
+    suggestion_kind: Optional[str],
+    current_missing_all: List[str],
+    current_ready_state: bool,
+) -> None:
+    """
+    Cache a response with full context for later validity checking.
+
+    Creates a CachePayload with all necessary context for validation on read.
+    """
+    cache = _get_node_cache(node_name)
+    thread_id = state.metadata.get("thread_id", state.session_id or "")
+    user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+    core_hash = _get_core_fields_state(state.trip_inputs)
+    model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
+    intent = state.intent
+    question_id = state.metadata.get("question_id_counter", 0)
+
+    # Create payload
+    payload = CachePayload(
+        assistant_message=assistant_message,
+        question_target=question_target,
+        suggested_responses=suggested_responses,
+        suggestion_kind=suggestion_kind,
+        suggestion_question_id=question_id,
+        thread_id=thread_id,
+        user_text_hash=user_text_hash,
+        answered_question_target=question_target,
+        answered_missing_all=current_missing_all,
+        core_hash=core_hash,
+        ready_state_at_write=current_ready_state,
+        intent=intent,
+        model_id=model_id,
+        last_summary_hash=hashlib.md5((assistant_message or "").encode()).hexdigest()[:16],
+        response_text_hash=hashlib.md5((assistant_message or "").encode()).hexdigest()[:16],
+        suggestions_hash=hashlib.md5(json.dumps(sorted(suggested_responses)).encode()).hexdigest()[
+            :16
+        ],
+        created_at=time.time(),
+        provenance="cached",
+    )
+
+    # Compute cache key
+    cache_key = _compute_cache_key_v6(
+        node_name=node_name,
+        thread_id=thread_id,
+        user_text_hash=user_text_hash,
+        question_target=question_target,
+        question_id=question_id,
+        missing_all=current_missing_all,
+        intent=intent,
+        core_hash=core_hash,
+        ready_state=current_ready_state,
+        model_id=model_id,
+    )
+
+    cache[cache_key] = payload.to_dict()
+    _debug(
+        "CACHE_SET",
+        node=node_name,
+        key_prefix=cache_key[:16],
+        question_target=question_target,
+        suggestions_count=len(suggested_responses),
+    )
+
+
+def get_cache_stats() -> Dict[str, Any]:
+    """Get cache statistics for all node caches."""
+    return {
+        "required_fields": {
+            **_cache_stats["required_fields"],
+            "size": len(_required_fields_cache),
+        },
+        "router": {
+            **_cache_stats["router"],
+            "size": len(_router_cache),
+        },
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "build_id": PLANNER_BUILD_ID,
+    }
+
 
 # =============================================================================
 # EXTRACTOR CACHE (Turn-level caching with hit tracking)
@@ -3270,7 +4536,10 @@ def _get_core_fields_state(trip_inputs: "TripInputs") -> str:
             "destinations": sorted(trip_inputs.destinations or []),
             "origin": trip_inputs.origin,
             "start_date": trip_inputs.start_date,
-            "has_end_date": trip_inputs.end_date is not None,
+            "end_date": trip_inputs.end_date,
+            "budget": trip_inputs.budget,
+            "adults": trip_inputs.adults,
+            "children": trip_inputs.children,
         },
         sort_keys=True,
     )
@@ -3338,12 +4607,24 @@ def clear_response_caches() -> int:
     _strategy_cache_stats["hits"] = 0
     _strategy_cache_stats["misses"] = 0
 
-    total = count + extractor_count + strategy_count
+    # v6: Clear node-scoped caches
+    required_fields_count = len(_required_fields_cache)
+    _required_fields_cache.clear()
+
+    router_count = len(_router_cache)
+    _router_cache.clear()
+
+    # Reset v6 cache stats
+    for node_name in _cache_stats:
+        _cache_stats[node_name] = {"hits": 0, "misses": 0, "discards": 0, "evictions": 0}
+
+    total = count + extractor_count + strategy_count + required_fields_count + router_count
     _debug(
         (
             "Cleared response caches: "
             f"{total} entries (follow_up: {count}, extractor: {extractor_count}, "
-            f"strategy: {strategy_count})"
+            f"strategy: {strategy_count}, required_fields: {required_fields_count}, "
+            f"router: {router_count})"
         )
     )
     return total
@@ -3507,9 +4788,9 @@ def prewarm_prompts() -> Dict[str, int]:
     # but we access them here to ensure any lazy compilation is done)
     try:
         # Access compiled patterns to ensure they're ready
-        _ = _GREETING_PATTERN.pattern
-        _ = _YES_PATTERN.pattern if "_YES_PATTERN" in dir() else None
-        _ = _NO_PATTERN.pattern if "_NO_PATTERN" in dir() else None
+        _ = GREETING_PATTERN.pattern
+        _ = YES_PATTERN.pattern
+        _ = NO_PATTERN.pattern
         _warmup_stats["regexes_compiled"] = 3
     except Exception:
         pass
@@ -3930,14 +5211,12 @@ _ACTIVITY_EMOJI_MAP: Dict[str, str] = {
 # Default emoji for activities that don't match any known category
 _DEFAULT_ACTIVITY_EMOJI = "✨"
 
-# Regex pattern to strip ANSI escape codes (color, bold, etc.)
-# Handles both ESC (\x1b) and CSI (\x9b) control sequences
-_ANSI_ESCAPE_PATTERN = re.compile(r"(\x1b|\x9b)\[[0-9;:]*[A-Za-z]")
+# NOTE: ANSI_ESCAPE_PATTERN is now imported from pattern_matching module
 
 
 def _strip_ansi_codes(text: str) -> str:
     """Strip ANSI escape codes from a string."""
-    return _ANSI_ESCAPE_PATTERN.sub("", text)
+    return ANSI_ESCAPE_PATTERN.sub("", text)
 
 
 def _strip_non_printable(text: str) -> str:
@@ -4285,7 +5564,25 @@ def validate_suggestion_contract(
     """
     _suggestion_contract_stats["validations"] += 1
 
-    if not question_target or not suggested_responses:
+    # =========================================================================
+    # v7 Final v5: SUGGESTION TARGET OVERRIDE
+    # =========================================================================
+    # When a suggestion click sets metadata["suggestion_target_override"], use
+    # that instead of question_target for validation. Clear after use.
+    # =========================================================================
+    effective_target = question_target
+    if state and state.metadata.get("suggestion_target_override"):
+        effective_target = state.metadata["suggestion_target_override"]
+        _debug(
+            "suggestion_target_override_used",
+            override=effective_target,
+            original=question_target,
+            node=node_name,
+        )
+        # Clear after use (single-use override)
+        del state.metadata["suggestion_target_override"]
+
+    if not effective_target or not suggested_responses:
         return suggested_responses
 
     # Define suggestion patterns by target type
@@ -4356,8 +5653,8 @@ def validate_suggestion_contract(
         s_lower = s.lower()
         return any(p in s_lower for p in place_patterns | origin_patterns)
 
-    # Check if suggestions match the target
-    target_lower = question_target.lower()
+    # Check if suggestions match the target (use effective_target for validation)
+    target_lower = effective_target.lower()
 
     if target_lower == "dates":
         # Suggestions should be date-like
@@ -4368,13 +5665,13 @@ def validate_suggestion_contract(
             _debug(
                 "suggestion_contract_violation",
                 node=node_name,
-                target=question_target,
+                target=effective_target,
                 mismatches=mismatches[:3],
             )
             if state:
                 state.metadata["suggestion_contract_violation"] = {
                     "node": node_name,
-                    "target": question_target,
+                    "target": effective_target,
                     "suggestions_preview": suggested_responses[:3],
                 }
             # Rewrite with date suggestions
@@ -4389,13 +5686,13 @@ def validate_suggestion_contract(
             _debug(
                 "suggestion_contract_violation",
                 node=node_name,
-                target=question_target,
+                target=effective_target,
                 mismatches=mismatches[:3],
             )
             if state:
                 state.metadata["suggestion_contract_violation"] = {
                     "node": node_name,
-                    "target": question_target,
+                    "target": effective_target,
                     "suggestions_preview": suggested_responses[:3],
                 }
             # Rewrite with place suggestions
@@ -5386,28 +6683,9 @@ def _is_generate_plan_trigger(message: str) -> bool:
 # =============================================================================
 # These patterns detect simple inputs that can bypass the LLM router/specialist
 # pipeline, saving ~800 tokens per message.
-
-# Pattern: Greetings (hi, hello, hey, good morning, etc.)
-_GREETING_PATTERN = re.compile(
-    r"^(h(i|ey|ello|iya|owdy)|yo|sup|good\s+(morning|afternoon|evening|day)|"
-    r"what'?s\s+up|greetings?)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
-
-# Pattern: Simple confirmations (yes, yeah, yep, yup)
-_YES_PATTERN = re.compile(
-    r"^(yes|yeah|yep|yup|yea|ya|sure|ok(ay)?|alright|all\s+right|"
-    r"sounds?\s+good|absolutely|definitely|of\s+course|please|do\s+it|go\s+ahead|"
-    r"let'?s\s+do\s+(it|this|that)|ok(ay)?\s+go\s+ahead)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
-
-# Pattern: Simple negations (no, nope, nah, not really)
-_NO_PATTERN = re.compile(
-    r"^(no|nope|nah|not\s+really|no\s+thanks?|never\s*mind|cancel|"
-    r"don'?t|stop|wait|hold\s+on)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
+#
+# NOTE: Patterns (GREETING_PATTERN, YES_PATTERN, NO_PATTERN, etc.) are now
+# imported from the pattern_matching module.
 
 # Friendly greeting responses (randomized for variety)
 _GREETING_RESPONSES = [
@@ -5432,87 +6710,9 @@ _OFF_TOPIC_DEFLECTIONS = [
 # =============================================================================
 # Light extraction (~128 tokens) is used for early turns with simple input.
 # Full extraction (~512 tokens) is used for dense input or when nearing ready_to_generate.
-
-# Keywords indicating dense input requiring full extraction
-# Topic keywords - used for routing/strategy detection, NOT for triggering FULL extraction mode
-# These are intents/themes, not concrete booking preferences
-_TOPIC_KEYWORDS = frozenset(
-    [
-        # Strategy/activity topics
-        "hiking",
-        "diving",
-        "skiing",
-        "cycling",
-        "boating",
-        "snorkeling",
-        "surfing",
-        "climbing",
-        "trekking",
-        "safari",
-        "cruise",
-        # Trip style/intent
-        "adventure",
-        "relaxation",
-        "beach",
-        "mountain",
-        "city break",
-        "road trip",
-        "honeymoon",
-        "backpacking",
-        "luxury",
-        "budget-friendly",
-    ]
-)
-
-# Settings keywords - concrete booking preferences that require FULL extraction mode
-# These indicate the user is specifying detailed preferences
-_DENSE_INPUT_KEYWORDS = frozenset(
-    [
-        # Flight settings
-        "direct",
-        "nonstop",
-        "non-stop",
-        "business",
-        "first class",
-        "economy",
-        "one-way",
-        "round-trip",
-        "round trip",
-        "layover",
-        "stopover",
-        "cabin",
-        # Hotel settings
-        "star",
-        "stars",
-        "boutique",
-        "resort",
-        "hostel",
-        "airbnb",
-        "pool",
-        "spa",
-        "gym",
-        "amenities",
-        "breakfast",
-        "wifi",
-        "parking",
-        # Transport settings
-        "car rental",
-        "rent a car",
-        "train",
-        "bus",
-        "ferry",
-        "taxi",
-        "uber",
-        "transfer",
-        # Generic activity keywords (not strategy topics)
-        "tour",
-        "museum",
-    ]
-)
-
-# Patterns indicating complex/dense input
-_COMMA_LIST_PATTERN = re.compile(r",\s*(?:and\s+)?[A-Z][a-z]+", re.IGNORECASE)
-_MULTI_DESTINATION_PATTERN = re.compile(r"\b(?:and|then|also|plus)\s+[A-Z][a-z]+", re.IGNORECASE)
+#
+# NOTE: TOPIC_KEYWORDS, DENSE_INPUT_KEYWORDS, COMMA_LIST_PATTERN, and
+# MULTI_DESTINATION_PATTERN are now imported from the pattern_matching module.
 
 
 def _is_dense_input(text: str, state: "GraphState") -> tuple[bool, str]:
@@ -5551,8 +6751,8 @@ def _is_dense_input(text: str, state: "GraphState") -> tuple[bool, str]:
     signal_details: dict[str, str] = {}
 
     # 1. Check for settings keywords (booking preferences, NOT topic/strategy keywords)
-    settings_matches = [kw for kw in _DENSE_INPUT_KEYWORDS if kw in text_lower]
-    topic_matches = [kw for kw in _TOPIC_KEYWORDS if kw in text_lower]
+    settings_matches = [kw for kw in DENSE_INPUT_KEYWORDS if kw in text_lower]
+    topic_matches = [kw for kw in TOPIC_KEYWORDS if kw in text_lower]
 
     # Log topic keywords for debugging (they affect routing, not extraction mode)
     if topic_matches:
@@ -5568,8 +6768,8 @@ def _is_dense_input(text: str, state: "GraphState") -> tuple[bool, str]:
 
     # 2. Check for structured list (comma-separated or multi-destination)
     comma_count = text.count(",")
-    has_comma_list = comma_count >= 2 and _COMMA_LIST_PATTERN.search(text)
-    multi_dest_matches = _MULTI_DESTINATION_PATTERN.findall(text)
+    has_comma_list = comma_count >= 2 and COMMA_LIST_PATTERN.search(text)
+    multi_dest_matches = MULTI_DESTINATION_PATTERN.findall(text)
     has_multi_dest = len(multi_dest_matches) >= 2
 
     if has_comma_list or has_multi_dest:
@@ -5717,70 +6917,88 @@ _SEASON_TO_DATE_RANGE: Dict[str, Tuple[int, int, int, int]] = {
     "winter": (12, 1, 2, 28),  # December to February (cross-year)
 }
 
-# Relative date patterns for deterministic parsing
-_RELATIVE_DATE_PATTERNS = {
-    "next_month": re.compile(r"^next\s+month$", re.IGNORECASE),
-    "this_month": re.compile(r"^this\s+month$", re.IGNORECASE),
-    "next_week": re.compile(r"^next\s+week$", re.IGNORECASE),
-    "this_weekend": re.compile(r"^this\s+weekend$", re.IGNORECASE),
-    "next_weekend": re.compile(r"^next\s+weekend$", re.IGNORECASE),
-}
-
-# Season patterns
-_SEASON_PATTERN = re.compile(
-    r"^(?:this\s+|next\s+)?(spring|summer|fall|autumn|winter)(?:\s+\d{4})?$", re.IGNORECASE
-)
-
-# Travelers patterns for micro-parser
-_TRAVELERS_MICRO_PATTERNS = {
-    "solo": re.compile(
-        r"^(?:solo|just\s+me|only\s+me|me|myself|alone|by\s+myself)$", re.IGNORECASE
-    ),
-    "couple": re.compile(
-        r"^(?:couple|2\s+of\s+us|two\s+of\s+us|me\s+and\s+(?:my\s+)?(?:partner|spouse|wife|husband|boyfriend|girlfriend))$",
-        re.IGNORECASE,
-    ),
-    "family": re.compile(r"^family\s+of\s+(\d+)$", re.IGNORECASE),
-    "group": re.compile(r"^(\d+)\s*(?:people|adults?|travelers?|of\s+us)$", re.IGNORECASE),
-}
-
-# Multi-place separators
-_PLACE_SEPARATORS = re.compile(r"\s*(?:,|/|\band\b|&|\+)\s*", re.IGNORECASE)
-
-# Verb patterns that indicate a sentence (not a place list)
-_SENTENCE_VERB_PATTERN = re.compile(
-    r"\b(want|go|plan|visit|travel|explore|see|book|need|would|could|should|will|can|am|is|are)\b",
-    re.IGNORECASE,
-)
-
-# Greeting words blocklist for title-case heuristic
-_GREETING_BLOCKLIST = frozenset(
-    {
-        "hello",
-        "hi",
-        "hey",
-        "thanks",
-        "thank",
-        "please",
-        "yes",
-        "no",
-        "ok",
-        "okay",
-        "sure",
-        "great",
-        "perfect",
-        "awesome",
-        "cool",
-        "nice",
-        "good",
-        "fine",
-    }
-)
+# NOTE: Date patterns (RELATIVE_DATE_PATTERNS, SEASON_PATTERN), traveler patterns
+# (TRAVELERS_MICRO_PATTERNS), place separators (PLACE_SEPARATORS_PATTERN),
+# sentence verb pattern, and GREETING_BLOCKLIST are now imported from
+# the pattern_matching module.
 
 
 def _normalize_suggestion_text(text: str) -> str:
     """Normalize text for suggestion matching: trim, collapse spaces, casefold."""
     return " ".join(text.split()).casefold()
+
+
+# Month-to-month range pattern for parsing (e.g., "September-November", "June to October")
+_MONTH_TO_MONTH_RANGE_PATTERN = re.compile(
+    r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
+    r"\s*(?:to|through|-|–|—)\s*"
+    r"(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_month_to_month_range(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """
+    Parse month-to-month range expressions like "September-November", "June to October".
+
+    Returns:
+        Dict with start_date_hint and end_date_hint, or None if not a month range.
+    """
+    text_stripped = text.strip()
+    match = _MONTH_TO_MONTH_RANGE_PATTERN.match(text_stripped)
+    if not match:
+        return None
+
+    start_month_str = match.group(1).lower()
+    end_month_str = match.group(2).lower()
+
+    # Get reference date
+    metadata = state.metadata or {}
+    today_iso = metadata.get("today_iso")
+    if today_iso:
+        try:
+            reference_date = datetime.strptime(today_iso, "%Y-%m-%d").date()
+        except ValueError:
+            reference_date = datetime.now(UTC).date()
+    else:
+        reference_date = datetime.now(UTC).date()
+
+    # Parse month names to numbers
+    try:
+        start_month_num = datetime.strptime(start_month_str[:3], "%b").month
+        end_month_num = datetime.strptime(end_month_str[:3], "%b").month
+    except ValueError:
+        return None
+
+    year = reference_date.year
+
+    # If start month is in the past this year, use next year
+    if start_month_num < reference_date.month:
+        year += 1
+    elif start_month_num == reference_date.month and reference_date.day > 15:
+        # Already mid-month, assume next year
+        year += 1
+
+    # Calculate end year - handle cross-year ranges (e.g., "November-February")
+    end_year = year
+    if end_month_num < start_month_num:
+        # Cross-year range (e.g., November to February)
+        end_year = year + 1
+
+    # Build date range: 1st of start month to last day of end month
+    start_date = f"{year:04d}-{start_month_num:02d}-01"
+
+    # Get last day of end month
+    if end_month_num == 12:
+        next_month_first = datetime(end_year + 1, 1, 1)
+    else:
+        next_month_first = datetime(end_year, end_month_num + 1, 1)
+    last_day = (next_month_first - timedelta(days=1)).day
+    end_date = f"{end_year:04d}-{end_month_num:02d}-{last_day:02d}"
+
+    return {"start_date_hint": start_date, "end_date_hint": end_date}
 
 
 def _try_suggestion_echo(
@@ -5850,9 +7068,34 @@ def _try_suggestion_echo(
                 delta["origin_delta"] = sugg_text
             elif sugg_field == "dates":
                 # Try to parse the date from suggestion text
+                # First try single date
                 iso_date = _date_normalizer.normalize(sugg_text)
                 if iso_date:
                     delta["start_date_delta"] = iso_date
+                else:
+                    # Try date range parsing (e.g., "December 20-27")
+                    range_start, range_end = _date_normalizer.parse_date_range(sugg_text)
+                    if range_start and range_end:
+                        delta["start_date_delta"] = range_start
+                        delta["end_date_delta"] = range_end
+                    else:
+                        # Try season/relative date parsing (e.g., "next month", "summer")
+                        season_result = _try_season_date_parse(sugg_text, state)
+                        if season_result:
+                            if "start_date_delta" in season_result:
+                                delta["start_date_delta"] = season_result["start_date_delta"]
+                            if "end_date_delta" in season_result:
+                                delta["end_date_delta"] = season_result["end_date_delta"]
+                        else:
+                            # Try month-to-month range (e.g., "September-November")
+                            month_range_result = _parse_month_to_month_range(sugg_text, state)
+                            if month_range_result:
+                                if "start_date_hint" in month_range_result:
+                                    delta["start_date_delta"] = month_range_result[
+                                        "start_date_hint"
+                                    ]
+                                if "end_date_hint" in month_range_result:
+                                    delta["end_date_delta"] = month_range_result["end_date_hint"]
             elif sugg_field == "travelers":
                 # Try travelers parsing
                 travelers_delta = _try_travelers_micro_parse(sugg_text)
@@ -5904,7 +7147,7 @@ def _try_season_date_parse(
     delta: Dict[str, Any] = {}
 
     # Check relative patterns first
-    for pattern_name, pattern in _RELATIVE_DATE_PATTERNS.items():
+    for pattern_name, pattern in RELATIVE_DATE_PATTERNS.items():
         if pattern.match(text_stripped):
             if pattern_name == "next_month":
                 # Next month: 1st to last day of next month
@@ -5970,8 +7213,45 @@ def _try_season_date_parse(
                 _deterministic_parse_stats["relative_date_hits"] += 1
                 return delta
 
+            elif pattern_name == "tomorrow":
+                start = today + timedelta(days=1)
+                delta["start_date_delta"] = start.strftime("%Y-%m-%d")
+                delta["lqa_reason"] = "deterministic:date_answer"
+                _deterministic_parse_stats["relative_date_hits"] += 1
+                return delta
+
+            elif pattern_name == "today":
+                delta["start_date_delta"] = today.strftime("%Y-%m-%d")
+                delta["lqa_reason"] = "deterministic:date_answer"
+                _deterministic_parse_stats["relative_date_hits"] += 1
+                return delta
+
+            elif pattern_name in ("next_weekday", "this_weekday"):
+                # Extract the day name from the match
+                match = pattern.match(text_stripped)
+                if match:
+                    weekday_names = {
+                        "monday": 0,
+                        "tuesday": 1,
+                        "wednesday": 2,
+                        "thursday": 3,
+                        "friday": 4,
+                        "saturday": 5,
+                        "sunday": 6,
+                    }
+                    target_day = weekday_names[match.group(1).lower()]
+                    days_ahead = (target_day - today.weekday()) % 7
+                    # "next X" means at least 1 day ahead; if today is that day, go to next week
+                    if days_ahead == 0 and pattern_name == "next_weekday":
+                        days_ahead = 7
+                    start = today + timedelta(days=days_ahead)
+                    delta["start_date_delta"] = start.strftime("%Y-%m-%d")
+                    delta["lqa_reason"] = "deterministic:date_answer"
+                    _deterministic_parse_stats["relative_date_hits"] += 1
+                    return delta
+
     # Check season pattern
-    season_match = _SEASON_PATTERN.match(text_stripped)
+    season_match = SEASON_PATTERN.match(text_stripped)
     if season_match:
         season = season_match.group(1).lower()
         if season in _SEASON_TO_DATE_RANGE:
@@ -6039,17 +7319,17 @@ def _try_travelers_micro_parse(text: str) -> Optional[Dict[str, Any]]:
     text_stripped = text.strip()
 
     # Solo patterns
-    if _TRAVELERS_MICRO_PATTERNS["solo"].match(text_stripped):
+    if TRAVELERS_MICRO_PATTERNS["solo"].match(text_stripped):
         _deterministic_parse_stats["travelers_hits"] += 1
         return {"adults_delta": 1, "lqa_reason": "deterministic:travelers_answer"}
 
     # Couple patterns
-    if _TRAVELERS_MICRO_PATTERNS["couple"].match(text_stripped):
+    if TRAVELERS_MICRO_PATTERNS["couple"].match(text_stripped):
         _deterministic_parse_stats["travelers_hits"] += 1
         return {"adults_delta": 2, "lqa_reason": "deterministic:travelers_answer"}
 
     # Family of N
-    family_match = _TRAVELERS_MICRO_PATTERNS["family"].match(text_stripped)
+    family_match = TRAVELERS_MICRO_PATTERNS["family"].match(text_stripped)
     if family_match:
         total = int(family_match.group(1))
         # Assume 2 adults if family of 4+
@@ -6063,7 +7343,7 @@ def _try_travelers_micro_parse(text: str) -> Optional[Dict[str, Any]]:
         }
 
     # N people/adults
-    group_match = _TRAVELERS_MICRO_PATTERNS["group"].match(text_stripped)
+    group_match = TRAVELERS_MICRO_PATTERNS["group"].match(text_stripped)
     if group_match:
         count = int(group_match.group(1))
         if 1 <= count <= 20:
@@ -6098,23 +7378,23 @@ def _try_place_parse(
 
     # Handle "from X" prefix for origin questions
     if question_target == "origin":
-        origin_match = _ORIGIN_PREFIX_PATTERN.match(text_stripped)
+        origin_match = ORIGIN_PREFIX_PATTERN.match(text_stripped)
         if origin_match:
             text_stripped = origin_match.group(2).strip()
 
     text_lower = text_stripped.lower()
 
     # Don't parse if it contains verbs (likely a sentence, not place list)
-    if _SENTENCE_VERB_PATTERN.search(text_stripped):
+    if SENTENCE_VERB_PATTERN.search(text_stripped):
         return None
 
     # Check greeting blocklist for title-case false positives
-    if text_lower in _GREETING_BLOCKLIST:
+    if text_lower in GREETING_BLOCKLIST:
         return None
 
     # Try multi-place split first if separator present
-    if _PLACE_SEPARATORS.search(text_stripped):
-        segments = _PLACE_SEPARATORS.split(text_stripped)
+    if PLACE_SEPARATORS_PATTERN.search(text_stripped):
+        segments = PLACE_SEPARATORS_PATTERN.split(text_stripped)
         segments = [s.strip() for s in segments if s.strip()]
 
         if len(segments) >= 2:
@@ -6175,7 +7455,7 @@ def _try_place_parse(
     elif len(capitalized) == 1 and len(capitalized[0]) >= 4:
         # Single capitalized word, 4+ chars, not a greeting
         word_lower = capitalized[0].lower()
-        if word_lower not in _GREETING_BLOCKLIST and word_lower not in _MONTH_NAMES:
+        if word_lower not in GREETING_BLOCKLIST and word_lower not in _MONTH_NAMES:
             _deterministic_parse_stats["place_single_hits"] += 1
             if question_target == "origin":
                 return {
@@ -6200,7 +7480,11 @@ def _run_deterministic_pipeline(
 
     Pipeline order: Suggestion echo → Date parser → Travelers parser → Place parser
 
-    Top-level guard: Only runs if question_target is set OR last_suggestions non-empty.
+    v6 ENHANCEMENT: Travelers parser runs UNCONDITIONALLY for short inputs (≤20 chars)
+    to catch simple traveler expressions regardless of question_target.
+
+    Top-level guard: Only runs if question_target is set OR last_suggestions non-empty
+                     OR input is short (≤20 chars) for unconditional travelers parse.
 
     Returns LQA-shaped delta dict on hit, None on miss.
     On hit, also sets metadata for conditional question_target advancement.
@@ -6210,12 +7494,35 @@ def _run_deterministic_pipeline(
     )
     last_suggestions = state.metadata.get("last_suggestions", [])
 
-    # Top-level guard: only run if we have context
-    if not question_target and not last_suggestions:
-        return None
-
     text_stripped = text.strip()
     if not text_stripped:
+        return None
+
+    is_short_input = len(text_stripped) <= 20
+
+    # v6: Unconditional travelers parse for short inputs
+    # This catches "family of four" etc even when question_target is "destinations"
+    if is_short_input:
+        # Check if travelers field is unset (only write if not already set)
+        ti = state.trip_inputs
+        travelers_unset = ti.adults is None or ti.adults == 0
+
+        if travelers_unset:
+            travelers_result = _try_travelers_micro_parse(text)
+            if travelers_result:
+                # Set intent to prevent unrelated question prompts
+                travelers_result["_intent_override"] = "update_travelers"
+                travelers_result["_provenance_source_node"] = "deterministic_pipeline.travelers"
+                travelers_result["_llm_suppressed_reason"] = "deterministic_parse:travelers"
+                _debug(
+                    "UNCONDITIONAL_TRAVELERS_PARSE",
+                    text=text_stripped,
+                    result=travelers_result,
+                )
+                return travelers_result
+
+    # Top-level guard: only run remaining pipeline if we have context
+    if not question_target and not last_suggestions:
         return None
 
     # 1. Suggestion echo (highest priority - user clicked a suggestion)
@@ -6249,8 +7556,19 @@ def _run_deterministic_pipeline(
                     "lqa_reason": "deterministic:date_answer",
                 }
 
+        # Try month-to-month range parsing (e.g., "September-November")
+        month_range_result = _parse_month_to_month_range(text, state)
+        if month_range_result:
+            _deterministic_parse_stats["relative_date_hits"] += 1
+            return {
+                "start_date_delta": month_range_result["start_date_hint"],
+                "end_date_delta": month_range_result["end_date_hint"],
+                "lqa_reason": "deterministic:month_range_answer",
+            }
+
     # 3. Travelers parser (if question_target is travelers)
-    if question_target == "travelers":
+    # Note: unconditional parse already ran above for short inputs
+    if question_target == "travelers" and not is_short_input:
         result = _try_travelers_micro_parse(text)
         if result:
             return result
@@ -6338,10 +7656,18 @@ def can_call_llm(state: "GraphState", node_name: str) -> bool:
     # Increment before call (never decrement on error)
     state.metadata["llm_calls_this_turn"] += 1
     state.metadata["llm_nodes_called_this_turn"].append(node_name)
+
+    # V12: Generate unique LLM call ID for tracing
+    turn_id = state.metadata.get("turn_canary", "unknown")[:8]
+    step = state.metadata.get("step_count", 0)
+    call_num = state.metadata["llm_calls_this_turn"]
+    llm_call_id = f"{turn_id}:{node_name}:{step}:{call_num}"
+
     _debug(
         "LLM call allowed",
         node=node_name,
-        call_number=state.metadata["llm_calls_this_turn"],
+        call_number=call_num,
+        llm_call_id=llm_call_id,
     )
     return True
 
@@ -6397,8 +7723,11 @@ def llm_blocked_fallback(
     state.suggested_responses = suggestions if suggestions else []
     state.question_target = target
 
-    # Set provenance for polish skip
-    set_response_provenance(state, "template")
+    # Set parse provenance for template fallback
+    set_parse_provenance(state, "template")
+    # Also set response generation provenance since we're generating a response
+    state.metadata["response_writer_node"] = f"llm_blocked_fallback:{source}"
+    state.metadata["response_generation_provenance"] = "template"
     state.metadata["question_target"] = target
     state.metadata["fallback_source"] = source
 
@@ -6419,30 +7748,127 @@ def llm_blocked_fallback(
 
 
 # =============================================================================
-# RESPONSE PROVENANCE TRACKING
+# PROVENANCE TRACKING (v6/v7 Hybrid System)
 # =============================================================================
-# Single-source-of-truth for how a response was generated.
-# Set in exactly one place per response path.
+# Two provenance types:
+# 1. response_generation_provenance: How the FINAL user-facing response was generated
+#    - Uses "final producer wins" via set_final_response() at end of run_turn
+#    - NOT precedence-based; the last node to produce response text wins
+#    - Values: template, llm, deterministic, codegen, cached, unknown
+# 2. parse_provenance: How data was EXTRACTED/PARSED from user input
+#    - Uses precedence-based write-once semantics (set_parse_provenance_once)
+#    - Values: cached, deterministic, template, codegen, llm, unknown
+#
+# PARSE provenance precedence order (higher wins, can never downgrade):
+#   cached (5) > deterministic (4) > template (3) > codegen (2) > llm (1) > unknown (0)
+#
+# NOTE: This precedence is for PARSE provenance only. Response generation
+# provenance uses set_final_response() which always overwrites based on final producer.
+
+PARSE_PROVENANCE_PRECEDENCE = {
+    "cached": 5,
+    "deterministic": 4,
+    "template": 3,
+    "codegen": 2,
+    "llm": 1,
+    "unknown": 0,
+}
 
 
-def set_response_provenance(state: "GraphState", provenance: str) -> None:
+def set_parse_provenance_once(
+    state: "GraphState",
+    provenance: str,
+    source_node: str,
+) -> bool:
     """
-    Set the response provenance for polish skip decisions.
+    Set parse provenance with precedence enforcement.
+
+    Parse provenance tracks how data was EXTRACTED/PARSED from user input.
+    Only upgrades provenance (higher precedence wins).
+    Returns True if provenance was set/upgraded, False if blocked.
+
+    Args:
+        state: Graph state
+        provenance: New provenance value (cached, deterministic, template, codegen, llm, unknown)
+        source_node: Node setting the provenance (for debugging)
+
+    Returns:
+        True if provenance was set, False if blocked by higher precedence
+    """
+    # Check if finalized
+    if state.metadata.get("parse_provenance_finalized"):
+        _debug(
+            "PARSE_PROVENANCE_BLOCKED_FINALIZED",
+            attempted=provenance,
+            source_node=source_node,
+            final_value=state.metadata.get("parse_provenance"),
+        )
+        return False
+
+    current = state.metadata.get("parse_provenance", "unknown")
+    current_precedence = PARSE_PROVENANCE_PRECEDENCE.get(current, 0)
+    new_precedence = PARSE_PROVENANCE_PRECEDENCE.get(provenance, 0)
+
+    if new_precedence > current_precedence:
+        state.metadata["parse_provenance"] = provenance
+        state.metadata["parse_provenance_source_node"] = source_node
+        _debug(
+            "PARSE_PROVENANCE_SET",
+            old=current,
+            new=provenance,
+            source_node=source_node,
+        )
+        return True
+    else:
+        _debug(
+            "PARSE_PROVENANCE_BLOCKED_PRECEDENCE",
+            attempted=provenance,
+            current=current,
+            source_node=source_node,
+        )
+        return False
+
+
+def finalize_parse_provenance(state: "GraphState") -> str:
+    """
+    Finalize parse provenance at end of turn. Subsequent writes are blocked.
+
+    Should be called at end of run_turn() after all processing complete.
+
+    Returns:
+        Final parse provenance value
+    """
+    state.metadata["parse_provenance_finalized"] = True
+    final = state.metadata.get("parse_provenance", "unknown")
+    _debug(
+        "PARSE_PROVENANCE_FINALIZED",
+        value=final,
+        source_node=state.metadata.get("parse_provenance_source_node"),
+    )
+    return final
+
+
+def set_parse_provenance(state: "GraphState", provenance: str) -> None:
+    """
+    Set the parse provenance (how data was extracted from user input).
+
+    DEPRECATED: Use set_parse_provenance_once() for precedence enforcement.
+    This function is kept for backwards compatibility but now delegates
+    to set_parse_provenance_once() with "compat:set_parse_provenance" as the source.
 
     Valid values:
-    - "template": Template-generated response
-    - "deterministic": Deterministic code path (no LLM)
-    - "codegen": Code-generated structured response
-    - "llm": LLM-generated response
-
-    Should be called exactly once per response, at the point of generation.
+    - "cached": Data from cache
+    - "template": Template-based extraction
+    - "deterministic": Deterministic code path (regex, pattern matching)
+    - "codegen": Code-generated extraction
+    - "llm": LLM-based extraction
     """
-    state.metadata["response_provenance"] = provenance
+    set_parse_provenance_once(state, provenance, "compat:set_parse_provenance")
 
 
-def get_response_provenance(state: "GraphState") -> Optional[str]:
-    """Get the response provenance if set."""
-    return state.metadata.get("response_provenance")
+def get_parse_provenance(state: "GraphState") -> Optional[str]:
+    """Get the parse provenance if set (how data was extracted from user input)."""
+    return state.metadata.get("parse_provenance")
 
 
 # =============================================================================
@@ -6470,12 +7896,66 @@ def set_response_source(
     """
     if state.metadata.get("response_source_node") is None:
         state.metadata["response_source_node"] = node_name
-        state.metadata["response_provenance"] = provenance
+        state.metadata["response_generation_provenance"] = provenance
         _debug(
             "Response source set",
             node=node_name,
             provenance=provenance,
         )
+
+
+def set_final_response(
+    state: "GraphState",
+    response: str,
+    node_name: str,
+    provenance: str,
+) -> None:
+    """
+    Finalize response provenance with hash-guarded overwrite.
+
+    This is called at the end of run_turn after polish to ensure provenance
+    accurately reflects the final response text. Uses hash comparison to
+    detect if the response changed (e.g., polish rewrote it).
+
+    CRITICAL: Must set provenance on first call (when prev_hash is None) AND
+    when response text changes. This fixes the bug where LLM responses were
+    incorrectly treated as deterministic due to provenance never being set.
+
+    Args:
+        state: Graph state to update
+        response: The final response text
+        node_name: Name of the node that produced the final response
+        provenance: Final response provenance
+    """
+    # Early return if response is empty/None to avoid hashing errors
+    if not response:
+        _debug(
+            "set_final_response: skipping (empty response)",
+            node_name=node_name,
+            provenance=provenance,
+        )
+        return
+
+    # Compute stable hash of final response (deterministic across runs)
+    response_text_hash = hashlib.sha256(response.encode()).hexdigest()[:16]
+
+    # Check if this is first finalization OR response changed
+    prev_hash = state.metadata.get("response_text_hash")
+    if prev_hash is None or prev_hash != response_text_hash:
+        # First call this turn OR response was modified (e.g., by polish)
+        _debug(
+            "Finalizing response provenance",
+            first_call=(prev_hash is None),
+            hash_changed=(prev_hash != response_text_hash if prev_hash else False),
+            original_node=state.metadata.get("response_source_node"),
+            new_node=node_name,
+            new_provenance=provenance,
+        )
+        state.metadata["response_source_node"] = node_name
+        state.metadata["response_generation_provenance"] = provenance
+
+    # Store hash for next comparison
+    state.metadata["response_text_hash"] = response_text_hash
 
 
 def get_response_source_node(state: "GraphState") -> Optional[str]:
@@ -6639,7 +8119,14 @@ def apply_lqa_like_deltas(
     if "budget_delta" in deltas and deltas["budget_delta"] is not None:
         updates["budget"] = deltas["budget_delta"]
 
-    if not updates:
+    # Handle "budget_answered" flag (user said "no budget"/"flexible"/etc.)
+    # This marks budget as answered so we don't re-ask
+    if deltas.get("budget_answered"):
+        state.metadata["budget_answered"] = True
+        if deltas.get("budget_tier"):
+            state.metadata["budget_tier"] = deltas["budget_tier"]
+
+    if not updates and not deltas.get("budget_answered"):
         return []
 
     # Apply via _write_trip_inputs with LQA provenance
@@ -6669,15 +8156,35 @@ def apply_lqa_like_deltas(
     return fields_changed
 
 
-# Bail patterns: Multi-intent or correction signals that need full extraction
-_LQA_BAIL_PATTERNS = [
-    re.compile(r"\b(also|and\s+book|plus|as\s+well)\b", re.IGNORECASE),  # Multi-intent
-    re.compile(r"[,;].*[,;]", re.IGNORECASE),  # Multiple delimiters
-    re.compile(r"\b(not|instead|change|actually|but)\b", re.IGNORECASE),  # Negation/correction
-]
+# =============================================================================
+# v7 Final v5: TRAVELER-DETAIL RECOGNIZER (pre-bail pattern check)
+# =============================================================================
+# Pattern to detect traveler detail answers like "3 kids ages 5, 8, 12"
+# These contain commas for age lists but are NOT multi-intent.
+# Must run BEFORE LQA_BAIL_PATTERNS to avoid false-positive bail.
+#
+# NOTE: TRAVELER_DETAIL_PATTERN, TRAVELER_AGES_ONLY_PATTERN, and
+# is_traveler_detail_answer() are now imported from the pattern_matching module.
 
-# Pattern to strip leading articles from destinations ("the Netherlands" -> "Netherlands")
-_ARTICLE_PREFIX = re.compile(r"^(the|a|an)\s+", re.IGNORECASE)
+# Local alias for compatibility
+_is_traveler_detail_answer = is_traveler_detail_answer
+
+
+# =============================================================================
+# v7 Final v5: TEXT COMPATIBILITY WITH QUESTION TARGET
+# =============================================================================
+# Pure deterministic function to check if user text is compatible with the
+# current question_target. Used for conservative topic-switch bypass.
+#
+# NOTE: BUDGET_COMPATIBILITY_PATTERN, DATES_COMPATIBILITY_PATTERN,
+# TRAVELERS_COMPATIBILITY_PATTERN, and text_is_compatible_with_target()
+# are now imported from the pattern_matching module.
+
+# NOTE: LQA_BAIL_PATTERNS are now imported from the pattern_matching module.
+
+# NOTE: ARTICLE_PREFIX_PATTERN is now imported from the pattern_matching module.
+# Local alias for compatibility
+_ARTICLE_PREFIX = ARTICLE_PREFIX_PATTERN
 
 
 def _parse_destination_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
@@ -6956,10 +8463,114 @@ def _parse_date_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any
     if range_start and range_end:
         return {"start_date_hint": range_start, "end_date_hint": range_end}
 
+    # Handle month-to-month ranges (e.g., "September-November", "June to October")
+    # Pattern: Month1 (to|through|-|–|—) Month2
+    month_to_month_match = re.match(
+        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
+        r"\s*(?:to|through|-|–|—)\s*"
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
+        text_stripped,
+        re.IGNORECASE,
+    )
+    if month_to_month_match:
+        start_month_str = month_to_month_match.group(1).lower()
+        end_month_str = month_to_month_match.group(2).lower()
+
+        # Get reference date
+        metadata = state.metadata or {}
+        today_iso = metadata.get("today_iso")
+        if today_iso:
+            try:
+                reference_date = datetime.strptime(today_iso, "%Y-%m-%d").date()
+            except ValueError:
+                reference_date = datetime.now(UTC).date()
+        else:
+            reference_date = datetime.now(UTC).date()
+
+        # Parse month names to numbers
+        try:
+            start_month_num = datetime.strptime(start_month_str[:3], "%b").month
+            end_month_num = datetime.strptime(end_month_str[:3], "%b").month
+        except ValueError:
+            pass  # Fall through to other parsers
+        else:
+            year = reference_date.year
+
+            # If start month is in the past this year, use next year
+            if start_month_num < reference_date.month:
+                year += 1
+            elif start_month_num == reference_date.month and reference_date.day > 15:
+                # Already mid-month, assume next year
+                year += 1
+
+            # Calculate end year - handle cross-year ranges (e.g., "November-February")
+            end_year = year
+            if end_month_num < start_month_num:
+                # Cross-year range (e.g., November to February)
+                end_year = year + 1
+
+            # Build date range: 1st of start month to last day of end month
+            start_date = f"{year:04d}-{start_month_num:02d}-01"
+
+            # Get last day of end month
+            if end_month_num == 12:
+                next_month_first = datetime(end_year + 1, 1, 1)
+            else:
+                next_month_first = datetime(end_year, end_month_num + 1, 1)
+            last_day = (next_month_first - timedelta(days=1)).day
+            end_date = f"{end_year:04d}-{end_month_num:02d}-{last_day:02d}"
+
+            return {"start_date_hint": start_date, "end_date_hint": end_date}
+
     # Standard single date parsing
     iso_date = _date_normalizer.normalize(text_stripped)
     if iso_date:
         return {"start_date_hint": iso_date}
+
+    # Handle bare month names (e.g., "December", "January")
+    # This is a valid answer - user is saying they want to travel in that month
+    text_lower = text_stripped.lower()
+    if text_lower in _MONTH_NAMES:
+        # Get reference date from state if available
+        metadata = state.metadata or {}
+        today_iso = metadata.get("today_iso")
+        if today_iso:
+            try:
+                reference_date = datetime.strptime(today_iso, "%Y-%m-%d").date()
+            except ValueError:
+                reference_date = datetime.now(UTC).date()
+        else:
+            reference_date = datetime.now(UTC).date()
+
+        # Get month number by parsing the month name
+        try:
+            month_dt = datetime.strptime(text_lower[:3], "%b")
+            month_num = month_dt.month
+        except ValueError:
+            return None
+
+        # Determine year: current year if month is upcoming, next year if past
+        year = reference_date.year
+        if month_num < reference_date.month or (
+            month_num == reference_date.month and reference_date.day > 15
+        ):
+            year += 1
+
+        # Return a date range covering the whole month
+        # First day of the month
+        start_date = f"{year:04d}-{month_num:02d}-01"
+        # Last day of the month
+        if month_num == 12:
+            next_month_first = datetime(year + 1, 1, 1)
+        else:
+            next_month_first = datetime(year, month_num + 1, 1)
+        last_day = (next_month_first - timedelta(days=1)).day
+        end_date = f"{year:04d}-{month_num:02d}-{last_day:02d}"
+
+        return {"start_date_hint": start_date, "end_date_hint": end_date}
+
     return None
 
 
@@ -6992,7 +8603,43 @@ def _parse_travelers_answer(text: str, state: "GraphState") -> Optional[Dict[str
 
 
 def _parse_budget_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
-    """Parse a budget answer. Returns parsed dict or None."""
+    """
+    Parse a budget answer. Returns parsed dict or None.
+
+    Handles:
+    - Numeric amounts: "$2000", "2k", "5 thousand", "€3000", "£1500"
+    - Qualitative prefixes: "under $2000", "around $1500", "about 3k", "max $5000"
+    - No-budget phrases: "no budget", "flexible", "budget-friendly", "no limit"
+    - Quality tiers: "luxury", "mid-range", "cheap", "budget-friendly"
+    """
+    text_lower = text.strip().lower()
+
+    # Check for "no budget" / "flexible" phrases first
+    # These are valid answers that mean "user has responded, skip budget requirement"
+    for phrase in _NO_BUDGET_PHRASES:
+        if phrase in text_lower or text_lower == phrase:
+            # Map quality tiers to approximate budget hints for better recommendations
+            budget_hint = None
+            if any(
+                w in text_lower for w in ("luxury", "high-end", "high end", "premium", "splurge")
+            ):
+                budget_hint = "luxury"
+            elif any(
+                w in text_lower for w in ("cheap", "cheapest", "budget-friendly", "budget friendly")
+            ):
+                budget_hint = "budget"
+            elif any(w in text_lower for w in ("mid-range", "midrange", "moderate", "average")):
+                budget_hint = "moderate"
+
+            result = {
+                "budget_answered": True,  # Signal that user responded
+                "lqa_reason": "deterministic:budget_flexible",
+            }
+            if budget_hint:
+                result["budget_tier"] = budget_hint
+            return result
+
+    # Try the main budget pattern
     budget_match = _BUDGET_PATTERN.match(text)
     if budget_match:
         amount_str = budget_match.group(1)
@@ -7005,7 +8652,26 @@ def _parse_budget_answer(text: str, state: "GraphState") -> Optional[Dict[str, A
         else:
             # Remove commas and convert
             amount = float(amount_str.replace(",", ""))
-        return {"budget_delta": amount}
+        return {"budget_delta": amount, "lqa_reason": "deterministic:budget_amount"}
+
+    # Fallback: Try to extract any number with currency symbol using inline pattern
+    # This catches edge cases like "I have $2000 to spend" that don't match the strict pattern
+    inline_match = _INLINE_BUDGET_PATTERN.search(text)
+    if inline_match:
+        # Find the first non-None group (different capture groups for different patterns)
+        for group_idx in range(1, 8):
+            try:
+                amount_str = inline_match.group(group_idx)
+                if amount_str:
+                    # Handle "k" suffix
+                    if amount_str.lower().endswith("k"):
+                        amount = float(amount_str[:-1]) * 1000
+                    else:
+                        amount = float(amount_str.replace(",", ""))
+                    return {"budget_delta": amount, "lqa_reason": "deterministic:budget_inline"}
+            except (IndexError, ValueError, TypeError):
+                continue
+
     return None
 
 
@@ -7134,22 +8800,42 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
 
     # -------------------------------------------------------------------------
     # BAIL 4: Multi-intent or negation patterns
+    # v7 Final v5: Check for traveler-detail answer BEFORE bail patterns
+    # to avoid false-positive bail on comma-separated age lists like
+    # "Three kids, ages 3, 6, and 12"
     # -------------------------------------------------------------------------
-    for i, pattern in enumerate(_LQA_BAIL_PATTERNS):
-        if pattern.search(text):
-            bail_types = ["multi_intent", "multi_intent", "negation"]
-            bail_type = bail_types[i] if i < len(bail_types) else "multi_intent"
-            _lqa_stats["bails"] += 1
-            _lqa_stats[f"bail_{bail_type}"] += 1
-            state.flags["lqa_prepass"] = False
-            state.flags["lqa_bail_reason"] = bail_type
-            _debug(
-                f"[LQA] BAIL: {bail_type} pattern detected",
-                pattern_idx=i,
-                text=text[:30],
-            )
-            _debug_node_exit("lqa_prepass", state)
-            return state
+    if _is_traveler_detail_answer(text, question_target):
+        _debug(
+            "[LQA] SKIP BAIL: traveler-detail answer detected",
+            text=text[:50],
+            question_target=question_target,
+        )
+        # Don't bail - let the deterministic pipeline or LQA parsers handle it
+        # Store info for special_requests if we don't have a schema field
+        if "ages" in text.lower():
+            existing_info = state.trip_inputs.additional_info or ""
+            if text.strip() not in existing_info:
+                _write_trip_inputs(
+                    state,
+                    "lqa_prepass",
+                    additional_info=f"{existing_info} {text.strip()}".strip(),
+                )
+    else:
+        for i, pattern in enumerate(LQA_BAIL_PATTERNS):
+            if pattern.search(text):
+                bail_types = ["multi_intent", "multi_intent", "negation"]
+                bail_type = bail_types[i] if i < len(bail_types) else "multi_intent"
+                _lqa_stats["bails"] += 1
+                _lqa_stats[f"bail_{bail_type}"] += 1
+                state.flags["lqa_prepass"] = False
+                state.flags["lqa_bail_reason"] = bail_type
+                _debug(
+                    f"[LQA] BAIL: {bail_type} pattern detected",
+                    pattern_idx=i,
+                    text=text[:30],
+                )
+                _debug_node_exit("lqa_prepass", state)
+                return state
 
     # -------------------------------------------------------------------------
     # MVP OPTIMIZATION: DETERMINISTIC PIPELINE (runs before LQA parsers)
@@ -7172,7 +8858,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             state.flags["lqa_bail_reason"] = lqa_reason
             state.metadata["date_clarify_mode"] = True
             state.metadata["pending_date_text"] = det_result.get("_pending_date_text")
-            set_response_provenance(state, "deterministic")
+            set_parse_provenance(state, "deterministic")
             _debug(
                 "[LQA] DETERMINISTIC: date ambiguous, triggering clarify mode",
                 pending_text=det_result.get("_pending_date_text"),
@@ -7203,7 +8889,19 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             state.flags["lqa_prepass"] = True
             state.flags["lqa_field"] = lqa_reason.replace("deterministic:", "")
             state.parsed_inputs = parsed
-            set_response_provenance(state, "deterministic")
+            set_parse_provenance(state, "deterministic")
+            # v7 Final v5: Record parse provenance separately
+            state.metadata["parse_provenance"] = "deterministic"
+
+            # v7 Final v5: Mark question as answered this turn for bypass
+            # Use active_question_id (the question we asked) not question_id_counter
+            if question_target:
+                state.metadata["answered_question_target_this_turn"] = state.metadata.get(
+                    "active_question_target"
+                )
+                state.metadata["answered_question_id_this_turn"] = state.metadata.get(
+                    "active_question_id"
+                )
 
             # Determine if we should advance question_target
             keep_target = det_result.get("_keep_question_target", False)
@@ -7221,7 +8919,10 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                 "low_confidence_reasons": [],
                 "typo_suggestions": {},
             }
-            state.metadata["extraction_path"] = lqa_reason
+            # Canonical parse path field (consolidating lqa_reason and extraction_path)
+            state.metadata["parse_path"] = lqa_reason
+            state.metadata["lqa_reason"] = lqa_reason  # For gate evaluation
+            state.metadata["extraction_path"] = lqa_reason  # Backward compat
 
             # Record multi-city signal if present
             if det_result.get("_multi_city_signal"):
@@ -7351,140 +9052,30 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
 # Maximum length for fast-path consideration
 _FAST_PATH_MAX_LENGTH = 30
 
-# Pattern: Sentence-ending punctuation (reject these - likely sentences)
-_SENTENCE_ENDING_PATTERN = re.compile(r"[!?]\s*$")
+# =============================================================================
+# NOTE: All patterns for extraction are now imported from pattern_matching module:
+# - SENTENCE_ENDING_PATTERN, ORIGIN_PREFIX_PATTERN
+# - TRAVELERS_PATTERN, INLINE_TRAVELERS_PATTERN, FAMILY_COMPOSITION_PATTERN
+# - INLINE_BUDGET_PATTERN, TRAVELERS_WITH_KIDS_PATTERN, BUDGET_PATTERN
+# - NO_BUDGET_PHRASES, DURATION_PATTERN, WORD_TO_NUMBER
+# - INITIAL_DESTINATION_PATTERN, ORIGIN_DESTINATION_PATTERN, MULTI_FIELD_PATTERN
+# =============================================================================
 
-# Pattern: Origin prefix (e.g., "from London", "leaving from NYC")
-_ORIGIN_PREFIX_PATTERN = re.compile(
-    r"^(from|leaving\s+from|departing\s+from|flying\s+from|starting\s+from)\s+(.+)$",
-    re.IGNORECASE,
-)
-
-# Pattern: Travelers (e.g., "2 adults", "just me", "3 people", "family of 4", "a couple")
-_TRAVELERS_PATTERN = re.compile(
-    r"^(?:just\s+me|only\s+me|me|myself|solo|"
-    r"a?\s*couple|"
-    r"(\d+)\s*(adult|person|people|guest|traveler|pax)s?|"
-    r"(?:family\s+of|group\s+of)\s+(\d+)|"
-    r"(\d+)\s*(?:of\s+us|traveling))$",
-    re.IGNORECASE,
-)
-
-# Pattern: Inline travelers within sentences (for initial extraction)
-# Matches: "I am traveling solo", "solo trip", "just me going", "two of us", "my partner and I"
-_INLINE_TRAVELERS_PATTERN = re.compile(
-    r"(?:^|[\s,])(?:"
-    # Solo indicators
-    r"(?:i'?m\s+)?(?:traveling\s+)?(?:solo|alone|by\s+myself)|"
-    r"solo\s+(?:trip|travel|vacation)|"
-    r"just\s+(?:me|myself)(?:\s+going|\s+traveling)?|"
-    r"on\s+my\s+own|"
-    # Couple indicators
-    r"(?:my\s+)?(?:partner|spouse|husband|wife|boyfriend|girlfriend)\s+and\s+(?:i|me)|"
-    r"(?:i|me)\s+and\s+my\s+(?:partner|spouse|husband|wife|boyfriend|girlfriend)|"
-    r"(?:the\s+)?two\s+of\s+us|"
-    r"just\s+(?:the\s+)?two\s+(?:of\s+us)?|"
-    r"as\s+a\s+couple|"
-    # Family with numbers
-    r"(?:family\s+of|group\s+of|party\s+of)\s+(\d+)|"
-    r"(\d+)\s+(?:of\s+us|people|adults?|travelers?)(?:\s+(?:are|will))?|"
-    # Explicit counts
-    r"(?:there\s+(?:are|will\s+be)\s+)?(\d+)\s+of\s+us" r")(?:[\s,.]|$)",
-    re.IGNORECASE,
-)
-
-# Pattern: Family composition (e.g., "family of 4", "with 2 kids", "me and my 2 children")
-# Returns total count and optional children count
-_FAMILY_COMPOSITION_PATTERN = re.compile(
-    r"(?:"
-    # "family of N" / "family with N members"
-    r"family\s+(?:of|with)\s+(\d+)(?:\s+(?:people|members))?|"
-    # "N adults and N kids/children"
-    r"(\d+)\s*adults?\s*(?:and|with|&|\+)\s*(\d+)\s*(?:kids?|children|child)|"
-    # "me and my N kids" / "myself and N children"
-    r"(?:me|myself|i)\s+(?:and\s+)?(?:my\s+)?(\d+)\s*(?:kids?|children|child)|"
-    # "with N kids/children" / "have N kids with us" / "we have N kids"
-    r"(?:with|have)\s+(\d+|two|three|four)\s*(?:kids?|children|child)(?:\s+with\s+us)?|"
-    # "N kids with us"
-    r"(\d+|two|three|four)\s*(?:kids?|children|child)\s+with\s+us|"
-    # "traveling with kids/children" (implies children, count unknown) - GROUP 6
-    r"((?:traveling|going)\s+with\s+(?:the\s+)?(?:kids?|children))|"
-    # "for the kids" / "our kids" / "the kids" (implies children) - GROUP 7
-    r"((?:for|with|and)\s+(?:the|our|my)\s+(?:kids?|children))|"
-    # "family trip" / "family vacation" (implies children likely) - GROUP 8
-    r"(family\s+(?:trip|vacation|holiday|getaway))" r")",
-    re.IGNORECASE,
-)
-
-# Pattern: Inline budget mentions (e.g., "budget of $2000", "with a $3000 budget",
-# "spending around 5k")
-_INLINE_BUDGET_PATTERN = re.compile(
-    (
-        r"(?:"  # inline budget patterns
-        r"budget\s+(?:of|is|around|about|roughly)?\s*(?:\$|€|£)?"
-        r"(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k)\s*(?:\$|€|£|dollars?|euros?|pounds?)?|"
-        r"(?:with\s+(?:a\s+)?)?(?:\$|€|£)"
-        r"(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k)\s*(?:budget|max|maximum)|"
-        # "around/about $X" in context of budget
-        r"(?:around|about|roughly|approximately)\s*(?:\$|€|£)"
-        r"(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k)|"
-        # "spending/spend $X" / "spend around $X"
-        r"(?:spend(?:ing)?|invest(?:ing)?)\s*(?:around|about|roughly)?\s*(?:\$|€|£)?"
-        r"(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k)|"
-        # "under $X" / "less than $X" / "keep it/the total/everything under $X" / "max $X"
-        r"(?:under|less\s+than|no\s+more\s+than|max(?:imum)?|"
-        r"keep\s+(?:it|everything|the\s+total|the\s+budget|things|costs?)?\s*under|"
-        r"hoping\s+to\s+keep\s+(?:it|the\s+total|everything|things)?\s*under)"
-        r"\s*(?:\$|€|£)?(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k)|"
-        # Simple "$X" or "$X for the trip/total" - standalone currency amounts
-        r"(?:\$|€|£)(\d+(?:,\d{3})*)\s*(?:for\s+(?:the\s+)?"
-        r"(?:trip|total|everything|whole|entire)|total)?|"
-        # "X dollars/euros" without context
-        r"(\d+(?:,\d{3})*)\s*(?:dollars?|euros?|pounds?)"
-        r")"
-    ),
-    re.IGNORECASE,
-)
-
-# Pattern: Travelers with children (e.g., "2 adults and 2 kids")
-_TRAVELERS_WITH_KIDS_PATTERN = re.compile(
-    r"^(\d+)\s*adults?\s*(?:and|with|&|\+)\s*(\d+)\s*(?:kids?|children|child)$",
-    re.IGNORECASE,
-)
-
-# Phase 5: Pattern for budget (e.g., "$2000", "2k", "5 thousand", "around 3000 euros")
-_BUDGET_PATTERN = re.compile(
-    (
-        r"^(?:around|about|approximately|roughly|~)?\s*"  # Optional prefix
-        r"(?:\$|€|£|USD|EUR|GBP|CAD|AUD)?\s*"  # Optional currency symbol/code before
-        r"(\d+(?:,\d{3})*(?:\.\d{2})?|\d+k|\d+\s*thousand)"  # Amount
-        r"\s*(?:\$|€|£|USD|EUR|GBP|CAD|AUD|dollars|euros|pounds)?"  # Optional currency after
-        r"(?:\s*(?:budget|total|max|maximum))?$"  # Optional suffix
-    ),
-    re.IGNORECASE,
-)
-
-# Phase 5: Pattern for duration (e.g., "7 days", "one week", "10 nights", "2 weeks")
-_DURATION_PATTERN = re.compile(
-    r"^(?:(?:for\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
-    r"\s*(day|days|night|nights|week|weeks))"
-    r"(?:\s*(?:trip|vacation|holiday))?$",
-    re.IGNORECASE,
-)
-
-# Word-to-number mapping for duration parsing
-_WORD_TO_NUMBER = {
-    "one": 1,
-    "two": 2,
-    "three": 3,
-    "four": 4,
-    "five": 5,
-    "six": 6,
-    "seven": 7,
-    "eight": 8,
-    "nine": 9,
-    "ten": 10,
-}
+# Local aliases for backward compatibility with existing code
+_SENTENCE_ENDING_PATTERN = SENTENCE_ENDING_PATTERN
+_ORIGIN_PREFIX_PATTERN = ORIGIN_PREFIX_PATTERN
+_TRAVELERS_PATTERN = TRAVELERS_PATTERN
+_INLINE_TRAVELERS_PATTERN = INLINE_TRAVELERS_PATTERN
+_FAMILY_COMPOSITION_PATTERN = FAMILY_COMPOSITION_PATTERN
+_INLINE_BUDGET_PATTERN = INLINE_BUDGET_PATTERN
+_TRAVELERS_WITH_KIDS_PATTERN = TRAVELERS_WITH_KIDS_PATTERN
+_BUDGET_PATTERN = BUDGET_PATTERN
+_NO_BUDGET_PHRASES = NO_BUDGET_PHRASES
+_DURATION_PATTERN = DURATION_PATTERN
+_WORD_TO_NUMBER = WORD_TO_NUMBER
+_INITIAL_DESTINATION_PATTERN = INITIAL_DESTINATION_PATTERN
+_ORIGIN_DESTINATION_PATTERN = ORIGIN_DESTINATION_PATTERN
+_MULTI_FIELD_PATTERN = MULTI_FIELD_PATTERN
 
 
 # NOTE: _debug_fast_path_decision and _try_fast_path_extraction have been removed.
@@ -7500,31 +9091,6 @@ _WORD_TO_NUMBER = {
 # Handle simple initial messages like "I want to go to Paris" or
 # "2 adults, Paris, next month" without LLM even when question_target is not set.
 # This extends fast-path to work on first turn, saving ~1145 tokens.
-
-# Pattern: "I want to go to X", "trip to X", "visit X", "travel to X"
-_INITIAL_DESTINATION_PATTERN = re.compile(
-    r"(?:i\s+want\s+to\s+(?:go\s+to|visit|travel\s+to)|"
-    r"(?:trip|vacation|holiday)\s+to|"
-    r"planning\s+(?:a\s+)?(?:trip|vacation|holiday)\s+to|"
-    r"going\s+to|"
-    r"let'?s\s+go\s+to)\s+(.+?)(?:\s+(?:from|next|in|for|with)\b|[.!?,]|$)",
-    re.IGNORECASE,
-)
-
-# Pattern: "from X to Y" or "X to Y"
-_ORIGIN_DESTINATION_PATTERN = re.compile(
-    r"(?:from\s+)?(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)",
-    re.IGNORECASE,
-)
-
-# Pattern: Multi-field simple input like "2 adults, Paris, next month"
-# Handles comma-separated values that each match a field pattern
-_MULTI_FIELD_PATTERN = re.compile(
-    r"^(?:(\d+)\s*(?:adult|people|person|traveler)s?(?:\s*,\s*|\s+and\s+|\s+)?)?"
-    r"(\w+(?:\s+\w+)?)?(?:\s*,\s*|\s+)?"
-    r"(next\s+(?:week|month)|in\s+\w+|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*(?:\s+\d+)?)?",
-    re.IGNORECASE,
-)
 
 
 def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
@@ -7815,6 +9381,30 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
                 _debug(f"[INITIAL_EXTRACT] Pattern 6: budget={budget_value}")
                 break
 
+    # Try inline date extraction (Pattern 7: "tomorrow", "today", "next week", etc.)
+    if not parsed.get("start_date_hint"):
+        date_patterns = [
+            r"\btomorrow\b",
+            r"\btoday\b",
+            r"\bnext\s+(?:week|month|weekend)\b",
+            r"\bthis\s+(?:week|weekend)\b",
+            r"\bon\s+((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}(?:st|nd|rd|th)?)\b",
+            r"\b((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2}(?:st|nd|rd|th)?)\b",
+        ]
+        for pattern in date_patterns:
+            date_match = re.search(pattern, text_lower)
+            if date_match:
+                date_str = date_match.group(0).strip()
+                # Remove "on " prefix if present
+                if date_str.startswith("on "):
+                    date_str = date_str[3:]
+                iso_date = _date_normalizer.normalize(date_str)
+                if iso_date:
+                    parsed["start_date_hint"] = iso_date
+                    fields_extracted.append("dates")
+                    _debug(f"[INITIAL_EXTRACT] Pattern 7: inline date={date_str} -> {iso_date}")
+                    break
+
     # Try extracting flight settings from the message
     flight_settings: Dict[str, Any] = {}
 
@@ -7925,51 +9515,11 @@ def _debug_short_circuit_decision(
 # =============================================================================
 # Detect obvious infeasibility signals without LLM - route directly to correction.
 # This saves ~1000 tokens by avoiding router LLM when correction is clearly needed.
+#
+# NOTE: INFEASIBILITY_SIGNALS patterns are now imported from pattern_matching module.
 
-# Infeasibility patterns that can be detected deterministically
-_INFEASIBILITY_SIGNALS: dict[str, re.Pattern] = {
-    # Dates in the past (explicit correction language)
-    "dates_past": re.compile(
-        r"\b(yesterday|last\s+week|last\s+month|already\s+passed|already\s+gone|"
-        r"was\s+supposed\s+to|should\s+have\s+been|missed\s+the\s+date)\b",
-        re.IGNORECASE,
-    ),
-    # Skiing in summer (seasonal impossibility)
-    "skiing_summer": re.compile(
-        r"\bski(ing)?\b.*\b(june|july|august|summer)\b|\b(june|july|august|summer)\b.*\bski(ing)?\b",
-        re.IGNORECASE,
-    ),
-    # Beach in winter for northern destinations
-    "beach_winter": re.compile(
-        r"\bbeach\b.*\b(december|january|february|winter)\b.*\b(norway|sweden|finland|iceland|alaska|canada)\b|"
-        r"\b(norway|sweden|finland|iceland|alaska|canada)\b.*\bbeach\b.*\b(december|january|february|winter)\b",
-        re.IGNORECASE,
-    ),
-    # Beach in landlocked countries (geographic impossibility)
-    "beach_landlocked": re.compile(
-        r"\bbeach\b.*\b(switzerland|austria|czech|hungary|serbia|slovakia|luxembourg|liechtenstein|"
-        r"andorra|vatican|san\s+marino|bolivia|paraguay|mongolia|nepal|bhutan|laos|kazakhstan|"
-        r"uzbekistan|turkmenistan|kyrgyzstan|tajikistan|afghanistan|rwanda|burundi|uganda|zambia|"
-        r"zimbabwe|botswana|malawi|lesotho|eswatini|ethiopia|chad|niger|mali|burkina\s+faso|"
-        r"central\s+african|south\s+sudan)\b|"
-        r"\b(switzerland|austria|czech|hungary|serbia|slovakia|luxembourg|liechtenstein|"
-        r"andorra|bolivia|paraguay|mongolia|nepal|bhutan)\b.*\bbeach\b",
-        re.IGNORECASE,
-    ),
-    # Impossible same-day intercontinental
-    "same_day_impossible": re.compile(
-        r"\bsame\s+day\b.*\b(tokyo|sydney|australia|japan|new\s+zealand)\b.*\b(london|paris|new\s+york|europe|america)\b|"
-        r"\b(london|paris|new\s+york|europe|america)\b.*\bsame\s+day\b.*\b(tokyo|sydney|australia|japan|new\s+zealand)\b",
-        re.IGNORECASE,
-    ),
-    # Explicit correction language from user
-    "explicit_correction": re.compile(
-        r"\b(that's\s+wrong|that's\s+incorrect|you\s+made\s+a\s+mistake|"
-        r"fix\s+this|correct\s+this|change\s+this|that\s+won't\s+work|"
-        r"not\s+possible|impossible|can't\s+do\s+that|won't\s+work)\b",
-        re.IGNORECASE,
-    ),
-}
+# Local alias for backward compatibility
+_INFEASIBILITY_SIGNALS = INFEASIBILITY_SIGNALS
 
 
 def _has_infeasibility_signals(text: str, state: "GraphState") -> tuple[bool, str | None]:
@@ -8047,7 +9597,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
         return None
 
     # 1. Greetings
-    if _GREETING_PATTERN.match(text_clean):
+    if GREETING_PATTERN.match(text_clean):
         _debug_short_circuit_decision(text, "greeting", last_field, "TRIGGERED")
         return {
             "type": "greeting",
@@ -8060,7 +9610,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
 
     # 2. Pending-action confirmations should be evaluated BEFORE acknowledgments
     # so ambiguous tokens like "sure" or "sounds good" act as a real confirm/deny.
-    if pending and _YES_PATTERN.match(text_clean):
+    if pending and YES_PATTERN.match(text_clean):
         pending = state.metadata.get("pending_action")
         if pending == "generate_plan":
             # Execute the pending action
@@ -8099,7 +9649,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             "parsed": None,
         }
 
-    if pending and _NO_PATTERN.match(text_clean):
+    if pending and NO_PATTERN.match(text_clean):
         pending = state.metadata.get("pending_action")
         if pending:
             # Clear the pending action
@@ -8123,7 +9673,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
     # 3. Acknowledgments - REMOVED: Now handled by LLM extractor for better context awareness
 
     # 4. Simple confirmations (yes, yeah)
-    if _YES_PATTERN.match(text_clean):
+    if YES_PATTERN.match(text_clean):
         pending = state.metadata.get("pending_action")
         if pending == "generate_plan":
             # Execute the pending action
@@ -8145,7 +9695,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
         }
 
     # 5. Simple negations (no, nope)
-    if _NO_PATTERN.match(text_clean):
+    if NO_PATTERN.match(text_clean):
         pending = state.metadata.get("pending_action")
         if pending:
             # Clear the pending action
@@ -8281,8 +9831,7 @@ def _today_iso(timezone_name: Optional[str] = None) -> str:
 # INPUT NORMALIZATION FUNCTIONS (ported from plan.py)
 # =============================================================================
 
-# Regex pattern for ANSI escape codes (terminal colors, formatting)
-_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+# NOTE: ANSI_ESCAPE_PATTERN is now imported from pattern_matching module.
 
 
 def _normalize_str(value: Any) -> Optional[str]:
@@ -8296,7 +9845,7 @@ def _normalize_str(value: Any) -> Optional[str]:
     if not value_str or value_str.lower() == "null":
         return None
     # Strip ANSI escape codes
-    value_str = _ANSI_ESCAPE_PATTERN.sub("", value_str)
+    value_str = ANSI_ESCAPE_PATTERN.sub("", value_str)
     return value_str
 
 
@@ -8553,6 +10102,28 @@ class DateNormalizer:
             if "next" in lowered and days_until_saturday <= 0:
                 days_until_saturday += 7
             return (today + timedelta(days=days_until_saturday)).strftime("%Y-%m-%d")
+
+        # Handle "next monday", "next tuesday", etc.
+        weekday_names = {
+            "monday": 0,
+            "tuesday": 1,
+            "wednesday": 2,
+            "thursday": 3,
+            "friday": 4,
+            "saturday": 5,
+            "sunday": 6,
+        }
+        next_weekday_match = re.match(
+            r"^(?:next|this)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$",
+            lowered,
+        )
+        if next_weekday_match:
+            target_day = weekday_names[next_weekday_match.group(1)]
+            days_ahead = (target_day - today.weekday()) % 7
+            # "next X" means at least 1 day ahead; if today is that day, go to next week
+            if days_ahead == 0 and "next" in lowered:
+                days_ahead = 7
+            return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
         return None
 
@@ -9219,6 +10790,9 @@ def set_question_target(
     This is the ONLY place question_target should be written.
     All other writes should go through this helper.
 
+    Also tracks active_question_id for bridge suppression - only increments
+    when the question target actually CHANGES (not on re-asks of the same target).
+
     Args:
         state: Graph state
         target: Raw target value (will be canonicalized)
@@ -9236,9 +10810,26 @@ def set_question_target(
         )
         canonical = None
 
+    # Track old target to detect actual question changes
+    old_target = state.metadata.get("active_question_target")
+
     state.metadata["question_target"] = canonical
     state.metadata["question_target_source"] = source
     state.question_target = canonical  # Sync state for this turn
+
+    # Increment active_question_id only when target CHANGES (not on re-asks)
+    # This provides stable question instance tracking for bridge suppression
+    if canonical and canonical != old_target:
+        active_qid = state.metadata.get("active_question_id", 0) + 1
+        state.metadata["active_question_id"] = active_qid
+        state.metadata["active_question_target"] = canonical
+        _debug(
+            "Active question changed",
+            old_target=old_target,
+            new_target=canonical,
+            active_question_id=active_qid,
+            source=source,
+        )
 
 
 def get_question_target(state: "GraphState") -> Optional[str]:
@@ -9263,13 +10854,13 @@ class NormalizationError:
         field: The field name that had the error
         code: Machine-readable error code (e.g., DATE_AMBIGUOUS_YEAR)
         message: Human-readable error message
-        severity: 'warning' for recoverable issues, 'error' for blocking issues
+        severity: 'blocking' for blocking issues, 'warning' for recoverable, 'info' for notes
         original_value: The original value that caused the error
     """
 
     field: str
     message: str
-    severity: Literal["warning", "error"]
+    severity: Literal["blocking", "warning", "info"]
     original_value: Any = None
     code: Optional[str] = None  # Machine-readable error code
 
@@ -9414,37 +11005,32 @@ class TripInputNormalizer:
         today = self._date_normalizer.today
 
         # =====================================================================
-        # STRADDLE-TODAY AMBIGUITY DETECTION
+        # PAST DATE HANDLING (moved up to run before straddle detection)
         # =====================================================================
-        # If both dates are in current year and range straddles today,
-        # the year is ambiguous (user might mean this year or next)
-        if start_dt.year == end_dt.year == today.year:
-            start_d = start_dt.date()
-            end_d = end_dt.date()
-            # Straddle: start <= today <= end OR (start < today and end >= today)
-            if (start_d <= today <= end_d) or (start_d < today and end_d >= today):
-                _date_stats["date_ambiguous_year_count"] += 1
-                errors.append(
-                    NormalizationError(
-                        field="dates",
-                        code=DateErrorCode.AMBIGUOUS_YEAR,
-                        message=(
-                            f"Date range {start_date} to {end_date} straddles today - "
-                            "year is ambiguous"
-                        ),
-                        severity="error",
-                        original_value={"start_date": start_date, "end_date": end_date},
-                    )
+        # If start_date is in the past, bump the entire range to next year.
+        # This MUST run before straddle-today detection to avoid false ambiguity.
+        if start_dt and start_dt.date() < today:
+            # Bump past start dates to next year
+            bumped_start_dt = start_dt.replace(year=start_dt.year + 1)
+            corrected_start = bumped_start_dt.strftime("%Y-%m-%d")
+            errors.append(
+                NormalizationError(
+                    field="start_date",
+                    message=f"Start date {start_date} is in the past, bumped to {corrected_start}",
+                    severity="warning",
+                    original_value=start_date,
                 )
-                # Store pending dates for clarification resolution
-                if metadata is not None:
-                    metadata["pending_date_range"] = {
-                        "start_date": start_date,
-                        "end_date": end_date,
-                    }
-                needs_clarify = True
-                # Return None dates - don't store ambiguous values
-                return None, None, errors, needs_clarify
+            )
+            _debug(f"Bumped past start date: {start_date} → {corrected_start}")
+
+            # Also bump end date if it was in the same year
+            if end_dt and end_dt.year == start_dt.year:
+                bumped_end_dt = end_dt.replace(year=end_dt.year + 1)
+                corrected_end = bumped_end_dt.strftime("%Y-%m-%d")
+                _debug(f"Bumped end date to match: {end_date} → {corrected_end}")
+                end_dt = bumped_end_dt
+
+            start_dt = bumped_start_dt
 
         # =====================================================================
         # CROSS-YEAR CORRECTION (Dec start → Jan/Feb end)
@@ -9498,7 +11084,7 @@ class TripInputNormalizer:
                         message=(
                             "Date range invalid after swap: " f"{corrected_start} > {corrected_end}"
                         ),
-                        severity="error",
+                        severity="blocking",
                         original_value={"start_date": start_date, "end_date": end_date},
                     )
                 )
@@ -9508,34 +11094,17 @@ class TripInputNormalizer:
                         "end_date": end_date,
                     }
                 needs_clarify = True
+                _debug(
+                    "🚫 DATE REJECTED: Range invalid after swap - user answer discarded",
+                    user_provided_start=start_date,
+                    user_provided_end=end_date,
+                    rejection_reason="range_invalid_after_swap",
+                )
                 return None, None, errors, needs_clarify
 
             # Update datetime objects after successful swap
             start_dt = swapped_start_dt
             end_dt = swapped_end_dt
-
-        # =====================================================================
-        # PAST DATE HANDLING
-        # =====================================================================
-        if start_dt and start_dt.date() < today:
-            # Bump past start dates to next year
-            bumped_start_dt = start_dt.replace(year=start_dt.year + 1)
-            corrected_start = bumped_start_dt.strftime("%Y-%m-%d")
-            errors.append(
-                NormalizationError(
-                    field="start_date",
-                    message=f"Start date {start_date} is in the past, bumped to {corrected_start}",
-                    severity="warning",
-                    original_value=start_date,
-                )
-            )
-            _debug(f"Bumped past start date: {start_date} → {corrected_start}")
-
-            # Also bump end date if it was in the same year
-            if end_dt and end_dt.year == start_dt.year:
-                bumped_end_dt = end_dt.replace(year=end_dt.year + 1)
-                corrected_end = bumped_end_dt.strftime("%Y-%m-%d")
-                _debug(f"Bumped end date to match: {end_date} → {corrected_end}")
 
         # =====================================================================
         # FINAL INVARIANT CHECK
@@ -9551,7 +11120,7 @@ class TripInputNormalizer:
                     field="dates",
                     code=DateErrorCode.RANGE_INVALID,
                     message=f"Date range invariant violation: {corrected_start} > {corrected_end}",
-                    severity="error",
+                    severity="blocking",
                     original_value={"start_date": start_date, "end_date": end_date},
                 )
             )
@@ -9561,6 +11130,14 @@ class TripInputNormalizer:
                     "end_date": end_date,
                 }
             needs_clarify = True
+            _debug(
+                "🚫 DATE REJECTED: Final invariant check failed - user answer discarded",
+                user_provided_start=start_date,
+                user_provided_end=end_date,
+                corrected_start=corrected_start,
+                corrected_end=corrected_end,
+                rejection_reason="invariant_violation",
+            )
             # NEVER store reversed dates
             return None, None, errors, needs_clarify
 
@@ -9655,8 +11232,8 @@ class TripInputNormalizer:
                 if not d_norm:
                     continue
 
-                # Apply synonym normalization
-                d_norm = normalize_place_synonym(d_norm)
+                # Apply fuzzy normalization (handles synonyms + typos + casing)
+                d_norm = normalize_place_with_fuzzy(d_norm)
                 d_lower = d_norm.lower()
 
                 # Filter phrase-like destinations
@@ -9739,12 +11316,33 @@ class TripInputNormalizer:
 
         updates: Dict[str, Any] = {}
         errors: List[NormalizationError] = []
+        # Track inputs that were provided but couldn't be normalized
+        failed_inputs: List[Dict[str, Any]] = []
 
         # --- Origin ---
         if "origin_delta" in deltas:
             origin_raw = _normalize_str(deltas["origin_delta"])
             if origin_raw:
-                updates["origin"] = normalize_place_synonym(origin_raw)
+                # Apply fuzzy normalization (handles synonyms + typos + casing)
+                updates["origin"] = normalize_place_with_fuzzy(origin_raw)
+            else:
+                # User provided origin but it couldn't be normalized
+                failed_inputs.append(
+                    {
+                        "field": "origin",
+                        "raw_value": deltas["origin_delta"],
+                        "reason": "Could not understand the departure city",
+                        "user_message": (
+                            f"I couldn't understand '{deltas['origin_delta']}' as a city. "
+                            "Could you please specify your departure city?"
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: origin",
+                    raw_value=deltas["origin_delta"],
+                    reason="empty after normalization",
+                )
 
         # --- Destinations ---
         if "destinations_delta" in deltas:
@@ -9828,6 +11426,25 @@ class TripInputNormalizer:
                             )
                     updates["start_date"] = provenance.value
                     date_provenance_updates["start_date"] = provenance
+                else:
+                    # Could not parse start_date_hint at all
+                    failed_inputs.append(
+                        {
+                            "field": "start_date",
+                            "raw_value": raw_hint,
+                            "reason": "Could not parse as a valid date",
+                            "user_message": (
+                                f"I couldn't understand '{raw_hint}' as a date. "
+                                "Could you please provide your travel dates "
+                                "(e.g., 'January 15-22' or 'next month')?"
+                            ),
+                        }
+                    )
+                    _debug(
+                        "🚫 USER INPUT FAILED: start_date",
+                        raw_value=raw_hint,
+                        reason="could not parse as valid date",
+                    )
 
         if "end_date_hint" in deltas:
             raw_hint = deltas["end_date_hint"]
@@ -9857,6 +11474,24 @@ class TripInputNormalizer:
                         )
                 updates["end_date"] = provenance.value
                 date_provenance_updates["end_date"] = provenance
+            else:
+                # Could not parse end_date_hint at all
+                failed_inputs.append(
+                    {
+                        "field": "end_date",
+                        "raw_value": raw_hint,
+                        "reason": "Could not parse as a valid date",
+                        "user_message": (
+                            f"I couldn't understand '{raw_hint}' as an end date. "
+                            "Could you please clarify when your trip ends?"
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: end_date",
+                    raw_value=raw_hint,
+                    reason="could not parse as valid date",
+                )
 
         # Duration-based end_date computation
         if "duration_days_hint" in deltas and not trip_inputs.end_date:
@@ -9882,6 +11517,23 @@ class TripInputNormalizer:
             errors.extend(date_errors)
             if needs_clarify:
                 updates["_needs_date_clarify"] = True
+                # Store the user's rejected answer for reference in clarification prompts
+                updates["_rejected_date_answer"] = {
+                    "user_text": user_text,
+                    "parsed_start": start,
+                    "parsed_end": end,
+                    "rejection_reasons": [
+                        e.message for e in date_errors if e.severity == "blocking"
+                    ],
+                }
+                _debug(
+                    "🚫 USER DATE ANSWER REJECTED - stored for clarification",
+                    user_text=user_text[:50] if user_text else None,
+                    parsed_start=start,
+                    parsed_end=end,
+                    corrected_to=(corrected_start, corrected_end),
+                    error_count=len([e for e in date_errors if e.severity == "blocking"]),
+                )
 
         # Store partial date notifications in metadata
         if partial_date_notifications:
@@ -9892,11 +11544,45 @@ class TripInputNormalizer:
             adults = self.normalize_adults(deltas["adults_delta"])
             if adults is not None:
                 updates["adults"] = adults
+            else:
+                failed_inputs.append(
+                    {
+                        "field": "adults",
+                        "raw_value": deltas["adults_delta"],
+                        "reason": "Could not parse as a valid number of adults",
+                        "user_message": (
+                            f"I couldn't understand '{deltas['adults_delta']}' as a number of "
+                            "travelers. How many adults will be traveling?"
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: adults",
+                    raw_value=deltas["adults_delta"],
+                    reason="could not parse as valid adult count",
+                )
 
         if "children_delta" in deltas:
             children = self.normalize_children(deltas["children_delta"])
             if children is not None:
                 updates["children"] = children
+            else:
+                failed_inputs.append(
+                    {
+                        "field": "children",
+                        "raw_value": deltas["children_delta"],
+                        "reason": "Could not parse as a valid number of children",
+                        "user_message": (
+                            f"I couldn't understand '{deltas['children_delta']}' as a number "
+                            "of children. How many children will be joining?"
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: children",
+                    raw_value=deltas["children_delta"],
+                    reason="could not parse as valid children count",
+                )
 
         if "requires_assistance_delta" in deltas:
             updates["requires_assistance"] = deltas["requires_assistance_delta"]
@@ -9906,11 +11592,46 @@ class TripInputNormalizer:
             budget = _normalize_budget(deltas["budget_delta"])
             if budget is not None:
                 updates["budget"] = budget
+            else:
+                failed_inputs.append(
+                    {
+                        "field": "budget",
+                        "raw_value": deltas["budget_delta"],
+                        "reason": "Could not parse as a valid budget amount",
+                        "user_message": (
+                            f"I couldn't understand '{deltas['budget_delta']}' as a budget. "
+                            "Could you specify an amount (e.g., '$2000' or "
+                            "'around 3000 euros')?"
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: budget",
+                    raw_value=deltas["budget_delta"],
+                    reason="could not parse as valid budget amount",
+                )
 
         if "currency_delta" in deltas:
             currency = self.normalize_currency(deltas["currency_delta"])
             if currency:
                 updates["currency"] = currency
+            else:
+                failed_inputs.append(
+                    {
+                        "field": "currency",
+                        "raw_value": deltas["currency_delta"],
+                        "reason": "Could not recognize as a valid currency",
+                        "user_message": (
+                            f"I couldn't recognize '{deltas['currency_delta']}' as a currency. "
+                            "Please use USD, EUR, GBP, or another standard currency code."
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: currency",
+                    raw_value=deltas["currency_delta"],
+                    reason="could not normalize to valid currency code",
+                )
         elif "budget_delta" in deltas and not trip_inputs.currency:
             # Default currency if budget set but no currency
             updates["currency"] = DEFAULT_CURRENCY
@@ -9920,6 +11641,23 @@ class TripInputNormalizer:
             intent = _normalize_multi_city_intent(deltas["multi_city_intent_delta"])
             if intent:
                 updates["multi_city_intent"] = intent
+            else:
+                failed_inputs.append(
+                    {
+                        "field": "multi_city_intent",
+                        "raw_value": deltas["multi_city_intent_delta"],
+                        "reason": "Could not understand trip type",
+                        "user_message": (
+                            "I couldn't understand if you want to visit multiple cities. "
+                            "Would you like to visit several destinations on this trip?"
+                        ),
+                    }
+                )
+                _debug(
+                    "🚫 USER INPUT FAILED: multi_city_intent",
+                    raw_value=deltas["multi_city_intent_delta"],
+                    reason="could not normalize to valid multi-city intent",
+                )
 
         # --- Settings (flight, hotel, transport, activity) ---
         if "flight_settings_delta" in deltas:
@@ -10016,6 +11754,10 @@ class TripInputNormalizer:
             updates["_date_provenance"] = {
                 k: v.to_dict() for k, v in date_provenance_updates.items()
             }
+
+        # --- Store failed inputs for user feedback ---
+        if failed_inputs:
+            updates["_failed_inputs"] = failed_inputs
 
         return updates, errors
 
@@ -10678,14 +12420,22 @@ def compute_trip_readiness(
         adults = trip_inputs.get("adults")
         budget = trip_inputs.get("budget")
 
-    # Compute missing core fields
-    missing_core = []
-    if not destinations or (isinstance(destinations, list) and len(destinations) == 0):
-        missing_core.append("destinations")
-    if not origin:
-        missing_core.append("origin")
-    if not start_date:
-        missing_core.append("start_date")
+    # Compute missing core fields using CORE_FIELD_PRIORITY as single source of truth
+    # This ensures priority order is consistent: destinations → start_date → end_date
+    # → origin → adults → budget
+    field_values = {
+        "destinations": destinations if isinstance(destinations, list) and destinations else None,
+        "start_date": start_date,
+        "end_date": end_date,
+        "origin": origin,
+        "adults": adults,
+        "budget": budget,
+    }
+    missing_candidates = {f for f, v in field_values.items() if not v}
+    # Filter to only core fields (first 4 in CORE_FIELD_PRIORITY: destinations,
+    # start_date, end_date, origin)
+    core_fields = {"destinations", "start_date", "origin"}  # end_date handled separately below
+    missing_core = [f for f in CORE_FIELD_PRIORITY if f in missing_candidates and f in core_fields]
 
     # Compute all missing fields (core + optional but useful)
     missing_all = list(missing_core)
@@ -10693,17 +12443,24 @@ def compute_trip_readiness(
         missing_all.append("end_date")
     if adults is None:
         missing_all.append("travelers (adults)")
-    if budget is None:
+    # Budget is optional - don't add to missing if user explicitly said "no budget"/"flexible"
+    budget_answered = metadata.get("budget_answered", False) if metadata else False
+    if budget is None and not budget_answered:
         missing_all.append("budget")
 
     # Compute blocking errors from errors list
+    # Supports: ErrorRecord (new), NormalizationError, dict (legacy), str (legacy)
     blocking_errors: List[str] = []
     if errors:
         for err in errors:
-            if isinstance(err, NormalizationError) and err.code in DATE_BLOCKING_ERROR_CODES:
+            if isinstance(err, ErrorRecord):
+                # New structured error format
+                if err.severity == "blocking" or err.code in DATE_BLOCKING_ERROR_CODES:
+                    blocking_errors.append(err.code)
+            elif isinstance(err, NormalizationError) and err.code in DATE_BLOCKING_ERROR_CODES:
                 blocking_errors.append(err.code)
             elif isinstance(err, dict):
-                # Handle dict errors with "code" key
+                # Handle dict errors with "code" key (legacy)
                 code = err.get("code", "")
                 if code in DATE_BLOCKING_ERROR_CODES:
                     blocking_errors.append(code)
@@ -11654,7 +13411,7 @@ class GraphState(BaseModel):
     strategy_topic: Optional[str] = None  # boating|hiking|diving|...
     active_category: Optional[str] = None
     last_summary: Optional[str] = None
-    errors: List[str] = Field(default_factory=list)
+    errors: List[ErrorRecord] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     flags: Dict[str, Any] = Field(default_factory=dict)
     # Chat history for LLM context (list of {role, content} dicts) - matches plan.py
@@ -12113,6 +13870,20 @@ def detect_question_loop(state: "GraphState", field_name: str) -> bool:
         )
         return False
 
+    # Guardrail: Don't suppress if user provided ANY core field this turn.
+    # This handles the case where user answers a different question than asked
+    # (e.g., asked for dates, user gave origin). The user is actively engaged
+    # and providing info in their preferred order - not a loop.
+    deltas_this_turn = state.metadata.get("deltas_applied_this_turn", []) if state.metadata else []
+    core_fields_changed = [f for f in deltas_this_turn if f in CORE_FIELD_PRIORITY]
+    if core_fields_changed:
+        _debug(
+            "Loop guard: user provided other core fields, not suppressing",
+            field=field_name,
+            core_fields_provided=core_fields_changed,
+        )
+        return False
+
     threshold = settings.loop_guard_threshold
 
     # Determine effective window size based on no-progress signal
@@ -12256,10 +14027,16 @@ def get_loop_guard_mitigation(state: "GraphState", field_name: str) -> Optional[
         # Check for blocking date errors
         if state.errors:
             for err in state.errors:
-                if isinstance(err, NormalizationError) and err.code in DATE_BLOCKING_ERROR_CODES:
+                if isinstance(err, ErrorRecord):
+                    if err.severity == "blocking" or err.code in DATE_BLOCKING_ERROR_CODES:
+                        has_blocking_date_errors = True
+                        break
+                elif isinstance(err, NormalizationError) and err.code in DATE_BLOCKING_ERROR_CODES:
                     has_blocking_date_errors = True
                     break
-                if isinstance(err, str) and any(code in err for code in DATE_BLOCKING_ERROR_CODES):
+                elif isinstance(err, str) and any(
+                    code in err for code in DATE_BLOCKING_ERROR_CODES
+                ):
                     has_blocking_date_errors = True
                     break
 
@@ -12376,6 +14153,17 @@ def apply_loop_guard_mitigation(
     Returns:
         Modified state with mitigation applied
     """
+    # v7 Final v5: Disable field-switch mitigations when plan is ready
+    # Loop guard is for escaping deadlocks when missing required info;
+    # it should not fire when the plan is complete.
+    if state.metadata.get("readiness_pre", {}).get("ready_to_generate"):
+        _debug(
+            "LOOP_GUARD: skipped mitigation (ready_to_generate=True)",
+            field=field_name,
+            mitigation=mitigation,
+        )
+        return state
+
     if mitigation == "different_field":
         # Find a different required field to ask about
         state.metadata["loop_guard_skip_field"] = field_name
@@ -13065,6 +14853,102 @@ _MODEL_MAP = {
     "large": settings.openai_plan_model,
 }
 
+# v6: Call-site token accounting
+_llm_call_log: List[Dict[str, Any]] = []  # Ring buffer for recent calls
+
+
+def _log_llm_call(
+    node_name: str,
+    mode: str,
+    prompt_hash: str,
+    tokens_in: int,
+    tokens_out: int,
+    model: str,
+    request_id: Optional[str] = None,
+    cache_hit: bool = False,
+    suppressed_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Log an LLM call at the call site for v6 observability.
+
+    Returns the log entry for immediate use.
+    """
+    entry = {
+        "timestamp": time.time(),
+        "node_name": node_name,
+        "mode": mode,
+        "prompt_hash": prompt_hash[:16],
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "model": model,
+        "request_id": request_id or uuid4().hex[:8],
+        "cache_hit": cache_hit,
+        "suppressed_reason": suppressed_reason,
+    }
+
+    # Ring buffer: keep last 100 calls
+    while len(_llm_call_log) >= 100:
+        _llm_call_log.pop(0)
+    _llm_call_log.append(entry)
+
+    _debug(
+        "LLM_CALL_SITE",
+        node=node_name,
+        mode=mode,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cache_hit=cache_hit,
+        suppressed=suppressed_reason,
+    )
+
+    return entry
+
+
+def emit_turn_accounting(state: "GraphState") -> Dict[str, Any]:
+    """
+    Emit structured accounting blob at turn exit.
+
+    Aggregates call-site logs into a single turn summary.
+    """
+    # Gather LLM calls from metadata
+    llm_calls = state.metadata.get("llm_calls_this_turn", 0)
+    llm_nodes = state.metadata.get("llm_nodes_called_this_turn", [])
+    node_tokens = state.metadata.get("node_tokens", {})
+    blocked_reasons = state.metadata.get("llm_call_blocked_reason", {})
+
+    # Gather cache stats
+    cache_hits = {
+        "required_fields": state.metadata.get("required_fields_cache_hit", False),
+        "router": state.metadata.get("router_cache_hit", False),
+        "extractor": state.metadata.get("extractor_cache_hit", False),
+    }
+
+    cache_discards = state.metadata.get("cache_discards", {})
+
+    accounting = {
+        "llm_calls_this_turn": llm_calls,
+        "llm_nodes_called_this_turn": llm_nodes,
+        "node_tokens": node_tokens,
+        "cache_hits": cache_hits,
+        "cache_discards": cache_discards,
+        "llm_suppressed_reasons": blocked_reasons,
+        "parse_provenance_final": state.metadata.get("parse_provenance", "unknown"),
+        "parse_provenance_source_node": state.metadata.get("parse_provenance_source_node"),
+        "response_generation_provenance": state.metadata.get(
+            "response_generation_provenance", "unknown"
+        ),
+        "response_writer_node": state.metadata.get("response_writer_node"),
+    }
+
+    _debug("TURN_ACCOUNTING", **accounting)
+
+    return accounting
+
+
+def get_llm_call_log() -> List[Dict[str, Any]]:
+    """Get recent LLM call log entries for debugging."""
+    return list(_llm_call_log)
+
 
 async def call_llm(
     model: str,
@@ -13339,6 +15223,32 @@ async def simulate_streaming(text: str):
 
         yield token
         await asyncio.sleep(delay_ms / 1000.0)
+
+
+# Fast streaming parameters for LLM responses (no artificial delays)
+_FAST_STREAM_CHUNK_SIZE = 1500  # ~1.5KB chunks for fast delivery
+
+
+async def fast_stream_buffered(text: str):
+    """
+    Fast streaming for LLM responses that are already buffered.
+
+    When provenance is 'llm' but we have the complete text (e.g., from
+    strategy_stage0), emit in large chunks without artificial delays.
+    This prevents 15s timeout issues with longer responses.
+
+    Args:
+        text: The complete text to stream quickly.
+
+    Yields:
+        str: Large text chunks with minimal delay.
+    """
+    # Emit in large chunks for fast delivery
+    for i in range(0, len(text), _FAST_STREAM_CHUNK_SIZE):
+        chunk = text[i : i + _FAST_STREAM_CHUNK_SIZE]
+        yield chunk
+        # Minimal yield point for async context switching, no artificial delay
+        await asyncio.sleep(0)
 
 
 def _truncate_to_balanced_json(raw: str) -> Optional[str]:
@@ -13636,7 +15546,7 @@ def _record_structured_error(
     code: str,
     node: str,
     message: str,
-    severity: str = "error",
+    severity: Literal["blocking", "warning", "info"] = "warning",
 ) -> None:
     """
     Record a structured error to state.errors for proper accounting.
@@ -13649,15 +15559,15 @@ def _record_structured_error(
         code: Error code (e.g., "LLM_FAILED", "GUARD_ERROR", "VALIDATION_FAILED")
         node: Node name where error occurred
         message: Human-readable error message
-        severity: "error", "warning", or "info"
+        severity: "blocking", "warning", or "info"
     """
     state.errors.append(
-        {
-            "code": code,
-            "node": node,
-            "severity": severity,
-            "message": message,
-        }
+        ErrorRecord(
+            code=code,
+            node=node,
+            severity=severity,
+            message=message,
+        )
     )
 
 
@@ -13672,7 +15582,7 @@ def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
         code="LLM_FAILED",
         node=state.metadata.get("current_node", "unknown"),
         message=reason,
-        severity="error",
+        severity="blocking",
     )
 
     # Always provide a user-facing message - be conversational
@@ -14034,7 +15944,8 @@ async def extractor(state: GraphState) -> GraphState:
         state.flags["strategy_bootstrap_active"] = True  # BUG FIX: explicit boolean
         state.flags["fast_path"] = True
         state.flags["fast_path_field"] = "strategy_bootstrap"
-        set_response_provenance(state, "deterministic")  # For polish skipping
+        set_parse_provenance(state, "deterministic")  # Parse provenance
+        # Response generation provenance will be set by the strategy node
 
         # Set minimal trip_shape fields deterministically
         if bypass_result.get("trip_style"):
@@ -14132,6 +16043,63 @@ async def extractor(state: GraphState) -> GraphState:
     # Light mode: Core fields only (~128 tokens) - used for early/simple turns
     # Full mode: All fields (~400 tokens) - used for dense input or near-ready
     # =========================================================================
+
+    # =========================================================================
+    # v7 Final v5: TOPIC SWITCH BYPASS (skip extractor entirely)
+    # =========================================================================
+    # When user says "I wanna go diving" but question_target is "budget",
+    # skip extractor entirely and let the gate route to STRATEGY_TOPIC_SWITCH.
+    # This saves ~3,755 tokens on off-target strategy requests.
+    #
+    # Conservative order:
+    # 1. First try deterministic parse for current question_target
+    # 2. Only if that fails AND text looks like topic switch AND text is
+    #    NOT compatible with target → skip extractor
+    # =========================================================================
+    question_target = state.question_target or state.metadata.get("question_target")
+    if question_target and question_target in ("budget", "dates", "travelers", "adults"):
+        # Check if text is compatible with the current question target
+        is_compatible = text_is_compatible_with_target(text, question_target)
+
+        if not is_compatible:
+            # Check if this looks like a strategy topic switch
+            text_lower = text.lower()
+            strategy_keywords = {
+                "diving": ["diving", "scuba", "snorkel"],
+                "hiking": ["hiking", "trek", "hike"],
+                "skiing": ["skiing", "ski", "snowboard"],
+                "cycling": ["cycling", "bike", "biking"],
+                "boating": ["boating", "sailing", "boat"],
+            }
+            detected_topic = None
+            for topic, keywords in strategy_keywords.items():
+                if any(kw in text_lower for kw in keywords):
+                    detected_topic = topic
+                    break
+
+            # Check for intent verbs
+            has_intent_verb = any(
+                verb in text_lower
+                for verb in ("want", "wanna", "go", "plan", "try", "do", "add", "also")
+            )
+
+            if detected_topic and has_intent_verb:
+                _debug(
+                    "EXTRACTOR TOPIC_SWITCH_BYPASS: skipping extractor (off-target strategy)",
+                    question_target=question_target,
+                    detected_topic=detected_topic,
+                    is_compatible=is_compatible,
+                )
+                _extractor_stats["skipped_topic_switch"] = (
+                    _extractor_stats.get("skipped_topic_switch", 0) + 1
+                )
+                state.metadata["extractor_skipped_reason"] = "topic_switch_bypass"
+                state.strategy_topic = detected_topic
+                # Set minimal parsed_inputs to allow gate evaluation
+                state.parsed_inputs = parsed
+                state.metadata["extraction_path"] = "topic_switch_bypass"
+                _debug_node_exit("extractor", state)
+                return state
 
     # Determine extraction mode
     is_dense, dense_reason = _is_dense_input(text, state)
@@ -14494,6 +16462,18 @@ def normalize_inputs(state: GraphState) -> GraphState:
                     break
 
     # =========================================================================
+    # HANDLE budget_answered FLAG FROM LQA (user said "no budget"/"flexible")
+    # =========================================================================
+    # When LQA detects a flexible budget answer, it sets budget_answered: True
+    # in parsed_inputs. We need to propagate this to metadata so that
+    # _compute_missing_fields_and_target doesn't re-ask about budget.
+    if parsed.get("budget_answered"):
+        state.metadata["budget_answered"] = True
+        if parsed.get("budget_tier"):
+            state.metadata["budget_tier"] = parsed["budget_tier"]
+        _debug("Set budget_answered=True from LQA", tier=parsed.get("budget_tier"))
+
+    # =========================================================================
     # USE TripInputNormalizer FOR UNIFIED NORMALIZATION
     # =========================================================================
     # This is the SINGLE normalization pass. All field normalization, validation,
@@ -14708,6 +16688,65 @@ def normalize_inputs(state: GraphState) -> GraphState:
         updates["activity_settings"] = existing_settings
         state.metadata["trip_shape_inferred"] = trip_shape
         _debug("Inferred trip shape from user text", trip_shape=trip_shape)
+
+    # =========================================================================
+    # EXTRACT PRIVATE KEYS BEFORE _write_trip_inputs (they're metadata, not fields)
+    # =========================================================================
+    # Pop keys that start with "_" - these are metadata signals, not TripInputs fields
+    needs_date_clarify = updates.pop("_needs_date_clarify", False)
+    rejected_date_answer = updates.pop("_rejected_date_answer", None)
+
+    if needs_date_clarify:
+        state.metadata["date_clarify_mode"] = True
+        _debug("Date clarification mode enabled due to validation failure")
+
+    if rejected_date_answer:
+        state.metadata["rejected_date_answer"] = rejected_date_answer
+        # Generate user-facing message for date rejection
+        reasons = rejected_date_answer.get("rejection_reasons", [])
+        parsed_start = rejected_date_answer.get("parsed_start")
+        parsed_end = rejected_date_answer.get("parsed_end")
+        if reasons and parsed_start:
+            # Create a helpful clarification message
+            if "past" in " ".join(reasons).lower():
+                state.metadata["failed_input_message"] = (
+                    f"The dates you mentioned ({parsed_start} to {parsed_end}) include dates that "
+                    "have already passed. Could you please provide future travel dates?"
+                )
+            elif "ambiguous" in " ".join(reasons).lower():
+                state.metadata["failed_input_message"] = (
+                    f"I'm not sure if you meant {parsed_start} to {parsed_end} this year or next "
+                    "year. Could you please confirm the year?"
+                )
+            else:
+                state.metadata["failed_input_message"] = (
+                    f"I had trouble with the dates '{parsed_start}' to '{parsed_end}'. "
+                    "Could you please provide your travel dates again?"
+                )
+        _debug(
+            "📋 Stored rejected date answer for clarification reference",
+            user_text=rejected_date_answer.get("user_text", "")[:50],
+            parsed_start=parsed_start,
+            parsed_end=parsed_end,
+            reasons=reasons,
+        )
+
+    failed_inputs = updates.pop("_failed_inputs", None)
+    if failed_inputs:
+        # Store failed inputs for reference
+        existing_failed = state.metadata.get("failed_inputs", [])
+        state.metadata["failed_inputs"] = existing_failed + failed_inputs
+        # Use the first failed input's user_message as the clarification message
+        # (prioritize showing one clear message rather than overwhelming the user)
+        if not state.metadata.get("failed_input_message"):
+            first_failure = failed_inputs[0]
+            state.metadata["failed_input_message"] = first_failure.get("user_message", "")
+        for inp in failed_inputs:
+            _debug(
+                f"📋 USER INPUT FAILED AND STORED: {inp['field']}",
+                raw_value=inp.get("raw_value"),
+                reason=inp.get("reason"),
+            )
 
     # Apply all updates via the helper (this does ownership checking and deep copy)
     if updates:
@@ -15054,13 +17093,12 @@ async def _invoke_missing_fields_guard(state: GraphState, missing_fields: List[s
     except Exception as e:
         _debug_error("Missing fields guard failed", error=str(e))
         # Record error for proper accounting (errors_count)
-        state.errors.append(
-            {
-                "code": "GUARD_LLM_FAILED",
-                "node": "missing_fields_guard",
-                "severity": "warning",
-                "message": str(e),
-            }
+        _record_structured_error(
+            state,
+            code="GUARD_LLM_FAILED",
+            node="missing_fields_guard",
+            message=str(e),
+            severity="warning",
         )
         # Fallback to a simple question (deterministic recovery)
         if "destinations" in missing_fields:
@@ -15251,6 +17289,10 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
 
                 # Track question for loop guard
                 track_question_asked(state, question_target, state.last_summary)
+
+                # Set provenance for final response tracking (pre-core deterministic)
+                state.metadata["response_writer_node"] = f"specialist:{name}:pre_core"
+                state.metadata["response_generation_provenance"] = "template"
 
                 _debug(
                     f"✅ PRE-CORE DETERMINISTIC: {name} → {question_target}",
@@ -15552,7 +17594,17 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             template_response = _get_template_response(question_target, state.strategy_topic)
             if template_response:
                 _template_stats["template_hits"] += 1
-                state.last_summary = template_response["question"]
+
+                # Check if there's a failed input message to prepend
+                failed_msg = state.metadata.get("failed_input_message")
+                if failed_msg:
+                    state.last_summary = f"{failed_msg}\n\n{template_response['question']}"
+                    # Clear the message so it's not repeated on next turn
+                    state.metadata.pop("failed_input_message", None)
+                    _debug("Prepended failed_input_message to template response")
+                else:
+                    state.last_summary = template_response["question"]
+
                 state.suggested_responses = template_response["suggestions"]
                 set_question_target(state, question_target, source=f"specialist:{name}:template")
 
@@ -15576,6 +17628,10 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     question_target, question_target
                 )
                 state.metadata["from_template"] = True  # Flag for response_polish to skip
+
+                # Set provenance for final response tracking (template path)
+                state.metadata["response_writer_node"] = f"specialist:{name}:template"
+                state.metadata["response_generation_provenance"] = "template"
 
                 _debug(
                     "✅ TEMPLATE PATH: Required fields using template (LLM BYPASSED)",
@@ -15606,16 +17662,35 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
         cache_key: Optional[str] = None
         core_fields = _get_core_fields_state(state.trip_inputs)
         user_intent = state.metadata.get("user_intent", "detailed_planner")
-        cache_key = _compute_cache_key("required_fields", core_fields, user_intent, "")
+        # Include budget_answered flag in cache key to avoid returning stale
+        # "what's your budget?" responses after user said "no specific budget"
+        budget_answered_str = "budget_answered" if state.metadata.get("budget_answered") else ""
+        cache_key = _compute_cache_key(
+            "required_fields", core_fields, user_intent, budget_answered_str
+        )
         cached = _get_cached_response(_follow_up_cache, cache_key, state)
         if cached is not None:
             _debug_cache_hit("required_fields", cache_key[:16])
-            state.last_summary = cached.get("assistant_message", "")
+            cached_message = cached.get("assistant_message", "")
+
+            # Check if there's a failed input message to prepend
+            failed_msg = state.metadata.get("failed_input_message")
+            if failed_msg:
+                state.last_summary = f"{failed_msg}\n\n{cached_message}"
+                # Clear the message so it's not repeated on next turn
+                state.metadata.pop("failed_input_message", None)
+                _debug("Prepended failed_input_message to cached response")
+            else:
+                state.last_summary = cached_message
+
             state.question_target = cached.get("question_target")
             state.suggested_responses = cached.get("suggested_responses", [])
             summary_snippet = state.last_summary[:50] if state.last_summary else ""
             _debug(f"Required fields cache hit: {summary_snippet}")
             state.metadata["required_fields_path"] = "cache"
+            # Set provenance for final response tracking (cached path)
+            state.metadata["response_writer_node"] = f"specialist:{name}:cache"
+            state.metadata["response_generation_provenance"] = "cached"
             _debug_node_exit(f"specialist:{name}", state)
             return state
     else:
@@ -15933,7 +18008,17 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
 
             # Validate the updated trip_inputs
             TRIP_VALIDATOR.validate(state.trip_inputs.model_dump())
-            state.last_summary = j.get("assistant_message", "")
+            llm_message = j.get("assistant_message", "")
+
+            # Check if there's a failed input message to prepend
+            failed_msg = state.metadata.get("failed_input_message")
+            if failed_msg:
+                state.last_summary = f"{failed_msg}\n\n{llm_message}"
+                # Clear the message so it's not repeated on next turn
+                state.metadata.pop("failed_input_message", None)
+                _debug("Prepended failed_input_message to LLM response")
+            else:
+                state.last_summary = llm_message
 
             # Early safety snippet injection for international travel
             # This triggers as soon as we have destination+origin, not just at summarize
@@ -15984,6 +18069,10 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
 
             state.metadata["model_used"] = llm_config["model_hint"]
             state.metadata["token_estimate"] = _count_tokens(out)
+
+            # Set provenance for final response tracking (LLM path)
+            state.metadata["response_writer_node"] = f"specialist:{name}"
+            state.metadata["response_generation_provenance"] = "llm"
 
             # Cache the response for required_fields node
             if name == "required_fields" and cache_key is not None:
@@ -16106,16 +18195,26 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
     Provides immediate value (destination archetypes + mini itinerary) with
     a single clarifying question, before core fields are complete.
 
-    This is triggered by the STRATEGY_PRE_CORE_VALUE gate when:
-    - Strategy topic detected (hiking, skiing, etc.)
-    - Core fields missing
-    - No destinations extracted
-    - User didn't ask for "questions only"
+    This is triggered by:
+    - STRATEGY_PRE_CORE_VALUE gate: topic detected, no destinations
+    - STRATEGY_PRE_CORE_VALUE_WITH_DEST gate: topic + destinations present
+
+    When destinations are present (strategy_dest_known=True), generates
+    destination-specific guidance and asks for dates.
     """
     ti = state.trip_inputs
-    # Canonicalize question_target at node entry (use "dates" not "start_date")
-    raw_target = state.question_target or "dates"
-    question_target = canonicalize_question_target(raw_target)
+
+    # Check if this is destination-known mode
+    dest_known_mode = state.metadata.get("strategy_dest_known", False)
+    destinations = ti.destinations or []
+
+    # For destination-known mode, always ask dates
+    if dest_known_mode and destinations:
+        question_target = "dates"
+    else:
+        # Canonicalize question_target at node entry (use "dates" not "start_date")
+        raw_target = state.question_target or "dates"
+        question_target = canonicalize_question_target(raw_target)
 
     # Get question guidance (uses canonical keys)
     question_guidance = _STRATEGY_PRE_CORE_QUESTION_GUIDANCE.get(
@@ -16130,6 +18229,16 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
     user_tone = state.metadata.get("user_tone", "neutral")
     tone_instruction = ToneAdapter.get_instruction(user_intent, user_tone)
 
+    # Build destination context for dest-known mode
+    destination_context = ""
+    if dest_known_mode and destinations:
+        destination_context = (
+            f"The user has already chosen: {', '.join(destinations)}. "
+            "Provide destination-specific guidance for this location. "
+            "Include details about: best areas/regions, seasonal considerations, "
+            "local conditions, and practical tips specific to this destination."
+        )
+
     # Load the pre-core prompt with Jinja2 templating
     try:
         template = _JINJA_ENV.get_template("strategy_pre_core.txt")
@@ -16141,6 +18250,9 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
             missing_core_fields=", ".join(missing_core) if missing_core else "none",
             tone_instruction=tone_instruction,
             trip_inputs=ti.model_dump_json(exclude_none=True),
+            destination_context=destination_context,
+            destinations=destinations,
+            dest_known_mode=dest_known_mode,
         )
     except FileNotFoundError:
         # Fallback to required_fields if prompt not found
@@ -16154,6 +18266,10 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
     timeout = settings.llm_timeout_specialist
     attempts = settings.llm_max_retries
     last_error = None
+
+    # Record token usage for observability
+    tokens = _estimate_prompt_tokens(prompt, state.parsed_inputs)
+    _record_node_tokens(state, "strategy_stage0", tokens, model=llm_config["model_hint"])
 
     # LLM Budget Gate: Return fallback if budget exhausted
     if not can_call_llm(state, "strategy_stage0"):
@@ -16251,6 +18367,16 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
 
             _debug_suggestions(state.suggested_responses, source="strategy_stage0")
 
+            # =========================================================================
+            # STORE SUGGESTIONS WITH FIELD KEY (P0 fix for suggestion-echo)
+            # =========================================================================
+            # Store suggestions using the same machinery as required_fields so that
+            # LQA prepass can match "June to November" as a suggestion echo.
+            # Must use field="dates" to match question_target for date questions.
+            # =========================================================================
+            effective_field = canonicalize_question_target(question_target)
+            store_suggestions_with_field(state, state.suggested_responses, effective_field)
+
             # Track loop guard for this question
             _track_strategy_pre_core_question(state, question_target)
 
@@ -16259,6 +18385,23 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
             state.metadata["strategy_stage0_completed"] = True
             state.metadata["strategy_stage0_topic"] = topic
             state.metadata["model_used"] = llm_config["model_hint"]
+
+            # =========================================================================
+            # SET LIFECYCLE STATE (P0 fix for stage0 loop)
+            # =========================================================================
+            # Set last_strategy_topic and stage0_completed_sig to prevent re-firing.
+            # The signature includes topic + destinations + origin hash so changing
+            # destinations or origin allows stage0 to run again.
+            # =========================================================================
+            state.metadata["last_strategy_topic"] = topic
+            origin = state.trip_inputs.origin
+            stage0_sig = GateEvaluator._compute_stage0_signature(topic, destinations, origin)
+            state.metadata["stage0_completed_sig"] = stage0_sig
+            state.metadata["last_stage0_question_target"] = question_target
+
+            # Set provenance for final response tracking
+            state.metadata["response_writer_node"] = "strategy_node:stage0"
+            state.metadata["response_generation_provenance"] = "llm"
 
             _debug(
                 "✅ Stage 0 completed",
@@ -16342,18 +18485,95 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
         ),
     }
 
-    fallback_response = topic_templates.get(
-        topic,
-        (
-            "Sounds like an exciting trip idea!\n\n"
-            "To help you plan the perfect adventure, I'll need a few details.\n\n"
-            "When are you thinking of traveling?"
-        ),
-    )
+    # Destination-known mode: generate destination-specific fallback
+    if dest_known_mode and destinations:
+        dest_name = destinations[0] if destinations else "your destination"
+        dest_topic_templates = {
+            "diving": (
+                f"Excellent choice! {dest_name} offers incredible diving opportunities.\n\n"
+                "Here's what makes it special:\n"
+                "- **Pristine reefs** - World-class visibility and marine life\n"
+                "- **Best conditions** - Varies by season, so timing matters\n"
+                "- **Options** - Liveaboard vs resort-based diving\n"
+                "- **Experience levels** - Sites for beginners to advanced\n\n"
+                "When are you thinking of going? The season really impacts conditions."
+            ),
+            "hiking": (
+                f"Great pick! {dest_name} has amazing hiking trails.\n\n"
+                "Key things to know:\n"
+                "- **Trail variety** - Routes for all fitness levels\n"
+                "- **Seasonal access** - Weather affects trail conditions\n"
+                "- **Permits** - Some routes require advance booking\n"
+                "- **Altitude** - May need acclimatization time\n\n"
+                "When are you planning to hike? Season affects trail access."
+            ),
+            "skiing": (
+                f"Awesome! {dest_name} is a fantastic ski destination.\n\n"
+                "What to expect:\n"
+                "- **Terrain** - Varied runs for all skill levels\n"
+                "- **Snow season** - Peak conditions vary by month\n"
+                "- **Lift access** - Multiple areas to explore\n"
+                "- **Off-piste** - Options for advanced skiers\n\n"
+                "When are you thinking of skiing? Season matters for snow quality."
+            ),
+            "cycling": (
+                f"Perfect! {dest_name} offers fantastic cycling.\n\n"
+                "Here's the overview:\n"
+                "- **Routes** - Scenic roads and dedicated paths\n"
+                "- **Terrain** - Mix of flat and challenging climbs\n"
+                "- **Weather** - Best conditions vary by season\n"
+                "- **Bike rentals** - Quality bikes available locally\n\n"
+                "When are you thinking of cycling? Weather is key."
+            ),
+            "boating": (
+                f"Wonderful! {dest_name} is beautiful for sailing.\n\n"
+                "Key considerations:\n"
+                "- **Waters** - Calm harbors and open passages\n"
+                "- **Season** - Wind and weather patterns vary\n"
+                "- **Charter options** - Bareboat or crewed\n"
+                "- **Island-hopping** - Multiple stops possible\n\n"
+                "When are you thinking of sailing? Season affects conditions."
+            ),
+        }
+        fallback_response = dest_topic_templates.get(
+            topic,
+            (
+                f"Exciting! {dest_name} is a great choice for your trip.\n\n"
+                "I'll help you plan an amazing adventure there.\n\n"
+                "When are you thinking of traveling?"
+            ),
+        )
+    else:
+        fallback_response = topic_templates.get(
+            topic,
+            (
+                "Sounds like an exciting trip idea!\n\n"
+                "To help you plan the perfect adventure, I'll need a few details.\n\n"
+                "When are you thinking of traveling?"
+            ),
+        )
 
     state.last_summary = fallback_response
     set_question_target(state, "dates", source="strategy_stage0_fallback")
     state.suggested_responses = _generate_date_suggestions()
+
+    # =========================================================================
+    # STORE SUGGESTIONS WITH FIELD KEY (P0 fix for suggestion-echo)
+    # =========================================================================
+    store_suggestions_with_field(state, state.suggested_responses, "dates")
+
+    # =========================================================================
+    # SET LIFECYCLE STATE (P0 fix for stage0 loop)
+    # =========================================================================
+    state.metadata["last_strategy_topic"] = topic
+    origin = state.trip_inputs.origin
+    stage0_sig = GateEvaluator._compute_stage0_signature(topic, destinations, origin)
+    state.metadata["stage0_completed_sig"] = stage0_sig
+    state.metadata["last_stage0_question_target"] = "dates"
+
+    # Set provenance for final response tracking (template/deterministic fallback)
+    state.metadata["response_writer_node"] = "strategy_node:stage0:fallback"
+    state.metadata["response_generation_provenance"] = "template"
 
     _debug_suggestions(state.suggested_responses, source="strategy_stage0_fallback")
     _debug_node_exit("strategy_node:stage0:fallback", state)
@@ -16419,6 +18639,29 @@ async def strategy_node(state: GraphState) -> GraphState:
     # inspiration before collecting details.
     is_stage0 = state.metadata.get("strategy_stage") == 0
     if is_stage0:
+        # =====================================================================
+        # LIFECYCLE SUPPRESSION CHECK (P0 fix: router path bypass)
+        # =====================================================================
+        # The gate path checks lifecycle in GateEvaluator, but router LLM path
+        # bypasses that. Apply the same check here to prevent re-running stage0
+        # for the same topic+destinations+origin combination.
+        # =====================================================================
+        ti = state.trip_inputs
+        destinations = ti.destinations or []
+        origin = ti.origin
+        current_sig = GateEvaluator._compute_stage0_signature(topic, destinations, origin)
+        completed_sig = state.metadata.get("stage0_completed_sig")
+        if completed_sig == current_sig:
+            _debug(
+                "strategy_node stage0 skipped: lifecycle suppression (router path)",
+                current_sig=current_sig,
+                completed_sig=completed_sig,
+                reason="stage0 already completed for this topic+destinations+origin",
+            )
+            # Fall through to required_fields instead of re-running stage0
+            state.metadata["strategy_stage0_skipped_lifecycle"] = True
+            return await required_fields_node(state)
+
         _debug(
             "📋 STRATEGY STAGE 0: Pre-core value-first mode",
             topic=topic,
@@ -16888,10 +19131,14 @@ def validate_and_merge(state: GraphState) -> GraphState:
 
         # Check for blocking date errors in state.errors
         for err in state.errors:
-            if isinstance(err, NormalizationError) and err.code in DATE_BLOCKING_ERROR_CODES:
+            if isinstance(err, ErrorRecord):
+                if err.severity == "blocking" or err.code in DATE_BLOCKING_ERROR_CODES:
+                    has_blocking_date_errors = True
+                    break
+            elif isinstance(err, NormalizationError) and err.code in DATE_BLOCKING_ERROR_CODES:
                 has_blocking_date_errors = True
                 break
-            if isinstance(err, str) and any(code in err for code in DATE_BLOCKING_ERROR_CODES):
+            elif isinstance(err, str) and any(code in err for code in DATE_BLOCKING_ERROR_CODES):
                 has_blocking_date_errors = True
                 break
 
@@ -17024,15 +19271,18 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
     if not settings.enable_response_polish:
         return True, "feature_disabled"
 
-    # MVP OPTIMIZATION: Use response_provenance as single-source-of-truth
-    # This is the preferred method - decoupled from routing flags
-    provenance = get_response_provenance(s)
-    if provenance == "template":
+    # MVP OPTIMIZATION: Use response_generation_provenance as single-source-of-truth
+    # This checks how the RESPONSE was generated (not how input was parsed)
+    # Uses final-writer-wins semantics from response_writer_node
+    response_gen_provenance = s.metadata.get("response_generation_provenance")
+    if response_gen_provenance == "template":
         return True, "provenance:template"
-    if provenance == "deterministic":
+    if response_gen_provenance == "deterministic":
         return True, "provenance:deterministic"
-    if provenance == "codegen":
+    if response_gen_provenance == "codegen":
         return True, "provenance:codegen"
+    if response_gen_provenance == "cached":
+        return True, "provenance:cached"
 
     # Short-circuited responses are already template-based and don't need polish
     if s.flags.get("short_circuit"):
@@ -17724,6 +19974,49 @@ def _maybe_append_safety_snippet(state: GraphState) -> str:
 def summarize(state: GraphState) -> GraphState:
     """Optional micro-summarizer node."""
     _debug_node_entry("summarize", state)
+    # Track if we generated a fallback response
+    generated_fallback = False
+
+    # =========================================================================
+    # READY-TO-GENERATE STATE TRANSITION (v14 - stale budget loop fix)
+    # =========================================================================
+    # When plan_just_became_ready is True, we need to:
+    # 1. Clear the stale last_summary (which was asking for fields)
+    # 2. Clear stale suggested_responses
+    # 3. Generate a fresh "ready to generate" message
+    # This prevents the bug where budget questions keep repeating after
+    # user provides the budget and plan is complete.
+    # =========================================================================
+    plan_just_ready = state.metadata.get("plan_just_became_ready", False)
+    if plan_just_ready:
+        ti = state.trip_inputs
+        destinations = ti.destinations or []
+        dest_str = ", ".join(destinations) if destinations else "your destination"
+
+        # Generate fresh ready-to-generate message
+        state.last_summary = (
+            f"Great news! I have everything I need to plan your trip to {dest_str}. "
+            "Would you like me to generate your personalized itinerary now?"
+        )
+        state.suggested_responses = [
+            "Yes, generate my itinerary!",
+            "I want to add more details first",
+            "Show me hotel options",
+        ]
+        state.question_target = None  # Clear stale question target
+        state.metadata["question_target"] = None  # SSoT sync
+        state.metadata["response_writer_node"] = "summarize:ready"
+        state.metadata["response_generation_provenance"] = "deterministic"
+        # Clear the flag so it doesn't fire again
+        state.metadata["plan_just_became_ready"] = False
+
+        _debug(
+            "Summarize: generated ready-to-generate message (plan just became ready)",
+            destinations=dest_str,
+        )
+        _debug_node_exit("summarize", state)
+        return state
+
     # If no assistant message, generate a default follow-up question
     if not state.last_summary:
         trip_inputs_dict = state.trip_inputs.model_dump(exclude_none=True)
@@ -17741,6 +20034,7 @@ def summarize(state: GraphState) -> GraphState:
         )
         if default_question:
             state.last_summary = default_question
+            generated_fallback = True
             if asked_field:
                 state.metadata["last_question_field"] = asked_field
                 _debug(
@@ -17762,6 +20056,11 @@ def summarize(state: GraphState) -> GraphState:
     # Append safety snippet for international travel if not already shown
     if state.last_summary:
         state.last_summary = _maybe_append_safety_snippet(state)
+
+    # Set provenance if summarize generated the fallback response
+    if generated_fallback:
+        state.metadata["response_writer_node"] = "summarize"
+        state.metadata["response_generation_provenance"] = "deterministic"
 
     _debug_node_exit("summarize", state)
     return state
@@ -18248,6 +20547,10 @@ def short_circuit_responder(state: GraphState) -> GraphState:
     # Set intent for logging purposes
     state.intent = f"short_circuit:{sc_type}"
 
+    # Set provenance for final response tracking (deterministic/template path)
+    state.metadata["response_writer_node"] = "short_circuit_responder"
+    state.metadata["response_generation_provenance"] = "deterministic"
+
     _debug_node_exit("short_circuit_responder", state)
     return state
 
@@ -18532,6 +20835,7 @@ _graph.add_conditional_edges(
 # Conditional edge: normalize_inputs → router OR short_circuit_responder OR specialist nodes
 # GateEvaluator can route directly to specialist nodes via KEYWORD_HEURISTIC, QUESTION_KEYWORD,
 # or SCORING_ROUTER gates, bypassing the router LLM entirely.
+# READY_NO_FIELDS gate routes directly to summarize when all fields are complete.
 _graph.add_conditional_edges(
     "normalize_inputs",
     route_after_normalize,
@@ -18547,6 +20851,7 @@ _graph.add_conditional_edges(
         "strategy_node": "strategy_node",
         "correction_node": "correction_node",
         "general_node": "general_node",
+        "summarize": "summarize",
     },
 )
 
@@ -19169,14 +21474,31 @@ async def run_turn(
     # =========================================================================
     # LLM BUDGET: Reset per-turn counters
     # =========================================================================
-    # TODO: Rename llm_calls_this_turn -> llm_budget_used after tests pass
-    metadata["llm_calls_this_turn"] = 0
+    metadata["llm_calls_this_turn"] = 0  # Integer counter for LLM call budget
     metadata["llm_call_blocked_reason"] = {}  # v5: dict for per-node tracking
     metadata["llm_nodes_called_this_turn"] = []  # v5: track which nodes called LLM
     metadata["deltas_applied_this_turn"] = []  # v5: track field changes this turn
     metadata["response_source_node"] = None  # v5: first node to produce response
-    metadata["response_provenance"] = None  # v5: provenance of response
+    metadata["response_generation_provenance"] = None  # v5: response generation provenance
     # Note: llm_call_blocked_count is cumulative (not reset per turn)
+
+    # =========================================================================
+    # v7 Final v5: Reset per-turn metadata keys to avoid stale overrides
+    # =========================================================================
+    # These keys are turn-scoped and must be cleared to prevent previous-turn
+    # state from leaking into routing/scoring decisions.
+    metadata.pop("answered_question_target_this_turn", None)
+    metadata.pop("answered_question_id_this_turn", None)
+    metadata.pop("suggestion_target_override", None)
+    metadata.pop("extractor_skipped_reason", None)
+    metadata.pop("response_writer_node", None)
+    metadata.pop("parse_provenance", None)
+    metadata.pop("response_text_hash", None)  # Reset for set_final_response
+
+    # =========================================================================
+    # V12: Initialize per-turn instrumentation (node journal, tripwires)
+    # =========================================================================
+    init_turn_instrumentation(metadata)
 
     # Build input state
     # Reset turn-specific flags to prevent stale state from persisting
@@ -19635,7 +21957,9 @@ async def run_turn(
             gate_result=gate_result_snapshot,
             executed_node=executed_node,
             redirect_reason=redirect_reason,
-            response_provenance=result_meta.get("response_provenance", "unknown"),
+            response_generation_provenance=result_meta.get(
+                "response_generation_provenance", "unknown"
+            ),
             question_target_out=result.question_target,
             deltas_applied=result_meta.get("deltas_applied_this_turn", []),
             llm_nodes_called_this_turn=result_meta.get("llm_nodes_called_this_turn", []),
@@ -19656,7 +21980,7 @@ async def run_turn(
             gate_destination=gate_result_snapshot.destination,
             executed_node=executed_node,
             redirect_reason=redirect_reason,
-            response_provenance=routing_decision_final.response_provenance,
+            response_generation_provenance=routing_decision_final.response_generation_provenance,
             question_target_out=routing_decision_final.question_target_out,
             deltas_applied=routing_decision_final.deltas_applied,
             llm_nodes_called=routing_decision_final.llm_nodes_called_this_turn,
@@ -19675,6 +21999,46 @@ async def run_turn(
             node_name="run_turn_exit",
             state=result,
         )
+
+    # ==========================================================================
+    # v7 Final v5: FINALIZE RESPONSE PROVENANCE
+    # ==========================================================================
+    # Set final response provenance with hash-guarded overwrite to ensure
+    # provenance accurately reflects the final response text.
+    # Uses response_writer_node and response_generation_provenance set by
+    # the node that produced the response (e.g., strategy_stage0, specialist).
+    # ==========================================================================
+    if result.last_summary:
+        writer_node = (
+            result.metadata.get("response_writer_node")
+            or result.metadata.get("response_source_node")
+            or "unknown"
+        )
+        provenance_kind = result.metadata.get("response_generation_provenance") or "unknown"
+        set_final_response(
+            result,
+            result.last_summary,
+            writer_node,
+            provenance_kind,
+        )
+
+        # ==========================================================================
+        # END-OF-TURN PROVENANCE SUMMARY (debugging guard)
+        # ==========================================================================
+        # Single-line summary for easy grep/correlation of provenance regressions
+        prev_hash = result.metadata.get("response_text_hash")
+        _debug(
+            "PROVENANCE_SUMMARY",
+            response_writer_node=result.metadata.get("response_writer_node"),
+            response_generation_provenance=result.metadata.get("response_generation_provenance"),
+            response_text_hash_changed=(prev_hash is not None),
+            parse_provenance=result.metadata.get("parse_provenance"),
+        )
+
+    # ==========================================================================
+    # V12: END-OF-TURN JOURNAL DUMP (duplication detection)
+    # ==========================================================================
+    dump_turn_journal(result)
 
     # ==========================================================================
     # QUESTION_TARGET TRIPWIRE: Detect direct writes that bypassed set_question_target
@@ -19796,6 +22160,34 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     # Clear routing_reason (set fresh each turn by gate evaluator)
     metadata.pop("routing_reason", None)
 
+    # =========================================================================
+    # LLM BUDGET: Reset per-turn counters (must match run_turn)
+    # =========================================================================
+    metadata["llm_calls_this_turn"] = 0  # Integer counter for LLM call budget
+    metadata["llm_call_blocked_reason"] = {}  # v5: dict for per-node tracking
+    metadata["llm_nodes_called_this_turn"] = []  # v5: track which nodes called LLM
+    metadata["deltas_applied_this_turn"] = []  # v5: track field changes this turn
+    metadata["response_source_node"] = None  # v5: first node to produce response
+    metadata["response_generation_provenance"] = None  # v5: response generation provenance
+
+    # =========================================================================
+    # v7 Final v5: Reset per-turn metadata keys to avoid stale overrides
+    # =========================================================================
+    # These keys are turn-scoped and must be cleared to prevent previous-turn
+    # state from leaking into routing/scoring decisions.
+    metadata.pop("answered_question_target_this_turn", None)
+    metadata.pop("answered_question_id_this_turn", None)
+    metadata.pop("suggestion_target_override", None)
+    metadata.pop("extractor_skipped_reason", None)
+    metadata.pop("response_writer_node", None)
+    metadata.pop("parse_provenance", None)
+    metadata.pop("response_text_hash", None)  # Reset for set_final_response
+
+    # =========================================================================
+    # V12: Initialize per-turn instrumentation (node journal, tripwires)
+    # =========================================================================
+    init_turn_instrumentation(metadata)
+
     # Build input state
     # Reset turn-specific flags to prevent stale state from persisting
     incoming_flags = deepcopy(session_state.get("flags", {}))
@@ -19885,31 +22277,88 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     # Get the final assistant message to stream
     final_message = result.last_summary or ""
 
-    # Determine if this was a short-circuit or polish-skipped path
-    polish_skipped = result_meta.get("polish_skipped_reason")
+    # ==========================================================================
+    # FINALIZE RESPONSE PROVENANCE (before streaming decision)
+    # ==========================================================================
+    # Set final response provenance BEFORE streaming decision so the decision
+    # uses the correct, finalized provenance value.
+    # ==========================================================================
+    if final_message:
+        writer_node = (
+            result_meta.get("response_writer_node")
+            or result_meta.get("response_source_node")
+            or "unknown"
+        )
+        provenance_kind = result_meta.get("response_generation_provenance") or "unknown"
+        set_final_response(
+            result,
+            final_message,
+            writer_node,
+            provenance_kind,
+        )
+        # Re-read result_meta after finalization
+        result_meta = result.metadata or {}
+
+        # ==========================================================================
+        # END-OF-TURN PROVENANCE SUMMARY (debugging guard)
+        # ==========================================================================
+        prev_hash = result_meta.get("response_text_hash")
+        _debug(
+            "PROVENANCE_SUMMARY",
+            response_writer_node=result_meta.get("response_writer_node"),
+            response_generation_provenance=result_meta.get("response_generation_provenance"),
+            response_text_hash_changed=(prev_hash is not None),
+            parse_provenance=result_meta.get("parse_provenance"),
+        )
+
+    # ==========================================================================
+    # V12: END-OF-TURN JOURNAL DUMP (duplication detection)
+    # ==========================================================================
+    dump_turn_journal(result)
+
+    # Determine if this was a deterministic/template/codegen response (simulated streaming)
+    # or an LLM response (real-time streaming behavior)
     is_short_circuit = bool(result_flags.get("short_circuit"))
+    response_gen_provenance = result_meta.get("response_generation_provenance", "unknown")
+
+    # Use finalized response_generation_provenance to decide streaming mode
+    # LLM responses should NOT use simulated streaming (which adds artificial delays)
+    is_deterministic_response = response_gen_provenance in (
+        "template",
+        "deterministic",
+        "codegen",
+        "cached",
+    )
 
     # Stream the message
     if final_message:
-        if polish_skipped or is_short_circuit:
-            # Simulated streaming for code-generated messages
+        if is_short_circuit or is_deterministic_response:
+            # Simulated streaming for code-generated/template messages
             _debug(
-                "Simulating streaming for code-generated response",
-                reason=polish_skipped or "short_circuit",
+                "Simulating streaming for non-LLM response",
+                reason=(
+                    f"provenance:{response_gen_provenance}"
+                    if is_deterministic_response
+                    else "short_circuit"
+                ),
             )
             async for token in simulate_streaming(final_message):
                 yield {"type": "token", "data": token}
         else:
-            # For LLM-polished responses, we already have the complete response
-            # (since we ran the full graph). Stream it with simulated timing
-            # to provide consistent UX.
-            #
-            # Note: True LLM streaming would require restructuring the graph
-            # to run response_polish as a separate streaming call. For now,
-            # we simulate to maintain UX consistency.
-            _debug("Simulating streaming for polished response")
-            async for token in simulate_streaming(final_message):
-                yield {"type": "token", "data": token}
+            # =====================================================================
+            # FAST STREAMING FOR LLM RESPONSES (P1 fix for 15s timeout)
+            # =====================================================================
+            # For LLM responses where we have buffered text (e.g., strategy_stage0),
+            # use fast_stream_buffered instead of simulate_streaming to avoid
+            # artificial delays that can cause 15s timeout with longer responses.
+            # =====================================================================
+            _debug(
+                "Fast streaming LLM response",
+                provenance=response_gen_provenance,
+                response_length=len(final_message),
+            )
+            async for chunk in fast_stream_buffered(final_message):
+                yield {"type": "token", "data": chunk}
 
     # Build final response (same as run_turn)
     resp = {

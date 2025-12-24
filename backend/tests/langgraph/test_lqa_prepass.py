@@ -116,6 +116,80 @@ class TestLqaFieldParsers:
         assert result is not None
         assert result["budget_delta"] == 2000.0
 
+    def test_parse_budget_under_amount(self):
+        """Should parse 'under $X' format."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("under $2,000", state)
+        assert result is not None
+        assert result["budget_delta"] == 2000.0
+
+    def test_parse_budget_around_amount(self):
+        """Should parse 'around $X' format."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("around $1,500", state)
+        assert result is not None
+        assert result["budget_delta"] == 1500.0
+
+    def test_parse_budget_max_amount(self):
+        """Should parse 'max $X' format."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("max $3000", state)
+        assert result is not None
+        assert result["budget_delta"] == 3000.0
+
+    def test_parse_budget_less_than(self):
+        """Should parse 'less than $X' format."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("less than $5000", state)
+        assert result is not None
+        assert result["budget_delta"] == 5000.0
+
+    def test_parse_budget_no_budget(self):
+        """Should handle 'no budget' as answered but no value."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("no budget", state)
+        assert result is not None
+        assert result.get("budget_answered") is True
+        assert result.get("budget_delta") is None
+
+    def test_parse_budget_flexible(self):
+        """Should handle 'flexible' as answered but no value."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("flexible budget", state)
+        assert result is not None
+        assert result.get("budget_answered") is True
+
+    def test_parse_budget_no_limit(self):
+        """Should handle 'no limit' as answered but no value."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("no limit", state)
+        assert result is not None
+        assert result.get("budget_answered") is True
+
+    def test_parse_budget_luxury_tier(self):
+        """Should handle 'luxury' and set budget tier."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("luxury", state)
+        assert result is not None
+        assert result.get("budget_answered") is True
+        assert result.get("budget_tier") == "luxury"
+
+    def test_parse_budget_budget_friendly(self):
+        """Should handle 'budget-friendly' and set budget tier."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("budget-friendly", state)
+        assert result is not None
+        assert result.get("budget_answered") is True
+        assert result.get("budget_tier") == "budget"
+
+    def test_parse_budget_mid_range(self):
+        """Should handle 'mid-range' and set budget tier."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_budget_answer("mid-range", state)
+        assert result is not None
+        assert result.get("budget_answered") is True
+        assert result.get("budget_tier") == "moderate"
+
     def test_parse_duration_days(self):
         """Should parse day duration."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
@@ -393,6 +467,38 @@ class TestLqaParserEdgeCases:
         assert "end_date_hint" in result
         # Last week of December should be Dec 25-31
         assert result["end_date_hint"].endswith("-12-31")
+
+    def test_parse_date_bare_month_name(self):
+        """Should parse bare month names like 'December' as full month range."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_date_answer("December", state)
+        assert result is not None
+        assert "start_date_hint" in result
+        assert "end_date_hint" in result
+        # December should be Dec 01 to Dec 31
+        assert result["start_date_hint"].endswith("-12-01")
+        assert result["end_date_hint"].endswith("-12-31")
+
+    def test_parse_date_bare_month_january(self):
+        """Should parse 'January' as full month range."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_date_answer("January", state)
+        assert result is not None
+        assert "start_date_hint" in result
+        assert "end_date_hint" in result
+        assert result["start_date_hint"].endswith("-01-01")
+        assert result["end_date_hint"].endswith("-01-31")
+
+    def test_parse_date_bare_month_abbreviated(self):
+        """Should parse abbreviated month names like 'jan' or 'feb'."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())
+        result = _parse_date_answer("jan", state)
+        assert result is not None
+        assert result["start_date_hint"].endswith("-01-01")
+
+        result = _parse_date_answer("feb", state)
+        assert result is not None
+        assert result["start_date_hint"].endswith("-02-01")
 
     def test_parse_budget_euro_symbol(self):
         """Should parse euro symbol budgets like €2000."""

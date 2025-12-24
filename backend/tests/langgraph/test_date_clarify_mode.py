@@ -33,6 +33,7 @@ from app.plan_graph import (
     lqa_prepass,
     validate_and_merge,
 )
+from app.schemas import ErrorRecord
 
 
 class TestCanonicalizeQuestionTarget:
@@ -238,8 +239,15 @@ class TestGenerateBlockedOnDateErrors:
             ),
             metadata={},
             flags={"generate_requested": True},
-            # Errors stored as strings with error codes embedded
-            errors=[f"dates: {DateErrorCode.AMBIGUOUS_YEAR} - Date range straddles today"],
+            # Errors stored as ErrorRecord with blocking severity
+            errors=[
+                ErrorRecord(
+                    code=DateErrorCode.AMBIGUOUS_YEAR,
+                    node="normalize_inputs",
+                    severity="blocking",
+                    message="Date range straddles today",
+                )
+            ],
         )
 
         result = GateEvaluator.evaluate(state)
@@ -301,8 +309,15 @@ class TestDateClarifyModeLifecycle:
             ),
             metadata={"date_clarify_mode": True},
             flags={},
-            # Errors stored as strings with error codes embedded
-            errors=[f"dates: {DateErrorCode.AMBIGUOUS_YEAR} - Date range straddles today"],
+            # Errors stored as ErrorRecord with blocking severity
+            errors=[
+                ErrorRecord(
+                    code=DateErrorCode.AMBIGUOUS_YEAR,
+                    node="normalize_inputs",
+                    severity="blocking",
+                    message="Date range straddles today",
+                )
+            ],
         )
 
         result = validate_and_merge(state)
@@ -321,8 +336,15 @@ class TestLoopGuardDateEscalation:
             trip_inputs=TripInputs(),
             metadata={"date_clarify_mode": True},
             flags={},
-            # Errors stored as strings with error codes embedded
-            errors=[f"dates: {DateErrorCode.AMBIGUOUS_YEAR} - Test"],
+            # Errors stored as ErrorRecord with blocking severity
+            errors=[
+                ErrorRecord(
+                    code=DateErrorCode.AMBIGUOUS_YEAR,
+                    node="normalize_inputs",
+                    severity="blocking",
+                    message="Test",
+                )
+            ],
             loop_guard={},
         )
 

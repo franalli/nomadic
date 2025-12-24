@@ -236,8 +236,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
-    // Show suggestions only when no user messages yet
-    const showSuggestions = !hasUserMessage && !isLoadingHistory;
+    // Show suggestions only when no user messages yet, not generating, not ready to generate, and not in planning mode (hasBranches)
+    const showSuggestions = !hasUserMessage && !isLoadingHistory && !hasBranches && !isGenerating && !readyToGenerate;
     // Dynamic height - grows with content naturally
     const panelHeightClass = fullHeight
       ? 'h-full'
@@ -420,14 +420,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       if (readyToGenerate && !readyMessageShown && !hasBranches && !generateTriggered) {
         setReadyMessageShown(true);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `${READY_MESSAGE_ID_PREFIX}${Date.now()}`,
-            role: 'assistant' as const,
-            content: "✨ All details collected — ready to generate your trip options!",
-          },
-        ]);
+        setMessages((prev) => {
+          // Check if a ready message already exists (e.g., from streaming response)
+          const hasReadyMessage = prev.some((msg) => msg.id.startsWith(READY_MESSAGE_ID_PREFIX));
+          if (hasReadyMessage) {
+            return prev; // Don't add duplicate
+          }
+          return [
+            ...prev,
+            {
+              id: `${READY_MESSAGE_ID_PREFIX}${Date.now()}`,
+              role: 'assistant' as const,
+              content: "✨ All details collected — ready to generate your trip options!",
+            },
+          ];
+        });
       }
     }, [readyToGenerate, readyMessageShown, hasBranches, generateTriggered]);
 
@@ -513,13 +520,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setSuggestedResponses(doc.suggested_responses || []);
 
               if (hasBranchesNow) {
-                // Branches generated: remove streaming message and "ready" messages,
+                // Branches generated: remove streaming message, keep "ready" message,
                 // add post-generate message
                 setMessages((prev) => {
                   const filtered = prev.filter(
-                    (msg) =>
-                      msg.id !== streamingMsgId &&
-                      !msg.id.startsWith(READY_MESSAGE_ID_PREFIX)
+                    (msg) => msg.id !== streamingMsgId
                   );
                   return [
                     ...filtered,
@@ -617,7 +622,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     }
 
     // Simple render - no content-based filters, just show all non-empty messages
-    const visibleMessages = messages.filter((m) => m.content && m.content.trim().length > 0);
+    // During generation, hide the initial welcome message to keep focus on the "All details collected" message
+    // After branches are ready, replace the welcome message with a prompt to refine the trip
+    const visibleMessages = messages
+      .filter((m) => {
+        if (!m.content || m.content.trim().length === 0) return false;
+        if (isGenerating && m.id === 'm0') return false;
+        return true;
+      })
+      .map((m) => {
+        if (hasBranches && m.id === 'm0') {
+          return { ...m, content: '💬 Keep chatting to refine and book your trip!' };
+        }
+        return m;
+      });
 
     // Show typing indicator when loading and haven't received first streaming token yet
     const showTypingIndicator = isLoading && !hasReceivedFirstToken;

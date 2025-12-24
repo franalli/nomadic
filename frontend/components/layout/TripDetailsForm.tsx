@@ -815,10 +815,7 @@ function TripDetailsFormInner({
               </div>
             }
           />
-      </div>
 
-      {/* Row 3: Other trip input pills */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         {/* Travelers field */}
         <ExpandablePill
           label={FIELD_LABELS.travelers}

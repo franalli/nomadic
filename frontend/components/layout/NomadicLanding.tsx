@@ -538,6 +538,7 @@ export function NomadicLanding() {
           typedTagline={typedTagline}
           isGenerating={isGenerating}
           hasBranchesReady={hasBranchesReady}
+          tripDetailsContent={tripDetailsSection.content}
         />
       ) : (
         /* Original centered layout when no branches */

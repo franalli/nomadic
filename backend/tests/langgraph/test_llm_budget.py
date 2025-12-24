@@ -111,10 +111,11 @@ class TestLlmBlockedFallback:
         assert state.question_target == "dates"
 
     def test_fallback_tracks_provenance(self, state):
-        """Fallback should set response_provenance to template."""
+        """Fallback should set parse_provenance and response_generation_provenance to template."""
         llm_blocked_fallback(state, asked_target="dates", source="test:budget")
 
-        assert state.metadata.get("response_provenance") == "template"
+        assert state.metadata.get("parse_provenance") == "template"
+        assert state.metadata.get("response_generation_provenance") == "template"
         assert state.metadata.get("fallback_source") == "test:budget"
 
 

@@ -73,7 +73,7 @@ class TestGetCoreFieldsState:
     """Tests for core fields state serialization."""
 
     def test_serializes_all_core_fields(self):
-        """Should serialize destinations, origin, start_date, has_end_date."""
+        """Should serialize destinations, origin, start_date, end_date, budget, adults, children."""
         trip_inputs = TripInputs(
             destinations=["Paris", "London"],
             origin="New York",
@@ -85,7 +85,7 @@ class TestGetCoreFieldsState:
         assert "London" in state
         assert "New York" in state
         assert FUTURE_DATE in state
-        assert "true" in state.lower() or "True" in state  # has_end_date
+        assert FUTURE_END_DATE in state  # actual end_date value, not just boolean
 
     def test_destinations_sorted_for_consistency(self):
         """Destinations should be sorted for consistent keys."""

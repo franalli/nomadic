@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     enable_graph_plan_route: bool = False  # Enable /v1/graph_plan route
 
     # Route configuration
-    graph_plan_route_timeout_ms: int = 15000  # Overall route timeout in milliseconds
+    graph_plan_route_timeout_ms: int = 300000  # Overall route timeout in milliseconds (5 min)
 
     # Output limits
     assistant_msg_max_len: int = 2000  # Max chars for assistant message
@@ -50,8 +50,8 @@ class Settings(BaseSettings):
     enable_response_polish_mvp: bool = (
         False  # MVP mode: disable LLM polish, keep deterministic only
     )
-    response_polish_timeout_ms: int = 200  # Hard timeout cap for polish node (ms)
-    response_polish_warn_threshold_ms: int = 150  # Log warning if polish exceeds this (ms)
+    response_polish_timeout_ms: int = 60000  # Hard timeout cap for polish node (60s)
+    response_polish_warn_threshold_ms: int = 30000  # Log warning if polish exceeds this (30s)
 
     # LQA (Last Question Answer) pre-pass configuration
     lqa_max_length: int = 50  # Max input length for LQA pre-pass (chars)
@@ -60,9 +60,9 @@ class Settings(BaseSettings):
     short_circuit_max_length: int = 200  # Max input length for short-circuit patterns (chars)
 
     # LLM timeouts (in seconds)
-    llm_timeout_extractor: float = 6.0  # Extractor should be fast
-    llm_timeout_router: float = 8.0
-    llm_timeout_specialist: float = 12.0
+    llm_timeout_extractor: float = 120.0  # No timeout limit
+    llm_timeout_router: float = 120.0  # No timeout limit
+    llm_timeout_specialist: float = 120.0  # No timeout limit
 
     # LLM configuration (parity with plan.py)
     plan_chat_history_limit: int = 20  # Max messages to include in context

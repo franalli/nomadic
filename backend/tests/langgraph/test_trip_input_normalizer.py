@@ -381,7 +381,7 @@ class TestNormalizationError:
         error = NormalizationError(
             field="currency",
             message="Invalid currency",
-            severity="error",
+            severity="blocking",
         )
         assert error.original_value is None
 

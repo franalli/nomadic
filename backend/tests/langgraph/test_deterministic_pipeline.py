@@ -10,7 +10,7 @@ This pipeline runs BEFORE extractor LLM to parse simple answers like:
 - Multi-place ("Paris and Rome")
 
 Key invariants:
-1. Deterministic hits set response_provenance = "deterministic"
+1. Deterministic hits set parse_provenance = "deterministic"
 2. lqa_reason reflects parse type (e.g., "deterministic:suggestion_echo")
 3. Date ambiguity sets date_clarify_mode instead of returning deltas
 4. Multi-place split only fires when separator AND ≥1 known place

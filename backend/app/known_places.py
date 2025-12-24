@@ -4,9 +4,13 @@ Known places database for confidence scoring and validation.
 This module provides:
 - Large sets of known cities, countries, regions for validation
 - Ambiguous entity detection (Jordan = country or name?)
+- Fuzzy matching for typo correction
 """
 
-from typing import Dict, FrozenSet
+import logging
+from typing import Dict, FrozenSet, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # KNOWN PLACES DATABASE
@@ -1173,6 +1177,29 @@ PLACE_SYNONYMS: Dict[str, str] = {
     # Middle East
     "mecca": "Mecca",  # vs Makkah
     "makkah": "Mecca",
+    # Local language city names (Italian, German, etc.)
+    "roma": "Rome",
+    "milano": "Milan",
+    "firenze": "Florence",
+    "venezia": "Venice",
+    "napoli": "Naples",
+    "torino": "Turin",
+    "genova": "Genoa",
+    "wien": "Vienna",
+    "munchen": "Munich",
+    "münchen": "Munich",
+    "koln": "Cologne",
+    "köln": "Cologne",
+    "lisboa": "Lisbon",
+    "athinai": "Athens",
+    "athina": "Athens",
+    "αθήνα": "Athens",
+    "moskva": "Moscow",
+    "москва": "Moscow",
+    "warszawa": "Warsaw",
+    "praha": "Prague",
+    "kobenhavn": "Copenhagen",
+    "københavn": "Copenhagen",
 }
 
 # Lowercase lookup for case-insensitive matching
@@ -1199,3 +1226,122 @@ def normalize_place_synonym(place: str) -> str:
 def is_known_place(place: str) -> bool:
     """Check if a place name is in our known places database."""
     return place.lower() in _ALL_KNOWN_PLACES_LOWER
+
+
+# =============================================================================
+# FUZZY MATCHING FOR TYPO CORRECTION
+# =============================================================================
+
+# Minimum input length for fuzzy matching (avoid false positives on very short strings)
+_FUZZY_MIN_LENGTH = 3
+
+# Default similarity threshold (0-100). 80% catches typos while avoiding false positives
+_FUZZY_DEFAULT_THRESHOLD = 80
+
+
+def fuzzy_match_place(
+    place: str, threshold: int = _FUZZY_DEFAULT_THRESHOLD
+) -> Tuple[Optional[str], Optional[int]]:
+    """
+    Find the best fuzzy match for a place name from known places.
+
+    Uses rapidfuzz for efficient fuzzy string matching to correct typos
+    like "pariss" → "Paris" or "new yrok" → "New York".
+
+    Args:
+        place: The place name to match (possibly with typos)
+        threshold: Minimum similarity score (0-100) to accept a match.
+                   Default is 80, which catches most typos while avoiding
+                   false positives (e.g., "Paris" vs "Parma").
+
+    Returns:
+        Tuple of (matched_place, similarity_score) if a match is found above threshold,
+        otherwise (None, None).
+    """
+    if not place or len(place.strip()) < _FUZZY_MIN_LENGTH:
+        return None, None
+
+    place_lower = place.lower().strip()
+
+    # First check synonym map (preferred - maps local names to English)
+    if place_lower in _PLACE_SYNONYMS_LOWER:
+        return _PLACE_SYNONYMS_LOWER[place_lower], 100
+
+    # Then check exact match in known places
+    if place_lower in _ALL_KNOWN_PLACES_LOWER:
+        canonical = _CANONICAL_PLACES.get(place_lower, place)
+        return canonical, 100
+
+    try:
+        from rapidfuzz import fuzz, process
+
+        # Search against lowercase place names for case-insensitive matching
+        # Using the lowercase set for matching, then map back to canonical form
+        result = process.extractOne(
+            place_lower,
+            list(_ALL_KNOWN_PLACES_LOWER),
+            scorer=fuzz.WRatio,
+            score_cutoff=threshold,
+        )
+
+        if result:
+            matched_lower, score, _ = result
+            # Map back to canonical form (proper casing)
+            canonical = _CANONICAL_PLACES.get(matched_lower, matched_lower.title())
+            logger.debug(f"[FUZZY_MATCH] '{place}' → '{canonical}' (score={score:.1f})")
+            return canonical, int(score)
+
+        return None, None
+
+    except ImportError:
+        logger.warning("rapidfuzz not installed, fuzzy matching disabled")
+        return None, None
+
+
+def normalize_place_with_fuzzy(place: str, fuzzy_threshold: int = _FUZZY_DEFAULT_THRESHOLD) -> str:
+    """
+    Normalize a place name using synonym map first, then fuzzy matching.
+
+    This is the recommended function for place normalization as it:
+    1. First tries exact synonym lookup (fast, deterministic)
+    2. Falls back to fuzzy matching for typo correction
+    3. Applies title case as final fallback
+
+    Args:
+        place: The place name to normalize
+        fuzzy_threshold: Minimum similarity for fuzzy match (default 85)
+
+    Returns:
+        Normalized place name (canonical form, or title-cased original if no match)
+    """
+    if not place:
+        return place
+
+    place_stripped = place.strip()
+    if not place_stripped:
+        return place
+
+    # Step 1: Try synonym map (exact match, case-insensitive)
+    lowered = place_stripped.lower()
+    if lowered in _PLACE_SYNONYMS_LOWER:
+        result = _PLACE_SYNONYMS_LOWER[lowered]
+        logger.debug(f"[PLACE_NORMALIZE] synonym: '{place}' → '{result}'")
+        return result
+
+    # Step 2: Try canonical lookup (exact match, case-insensitive)
+    if lowered in _CANONICAL_PLACES:
+        result = _CANONICAL_PLACES[lowered]
+        logger.debug(f"[PLACE_NORMALIZE] canonical: '{place}' → '{result}'")
+        return result
+
+    # Step 3: Try fuzzy matching for typos
+    fuzzy_result, score = fuzzy_match_place(place_stripped, fuzzy_threshold)
+    if fuzzy_result:
+        logger.debug(f"[PLACE_NORMALIZE] fuzzy: '{place}' → '{fuzzy_result}' (score={score})")
+        return fuzzy_result
+
+    # Step 4: Fallback - apply title case for proper capitalization
+    result = place_stripped.title()
+    if result != place:
+        logger.debug(f"[PLACE_NORMALIZE] title_case: '{place}' → '{result}'")
+    return result

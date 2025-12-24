@@ -13,6 +13,7 @@ The harness validates:
 3. No-stale-summary invariant
 4. Suggestion contract (suggestions match question_target)
 5. Selected specialist matches expected
+6. ErrorRecord schema compatibility (V8)
 """
 
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 import pytest
+
+from app.schemas import ErrorRecord
 
 
 @dataclass
@@ -138,6 +141,77 @@ MULTI_CITY_INFERENCE_TRACE = TraceFixture(
 
 
 # =============================================================================
+# REGRESSION TEST FIXTURES (V8: ErrorRecord + Destination-Known Gate)
+# =============================================================================
+
+DIVING_IN_MALDIVES_TRACE = TraceFixture(
+    name="diving_in_maldives_destination_known",
+    description="Verify STRATEGY_PRE_CORE_VALUE_WITH_DEST fires for 'diving in maldives'",
+    turns=[
+        TurnExpectation(
+            user_text="I want to go diving in the Maldives",
+            expected_gate="STRATEGY_PRE_CORE_VALUE_WITH_DEST",
+            expected_destination="strategy_node",
+            expected_question_target="dates",  # Always ask dates when destination known
+            expected_selected_specialist="strategy_diving",
+            expected_state_updates={
+                "destinations": ["Maldives"],
+            },
+        ),
+    ],
+)
+
+DATE_AMBIGUITY_ERROR_RECORD_TRACE = TraceFixture(
+    name="date_ambiguity_error_record",
+    description="Verify date ambiguity produces ErrorRecord without crash",
+    initial_state={
+        "trip_inputs": {"destinations": ["Paris"], "origin": "New York"},
+    },
+    turns=[
+        TurnExpectation(
+            user_text="December 20-27",  # Ambiguous year when today is Dec 23
+            expected_error_codes=["DATE_AMBIGUOUS_YEAR"],
+            expected_question_target="dates",  # Should ask for clarification
+        ),
+    ],
+)
+
+VALUE_FIRST_NOT_STICKY_TRACE = TraceFixture(
+    name="value_first_not_sticky",
+    description="After dates answered, next question should be origin (not stuck on dates)",
+    turns=[
+        TurnExpectation(
+            user_text="I want to go diving in the Maldives",
+            expected_gate="STRATEGY_PRE_CORE_VALUE_WITH_DEST",
+            expected_question_target="dates",
+        ),
+        TurnExpectation(
+            user_text="March 2025",
+            expected_question_target="origin",  # Should ask origin, not repeat dates
+        ),
+    ],
+)
+
+BLOCKING_ERROR_GUARDS_DEST_KNOWN_TRACE = TraceFixture(
+    name="blocking_error_guards_dest_known",
+    description="Blocking date errors should prevent destination-known value-first gate",
+    initial_state={
+        "trip_inputs": {"destinations": ["Maldives"]},
+        "metadata": {"date_clarify_mode": True},
+    },
+    turns=[
+        TurnExpectation(
+            user_text="Let's go diving",
+            # Should NOT fire STRATEGY_PRE_CORE_VALUE_WITH_DEST due to blocking errors
+            # Instead should route to required_fields for date clarification
+            expected_destination="required_fields_node",
+            expected_question_target="dates",
+        ),
+    ],
+)
+
+
+# =============================================================================
 # TEST HARNESS
 # =============================================================================
 
@@ -191,9 +265,26 @@ class TraceReplayHarness:
         session_state = result.get("session_state", {})
         metadata = session_state.get("metadata", {})
 
+        # Read from canonical gate_result object (SSoT for routing decisions)
+        gate_result = metadata.get("gate_result", {})
+
         # Check gate fired
         if expectation.expected_gate:
-            actual_gate = metadata.get("gate_fired")
+            # gate_result may be a dataclass or dict depending on serialization
+            if hasattr(gate_result, "gate_fired"):
+                actual_gate = (
+                    gate_result.gate_fired.name
+                    if hasattr(gate_result.gate_fired, "name")
+                    else str(gate_result.gate_fired)
+                )
+            else:
+                # Fallback to dict access or legacy keys
+                if isinstance(gate_result, dict):
+                    actual_gate = gate_result.get("gate_fired")
+                else:
+                    actual_gate = None
+                if not actual_gate:
+                    actual_gate = metadata.get("_gate_result_gate_fired")
             if actual_gate != expectation.expected_gate:
                 self.violations.append(
                     f"Turn {turn_num}: Expected gate {expectation.expected_gate}, "
@@ -202,7 +293,15 @@ class TraceReplayHarness:
 
         # Check destination
         if expectation.expected_destination:
-            actual_dest = metadata.get("routing_destination")
+            if hasattr(gate_result, "destination"):
+                actual_dest = gate_result.destination  # type: ignore
+            else:
+                if isinstance(gate_result, dict):
+                    actual_dest = gate_result.get("destination")
+                else:
+                    actual_dest = None
+                if not actual_dest:
+                    actual_dest = metadata.get("_gate_result_destination")
             if actual_dest != expectation.expected_destination:
                 self.violations.append(
                     f"Turn {turn_num}: Expected destination {expectation.expected_destination}, "
@@ -262,10 +361,18 @@ class TraceReplayHarness:
                     )
                 )
 
-        # Check error codes
+        # Check error codes (supports ErrorRecord objects and legacy formats)
         if expectation.expected_error_codes:
             actual_errors = result.get("errors", [])
-            actual_codes = [e.get("code") if isinstance(e, dict) else str(e) for e in actual_errors]
+            actual_codes = []
+            for e in actual_errors:
+                if hasattr(e, "code"):
+                    # ErrorRecord object
+                    actual_codes.append(e.code)
+                elif isinstance(e, dict):
+                    actual_codes.append(e.get("code", ""))
+                else:
+                    actual_codes.append(str(e))
             for expected_code in expectation.expected_error_codes:
                 if expected_code not in actual_codes:
                     self.violations.append(
@@ -284,6 +391,58 @@ def mock_llm():
     with patch("app.plan_graph.call_llm_with_timeout") as mock:
         mock.return_value = '{"assistant_message": "Test response", "suggested_responses": []}'
         yield mock
+
+
+# =============================================================================
+# UNIT TESTS (no full app context required)
+# =============================================================================
+
+
+def test_error_record_schema():
+    """Test that ErrorRecord model works correctly."""
+    # Test creating ErrorRecord
+    err = ErrorRecord(
+        code="DATE_AMBIGUOUS_YEAR",
+        node="normalize_inputs",
+        severity="blocking",
+        message="Year is ambiguous for date range Dec 20-27",
+    )
+    assert err.code == "DATE_AMBIGUOUS_YEAR"
+    assert err.node == "normalize_inputs"
+    assert err.severity == "blocking"
+    assert "ambiguous" in err.message.lower()
+
+
+def test_error_record_default_severity():
+    """Test ErrorRecord defaults severity to 'warning'."""
+    err = ErrorRecord(
+        code="LLM_FAILED",
+        node="router",
+        message="LLM call timed out",
+    )
+    assert err.severity == "warning"  # Default value
+
+
+def test_error_record_in_list():
+    """Test that ErrorRecord works in a list (simulating GraphState.errors)."""
+    errors: List[ErrorRecord] = [
+        ErrorRecord(
+            code="DATE_AMBIGUOUS_YEAR",
+            node="normalize",
+            severity="blocking",
+            message="Year unclear",
+        ),
+        ErrorRecord(
+            code="LLM_FAILED",
+            node="router",
+            severity="warning",
+            message="Timeout",
+        ),
+    ]
+
+    # Extract blocking codes (as compute_trip_readiness does)
+    blocking_codes = [e.code for e in errors if e.severity == "blocking"]
+    assert blocking_codes == ["DATE_AMBIGUOUS_YEAR"]
 
 
 @pytest.mark.asyncio
@@ -314,6 +473,87 @@ async def test_topic_switch_turn_1_guard(mock_llm):
     """Test that STRATEGY_TOPIC_SWITCH doesn't fire on turn 1."""
     harness = TraceReplayHarness(TOPIC_SWITCH_TURN_1_TRACE)
     success = await harness.replay()
+
+    assert success, f"Trace replay failed: {harness.violations}"
+
+
+# =============================================================================
+# V8 REGRESSION TESTS: ErrorRecord + Destination-Known Gate
+# =============================================================================
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Requires full app context - enable in integration tests")
+async def test_diving_in_maldives_destination_known(mock_llm):
+    """
+    Test 'diving in maldives' routes to STRATEGY_PRE_CORE_VALUE_WITH_DEST.
+
+    This validates that when user provides both strategy topic AND destination,
+    the new gate fires and asks for dates (not origin).
+    """
+    harness = TraceReplayHarness(DIVING_IN_MALDIVES_TRACE)
+    success = await harness.replay()
+
+    if not success:
+        for v in harness.violations:
+            print(f"VIOLATION: {v}")
+
+    assert success, f"Trace replay failed: {harness.violations}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Requires full app context - enable in integration tests")
+async def test_date_ambiguity_error_record(mock_llm):
+    """
+    Test that date ambiguity produces ErrorRecord without Pydantic crash.
+
+    This validates that GraphState.errors: List[ErrorRecord] works correctly
+    and blocking date errors are properly recorded.
+    """
+    harness = TraceReplayHarness(DATE_AMBIGUITY_ERROR_RECORD_TRACE)
+    success = await harness.replay()
+
+    if not success:
+        for v in harness.violations:
+            print(f"VIOLATION: {v}")
+
+    assert success, f"Trace replay failed: {harness.violations}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Requires full app context - enable in integration tests")
+async def test_value_first_not_sticky(mock_llm):
+    """
+    Test that value-first mode doesn't suppress core collection indefinitely.
+
+    After destination-known stage0 fires and user answers dates,
+    the next question should be origin (not stuck on dates).
+    """
+    harness = TraceReplayHarness(VALUE_FIRST_NOT_STICKY_TRACE)
+    success = await harness.replay()
+
+    if not success:
+        for v in harness.violations:
+            print(f"VIOLATION: {v}")
+
+    assert success, f"Trace replay failed: {harness.violations}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip(reason="Requires full app context - enable in integration tests")
+async def test_blocking_error_guards_dest_known(mock_llm):
+    """
+    Test that blocking date errors prevent destination-known value-first gate.
+
+    When date_clarify_mode is set (blocking errors), the
+    STRATEGY_PRE_CORE_VALUE_WITH_DEST gate should NOT fire.
+    """
+    harness = TraceReplayHarness(BLOCKING_ERROR_GUARDS_DEST_KNOWN_TRACE)
+    success = await harness.replay()
+
+    if not success:
+        for v in harness.violations:
+            print(f"VIOLATION: {v}")
 
     assert success, f"Trace replay failed: {harness.violations}"
 

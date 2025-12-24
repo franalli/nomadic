@@ -36,7 +36,7 @@
       "When would you like to go?"
     ],
     "suggestions": {
-      "default": ["Next month", "December 20-27", "First week of January"]
+      "default": ["Next month", "Next monday", "Tomorrow"]
     }
   },
 
