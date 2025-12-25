@@ -18,6 +18,34 @@
     }
   },
 
+  "destinations_clarify": {
+    "_description": "V16: Used when destination extraction fails or is ambiguous",
+    "questions": {
+      "ambiguous_place": [
+        "I found a few places that might match \"{user_input}\". Which one did you mean?",
+        "There are multiple destinations called \"{user_input}\". Could you be more specific?"
+      ],
+      "unknown_place": [
+        "I'm not sure I recognize \"{user_input}\" as a destination. Could you tell me more about where you'd like to go?",
+        "I couldn't find a destination matching \"{user_input}\". Did you mean something else?"
+      ],
+      "typo_detected": [
+        "Did you mean \"{suggestion}\" instead of \"{user_input}\"?",
+        "I think there might be a typo in \"{user_input}\". Did you mean \"{suggestion}\"?"
+      ],
+      "low_confidence": [
+        "Just to make sure I got it right - you want to go to \"{extracted_value}\"?",
+        "I want to make sure I understood - your destination is \"{extracted_value}\"?"
+      ]
+    },
+    "suggestions": {
+      "ambiguous_place": ["Show me options", "I'll type it differently"],
+      "unknown_place": ["Let me try again", "Show popular destinations"],
+      "typo_detected": ["Yes, that's right", "No, let me retype"],
+      "low_confidence": ["Yes, correct", "No, that's wrong"]
+    }
+  },
+
   "origin": {
     "questions": [
       "Where will you be traveling from?",
@@ -26,6 +54,23 @@
     ],
     "suggestions": {
       "default": ["New York", "London", "Los Angeles"]
+    }
+  },
+
+  "origin_clarify": {
+    "_description": "V16: Used when origin extraction fails or is ambiguous",
+    "questions": {
+      "ambiguous_place": [
+        "There are multiple cities called \"{user_input}\". Which one are you departing from?",
+        "I found a few places matching \"{user_input}\". Could you specify which one?"
+      ],
+      "unknown_place": [
+        "I couldn't find an airport or city matching \"{user_input}\". Could you try again?",
+        "I'm not sure where \"{user_input}\" is. Could you provide more details?"
+      ]
+    },
+    "suggestions": {
+      "default": ["Let me try again", "Show nearby airports"]
     }
   },
 

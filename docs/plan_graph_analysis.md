@@ -1,8 +1,8 @@
 # Plan Graph Architecture Analysis
 
-> **Generated**: December 24, 2025 (Updated: V14 Pattern Matching Module)
-> **Source File**: `backend/app/plan_graph.py` (~22,200 lines)
-> **Pattern Module**: `backend/app/pattern_matching.py` (~900 lines)
+> **Generated**: December 24, 2025 (Updated: V15 Gate Renumbering & Routing Fixes)
+> **Source File**: `backend/app/plan_graph.py` (~23,100 lines)
+> **Pattern Module**: `backend/app/pattern_matching.py` (~1,400 lines)
 > **Prompt Files**: 26 files in `backend/app/prompts/`
 
 ---
@@ -66,6 +66,12 @@
     - [Pattern Categories](#pattern-categories)
     - [Enhanced Flight/Hotel/Transport Patterns](#enhanced-flighthoteltransport-patterns)
     - [Helper Functions](#helper-functions)
+25. [Gate Renumbering & Routing Fixes (V15)](#gate-renumbering--routing-fixes-v15)
+    - [Gate Precedence Renumbering](#gate-precedence-renumbering)
+    - [GENERATE_REQUEST_PATTERN](#generate_request_pattern)
+    - [STRATEGY_EXPANSION Gate](#strategy_expansion-gate)
+    - [JSON Recovery Fallback](#json-recovery-fallback)
+    - [Empty Response Guard](#empty-response-guard)
 
 ---
 
@@ -507,6 +513,9 @@ All 26 prompt files are actively wired:
 
 The `GateEvaluator` checks gates in strict precedence order. First match wins.
 
+**Gate Numbering (V15)**: Gates now use intuitive increments of 10 for easier insertion of future gates.
+Lower numbers = higher priority.
+
 **Gate Suppression**: Some gates explicitly yield to higher-priority paths:
 
 - `SPECIALIST_PRE_CORE` yields to `STRATEGY_PRE_CORE_VALUE` when strategy topic detected without destinations
@@ -515,18 +524,44 @@ The `GateEvaluator` checks gates in strict precedence order. First match wins.
 
 | Precedence | Gate                                | Destination                 | Description                                            | Yields To                               |
 | ---------- | ----------------------------------- | --------------------------- | ------------------------------------------------------ | --------------------------------------- |
-| 1          | `SHORT_CIRCUIT`                     | `short_circuit_responder`   | Greetings, confirmations, generate triggers            | —                                       |
-| 2          | `FAST_PATH`                         | Specialists/validate        | LQA pre-pass success or initial extraction             | — (bootstrap-only after turn 1)         |
-| 3          | `SPECIALIST_PRE_CORE`               | Specialists (pre-core mode) | Domain keyword detected, core fields missing           | `STRATEGY_PRE_CORE_VALUE`               |
-| 4          | `STRATEGY_TOPIC_SWITCH`             | `strategy_{topic}`          | Mid-session strategy topic switch (new activity)       | — (deferred if blocking errors)         |
-| 5          | `STRATEGY_PRE_CORE_VALUE`           | `strategy_node` (stage 0)   | Strategy topic + no destinations → value-first         | —                                       |
-| 55         | `STRATEGY_PRE_CORE_VALUE_WITH_DEST` | `strategy_node` (stage 0)   | Strategy topic + destination known → dest-aware stage0 | Ownership + Lifecycle suppression (V10) |
-| 6          | `CORE_COLLECTION`                   | `required_fields_node`      | Core fields missing, no domain keyword                 | —                                       |
-| 7          | `HIGH_CONFIDENCE`                   | Based on parsed data        | High extraction confidence + short input               | —                                       |
-| 8          | `QUESTION_KEYWORD`                  | Based on keyword            | User answering question with domain keyword            | —                                       |
-| 9          | `KEYWORD_HEURISTIC`                 | Based on keyword            | Unambiguous domain keywords detected                   | —                                       |
-| 10         | `SCORING_ROUTER`                    | Deterministic scoring       | Multi-signal scoring-based routing                     | —                                       |
-| 99         | `ROUTER_LLM`                        | `router` node               | Fallback to LLM-based intent classification            | —                                       |
+| 10         | `STRATEGY_EXPANSION`                | `strategy_node`             | User requesting expansion on existing strategy content | —                                       |
+| 20         | `GENERATE_REQUESTED`                | `generate_responder`        | Explicit generate request (pattern match)              | —                                       |
+| 30         | `SHORT_CIRCUIT`                     | `short_circuit_responder`   | Greetings, confirmations, off-topic                    | —                                       |
+| 40         | `READY_NO_FIELDS`                   | `summarize`                 | Plan ready, no fields to ask                           | —                                       |
+| 50         | `FAST_PATH`                         | Specialists/validate        | LQA pre-pass success or initial extraction             | — (bootstrap-only after turn 1)         |
+| 60         | `SPECIALIST_PRE_CORE`               | Specialists (pre-core mode) | Domain keyword detected, core fields missing           | `STRATEGY_PRE_CORE_VALUE`               |
+| 70         | `STRATEGY_TOPIC_SWITCH`             | `strategy_{topic}`          | Mid-session strategy topic switch (new activity)       | — (deferred if blocking errors)         |
+| 80         | `STRATEGY_PRE_CORE_VALUE`           | `strategy_node` (stage 0)   | Strategy topic + no destinations → value-first         | —                                       |
+| 85         | `STRATEGY_PRE_CORE_VALUE_WITH_DEST` | `strategy_node` (stage 0)   | Strategy topic + destination known → dest-aware stage0 | Ownership + Lifecycle suppression (V10) |
+| 90         | `CORE_COLLECTION`                   | `required_fields_node`      | Core fields missing, no domain keyword                 | —                                       |
+| 100        | `HIGH_CONFIDENCE`                   | Based on parsed data        | High extraction confidence + short input               | —                                       |
+| 110        | `QUESTION_KEYWORD`                  | Based on keyword            | User answering question with domain keyword            | —                                       |
+| 120        | `KEYWORD_HEURISTIC`                 | Based on keyword            | Unambiguous domain keywords detected                   | —                                       |
+| 130        | `SCORING_ROUTER`                    | Deterministic scoring       | Multi-signal scoring-based routing                     | —                                       |
+| 999        | `ROUTER_LLM`                        | `router` node               | Fallback to LLM-based intent classification            | —                                       |
+
+### New Gates (V15)
+
+#### STRATEGY_EXPANSION (Precedence 10)
+
+Handles "Show more details", "expand", "tell me more" requests when a strategy is already in progress.
+Triggers when:
+
+- `pending_strategy_expansion` is set in metadata, OR
+- Generic expansion pattern detected AND strategy context exists
+
+This gate has highest priority to ensure expansion requests don't get routed to required_fields or other nodes.
+
+#### GENERATE_REQUESTED (Precedence 20)
+
+Handles explicit plan generation requests like "Yes, generate my itinerary!", "I'm ready", "let's go".
+Uses `GENERATE_REQUEST_PATTERN` from `pattern_matching.py` with careful exclusion of multi-city intent
+phrases like "do it all together".
+
+**Pattern exclusions to avoid false positives:**
+
+- "do it" alone (too ambiguous) - requires "do it now" or "make it happen"
+- "one trip" (multi-city intent phrase)
 
 ### Key Helper Functions
 
@@ -539,6 +574,7 @@ The `GateEvaluator` checks gates in strict precedence order. First match wins.
 | `_check_strategy_topic_switch`             | Detects mid-session strategy topic changes with intent verbs and cooldowns  |
 | `text_is_compatible_with_target` (V10)     | Checks if user input looks like an answer to `question_target`              |
 | `_compute_stage0_signature` (V10)          | Computes unique signature for stage0 lifecycle tracking                     |
+| `_extract_message_from_malformed_json`     | JSON recovery: extracts message field from malformed LLM JSON responses     |
 
 ### STRATEGY_TOPIC_SWITCH Gate Details
 
@@ -3117,3 +3153,132 @@ _GREETING_PATTERN = GREETING_PATTERN  # Alias for existing code
 ### Test Coverage
 
 All 1093 langgraph tests pass with the refactored patterns. No behavior changes were introduced—this is a pure consolidation refactoring.
+
+---
+
+## Gate Renumbering & Routing Fixes (V15)
+
+This section documents the routing fixes implemented to resolve three interconnected bugs:
+
+1. "Yes, generate my itinerary!" not triggering plan generation
+2. "I want a hiking plan" showing empty response due to JSON parse failure
+3. "Show more details" not routing to strategy expansion
+
+### Gate Precedence Renumbering
+
+Gate precedence values were renumbered from sequential (1, 2, 3...) to intuitive increments of 10
+to allow future insertions without reshuffling all values:
+
+| Old Value | New Value | Gate Name                           |
+| --------- | --------- | ----------------------------------- |
+| —         | 10        | `STRATEGY_EXPANSION` (NEW)          |
+| —         | 20        | `GENERATE_REQUESTED` (NEW)          |
+| 1         | 30        | `SHORT_CIRCUIT`                     |
+| —         | 40        | `READY_NO_FIELDS` (NEW POSITION)    |
+| 2         | 50        | `FAST_PATH`                         |
+| 3         | 60        | `SPECIALIST_PRE_CORE`               |
+| 4         | 70        | `STRATEGY_TOPIC_SWITCH`             |
+| 5         | 80        | `STRATEGY_PRE_CORE_VALUE`           |
+| 55        | 85        | `STRATEGY_PRE_CORE_VALUE_WITH_DEST` |
+| 6         | 90        | `CORE_COLLECTION`                   |
+| 7-10      | 100-130   | Heuristic gates                     |
+| 99        | 999       | `ROUTER_LLM`                        |
+
+### GENERATE_REQUEST_PATTERN
+
+New consolidated pattern in `pattern_matching.py` (~line 78-107) for detecting explicit plan
+generation requests:
+
+```python
+GENERATE_REQUEST_PATTERN = re.compile(
+    r"(?:"
+    r"(?:yes[,!]?\s+)?(?:generate|create|build|make)\s+(?:my\s+|the\s+)?(?:itinerary|plan|trip)"
+    r"|(?:show|give)\s+(?:me\s+)?(?:the\s+)?(?:plan|itinerary)"
+    r"|(?:i'?m\s+)?ready(?:\s+to\s+(?:go|book|generate|plan))?"
+    r"|(?:looks?|sounds?)\s+good[,!]?\s*(?:go\s+ahead|let'?s\s+(?:go|do\s+it))?"
+    r"|let'?s\s+(?:go|do\s+it|book|plan|generate)"
+    r"|go\s+ahead(?:\s+(?:and\s+)?(?:generate|create|book|plan))?"
+    r"|book\s+it(?:\s+now)?"
+    r"|(?:do|make)\s+it\s+(?:now|happen)"  # NOT "do it all together"
+    r"|yes[,!]?\s*(?:please\s+)?generate"
+    r")",
+    re.IGNORECASE,
+)
+```
+
+**Key exclusion**: "do it" alone is NOT matched (too ambiguous, often means multi-city intent).
+Requires "do it now" or "make it happen" for explicit generation.
+
+### STRATEGY_EXPANSION Gate
+
+New highest-priority gate (precedence 10) for handling strategy expansion requests:
+
+```python
+# In GateEvaluator.evaluate():
+if meta.get("pending_strategy_expansion"):
+    return GateResult(
+        gate_fired=GatePrecedence.STRATEGY_EXPANSION,
+        destination="strategy_node",
+        reason="pending_strategy_expansion_flag",
+    )
+```
+
+Triggers on phrases like "Show more details", "expand", "tell me more", "elaborate", "go deeper".
+
+### JSON Recovery Fallback
+
+New helper function `_extract_message_from_malformed_json()` provides fallback extraction when
+LLM returns malformed JSON that fails `json.loads()`:
+
+```python
+def _extract_message_from_malformed_json(raw: str) -> str | None:
+    """
+    Extract the 'message' field from malformed JSON response.
+    Uses regex extraction as fallback when json.loads() fails.
+    """
+    if len(raw) < 50:
+        return None  # Too short to be meaningful
+
+    # Try to extract message field with regex
+    for pattern in [
+        r'"message"\s*:\s*"((?:[^"\\]|\\.)+)"',  # Standard quotes
+        r'"message"\s*:\s*"([^"]+(?:\\"[^"]*)*)"',  # Escaped quotes
+    ]:
+        match = re.search(pattern, raw, re.DOTALL)
+        if match:
+            content = match.group(1)
+            # Unescape common sequences
+            content = content.replace('\\"', '"').replace('\\n', '\n')
+            if len(content) > 50:
+                return content
+    return None
+```
+
+Used in `strategy_node` to recover meaningful responses from JSON parse failures.
+
+### Empty Response Guard
+
+Added guard in `summarize` node to prevent empty responses:
+
+```python
+# In summarize():
+if not state.get("last_summary") and not _get_pending_user_response(state):
+    return {
+        "last_summary": "I'm still working on understanding your request. Could you tell me more about your travel plans?",
+        **_write_metadata_field("response_writer_node", "summarize:fallback"),
+    }
+```
+
+This ensures users always receive a meaningful response even when upstream nodes fail silently.
+
+### Test Coverage
+
+54 new tests in `tests/langgraph/test_generate_request_routing.py` covering:
+
+- `GENERATE_REQUEST_PATTERN` matching and non-matching
+- `_detect_short_circuit` with generate requests (ready vs incomplete plans)
+- `STRATEGY_EXPANSION` gate evaluation
+- JSON recovery fallback behavior
+- Gate precedence ordering invariants
+
+All 1150 langgraph tests pass with these changes.

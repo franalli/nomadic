@@ -61,6 +61,8 @@ from app.pattern_matching import (
     DURATION_PATTERN,
     # Activity patterns
     FAMILY_COMPOSITION_PATTERN,
+    # Generate request pattern
+    GENERATE_REQUEST_PATTERN,
     GREETING_BLOCKLIST,
     GREETING_PATTERN,
     # Hotel patterns
@@ -920,38 +922,43 @@ def dump_turn_journal(state: "GraphState") -> None:
 
 # Gate Precedence Enum - explicit ordering of routing gates
 # Lower values = higher priority (checked first)
+# Using increments of 10 for future insertions
 class GatePrecedence(IntEnum):
     """
     Explicit ordering of routing gates in _route_after_extraction().
     Gates are checked in priority order; first match wins.
 
-    Gate Ordering Rationale:
-    - READY_NO_FIELDS: Highest priority - plan is ready, no fields to ask
-    - SHORT_CIRCUIT: High priority for greetings/confirmations
-    - FAST_PATH: Bootstrap optimization (turn 1 only when strategy_bootstrap_active)
-    - SPECIALIST_PRE_CORE: Domain keywords before core complete
-    - STRATEGY_TOPIC_SWITCH: Mid-session topic changes (e.g., adding "diving")
-    - STRATEGY_PRE_CORE_VALUE: First-turn strategy value-first (no destinations)
-    - STRATEGY_PRE_CORE_VALUE_WITH_DEST: Strategy + destination known → value-first + ask dates
-    - CORE_COLLECTION: Collect missing core fields
-    - Remaining gates for various heuristic routing
+    Gate Ordering Rationale (increments of 10 for future insertions):
+    - STRATEGY_EXPANSION (10): User requesting expansion on existing strategy
+    - GENERATE_REQUESTED (20): Explicit generate request detected
+    - SHORT_CIRCUIT (30): High priority for greetings/confirmations
+    - READY_NO_FIELDS (40): Plan is ready, no fields to ask
+    - FAST_PATH (50): Bootstrap optimization (turn 1 only when strategy_bootstrap_active)
+    - SPECIALIST_PRE_CORE (60): Domain keywords before core complete
+    - STRATEGY_TOPIC_SWITCH (70): Mid-session topic changes (e.g., adding "diving")
+    - STRATEGY_PRE_CORE_VALUE (80): First-turn strategy value-first (no destinations)
+    - STRATEGY_PRE_CORE_VALUE_WITH_DEST (85): Strategy + destination known → value-first + ask dates
+    - CORE_COLLECTION (90): Collect missing core fields
+    - Remaining gates for various heuristic routing (100+)
     """
 
-    READY_NO_FIELDS = 0  # Plan ready, missing_all empty, no blocking errors
-    SHORT_CIRCUIT = 1  # Greeting, acknowledgment, off-topic
-    FAST_PATH = 2  # Direct field updates (bootstrap only when strategy_bootstrap_active)
-    SPECIALIST_PRE_CORE = 3  # Specialist keyword when core fields missing (pre-core mode)
-    STRATEGY_TOPIC_SWITCH = 4  # Mid-session strategy topic change (e.g., "diving")
-    STRATEGY_PRE_CORE_VALUE = 5  # Strategy topic detected + NO destinations → value-first response
+    STRATEGY_EXPANSION = 10  # User requesting expansion on existing strategy content
+    GENERATE_REQUESTED = 20  # Explicit generate request (pattern match or pending_action)
+    SHORT_CIRCUIT = 30  # Greeting, acknowledgment, off-topic
+    READY_NO_FIELDS = 40  # Plan ready, missing_all empty, no blocking errors
+    FAST_PATH = 50  # Direct field updates (bootstrap only when strategy_bootstrap_active)
+    SPECIALIST_PRE_CORE = 60  # Specialist keyword when core fields missing (pre-core mode)
+    STRATEGY_TOPIC_SWITCH = 70  # Mid-session strategy topic change (e.g., "diving")
+    STRATEGY_PRE_CORE_VALUE = 80  # Strategy topic detected + NO destinations → value-first response
     STRATEGY_PRE_CORE_VALUE_WITH_DEST = (
-        55  # Strategy topic + destinations known → value-first + ask dates
+        85  # Strategy topic + destinations known → value-first + ask dates
     )
-    CORE_COLLECTION = 6  # Core fields missing → required_fields
-    HIGH_CONFIDENCE = 7  # High conf + short input + no intent keywords
-    QUESTION_KEYWORD = 8  # Phase 6: Question-word + domain keyword combo
-    KEYWORD_HEURISTIC = 9  # Unambiguous domain keywords
-    SCORING_ROUTER = 10  # Phase 3: Multi-signal scoring deterministic router
-    ROUTER_LLM = 99  # Default: invoke router LLM
+    CORE_COLLECTION = 90  # Core fields missing → required_fields
+    HIGH_CONFIDENCE = 100  # High conf + short input + no intent keywords
+    QUESTION_KEYWORD = 110  # Phase 6: Question-word + domain keyword combo
+    KEYWORD_HEURISTIC = 120  # Unambiguous domain keywords
+    SCORING_ROUTER = 130  # Phase 3: Multi-signal scoring deterministic router
+    ROUTER_LLM = 999  # Default: invoke router LLM
 
 
 # =============================================================================
@@ -1155,7 +1162,52 @@ class GateEvaluator:
         # Use TripReadiness for consistent missing-fields computation
         readiness = compute_trip_readiness(ti, prefer_date_first=prefer_date_first)
 
-        # Gate 0: GENERATE_REQUESTED
+        # =====================================================================
+        # Gate 0: STRATEGY_EXPANSION (Precedence 10)
+        # =====================================================================
+        # When user requests expansion on existing strategy content (e.g., "Show more details")
+        # This takes highest priority to avoid the READY_NO_FIELDS gate consuming these requests.
+        # Triggers when:
+        # 1. pending_strategy_expansion is True (stage 1 was completed)
+        # 2. User text matches expansion triggers ("show more details", "expand", etc.)
+        # =====================================================================
+        if state.pending_strategy_expansion:
+            expansion_result = _is_strategy_expansion_request(user_text)
+            if expansion_result.is_expansion:
+                # Get the last strategy topic for routing
+                last_topic = state.metadata.get("last_strategy_topic", "hiking")
+                _debug(
+                    "STRATEGY_EXPANSION gate triggered",
+                    topic=last_topic,
+                    expansion_target=expansion_result.target,
+                    expansion_tier=expansion_result.tier,
+                    matched_phrase=expansion_result.matched_phrase,
+                )
+                return cls._build_result(
+                    gate=GatePrecedence.STRATEGY_EXPANSION,
+                    destination="strategy_node",
+                    reason=f"strategy_expansion:{last_topic}:{expansion_result.matched_phrase}",
+                    start_time=start_time,
+                    skipped=skipped_gates,
+                    state=state,
+                    intent="strategy",
+                    strategy_topic=last_topic,
+                    metadata_updates={
+                        "router_path": f"strategy_expansion:{last_topic}",
+                        "router_bypassed": True,
+                        "strategy_stage": 2,
+                        "expansion_target": (
+                            expansion_result.target.value if expansion_result.target else None
+                        ),
+                        "expansion_tier": (
+                            expansion_result.tier.value if expansion_result.tier else None
+                        ),
+                        "user_request_type": "expand",
+                    },
+                )
+        skipped_gates.append("STRATEGY_EXPANSION")
+
+        # Gate 1: GENERATE_REQUESTED (Precedence 20)
         # When user triggers plan generation (e.g., "GENERATE_PLAN_NOW"), route
         # directly to generate handling. This takes priority over everything else.
         # EXCEPTION: Block if blocking date errors exist (DATE_AMBIGUOUS_YEAR, DATE_RANGE_INVALID)
@@ -1209,7 +1261,7 @@ class GateEvaluator:
                 )
 
             return cls._build_result(
-                gate=GatePrecedence.SHORT_CIRCUIT,  # High priority
+                gate=GatePrecedence.GENERATE_REQUESTED,  # Precedence 20
                 destination="generate_responder",
                 reason="generate_requested",
                 start_time=start_time,
@@ -1222,7 +1274,7 @@ class GateEvaluator:
             )
         skipped_gates.append("GENERATE_REQUESTED")
 
-        # Gate 1: SHORT_CIRCUIT
+        # Gate 2: SHORT_CIRCUIT (Precedence 30)
         if flags.get("short_circuit"):
             sc_type = flags.get("short_circuit")
             return cls._build_result(
@@ -1427,6 +1479,8 @@ class GateEvaluator:
                 )
 
             # Determine stage based on readiness
+            # Also set strategy_dest_known when destinations are present
+            has_destinations = bool(ti.destinations)
             if readiness.core_complete:
                 # Core complete - route to strategy stage 1
                 strategy_stage = 1
@@ -1452,6 +1506,7 @@ class GateEvaluator:
                     "router_bypassed": True,
                     "router_bypass_reason": f"topic_switch:{new_topic}",
                     "strategy_stage": strategy_stage,
+                    "strategy_dest_known": has_destinations,  # Enable dest-specific advice
                     "last_strategy_topic": new_topic,
                     "last_strategy_topic_turn": state.turn_number,
                     "topic_switch_cooldown_until_turn": state.turn_number + 1,
@@ -8287,6 +8342,50 @@ _RELATIVE_DATE_WORDS = frozenset(
     }
 )
 
+# Activity modifier words (V16) - exclude from place-like detection
+# These indicate activity preferences, not place names
+_ACTIVITY_MODIFIER_WORDS = frozenset(
+    {
+        "beginner",
+        "intermediate",
+        "advanced",
+        "expert",
+        "easy",
+        "moderate",
+        "difficult",
+        "challenging",
+        "friendly",
+        "casual",
+        "professional",
+        "family",
+        "kid",
+        "child",
+        "senior",
+        "budget",
+        "luxury",
+        "short",
+        "long",
+        "day",
+        "multi",
+    }
+)
+
+# Strategy keywords for activity preference detection
+_STRATEGY_KEYWORDS = frozenset(
+    {
+        "hiking",
+        "trekking",
+        "diving",
+        "snorkeling",
+        "skiing",
+        "snowboarding",
+        "cycling",
+        "biking",
+        "boating",
+        "sailing",
+    }
+)
+
 # Year clarification patterns (for dates_clarify responses)
 _YEAR_CLARIFY_PATTERNS = [
     re.compile(
@@ -8339,16 +8438,44 @@ def _is_place_like_text(text: str) -> bool:
 
     Returns True for text that appears to be a location rather than a date.
     Used to skip LQA date parsing.
+
+    V16: Excludes activity modifiers (beginner, advanced, easy, etc.) from
+    place detection to avoid false positives on suggestions like
+    "Beginner-friendly hiking".
     """
     # Check if it's a known place
     if is_known_place(text):
         return True
 
+    # V16: Check if text is an activity preference (modifier + strategy keyword)
+    # These should not be treated as place names
+    if _is_activity_preference_text(text):
+        return False
+
     # Check for capitalized words (proper nouns suggesting places)
     # But exclude single common words
     words = text.split()
     if len(words) >= 1:
-        capitalized_words = [w for w in words if w[0].isupper() and len(w) > 1]
+        # V16: Filter out activity modifier words before counting
+        capitalized_words = []
+        for w in words:
+            if len(w) > 1 and w[0].isupper():
+                w_lower = w.lower()
+                # Exclude activity modifiers
+                if w_lower in _ACTIVITY_MODIFIER_WORDS:
+                    continue
+                # Exclude words ending in "-friendly" (e.g., "Beginner-friendly")
+                if (
+                    "-friendly" in w.lower()
+                    or "-" in w
+                    and any(part.lower() in _ACTIVITY_MODIFIER_WORDS for part in w.split("-"))
+                ):
+                    continue
+                # Exclude strategy keywords
+                if w_lower in _STRATEGY_KEYWORDS:
+                    continue
+                capitalized_words.append(w)
+
         # Multiple capitalized words or a known place pattern
         if len(capitalized_words) >= 2:
             return True
@@ -8359,6 +8486,29 @@ def _is_place_like_text(text: str) -> bool:
                 return True
 
     return False
+
+
+def _is_activity_preference_text(text: str) -> bool:
+    """
+    Check if text is an activity preference (V16).
+
+    Returns True if text contains both:
+    - An activity modifier word (beginner, advanced, easy, etc.)
+    - A strategy keyword (hiking, diving, skiing, etc.)
+
+    Examples:
+    - "Beginner-friendly hiking" → True
+    - "Advanced skiing" → True
+    - "Easy trails" → False (no strategy keyword)
+    - "Swiss Alps" → False (no modifier)
+    """
+    text_lower = text.lower()
+    words = set(re.split(r"[-\s]+", text_lower))
+
+    has_modifier = bool(words & _ACTIVITY_MODIFIER_WORDS)
+    has_strategy = bool(words & _STRATEGY_KEYWORDS)
+
+    return has_modifier and has_strategy
 
 
 def _parse_date_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
@@ -8527,6 +8677,10 @@ def _parse_date_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any
     # Standard single date parsing
     iso_date = _date_normalizer.normalize(text_stripped)
     if iso_date:
+        # If start_date is already set but end_date is not, treat this as end_date
+        ti = state.trip_inputs
+        if ti.start_date and not ti.end_date:
+            return {"end_date_hint": iso_date}
         return {"start_date_hint": iso_date}
 
     # Handle bare month names (e.g., "December", "January")
@@ -8763,12 +8917,45 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
     question_target = canonicalize_question_target(raw_question_target)
 
     # -------------------------------------------------------------------------
+    # V16: SUGGESTION CLICK FAST-PATH
+    # -------------------------------------------------------------------------
+    # If user text exactly matches a previously offered suggestion, bypass LQA
+    # and let the extractor/router handle it properly
+    last_suggestions = state.metadata.get("last_offered_suggestions", [])
+    if last_suggestions:
+        text_lower = text.lower().strip()
+        for suggestion in last_suggestions:
+            if suggestion.lower().strip() == text_lower:
+                _lqa_stats["bails"] += 1
+                state.flags["lqa_prepass"] = False
+                state.flags["lqa_bail_reason"] = "suggestion_click"
+                _debug(
+                    "[LQA] BYPASS: suggestion click detected",
+                    matched_suggestion=suggestion[:40],
+                )
+                _debug_node_exit("lqa_prepass", state)
+                return state
+
+    # -------------------------------------------------------------------------
     # NOT DATE-LIKE BAIL: When asking for dates but text looks like a place
     # -------------------------------------------------------------------------
     # Per test_lqa_skips_place_when_target_is_dates: when user gives a place
     # name (like "Swiss Alps") but we asked for dates, bail with "not_date_like"
     # and let the system re-ask for dates.
+    # V16: Also check for activity preferences which should route to strategy
     if question_target == "dates":
+        # V16: Activity preferences should go to strategy, not re-ask dates
+        if _is_activity_preference_text(text):
+            _lqa_stats["bails"] += 1
+            state.flags["lqa_prepass"] = False
+            state.flags["lqa_bail_reason"] = "activity_preference"
+            _debug(
+                "[LQA] BYPASS: activity preference detected, routing to strategy",
+                text=text[:40],
+            )
+            _debug_node_exit("lqa_prepass", state)
+            return state
+
         if not _is_date_like_text(text) and _is_place_like_text(text):
             _lqa_stats["bails"] += 1
             _date_stats["lqa_skip_not_date_like"] += 1
@@ -9605,6 +9792,38 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             "action": None,
             "parsed": None,
         }
+
+    # 1.5. Explicit generate request detection (regardless of pending_action)
+    # This catches phrases like "Yes, generate my itinerary!", "I'm ready", etc.
+    # Only trigger if plan is ready (core fields complete)
+    if GENERATE_REQUEST_PATTERN.search(text_clean):
+        # Check if plan is ready (core fields complete)
+        ti = state.trip_inputs
+        ti_dict = ti.model_dump(exclude_none=True) if hasattr(ti, "model_dump") else ti
+        readiness = compute_trip_readiness(ti_dict)
+        if readiness.core_complete:
+            _debug_short_circuit_decision(
+                text,
+                "generate_request",
+                last_field,
+                "TRIGGERED",
+                reason="explicit_generate_pattern",
+            )
+            return {
+                "type": "generate_request",
+                "response": None,
+                "action": "generate_plan",
+                "parsed": None,
+                "user_request_type": "generate",
+            }
+        else:
+            _debug_short_circuit_decision(
+                text,
+                "generate_request",
+                last_field,
+                "BYPASSED",
+                reason=f"core_incomplete:missing={readiness.missing_core}",
+            )
 
     pending = state.metadata.get("pending_action")
 
@@ -10682,6 +10901,29 @@ def get_turn_trip_normalizer(state: Optional["GraphState"] = None) -> "TripInput
     """
     date_normalizer = get_turn_date_normalizer(state)
     return TripInputNormalizer(date_normalizer=date_normalizer)
+
+
+# =============================================================================
+# EXTRACTION ERROR CODES (V16: Explicit error codes for extraction issues)
+# =============================================================================
+# These error codes are used for user-in-the-loop clarification when LQA or
+# LLM extraction cannot confidently extract place information.
+class ExtractionErrorCode:
+    """Explicit error codes for extraction-related issues."""
+
+    AMBIGUOUS_PLACE = "EXTRACTION_AMBIGUOUS_PLACE"  # Multiple places possible
+    UNKNOWN_PLACE = "EXTRACTION_UNKNOWN_PLACE"  # Place not recognized
+    TYPO_DETECTED = "EXTRACTION_TYPO_DETECTED"  # Possible typo in place name
+    LOW_CONFIDENCE = "EXTRACTION_LOW_CONFIDENCE"  # LLM confidence below threshold
+    PARTIAL_MATCH = "EXTRACTION_PARTIAL_MATCH"  # Partial place name match
+
+
+EXTRACTION_BLOCKING_ERROR_CODES = frozenset(
+    {
+        ExtractionErrorCode.AMBIGUOUS_PLACE,
+        ExtractionErrorCode.UNKNOWN_PLACE,
+    }
+)
 
 
 # =============================================================================
@@ -15345,6 +15587,67 @@ def jloads_safe(s: str) -> Dict[str, Any]:
     return {}
 
 
+def _extract_message_from_malformed_json(raw: str) -> Optional[str]:
+    """
+    Try to extract assistant_message content from truncated/malformed JSON.
+
+    This is a recovery mechanism when LLM output gets truncated or has JSON errors.
+    It uses regex to find the assistant_message field value even if the JSON is incomplete.
+
+    Args:
+        raw: The raw LLM output string (potentially malformed JSON)
+
+    Returns:
+        The extracted message content, or None if extraction failed
+    """
+    if not raw:
+        return None
+
+    # Pattern 1: Match "assistant_message": "..." with proper quote handling
+    # This handles cases where the message is complete but other parts are truncated
+    pattern1 = re.compile(
+        r'"assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)',
+        re.DOTALL,
+    )
+
+    # Pattern 2: Match with single quotes (some LLMs use this)
+    pattern2 = re.compile(
+        r"['\"]assistant_message['\"]\s*:\s*['\"](.+?)(?:['\"]|$)",
+        re.DOTALL,
+    )
+
+    for pattern in [pattern1, pattern2]:
+        match = pattern.search(raw)
+        if match:
+            message = match.group(1)
+            # Unescape JSON escape sequences
+            try:
+                # Try to parse as JSON string to handle escapes properly
+                message = json.loads(f'"{message}"')
+            except (json.JSONDecodeError, ValueError):
+                # Fallback: manual unescape of common sequences
+                message = (
+                    message.replace('\\"', '"')
+                    .replace("\\n", "\n")
+                    .replace("\\t", "\t")
+                    .replace("\\\\", "\\")
+                )
+
+            # Validate: message should be reasonably long and not truncated mid-word
+            if len(message) > 50:
+                # Check if message appears truncated (ends mid-sentence without punctuation)
+                if message.rstrip()[-1:] not in ".!?:;)\"'":
+                    # Try to find a natural break point
+                    for punct in [".", "!", "?", "\n"]:
+                        last_punct = message.rfind(punct)
+                        if last_punct > len(message) // 2:  # At least half the content
+                            message = message[: last_punct + 1]
+                            break
+                return message.strip()
+
+    return None
+
+
 def ti_short(ti: TripInputs) -> Dict[str, Any]:
     return ti.model_dump(exclude_none=True)
 
@@ -15901,6 +16204,9 @@ async def extractor(state: GraphState) -> GraphState:
         if short_circuit.get("action") == "generate_plan":
             state.flags["generate_requested"] = True
             state.flags["generate_plan"] = True
+            # Track user request type for suggestion filtering
+            if short_circuit.get("user_request_type"):
+                state.metadata["user_request_type"] = short_circuit["user_request_type"]
             _debug("Short-circuit triggered generate_plan")
         elif short_circuit.get("action") == "apply_typo_corrections":
             # Apply the stored typo corrections to trip_inputs
@@ -18030,11 +18336,74 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             if raw_question_target and isinstance(raw_question_target, str):
                 normalized_target = raw_question_target.lower().strip()
                 if normalized_target in QUESTION_TARGET_VALUES:
-                    set_question_target(
-                        state, normalized_target, source=f"specialist:{name}:llm_response"
-                    )
-                    # Track this question for loop guard
-                    track_question_asked(state, normalized_target, state.last_summary)
+                    # =========================================================================
+                    # VALIDATION: Prevent LLM from asking about already-set fields
+                    # =========================================================================
+                    # The LLM may hallucinate and ask about a field that's already set.
+                    # This fix validates the question_target against trip_inputs and overrides
+                    # if the field is already populated. When this happens, we also replace
+                    # the response with a template to avoid showing the wrong question.
+                    # =========================================================================
+                    ti = state.trip_inputs
+
+                    # Map question_target to field check - covers ALL core field targets
+                    # Note: "activities" and "general" are domain targets, not core fields,
+                    # so they don't need the "already set" check
+                    _QUESTION_TARGET_FIELD_CHECK = {
+                        "dates": lambda t: bool(t.start_date),
+                        "start_date": lambda t: bool(t.start_date),  # alias
+                        "end_date": lambda t: bool(t.end_date),
+                        "destinations": lambda t: bool(t.destinations),
+                        "origin": lambda t: bool(t.origin),
+                        "travelers": lambda t: t.adults is not None,
+                        "adults": lambda t: t.adults is not None,  # alias
+                        "budget": lambda t: t.budget is not None,
+                        "currency": lambda t: bool(t.currency),
+                    }
+
+                    field_check = _QUESTION_TARGET_FIELD_CHECK.get(normalized_target)
+                    field_is_set = field_check(ti) if field_check else False
+
+                    if field_is_set:
+                        # LLM asked about a field that's already set - override to next missing
+                        readiness = compute_trip_readiness(ti, metadata=state.metadata)
+                        corrected_target = readiness.question_target
+                        _debug(
+                            "🛡️ LLM_QUESTION_TARGET_OVERRIDE: LLM asked about already-set field",
+                            llm_target=normalized_target,
+                            corrected_target=corrected_target,
+                            start_date=ti.start_date,
+                            origin=ti.origin,
+                            destinations=ti.destinations,
+                        )
+                        normalized_target = corrected_target
+
+                        # Also replace the response with a template for the corrected target
+                        # to avoid showing the user a question about an already-set field
+                        if corrected_target:
+                            template_response = _get_template_response(
+                                corrected_target, state.strategy_topic
+                            )
+                            if template_response:
+                                state.last_summary = template_response["question"]
+                                state.suggested_responses = template_response["suggestions"]
+                                store_suggestions_with_field(
+                                    state, template_response["suggestions"], corrected_target
+                                )
+                                _debug(
+                                    "🛡️ LLM_RESPONSE_REPLACED: Using template for corrected target",
+                                    corrected_target=corrected_target,
+                                    question=template_response["question"][:50],
+                                )
+
+                    if normalized_target:
+                        set_question_target(
+                            state, normalized_target, source=f"specialist:{name}:llm_response"
+                        )
+                        # Track this question for loop guard
+                        track_question_asked(state, normalized_target, state.last_summary)
+                    else:
+                        set_question_target(state, None, source=f"specialist:{name}:llm_all_set")
                 elif normalized_target == "null" or normalized_target == "none":
                     set_question_target(state, None, source=f"specialist:{name}:llm_null")
                 else:
@@ -18853,6 +19222,37 @@ async def strategy_node(state: GraphState) -> GraphState:
         prompt = _strip_stage1_includes(prompt)
         # Add budget/season sanity checklist for Stage 1 to prevent correction triggers
         prompt = prompt + _STAGE1_SANITY_CHECKLIST
+
+        # =====================================================================
+        # DESTINATION-KNOWN MODE: Add context for destination-specific advice
+        # =====================================================================
+        # When strategy_dest_known is True, the user has already chosen a destination.
+        # The LLM should provide destination-specific advice, NOT a shortlist of destinations.
+        # =====================================================================
+        dest_known_mode = state.metadata.get("strategy_dest_known", False)
+        destinations = state.trip_inputs.destinations
+        if dest_known_mode and destinations:
+            dest_list = ", ".join(destinations)
+            dest_context = (
+                f"\n\n==============================\n"
+                f"DESTINATION ALREADY CHOSEN: {dest_list}\n"
+                f"==============================\n"
+                f"The user has ALREADY selected {dest_list} as their destination.\n"
+                f"DO NOT ask which destination they prefer or suggest alternative destinations.\n"
+                f"Instead, provide:\n"
+                f"1. Specific {topic} recommendations for {dest_list}\n"
+                f"2. Best trails/routes/spots in this region\n"
+                f"3. Seasonal considerations for their travel dates\n"
+                f"4. Practical tips specific to {dest_list}\n"
+                f"5. Ask about preferences (difficulty, duration, etc.) if needed\n\n"
+            )
+            prompt = prompt + dest_context
+            _debug(
+                "📍 STRATEGY_DEST_KNOWN: Added destination-specific context",
+                destinations=destinations,
+                topic=topic,
+            )
+
     elif expansion_target and expansion_target != StrategyExpansionTarget.FULL_EXPANSION:
         # Stage 2 section expansion: Add focus instruction to prompt
         section_focus = (
@@ -19084,6 +19484,32 @@ async def strategy_node(state: GraphState) -> GraphState:
         except json.JSONDecodeError as e:
             last_error = e
             _debug_error(f"Strategy {topic} JSON error on attempt {attempt + 1}", error=str(e))
+
+            # =====================================================================
+            # JSON RECOVERY: Try to extract useful content from malformed response
+            # =====================================================================
+            # Before retrying with INVALID_JSON_HINT, attempt to salvage the message
+            recovered_message = _extract_message_from_malformed_json(out if "out" in dir() else "")
+            if recovered_message and len(recovered_message) > 50:
+                _debug(
+                    "📦 JSON_RECOVERY: Extracted message from malformed JSON",
+                    topic=topic,
+                    message_length=len(recovered_message),
+                )
+                state.last_summary = recovered_message
+                state.metadata["response_writer_node"] = f"strategy:{topic}:json_recovery"
+                state.metadata["response_generation_provenance"] = "llm_fallback"
+                state.metadata["strategy_stage"] = stage_name
+
+                # Set pending expansion for stage 1 even on recovery
+                if stage_name == "stage1":
+                    state.pending_strategy_expansion = True
+                    state.suggested_responses = ["Show more details", "What else should I know?"]
+
+                _debug_node_exit("strategy_node", state)
+                return state
+
+            # If recovery failed, try again with hint
             if attempt < attempts - 1:
                 system_prompt += INVALID_JSON_HINT
                 continue
@@ -20007,6 +20433,8 @@ def summarize(state: GraphState) -> GraphState:
         state.metadata["question_target"] = None  # SSoT sync
         state.metadata["response_writer_node"] = "summarize:ready"
         state.metadata["response_generation_provenance"] = "deterministic"
+        # Set pending_action so YES_PATTERN triggers generate_plan
+        state.metadata["pending_action"] = "generate_plan"
         # Clear the flag so it doesn't fire again
         state.metadata["plan_just_became_ready"] = False
 
@@ -20016,6 +20444,35 @@ def summarize(state: GraphState) -> GraphState:
         )
         _debug_node_exit("summarize", state)
         return state
+
+    # =========================================================================
+    # SUGGESTION FILTERING BASED ON USER REQUEST TYPE
+    # =========================================================================
+    # When user made an explicit request (generate, expand), don't show redundant suggestions
+    user_request_type = state.metadata.get("user_request_type")
+    if user_request_type and state.suggested_responses:
+        filtered_suggestions = []
+        for suggestion in state.suggested_responses:
+            suggestion_lower = suggestion.lower()
+            # Don't show "Show more details" if user just asked for it
+            if user_request_type == "expand" and "more detail" in suggestion_lower:
+                continue
+            # Don't show "generate" suggestions if user just asked to generate
+            if user_request_type == "generate" and (
+                "generate" in suggestion_lower or "itinerary" in suggestion_lower
+            ):
+                continue
+            filtered_suggestions.append(suggestion)
+        if filtered_suggestions != state.suggested_responses:
+            _debug(
+                "Filtered suggestions based on user_request_type",
+                user_request_type=user_request_type,
+                original_count=len(state.suggested_responses),
+                filtered_count=len(filtered_suggestions),
+            )
+            state.suggested_responses = filtered_suggestions
+        # Clear the request type after filtering
+        state.metadata.pop("user_request_type", None)
 
     # If no assistant message, generate a default follow-up question
     if not state.last_summary:
@@ -20061,6 +20518,65 @@ def summarize(state: GraphState) -> GraphState:
     if generated_fallback:
         state.metadata["response_writer_node"] = "summarize"
         state.metadata["response_generation_provenance"] = "deterministic"
+
+    # =========================================================================
+    # EMPTY RESPONSE GUARD (v15 - prevent empty responses)
+    # =========================================================================
+    # Ensure we never return an empty response to the user. This catches edge cases
+    # where LLM parsing failed or no fallback was generated.
+    if not state.last_summary or not state.last_summary.strip():
+        _debug("Summarize: empty response detected, generating emergency fallback")
+        ti = state.trip_inputs
+        destinations = ti.destinations or []
+
+        # Check context to provide relevant fallback
+        if state.pending_strategy_expansion:
+            # User was in strategy flow
+            topic = state.metadata.get("last_strategy_topic", "adventure")
+            dest_str = destinations[0] if destinations else "your destination"
+            state.last_summary = (
+                f"I'd love to help you plan your {topic} trip to {dest_str}! "
+                "Would you like me to show you more details about the itinerary?"
+            )
+            state.suggested_responses = ["Show more details", "Yes, generate my plan"]
+            state.metadata["response_writer_node"] = "summarize:strategy_fallback"
+        elif len(destinations) > 0:
+            # Has destinations - offer to generate
+            dest_str = ", ".join(destinations)
+            trip_inputs_dict = ti.model_dump(exclude_none=True) if hasattr(ti, "model_dump") else ti
+            readiness = compute_trip_readiness(trip_inputs_dict)
+            if readiness.core_complete:
+                state.last_summary = (
+                    f"Your trip to {dest_str} is ready! "
+                    "Would you like me to generate your detailed itinerary now?"
+                )
+                state.suggested_responses = [
+                    "Yes, generate my itinerary!",
+                    "I want to add more details first",
+                ]
+                state.metadata["pending_action"] = "generate_plan"
+            else:
+                # Still missing core fields
+                missing_str = ", ".join(readiness.missing_core[:2])
+                state.last_summary = (
+                    f"I'm excited to help plan your trip to {dest_str}! "
+                    f"I just need a few more details: {missing_str}."
+                )
+                state.suggested_responses = ["Let me tell you more"]
+            state.metadata["response_writer_node"] = "summarize:dest_fallback"
+        else:
+            # No context - generic greeting
+            state.last_summary = (
+                "I'm here to help plan your perfect trip! " "Where would you like to go?"
+            )
+            state.suggested_responses = ["I want to go hiking", "Beach vacation", "City break"]
+            state.metadata["response_writer_node"] = "summarize:generic_fallback"
+
+        state.metadata["response_generation_provenance"] = "template"
+        _debug(
+            "Summarize: generated emergency fallback",
+            response_writer_node=state.metadata.get("response_writer_node"),
+        )
 
     _debug_node_exit("summarize", state)
     return state
@@ -21518,6 +22034,15 @@ async def run_turn(
     incoming_flags.pop("lqa_bail_reason", None)
     incoming_flags.pop("deterministic_place_parse", None)
 
+    # =========================================================================
+    # V16: Store previous turn's suggestions for suggestion-click detection
+    # =========================================================================
+    prev_suggestions = session_state.get("suggested_responses", [])
+    if prev_suggestions:
+        metadata["last_offered_suggestions"] = [s for s in prev_suggestions if isinstance(s, str)]
+    else:
+        metadata.pop("last_offered_suggestions", None)
+
     state = GraphState(
         user_text=user_text,
         trip_inputs=TripInputs(**session_state.get("trip_inputs", {})),
@@ -22205,6 +22730,15 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     incoming_flags.pop("lqa_field", None)
     incoming_flags.pop("lqa_bail_reason", None)
     incoming_flags.pop("deterministic_place_parse", None)
+
+    # =========================================================================
+    # V16: Store previous turn's suggestions for suggestion-click detection
+    # =========================================================================
+    prev_suggestions = session_state.get("suggested_responses", [])
+    if prev_suggestions:
+        metadata["last_offered_suggestions"] = [s for s in prev_suggestions if isinstance(s, str)]
+    else:
+        metadata.pop("last_offered_suggestions", None)
 
     state = GraphState(
         user_text=user_text,

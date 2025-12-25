@@ -264,6 +264,7 @@ class ActivitySettings(BaseModel):
     """Activity-specific search settings."""
 
     categories: List[str] = Field(default_factory=list)  # empty = all categories
+    skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
 
 
 class TransportSettings(BaseModel):

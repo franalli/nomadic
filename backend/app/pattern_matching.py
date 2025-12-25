@@ -72,6 +72,34 @@ NO_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Generate request pattern - detect explicit plan generation requests
+# Matches: "generate my itinerary", "create my plan", "show me the plan",
+# "I'm ready", "looks good, go ahead", "let's go", "book it now", etc.
+# IMPORTANT: Avoid matching multi-city intent phrases like "do it all together"
+GENERATE_REQUEST_PATTERN = re.compile(
+    r"(?:"
+    # "yes, generate my itinerary" / "generate my plan" / "create the itinerary"
+    r"(?:yes[,!]?\s+)?(?:generate|create|build|make)\s+(?:my\s+|the\s+)?(?:itinerary|plan|trip)"
+    r"|"
+    # "show me the plan" / "show the itinerary"
+    r"(?:show|give)\s+(?:me\s+)?(?:the\s+)?(?:plan|itinerary)" r"|"
+    # "I'm ready" / "ready to go" / "ready to generate"
+    r"(?:i'?m\s+)?ready(?:\s+to\s+(?:go|book|generate|plan))?" r"|"
+    # "looks good, go ahead" / "sounds good, let's go"
+    r"(?:looks?|sounds?)\s+good[,!]?\s*(?:go\s+ahead|let'?s\s+(?:go|do\s+it))?" r"|"
+    # "let's go" / "let's do it" / "let's book"
+    r"let'?s\s+(?:go|do\s+it|book|plan|generate)" r"|"
+    # "go ahead" / "go ahead and generate"
+    r"go\s+ahead(?:\s+(?:and\s+)?(?:generate|create|book|plan))?" r"|"
+    # "book it" / "book it now"
+    r"book\s+it(?:\s+now)?" r"|"
+    # "do it now" / "make it happen" (NOT "do it all together" which is multi-city intent)
+    r"(?:do|make)\s+it\s+(?:now|happen)" r"|"
+    # "yes please generate" / "yes generate"
+    r"yes[,!]?\s*(?:please\s+)?generate" r")",
+    re.IGNORECASE,
+)
+
 # Patterns indicating complex/dense input
 COMMA_LIST_PATTERN = re.compile(r",\s*(?:and\s+)?[A-Z][a-z]+", re.IGNORECASE)
 MULTI_DESTINATION_PATTERN = re.compile(r"\b(?:and|then|also|plus)\s+[A-Z][a-z]+", re.IGNORECASE)

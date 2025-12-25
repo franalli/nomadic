@@ -75,6 +75,27 @@ class TestLqaFieldParsers:
         assert result is not None
         assert "start_date_hint" in result
 
+    def test_parse_date_as_end_date_when_start_date_set(self):
+        """Should parse date as end_date_hint when start_date is already set."""
+        # When start_date is already set and user provides a single date,
+        # it should be interpreted as the return/end date
+        state = GraphState(
+            user_text="", trip_inputs=TripInputs(start_date="2025-12-29")  # start_date already set
+        )
+        result = _parse_date_answer("January 10, 2026", state)
+        assert result is not None
+        assert "end_date_hint" in result
+        assert "start_date_hint" not in result
+        assert result["end_date_hint"] == "2026-01-10"
+
+    def test_parse_date_as_start_date_when_no_dates_set(self):
+        """Should parse date as start_date_hint when no dates are set."""
+        state = GraphState(user_text="", trip_inputs=TripInputs())  # no dates set
+        result = _parse_date_answer("January 10, 2026", state)
+        assert result is not None
+        assert "start_date_hint" in result
+        assert result["start_date_hint"] == "2026-01-10"
+
     def test_parse_date_invalid(self):
         """Should return None for non-date strings."""
         state = GraphState(user_text="", trip_inputs=TripInputs())

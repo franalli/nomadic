@@ -425,11 +425,21 @@ class TestGatePrecedenceGuard:
         but before CORE_COLLECTION. This is the key ordering invariant.
         It now includes STRATEGY_TOPIC_SWITCH between
         SPECIALIST_PRE_CORE and STRATEGY_PRE_CORE_VALUE.
+
+        Note: Gate precedence values use increments of 10 for intuitive ordering.
         """
-        assert GatePrecedence.SPECIALIST_PRE_CORE.value == 3
-        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 4
-        assert GatePrecedence.STRATEGY_PRE_CORE_VALUE.value == 5
-        assert GatePrecedence.CORE_COLLECTION.value == 6
+        # Verify the ordering invariant (lower value = higher priority)
+        assert GatePrecedence.SPECIALIST_PRE_CORE.value < GatePrecedence.STRATEGY_TOPIC_SWITCH.value
+        assert (
+            GatePrecedence.STRATEGY_TOPIC_SWITCH.value
+            < GatePrecedence.STRATEGY_PRE_CORE_VALUE.value
+        )
+        assert GatePrecedence.STRATEGY_PRE_CORE_VALUE.value < GatePrecedence.CORE_COLLECTION.value
+        # Verify specific values (increments of 10)
+        assert GatePrecedence.SPECIALIST_PRE_CORE.value == 60
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 70
+        assert GatePrecedence.STRATEGY_PRE_CORE_VALUE.value == 80
+        assert GatePrecedence.CORE_COLLECTION.value == 90
 
     def test_is_strategy_pre_core_eligible_helper(self):
         """Test the eligibility helper used to suppress SPECIALIST_PRE_CORE."""
