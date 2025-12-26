@@ -137,7 +137,11 @@ class TestStraddleTodayAmbiguity:
     """Test straddle-today detection in date range parsing."""
 
     def test_range_straddling_today_is_ambiguous(self):
-        """December 20-27 on Dec 21 should trigger ambiguity."""
+        """December 20-27 on Dec 21: past dates are auto-bumped to next year.
+
+        Since Dec 20 is in the past, the normalizer bumps both dates to 2026.
+        This is NOT ambiguous - it's a clear correction.
+        """
         today = date(2025, 12, 21)  # Dec 21, 2025
         normalizer = TripInputNormalizer(date_normalizer=DateNormalizer(today))
 
@@ -147,11 +151,12 @@ class TestStraddleTodayAmbiguity:
             metadata={},
         )
 
-        # Should detect ambiguity and request clarification
-        assert needs_clarify is True
-        assert start is None  # Dates should be cleared
-        assert end is None
-        assert any(e.code == DateErrorCode.AMBIGUOUS_YEAR for e in errors)
+        # Past dates are auto-bumped to next year - not ambiguous
+        assert needs_clarify is False
+        assert start == "2026-12-20"  # Bumped to next year
+        assert end == "2026-12-27"  # Also bumped to match
+        # Should have a warning about the bump
+        assert any("past" in e.message.lower() or "bump" in e.message.lower() for e in errors)
 
     def test_future_range_not_ambiguous(self):
         """January 10-17 (completely in future) should not be ambiguous."""

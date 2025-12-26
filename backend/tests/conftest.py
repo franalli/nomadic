@@ -3,11 +3,20 @@
 Provides automatic cache isolation for complete test independence.
 This ensures that no cached LLM responses, validation results, or
 other state can leak between tests.
+
+PR4: Sets PYTEST_RUNNING env var for test-mode detection.
 """
 
 from __future__ import annotations
 
+import os
+
 import pytest
+
+# =============================================================================
+# PR4: Test-mode detection - set env var before any imports
+# =============================================================================
+os.environ["PYTEST_RUNNING"] = "1"
 
 
 def pytest_collection_modifyitems(session, config, items):

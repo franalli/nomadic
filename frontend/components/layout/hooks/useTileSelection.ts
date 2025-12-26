@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo } from 'react';
 
+import { isActivityType, isFlightType } from '@/lib/utils';
 import type { Tile, TileSelection } from '@/types/tile';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -13,13 +14,6 @@ import type { Tile, TileSelection } from '@/types/tile';
  * Used as a default value when no selection exists for a branch.
  */
 export const EMPTY_TILE_SELECTION: TileSelection = { activities: [] };
-
-/**
- * Type keywords used to classify tiles.
- * Keep in sync with TilesGrid.tsx resolveTabForTile.
- */
-const FLIGHT_KEYWORDS = ['flight', 'air', 'fare', 'plane'];
-const ACTIVITY_KEYWORDS = ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -121,9 +115,9 @@ export interface UseTileSelectionReturn {
  * @returns The selection category ('stay', 'flight', or 'activity')
  */
 export const resolveSelectionCategory = (tile: Tile): SelectionCategory => {
-  const type = (tile.type || '').toLowerCase();
-  if (FLIGHT_KEYWORDS.some((keyword) => type.includes(keyword))) return 'flight';
-  if (ACTIVITY_KEYWORDS.some((keyword) => type.includes(keyword))) return 'activity';
+  const type = tile.type || '';
+  if (isFlightType(type)) return 'flight';
+  if (isActivityType(type)) return 'activity';
   return 'stay';
 };
 

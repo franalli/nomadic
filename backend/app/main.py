@@ -48,19 +48,30 @@ from app.middleware import (
     clear_session_cookies,
     get_session_from_request,
 )
-from app.plan_graph import (
+from app.planner import (
+    CACHE_SCHEMA_VERSION,
+    PLANNER_BUILD_ID,
+    PROMPT_BUNDLE_HASH,
+    TRACE_ENVELOPE,
     checkpoint_stats,
     clear_all_caches,
     clear_all_checkpoints,
     clear_response_caches,
     clear_session_checkpoint,
     condense_long_message,
+    create_envelope,
+    emit_anomaly_bundle,
+    emit_request_end,
+    emit_request_start,
+    force_verbose_on_anomaly,
     get_graph_stats,
+    get_planner_debug_info,
     prewarm_prompts,
     prune_stale_checkpoints,
     response_cache_stats,
     run_turn,
     run_turn_streaming,
+    validate_template_coverage,
 )
 from app.schemas import (
     ChatHistoryResponse,
@@ -92,7 +103,20 @@ async def lifespan(app: FastAPI):
 
     Used instead of deprecated @app.on_event handlers.
     Pre-warms caches and compiles templates to eliminate cold-start latency.
+    Validates template coverage at startup - fails fast on mismatch.
     """
+    # Log build info for cache debugging
+    logger.info(
+        "[Startup] Build info: prompt_bundle_hash=%s, planner_build_id=%s, cache_schema_version=%s",
+        PROMPT_BUNDLE_HASH,
+        PLANNER_BUILD_ID,
+        CACHE_SCHEMA_VERSION,
+    )
+    print(
+        f"[Startup] prompt_bundle_hash={PROMPT_BUNDLE_HASH}, "
+        f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
+    )
+
     # Prewarm validation cache
     validation_count = prewarm_cache()
     print(f"[Validation] Pre-warmed cache with {validation_count} entries")
@@ -102,6 +126,23 @@ async def lifespan(app: FastAPI):
     print(
         f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
         f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
+    )
+
+    # Validate template coverage - FATAL on failure
+    # This prevents deploy-time prompt/template drift that causes hard-to-debug runtime behavior
+    template_validation = validate_template_coverage()
+    if not template_validation["valid"]:
+        error_msg = (
+            f"[FATAL] Template coverage validation failed: "
+            f"missing_fields={template_validation['missing_fields']}, "
+            f"errors={template_validation['errors'][:3]}"
+        )
+        logger.error(error_msg)
+        print(error_msg)
+        raise RuntimeError(error_msg)
+    print(
+        f"[Startup] Template coverage validation passed "
+        f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
     )
 
     yield
@@ -159,6 +200,9 @@ def health():
     return {
         "status": "ok",
         "env": settings.env,
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
     }
 
 
@@ -285,6 +329,31 @@ def admin_graph_stats():
     }
     """
     return get_graph_stats()
+
+
+@app.get("/v1/admin/planner")
+def admin_planner_debug():
+    """
+    Get planner configuration and build identifiers for ops debugging.
+
+    Returns stable JSON schema with behavioral config and build info.
+    Useful for verifying deployment state and debugging cache issues.
+
+    Response includes:
+    - admin_endpoint_version: Schema version for evolution tracking
+    - prompt_bundle_hash: Hash of prompt templates
+    - planner_build_id: Git SHA or build ID
+    - cache_schema_version: Cache payload schema version
+    - enabled_strategy_topics: List of enabled strategy topics
+    - enabled_strategy_topics_source: "defaults" or "env_override"
+    - enable_all_strategy_topics: Whether env override is active
+    - llm_budget_max_calls_non_ready: Max LLM calls per non-ready turn
+    - cache_ttl_map_seconds: TTL per cache type
+    - gate_precedence_version: Gate logic version
+    - node_logic_version: Per-node logic versions
+    - strategy_output_caps: Max output characters for strategy responses
+    """
+    return get_planner_debug_info()
 
 
 @app.post("/v1/admin/clear-all-checkpoints")
@@ -445,6 +514,17 @@ async def graph_plan_endpoint(
     session_id = get_session_from_request(request)
     db_session = await get_or_create_session(db, session_id)
 
+    # --- Create telemetry envelope for this request ---
+    thread_id = session_state.get("thread_id", "")
+    trace_envelope = create_envelope(
+        request=request,
+        thread_id=thread_id,
+        session_id=session_id,
+        redaction_mode=settings.trace_redaction_mode,
+    )
+    # Store envelope in session_state metadata for downstream access
+    session_state.setdefault("metadata", {})[TRACE_ENVELOPE] = trace_envelope.to_dict()
+
     # --- Track previous ready_to_generate for observability ---
     ready_to_generate_prev = session_state.get("metadata", {}).get("ready_to_generate", False)
 
@@ -490,6 +570,9 @@ async def graph_plan_endpoint(
     # Note: We intentionally do not reject relative date phrases (e.g., "next week").
     # The planner should handle them contextually using today_iso.
 
+    # --- Emit telemetry request start ---
+    request_start_ns = emit_request_start(trace_envelope, req.message)
+
     # --- Call run_turn with route-level timeout ---
     route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
     try:
@@ -500,6 +583,12 @@ async def graph_plan_endpoint(
         )
         logger.info(f"[{request_id}] Graph planner succeeded (LangGraph path)")
     except asyncio.TimeoutError:
+        force_verbose_on_anomaly(trace_envelope, session_state.get("metadata", {}))
+        emit_anomaly_bundle(
+            trace_envelope,
+            anomaly_type="timeout",
+            metadata={"timeout_seconds": route_timeout_seconds, "session_id": session_id},
+        )
         logger.error(
             f"[{request_id}] Route timeout after {route_timeout_seconds}s "
             f"(session_id={session_id})"
@@ -512,6 +601,12 @@ async def graph_plan_endpoint(
             },
         ) from None
     except TimeoutError:
+        force_verbose_on_anomaly(trace_envelope, session_state.get("metadata", {}))
+        emit_anomaly_bundle(
+            trace_envelope,
+            anomaly_type="timeout",
+            metadata={"reason": "TimeoutError"},
+        )
         logger.error(f"[{request_id}] run_turn timed out")
         raise HTTPException(
             status_code=504,
@@ -521,6 +616,12 @@ async def graph_plan_endpoint(
             },
         ) from None
     except Exception as e:
+        force_verbose_on_anomaly(trace_envelope, session_state.get("metadata", {}))
+        emit_anomaly_bundle(
+            trace_envelope,
+            anomaly_type="exception",
+            metadata={"error": str(e), "error_type": type(e).__name__},
+        )
         logger.error(f"[{request_id}] run_turn failed: {e}")
         raise HTTPException(
             status_code=500,
@@ -529,6 +630,17 @@ async def graph_plan_endpoint(
                 "message": "Planning request failed",
             },
         ) from e
+
+    # --- Extract cache summary for telemetry ---
+    cache_summary = result.get("session_state", {}).get("metadata", {}).get("cache_summary", {})
+
+    # --- Emit telemetry request end ---
+    emit_request_end(
+        envelope=trace_envelope,
+        start_ns=request_start_ns,
+        cache_summary=cache_summary,
+        error=None,
+    )
 
     # --- Validate and sanitize output ---
     assistant_message = result.get("assistant_message", "")

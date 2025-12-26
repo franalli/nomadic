@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useCallback, useState } from 'react';
+import { memo } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
@@ -93,55 +93,3 @@ export const ConfirmDialog = memo(function ConfirmDialog({
     </div>
   );
 });
-
-// Hook for easier usage
-export function useConfirmDialog() {
-  const [isOpen, setIsOpen] = useState(false);
-  const [config, setConfig] = useState<{
-    title: string;
-    description: string;
-    confirmLabel?: string;
-    cancelLabel?: string;
-    variant?: 'default' | 'destructive';
-    onConfirm: () => void;
-  } | null>(null);
-
-  const confirm = useCallback(
-    (options: {
-      title: string;
-      description: string;
-      confirmLabel?: string;
-      cancelLabel?: string;
-      variant?: 'default' | 'destructive';
-    }): Promise<boolean> => {
-      return new Promise((resolve) => {
-        setConfig({
-          ...options,
-          onConfirm: () => resolve(true),
-        });
-        setIsOpen(true);
-      });
-    },
-    []
-  );
-
-  const handleClose = useCallback(() => {
-    setIsOpen(false);
-    setConfig(null);
-  }, []);
-
-  const DialogComponent = config ? (
-    <ConfirmDialog
-      isOpen={isOpen}
-      onClose={handleClose}
-      onConfirm={config.onConfirm}
-      title={config.title}
-      description={config.description}
-      confirmLabel={config.confirmLabel}
-      cancelLabel={config.cancelLabel}
-      variant={config.variant}
-    />
-  ) : null;
-
-  return { confirm, DialogComponent };
-}

@@ -22,8 +22,8 @@ from unittest.mock import patch
 import pytest
 
 from app.config import settings
+from app.pattern_matching import BYPASS_CONSTRAINT_PATTERNS
 from app.plan_graph import (
-    _BYPASS_CONSTRAINT_PATTERNS,
     GraphState,
     TripInputs,
     _detect_strategy_topic_from_text,
@@ -348,7 +348,7 @@ class TestConstraintPatterns:
     )
     def test_constraint_pattern_detection(self, text: str, constraint_type: str):
         """Constraint patterns should be detected."""
-        pattern = _BYPASS_CONSTRAINT_PATTERNS[constraint_type]
+        pattern = BYPASS_CONSTRAINT_PATTERNS[constraint_type]
         assert (
             pattern.search(text) is not None
         ), f"Expected '{constraint_type}' constraint in '{text}'"

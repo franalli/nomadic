@@ -6,11 +6,14 @@ This module provides:
 - Trip input normalization (currency, destinations, dates)
 - Output validation (suggested responses, message truncation)
 - Today ISO computation with server timezone
+- JSON parsing with recovery (PR-D extraction)
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import unicodedata
 import uuid
 from datetime import datetime
@@ -719,3 +722,180 @@ def check_payload_size(request: Any) -> Optional[str]:
         )
 
     return None
+
+
+# =============================================================================
+# PR-D: JSON PARSING UTILITIES (Extracted from plan_graph.py)
+# =============================================================================
+# These functions provide robust JSON parsing with multiple recovery strategies
+# for handling malformed LLM output.
+
+
+def truncate_to_balanced_json(raw: str) -> Optional[str]:
+    """
+    Extract a valid JSON object from a potentially truncated or malformed string.
+
+    LLMs sometimes return incomplete JSON or include extra text before/after the JSON.
+    This function finds the first complete, balanced JSON object in the string.
+
+    Args:
+        raw: Raw string potentially containing JSON
+
+    Returns:
+        Extracted balanced JSON string, or None if not found
+    """
+    start_idx = None
+    brace_count = 0
+    in_string = False
+    escape = False
+    last_valid_idx = -1
+
+    for idx, ch in enumerate(raw):
+        if start_idx is None:
+            if ch == "{":
+                start_idx = idx
+                brace_count = 1
+            continue
+
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            brace_count += 1
+        elif ch == "}":
+            brace_count -= 1
+            if brace_count == 0:
+                last_valid_idx = idx
+                break
+
+    if start_idx is not None and last_valid_idx >= start_idx:
+        return raw[start_idx : last_valid_idx + 1]
+    return None
+
+
+def jloads_safe(s: str) -> Dict[str, Any]:
+    """
+    Parse JSON with multiple fallback strategies for malformed input.
+
+    Tries progressively more lenient parsing approaches:
+    1. Standard json.loads() - works for well-formed JSON
+    2. Non-strict mode - allows some escape sequence issues
+    3. Truncation recovery - extracts balanced JSON from garbage
+    4. Last resort: find { and } brackets
+
+    Args:
+        s: JSON string to parse
+
+    Returns:
+        Parsed dict, or empty dict on failure
+    """
+    if not s:
+        return {}
+
+    # Try standard parsing first
+    try:
+        return json.loads(s)
+    except json.JSONDecodeError:
+        pass
+
+    # Try non-strict mode (allows some escape sequence issues)
+    try:
+        return json.loads(s, strict=False)
+    except Exception:
+        pass
+
+    # Try extracting balanced JSON from garbage
+    trimmed = truncate_to_balanced_json(s)
+    if trimmed:
+        try:
+            return json.loads(trimmed, strict=False)
+        except json.JSONDecodeError:
+            pass
+
+    # Last resort: find { and } brackets
+    start, end = s.find("{"), s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(s[start : end + 1], strict=False)
+        except json.JSONDecodeError:
+            pass
+
+    # Return empty dict on failure
+    logger.warning("JSON parse failed: %s", s[:100] if len(s) > 100 else s)
+    return {}
+
+
+def extract_message_from_malformed_json(raw: str) -> Optional[str]:
+    """
+    Try to extract assistant_message content from truncated/malformed JSON.
+
+    This is a recovery mechanism when LLM output gets truncated or has JSON errors.
+    It uses regex to find the assistant_message field value even if the JSON is incomplete.
+
+    Args:
+        raw: The raw LLM output string (potentially malformed JSON)
+
+    Returns:
+        The extracted message content, or None if extraction failed
+    """
+    if not raw:
+        return None
+
+    # Pattern 1: Match "assistant_message": "..." with proper quote handling
+    # This handles cases where the message is complete but other parts are truncated
+    pattern1 = re.compile(
+        r'"assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)',
+        re.DOTALL,
+    )
+
+    # Pattern 2: Match with single quotes (some LLMs use this)
+    pattern2 = re.compile(
+        r"['\"]assistant_message['\"]\s*:\s*['\"](.+?)(?:['\"]|$)",
+        re.DOTALL,
+    )
+
+    for pattern in [pattern1, pattern2]:
+        match = pattern.search(raw)
+        if match:
+            message = match.group(1)
+            # Unescape JSON escape sequences
+            try:
+                # Try to parse as JSON string to handle escapes properly
+                message = json.loads(f'"{message}"')
+            except (json.JSONDecodeError, ValueError):
+                # Fallback: manual unescape of common sequences
+                message = (
+                    message.replace('\\"', '"')
+                    .replace("\\n", "\n")
+                    .replace("\\t", "\t")
+                    .replace("\\\\", "\\")
+                )
+
+            # Validate: message should be reasonably long and not truncated mid-word
+            if len(message) > 50:
+                # Check if message appears truncated (ends mid-sentence without punctuation)
+                if message.rstrip()[-1:] not in ".!?:;)\"'":
+                    # Try to find a natural break point
+                    for punct in [".", "!", "?", "\n"]:
+                        last_punct = message.rfind(punct)
+                        if last_punct > len(message) // 2:  # At least half the content
+                            message = message[: last_punct + 1]
+                            break
+                return message.strip()
+
+    return None
+
+
+# Backwards compatibility aliases (private names used in plan_graph.py)
+_truncate_to_balanced_json = truncate_to_balanced_json
+_extract_message_from_malformed_json = extract_message_from_malformed_json

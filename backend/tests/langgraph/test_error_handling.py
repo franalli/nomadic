@@ -14,12 +14,14 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+from app.graph_plan_utils import (
+    _truncate_to_balanced_json,
+    jloads_safe,
+)
 from app.plan_graph import (
     GraphState,
     TripInputs,
     _detect_short_circuit,
-    _truncate_to_balanced_json,
-    jloads_safe,
 )
 
 

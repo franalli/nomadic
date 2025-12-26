@@ -28,6 +28,10 @@ from datetime import date, timedelta
 import pytest
 
 from app.plan_graph import (
+    CACHE_SCHEMA_VERSION,
+    NODE_LOGIC_VERSION,
+    PLANNER_BUILD_ID,
+    PROMPT_BUNDLE_HASH,
     CachePayload,
     GateEvaluator,
     GraphState,
@@ -223,6 +227,12 @@ class TestContractMismatchEviction:
 
         # Create a poisoned payload with wrong suggestion_kind
         poisoned_payload = CachePayload(
+            payload_kind="required_fields",
+            node_name="required_fields",
+            schema_version=CACHE_SCHEMA_VERSION,
+            logic_version=NODE_LOGIC_VERSION.get("required_fields", 1),
+            prompt_bundle_hash=PROMPT_BUNDLE_HASH,
+            planner_build_id=PLANNER_BUILD_ID,
             assistant_message="How many travelers?",
             question_target="dates",  # Says "dates" but...
             suggested_responses=["Just me", "Two adults"],
@@ -241,6 +251,7 @@ class TestContractMismatchEviction:
             suggestions_hash="def456",
             created_at=1234567890.0,
             provenance="cached",
+            extra={},
         )
 
         # Manually insert into cache using same key computation as get_cached_response_v6
@@ -460,3 +471,161 @@ class TestReadyStateFlip:
 
         # Should miss due to ready_state mismatch
         assert cached is None, "Cache should miss when ready_state differs"
+
+
+# =============================================================================
+# PR-B: Cache Summary Metrics Tests
+# =============================================================================
+
+
+class TestCacheInvalidReasonConstants:
+    """Tests for standardized cache invalidation reason constants."""
+
+    def test_reason_constants_defined(self):
+        """All required reason constants should be defined."""
+        from app.plan_graph import CacheInvalidReason
+
+        required_reasons = [
+            "SCHEMA_VERSION_MISMATCH",
+            "LOGIC_VERSION_MISMATCH",
+            "PROMPT_BUNDLE_HASH_MISMATCH",
+            "PLANNER_BUILD_ID_MISMATCH",
+            "HARD_CONSTRAINT_MISMATCH",
+            "READY_STATE_FLIP",
+            "CONTRACT_MISMATCH",
+            "TTL_EXPIRED",
+            "PAYLOAD_KIND_MISMATCH",
+            "THREAD_MISMATCH",
+            "USER_TEXT_MISMATCH",
+            "QUESTION_TARGET_MISMATCH",
+            "QUESTION_ID_MISMATCH",
+            "MISSING_ALL_MISMATCH",
+            "CORE_HASH_MISMATCH",
+            "UNKNOWN",
+        ]
+
+        for reason in required_reasons:
+            assert hasattr(CacheInvalidReason, reason), f"Missing reason: {reason}"
+            value = getattr(CacheInvalidReason, reason)
+            assert isinstance(value, str), f"Reason {reason} should be a string"
+            assert len(value) > 0, f"Reason {reason} should not be empty"
+
+    def test_reason_values_lowercase_snake_case(self):
+        """Reason values should be lowercase snake_case."""
+        from app.plan_graph import CacheInvalidReason
+
+        for attr in dir(CacheInvalidReason):
+            if attr.startswith("_"):
+                continue
+            value = getattr(CacheInvalidReason, attr)
+            if isinstance(value, str):
+                assert value == value.lower(), f"{attr} value should be lowercase"
+                assert " " not in value, f"{attr} value should not have spaces"
+
+
+class TestSummarizeCacheEvents:
+    """Tests for summarize_cache_events() function."""
+
+    def test_empty_events_returns_empty_summary(self):
+        """Empty events should return empty summary."""
+        from app.plan_graph import summarize_cache_events
+
+        summary = summarize_cache_events([])
+        assert summary["by_node"] == {}
+        assert summary["by_reason"] == {}
+        assert summary["hit_rate_by_node"] == {}
+
+    def test_single_hit_event(self):
+        """Single hit event should be counted correctly."""
+        from app.plan_graph import summarize_cache_events
+
+        events = [{"node": "required_fields", "action": "hit", "reason": None}]
+        summary = summarize_cache_events(events)
+
+        assert "required_fields" in summary["by_node"]
+        assert summary["by_node"]["required_fields"]["hit"] == 1
+        assert summary["by_node"]["required_fields"]["miss"] == 0
+        assert summary["hit_rate_by_node"]["required_fields"] == 1.0
+
+    def test_hit_and_miss_events(self):
+        """Hit and miss events should calculate correct hit rate."""
+        from app.plan_graph import summarize_cache_events
+
+        events = [
+            {"node": "router", "action": "hit", "reason": None},
+            {"node": "router", "action": "miss", "reason": None},
+            {"node": "router", "action": "hit", "reason": None},
+        ]
+        summary = summarize_cache_events(events)
+
+        assert summary["by_node"]["router"]["hit"] == 2
+        assert summary["by_node"]["router"]["miss"] == 1
+        # Hit rate = 2 / (2 + 1) = 0.666...
+        assert abs(summary["hit_rate_by_node"]["router"] - 2 / 3) < 0.001
+
+    def test_discard_with_reason(self):
+        """Discard events with reasons should be tracked."""
+        from app.plan_graph import summarize_cache_events
+
+        events = [
+            {"node": "extractor", "action": "discard", "reason": "schema_version_mismatch:1!=2"},
+            {
+                "node": "extractor",
+                "action": "discard",
+                "reason": "prompt_bundle_hash_mismatch:abc!=def",
+            },
+            {"node": "strategy", "action": "discard", "reason": "schema_version_mismatch:1!=3"},
+        ]
+        summary = summarize_cache_events(events)
+
+        assert summary["by_node"]["extractor"]["discard"] == 2
+        assert summary["by_node"]["strategy"]["discard"] == 1
+        # Reasons should be normalized to base category
+        assert summary["by_reason"]["schema_version_mismatch"] == 2
+        assert summary["by_reason"]["prompt_bundle_hash_mismatch"] == 1
+
+    def test_multiple_nodes(self):
+        """Events from multiple nodes should be tracked separately."""
+        from app.plan_graph import summarize_cache_events
+
+        events = [
+            {"node": "required_fields", "action": "hit", "reason": None},
+            {"node": "router", "action": "miss", "reason": None},
+            {"node": "extractor", "action": "hit", "reason": None},
+        ]
+        summary = summarize_cache_events(events)
+
+        assert len(summary["by_node"]) == 3
+        assert summary["by_node"]["required_fields"]["hit"] == 1
+        assert summary["by_node"]["router"]["miss"] == 1
+        assert summary["by_node"]["extractor"]["hit"] == 1
+
+
+class TestCacheCounters:
+    """Tests for process-level rolling cache counters."""
+
+    def test_get_cache_counters_returns_structure(self):
+        """get_cache_counters should return correct structure."""
+        from app.plan_graph import get_cache_counters
+
+        counters = get_cache_counters()
+
+        assert "totals" in counters
+        assert "by_node" in counters
+        assert "by_reason" in counters
+        assert "hits_total" in counters["totals"]
+        assert "misses_total" in counters["totals"]
+        assert "discards_total" in counters["totals"]
+        assert "evictions_total" in counters["totals"]
+
+    def test_counters_in_admin_endpoint(self):
+        """Cache counters should be included in admin endpoint."""
+        from app.plan_graph import get_planner_debug_info
+
+        debug_info = get_planner_debug_info()
+
+        assert "cache_counters" in debug_info
+        assert "cache_counters_scope" in debug_info
+        assert debug_info["cache_counters_scope"] == "process"
+        assert "cache_counters_reset_on_restart" in debug_info
+        assert debug_info["cache_counters_reset_on_restart"] is True

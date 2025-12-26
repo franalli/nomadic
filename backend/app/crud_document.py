@@ -37,41 +37,6 @@ _DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
 
 # =============================================================================
-# Sync functions (for legacy endpoints)
-# =============================================================================
-
-
-def get_document_sync(db: Session, *, session: models.Session) -> Optional[models.PlanDocument]:
-    """Fetch the plan document for a session (sync version)."""
-    return (
-        db.query(models.PlanDocument).filter(models.PlanDocument.session_id == session.id).first()
-    )
-
-
-def get_or_create_document_sync(
-    db: Session,
-    *,
-    session: models.Session,
-    updated_by: UpdatedBy = "planner",
-) -> models.PlanDocument:
-    """Get existing document or create an empty one (sync version)."""
-    doc = get_document_sync(db, session=session)
-    if doc:
-        return doc
-
-    empty_data = PlanDocumentData().model_dump()
-    doc = models.PlanDocument(
-        session_id=session.id,
-        version=1,
-        updated_by=updated_by,
-        document=empty_data,
-    )
-    db.add(doc)
-    db.flush()
-    return doc
-
-
-# =============================================================================
 # Async functions (for async endpoints and LangGraph)
 # =============================================================================
 

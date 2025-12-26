@@ -42,6 +42,20 @@ from app.crud_trip import (
     get_or_create_session,
     record_chat_message,
 )
+from app.debug_utils import (
+    # PR-E: Debug utilities extracted to debug_utils.py
+    _debug,
+    _debug_error,
+    _debug_suggestions,
+    is_debug_enabled,
+    safe_debug,
+    safe_debug_error,
+)
+from app.graph_plan_utils import (
+    # PR-D: JSON utilities extracted to graph_plan_utils
+    _extract_message_from_malformed_json,
+    jloads_safe,
+)
 from app.known_places import (
     KNOWN_COUNTRIES,
     is_known_place,
@@ -49,18 +63,25 @@ from app.known_places import (
     normalize_place_with_fuzzy,
 )
 from app.pattern_matching import (
+    ADVENTUROUS_PATTERNS,
     # Utility patterns
     ANSI_ESCAPE_PATTERN,
     ARTICLE_PREFIX_PATTERN,
     # Flight patterns
     BUDGET_PATTERN,
+    BYPASS_CONSTRAINT_PATTERNS,
     # Transport patterns
     COMMA_LIST_PATTERN,
+    DATE_RANGE_WITH_YEAR_PATTERNS,
     # Date patterns
     DENSE_INPUT_KEYWORDS,
     DURATION_PATTERN,
+    # User tone patterns
+    ENTHUSIASTIC_TONE_PATTERNS,
+    EXPLICIT_YEAR_PATTERN,
     # Activity patterns
     FAMILY_COMPOSITION_PATTERN,
+    FRUSTRATED_TONE_PATTERNS,
     # Generate request pattern
     GENERATE_REQUEST_PATTERN,
     GREETING_BLOCKLIST,
@@ -71,27 +92,84 @@ from app.pattern_matching import (
     INITIAL_DESTINATION_PATTERN,
     INLINE_BUDGET_PATTERN,
     INLINE_TRAVELERS_PATTERN,
+    ISO_DATE_PATTERN,
     LQA_BAIL_PATTERNS,
+    MONTH_DAY_EXTRACTION_PATTERNS,
+    MONTH_DAY_PATTERN,
+    # Date parsing patterns (V26 extraction)
+    MONTH_TO_MONTH_RANGE_PATTERN,
     MULTI_DESTINATION_PATTERN,
     MULTI_FIELD_PATTERN,
     NO_BUDGET_PHRASES,
     NO_PATTERN,
+    ORDINAL_SUFFIX_PATTERN,
     ORIGIN_DESTINATION_PATTERN,
     ORIGIN_PREFIX_PATTERN,
+    PARTIAL_DATE_PATTERN,
     PLACE_SEPARATORS_PATTERN,
+    # User intent archetype patterns
+    QUICK_BOOKING_PATTERNS,
     RELATIVE_DATE_PATTERNS,
+    # Relative date words (consolidated constants)
+    RELATIVE_DATE_WORDS_ALL,
     SEASON_PATTERN,
     SENTENCE_ENDING_PATTERN,
     SENTENCE_VERB_PATTERN,
+    SHORT_TRIP_PATTERNS,
+    STRATEGY_TOPIC_PATTERNS,
+    TODAY_WORDS,
     TOPIC_KEYWORDS,
     TRAVELERS_MICRO_PATTERNS,
     TRAVELERS_PATTERN,
     TRAVELERS_WITH_KIDS_PATTERN,
+    UNDECIDED_PATTERNS,
+    WEEK_OF_MONTH_PATTERN,
+    WEEK_ORDINALS,
     WORD_TO_NUMBER,
+    # Year clarification patterns
+    YEAR_CLARIFY_PATTERNS,
     YES_PATTERN,
+    # Date compatibility (consolidated)
+    is_text_date_compatible,
     # Helper functions
     is_traveler_detail_answer,
     text_is_compatible_with_target,
+)
+from app.planner.hashing import (
+    # PR5: Stable hashing utilities
+    stable_hash_index,
+    stable_hash_int,
+)
+from app.planner.meta_keys import (
+    # PR2: Metadata key constants
+    DELTAS_APPLIED_THIS_TURN,
+    DUPLICATION_CLASS,
+    LLM_CALL_BLOCKED_REASON,
+    LLM_CALL_SITES,
+    LLM_CALLS_THIS_TURN,
+    MUTATION_COUNTER,
+    NODE_RUN_JOURNAL,
+    PLANNER_SNAPSHOT,
+    RESPONSE_CLAIMED_BY,
+    RESPONSE_GENERATION_PROVENANCE,
+    RESPONSE_SOURCE_NODE,
+    STEP_COUNT,
+    TRACE_ENVELOPE,
+    TRIPWIRE_TRIGGERED,
+    TURN_CANARY,
+    VISITED_NODES,
+)
+from app.planner.telemetry import (
+    # PR-T: Telemetry instrumentation
+    TraceEnvelope,
+    emit_node_end,
+    emit_node_start,
+    force_verbose_on_anomaly,
+    now_ns,
+)
+from app.planner.test_mode import (
+    # PR4: Test-mode detection for invariant hard-fails
+    raise_if_test_mode,
 )
 from app.schemas import (
     ActivitySettings,
@@ -189,122 +267,24 @@ FALLBACK_SUGGESTIONS: List[str] = [
 ]
 
 # =============================================================================
-# DEBUG LOGGING
+# PR-E: DEBUG LOGGING MOVED TO debug_utils.py
 # =============================================================================
-_DEBUG_LOG = settings.debug_plan_messages
+# The following functions have been extracted to app/debug_utils.py:
+# - _debug() - Conditional debug logging
+# - _debug_error() - Error logging with emoji prefix
+# - _debug_suggestions() - Suggestion logging for debug visibility
+# - safe_debug() - Guaranteed non-throwing debug wrapper
+# - safe_debug_error() - Guaranteed non-throwing error debug wrapper
+# - is_debug_enabled() - Check if debug logging is enabled
+#
+# They are imported at the top of this file for backwards compatibility.
+# See: from app.debug_utils import _debug, _debug_error, ...
+
+# Cache _DEBUG_LOG for local use (imported functions use their own cache)
+_DEBUG_LOG = is_debug_enabled()
 
 # Retry count for API errors (from settings)
 _PLAN_MAX_RETRIES = settings.llm_max_retries
-
-
-def _debug(message: str, **kwargs: Any) -> None:
-    """Print debug message if DEBUG_PLAN_MESSAGES is enabled.
-
-    This function is designed to be non-fatal - any error during logging
-    is silently caught to prevent debug code from crashing production.
-    """
-    if not _DEBUG_LOG:
-        return
-    try:
-        # Truncate message if too long
-        max_len = 2000
-        if len(message) > max_len:
-            message = message[:max_len] + "...(truncated)"
-
-        # Safely format kwargs, handling any serialization errors
-        extras_parts = []
-        for k, v in kwargs.items():
-            try:
-                v_str = str(v)
-                if len(v_str) > 200:
-                    v_str = v_str[:200] + "..."
-                extras_parts.append(f"{k}={v_str}")
-            except Exception:
-                extras_parts.append(f"{k}=<unserializable>")
-        extras = " ".join(extras_parts) if extras_parts else ""
-        print(f"[PLAN_GRAPH DEBUG] {message} {extras}".strip())
-    except Exception:
-        # Never re-raise - debug logging must not crash production
-        pass
-
-
-def _debug_error(message: str, **kwargs: Any) -> None:
-    """Print ERROR message - always visible and prominent.
-
-    This function is designed to be non-fatal - any error during logging
-    is silently caught to prevent debug code from crashing production.
-    """
-    if not _DEBUG_LOG:
-        return
-    try:
-        # Truncate message if too long
-        max_len = 2000
-        if len(message) > max_len:
-            message = message[:max_len] + "...(truncated)"
-
-        # Safely format kwargs, handling any serialization errors
-        extras_parts = []
-        for k, v in kwargs.items():
-            try:
-                v_str = str(v)
-                if len(v_str) > 200:
-                    v_str = v_str[:200] + "..."
-                extras_parts.append(f"{k}={v_str}")
-            except Exception:
-                extras_parts.append(f"{k}=<unserializable>")
-        extras = " ".join(extras_parts) if extras_parts else ""
-        print(f"[PLAN_GRAPH ERROR] ❌ {message} {extras}".strip())
-    except Exception:
-        # Never re-raise - debug logging must not crash production
-        pass
-
-
-def _debug_suggestions(suggestions: List[str], source: str = "") -> None:
-    """Print user prompt suggestions for debug visibility.
-
-    This function is designed to be non-fatal - any error during logging
-    is silently caught to prevent debug code from crashing production.
-    """
-    if not _DEBUG_LOG:
-        return
-    try:
-        src_tag = f" ({source})" if source else ""
-        if suggestions:
-            # Truncate each suggestion and limit count
-            truncated = [s[:100] + "..." if len(s) > 100 else s for s in suggestions[:5]]
-            suggestions_str = " | ".join(truncated)
-            print(f"[PLAN_GRAPH DEBUG] 💡 Prompt suggestions{src_tag}: [{suggestions_str}]")
-        else:
-            print(f"[PLAN_GRAPH DEBUG] 💡 Prompt suggestions{src_tag}: (none)")
-    except Exception:
-        # Never re-raise - debug logging must not crash production
-        pass
-
-
-# =============================================================================
-# SAFE DEBUG: Guaranteed non-throwing debug for use in safety wrappers
-# =============================================================================
-def safe_debug(message: str, **kwargs: Any) -> None:
-    """
-    Guaranteed non-throwing debug function for use inside @safe_node and recovery code.
-
-    Unlike _debug(), this function wraps EVERYTHING in try/except including
-    the initial condition check and all string formatting. Use this in places
-    where even a debug failure could break critical recovery paths.
-    """
-    try:
-        _debug(message, **kwargs)
-    except Exception:
-        # Absolutely never throw - this is the safety net
-        pass
-
-
-def safe_debug_error(message: str, **kwargs: Any) -> None:
-    """Guaranteed non-throwing error debug for safety wrappers."""
-    try:
-        _debug_error(message, **kwargs)
-    except Exception:
-        pass
 
 
 # =============================================================================
@@ -565,15 +545,16 @@ def _debug_cache_hit(cache_name: str, key: str = "", value_preview: str = "") ->
         )
 
 
-def _debug_node_entry(node_name: str, state: "GraphState") -> str:
+def _debug_node_entry(node_name: str, state: "GraphState") -> Tuple[str, int]:
     """
     Log entry into a graph node and record in journal.
 
     Returns:
-        event_guid for this node execution
+        Tuple of (event_guid, start_ns) for this node execution.
+        start_ns is used by _debug_node_exit to compute duration.
     """
-    # Record in journal (performs tripwire checks)
-    event_guid = record_node_run(state, node_name)
+    # Record in journal (performs tripwire checks, emits telemetry node_start)
+    event_guid, start_ns = record_node_run(state, node_name)
 
     if _DEBUG_LOG:
         ti = state.trip_inputs
@@ -595,13 +576,33 @@ def _debug_node_entry(node_name: str, state: "GraphState") -> str:
             f"ENTERING {node_name} {emoji}{emoji}{emoji} {extras}"
         )
 
-    return event_guid
+    return event_guid, start_ns
 
 
-def _debug_node_exit(node_name: str, state: "GraphState") -> None:
-    """Log exit from a graph node and update journal."""
+def _debug_node_exit(
+    node_name: str,
+    state: "GraphState",
+    start_ns: int = 0,
+    *,
+    produced_response: bool = False,
+    error: Optional[str] = None,
+) -> None:
+    """
+    Log exit from a graph node, update journal, and emit telemetry.
+
+    Args:
+        node_name: Name of the node
+        state: Current graph state
+        start_ns: Start timestamp from _debug_node_entry (0 if not tracked)
+        produced_response: Whether this node wrote the assistant response
+        error: Error message if node failed
+    """
     # Update journal entry with final LLM count
     update_node_exit(state, node_name)
+
+    # Emit telemetry node_end if start_ns is valid
+    if start_ns > 0:
+        mark_node_end(state, node_name, start_ns, produced_response=produced_response, error=error)
 
     if _DEBUG_LOG:
         emoji = _NODE_EMOJIS.get(node_name, "🚀")
@@ -661,6 +662,26 @@ class NodeRunEntry:
     timestamp_ms: float = 0.0  # Timestamp for timing analysis
 
 
+def _get_trace_envelope(metadata: Dict[str, Any]) -> Optional[TraceEnvelope]:
+    """
+    Retrieve TraceEnvelope from metadata if present and tracing is enabled.
+
+    Returns None if:
+    - No envelope in metadata
+    - Envelope has trace_enabled=False
+    """
+    env_dict = metadata.get(TRACE_ENVELOPE)
+    if not env_dict or not isinstance(env_dict, dict):
+        return None
+    try:
+        env = TraceEnvelope.from_dict(env_dict)
+        if not env.trace_enabled:
+            return None
+        return env
+    except Exception:
+        return None
+
+
 def init_turn_instrumentation(metadata: Dict[str, Any]) -> str:
     """
     Initialize per-turn instrumentation in metadata.
@@ -674,14 +695,17 @@ def init_turn_instrumentation(metadata: Dict[str, Any]) -> str:
 
     Returns:
         turn_canary UUID for validation
+
+    Note: This function is kept for backward compatibility.
+    PR2: Now delegates to init_turn_metadata from planner.meta
     """
     turn_canary = uuid4().hex
-    metadata["node_run_journal"] = []
-    metadata["visited_nodes"] = set()
-    metadata["step_count"] = 0
-    metadata["response_claimed_by"] = None
-    metadata["turn_canary"] = turn_canary
-    metadata["mutation_counter"] = 0
+    metadata[NODE_RUN_JOURNAL] = []
+    metadata[VISITED_NODES] = set()
+    metadata[STEP_COUNT] = 0
+    metadata[RESPONSE_CLAIMED_BY] = None
+    metadata[TURN_CANARY] = turn_canary
+    metadata[MUTATION_COUNTER] = 0
     return turn_canary
 
 
@@ -690,66 +714,82 @@ def record_node_run(
     node_name: str,
     *,
     router_decision: Optional[str] = None,
-) -> str:
+) -> Tuple[str, int]:
     """
     Record a node execution in the journal and perform tripwire checks.
 
     Call this at the START of each node (after _debug_node_entry).
 
     Returns:
-        event_guid for this execution
+        Tuple of (event_guid, start_ns) for this execution.
+        start_ns is used to compute duration when calling mark_node_end.
 
     Raises:
         RuntimeError: If tripwire triggered (max steps or repeat node)
     """
     meta = state.metadata
     event_guid = uuid4().hex[:12]
+    start_ns = now_ns()
 
     # Initialize if missing (defensive)
-    if "node_run_journal" not in meta:
+    if NODE_RUN_JOURNAL not in meta:
         init_turn_instrumentation(meta)
 
     # Increment step counter
-    meta["step_count"] = meta.get("step_count", 0) + 1
-    step_count = meta["step_count"]
+    meta[STEP_COUNT] = meta.get(STEP_COUNT, 0) + 1
+    step_count = meta[STEP_COUNT]
 
     # Tripwire: max steps exceeded
     if step_count > MAX_STEPS_PER_TURN:
-        journal = meta.get("node_run_journal", [])
+        journal = meta.get(NODE_RUN_JOURNAL, [])
         _debug_error(
             "TRIPWIRE: Max steps exceeded",
             step_count=step_count,
             max_steps=MAX_STEPS_PER_TURN,
             journal_length=len(journal),
         )
-        # Don't raise - log and continue to avoid breaking production
-        # but mark in metadata for observability
-        meta["tripwire_triggered"] = "max_steps"
+        # Mark in metadata for observability
+        meta[TRIPWIRE_TRIGGERED] = "max_steps"
+        # Force verbose telemetry on tripwire
+        envelope = _get_trace_envelope(meta)
+        if envelope:
+            force_verbose_on_anomaly(envelope)
+            meta[TRACE_ENVELOPE] = envelope.to_dict()
+        # PR4: Raise in test mode for immediate failure
+        raise_if_test_mode(f"TRIPWIRE: Max steps exceeded: {step_count} > {MAX_STEPS_PER_TURN}")
 
     # Tripwire: same node executed twice (unless in allowlist)
-    visited = meta.get("visited_nodes", set())
+    visited = meta.get(VISITED_NODES, set())
     if node_name in visited and node_name not in MULTI_EXEC_ALLOWLIST:
-        journal = meta.get("node_run_journal", [])
+        journal = meta.get(NODE_RUN_JOURNAL, [])
         _debug_error(
             "TRIPWIRE: Node executed twice",
             node=node_name,
             step_count=step_count,
             previous_executions=[e for e in journal if e.get("node_name") == node_name],
         )
-        meta["tripwire_triggered"] = f"repeat_node:{node_name}"
-        meta["duplication_class"] = DuplicationClass.SAME_NODE_TWICE.value
+        # Mark in metadata for observability
+        meta[TRIPWIRE_TRIGGERED] = f"repeat_node:{node_name}"
+        meta[DUPLICATION_CLASS] = DuplicationClass.SAME_NODE_TWICE.value
+        # Force verbose telemetry on tripwire
+        envelope = _get_trace_envelope(meta)
+        if envelope:
+            force_verbose_on_anomaly(envelope)
+            meta[TRACE_ENVELOPE] = envelope.to_dict()
+        # PR4: Raise in test mode for immediate failure
+        raise_if_test_mode(f"TRIPWIRE: Node {node_name} executed twice")
 
     # Add to visited set
     if isinstance(visited, set):
         visited.add(node_name)
-        meta["visited_nodes"] = visited
+        meta[VISITED_NODES] = visited
 
     # Increment mutation counter (canary check)
-    meta["mutation_counter"] = meta.get("mutation_counter", 0) + 1
+    meta[MUTATION_COUNTER] = meta.get(MUTATION_COUNTER, 0) + 1
 
     # Get current state for journal entry
     readiness = compute_trip_readiness(state.trip_inputs)
-    llm_calls = meta.get("llm_calls_this_turn", 0)
+    llm_calls = meta.get(LLM_CALLS_THIS_TURN, 0)
 
     # Create journal entry
     entry = NodeRunEntry(
@@ -766,9 +806,67 @@ def record_node_run(
     )
 
     # Append to journal (as dict for JSON serialization)
-    meta["node_run_journal"].append(asdict(entry))
+    meta[NODE_RUN_JOURNAL].append(asdict(entry))
 
-    return event_guid
+    # Emit telemetry node_start event
+    envelope = _get_trace_envelope(meta)
+    if envelope:
+        emit_node_start(
+            envelope=envelope,
+            node=node_name,
+            event_guid=event_guid,
+        )
+
+    return event_guid, start_ns
+
+
+def mark_node_end(
+    state: "GraphState",
+    node_name: str,
+    start_ns: int,
+    *,
+    produced_response: bool = False,
+    error: Optional[str] = None,
+) -> None:
+    """
+    Mark the end of a node execution and emit telemetry.
+
+    Call this at the END of each node, before returning state.
+
+    Args:
+        state: Current graph state
+        node_name: Name of the node that just finished
+        start_ns: Start timestamp from record_node_run
+        produced_response: Whether this node wrote the assistant response
+        error: Error message if node failed
+    """
+    meta = state.metadata
+
+    # Update journal entry with LLM calls after and get event_guid
+    llm_calls = meta.get(LLM_CALLS_THIS_TURN, 0)
+    journal = meta.get(NODE_RUN_JOURNAL, [])
+    event_guid = ""
+    for entry in reversed(journal):
+        if entry.get("node_name") == node_name:
+            entry["llm_calls_after"] = llm_calls
+            event_guid = entry.get("event_guid", "")
+            break
+
+    # Compute duration in milliseconds
+    end_ns = now_ns()
+    duration_ms = (end_ns - start_ns) / 1_000_000 if start_ns > 0 else 0.0
+
+    # Emit telemetry node_end event
+    envelope = _get_trace_envelope(meta)
+    if envelope and event_guid:
+        emit_node_end(
+            envelope=envelope,
+            node=node_name,
+            event_guid=event_guid,
+            duration_ms=duration_ms,
+            wrote_response=produced_response,
+            error=error,
+        )
 
 
 def claim_response_writer(state: "GraphState", node_name: str) -> bool:
@@ -787,13 +885,13 @@ def claim_response_writer(state: "GraphState", node_name: str) -> bool:
         False if already claimed by another node (should skip write)
     """
     meta = state.metadata
-    current_writer = meta.get("response_claimed_by")
+    current_writer = meta.get(RESPONSE_CLAIMED_BY)
 
     if current_writer is None:
         # First writer - claim it
-        meta["response_claimed_by"] = node_name
+        meta[RESPONSE_CLAIMED_BY] = node_name
         # Update journal entry for this node
-        journal = meta.get("node_run_journal", [])
+        journal = meta.get(NODE_RUN_JOURNAL, [])
         for entry in reversed(journal):
             if entry.get("node_name") == node_name:
                 entry["produced_response"] = True
@@ -810,8 +908,13 @@ def claim_response_writer(state: "GraphState", node_name: str) -> bool:
         attempting_node=node_name,
         claimed_by=current_writer,
     )
-    meta["duplication_class"] = DuplicationClass.DOUBLE_WRITER.value
+    meta[DUPLICATION_CLASS] = DuplicationClass.DOUBLE_WRITER.value
     meta.setdefault("blocked_writers", []).append(node_name)
+    # PR4: Raise in test mode for immediate failure
+    raise_if_test_mode(
+        f"DOUBLE_WRITER: response_claimed_by already set to '{current_writer}', "
+        f"node '{node_name}' attempted to claim"
+    )
     return False
 
 
@@ -822,8 +925,8 @@ def update_node_exit(state: "GraphState", node_name: str) -> None:
     Call this at the END of each node (before _debug_node_exit).
     """
     meta = state.metadata
-    journal = meta.get("node_run_journal", [])
-    llm_calls = meta.get("llm_calls_this_turn", 0)
+    journal = meta.get(NODE_RUN_JOURNAL, [])
+    llm_calls = meta.get(LLM_CALLS_THIS_TURN, 0)
 
     # Update the most recent entry for this node
     for entry in reversed(journal):
@@ -841,10 +944,10 @@ def classify_turn_duplication(state: "GraphState") -> DuplicationClass:
     meta = state.metadata
 
     # Check for explicitly set duplication class
-    if "duplication_class" in meta:
-        return DuplicationClass(meta["duplication_class"])
+    if DUPLICATION_CLASS in meta:
+        return DuplicationClass(meta[DUPLICATION_CLASS])
 
-    journal = meta.get("node_run_journal", [])
+    journal = meta.get(NODE_RUN_JOURNAL, [])
     if not journal:
         return DuplicationClass.NONE
 
@@ -876,16 +979,16 @@ def dump_turn_journal(state: "GraphState") -> None:
         return
 
     meta = state.metadata
-    journal = meta.get("node_run_journal", [])
+    journal = meta.get(NODE_RUN_JOURNAL, [])
 
     if not journal:
         return
 
     # Compute statistics
     duplication = classify_turn_duplication(state)
-    step_count = meta.get("step_count", 0)
-    total_llm_calls = meta.get("llm_calls_this_turn", 0)
-    tripwire = meta.get("tripwire_triggered")
+    step_count = meta.get(STEP_COUNT, 0)
+    total_llm_calls = meta.get(LLM_CALLS_THIS_TURN, 0)
+    tripwire = meta.get(TRIPWIRE_TRIGGERED)
 
     # Node sequence
     node_seq = " → ".join(e.get("node_name", "?") for e in journal)
@@ -2191,23 +2294,8 @@ class GateEvaluator:
 
         return None
 
-    # Month-to-month range pattern for detecting date-like input
-    # Matches: "June to November", "March through October", "Jan-Dec"
-    _MONTH_TO_MONTH_PATTERN = re.compile(
-        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
-        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
-        r"\s*(?:to|through|-|–|—)\s*"
-        r"(january|february|march|april|may|june|july|august|september|october|november|december"
-        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
-        re.IGNORECASE,
-    )
-
-    # Single month pattern: "November", "next June"
-    _SINGLE_MONTH_PATTERN = re.compile(
-        r"^(?:next\s+|this\s+)?(january|february|march|april|may|june|july|august|september|october|november|december"
-        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
-        re.IGNORECASE,
-    )
+    # NOTE: _MONTH_TO_MONTH_PATTERN and _SINGLE_MONTH_PATTERN moved to pattern_matching.py
+    # as MONTH_TO_MONTH_RANGE_PATTERN and SINGLE_MONTH_PATTERN (V26 extraction)
 
     @classmethod
     def text_is_compatible_with_target(cls, user_text: str, question_target: Optional[str]) -> bool:
@@ -2217,6 +2305,10 @@ class GateEvaluator:
         This is used to determine if a user is answering a pending question
         (e.g., providing dates when question_target="dates") vs making a new
         request (e.g., topic switch).
+
+        CONSOLIDATION NOTE: For dates, this now delegates to is_text_date_compatible()
+        from pattern_matching.py which is the single source of truth for date
+        compatibility checks.
 
         Args:
             user_text: The user's input text
@@ -2232,39 +2324,8 @@ class GateEvaluator:
         text_stripped = user_text.strip()
 
         if question_target in ("dates", "start_date"):
-            # Check for month-to-month range ("June to November")
-            if cls._MONTH_TO_MONTH_PATTERN.match(text_stripped):
-                return True
-            # Check for single month ("November", "next June")
-            if cls._SINGLE_MONTH_PATTERN.match(text_stripped):
-                return True
-            # Check for season words
-            season_words = {
-                "spring",
-                "summer",
-                "fall",
-                "autumn",
-                "winter",
-                "next month",
-                "this month",
-                "next week",
-                "this week",
-                "next year",
-                "flexible",
-                "whenever",
-                "anytime",
-            }
-            if any(sw in text_lower for sw in season_words):
-                return True
-            # Check for relative date phrases
-            if re.search(
-                r"\b(in|around|by|before|after)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)",
-                text_lower,
-            ):
-                return True
-            # Check for date-like numbers
-            if re.search(r"\b(\d{1,2}[/.-]\d{1,2}|\d{4}|\d{1,2}(?:st|nd|rd|th))\b", text_lower):
-                return True
+            # Delegate to consolidated date compatibility check
+            return is_text_date_compatible(user_text)
 
         elif question_target == "origin":
             # Check if looks like a city/place name (capitalized, no strategy keywords)
@@ -3740,6 +3801,9 @@ CACHE_SCHEMA_VERSION = 1  # Bump on payload format changes
 NODE_LOGIC_VERSION = {
     "required_fields": 1,  # Bump when required_fields logic changes
     "router": 1,  # Bump when router logic changes
+    "extractor": 1,  # Bump when extractor logic/schema changes
+    "strategy": 1,  # Bump when strategy logic changes
+    "tile": 1,  # Bump when tile logic changes
 }
 
 
@@ -3769,24 +3833,197 @@ PROMPT_BUNDLE_HASH = _compute_prompt_bundle_hash()
 # Build ID for cross-deploy cache isolation (use git SHA or fallback)
 PLANNER_BUILD_ID = os.environ.get("GIT_SHA", os.environ.get("BUILD_ID", "dev"))[:12]
 
+# Gate precedence version for tracking gate logic changes (V15 renumbering)
+GATE_PRECEDENCE_VERSION = "v15"
+
+
+# =============================================================================
+# PR-C: STRATEGY OUTPUT SIZE LIMITS
+# =============================================================================
+# Hard cap on strategy response size to prevent runaway LLM output
+
+# Default truncation footer
+_STRATEGY_TRUNCATION_FOOTER = "\n\nAsk if you want me to expand any section."
+
+
+def truncate_preserving_newlines(
+    text: str,
+    cap: int,
+    footer: str = _STRATEGY_TRUNCATION_FOOTER,
+) -> Tuple[str, bool]:
+    """
+    Truncate text at last newline before cap, preserving structure.
+
+    PR-C: Strategy Output Size Limits
+
+    Args:
+        text: Text to truncate
+        cap: Maximum character limit
+        footer: Footer to append if truncated
+
+    Returns:
+        (truncated_text, was_truncated)
+    """
+    if len(text) <= cap:
+        return text, False
+
+    # Find last newline before the cap (leaving room for footer)
+    effective_cap = cap - len(footer)
+    if effective_cap <= 0:
+        # Footer is larger than cap - just truncate at cap
+        return text[:cap], True
+
+    # Find last newline before effective_cap
+    truncate_point = text.rfind("\n", 0, effective_cap)
+    if truncate_point <= 0:
+        # No newline found - truncate at word boundary
+        truncate_point = text.rfind(" ", 0, effective_cap)
+        if truncate_point <= 0:
+            truncate_point = effective_cap
+
+    truncated = text[:truncate_point]
+
+    # Check for unclosed markdown code blocks
+    # Count ``` occurrences - if odd, we're inside a code block
+    code_block_count = truncated.count("```")
+    if code_block_count % 2 == 1:
+        # Odd count = unclosed code block - close it
+        truncated = truncated + "\n```"
+
+    return truncated + footer, True
+
+
+# =============================================================================
+# PLANNER DEBUG INFO (PR-A: Debug/Config Snapshot)
+# =============================================================================
+def get_planner_debug_info() -> Dict[str, Any]:
+    """
+    Return planner configuration and build identifiers for ops debugging.
+
+    This is a thin wrapper that reads constants/config and calls existing helpers.
+    Designed to be called by /v1/admin/planner endpoint.
+
+    Returns stable schema with admin_endpoint_version for evolution tracking.
+    """
+    # Compute enabled strategy topics from feature flags
+    enabled_topics = []
+    enabled_topics_source = "defaults"
+    topic_flags = {
+        "boating": settings.enable_strategy_boating,
+        "hiking": settings.enable_strategy_hiking,
+        "diving": settings.enable_strategy_diving,
+        "skiing": settings.enable_strategy_skiing,
+        "cycling": settings.enable_strategy_cycling,
+    }
+    for topic, enabled in topic_flags.items():
+        if enabled:
+            enabled_topics.append(topic)
+
+    # Check if env override exists for strategy topics
+    enable_all_override = os.environ.get("ENABLE_ALL_STRATEGY_TOPICS", "").lower() == "true"
+    if enable_all_override:
+        enabled_topics = list(topic_flags.keys())
+        enabled_topics_source = "env_override"
+
+    # Build cache TTL map from settings
+    cache_ttl_map = {
+        "response": settings.response_cache_ttl_seconds,
+        "extractor": settings.extractor_cache_ttl_seconds,
+        "strategy": settings.strategy_cache_ttl_seconds,
+    }
+    cache_ttl_source = "config"
+
+    return {
+        # Schema evolution marker
+        "admin_endpoint_version": "planner_v1",
+        # Build identifiers
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+        # Strategy configuration
+        "enabled_strategy_topics": sorted(enabled_topics),
+        "enabled_strategy_topics_source": enabled_topics_source,
+        "enable_all_strategy_topics": enable_all_override,
+        # LLM budget
+        "llm_budget_max_calls_non_ready": 1,
+        # Hardcoded invariant: max 1 LLM call per non-ready turn
+        # Cache configuration
+        "cache_ttl_map_seconds": cache_ttl_map,
+        "cache_ttl_map_source": cache_ttl_source,
+        # Version constants
+        "gate_precedence_version": GATE_PRECEDENCE_VERSION,
+        "node_logic_version": NODE_LOGIC_VERSION,
+        # Strategy output caps
+        "strategy_output_caps": {
+            "max_chars": settings.strategy_max_output_chars,
+            "expansion_max_chars": settings.strategy_expansion_max_output_chars,
+        },
+        # PR-B: Process-level cache counters
+        "cache_counters": get_cache_counters(),
+        "cache_counters_scope": "process",
+        "cache_counters_reset_on_restart": True,
+    }
+
+
+def get_planner_snapshot() -> Dict[str, Any]:
+    """
+    Return minimal planner snapshot for per-turn metadata.
+
+    Subset of get_planner_debug_info() for inclusion in state.metadata["planner_snapshot"].
+    """
+    enabled_topics = []
+    for topic, enabled in [
+        ("boating", settings.enable_strategy_boating),
+        ("hiking", settings.enable_strategy_hiking),
+        ("diving", settings.enable_strategy_diving),
+        ("skiing", settings.enable_strategy_skiing),
+        ("cycling", settings.enable_strategy_cycling),
+    ]:
+        if enabled:
+            enabled_topics.append(topic)
+
+    return {
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+        "enabled_strategy_topics": sorted(enabled_topics),
+        "llm_budget_max_calls_non_ready": 1,
+        "gate_precedence_version": GATE_PRECEDENCE_VERSION,
+    }
+
 
 @dataclass
 class CachePayload:
     """
     Structured cache payload with full context for validity checking.
 
+    V6 Unified: Single payload type with payload_kind for node-specific data.
     Stores enough information to validate applicability on read and
     provide meaningful discard diagnostics.
     """
 
-    # Response data
+    # =========================================================================
+    # V6 UNIFIED FIELDS
+    # =========================================================================
+    payload_kind: str  # "required_fields", "router", "extractor", "strategy", "tile"
+    node_name: str  # Node that created this payload
+    schema_version: int  # CACHE_SCHEMA_VERSION at write time
+    logic_version: int  # NODE_LOGIC_VERSION[node] at write time
+    prompt_bundle_hash: str  # PROMPT_BUNDLE_HASH at write time
+    planner_build_id: str  # PLANNER_BUILD_ID at write time
+
+    # =========================================================================
+    # RESPONSE DATA
+    # =========================================================================
     assistant_message: str
     question_target: Optional[str]  # Canonical string, not raw object
     suggested_responses: List[str]
     suggestion_kind: Optional[str]  # travelers/dates/destinations/budget/etc
     suggestion_question_id: Optional[int]
 
-    # Context for validity checking
+    # =========================================================================
+    # CONTEXT FOR VALIDITY CHECKING
+    # =========================================================================
     thread_id: str
     user_text_hash: str
     answered_question_target: Optional[str]  # What question this answers
@@ -3796,14 +4033,24 @@ class CachePayload:
     intent: Optional[str]
     model_id: str
 
-    # Hashes for diagnostics (avoid logging large text)
+    # =========================================================================
+    # HASHES FOR DIAGNOSTICS
+    # =========================================================================
     last_summary_hash: str
     response_text_hash: str
     suggestions_hash: str
 
-    # Metadata
+    # =========================================================================
+    # METADATA
+    # =========================================================================
     created_at: float  # time.time()
     provenance: str = "cached"  # Always "cached" for cache entries
+
+    # =========================================================================
+    # NODE-SPECIFIC EXTRA DATA
+    # =========================================================================
+    # Stores node-specific fields without requiring schema changes
+    extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dict for cache storage."""
@@ -3811,7 +4058,22 @@ class CachePayload:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CachePayload":
-        """Reconstruct from dict."""
+        """Reconstruct from dict with backward compatibility."""
+        # Handle V5 payloads without V6 fields
+        if "payload_kind" not in data:
+            data["payload_kind"] = "legacy"
+        if "node_name" not in data:
+            data["node_name"] = "unknown"
+        if "schema_version" not in data:
+            data["schema_version"] = 0
+        if "logic_version" not in data:
+            data["logic_version"] = 0
+        if "prompt_bundle_hash" not in data:
+            data["prompt_bundle_hash"] = ""
+        if "planner_build_id" not in data:
+            data["planner_build_id"] = ""
+        if "extra" not in data:
+            data["extra"] = {}
         return cls(**data)
 
 
@@ -3826,11 +4088,184 @@ _follow_up_cache: TTLCache = TTLCache(maxsize=_RESPONSE_CACHE_MAXSIZE, ttl=_RESP
 _required_fields_cache: TTLCache = TTLCache(maxsize=100, ttl=30)  # 30s TTL for question responses
 _router_cache: TTLCache = TTLCache(maxsize=100, ttl=30)
 
-# Cache stats per node
+
+# V6 UNIFIED: Cache stats per node (extended for all caches)
+# =============================================================================
+# PR-B: CACHE INVALID REASON CONSTANTS
+# =============================================================================
+# Standardized discard/eviction reasons for analytics
+class CacheInvalidReason:
+    """Standardized cache invalidation reason constants."""
+
+    SCHEMA_VERSION_MISMATCH = "schema_version_mismatch"
+    LOGIC_VERSION_MISMATCH = "logic_version_mismatch"
+    PROMPT_BUNDLE_HASH_MISMATCH = "prompt_bundle_hash_mismatch"
+    PLANNER_BUILD_ID_MISMATCH = "planner_build_id_mismatch"
+    HARD_CONSTRAINT_MISMATCH = "hard_constraint_mismatch"
+    READY_STATE_FLIP = "ready_state_flip"
+    CONTRACT_MISMATCH = "contract_mismatch"
+    TTL_EXPIRED = "ttl_expired"
+    PAYLOAD_KIND_MISMATCH = "payload_kind_mismatch"
+    THREAD_MISMATCH = "thread_mismatch"
+    USER_TEXT_MISMATCH = "user_text_mismatch"
+    QUESTION_TARGET_MISMATCH = "question_target_mismatch"
+    QUESTION_ID_MISMATCH = "question_id_mismatch"
+    MISSING_ALL_MISMATCH = "missing_all_mismatch"
+    CORE_HASH_MISMATCH = "core_hash_mismatch"
+    UNKNOWN = "unknown"
+
+
 _cache_stats: Dict[str, Dict[str, int]] = {
     "required_fields": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
     "router": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
+    "extractor": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
+    "strategy": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
+    "tile": {"hits": 0, "misses": 0, "discards": 0, "evictions": 0},
 }
+
+# =============================================================================
+# PR-B: PROCESS-LEVEL ROLLING COUNTERS
+# =============================================================================
+# These counters aggregate across all turns for process-level observability
+# Reset on process restart; not persisted
+_cache_counters: Dict[str, int] = {
+    "hits_total": 0,
+    "misses_total": 0,
+    "discards_total": 0,
+    "evictions_total": 0,
+}
+_cache_counters_by_node: Dict[str, Dict[str, int]] = {}
+_cache_counters_by_reason: Dict[str, int] = {}
+
+# V6 UNIFIED: Per-turn cache events for observability
+# Populated during turn execution, cleared at turn start
+_cache_events_this_turn: List[Dict[str, Any]] = []
+
+
+def _record_cache_event(node: str, action: str, reason: Optional[str] = None) -> None:
+    """Record a cache event for per-turn observability."""
+    _cache_events_this_turn.append(
+        {
+            "node": node,
+            "action": action,  # hit, miss, evict, discard, set
+            "reason": reason,
+            "ts": time.time(),
+        }
+    )
+    # PR-B: Update rolling counters
+    _update_cache_counters(node, action, reason)
+
+
+def _update_cache_counters(node: str, action: str, reason: Optional[str]) -> None:
+    """Update process-level rolling counters for cache events."""
+    global _cache_counters, _cache_counters_by_node, _cache_counters_by_reason
+
+    # Update total counters
+    if action == "hit":
+        _cache_counters["hits_total"] += 1
+    elif action == "miss":
+        _cache_counters["misses_total"] += 1
+    elif action == "discard":
+        _cache_counters["discards_total"] += 1
+    elif action == "evict":
+        _cache_counters["evictions_total"] += 1
+
+    # Update per-node counters
+    if node not in _cache_counters_by_node:
+        _cache_counters_by_node[node] = {"hits": 0, "misses": 0, "discards": 0, "evictions": 0}
+    if action in ("hit", "miss", "discard", "evict"):
+        if action == "hit":
+            _cache_counters_by_node[node]["hits"] += 1
+        elif action == "miss":
+            _cache_counters_by_node[node]["misses"] += 1
+        elif action == "discard":
+            _cache_counters_by_node[node]["discards"] += 1
+        elif action == "evict":
+            _cache_counters_by_node[node]["evictions"] += 1
+
+    # Update per-reason counters (for discards/evictions)
+    if reason and action in ("discard", "evict"):
+        # Normalize reason to base category
+        reason_base = reason.split(":")[0] if ":" in reason else reason
+        _cache_counters_by_reason[reason_base] = _cache_counters_by_reason.get(reason_base, 0) + 1
+
+
+def get_cache_events_this_turn() -> List[Dict[str, Any]]:
+    """Get cache events for current turn (for metadata emission)."""
+    return _cache_events_this_turn.copy()
+
+
+def clear_cache_events_this_turn() -> None:
+    """Clear cache events at start of new turn."""
+    _cache_events_this_turn.clear()
+
+
+def summarize_cache_events(cache_events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Summarize cache events into dashboard-friendly per-node totals.
+
+    PR-B: Cache Summary Metrics
+
+    Args:
+        cache_events: List of cache event dicts from get_cache_events_this_turn()
+
+    Returns:
+        Dict with:
+        - by_node: {node: {hit, miss, discard, evict}}
+        - by_reason: {reason: count}
+        - hit_rate_by_node: {node: float}
+    """
+    by_node: Dict[str, Dict[str, int]] = {}
+    by_reason: Dict[str, int] = {}
+
+    for event in cache_events:
+        node = event.get("node", "unknown")
+        action = event.get("action", "unknown")
+        reason = event.get("reason")
+
+        # Initialize node counters
+        if node not in by_node:
+            by_node[node] = {"hit": 0, "miss": 0, "discard": 0, "evict": 0}
+
+        # Count actions
+        if action in by_node[node]:
+            by_node[node][action] += 1
+
+        # Count reasons (for discards/evictions)
+        if reason and action in ("discard", "evict"):
+            reason_base = reason.split(":")[0] if ":" in reason else reason
+            by_reason[reason_base] = by_reason.get(reason_base, 0) + 1
+
+    # Compute hit rates
+    hit_rate_by_node: Dict[str, float] = {}
+    for node, counts in by_node.items():
+        total = counts["hit"] + counts["miss"]
+        if total > 0:
+            hit_rate_by_node[node] = counts["hit"] / total
+        else:
+            hit_rate_by_node[node] = 0.0
+
+    return {
+        "by_node": by_node,
+        "by_reason": by_reason,
+        "hit_rate_by_node": hit_rate_by_node,
+    }
+
+
+def get_cache_counters() -> Dict[str, Any]:
+    """
+    Get process-level rolling cache counters.
+
+    PR-B: Process-level counters for /v1/admin/planner endpoint.
+
+    Returns:
+        Dict with totals, by_node, and by_reason counters.
+    """
+    return {
+        "totals": _cache_counters.copy(),
+        "by_node": {k: v.copy() for k, v in _cache_counters_by_node.items()},
+        "by_reason": _cache_counters_by_reason.copy(),
+    }
 
 
 def _get_node_cache(node_name: str) -> TTLCache:
@@ -3905,12 +4340,16 @@ def _validate_cache_payload(
     """
     Validate cached payload is applicable to current turn.
 
-    Enforces hard constraints:
+    V6 UNIFIED: Enforces hard constraints including version checks:
+    - Same prompt_bundle_hash (cache invalidation on prompt changes)
+    - Same planner_build_id (cache invalidation on deploy)
+    - Same schema_version
+    - Same logic_version for the node
     - Same thread_id
     - Same user_text_hash
     - Same question_target (canonical)
     - Same question_id (if available)
-    - Same missing_all (sorted)
+    - Same missing_all (sorted) OR ready_state_at_write match
     - Same core_hash
     - Same ready_state
 
@@ -3920,43 +4359,67 @@ def _validate_cache_payload(
     thread_id = state.metadata.get("thread_id", state.session_id or "")
     user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
 
-    # Hard constraint: same thread
+    # =========================================================================
+    # V6 VERSION CHECKS (fail fast on deploy/prompt changes)
+    # =========================================================================
+    if payload.prompt_bundle_hash and payload.prompt_bundle_hash != PROMPT_BUNDLE_HASH:
+        return (
+            False,
+            f"prompt_bundle_hash_mismatch:{payload.prompt_bundle_hash[:8]}!={PROMPT_BUNDLE_HASH[:8]}",
+        )
+
+    if payload.planner_build_id and payload.planner_build_id != PLANNER_BUILD_ID:
+        return False, f"planner_build_id_mismatch:{payload.planner_build_id}!={PLANNER_BUILD_ID}"
+
+    if payload.schema_version and payload.schema_version != CACHE_SCHEMA_VERSION:
+        return False, f"schema_version_mismatch:{payload.schema_version}!={CACHE_SCHEMA_VERSION}"
+
+    node_version = NODE_LOGIC_VERSION.get(node_name, 0)
+    if payload.logic_version and payload.logic_version != node_version:
+        return False, f"logic_version_mismatch:{payload.logic_version}!={node_version}"
+
+    # =========================================================================
+    # THREAD/SESSION CHECKS
+    # =========================================================================
     if payload.thread_id != thread_id:
         return False, "thread_mismatch"
 
-    # Hard constraint: same user_text (prevents cross-input pollution)
     if payload.user_text_hash != user_text_hash:
         return False, "user_text_mismatch"
 
-    # Hard constraint: same question_target
+    # =========================================================================
+    # QUESTION STATE CHECKS
+    # =========================================================================
     if payload.answered_question_target != current_question_target:
         return (
             False,
             f"question_target_mismatch:{payload.answered_question_target}!={current_question_target}",
         )
 
-    # Hard constraint: same question_id (if we have one)
     if current_question_id is not None and payload.suggestion_question_id != current_question_id:
         return (
             False,
             f"question_id_mismatch:{payload.suggestion_question_id}!={current_question_id}",
         )
 
-    # Hard constraint: same missing_all
+    # =========================================================================
+    # STATE DRIFT CHECKS (prevent stale-but-valid)
+    # =========================================================================
     payload_missing = sorted(payload.answered_missing_all)
     current_missing = sorted(current_missing_all)
     if payload_missing != current_missing:
         return False, f"missing_all_mismatch:{len(payload_missing)}!={len(current_missing)}"
 
-    # Hard constraint: same core_hash
     if payload.core_hash != current_core_hash:
         return False, "core_hash_mismatch"
 
-    # Hard constraint: same ready_state (never serve not-ready response when ready)
+    # Never serve not-ready response when ready (or vice versa)
     if payload.ready_state_at_write != current_ready_state:
         return False, f"ready_state_mismatch:{payload.ready_state_at_write}!={current_ready_state}"
 
-    # Suggestion contract check: suggestion_kind must match question_target category
+    # =========================================================================
+    # SUGGESTION CONTRACT CHECK
+    # =========================================================================
     if payload.suggestion_kind and current_question_target:
         qt_category = _get_question_target_category(current_question_target)
         if payload.suggestion_kind != qt_category:
@@ -4093,11 +4556,12 @@ def set_cached_response_v6(
     suggestion_kind: Optional[str],
     current_missing_all: List[str],
     current_ready_state: bool,
+    extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Cache a response with full context for later validity checking.
 
-    Creates a CachePayload with all necessary context for validation on read.
+    V6 UNIFIED: Creates a CachePayload with all version info for cache invalidation.
     """
     cache = _get_node_cache(node_name)
     thread_id = state.metadata.get("thread_id", state.session_id or "")
@@ -4106,14 +4570,24 @@ def set_cached_response_v6(
     model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
     intent = state.intent
     question_id = state.metadata.get("question_id_counter", 0)
+    node_version = NODE_LOGIC_VERSION.get(node_name, 0)
 
-    # Create payload
+    # Create V6 payload with version info
     payload = CachePayload(
+        # V6 unified fields
+        payload_kind=node_name,
+        node_name=node_name,
+        schema_version=CACHE_SCHEMA_VERSION,
+        logic_version=node_version,
+        prompt_bundle_hash=PROMPT_BUNDLE_HASH,
+        planner_build_id=PLANNER_BUILD_ID,
+        # Response data
         assistant_message=assistant_message,
         question_target=question_target,
         suggested_responses=suggested_responses,
         suggestion_kind=suggestion_kind,
         suggestion_question_id=question_id,
+        # Context for validity
         thread_id=thread_id,
         user_text_hash=user_text_hash,
         answered_question_target=question_target,
@@ -4122,13 +4596,17 @@ def set_cached_response_v6(
         ready_state_at_write=current_ready_state,
         intent=intent,
         model_id=model_id,
+        # Hashes
         last_summary_hash=hashlib.md5((assistant_message or "").encode()).hexdigest()[:16],
         response_text_hash=hashlib.md5((assistant_message or "").encode()).hexdigest()[:16],
         suggestions_hash=hashlib.md5(json.dumps(sorted(suggested_responses)).encode()).hexdigest()[
             :16
         ],
+        # Metadata
         created_at=time.time(),
         provenance="cached",
+        # Node-specific extra data
+        extra=extra or {},
     )
 
     # Compute cache key
@@ -4152,11 +4630,12 @@ def set_cached_response_v6(
         key_prefix=cache_key[:16],
         question_target=question_target,
         suggestions_count=len(suggested_responses),
+        schema_version=CACHE_SCHEMA_VERSION,
     )
 
 
 def get_cache_stats() -> Dict[str, Any]:
-    """Get cache statistics for all node caches."""
+    """V6: Get cache statistics for all node caches."""
     return {
         "required_fields": {
             **_cache_stats["required_fields"],
@@ -4166,9 +4645,24 @@ def get_cache_stats() -> Dict[str, Any]:
             **_cache_stats["router"],
             "size": len(_router_cache),
         },
+        "extractor": {
+            **_cache_stats["extractor"],
+            "size": len(_extractor_cache),
+        },
+        "strategy": {
+            **_cache_stats["strategy"],
+            "size": len(_strategy_cache),
+        },
+        "tile": {
+            **_cache_stats["tile"],
+            "size": len(_tile_cache),
+        },
         "schema_version": CACHE_SCHEMA_VERSION,
         "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
         "build_id": PLANNER_BUILD_ID,
+        "cache_events_this_turn": get_cache_events_this_turn(),
+        # PR-B: Cache summary for this turn
+        "cache_summary_this_turn": summarize_cache_events(get_cache_events_this_turn()),
     }
 
 
@@ -4182,34 +4676,34 @@ def get_cache_stats() -> Dict[str, Any]:
 _EXTRACTOR_CACHE_TTL = settings.extractor_cache_ttl_seconds
 _EXTRACTOR_CACHE_MAXSIZE = settings.extractor_cache_maxsize
 
-# Extractor result cache
+# V6: Extractor result cache with TTL
 _extractor_cache: TTLCache = TTLCache(maxsize=_EXTRACTOR_CACHE_MAXSIZE, ttl=_EXTRACTOR_CACHE_TTL)
 
-# Hit rate tracking for observability
-_extractor_cache_stats = {"hits": 0, "misses": 0}
 
-
-def _compute_extractor_cache_key(
+def _compute_extractor_cache_key_v6(
     session_id: str,
     user_text: str,
     core_fields_hash: str,
     extractor_mode: str,
+    model_id: str,
 ) -> str:
     """
-    Compute cache key for extractor LLM results.
+    V6: Compute cache key for extractor LLM results with version isolation.
 
-    Args:
-        session_id: The session ID (conversation ID)
-        user_text: The user's input text
-        core_fields_hash: Hash of core trip fields (dest, origin, date)
-        extractor_mode: "light" or "full"
-
-    Returns:
-        MD5 hash string for cache lookup
+    Key components:
+    - session_id: Session isolation
+    - user_text_hash: Input isolation
+    - core_fields_hash: State isolation
+    - extractor_mode: light/full
+    - model_id: Model isolation
+    - CACHE_SCHEMA_VERSION, NODE_LOGIC_VERSION, PROMPT_BUNDLE_HASH, PLANNER_BUILD_ID
     """
-    # Hash user text for stability
     text_hash = hashlib.md5(user_text.encode()).hexdigest()[:16]
-    key_parts = f"extractor|{session_id}|{text_hash}|{core_fields_hash}|{extractor_mode}"
+    node_version = NODE_LOGIC_VERSION.get("extractor", 0)
+    key_parts = (
+        f"extractor_v6|{session_id}|{text_hash}|{core_fields_hash}|{extractor_mode}|"
+        f"{model_id}|v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+    )
     return hashlib.md5(key_parts.encode()).hexdigest()
 
 
@@ -4221,24 +4715,60 @@ def _get_extractor_cached(
     state: Optional["GraphState"] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Try to get cached extractor result.
+    V6: Try to get cached extractor result with validation.
 
     Returns:
-        Cached extraction dict or None if not cached.
-        On hit, also increments hit counter and state cache_hits.
+        Cached extraction dict (parsed, confidence) or None if not cached/invalid.
     """
-    key = _compute_extractor_cache_key(session_id, user_text, core_fields_hash, extractor_mode)
-    result = _extractor_cache.get(key)
+    model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
+    key = _compute_extractor_cache_key_v6(
+        session_id, user_text, core_fields_hash, extractor_mode, model_id
+    )
+    cached_data = _extractor_cache.get(key)
+
+    if cached_data is None:
+        _cache_stats["extractor"]["misses"] += 1
+        _record_cache_event("extractor", "miss")
+        return None
+
+    # V6: Validate payload structure and version
+    if isinstance(cached_data, dict):
+        # Check V6 version fields if present
+        if "schema_version" in cached_data:
+            if cached_data.get("schema_version") != CACHE_SCHEMA_VERSION:
+                _cache_stats["extractor"]["discards"] += 1
+                _record_cache_event("extractor", "discard", "schema_version_mismatch")
+                del _extractor_cache[key]
+                return None
+            if cached_data.get("prompt_bundle_hash") != PROMPT_BUNDLE_HASH:
+                _cache_stats["extractor"]["discards"] += 1
+                _record_cache_event("extractor", "discard", "prompt_bundle_hash_mismatch")
+                del _extractor_cache[key]
+                return None
+            if cached_data.get("planner_build_id") != PLANNER_BUILD_ID:
+                _cache_stats["extractor"]["discards"] += 1
+                _record_cache_event("extractor", "discard", "planner_build_id_mismatch")
+                del _extractor_cache[key]
+                return None
+            # Return the actual extraction data from extra
+            result = cached_data.get("extra", {}).get("extraction_result")
+        else:
+            # Legacy format - return as-is but mark for upgrade
+            result = cached_data
+    else:
+        result = cached_data
 
     if result is not None:
-        _extractor_cache_stats["hits"] += 1
+        _cache_stats["extractor"]["hits"] += 1
+        _record_cache_event("extractor", "hit")
         _debug_cache_hit("extractor_cache", key[:16])
         if state is not None:
             _increment_cache_hits(state)
             state.metadata["extractor_cache_hit"] = True
         return result
 
-    _extractor_cache_stats["misses"] += 1
+    _cache_stats["extractor"]["misses"] += 1
+    _record_cache_event("extractor", "miss")
     return None
 
 
@@ -4249,9 +4779,37 @@ def _set_extractor_cached(
     extractor_mode: str,
     result: Dict[str, Any],
 ) -> None:
-    """Cache an extractor LLM result."""
-    key = _compute_extractor_cache_key(session_id, user_text, core_fields_hash, extractor_mode)
-    _extractor_cache[key] = result
+    """V6: Cache an extractor LLM result with version info."""
+    model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
+    key = _compute_extractor_cache_key_v6(
+        session_id, user_text, core_fields_hash, extractor_mode, model_id
+    )
+    node_version = NODE_LOGIC_VERSION.get("extractor", 0)
+
+    # V6 payload with version info
+    payload = {
+        "payload_kind": "extractor",
+        "node_name": "extractor",
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "logic_version": node_version,
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "created_at": time.time(),
+        "extra": {
+            "extraction_result": result,
+            "extractor_mode": extractor_mode,
+            "model_id": model_id,
+        },
+    }
+
+    _extractor_cache[key] = payload
+    _record_cache_event("extractor", "set")
+    _debug(
+        "EXTRACTOR_CACHE_SET",
+        key_prefix=key[:16],
+        mode=extractor_mode,
+        schema_version=CACHE_SCHEMA_VERSION,
+    )
 
 
 def get_extractor_cache_stats() -> Dict[str, Any]:
@@ -4261,60 +4819,63 @@ def get_extractor_cache_stats() -> Dict[str, Any]:
     Returns:
         Dict with hits, misses, hit_rate, and cache_size
     """
-    hits = _extractor_cache_stats["hits"]
-    misses = _extractor_cache_stats["misses"]
+    stats = _cache_stats["extractor"]
+    hits = stats["hits"]
+    misses = stats["misses"]
     total = hits + misses
     hit_rate = hits / total if total > 0 else 0.0
 
     return {
         "hits": hits,
         "misses": misses,
+        "discards": stats["discards"],
         "hit_rate": hit_rate,
         "cache_size": len(_extractor_cache),
         "max_size": _EXTRACTOR_CACHE_MAXSIZE,
         "ttl_seconds": _EXTRACTOR_CACHE_TTL,
+        "schema_version": CACHE_SCHEMA_VERSION,
     }
 
 
 # =============================================================================
-# STRATEGY CACHE (5-min TTL, topic-keyed)
+# STRATEGY CACHE (5-min TTL, topic-keyed) - V6 UNIFIED
 # =============================================================================
 # Cache strategy node LLM results for repeated queries about same topic.
-# Key: (session_id, topic, core_fields_hash, user_text_hash)
+# Key: (session_id, topic, core_fields_hash, user_text_hash, stage0_lifecycle_hash)
 # Longer TTL since strategy advice is more stable than extraction.
 
 _STRATEGY_CACHE_TTL = settings.strategy_cache_ttl_seconds
 _STRATEGY_CACHE_MAXSIZE = settings.strategy_cache_maxsize
 
-# Strategy result cache
+# V6: Strategy result cache with TTL
 _strategy_cache: TTLCache = TTLCache(maxsize=_STRATEGY_CACHE_MAXSIZE, ttl=_STRATEGY_CACHE_TTL)
 
-# Hit rate tracking
-_strategy_cache_stats = {"hits": 0, "misses": 0}
 
-
-def _compute_strategy_cache_key(
+def _compute_strategy_cache_key_v6(
     session_id: str,
     topic: str,
     core_fields_hash: str,
     user_text_hash: str,
-    section_id: Optional[str] = None,
+    section_id: Optional[str],
+    stage0_lifecycle_hash: Optional[str],
+    model_id: str,
 ) -> str:
     """
-    Compute cache key for strategy LLM results.
+    V6: Compute cache key for strategy LLM results with version isolation.
 
-    Args:
-        session_id: The session ID (conversation ID)
-        topic: The strategy topic (hiking, diving, etc.)
-        core_fields_hash: Hash of core trip fields
-        user_text_hash: Hash of user text
-        section_id: Optional expansion section (day_details, routes, etc.)
-
-    Returns:
-        MD5 hash string for cache lookup
+    Key components:
+    - session_id, topic, section_id: Scope isolation
+    - core_fields_hash, user_text_hash: State/input isolation
+    - stage0_lifecycle_hash: Prevents stage0 resurrection after answer
+    - model_id, versions: Model/deploy isolation
     """
     section_part = section_id or "stage1"
-    key_parts = f"strategy|{session_id}|{topic}|{section_part}|{core_fields_hash}|{user_text_hash}"
+    lifecycle_part = stage0_lifecycle_hash or "none"
+    node_version = NODE_LOGIC_VERSION.get("strategy", 0)
+    key_parts = (
+        f"strategy_v6|{session_id}|{topic}|{section_part}|{core_fields_hash}|{user_text_hash}|"
+        f"{lifecycle_part}|{model_id}|v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+    )
     return hashlib.md5(key_parts.encode()).hexdigest()
 
 
@@ -4327,25 +4888,72 @@ def _get_strategy_cached(
     section_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Try to get cached strategy result.
+    V6: Try to get cached strategy result with validation.
 
     Returns:
-        Cached strategy response dict or None if not cached.
+        Cached strategy response dict or None if not cached/invalid.
     """
-    key = _compute_strategy_cache_key(
-        session_id, topic, core_fields_hash, user_text_hash, section_id
+    model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
+    # Stage0 lifecycle hash prevents resurrection of answered questions
+    stage0_lifecycle_hash = None
+    if state is not None:
+        active_qid = state.metadata.get("question_id_counter", 0)
+        answered_qid = state.metadata.get("last_answered_question_id")
+        stage0_lifecycle_hash = f"{active_qid}:{answered_qid or 0}"
+
+    key = _compute_strategy_cache_key_v6(
+        session_id,
+        topic,
+        core_fields_hash,
+        user_text_hash,
+        section_id,
+        stage0_lifecycle_hash,
+        model_id,
     )
-    result = _strategy_cache.get(key)
+    cached_data = _strategy_cache.get(key)
+
+    if cached_data is None:
+        _cache_stats["strategy"]["misses"] += 1
+        _record_cache_event("strategy", "miss")
+        return None
+
+    # V6: Validate payload structure and version
+    if isinstance(cached_data, dict):
+        if "schema_version" in cached_data:
+            if cached_data.get("schema_version") != CACHE_SCHEMA_VERSION:
+                _cache_stats["strategy"]["discards"] += 1
+                _record_cache_event("strategy", "discard", "schema_version_mismatch")
+                del _strategy_cache[key]
+                return None
+            if cached_data.get("prompt_bundle_hash") != PROMPT_BUNDLE_HASH:
+                _cache_stats["strategy"]["discards"] += 1
+                _record_cache_event("strategy", "discard", "prompt_bundle_hash_mismatch")
+                del _strategy_cache[key]
+                return None
+            if cached_data.get("planner_build_id") != PLANNER_BUILD_ID:
+                _cache_stats["strategy"]["discards"] += 1
+                _record_cache_event("strategy", "discard", "planner_build_id_mismatch")
+                del _strategy_cache[key]
+                return None
+            # Return the actual strategy data from extra
+            result = cached_data.get("extra", {}).get("strategy_result")
+        else:
+            # Legacy format
+            result = cached_data
+    else:
+        result = cached_data
 
     if result is not None:
-        _strategy_cache_stats["hits"] += 1
+        _cache_stats["strategy"]["hits"] += 1
+        _record_cache_event("strategy", "hit")
         _debug_cache_hit("strategy_cache", key[:16])
         if state is not None:
             _increment_cache_hits(state)
             state.metadata["strategy_cache_hit"] = True
         return result
 
-    _strategy_cache_stats["misses"] += 1
+    _cache_stats["strategy"]["misses"] += 1
+    _record_cache_event("strategy", "miss")
     return None
 
 
@@ -4356,12 +4964,54 @@ def _set_strategy_cached(
     user_text_hash: str,
     result: Dict[str, Any],
     section_id: Optional[str] = None,
+    state: Optional["GraphState"] = None,
 ) -> None:
-    """Cache a strategy LLM result."""
-    key = _compute_strategy_cache_key(
-        session_id, topic, core_fields_hash, user_text_hash, section_id
+    """V6: Cache a strategy LLM result with version info."""
+    model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
+    stage0_lifecycle_hash = None
+    if state is not None:
+        active_qid = state.metadata.get("question_id_counter", 0)
+        answered_qid = state.metadata.get("last_answered_question_id")
+        stage0_lifecycle_hash = f"{active_qid}:{answered_qid or 0}"
+
+    key = _compute_strategy_cache_key_v6(
+        session_id,
+        topic,
+        core_fields_hash,
+        user_text_hash,
+        section_id,
+        stage0_lifecycle_hash,
+        model_id,
     )
-    _strategy_cache[key] = result
+    node_version = NODE_LOGIC_VERSION.get("strategy", 0)
+
+    # V6 payload with version info
+    payload = {
+        "payload_kind": "strategy",
+        "node_name": "strategy",
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "logic_version": node_version,
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "created_at": time.time(),
+        "extra": {
+            "strategy_result": result,
+            "topic": topic,
+            "section_id": section_id,
+            "stage0_lifecycle_hash": stage0_lifecycle_hash,
+            "model_id": model_id,
+        },
+    }
+
+    _strategy_cache[key] = payload
+    _record_cache_event("strategy", "set")
+    _debug(
+        "STRATEGY_CACHE_SET",
+        key_prefix=key[:16],
+        topic=topic,
+        section_id=section_id,
+        schema_version=CACHE_SCHEMA_VERSION,
+    )
 
 
 def get_strategy_cache_stats() -> Dict[str, Any]:
@@ -4371,18 +5021,21 @@ def get_strategy_cache_stats() -> Dict[str, Any]:
     Returns:
         Dict with hits, misses, hit_rate, and cache_size
     """
-    hits = _strategy_cache_stats["hits"]
-    misses = _strategy_cache_stats["misses"]
+    stats = _cache_stats["strategy"]
+    hits = stats["hits"]
+    misses = stats["misses"]
     total = hits + misses
     hit_rate = hits / total if total > 0 else 0.0
 
     return {
         "hits": hits,
         "misses": misses,
+        "discards": stats["discards"],
         "hit_rate": hit_rate,
         "cache_size": len(_strategy_cache),
         "max_size": _STRATEGY_CACHE_MAXSIZE,
         "ttl_seconds": _STRATEGY_CACHE_TTL,
+        "schema_version": CACHE_SCHEMA_VERSION,
     }
 
 
@@ -4430,11 +5083,10 @@ def reset_graph_stats() -> None:
     # Reset gate latency samples
     _gate_latency_samples = []
 
-    # Reset cache hit counters
-    _extractor_cache_stats["hits"] = 0
-    _extractor_cache_stats["misses"] = 0
-    _strategy_cache_stats["hits"] = 0
-    _strategy_cache_stats["misses"] = 0
+    # Reset V6 unified cache stats
+    for node_name in _cache_stats:
+        for key in _cache_stats[node_name]:
+            _cache_stats[node_name][key] = 0
 
 
 def get_graph_stats() -> Dict[str, Any]:
@@ -4559,6 +5211,8 @@ def get_graph_stats() -> Dict[str, Any]:
         },
         "extractor_cache": get_extractor_cache_stats(),
         "strategy_cache": get_strategy_cache_stats(),
+        "tile_cache": get_tile_cache_stats(),
+        "cache_events_this_turn": get_cache_events_this_turn(),
     }
 
 
@@ -4646,21 +5300,17 @@ def clear_response_caches() -> int:
     count = len(_follow_up_cache)
     _follow_up_cache.clear()
 
-    # Also clear extractor cache
+    # V6: Clear extractor cache
     extractor_count = len(_extractor_cache)
     _extractor_cache.clear()
 
-    # Reset extractor cache stats
-    _extractor_cache_stats["hits"] = 0
-    _extractor_cache_stats["misses"] = 0
-
-    # Also clear strategy cache
+    # V6: Clear strategy cache
     strategy_count = len(_strategy_cache)
     _strategy_cache.clear()
 
-    # Reset strategy cache stats
-    _strategy_cache_stats["hits"] = 0
-    _strategy_cache_stats["misses"] = 0
+    # V6: Clear tile cache
+    tile_count = len(_tile_cache)
+    _tile_cache.clear()
 
     # v6: Clear node-scoped caches
     required_fields_count = len(_required_fields_cache)
@@ -4669,19 +5319,20 @@ def clear_response_caches() -> int:
     router_count = len(_router_cache)
     _router_cache.clear()
 
-    # Reset v6 cache stats
+    # Reset v6 unified cache stats
     for node_name in _cache_stats:
         _cache_stats[node_name] = {"hits": 0, "misses": 0, "discards": 0, "evictions": 0}
 
-    total = count + extractor_count + strategy_count + required_fields_count + router_count
-    _debug(
-        (
-            "Cleared response caches: "
-            f"{total} entries (follow_up: {count}, extractor: {extractor_count}, "
-            f"strategy: {strategy_count}, required_fields: {required_fields_count}, "
-            f"router: {router_count})"
-        )
+    total = (
+        count + extractor_count + strategy_count + tile_count + required_fields_count + router_count
     )
+    message_prefix = "Cleared response caches: "
+    message_counts = (
+        f"{total} entries (follow_up: {count}, extractor: {extractor_count}, "
+        f"strategy: {strategy_count}, tile: {tile_count}, "
+        f"required_fields: {required_fields_count}, router: {router_count})"
+    )
+    _debug(message_prefix + message_counts)
     return total
 
 
@@ -5890,7 +6541,10 @@ def _hash_value(value: Any) -> str:
         serialized = json.dumps(value, sort_keys=True, default=str)
         return hashlib.md5(serialized.encode()).hexdigest()[:8]
     except Exception:
-        return str(hash(str(value)))[:8]
+        # Use blake2s for stable fallback instead of built-in hash()
+        # (Inline logic to avoid circular import with app.planner)
+        fallback_str = repr(value)
+        return hashlib.blake2s(fallback_str.encode("utf-8"), digest_size=32).hexdigest()[:8]
 
 
 def _write_trip_inputs(
@@ -6221,46 +6875,26 @@ def _apply_llm_delta(
 # USER INTENT ARCHETYPES (for conversational style adaptation)
 # =============================================================================
 # Priority order: lower number = higher priority (speed preferences win)
-# Patterns are pre-compiled for efficiency
+# Patterns imported from pattern_matching.py (V26 extraction)
 USER_INTENT_ARCHETYPES = {
     "quick_booking": {
         "priority": 1,
-        "patterns": [
-            re.compile(
-                r"\b(just\s+flights?|book\s+now|asap|fastest|quick\s+book|just\s+need)\b", re.I
-            ),
-            re.compile(r"\b(hurry|urgent|immediately|right\s+away)\b", re.I),
-        ],
+        "patterns": QUICK_BOOKING_PATTERNS,
         "description": "Streamlined, minimal questions, skip optional fields",
     },
     "short_trip": {
         "priority": 2,
-        "patterns": [
-            re.compile(
-                r"\b(weekend|quick\s+trip|2-3\s+days|getaway|short\s+trip|day\s+trip)\b", re.I
-            ),
-            re.compile(r"\b(mini\s+vacation|long\s+weekend|brief\s+visit)\b", re.I),
-        ],
+        "patterns": SHORT_TRIP_PATTERNS,
         "description": "Focus on essentials, suggest compact itineraries",
     },
     "adventurous": {
         "priority": 3,
-        "patterns": [
-            re.compile(
-                r"\b(explore|off\s+the?\s+beaten\s+path|unique|adventure|hidden\s+gems?)\b", re.I
-            ),
-            re.compile(r"\b(authentic|local\s+experience|undiscovered|unusual)\b", re.I),
-        ],
+        "patterns": ADVENTUROUS_PATTERNS,
         "description": "Proactive tips, suggest hidden gems, enthusiastic tone",
     },
     "undecided": {
         "priority": 4,
-        "patterns": [
-            re.compile(
-                r"\b(not\s+sure|help\s+me|suggestions?|ideas?|recommend|where\s+should)\b", re.I
-            ),
-            re.compile(r"\b(can\'t\s+decide|options?|what\s+do\s+you\s+think)\b", re.I),
-        ],
+        "patterns": UNDECIDED_PATTERNS,
         "description": "Curated options, gentle guidance, offer comparisons",
     },
     "detailed_planner": {
@@ -6271,20 +6905,13 @@ USER_INTENT_ARCHETYPES = {
 }
 
 # User tone detection patterns (for response adaptation)
-# Patterns are pre-compiled for efficiency
+# Patterns imported from pattern_matching.py (V26 extraction)
 USER_TONE_PATTERNS = {
     "enthusiastic": {
-        "patterns": [
-            re.compile(r"!{2,}", re.I),  # Multiple exclamation marks
-            re.compile(r"\b(can\'t\s+wait|so\s+excited|amazing|awesome|love\s+it|perfect)\b", re.I),
-            re.compile(r"\b(yay|woohoo|fantastic|incredible|thrilled)\b", re.I),
-        ],
+        "patterns": ENTHUSIASTIC_TONE_PATTERNS,
     },
     "frustrated": {
-        "patterns": [
-            re.compile(r"\b(ugh|again\??|still|already\s+told|not\s+working)\b", re.I),
-            re.compile(r"\b(confused|frustrat|annoying|wrong|doesn\'t\s+work)\b", re.I),
-        ],
+        "patterns": FRUSTRATED_TONE_PATTERNS,
     },
     "neutral": {
         "patterns": [],  # Default
@@ -6983,15 +7610,8 @@ def _normalize_suggestion_text(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
-# Month-to-month range pattern for parsing (e.g., "September-November", "June to October")
-_MONTH_TO_MONTH_RANGE_PATTERN = re.compile(
-    r"^(january|february|march|april|may|june|july|august|september|october|november|december"
-    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
-    r"\s*(?:to|through|-|–|—)\s*"
-    r"(january|february|march|april|may|june|july|august|september|october|november|december"
-    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
-    re.IGNORECASE,
-)
+# NOTE: _MONTH_TO_MONTH_RANGE_PATTERN moved to pattern_matching.py (V26 extraction)
+# Use MONTH_TO_MONTH_RANGE_PATTERN imported at module level
 
 
 def _parse_month_to_month_range(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
@@ -7002,7 +7622,7 @@ def _parse_month_to_month_range(text: str, state: "GraphState") -> Optional[Dict
         Dict with start_date_hint and end_date_hint, or None if not a month range.
     """
     text_stripped = text.strip()
-    match = _MONTH_TO_MONTH_RANGE_PATTERN.match(text_stripped)
+    match = MONTH_TO_MONTH_RANGE_PATTERN.match(text_stripped)
     if not match:
         return None
 
@@ -7667,13 +8287,13 @@ def can_call_llm(state: "GraphState", node_name: str) -> bool:
     Returns:
         True if LLM call is allowed, False if blocked
     """
-    # Initialize counters/trackers if needed
-    if "llm_calls_this_turn" not in state.metadata:
-        state.metadata["llm_calls_this_turn"] = 0
-    if "llm_nodes_called_this_turn" not in state.metadata:
-        state.metadata["llm_nodes_called_this_turn"] = []
-    if "llm_call_blocked_reason" not in state.metadata:
-        state.metadata["llm_call_blocked_reason"] = {}
+    # Initialize counters/trackers if needed (PR2: Use constants)
+    if LLM_CALLS_THIS_TURN not in state.metadata:
+        state.metadata[LLM_CALLS_THIS_TURN] = 0
+    if LLM_CALL_SITES not in state.metadata:
+        state.metadata[LLM_CALL_SITES] = []
+    if LLM_CALL_BLOCKED_REASON not in state.metadata:
+        state.metadata[LLM_CALL_BLOCKED_REASON] = {}
     if "llm_call_blocked_count" not in state.metadata:
         state.metadata["llm_call_blocked_count"] = {}
 
@@ -7684,11 +8304,11 @@ def can_call_llm(state: "GraphState", node_name: str) -> bool:
     # If ready or no question_target, no cap
     if readiness.ready_to_generate or not question_target:
         # Still track but don't enforce cap
-        state.metadata["llm_calls_this_turn"] += 1
-        state.metadata["llm_nodes_called_this_turn"].append(node_name)
+        state.metadata[LLM_CALLS_THIS_TURN] += 1
+        state.metadata[LLM_CALL_SITES].append(node_name)
         return True
 
-    current_calls = state.metadata["llm_calls_this_turn"]
+    current_calls = state.metadata[LLM_CALLS_THIS_TURN]
     max_calls = (
         settings.max_llm_calls_per_turn if hasattr(settings, "max_llm_calls_per_turn") else 1
     )
@@ -7702,20 +8322,20 @@ def can_call_llm(state: "GraphState", node_name: str) -> bool:
         )
         _deterministic_parse_stats["extractor_light_blocked_trivial"] += 1
         # Track blocked reason per node (dict format for v5)
-        state.metadata["llm_call_blocked_reason"][node_name] = "budget_exhausted"
+        state.metadata[LLM_CALL_BLOCKED_REASON][node_name] = "budget_exhausted"
         # Track blocked count per node for observability
         blocked_counts = state.metadata["llm_call_blocked_count"]
         blocked_counts[node_name] = blocked_counts.get(node_name, 0) + 1
         return False
 
     # Increment before call (never decrement on error)
-    state.metadata["llm_calls_this_turn"] += 1
-    state.metadata["llm_nodes_called_this_turn"].append(node_name)
+    state.metadata[LLM_CALLS_THIS_TURN] += 1
+    state.metadata[LLM_CALL_SITES].append(node_name)
 
     # V12: Generate unique LLM call ID for tracing
-    turn_id = state.metadata.get("turn_canary", "unknown")[:8]
-    step = state.metadata.get("step_count", 0)
-    call_num = state.metadata["llm_calls_this_turn"]
+    turn_id = state.metadata.get(TURN_CANARY, "unknown")[:8]
+    step = state.metadata.get(STEP_COUNT, 0)
+    call_num = state.metadata[LLM_CALLS_THIS_TURN]
     llm_call_id = f"{turn_id}:{node_name}:{step}:{call_num}"
 
     _debug(
@@ -8324,23 +8944,9 @@ _MONTH_NAMES = frozenset(
     }
 )
 
-# Relative date keywords
-_RELATIVE_DATE_WORDS = frozenset(
-    {
-        "today",
-        "tomorrow",
-        "next",
-        "this",
-        "weekend",
-        "week",
-        "month",
-        "year",
-        "morning",
-        "evening",
-        "afternoon",
-        "night",
-    }
-)
+# Relative date keywords - now imported from pattern_matching.py as RELATIVE_DATE_WORDS_ALL
+# Keeping local alias for backward compatibility with any internal references
+_RELATIVE_DATE_WORDS = RELATIVE_DATE_WORDS_ALL
 
 # Activity modifier words (V16) - exclude from place-like detection
 # These indicate activity preferences, not place names
@@ -8386,20 +8992,8 @@ _STRATEGY_KEYWORDS = frozenset(
     }
 )
 
-# Year clarification patterns (for dates_clarify responses)
-_YEAR_CLARIFY_PATTERNS = [
-    re.compile(
-        r"this\s+(december|january|february|march|april|may|june|july|august|september|october|november)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"next\s+(december|january|february|march|april|may|june|july|august|september|october|november|year)",
-        re.IGNORECASE,
-    ),
-    re.compile(r"(20\d{2})", re.IGNORECASE),  # Explicit year like "2025" or "2026"
-    re.compile(r"this\s+year", re.IGNORECASE),
-    re.compile(r"next\s+year", re.IGNORECASE),
-]
+# NOTE: _YEAR_CLARIFY_PATTERNS moved to pattern_matching.py (V26 extraction)
+# Use YEAR_CLARIFY_PATTERNS imported at module level
 
 
 def _is_date_like_text(text: str) -> bool:
@@ -8412,24 +9006,12 @@ def _is_date_like_text(text: str) -> bool:
 
     This is used to skip LQA date parsing on clearly non-date text like
     "Swiss Alps" when question_target is "dates".
+
+    CONSOLIDATION NOTE: This now delegates to is_text_date_compatible() from
+    pattern_matching.py which is the single source of truth for date detection.
     """
-    text_lower = text.lower().strip()
-
-    # Has digits? Likely a date (Dec 20, 2025, etc.)
-    if re.search(r"\d", text):
-        return True
-
-    # Contains month name?
-    words = set(re.findall(r"[a-z]+", text_lower))
-    if words & _MONTH_NAMES:
-        return True
-
-    # Contains relative date words?
-    if words & _RELATIVE_DATE_WORDS:
-        return True
-
-    # No date-like tokens found
-    return False
+    # Delegate to consolidated date compatibility check
+    return is_text_date_compatible(text)
 
 
 def _is_place_like_text(text: str) -> bool:
@@ -8523,7 +9105,7 @@ def _parse_date_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any
     text_stripped = text.strip()
 
     # First, check for year clarification patterns
-    for pattern in _YEAR_CLARIFY_PATTERNS:
+    for pattern in YEAR_CLARIFY_PATTERNS:
         if pattern.search(text_stripped):
             # Get reference date from state if available
             metadata = state.metadata or {}
@@ -8882,7 +9464,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
     Returns:
         Updated state with flags["lqa_prepass"] = True/False
     """
-    _debug_node_entry("lqa_prepass", state)
+    _, start_ns = _debug_node_entry("lqa_prepass", state)
     _lqa_stats["attempts"] += 1
 
     text = (state.user_text or "").strip()
@@ -8897,7 +9479,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
         state.flags["lqa_prepass"] = False
         state.flags["lqa_bail_reason"] = "pending_action"
         _debug("[LQA] BAIL: pending_action set", action=pending_action)
-        _debug_node_exit("lqa_prepass", state)
+        _debug_node_exit("lqa_prepass", state, start_ns)
         return state
 
     # -------------------------------------------------------------------------
@@ -8910,7 +9492,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
         state.flags["lqa_prepass"] = False
         state.flags["lqa_bail_reason"] = "no_question_target"
         _debug("[LQA] BAIL: no question_target set")
-        _debug_node_exit("lqa_prepass", state)
+        _debug_node_exit("lqa_prepass", state, start_ns)
         return state
 
     # Canonicalize question_target before parsing
@@ -8933,7 +9515,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                     "[LQA] BYPASS: suggestion click detected",
                     matched_suggestion=suggestion[:40],
                 )
-                _debug_node_exit("lqa_prepass", state)
+                _debug_node_exit("lqa_prepass", state, start_ns)
                 return state
 
     # -------------------------------------------------------------------------
@@ -8953,7 +9535,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                 "[LQA] BYPASS: activity preference detected, routing to strategy",
                 text=text[:40],
             )
-            _debug_node_exit("lqa_prepass", state)
+            _debug_node_exit("lqa_prepass", state, start_ns)
             return state
 
         if not _is_date_like_text(text) and _is_place_like_text(text):
@@ -8966,7 +9548,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                 target=question_target,
                 text=text[:30],
             )
-            _debug_node_exit("lqa_prepass", state)
+            _debug_node_exit("lqa_prepass", state, start_ns)
             return state
 
     # -------------------------------------------------------------------------
@@ -8982,7 +9564,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             length=len(text),
             max=settings.lqa_max_length,
         )
-        _debug_node_exit("lqa_prepass", state)
+        _debug_node_exit("lqa_prepass", state, start_ns)
         return state
 
     # -------------------------------------------------------------------------
@@ -9021,7 +9603,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                     pattern_idx=i,
                     text=text[:30],
                 )
-                _debug_node_exit("lqa_prepass", state)
+                _debug_node_exit("lqa_prepass", state, start_ns)
                 return state
 
     # -------------------------------------------------------------------------
@@ -9050,7 +9632,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                 "[LQA] DETERMINISTIC: date ambiguous, triggering clarify mode",
                 pending_text=det_result.get("_pending_date_text"),
             )
-            _debug_node_exit("lqa_prepass", state)
+            _debug_node_exit("lqa_prepass", state, start_ns)
             return state
 
         # Build parsed_inputs from delta dict (keep delta format for compatibility)
@@ -9122,7 +9704,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                 text=text[:30],
                 tokens_saved="~500 (extractor_light avoided)",
             )
-            _debug_node_exit("lqa_prepass", state)
+            _debug_node_exit("lqa_prepass", state, start_ns)
             return state
 
     # -------------------------------------------------------------------------
@@ -9135,7 +9717,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
         state.flags["lqa_prepass"] = False
         state.flags["lqa_bail_reason"] = "unhandled_field"
         _debug("[LQA] BAIL: no parser for question_target", target=question_target)
-        _debug_node_exit("lqa_prepass", state)
+        _debug_node_exit("lqa_prepass", state, start_ns)
         return state
 
     # -------------------------------------------------------------------------
@@ -9152,7 +9734,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             target=question_target,
             text=text[:30],
         )
-        _debug_node_exit("lqa_prepass", state)
+        _debug_node_exit("lqa_prepass", state, start_ns)
         return state
 
     # -------------------------------------------------------------------------
@@ -9184,7 +9766,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             state.flags["lqa_prepass"] = False
             state.flags["lqa_bail_reason"] = "no_date_fields_after_filter"
             _debug("[LQA] BAIL: no date fields after filter")
-            _debug_node_exit("lqa_prepass", state)
+            _debug_node_exit("lqa_prepass", state, start_ns)
             return state
 
     # -------------------------------------------------------------------------
@@ -9220,7 +9802,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
         parsed=parsed,
         text=text[:30],
     )
-    _debug_node_exit("lqa_prepass", state)
+    _debug_node_exit("lqa_prepass", state, start_ns)
     return state
 
 
@@ -10195,65 +10777,10 @@ class DateNormalizer:
         start, end = normalizer.parse_date_range("December 20-27")
     """
 
-    # Pre-compiled patterns (class-level for efficiency)
-    _ORDINAL_SUFFIX = re.compile(r"(\d+)(st|nd|rd|th)\b", re.IGNORECASE)
-    _PARTIAL_DATE = re.compile(
-        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
-        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{4})$",
-        re.IGNORECASE,
-    )
-    # Month + day without year (e.g., "December 15", "Dec 15")
-    _MONTH_DAY_PATTERN = re.compile(
-        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
-        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?$",
-        re.IGNORECASE,
-    )
-    _ISO_FORMAT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-    # Date range patterns: "December 20-27", "Dec 20-27", "20-27 December", etc.
-    _DATE_RANGE_PATTERNS = [
-        # "December 20-27" or "Dec 20-27" (optionally with year)
-        re.compile(
-            r"^(january|february|march|april|may|june|july|august|september|october|november|december"
-            r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+"
-            r"(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$",
-            re.IGNORECASE,
-        ),
-        # "20-27 December" or "20-27 Dec" (optionally with year)
-        re.compile(
-            r"^(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?\s+"
-            r"(january|february|march|april|may|june|july|august|september|october|november|december"
-            r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s*(\d{4}))?$",
-            re.IGNORECASE,
-        ),
-    ]
-
-    # Week of month patterns: "first week of January", "last week of December", etc.
-    _WEEK_OF_MONTH_PATTERN = re.compile(
-        r"^(first|second|third|fourth|last|1st|2nd|3rd|4th)\s+week\s+(?:of\s+)?"
-        r"(january|february|march|april|may|june|july|august|september|october|november|december"
-        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s*(\d{4}))?$",
-        re.IGNORECASE,
-    )
-
-    # Mapping from ordinal word to week number (1-indexed)
-    _WEEK_ORDINALS = {
-        "first": 1,
-        "1st": 1,
-        "second": 2,
-        "2nd": 2,
-        "third": 3,
-        "3rd": 3,
-        "fourth": 4,
-        "4th": 4,
-        "last": -1,  # Special: last week of month
-    }
-
-    # Relative date keywords
-    _TODAY_WORDS = frozenset({"today", "tonight", "now"})
-
-    # Pattern to detect explicit 4-digit year in input
-    _EXPLICIT_YEAR_PATTERN = re.compile(r"\b(20\d{2}|19\d{2})\b")
+    # NOTE: Pre-compiled patterns moved to pattern_matching.py (V26 extraction)
+    # Using module-level imports: ORDINAL_SUFFIX_PATTERN, PARTIAL_DATE_PATTERN,
+    # MONTH_DAY_PATTERN, ISO_DATE_PATTERN, DATE_RANGE_WITH_YEAR_PATTERNS,
+    # WEEK_OF_MONTH_PATTERN, WEEK_ORDINALS, TODAY_WORDS, EXPLICIT_YEAR_PATTERN
 
     # Supported date formats (ordered by specificity - 4-digit year first)
     _DATE_FORMATS = (
@@ -10304,7 +10831,7 @@ class DateNormalizer:
         lowered = text.lower().strip()
         today = self._reference
 
-        if lowered in self._TODAY_WORDS:
+        if lowered in TODAY_WORDS:
             return today.strftime("%Y-%m-%d")
 
         if lowered == "tomorrow":
@@ -10365,7 +10892,7 @@ class DateNormalizer:
             return relative, False
 
         # Strip ordinal suffixes before parsing (28th -> 28)
-        text_cleaned = self._ORDINAL_SUFFIX.sub(r"\1", text)
+        text_cleaned = ORDINAL_SUFFIX_PATTERN.sub(r"\1", text)
 
         # Try various date formats
         for fmt in self._DATE_FORMATS:
@@ -10376,7 +10903,7 @@ class DateNormalizer:
                 continue
 
         # Check for partial dates (month + year only)
-        partial_match = self._PARTIAL_DATE.match(text_cleaned)
+        partial_match = PARTIAL_DATE_PATTERN.match(text_cleaned)
         if partial_match:
             month_str = partial_match.group(1)
             year_str = partial_match.group(2)
@@ -10388,7 +10915,7 @@ class DateNormalizer:
                     continue
 
         # Check for month + day without year (e.g., "December 15", "Dec 15")
-        month_day_match = self._MONTH_DAY_PATTERN.match(text_cleaned)
+        month_day_match = MONTH_DAY_PATTERN.match(text_cleaned)
         if month_day_match:
             month_str = month_day_match.group(1)
             day_str = month_day_match.group(2)
@@ -10408,7 +10935,7 @@ class DateNormalizer:
                     continue
 
         # Check if already ISO format
-        if self._ISO_FORMAT.match(text_cleaned):
+        if ISO_DATE_PATTERN.match(text_cleaned):
             return text_cleaned, False
 
         return None, False
@@ -10426,7 +10953,7 @@ class DateNormalizer:
         """
         if not text:
             return False
-        return bool(self._EXPLICIT_YEAR_PATTERN.search(text))
+        return bool(EXPLICIT_YEAR_PATTERN.search(text))
 
     def normalize_with_provenance(
         self,
@@ -10463,7 +10990,7 @@ class DateNormalizer:
             parsed_from = "partial_month"
         elif self.relative_to_iso(text):
             parsed_from = "relative"
-        elif self._ISO_FORMAT.match(text.strip()):
+        elif ISO_DATE_PATTERN.match(text.strip()):
             parsed_from = "iso_passthrough"
         else:
             parsed_from = "user_text"
@@ -10505,26 +11032,9 @@ class DateNormalizer:
 
         # Pattern to find dates like "January 15", "Jan 15", "15 January", "15th of January"
         # followed optionally by year.
-        # IMPORTANT: Use negative lookahead (?!\d) to avoid matching "20" from "2025" as a day.
-        month_day_patterns = [
-            # "January 15, 2026" or "January 15 2026" or "January 15th, 2026"
-            # The (?!\d) after (\d{1,2}) ensures we don't match partial year digits as day
-            re.compile(
-                r"(january|february|march|april|may|june|july|august|september|october|november|december"
-                r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+"
-                r"(\d{1,2})(?!\d)(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?",
-                re.IGNORECASE,
-            ),
-            # "15 January 2026" or "15th of January 2026"
-            re.compile(
-                r"(\d{1,2})(?!\d)(?:st|nd|rd|th)?(?:\s+of)?\s+"
-                r"(january|february|march|april|may|june|july|august|september|october|november|december"
-                r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s+(\d{4}))?",
-                re.IGNORECASE,
-            ),
-        ]
+        # NOTE: Patterns moved to pattern_matching.py as MONTH_DAY_EXTRACTION_PATTERNS (V26)
 
-        for pattern in month_day_patterns:
+        for pattern in MONTH_DAY_EXTRACTION_PATTERNS:
             matches = list(pattern.finditer(text_lower))
             for match in matches:
                 groups = match.groups()
@@ -10605,7 +11115,7 @@ class DateNormalizer:
 
         text_clean = text.strip()
 
-        for pattern in self._DATE_RANGE_PATTERNS:
+        for pattern in DATE_RANGE_WITH_YEAR_PATTERNS:
             match = pattern.match(text_clean)
             if match:
                 groups = match.groups()
@@ -10659,14 +11169,14 @@ class DateNormalizer:
                     continue
 
         # Check for "first/second/third/fourth/last week of [month]" pattern
-        week_match = self._WEEK_OF_MONTH_PATTERN.match(text_clean)
+        week_match = WEEK_OF_MONTH_PATTERN.match(text_clean)
         if week_match:
             ordinal_str = week_match.group(1).lower()
             month_str = week_match.group(2)
             year_str = week_match.group(3) if len(week_match.groups()) > 2 else None
 
             # Get week number from ordinal
-            week_num = self._WEEK_ORDINALS.get(ordinal_str)
+            week_num = WEEK_ORDINALS.get(ordinal_str)
             if week_num is None:
                 return None, None
 
@@ -10736,7 +11246,7 @@ class DateNormalizer:
         if not text:
             return None, None, False
 
-        for pattern in self._DATE_RANGE_PATTERNS:
+        for pattern in DATE_RANGE_WITH_YEAR_PATTERNS:
             match = pattern.match(text)
             if not match:
                 continue
@@ -14659,7 +15169,9 @@ TRIP_JSON_SCHEMA = {
 }
 TRIP_VALIDATOR = Draft7Validator(TRIP_JSON_SCHEMA)
 
-ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# NOTE: ISO pattern moved to pattern_matching.py as ISO_DATE_PATTERN (V26 extraction)
+# Backwards compatibility alias:
+ISO = ISO_DATE_PATTERN
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 INVALID_JSON_HINT = (
     "\n\nIMPORTANT: Your previous response was not valid JSON. "
@@ -15493,159 +16005,16 @@ async def fast_stream_buffered(text: str):
         await asyncio.sleep(0)
 
 
-def _truncate_to_balanced_json(raw: str) -> Optional[str]:
-    """
-    Extract a valid JSON object from a potentially truncated or malformed string.
-
-    LLMs sometimes return incomplete JSON or include extra text before/after the JSON.
-    This function finds the first complete, balanced JSON object in the string.
-    """
-    start_idx = None
-    brace_count = 0
-    in_string = False
-    escape = False
-    last_valid_idx = -1
-
-    for idx, ch in enumerate(raw):
-        if start_idx is None:
-            if ch == "{":
-                start_idx = idx
-                brace_count = 1
-            continue
-
-        if in_string:
-            if escape:
-                escape = False
-                continue
-            if ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-            continue
-
-        if ch == '"':
-            in_string = True
-            continue
-        if ch == "{":
-            brace_count += 1
-        elif ch == "}":
-            brace_count -= 1
-            if brace_count == 0:
-                last_valid_idx = idx
-                break
-
-    if start_idx is not None and last_valid_idx >= start_idx:
-        return raw[start_idx : last_valid_idx + 1]
-    return None
-
-
-def jloads_safe(s: str) -> Dict[str, Any]:
-    """
-    Parse JSON with multiple fallback strategies for malformed input.
-
-    Tries progressively more lenient parsing approaches:
-    1. Standard json.loads() - works for well-formed JSON
-    2. Non-strict mode - allows some escape sequence issues
-    3. Truncation recovery - extracts balanced JSON from garbage
-    4. Last resort: find { and } brackets
-
-    Returns empty dict on failure (matches plan.py's _tolerant_json_loads behavior).
-    """
-    if not s:
-        return {}
-
-    # Try standard parsing first
-    try:
-        return json.loads(s)
-    except json.JSONDecodeError:
-        pass
-
-    # Try non-strict mode (allows some escape sequence issues)
-    try:
-        return json.loads(s, strict=False)
-    except Exception:
-        pass
-
-    # Try extracting balanced JSON from garbage
-    trimmed = _truncate_to_balanced_json(s)
-    if trimmed:
-        try:
-            return json.loads(trimmed, strict=False)
-        except json.JSONDecodeError:
-            pass
-
-    # Last resort: find { and } brackets
-    start, end = s.find("{"), s.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        try:
-            return json.loads(s[start : end + 1], strict=False)
-        except json.JSONDecodeError:
-            pass
-
-    # Return empty dict on failure (matching plan.py's _tolerant_json_loads)
-    _debug_error("JSON parse failed", raw=s[:100] if len(s) > 100 else s)
-    return {}
-
-
-def _extract_message_from_malformed_json(raw: str) -> Optional[str]:
-    """
-    Try to extract assistant_message content from truncated/malformed JSON.
-
-    This is a recovery mechanism when LLM output gets truncated or has JSON errors.
-    It uses regex to find the assistant_message field value even if the JSON is incomplete.
-
-    Args:
-        raw: The raw LLM output string (potentially malformed JSON)
-
-    Returns:
-        The extracted message content, or None if extraction failed
-    """
-    if not raw:
-        return None
-
-    # Pattern 1: Match "assistant_message": "..." with proper quote handling
-    # This handles cases where the message is complete but other parts are truncated
-    pattern1 = re.compile(
-        r'"assistant_message"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)',
-        re.DOTALL,
-    )
-
-    # Pattern 2: Match with single quotes (some LLMs use this)
-    pattern2 = re.compile(
-        r"['\"]assistant_message['\"]\s*:\s*['\"](.+?)(?:['\"]|$)",
-        re.DOTALL,
-    )
-
-    for pattern in [pattern1, pattern2]:
-        match = pattern.search(raw)
-        if match:
-            message = match.group(1)
-            # Unescape JSON escape sequences
-            try:
-                # Try to parse as JSON string to handle escapes properly
-                message = json.loads(f'"{message}"')
-            except (json.JSONDecodeError, ValueError):
-                # Fallback: manual unescape of common sequences
-                message = (
-                    message.replace('\\"', '"')
-                    .replace("\\n", "\n")
-                    .replace("\\t", "\t")
-                    .replace("\\\\", "\\")
-                )
-
-            # Validate: message should be reasonably long and not truncated mid-word
-            if len(message) > 50:
-                # Check if message appears truncated (ends mid-sentence without punctuation)
-                if message.rstrip()[-1:] not in ".!?:;)\"'":
-                    # Try to find a natural break point
-                    for punct in [".", "!", "?", "\n"]:
-                        last_punct = message.rfind(punct)
-                        if last_punct > len(message) // 2:  # At least half the content
-                            message = message[: last_punct + 1]
-                            break
-                return message.strip()
-
-    return None
+# =============================================================================
+# PR-D: JSON UTILITIES MOVED TO graph_plan_utils.py
+# =============================================================================
+# The following functions have been extracted to app/graph_plan_utils.py:
+# - _truncate_to_balanced_json() -> truncate_to_balanced_json()
+# - jloads_safe() (unchanged name)
+# - _extract_message_from_malformed_json() -> extract_message_from_malformed_json()
+#
+# They are imported at the top of this file for backwards compatibility.
+# See: from app.graph_plan_utils import jloads_safe, ...
 
 
 def ti_short(ti: TripInputs) -> Dict[str, Any]:
@@ -15906,15 +16275,8 @@ def _record_llm_failure(state: GraphState, reason: str) -> GraphState:
     return state
 
 
-# Strategy topic detection patterns - use word boundaries to avoid false positives
-# e.g., "skippered" should not match "ski"
-_STRATEGY_TOPIC_PATTERNS = {
-    "hiking": re.compile(r"\b(?:hik(?:e|ing)|trek(?:king)?)\b", re.IGNORECASE),
-    "diving": re.compile(r"\b(?:div(?:e|ing)|scuba|snorkel(?:ing)?)\b", re.IGNORECASE),
-    "skiing": re.compile(r"\b(?:ski(?:ing)?|snowboard(?:ing)?)\b", re.IGNORECASE),
-    "cycling": re.compile(r"\b(?:cycl(?:e|ing)|bik(?:e|ing)|bicycle)\b", re.IGNORECASE),
-    "boating": re.compile(r"\b(?:boat(?:ing)?|sail(?:ing)?|yacht(?:ing)?)\b", re.IGNORECASE),
-}
+# NOTE: _STRATEGY_TOPIC_PATTERNS moved to pattern_matching.py (V26 extraction)
+# Use STRATEGY_TOPIC_PATTERNS imported at module level
 
 
 def _detect_strategy_topic_from_text(text: str) -> Optional[str]:
@@ -15927,7 +16289,7 @@ def _detect_strategy_topic_from_text(text: str) -> Optional[str]:
     if not text:
         return None
 
-    for topic, pattern in _STRATEGY_TOPIC_PATTERNS.items():
+    for topic, pattern in STRATEGY_TOPIC_PATTERNS.items():
         if pattern.search(text):
             return topic
     return None
@@ -15938,24 +16300,9 @@ def _detect_strategy_topic_from_text(text: str) -> Optional[str]:
 # =============================================================================
 # Constants for bypass safety guards
 _BYPASS_MAX_TEXT_LENGTH = 150  # Skip bypass for long/dense prompts
-_BYPASS_CONSTRAINT_PATTERNS = {
-    "dates": re.compile(
-        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|"
-        r"january|february|march|april|june|july|august|september|october|november|december|"
-        r"next\s+(?:week|month|year)|this\s+(?:week|month|year)|"
-        r"\d{1,2}[/-]\d{1,2}|\d{4})\b",
-        re.IGNORECASE,
-    ),
-    "budget": re.compile(
-        r"\$\d+|€\d+|£\d+|\d+\s*(?:dollars|euros|pounds|usd|eur|gbp)|budget\s+(?:is|of|\d)",
-        re.IGNORECASE,
-    ),
-    "travelers": re.compile(
-        r"\b(?:\d+\s*(?:adults?|people|persons?|travelers?|of\s+us)|"
-        r"(?:just\s+)?me|solo|alone|couple|family)\b",
-        re.IGNORECASE,
-    ),
-}
+
+# NOTE: _BYPASS_CONSTRAINT_PATTERNS moved to pattern_matching.py (V26 extraction)
+# Use BYPASS_CONSTRAINT_PATTERNS imported at module level
 
 # Multi-intent detection: vertical keywords that suggest multiple booking types
 _MULTI_INTENT_KEYWORDS = frozenset(
@@ -16021,7 +16368,7 @@ def _try_strategy_bootstrap_bypass(
     session_id = state.metadata.get("thread_id", "") if state.metadata else ""
     sample_rate = settings.strategy_bootstrap_bypass_sample_rate
     if sample_rate < 1.0:
-        hash_val = hash(session_id) % 100
+        hash_val = stable_hash_int(session_id, modulo=100)
         if hash_val >= int(sample_rate * 100):
             # Control cohort - record but don't bypass
             _debug(
@@ -16076,7 +16423,7 @@ def _try_strategy_bootstrap_bypass(
 
     # Gate 8: No constraint tokens
     constraint_tokens: Dict[str, bool] = {}
-    for constraint_type, pattern in _BYPASS_CONSTRAINT_PATTERNS.items():
+    for constraint_type, pattern in BYPASS_CONSTRAINT_PATTERNS.items():
         if pattern.search(text):
             constraint_tokens[constraint_type] = True
             reject_reasons.append(f"constraint:{constraint_type}")
@@ -16104,7 +16451,7 @@ def _try_strategy_bootstrap_bypass(
 
     # Check for multiple strategy topics
     topics_found = []
-    for t, pattern in _STRATEGY_TOPIC_PATTERNS.items():
+    for t, pattern in STRATEGY_TOPIC_PATTERNS.items():
         if pattern.search(text):
             topics_found.append(t)
     if len(topics_found) > 1:
@@ -16145,7 +16492,7 @@ def _try_strategy_bootstrap_bypass(
         "activity_categories": topic_to_activity.get(topic, [topic]),
         "variant": "bypass",
         "place_detected_by": place_detected_by,
-        "constraint_tokens": {k: False for k in _BYPASS_CONSTRAINT_PATTERNS.keys()},
+        "constraint_tokens": {k: False for k in BYPASS_CONSTRAINT_PATTERNS.keys()},
     }
 
 
@@ -16166,7 +16513,7 @@ async def extractor(state: GraphState) -> GraphState:
     - Confirmations: "yes"/"no" with pending_action -> execute or clear action
     - Off-topic: weather, math, general knowledge -> redirect to travel
     """
-    _debug_node_entry("extractor", state)
+    _, start_ns = _debug_node_entry("extractor", state)
 
     text = state.user_text
     parsed: Dict[str, Any] = {}
@@ -16177,7 +16524,7 @@ async def extractor(state: GraphState) -> GraphState:
         state.flags["generate_plan"] = True
         _debug("Generate plan trigger detected")
         state.parsed_inputs = parsed
-        _debug_node_exit("extractor", state)
+        _debug_node_exit("extractor", state, start_ns)
         return state
 
     # =========================================================================
@@ -16222,7 +16569,7 @@ async def extractor(state: GraphState) -> GraphState:
             _debug("Short-circuit cleared pending_action")
 
         state.parsed_inputs = parsed
-        _debug_node_exit("extractor", state)
+        _debug_node_exit("extractor", state, start_ns)
         return state
 
     # =========================================================================
@@ -16284,7 +16631,7 @@ async def extractor(state: GraphState) -> GraphState:
         )
 
         state.parsed_inputs = parsed
-        _debug_node_exit("extractor", state)
+        _debug_node_exit("extractor", state, start_ns)
         return state
 
     # =========================================================================
@@ -16341,7 +16688,7 @@ async def extractor(state: GraphState) -> GraphState:
                 )
 
         state.parsed_inputs = parsed
-        _debug_node_exit("extractor", state)
+        _debug_node_exit("extractor", state, start_ns)
         return state
 
     # =========================================================================
@@ -16404,7 +16751,7 @@ async def extractor(state: GraphState) -> GraphState:
                 # Set minimal parsed_inputs to allow gate evaluation
                 state.parsed_inputs = parsed
                 state.metadata["extraction_path"] = "topic_switch_bypass"
-                _debug_node_exit("extractor", state)
+                _debug_node_exit("extractor", state, start_ns)
                 return state
 
     # Determine extraction mode
@@ -16438,7 +16785,7 @@ async def extractor(state: GraphState) -> GraphState:
         state.parsed_inputs = cached_extraction.get("parsed", {})
         state.metadata["extraction_confidence"] = cached_extraction.get("confidence", {})
         state.metadata["extraction_path"] = f"cache:{extractor_mode}"
-        _debug_node_exit("extractor", state)
+        _debug_node_exit("extractor", state, start_ns)
         return state
 
     # Select config and prompt based on mode
@@ -16627,7 +16974,7 @@ async def extractor(state: GraphState) -> GraphState:
                     topic=state.strategy_topic,
                 )
 
-    _debug_node_exit("extractor", state)
+    _debug_node_exit("extractor", state, start_ns)
     return state
 
 
@@ -16645,7 +16992,7 @@ def normalize_inputs(state: GraphState) -> GraphState:
     NOTE: All normalization happens here. Specialists and validate_and_merge
     should NOT duplicate normalization logic.
     """
-    _debug_node_entry("normalize_inputs", state)
+    _, start_ns = _debug_node_entry("normalize_inputs", state)
 
     # Early exit for short-circuits with no parsed data (greetings, acknowledgments, off-topic)
     # These don't need any normalization work
@@ -16659,7 +17006,7 @@ def normalize_inputs(state: GraphState) -> GraphState:
     ):
         if not state.parsed_inputs:
             _debug(f"Skipping normalize_inputs for short-circuit: {sc_type}")
-            _debug_node_exit("normalize_inputs", state)
+            _debug_node_exit("normalize_inputs", state, start_ns)
             return state
 
     parsed = state.parsed_inputs or {}
@@ -17107,7 +17454,7 @@ def normalize_inputs(state: GraphState) -> GraphState:
     for key, value in gate_result.metadata_updates.items():
         state.metadata[key] = value
 
-    _debug_node_exit("normalize_inputs", state)
+    _debug_node_exit("normalize_inputs", state, start_ns)
     return state
 
 
@@ -17119,7 +17466,7 @@ async def router(state: GraphState) -> GraphState:
     Router node to determine intent. Uses timeout but NO retry (router should be fast and reliable).
     Also refines user intent classification for conversational style adaptation.
     """
-    _debug_node_entry("router", state)
+    _, start_ns = _debug_node_entry("router", state)
 
     # Get per-node LLM configuration
     llm_config = _get_node_llm_config("router")
@@ -17139,7 +17486,7 @@ async def router(state: GraphState) -> GraphState:
         if cached.get("user_intent"):
             state.metadata["user_intent"] = cached["user_intent"]
         _debug("Router cache hit", intent=state.intent, topic=state.strategy_topic)
-        _debug_node_exit("router", state)
+        _debug_node_exit("router", state, start_ns)
         return state
 
     try:
@@ -17196,7 +17543,7 @@ async def router(state: GraphState) -> GraphState:
             state.last_summary = _random_module.choice(_OFF_TOPIC_DEFLECTIONS)
             state.metadata["last_question_field"] = "destinations"
             _debug("Off-topic detected, deflecting to travel", response=state.last_summary[:50])
-            _debug_node_exit("router", state)
+            _debug_node_exit("router", state, start_ns)
             return state
 
         # Capture refined user intent from router (if provided)
@@ -17231,14 +17578,14 @@ async def router(state: GraphState) -> GraphState:
         state.metadata["no_progress_turns"] = no_progress_turns
         state.metadata["last_intent"] = state.intent
 
-        _debug_node_exit("router", state)
+        _debug_node_exit("router", state, start_ns)
         return state
     except Exception as exc:
         # Router failure is not critical - default to required_fields for conversational flow
         _debug_error("Router failed, defaulting to required_fields", error=str(exc))
         state.intent = "required_fields"
         state.metadata["router_notes"] = f"Router error: {exc}"
-        _debug_node_exit("router", state)
+        _debug_node_exit("router", state, start_ns)
         return state
 
 
@@ -17494,7 +17841,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
         state: Current graph state.
         retry_on_json_error: If True, attempt one repair retry on JSON parse failure.
     """
-    _debug_node_entry(f"specialist:{name}", state)
+    _, start_ns = _debug_node_entry(f"specialist:{name}", state)
 
     # =========================================================================
     # HARD GATE: Block ALL domain specialists if core fields are missing
@@ -17605,7 +17952,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     question=state.last_summary[:80],
                     suggestions=suggestions,
                 )
-                _debug_node_exit(f"specialist:{name}", state)
+                _debug_node_exit(f"specialist:{name}", state, start_ns)
                 return state
             else:
                 _debug(
@@ -17620,7 +17967,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 # Use small prompt to generate a warm question with suggestions
                 guard_result = await _invoke_missing_fields_guard(state, missing_core)
                 if guard_result:
-                    _debug_node_exit(f"specialist:{name}", state)
+                    _debug_node_exit(f"specialist:{name}", state, start_ns)
                     return state
 
     # =========================================================================
@@ -17676,7 +18023,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 "Add more details",
                 "Change something",
             ]
-            _debug_node_exit(f"specialist:{name}", state)
+            _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state
 
     # Get per-node LLM configuration
@@ -17755,11 +18102,38 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 state.intent = detected_domain
                 state.metadata["deferred_intent"] = detected_domain
                 # Return early - let the routing mechanism handle it
-                _debug_node_exit(f"specialist:{name}", state)
+                _debug_node_exit(f"specialist:{name}", state, start_ns)
                 return state
 
         # Determine question_target based on missing fields
-        question_target = state.question_target or state.metadata.get("last_question_field")
+        # FIRST: Get candidate from state (may be stale from previous turn)
+        question_target_candidate = state.question_target or state.metadata.get(
+            "last_question_field"
+        )
+
+        # THEN: Validate that the candidate field is actually still missing
+        # This prevents asking about already-populated fields (stale question_target bug)
+        if question_target_candidate:
+            field_values = {
+                "destinations": ti.destinations,
+                "origin": ti.origin,
+                "dates": ti.start_date,
+                "travelers": ti.adults,
+            }
+            # Check if the candidate field is already populated
+            if field_values.get(question_target_candidate):
+                _debug(
+                    "🔄 STALE_TARGET: question_target was set but field is populated, clearing",
+                    stale_target=question_target_candidate,
+                    field_value=field_values.get(question_target_candidate),
+                )
+                # Clear stale target from state and metadata
+                state.question_target = None
+                state.metadata.pop("last_question_field", None)
+                question_target_candidate = None  # Clear stale target
+
+        # If no valid candidate, compute from actual missing fields
+        question_target = question_target_candidate
         if not question_target:
             if not ti.destinations:
                 question_target = "destinations"
@@ -17840,7 +18214,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     questions_asked=state.questions_asked,
                 )
                 # Return with recovery summary instead of repeating the question
-                _debug_node_exit(f"specialist:{name}", state)
+                _debug_node_exit(f"specialist:{name}", state, start_ns)
                 return state
 
             # LOOP GUARD: If "different_field" mitigation was applied, switch to another field
@@ -17893,7 +18267,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     _debug(
                         "🛡️ LOOP GUARD: No alternative fields, emitting recovery summary",
                     )
-                    _debug_node_exit(f"specialist:{name}", state)
+                    _debug_node_exit(f"specialist:{name}", state, start_ns)
                     return state
 
             # TEMPLATE PATH: Use template for simple field questions
@@ -17947,7 +18321,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                     tokens_saved="~900-1500 (required_fields LLM call avoided)",
                 )
                 state.metadata["required_fields_path"] = f"template:{question_target}"
-                _debug_node_exit(f"specialist:{name}", state)
+                _debug_node_exit(f"specialist:{name}", state, start_ns)
                 return state
             else:
                 _template_stats["template_misses"] += 1
@@ -17997,7 +18371,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
             # Set provenance for final response tracking (cached path)
             state.metadata["response_writer_node"] = f"specialist:{name}:cache"
             state.metadata["response_generation_provenance"] = "cached"
-            _debug_node_exit(f"specialist:{name}", state)
+            _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state
     else:
         cache_key = None
@@ -18462,7 +18836,7 @@ async def _specialist(name: str, state: GraphState, retry_on_json_error: bool = 
                 ready=state.ready_to_generate,
                 branches=len(state.branches),
             )
-            _debug_node_exit(f"specialist:{name}", state)
+            _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state
 
         except json.JSONDecodeError as e:
@@ -18571,6 +18945,7 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
     When destinations are present (strategy_dest_known=True), generates
     destination-specific guidance and asks for dates.
     """
+    _, start_ns = _debug_node_entry("strategy_node:stage0", state)
     ti = state.trip_inputs
 
     # Check if this is destination-known mode
@@ -18778,7 +19153,7 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
                 question_target=question_target,
                 response_length=len(response),
             )
-            _debug_node_exit("strategy_node:stage0", state)
+            _debug_node_exit("strategy_node:stage0", state, start_ns)
             return state
 
         except json.JSONDecodeError as e:
@@ -18945,7 +19320,7 @@ async def _strategy_stage0(state: GraphState, topic: str) -> GraphState:
     state.metadata["response_generation_provenance"] = "template"
 
     _debug_suggestions(state.suggested_responses, source="strategy_stage0_fallback")
-    _debug_node_exit("strategy_node:stage0:fallback", state)
+    _debug_node_exit("strategy_node:stage0:fallback", state, start_ns)
     return state
 
 
@@ -18985,7 +19360,7 @@ def _should_escalate_from_stage0(state: GraphState) -> bool:
 
 
 async def strategy_node(state: GraphState) -> GraphState:
-    _debug_node_entry("strategy_node", state)
+    _, start_ns = _debug_node_entry("strategy_node", state)
 
     topic = state.strategy_topic or "boating"
 
@@ -19055,7 +19430,7 @@ async def strategy_node(state: GraphState) -> GraphState:
         # Use small prompt to generate a warm question with suggestions
         guard_result = await _invoke_missing_fields_guard(state, missing_core)
         if guard_result:
-            _debug_node_exit("strategy_node", state)
+            _debug_node_exit("strategy_node", state, start_ns)
             return state
 
     # =========================================================================
@@ -19099,7 +19474,7 @@ async def strategy_node(state: GraphState) -> GraphState:
             "Equipment rental info",
         ]
         _debug_suggestions(state.suggested_responses, source="strategy_node:relevance_gate")
-        _debug_node_exit("strategy_node", state)
+        _debug_node_exit("strategy_node", state, start_ns)
         return state
 
     # Check feature flag - if disabled, fallback to activities-lite
@@ -19125,7 +19500,7 @@ async def strategy_node(state: GraphState) -> GraphState:
             "Max 4 hours daily",
         ]
         _debug_suggestions(state.suggested_responses, source="strategy_node:fallback")
-        _debug_node_exit("strategy_node", state)
+        _debug_node_exit("strategy_node", state, start_ns)
         return state
 
     # =========================================================================
@@ -19315,7 +19690,7 @@ async def strategy_node(state: GraphState) -> GraphState:
             )  # Ignore fields_changed
 
         state.metadata["strategy_path"] = f"cache:{topic}"
-        _debug_node_exit("strategy_node", state)
+        _debug_node_exit("strategy_node", state, start_ns)
         return state
 
     tokens = _estimate_prompt_tokens(system_prompt, state.parsed_inputs)
@@ -19393,6 +19768,27 @@ async def strategy_node(state: GraphState) -> GraphState:
             # Validate the updated trip_inputs
             TRIP_VALIDATOR.validate(state.trip_inputs.model_dump())
             state.last_summary = j.get("assistant_message", "")
+
+            # PR-C: Apply strategy output size limits
+            # Use expansion cap for stage2, regular cap for stage0/stage1
+            _strategy_cap = (
+                settings.strategy_expansion_max_output_chars
+                if stage_name == "stage2"
+                else settings.strategy_max_output_chars
+            )
+            state.last_summary, _was_truncated = truncate_preserving_newlines(
+                state.last_summary, _strategy_cap
+            )
+            if _was_truncated:
+                state.metadata["strategy_truncated"] = True
+                state.metadata["strategy_truncate_cap"] = _strategy_cap
+                _debug(
+                    "✂️ STRATEGY OUTPUT TRUNCATED",
+                    stage=stage_name,
+                    cap=_strategy_cap,
+                    original_len=len(j.get("assistant_message", "")),
+                    truncated_len=len(state.last_summary),
+                )
 
             # Parse question_target from LLM response for suggestion relevance
             raw_question_target = j.get("question_target")
@@ -19476,9 +19872,10 @@ async def strategy_node(state: GraphState) -> GraphState:
                     "expansion_target": expansion_target.value if expansion_target else None,
                 },
                 section_id,
+                state=state,  # V6: Pass state for lifecycle hash
             )
 
-            _debug_node_exit("strategy_node", state)
+            _debug_node_exit("strategy_node", state, start_ns)
             return state
 
         except json.JSONDecodeError as e:
@@ -19497,6 +19894,20 @@ async def strategy_node(state: GraphState) -> GraphState:
                     message_length=len(recovered_message),
                 )
                 state.last_summary = recovered_message
+
+                # PR-C: Apply strategy output size limits to recovered message
+                _strategy_cap = (
+                    settings.strategy_expansion_max_output_chars
+                    if stage_name == "stage2"
+                    else settings.strategy_max_output_chars
+                )
+                state.last_summary, _was_truncated = truncate_preserving_newlines(
+                    state.last_summary, _strategy_cap
+                )
+                if _was_truncated:
+                    state.metadata["strategy_truncated"] = True
+                    state.metadata["strategy_truncate_cap"] = _strategy_cap
+
                 state.metadata["response_writer_node"] = f"strategy:{topic}:json_recovery"
                 state.metadata["response_generation_provenance"] = "llm_fallback"
                 state.metadata["strategy_stage"] = stage_name
@@ -19506,7 +19917,7 @@ async def strategy_node(state: GraphState) -> GraphState:
                     state.pending_strategy_expansion = True
                     state.suggested_responses = ["Show more details", "What else should I know?"]
 
-                _debug_node_exit("strategy_node", state)
+                _debug_node_exit("strategy_node", state, start_ns)
                 return state
 
             # If recovery failed, try again with hint
@@ -19541,7 +19952,7 @@ def validate_and_merge(state: GraphState) -> GraphState:
     3. Generates any final validation messages
     4. Manages date_clarify_mode lifecycle (invariant check)
     """
-    _debug_node_entry("validate_and_merge", state)
+    _, start_ns = _debug_node_entry("validate_and_merge", state)
 
     ti = state.trip_inputs  # Read-only reference
 
@@ -19643,7 +20054,7 @@ def validate_and_merge(state: GraphState) -> GraphState:
         errors_count=len(state.errors),
         date_clarify_mode=state.metadata.get("date_clarify_mode"),
     )
-    _debug_node_exit("validate_and_merge", state)
+    _debug_node_exit("validate_and_merge", state, start_ns)
     return state
 
 
@@ -19869,7 +20280,7 @@ def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
         # Don't modify if it's a question
         if not has_question:
             # Use deterministic selection based on message hash for consistency
-            opener_idx = hash(msg) % len(_WARM_OPENERS)
+            opener_idx = stable_hash_index(msg, len(_WARM_OPENERS))
             opener = _WARM_OPENERS[opener_idx]
 
             # Make first char lowercase if prepending
@@ -19890,7 +20301,7 @@ def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
     # Messages ending with period but no warmth - add warm closer
     if msg.rstrip().endswith(".") and not has_exclamation and not has_question:
         if len(msg) < 150:  # Only for shorter messages
-            closer_idx = hash(msg) % len(_WARM_CLOSERS)
+            closer_idx = stable_hash_index(msg, len(_WARM_CLOSERS))
             closer = _WARM_CLOSERS[closer_idx]
             polished = msg.rstrip(".") + "!" + closer
 
@@ -19917,7 +20328,7 @@ async def response_polish(state: GraphState) -> GraphState:
     """
     import time
 
-    _debug_node_entry("response_polish", state)
+    _, start_ns = _debug_node_entry("response_polish", state)
 
     # Check if we should skip polishing
     should_skip, skip_reason = _should_skip_polish(state)
@@ -19925,7 +20336,7 @@ async def response_polish(state: GraphState) -> GraphState:
         state.metadata["polish_skipped_reason"] = skip_reason
         _polish_stats["polish_skipped"] += 1
         _debug(f"Response polish skipped: {skip_reason}")
-        _debug_node_exit("response_polish", state)
+        _debug_node_exit("response_polish", state, start_ns)
         return state
 
     # =========================================================================
@@ -19950,7 +20361,7 @@ async def response_polish(state: GraphState) -> GraphState:
         if not settings.enable_response_polish_mvp:
             _debug("MVP mode: LLM polish disabled, using deterministic only")
             state.metadata["polish_mvp_mode"] = True
-            _debug_node_exit("response_polish", state)
+            _debug_node_exit("response_polish", state, start_ns)
             return state
 
     # =========================================================================
@@ -19960,7 +20371,7 @@ async def response_polish(state: GraphState) -> GraphState:
         _debug("MVP mode: LLM polish disabled")
         state.metadata["polish_mvp_mode"] = True
         state.metadata["polish_skipped_reason"] = "mvp_mode"
-        _debug_node_exit("response_polish", state)
+        _debug_node_exit("response_polish", state, start_ns)
         return state
 
     # =========================================================================
@@ -19986,7 +20397,7 @@ async def response_polish(state: GraphState) -> GraphState:
         if not can_call_llm(state, "response_polish"):
             _debug("⚠️ response_polish: LLM budget exhausted, skipping polish")
             state.metadata["polish_skipped_reason"] = "llm_budget_exhausted"
-            _debug_node_exit("response_polish", state)
+            _debug_node_exit("response_polish", state, start_ns)
             return state
 
         # Use hard timeout cap from settings (convert ms to seconds)
@@ -20041,7 +20452,7 @@ async def response_polish(state: GraphState) -> GraphState:
         state.metadata["polish_skipped_reason"] = f"error: {str(exc)[:50]}"
         _debug_error("Response polish failed", error=str(exc))
 
-    _debug_node_exit("response_polish", state)
+    _debug_node_exit("response_polish", state, start_ns)
     return state
 
 
@@ -20399,7 +20810,7 @@ def _maybe_append_safety_snippet(state: GraphState) -> str:
 
 def summarize(state: GraphState) -> GraphState:
     """Optional micro-summarizer node."""
-    _debug_node_entry("summarize", state)
+    _, start_ns = _debug_node_entry("summarize", state)
     # Track if we generated a fallback response
     generated_fallback = False
 
@@ -20442,7 +20853,7 @@ def summarize(state: GraphState) -> GraphState:
             "Summarize: generated ready-to-generate message (plan just became ready)",
             destinations=dest_str,
         )
-        _debug_node_exit("summarize", state)
+        _debug_node_exit("summarize", state, start_ns)
         return state
 
     # =========================================================================
@@ -20578,7 +20989,7 @@ def summarize(state: GraphState) -> GraphState:
             response_writer_node=state.metadata.get("response_writer_node"),
         )
 
-    _debug_node_exit("summarize", state)
+    _debug_node_exit("summarize", state, start_ns)
     return state
 
 
@@ -20590,11 +21001,11 @@ def branch_postprocess(state: GraphState) -> GraphState:
     Post-process branches: split by destination if multi_city_intent != 'multi_city',
     normalize all branch specs, and generate unique IDs.
     """
-    _debug_node_entry("branch_postprocess", state)
+    _, start_ns = _debug_node_entry("branch_postprocess", state)
 
     if not state.branches:
         _debug("No branches to post-process")
-        _debug_node_exit("branch_postprocess", state)
+        _debug_node_exit("branch_postprocess", state, start_ns)
         return state
 
     ti = state.trip_inputs
@@ -20639,7 +21050,7 @@ def branch_postprocess(state: GraphState) -> GraphState:
         seen_ids.add(branch["id"])
 
     _debug("Branch post-processing complete", branches=len(state.branches))
-    _debug_node_exit("branch_postprocess", state)
+    _debug_node_exit("branch_postprocess", state, start_ns)
     return state
 
 
@@ -20741,8 +21152,33 @@ def needs_tiles(intent: str, state: "GraphState") -> bool:
     return False
 
 
-# Tile cache for the current session (simple in-memory cache)
-_tile_cache: Dict[str, Any] = {}
+# =============================================================================
+# TILE CACHE (V6 UNIFIED) - Bounded with TTL
+# =============================================================================
+# Cache tile search results per session/intent/destination.
+# TTL: 5 minutes (tiles change infrequently within session)
+# Bounded: max 100 entries to prevent memory leaks
+
+_TILE_CACHE_TTL = 300  # 5 minutes
+_TILE_CACHE_MAXSIZE = 100
+
+_tile_cache: TTLCache = TTLCache(maxsize=_TILE_CACHE_MAXSIZE, ttl=_TILE_CACHE_TTL)
+
+
+def _compute_tile_cache_key_v6(
+    intent: str,
+    destinations: List[str],
+    start_date: Optional[str],
+    origin: Optional[str],
+) -> str:
+    """V6: Compute cache key for tile search results with version isolation."""
+    dest_hash = hashlib.md5(",".join(sorted(destinations or [])).encode()).hexdigest()[:16]
+    node_version = NODE_LOGIC_VERSION.get("tile", 0)
+    key_parts = (
+        f"tile_v6|{intent}|{dest_hash}|{start_date or 'none'}|{origin or 'none'}|"
+        f"v{CACHE_SCHEMA_VERSION}.{node_version}|{PLANNER_BUILD_ID}"
+    )
+    return hashlib.md5(key_parts.encode()).hexdigest()
 
 
 def ensure_tiles(
@@ -20751,7 +21187,7 @@ def ensure_tiles(
     timeout_ms: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Ensure tiles are available for grounding, with caching.
+    V6: Ensure tiles are available for grounding, with validated caching.
 
     Args:
         state: Current graph state
@@ -20765,30 +21201,110 @@ def ensure_tiles(
     if not needs_tiles(intent, state) or not should_run_tile_search(state, intent):
         return None
 
-    # Build cache key
     ti = state.trip_inputs
-    cache_key = f"{intent}:{','.join(ti.destinations or [])}:{ti.start_date}:{ti.origin}"
+    cache_key = _compute_tile_cache_key_v6(intent, ti.destinations or [], ti.start_date, ti.origin)
 
-    # Check cache
-    if cache_key in _tile_cache:
-        _debug(f"Tile cache hit for {intent}", cache_key=cache_key[:50])
-        state.metadata["tile_cache_hit"] = True
-        return _tile_cache[cache_key]
+    # Check cache with V6 validation
+    cached_data = _tile_cache.get(cache_key)
+    if cached_data is not None:
+        if isinstance(cached_data, dict) and "schema_version" in cached_data:
+            # V6 payload - validate version
+            if cached_data.get("schema_version") != CACHE_SCHEMA_VERSION:
+                _cache_stats["tile"]["discards"] += 1
+                _record_cache_event("tile", "discard", "schema_version_mismatch")
+                del _tile_cache[cache_key]
+            elif cached_data.get("planner_build_id") != PLANNER_BUILD_ID:
+                _cache_stats["tile"]["discards"] += 1
+                _record_cache_event("tile", "discard", "planner_build_id_mismatch")
+                del _tile_cache[cache_key]
+            else:
+                # Valid V6 hit
+                _cache_stats["tile"]["hits"] += 1
+                _record_cache_event("tile", "hit")
+                _debug(f"Tile cache hit for {intent}", cache_key=cache_key[:16])
+                state.metadata["tile_cache_hit"] = True
+                return cached_data.get("extra", {}).get("tile_result")
+        else:
+            # Legacy format - return as-is
+            _cache_stats["tile"]["hits"] += 1
+            _record_cache_event("tile", "hit")
+            state.metadata["tile_cache_hit"] = True
+            return cached_data
 
-    # Call tile service (would integrate with actual tile search here)
-    # For now, mark that we need tiles but don't have them
+    # Cache miss
+    _cache_stats["tile"]["misses"] += 1
+    _record_cache_event("tile", "miss")
     state.metadata["tile_cache_miss"] = True
     state.metadata["tiles_needed_for"] = intent
 
     return None
 
 
+def set_tile_cached(
+    intent: str,
+    destinations: List[str],
+    start_date: Optional[str],
+    origin: Optional[str],
+    result: Dict[str, Any],
+) -> None:
+    """V6: Cache a tile search result with version info."""
+    cache_key = _compute_tile_cache_key_v6(intent, destinations, start_date, origin)
+    node_version = NODE_LOGIC_VERSION.get("tile", 0)
+
+    payload = {
+        "payload_kind": "tile",
+        "node_name": "tile",
+        "schema_version": CACHE_SCHEMA_VERSION,
+        "logic_version": node_version,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "created_at": time.time(),
+        "extra": {
+            "tile_result": result,
+            "intent": intent,
+            "destinations_hash": hashlib.md5(
+                ",".join(sorted(destinations or [])).encode()
+            ).hexdigest()[:16],
+        },
+    }
+
+    _tile_cache[cache_key] = payload
+    _record_cache_event("tile", "set")
+    _debug(
+        "TILE_CACHE_SET",
+        key_prefix=cache_key[:16],
+        intent=intent,
+        schema_version=CACHE_SCHEMA_VERSION,
+    )
+
+
 def clear_tile_cache() -> int:
     """Clear the tile cache. Returns count of cleared entries."""
-    global _tile_cache
     count = len(_tile_cache)
     _tile_cache.clear()
+    _cache_stats["tile"]["hits"] = 0
+    _cache_stats["tile"]["misses"] = 0
+    _cache_stats["tile"]["discards"] = 0
     return count
+
+
+def get_tile_cache_stats() -> Dict[str, Any]:
+    """Get tile cache statistics."""
+    stats = _cache_stats["tile"]
+    hits = stats["hits"]
+    misses = stats["misses"]
+    total = hits + misses
+    hit_rate = hits / total if total > 0 else 0.0
+
+    return {
+        "hits": hits,
+        "misses": misses,
+        "discards": stats["discards"],
+        "hit_rate": hit_rate,
+        "cache_size": len(_tile_cache),
+        "max_size": _TILE_CACHE_MAXSIZE,
+        "ttl_seconds": _TILE_CACHE_TTL,
+        "schema_version": CACHE_SCHEMA_VERSION,
+    }
 
 
 # -----------------------
@@ -20801,7 +21317,7 @@ def tile_search(state: GraphState) -> GraphState:
 
     MVP Hardening: Now includes strict gating on core field readiness.
     """
-    _debug_node_entry("tile_search", state)
+    _, start_ns = _debug_node_entry("tile_search", state)
 
     # =========================================================================
     # MVP GATE: Check core field prerequisites before tile search
@@ -20814,7 +21330,7 @@ def tile_search(state: GraphState) -> GraphState:
             has_start_date=bool(ti.start_date),
         )
         state.metadata["tile_search_blocked"] = "missing_core_fields"
-        _debug_node_exit("tile_search", state)
+        _debug_node_exit("tile_search", state, start_ns)
         return state
 
     # Check if any booking types are enabled
@@ -20823,12 +21339,12 @@ def tile_search(state: GraphState) -> GraphState:
 
     if not any_enabled:
         _debug("No booking types enabled, skipping tile search")
-        _debug_node_exit("tile_search", state)
+        _debug_node_exit("tile_search", state, start_ns)
         return state
 
     if not state.branches:
         _debug("No branches to search tiles for")
-        _debug_node_exit("tile_search", state)
+        _debug_node_exit("tile_search", state, start_ns)
         return state
 
     ti = state.trip_inputs
@@ -20845,7 +21361,7 @@ def tile_search(state: GraphState) -> GraphState:
 
     if not verticals:
         _debug("No verticals enabled despite booking types set")
-        _debug_node_exit("tile_search", state)
+        _debug_node_exit("tile_search", state, start_ns)
         return state
 
     # Search tiles for the primary branch only (idx == 0), matching plan.py behavior
@@ -20918,7 +21434,7 @@ def tile_search(state: GraphState) -> GraphState:
         total_tiles=len(tiles_dict),
         enabled_verticals=verticals,
     )
-    _debug_node_exit("tile_search", state)
+    _debug_node_exit("tile_search", state, start_ns)
     return state
 
 
@@ -20935,7 +21451,7 @@ def generate_responder(state: GraphState) -> GraphState:
     It creates default branches from trip_inputs and sets ready_to_generate=True.
     When the user explicitly requests generation, we proceed even with partial data.
     """
-    _debug_node_entry("generate_responder", state)
+    _, start_ns = _debug_node_entry("generate_responder", state)
 
     ti = state.trip_inputs
 
@@ -20949,7 +21465,7 @@ def generate_responder(state: GraphState) -> GraphState:
         state.question_target = "destinations"
         state.ready_to_generate = False
         _debug("Generate blocked - no destinations")
-        _debug_node_exit("generate_responder", state)
+        _debug_node_exit("generate_responder", state, start_ns)
         return state
 
     # All core fields complete - create branches and set ready
@@ -20986,7 +21502,7 @@ def generate_responder(state: GraphState) -> GraphState:
         ready=state.ready_to_generate,
         branches=len(state.branches),
     )
-    _debug_node_exit("generate_responder", state)
+    _debug_node_exit("generate_responder", state, start_ns)
     return state
 
 
@@ -21004,7 +21520,7 @@ def short_circuit_responder(state: GraphState) -> GraphState:
     Only handles: greeting, confirmation_yes, confirmation_no
     All other input types (including acknowledgments, bare inputs) go through LLM.
     """
-    _debug_node_entry("short_circuit_responder", state)
+    _, start_ns = _debug_node_entry("short_circuit_responder", state)
 
     sc_type = state.flags.get("short_circuit", "unknown")
     sc_response = state.flags.get("short_circuit_response")
@@ -21067,7 +21583,7 @@ def short_circuit_responder(state: GraphState) -> GraphState:
     state.metadata["response_writer_node"] = "short_circuit_responder"
     state.metadata["response_generation_provenance"] = "deterministic"
 
-    _debug_node_exit("short_circuit_responder", state)
+    _debug_node_exit("short_circuit_responder", state, start_ns)
     return state
 
 
@@ -21988,15 +22504,20 @@ async def run_turn(
     metadata.pop("routing_reason", None)
 
     # =========================================================================
-    # LLM BUDGET: Reset per-turn counters
+    # LLM BUDGET: Reset per-turn counters (PR2: Use constants)
     # =========================================================================
-    metadata["llm_calls_this_turn"] = 0  # Integer counter for LLM call budget
-    metadata["llm_call_blocked_reason"] = {}  # v5: dict for per-node tracking
-    metadata["llm_nodes_called_this_turn"] = []  # v5: track which nodes called LLM
-    metadata["deltas_applied_this_turn"] = []  # v5: track field changes this turn
-    metadata["response_source_node"] = None  # v5: first node to produce response
-    metadata["response_generation_provenance"] = None  # v5: response generation provenance
+    metadata[LLM_CALLS_THIS_TURN] = 0  # Integer counter for LLM call budget
+    metadata[LLM_CALL_BLOCKED_REASON] = {}  # v5: dict for per-node tracking
+    metadata[LLM_CALL_SITES] = []  # v5: track which nodes called LLM
+    metadata[DELTAS_APPLIED_THIS_TURN] = []  # v5: track field changes this turn
+    metadata[RESPONSE_SOURCE_NODE] = None  # v5: first node to produce response
+    metadata[RESPONSE_GENERATION_PROVENANCE] = None  # v5: response generation provenance
     # Note: llm_call_blocked_count is cumulative (not reset per turn)
+
+    # =========================================================================
+    # PR-A: PLANNER SNAPSHOT (set once per turn for observability)
+    # =========================================================================
+    metadata[PLANNER_SNAPSHOT] = get_planner_snapshot()
 
     # =========================================================================
     # v7 Final v5: Reset per-turn metadata keys to avoid stale overrides
@@ -22620,6 +23141,8 @@ async def run_turn(
             "turn_number": getattr(result, "turn_number", 0),
             # State counters for observability
             "state_counters": _get_state_counters(),
+            # PR-B: Cache summary for this turn
+            "cache_summary_this_turn": summarize_cache_events(get_cache_events_this_turn()),
         },
     }
     return resp
@@ -22686,14 +23209,14 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     metadata.pop("routing_reason", None)
 
     # =========================================================================
-    # LLM BUDGET: Reset per-turn counters (must match run_turn)
+    # LLM BUDGET: Reset per-turn counters (must match run_turn) (PR2: Use constants)
     # =========================================================================
-    metadata["llm_calls_this_turn"] = 0  # Integer counter for LLM call budget
-    metadata["llm_call_blocked_reason"] = {}  # v5: dict for per-node tracking
-    metadata["llm_nodes_called_this_turn"] = []  # v5: track which nodes called LLM
-    metadata["deltas_applied_this_turn"] = []  # v5: track field changes this turn
-    metadata["response_source_node"] = None  # v5: first node to produce response
-    metadata["response_generation_provenance"] = None  # v5: response generation provenance
+    metadata[LLM_CALLS_THIS_TURN] = 0  # Integer counter for LLM call budget
+    metadata[LLM_CALL_BLOCKED_REASON] = {}  # v5: dict for per-node tracking
+    metadata[LLM_CALL_SITES] = []  # v5: track which nodes called LLM
+    metadata[DELTAS_APPLIED_THIS_TURN] = []  # v5: track field changes this turn
+    metadata[RESPONSE_SOURCE_NODE] = None  # v5: first node to produce response
+    metadata[RESPONSE_GENERATION_PROVENANCE] = None  # v5: response generation provenance
 
     # =========================================================================
     # v7 Final v5: Reset per-turn metadata keys to avoid stale overrides

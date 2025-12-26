@@ -1,8 +1,9 @@
 # Plan Graph Architecture Analysis
 
-> **Generated**: December 24, 2025 (Updated: V15 Gate Renumbering & Routing Fixes)
-> **Source File**: `backend/app/plan_graph.py` (~23,100 lines)
-> **Pattern Module**: `backend/app/pattern_matching.py` (~1,400 lines)
+> **Generated**: December 25, 2025 (Updated: V32 Date Compatibility Consolidation)
+> **Source File**: `backend/app/plan_graph.py` (~23,800 lines)
+> **Pattern Module**: `backend/app/pattern_matching.py` (~1,700 lines)
+> **Planner Package**: `backend/app/planner/` (new in V26)
 > **Prompt Files**: 26 files in `backend/app/prompts/`
 
 ---
@@ -72,6 +73,108 @@
     - [STRATEGY_EXPANSION Gate](#strategy_expansion-gate)
     - [JSON Recovery Fallback](#json-recovery-fallback)
     - [Empty Response Guard](#empty-response-guard)
+26. [Hermetic Tier A Test Harness (V16)](#hermetic-tier-a-test-harness-v16)
+    - [FakeLLM Harness](#fakellm-harness)
+    - [Text Compatibility Table-Driven Tests](#text-compatibility-table-driven-tests)
+    - [Gate Invariant Tests](#gate-invariant-tests)
+    - [Tier A Trace Replay Tests](#tier-a-trace-replay-tests)
+    - [Ownership Suppression Tests](#ownership-suppression-tests)
+27. [Startup Validation & Build Info (V17)](#startup-validation--build-info-v17)
+    - [Fail-Fast Template Validation](#fail-fast-template-validation)
+    - [Build Info Logging](#build-info-logging)
+    - [Health Endpoint Enhancement](#health-endpoint-enhancement)
+    - [Startup Validation Tests](#startup-validation-tests)
+    - [Test Summary](#test-summary)
+28. [CachePayload V6 Everywhere (V18)](#cachepayload-v6-everywhere-v18)
+    - [Unified CachePayload Schema](#unified-cachepayload-schema)
+    - [Migrated Caches](#migrated-caches)
+    - [Cache Event Observability](#cache-event-observability)
+    - [Bounded Tile Cache](#bounded-tile-cache)
+    - [V6 Migration Tests](#v6-migration-tests)
+29. [LLM Budget CI (V19)](#llm-budget-ci-v19)
+    - [Budget Enforcement Rules](#budget-enforcement-rules)
+    - [Budget CI Tests](#budget-ci-tests)
+    - [Observability & Tracking](#observability--tracking)
+30. [Strategy Topics (V20)](#strategy-topics-v20)
+    - [Topic Registry](#topic-registry)
+    - [Topic Detection Patterns](#topic-detection-patterns)
+    - [Strategy Gates](#strategy-gates)
+    - [Strategy Topic Tests](#strategy-topic-tests)
+31. [Debug/Config Snapshot (V21)](#debugconfig-snapshot-v21)
+    - [Admin Planner Endpoint](#admin-planner-endpoint)
+    - [Planner Snapshot Per Turn](#planner-snapshot-per-turn)
+    - [Version Constants](#version-constants)
+    - [Debug Endpoint Tests](#debug-endpoint-tests)
+32. [Cache Summary Metrics (V22)](#cache-summary-metrics-v22)
+    - [Cache Invalid Reason Constants](#cache-invalid-reason-constants)
+    - [Summarize Cache Events](#summarize-cache-events)
+    - [Process-Level Rolling Counters](#process-level-rolling-counters)
+    - [Cache Summary Tests](#cache-summary-tests)
+33. [Strategy Output Size Limits (V23)](#strategy-output-size-limits-v23)
+    - [Truncation Helper Function](#truncation-helper-function)
+    - [Strategy Node Integration](#strategy-node-integration)
+    - [Configuration Settings](#configuration-settings)
+    - [Strategy Output Tests](#strategy-output-tests)
+34. [JSON Utilities Extraction (V24)](#json-utilities-extraction-v24)
+    - [Extracted Functions](#extracted-functions)
+    - [Backwards Compatibility](#backwards-compatibility)
+    - [Extraction Tests](#extraction-tests)
+35. [Debug Utilities Extraction (V25)](#debug-utilities-extraction-v25)
+    - [Extracted Debug Functions](#extracted-debug-functions)
+    - [Debug Backwards Compatibility](#debug-backwards-compatibility)
+    - [Debug Extraction Tests](#debug-extraction-tests)
+36. [Metadata Helpers & Turn Init (V26)](#metadata-helpers--turn-init-v26)
+    - [Planner Package Structure](#planner-package-structure)
+    - [Metadata Key Constants](#metadata-key-constants)
+    - [Metadata Helper Functions](#metadata-helper-functions)
+    - [Centralized Turn Initialization](#centralized-turn-initialization)
+    - [Metadata Helpers Tests](#metadata-helpers-tests)
+37. [Test-Mode Invariant Hard-Fails (V27)](#test-mode-invariant-hard-fails-v27)
+    - [Test-Mode Detection](#test-mode-detection)
+    - [Tripwire Hard-Fails](#tripwire-hard-fails)
+    - [Response Writer Guard](#response-writer-guard)
+    - [Gate Invariants](#gate-invariants)
+    - [Invariant Failure Tests](#invariant-failure-tests)
+38. [Cache Concurrency Safety (V28)](#cache-concurrency-safety-v28)
+    - [Cache Access Module](#cache-access-module)
+    - [Thread-Safe Accessors](#thread-safe-accessors)
+    - [Counter Safety](#counter-safety)
+    - [Cache Concurrency Tests](#cache-concurrency-tests)
+39. [Import Surface Freeze (V29)](#import-surface-freeze-v29)
+    - [Planner Facade Module](#planner-facade-module)
+    - [Exported Symbols](#exported-symbols)
+    - [Import Contract Enforcement](#import-contract-enforcement)
+    - [Migration Path](#migration-path)
+    - [Import Contract Tests](#import-contract-tests)
+40. [Stable Hashing Utilities (V30)](#stable-hashing-utilities-v30)
+    - [Hashing Module](#hashing-module)
+    - [Stable Hash Functions](#stable-hash-functions)
+    - [Canonicalization Helpers](#canonicalization-helpers)
+    - [Hash Ban Enforcement](#hash-ban-enforcement)
+    - [Stable Hashing Tests](#stable-hashing-tests)
+41. [Telemetry Spine (V31)](#telemetry-spine-v31)
+    - [Telemetry Module](#telemetry-module)
+    - [TraceEnvelope](#traceenvelope)
+    - [Event Types](#event-types)
+    - [Sampling & Redaction](#sampling--redaction)
+    - [Console Output](#console-output)
+    - [Integration Points](#integration-points)
+    - [Configuration Settings](#configuration-settings-1)
+    - [Telemetry Tests](#telemetry-tests)
+42. [Date Compatibility Consolidation (V32)](#date-compatibility-consolidation-v32)
+    - [Problem](#problem)
+    - [Solution: Single Source of Truth](#solution-single-source-of-truth)
+    - [Files Changed](#files-changed)
+    - [Patterns Now Recognized](#patterns-now-recognized)
+    - [Test Coverage](#test-coverage-1)
+    - [Ownership Suppression Now Works](#ownership-suppression-now-works)
+43. [Stale Question Target Fix (V33)](#stale-question-target-fix-v33)
+    - [Problem](#problem-1)
+    - [Root Cause](#root-cause)
+    - [Solution: Validate Before Use](#solution-validate-before-use)
+    - [Debug Output](#debug-output)
+    - [Files Changed](#files-changed-1)
+    - [Invariant Enforced](#invariant-enforced)
 
 ---
 
@@ -572,6 +675,7 @@ phrases like "do it all together".
 | `_check_strategy_pre_core_value`           | Detects strategy topic and determines question_target priority              |
 | `_check_strategy_pre_core_value_with_dest` | Detects strategy topic with destination known → dest-aware stage0 response  |
 | `_check_strategy_topic_switch`             | Detects mid-session strategy topic changes with intent verbs and cooldowns  |
+| `is_text_date_compatible` (V32)            | **Single source of truth** for date compatibility (pattern_matching.py)     |
 | `text_is_compatible_with_target` (V10)     | Checks if user input looks like an answer to `question_target`              |
 | `_compute_stage0_signature` (V10)          | Computes unique signature for stage0 lifecycle tracking                     |
 | `_extract_message_from_malformed_json`     | JSON recovery: extracts message field from malformed LLM JSON responses     |
@@ -878,10 +982,15 @@ When in clarify mode, the `dates_clarify` template is used:
 
 When `question_target == "dates"`, LQA applies a skip heuristic to avoid misfiring on non-date text:
 
-| Check               | Function                | Purpose                                        |
-| ------------------- | ----------------------- | ---------------------------------------------- |
-| Is date-like text?  | `_is_date_like_text()`  | Detects months, "next/this", digits+separators |
-| Is place-like text? | `_is_place_like_text()` | Detects capitals, multi-word proper nouns      |
+| Check               | Function                              | Purpose                                        |
+| ------------------- | ------------------------------------- | ---------------------------------------------- |
+| Is date-like text?  | `_is_date_like_text()` → delegates to | Detects months, "next/this", digits+separators |
+|                     | `is_text_date_compatible()` (V32)     | **Consolidated single source of truth**        |
+| Is place-like text? | `_is_place_like_text()`               | Detects capitals, multi-word proper nouns      |
+
+**V32 Consolidation:** `_is_date_like_text()` now delegates to `is_text_date_compatible()` from
+`pattern_matching.py`, which is the single source of truth for date detection. This ensures
+consistency between LQA skip heuristics, gate ownership suppression, and text compatibility checks.
 
 If text is NOT date-like AND IS place-like (e.g., "Swiss Alps"), LQA bails with reason
 `"not_date_like"` instead of `"validation_fail"`. This prevents spurious error accumulation.
@@ -2608,32 +2717,41 @@ ignored and stage0 to loop indefinitely. Also fixes 15s streaming timeout for LL
 **New Invariant:** If `question_target` is set AND user input is compatible with that target,
 strategy stage0 gates MUST NOT fire. The answer-collection path owns the turn.
 
-**Implementation:**
+**Implementation (V32 Consolidated):**
 
 ```python
-# GateEvaluator.text_is_compatible_with_target()
+# GateEvaluator.text_is_compatible_with_target() - now delegates to pattern_matching.py
 @classmethod
 def text_is_compatible_with_target(cls, user_text: str, question_target: Optional[str]) -> bool:
     """Check if user_text looks like an answer to the given question_target."""
     if question_target in ("dates", "start_date"):
-        # Check for month-to-month range ("June to November")
-        if cls._MONTH_TO_MONTH_PATTERN.match(text_stripped):
-            return True
-        # Check for single month, season words, date-like patterns
-        ...
+        # Delegate to consolidated date compatibility check
+        return is_text_date_compatible(user_text)
     elif question_target == "origin":
         # Check for city/place-like input
         ...
     return False
 ```
 
-**New Patterns Added:**
+**Consolidated Date Compatibility (V32):**
 
-| Pattern                   | Example Matches                    | Purpose                          |
-| ------------------------- | ---------------------------------- | -------------------------------- |
-| `_MONTH_TO_MONTH_PATTERN` | "June to November", "Jan-Dec"      | Detect date range answers        |
-| `_SINGLE_MONTH_PATTERN`   | "November", "next June"            | Detect single month answers      |
-| Season/relative words     | "spring", "next month", "flexible" | Detect non-specific date answers |
+The `is_text_date_compatible()` function in `pattern_matching.py` is the **single source of truth**
+for determining if text answers a dates question. It consolidates:
+
+- `DATES_COMPATIBILITY_PATTERN` regex
+- `GateEvaluator.text_is_compatible_with_target()` dates branch
+- `_is_date_like_text()` function
+
+**Patterns Recognized:**
+
+| Pattern                        | Example Matches                           | Purpose                          |
+| ------------------------------ | ----------------------------------------- | -------------------------------- |
+| `RELATIVE_DATE_WORDS_SIMPLE`   | "tomorrow", "today", "tonight", "weekend" | Standalone relative date words   |
+| `MONTH_TO_MONTH_RANGE_PATTERN` | "June to November", "Jan-Dec"             | Detect date range answers        |
+| `SINGLE_MONTH_PATTERN`         | "November", "next June"                   | Detect single month answers      |
+| Season words                   | "spring", "summer", "fall", "winter"      | Detect season answers            |
+| Relative phrases               | "next month", "this week", "next year"    | Detect non-specific date answers |
+| Flexibility expressions        | "flexible", "whenever", "anytime"         | Detect open date answers         |
 
 **Suppression Logic in `_check_strategy_pre_core_value_with_dest()`:**
 
@@ -3110,19 +3228,29 @@ FERRY_PATTERN = r"\b(ferry|cruise|catamaran|water\s+taxi)\b"
 
 The module provides ready-to-use extraction functions:
 
-| Function                              | Returns       | Description                          |
-| ------------------------------------- | ------------- | ------------------------------------ |
-| `extract_hotel_stars(text)`           | `int \| None` | Extracts star rating (1-5) from text |
-| `extract_cabin_class(text)`           | `str \| None` | Returns normalized cabin class       |
-| `extract_hotel_amenities(text)`       | `List[str]`   | Lists all mentioned amenities        |
-| `is_direct_flight_preferred(text)`    | `bool`        | Checks for non-stop preference       |
-| `extract_trip_type(text)`             | `str \| None` | Returns "one_way" or "round_trip"    |
-| `has_car_rental_intent(text)`         | `bool`        | Checks for car rental mention        |
-| `has_train_intent(text)`              | `bool`        | Checks for train travel mention      |
-| `parse_duration_text(text)`           | `int \| None` | Parses duration to days              |
-| `normalize_ansi(text)`                | `str`         | Strips ANSI escape codes             |
-| `is_traveler_detail_answer(...)`      | `bool`        | Detects age lists like "3, 6, 12"    |
-| `text_is_compatible_with_target(...)` | `bool`        | Checks if text answers question      |
+| Function                              | Returns       | Description                                       |
+| ------------------------------------- | ------------- | ------------------------------------------------- |
+| `extract_hotel_stars(text)`           | `int \| None` | Extracts star rating (1-5) from text              |
+| `extract_cabin_class(text)`           | `str \| None` | Returns normalized cabin class                    |
+| `extract_hotel_amenities(text)`       | `List[str]`   | Lists all mentioned amenities                     |
+| `is_direct_flight_preferred(text)`    | `bool`        | Checks for non-stop preference                    |
+| `extract_trip_type(text)`             | `str \| None` | Returns "one_way" or "round_trip"                 |
+| `has_car_rental_intent(text)`         | `bool`        | Checks for car rental mention                     |
+| `has_train_intent(text)`              | `bool`        | Checks for train travel mention                   |
+| `parse_duration_text(text)`           | `int \| None` | Parses duration to days                           |
+| `normalize_ansi(text)`                | `str`         | Strips ANSI escape codes                          |
+| `is_traveler_detail_answer(...)`      | `bool`        | Detects age lists like "3, 6, 12"                 |
+| `is_text_date_compatible(text)`       | `bool`        | **Single source of truth** for date answers (V32) |
+| `text_is_compatible_with_target(...)` | `bool`        | Checks if text answers question                   |
+
+### Constants Exported (V32)
+
+| Constant                         | Type         | Description                                      |
+| -------------------------------- | ------------ | ------------------------------------------------ |
+| `RELATIVE_DATE_WORDS_SIMPLE`     | `frozenset`  | Standalone date words: "today", "tomorrow", etc. |
+| `RELATIVE_DATE_WORDS_CONTEXTUAL` | `frozenset`  | Words requiring context: "week", "month", etc.   |
+| `RELATIVE_DATE_WORDS_ALL`        | `frozenset`  | Combined set for general date detection          |
+| `DATES_COMPATIBILITY_PATTERN`    | `re.Pattern` | Canonical regex for date answer detection        |
 
 ### Usage in plan_graph.py
 
@@ -3135,6 +3263,9 @@ from app.pattern_matching import (
     GREETING_PATTERN,
     YES_PATTERN,
     NO_PATTERN,
+    # Date compatibility (consolidated - V32)
+    is_text_date_compatible,
+    RELATIVE_DATE_WORDS_ALL,
     # ... 80+ pattern imports ...
     # Helper functions
     extract_hotel_stars,
@@ -3282,3 +3413,1789 @@ This ensures users always receive a meaningful response even when upstream nodes
 - Gate precedence ordering invariants
 
 All 1150 langgraph tests pass with these changes.
+
+---
+
+## Hermetic Tier A Test Harness (V16)
+
+> **Added**: PR0 Implementation
+> **Test Files**:
+>
+> - `tests/langgraph/fake_llm.py` (~100 lines)
+> - `tests/langgraph/test_text_compatibility.py` (~290 lines)
+> - `tests/langgraph/test_tier_a_trace_replay.py` (~240 lines)
+> - `tests/langgraph/test_gate_invariants.py` (~300 lines)
+
+### FakeLLM Harness
+
+The `FakeLLM` class provides a hermetic test harness for Tier A (pure-logic) testing that guarantees
+zero actual LLM calls during test execution:
+
+```python
+class FakeLLM:
+    """
+    Hermetic LLM stub for Tier A testing.
+
+    Two modes:
+    - strict: Raises AssertionError on ANY LLM call (zero-LLM invariant testing)
+    - map: Returns keyed responses based on (node_name, callsite_name) tuple
+    """
+
+    def __init__(self, mode: str = "strict", response_map: dict = None):
+        self.mode = mode
+        self.response_map = response_map or {}
+        self.call_log: List[LLMCallRecord] = []
+```
+
+**Key Design Decisions**:
+
+1. **Keying by semantic identity**: Uses `(node_name, callsite_name)` tuple rather than prompt hash
+
+   - Avoids brittleness when prompt text changes
+   - Provides stable keys for test fixtures
+   - Example: `("extractor", "main_extraction")` vs `hash("Extract fields from...")`
+
+2. **Call logging**: Records all attempted LLM calls with full context:
+
+   ```python
+   @dataclass
+   class LLMCallRecord:
+       node_name: str
+       callsite_name: str
+       prompt_bundle_hash: str
+       timestamp: float
+   ```
+
+3. **Context manager API**: Clean setup/teardown in tests:
+   ```python
+   with FakeLLM.patch_strict():
+       # Any LLM call here raises AssertionError
+       result = gate_evaluator.evaluate(state)
+   ```
+
+### Text Compatibility Table-Driven Tests
+
+Comprehensive coverage for `text_is_compatible_with_target()` and `is_text_date_compatible()`:
+
+| Target Category  | Test Cases | Coverage                                                                                      |
+| ---------------- | ---------- | --------------------------------------------------------------------------------------------- |
+| **dates**        | 35+        | ISO dates, relative dates, ranges, natural language, **tomorrow/today/tonight/weekend (V32)** |
+| **origin**       | 15+        | City names, airports, countries, negatives                                                    |
+| **destinations** | 20+        | Single/multi-city, known places, negatives                                                    |
+| **travelers**    | 20+        | Adults, children, couples, groups, edge cases                                                 |
+| **budget**       | 15+        | Currency symbols, numeric, per-person, negatives                                              |
+
+**V32 Addition:** New `TestIsTextDateCompatible` class tests the consolidated date function directly:
+
+```python
+class TestIsTextDateCompatible:
+    \"\"\"Direct tests for the consolidated is_text_date_compatible function.\"\"\"
+
+    @pytest.mark.parametrize("text,expected", [
+        # Standalone relative date words (P0 fix)
+        ("tomorrow", True),
+        ("Tomorrow", True),  # Case insensitive
+        ("TOMORROW", True),  # All caps
+        ("today", True),
+        ("tonight", True),
+        ("weekend", True),
+        # Should not match non-date text
+        ("Paris", False),
+        ("Swiss Alps", False),
+    ])
+    def test_relative_date_words(self, text: str, expected: bool):
+        result = is_text_date_compatible(text)
+        assert result == expected
+```
+
+Example test structure:
+
+```python
+class TestTextIsCompatibleWithTargetDates:
+    @pytest.mark.parametrize("text,expected", [
+        ("2025-03-15", True),
+        ("March 15th", True),
+        ("next Friday", True),
+        ("hello world", False),
+        ("the date is great", False),  # "date" as word != date value
+    ])
+    def test_dates_compatibility(self, text, expected):
+        result = _text_is_compatible_with_target(text, "dates")
+        assert result == expected
+```
+
+### Gate Invariant Tests
+
+Critical invariants enforced by test assertions:
+
+1. **Complete State Never Routes to required_fields**:
+
+   ```python
+   def test_complete_state_never_routes_to_required_fields():
+       """
+       INVARIANT: When TripReadiness.core_complete is True,
+       GateEvaluator MUST NOT return destination="required_fields".
+       """
+       state = make_complete_state()
+       result = gate_evaluator.evaluate(state)
+       assert result.destination != "required_fields"
+   ```
+
+2. **Gate Precedence Ordering**:
+
+   ```python
+   def test_gate_precedence_ordering():
+       """Gates with lower precedence numbers fire first."""
+       assert GatePrecedence.SHORT_CIRCUIT < GatePrecedence.FAST_PATH
+       assert GatePrecedence.FAST_PATH < GatePrecedence.SPECIALIST_PRE_CORE
+       # ... etc
+   ```
+
+3. **Question Target Canonicalization**:
+   ```python
+   def test_question_target_canonicalization():
+       """Verify canonicalize_question_target() mappings."""
+       assert canonicalize_question_target("start_date") == "dates"
+       assert canonicalize_question_target("end_date") == "dates"
+       assert canonicalize_question_target("adults") == "travelers"
+       assert canonicalize_question_target("children") == "children"  # NOT travelers
+   ```
+
+### Tier A Trace Replay Tests
+
+Zero-LLM trace replay tests for core routing logic:
+
+```python
+class TestZeroLLMInvariants:
+    """Tests that verify no LLM calls for deterministic paths."""
+
+    def test_complete_state_gate_zero_llm(self):
+        """Complete state evaluation requires zero LLM calls."""
+        with FakeLLM.patch_strict():
+            state = make_complete_state()
+            result = gate_evaluator.evaluate(state)
+            # If we reach here, no LLM was called
+            assert result.destination in ["validate_and_merge", "general_node"]
+
+    def test_question_target_answer_zero_llm(self):
+        """Answering an active question requires zero LLM calls."""
+        with FakeLLM.patch_strict():
+            state = make_state_with_active_question("dates")
+            state["user_text"] = "March 15-20"
+            result = lqa_prepass(state)
+            # LQA handles simple date answers without LLM
+            assert result.get("lqa_answered") == True
+```
+
+### Ownership Suppression Tests
+
+Tests for the signature-scoped lifecycle suppression invariant:
+
+```python
+class TestOwnershipSuppressionInvariant:
+    """
+    INVARIANT: When a question_target is active, topic-switch gates
+    are suppressed until the question is answered or explicitly abandoned.
+    """
+
+    def test_active_question_blocks_topic_switch(self):
+        state = make_state_with_active_question("budget")
+        state["user_text"] = "What about hotels in Paris?"
+
+        result = gate_evaluator.evaluate(state)
+
+        # Should NOT switch to hotels specialist while budget question pending
+        assert result.destination != "hotels_node"
+        assert result.gate_fired != GatePrecedence.SPECIALIST_PRE_CORE
+```
+
+### Test Summary
+
+| Test File                   | Tests | Focus                               |
+| --------------------------- | ----- | ----------------------------------- |
+| test_text_compatibility.py  | 95+   | Pattern matching edge cases         |
+| test_tier_a_trace_replay.py | 35+   | Zero-LLM invariants, trace replay   |
+| test_gate_invariants.py     | 31+   | Gate precedence, routing invariants |
+
+**Total**: 161 new tests added, all passing (1348 total langgraph tests).
+
+---
+
+## Startup Validation & Build Info (V17)
+
+> **Added**: PR4 Implementation
+> **Files Modified**:
+>
+> - `backend/app/main.py` (lifespan, health endpoint)
+> - `backend/tests/test_startup.py` (new, 14 tests)
+
+### Fail-Fast Template Validation
+
+The application now calls `validate_template_coverage()` at startup and **fails fast** if template
+validation fails. This prevents deploy-time prompt/template drift that causes hard-to-debug runtime behavior.
+
+```python
+# In lifespan() - main.py
+template_validation = validate_template_coverage()
+if not template_validation["valid"]:
+    error_msg = (
+        f"[FATAL] Template coverage validation failed: "
+        f"missing_fields={template_validation['missing_fields']}, "
+        f"errors={template_validation['errors'][:3]}"
+    )
+    logger.error(error_msg)
+    raise RuntimeError(error_msg)
+```
+
+**Failure is fatal everywhere** (dev + prod). Silent drift is worse than a loud failure.
+
+### Build Info Logging
+
+At startup, the application logs critical build identifiers for cache debugging:
+
+```python
+logger.info(
+    "[Startup] Build info: prompt_bundle_hash=%s, planner_build_id=%s, cache_schema_version=%s",
+    PROMPT_BUNDLE_HASH,
+    PLANNER_BUILD_ID,
+    CACHE_SCHEMA_VERSION,
+)
+```
+
+| Identifier             | Source                                     | Purpose                                  |
+| ---------------------- | ------------------------------------------ | ---------------------------------------- |
+| `PROMPT_BUNDLE_HASH`   | MD5 of normalized prompt files             | Cache invalidation across prompt changes |
+| `PLANNER_BUILD_ID`     | `GIT_SHA` or `BUILD_ID` env var (12 chars) | Cross-deploy cache isolation             |
+| `CACHE_SCHEMA_VERSION` | Integer constant in plan_graph.py          | Invalidate on payload format changes     |
+
+### Health Endpoint Enhancement
+
+The `/health` endpoint now returns build information for debugging:
+
+```python
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "env": settings.env,
+        "prompt_bundle_hash": PROMPT_BUNDLE_HASH,
+        "planner_build_id": PLANNER_BUILD_ID,
+        "cache_schema_version": CACHE_SCHEMA_VERSION,
+    }
+```
+
+This enables:
+
+- Quick verification that correct build is deployed
+- Cache debugging across multiple instances
+- Detecting prompt drift between environments
+
+### Startup Validation Tests
+
+14 new tests in `tests/test_startup.py`:
+
+| Test Class                | Tests | Coverage                                                                    |
+| ------------------------- | ----- | --------------------------------------------------------------------------- |
+| `TestStartupValidation`   | 3     | Template coverage validation structure, pass, and fail detection            |
+| `TestPromptBundleHash`    | 4     | Hash stability, format, content change detection, line ending normalization |
+| `TestHealthEndpoint`      | 1     | Health endpoint returns build info                                          |
+| `TestBuildIdentifiers`    | 2     | PLANNER_BUILD_ID and CACHE_SCHEMA_VERSION format                            |
+| `TestStartupFailFast`     | 1     | Invalid templates trigger fail-fast                                         |
+| `TestExpectedPromptFiles` | 3     | Critical prompt files and templates.json exist and are valid                |
+
+**DoD**: Deploys with missing/mismatched prompt bundle fail immediately at startup, not at first request.
+
+---
+
+## CachePayload V6 Everywhere (V18)
+
+Addresses the top remaining product risk: **stale-but-valid cache behavior**. All node-specific caches now use unified V6 validation with version tracking and event observability.
+
+### Unified CachePayload Schema
+
+Extended `CachePayload` dataclass with V6 fields:
+
+```python
+@dataclass
+class CachePayload:
+    # V6 Fields (new)
+    payload_kind: str       # "required_fields", "router", "extractor", "strategy", "tile"
+    node_name: str          # Matches payload_kind for consistency
+    schema_version: int     # CACHE_SCHEMA_VERSION (currently 1)
+    logic_version: int      # NODE_LOGIC_VERSION[node_name]
+    prompt_bundle_hash: str # PROMPT_BUNDLE_HASH for prompt drift detection
+    planner_build_id: str   # PLANNER_BUILD_ID for build isolation
+    extra: Dict[str, Any]   # Node-specific payload data
+
+    # Existing fields remain unchanged...
+```
+
+The `from_dict()` method is backward-compatible, defaulting V6 fields for legacy payloads.
+
+### Migrated Caches
+
+All 5 caches now use V6 validation:
+
+| Cache                    | Key Components                                                                                              | Validation                |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `_required_fields_cache` | thread_id, user_text_hash, question_target, question_id, intent, core_hash, ready_state, model_id           | Full V6                   |
+| `_router_cache`          | thread_id, user_text_hash, intent, core_hash, ready_state, model_id                                         | Full V6                   |
+| `_extractor_cache`       | session_id, text_hash, core_hash, mode, model_id, schema_version, prompt_bundle_hash, build_id              | V6 key + validation       |
+| `_strategy_cache`        | session_id, topic, core_hash, user_text_hash, model_id, stage0_lifecycle_hash, prompt_bundle_hash, build_id | V6 key + lifecycle hash   |
+| `_tile_cache`            | intent, destinations, start_date, origin, schema_version, prompt_bundle_hash, build_id                      | V6 key + TTLCache bounded |
+
+### Cache Event Observability
+
+Per-turn cache event tracking:
+
+```python
+_cache_events_this_turn: List[Dict[str, Any]] = []
+
+def _record_cache_event(node: str, action: str, reason: str = "") -> None:
+    """Record cache event for observability."""
+    _cache_events_this_turn.append({
+        "node": node,
+        "action": action,  # "hit", "miss", "discard", "evict"
+        "reason": reason,
+        "timestamp": time.time(),
+    })
+```
+
+Events are cleared at turn start and included in `get_cache_stats()`:
+
+```python
+{
+    "cache_events_this_turn": [
+        {"node": "extractor", "action": "hit", "reason": ""},
+        {"node": "strategy", "action": "miss", "reason": ""},
+        {"node": "tile", "action": "discard", "reason": "schema_version_mismatch"},
+    ],
+    ...
+}
+```
+
+### Bounded Tile Cache
+
+Fixed memory leak risk in tile cache:
+
+```python
+# Before (unbounded, memory leak risk):
+_tile_cache: Dict[str, Any] = {}
+
+# After (bounded with TTL):
+_TILE_CACHE_MAXSIZE = 100
+_TILE_CACHE_TTL = 300  # 5 minutes
+_tile_cache: TTLCache = TTLCache(maxsize=_TILE_CACHE_MAXSIZE, ttl=_TILE_CACHE_TTL)
+```
+
+### NODE_LOGIC_VERSION
+
+Extended to include all cache-using nodes:
+
+```python
+NODE_LOGIC_VERSION: Dict[str, int] = {
+    "required_fields": 1,
+    "router": 1,
+    "extractor": 1,
+    "strategy": 1,
+    "tile": 1,
+}
+```
+
+Bumping a node's version invalidates all cached entries for that node.
+
+### V6 Migration Tests
+
+20 new tests in `tests/langgraph/test_cache_v6_migration.py`:
+
+| Test Class                 | Tests | Coverage                                                                   |
+| -------------------------- | ----- | -------------------------------------------------------------------------- |
+| `TestExtractorCacheV6`     | 5     | Hit path, miss on text/hash change, prompt_bundle mismatch, stats tracking |
+| `TestStrategyCacheV6`      | 3     | Hit path, miss on topic change, stats tracking                             |
+| `TestTileCacheV6`          | 3     | Bounded TTLCache, set/get, schema_version in stats                         |
+| `TestCachePayloadV6Fields` | 2     | V6 field presence, backward-compatible from_dict                           |
+| `TestCacheEventTracking`   | 2     | Event recording, clearing between turns                                    |
+| `TestCacheValidationV6`    | 2     | Schema version mismatch, ready state mismatch rejection                    |
+| `TestNodeLogicVersion`     | 1     | All cache nodes included                                                   |
+| `TestGetCacheStats`        | 2     | All caches included, size per cache                                        |
+
+**DoD**: No code path reads from any cache without V6 validation. Cache events visible in metadata every turn.
+
+---
+
+## LLM Budget CI (V19)
+
+CI tests to verify that any single turn respects the MAX_LLM_CALLS_PER_TURN budget. These tests should fail CI if any node path allows budget violations.
+
+### Budget Enforcement Rules
+
+The `can_call_llm()` function enforces these rules:
+
+| Condition                                           | Max LLM Calls | Enforcement              |
+| --------------------------------------------------- | ------------- | ------------------------ |
+| `ready_to_generate=False` AND `question_target` set | 1 (default)   | Blocked after first call |
+| `ready_to_generate=True`                            | No limit      | Tracked but not capped   |
+| No `question_target` set                            | No limit      | Tracked but not capped   |
+
+```python
+MAX_LLM_CALLS_PER_TURN = 1  # Default during core field collection
+
+# Key invariants:
+# 1. Counter is increment-only (never decremented on error)
+# 2. All blocked calls tracked in llm_call_blocked_reason dict
+# 3. llm_nodes_called_this_turn tracks all nodes that called LLM
+```
+
+### Budget CI Tests
+
+16 tests in `tests/langgraph/test_llm_budget_ci.py`:
+
+| Test Class                 | Tests | Coverage                                                                                        |
+| -------------------------- | ----- | ----------------------------------------------------------------------------------------------- |
+| `TestLLMBudgetEnforcement` | 5     | First call allowed, second blocked, no cap when ready, no cap when no target, fallback response |
+| `TestLLMBudgetPerNodePath` | 3     | required_fields, router, strategy paths respect budget                                          |
+| `TestLLMCallTracking`      | 2     | Nodes tracked, blocked counts tracked                                                           |
+| `TestBudgetWithFakeLLM`    | 2     | Short-circuit patterns skip LLM, confirmation patterns skip LLM                                 |
+| `TestBudgetInvariants`     | 3     | Counter never decremented, blocked reason preserved, constant matches settings                  |
+| `TestCIFailureConditions`  | 1     | Detects budget violation when simulated                                                         |
+
+### Observability & Tracking
+
+Budget tracking in `metadata`:
+
+```python
+state.metadata = {
+    "llm_calls_this_turn": 1,          # Current count
+    "llm_nodes_called_this_turn": ["required_fields"],  # Which nodes called LLM
+    "llm_call_blocked_reason": {       # Why each node was blocked
+        "extractor": "budget_exhausted",
+        "router": "budget_exhausted",
+    },
+    "llm_call_blocked_count": {        # How many times each was blocked
+        "extractor": 2,
+        "router": 1,
+    },
+}
+```
+
+**DoD**: CI fails if any single turn exceeds MAX_LLM_CALLS_PER_TURN. All non-short-circuit paths tested.
+
+---
+
+## Strategy Topics (V20)
+
+Comprehensive testing for all 5 strategy topics: hiking, diving, skiing, cycling, boating.
+
+### Topic Registry
+
+All strategy topics are registered in `STRATEGY_TOPIC_TO_NODE`:
+
+```python
+STRATEGY_TOPIC_TO_NODE: Dict[str, str] = {
+    "hiking": "strategy_node",
+    "diving": "strategy_node",
+    "skiing": "strategy_node",
+    "cycling": "strategy_node",
+    "boating": "strategy_node",
+}
+```
+
+Each topic has:
+
+- Detection pattern in `_STRATEGY_TOPIC_PATTERNS`
+- Prompt file at `prompts/strategy_{topic}.txt`
+- Shared base at `prompts/_strategy_base.txt`
+
+### Topic Detection Patterns
+
+| Topic   | Pattern                               | Examples                                    |
+| ------- | ------------------------------------- | ------------------------------------------- |
+| hiking  | `hik(e\|ing)\|trek(king)?`            | "I want to go hiking", "trekking adventure" |
+| diving  | `div(e\|ing)\|scuba\|snorkel(ing)?`   | "scuba diving", "snorkeling"                |
+| skiing  | `ski(ing)?\|snowboard(ing)?`          | "ski vacation", "snowboarding"              |
+| cycling | `cycl(e\|ing)\|bik(e\|ing)\|bicycle`  | "cycling tour", "biking"                    |
+| boating | `boat(ing)?\|sail(ing)?\|yacht(ing)?` | "sailing", "yacht trip"                     |
+
+Word boundaries prevent false positives (e.g., "skippered" doesn't match "ski").
+
+### Strategy Gates
+
+| Gate                                | Precedence | Purpose                                     |
+| ----------------------------------- | ---------- | ------------------------------------------- |
+| `STRATEGY_TOPIC_SWITCH`             | 70         | Mid-session topic changes with intent verbs |
+| `STRATEGY_PRE_CORE_VALUE`           | 80         | Pre-core strategy topic handling            |
+| `STRATEGY_PRE_CORE_VALUE_WITH_DEST` | 85         | Strategy with destination known             |
+| `STRATEGY_EXPANSION`                | 100        | Expand strategy after core complete         |
+
+### Strategy Topic Tests
+
+59 tests in `tests/langgraph/test_strategy_topics.py`:
+
+| Test Class                     | Tests | Coverage                                                      |
+| ------------------------------ | ----- | ------------------------------------------------------------- |
+| `TestStrategyTopicRegistry`    | 3     | All 5 topics registered, map to strategy_node, patterns exist |
+| `TestTopicDetectionHiking`     | 8     | Hiking positive cases, edge cases                             |
+| `TestTopicDetectionDiving`     | 5     | Diving positive cases                                         |
+| `TestTopicDetectionSkiing`     | 6     | Skiing positive cases, skippered false positive               |
+| `TestTopicDetectionCycling`    | 5     | Cycling positive cases                                        |
+| `TestTopicDetectionBoating`    | 5     | Boating positive cases                                        |
+| `TestTopicDetectionNegative`   | 8     | Non-strategy texts don't detect                               |
+| `TestStrategyTopicSwitchGate`  | 3     | Gate precedence, intent verb detection                        |
+| `TestStrategyTopicPersistence` | 2     | Topic stored in metadata, survives state copy                 |
+| `TestStrategyPromptFiles`      | 7     | Prompt files exist for all topics                             |
+| `TestStrategyGateIntegration`  | 3     | Gate existence and ordering                                   |
+| `TestMultiTopicDetection`      | 2     | First topic wins                                              |
+| `TestStrategyTopicValidation`  | 2     | Valid and unknown topics handled                              |
+
+**DoD**: All 5 strategy topics have detection patterns, prompt files, and gate integration tests.
+
+---
+
+## Debug/Config Snapshot (V21)
+
+Planner debug information and configuration snapshot for ops debugging and observability.
+
+### Admin Planner Endpoint
+
+New endpoint `GET /v1/admin/planner` exposes behavioral config and build identifiers:
+
+```python
+@app.get("/v1/admin/planner")
+def admin_planner_debug():
+    return get_planner_debug_info()
+```
+
+**Response Schema** (stable, versioned via `admin_endpoint_version`):
+
+| Field                            | Type         | Description                                   |
+| -------------------------------- | ------------ | --------------------------------------------- |
+| `admin_endpoint_version`         | string       | Schema version (`"planner_v1"`)               |
+| `prompt_bundle_hash`             | string       | 16-char hash of prompt templates              |
+| `planner_build_id`               | string       | Git SHA or BUILD_ID (max 12 chars)            |
+| `cache_schema_version`           | int          | Cache payload schema version (1)              |
+| `enabled_strategy_topics`        | list[string] | Enabled strategy topics (sorted)              |
+| `enabled_strategy_topics_source` | string       | `"defaults"` or `"env_override"`              |
+| `enable_all_strategy_topics`     | bool         | Whether ENABLE_ALL_STRATEGY_TOPICS is set     |
+| `llm_budget_max_calls_non_ready` | int          | Max LLM calls per non-ready turn (1)          |
+| `cache_ttl_map_seconds`          | dict         | TTL per cache type (response, extractor, etc) |
+| `cache_ttl_map_source`           | string       | Source of TTL config (`"config"`)             |
+| `gate_precedence_version`        | string       | Gate logic version (`"v15"`)                  |
+| `node_logic_version`             | dict         | Per-node logic versions                       |
+| `strategy_output_caps`           | dict         | `{max_chars, expansion_max_chars}`            |
+
+### Planner Snapshot Per Turn
+
+Every turn carries a minimal planner config stamp in `state.metadata["planner_snapshot"]`:
+
+```python
+# Set once at start of run_turn()
+metadata["planner_snapshot"] = get_planner_snapshot()
+```
+
+**Snapshot Fields**:
+
+- `prompt_bundle_hash`
+- `planner_build_id`
+- `cache_schema_version`
+- `enabled_strategy_topics`
+- `llm_budget_max_calls_non_ready`
+- `gate_precedence_version`
+
+This enables trace replay with config verification and debugging of cache invalidation.
+
+### Version Constants
+
+New constants in `plan_graph.py`:
+
+| Constant                  | Value    | Description                          |
+| ------------------------- | -------- | ------------------------------------ |
+| `GATE_PRECEDENCE_VERSION` | `"v15"`  | Gate logic version (V15 renumbering) |
+| `CACHE_SCHEMA_VERSION`    | `1`      | Cache payload schema version         |
+| `NODE_LOGIC_VERSION`      | dict     | Per-node logic versions              |
+| `PLANNER_BUILD_ID`        | env      | GIT_SHA or BUILD_ID (max 12 chars)   |
+| `PROMPT_BUNDLE_HASH`      | computed | Hash of prompt templates             |
+
+**Strategy Output Caps** (in `config.py`):
+
+| Setting                               | Default | Description                     |
+| ------------------------------------- | ------- | ------------------------------- |
+| `strategy_max_output_chars`           | 4000    | Max chars for strategy response |
+| `strategy_expansion_max_output_chars` | 8000    | Max chars for expansion         |
+
+### Debug Endpoint Tests
+
+Tests in `tests/langgraph/test_debug_endpoints.py`:
+
+| Test Class                 | Tests | Coverage                                    |
+| -------------------------- | ----- | ------------------------------------------- |
+| `TestAdminPlannerEndpoint` | 3     | Schema keys, values match constants, topics |
+| `TestPlannerSnapshot`      | 3     | Exists in metadata, required keys, values   |
+| `TestPlannerSnapshotTierA` | 1     | Snapshot consistent across turns            |
+
+**Acceptance Criteria**:
+
+- [x] `/v1/admin/planner` returns required keys
+- [x] `planner_snapshot` emitted per turn
+- [x] Tier A fixtures assert snapshot exists
+
+---
+
+## Cache Summary Metrics (V22)
+
+Aggregate per-turn cache metrics and standardized discard/eviction reasons for analytics.
+
+### Cache Invalid Reason Constants
+
+New `CacheInvalidReason` class with standardized reason constants:
+
+| Constant                      | Value                         | Description                    |
+| ----------------------------- | ----------------------------- | ------------------------------ |
+| `SCHEMA_VERSION_MISMATCH`     | `schema_version_mismatch`     | Cache schema version changed   |
+| `LOGIC_VERSION_MISMATCH`      | `logic_version_mismatch`      | Node logic version changed     |
+| `PROMPT_BUNDLE_HASH_MISMATCH` | `prompt_bundle_hash_mismatch` | Prompt templates changed       |
+| `PLANNER_BUILD_ID_MISMATCH`   | `planner_build_id_mismatch`   | Deploy/build changed           |
+| `HARD_CONSTRAINT_MISMATCH`    | `hard_constraint_mismatch`    | Core field constraint violated |
+| `READY_STATE_FLIP`            | `ready_state_flip`            | Ready state changed            |
+| `CONTRACT_MISMATCH`           | `contract_mismatch`           | Suggestion contract violated   |
+| `TTL_EXPIRED`                 | `ttl_expired`                 | Cache entry TTL expired        |
+| `PAYLOAD_KIND_MISMATCH`       | `payload_kind_mismatch`       | Wrong payload type             |
+| `THREAD_MISMATCH`             | `thread_mismatch`             | Thread/session changed         |
+| `USER_TEXT_MISMATCH`          | `user_text_mismatch`          | User input changed             |
+| `QUESTION_TARGET_MISMATCH`    | `question_target_mismatch`    | Question target changed        |
+| `QUESTION_ID_MISMATCH`        | `question_id_mismatch`        | Question ID changed            |
+| `MISSING_ALL_MISMATCH`        | `missing_all_mismatch`        | Missing fields changed         |
+| `CORE_HASH_MISMATCH`          | `core_hash_mismatch`          | Core fields hash changed       |
+| `UNKNOWN`                     | `unknown`                     | Unclassified reason            |
+
+### Summarize Cache Events
+
+New `summarize_cache_events()` function converts raw cache events to dashboard-friendly summaries:
+
+```python
+def summarize_cache_events(cache_events: List[Dict]) -> Dict:
+    return {
+        "by_node": {node: {hit, miss, discard, evict}},
+        "by_reason": {reason: count},
+        "hit_rate_by_node": {node: float},
+    }
+```
+
+**Output Structure**:
+
+| Field              | Type                       | Description                        |
+| ------------------ | -------------------------- | ---------------------------------- |
+| `by_node`          | `Dict[str, Dict[str,int]]` | Per-node action counts             |
+| `by_reason`        | `Dict[str, int]`           | Per-reason discard/eviction counts |
+| `hit_rate_by_node` | `Dict[str, float]`         | Hit rate per node (0.0-1.0)        |
+
+### Process-Level Rolling Counters
+
+Module-level counters updated on each cache event:
+
+```python
+_cache_counters = {
+    "hits_total": int,
+    "misses_total": int,
+    "discards_total": int,
+    "evictions_total": int,
+}
+_cache_counters_by_node: Dict[str, Dict[str, int]]
+_cache_counters_by_reason: Dict[str, int]
+```
+
+Exposed via `/v1/admin/planner` endpoint with scope documentation:
+
+- `cache_counters_scope: "process"` - Counters are per-process
+- `cache_counters_reset_on_restart: true` - Not persisted
+
+### Cache Summary Tests
+
+Tests in `tests/langgraph/test_cache_hardening_v6.py`:
+
+| Test Class                        | Tests | Coverage                                    |
+| --------------------------------- | ----- | ------------------------------------------- |
+| `TestCacheInvalidReasonConstants` | 2     | All constants defined, lowercase snake_case |
+| `TestSummarizeCacheEvents`        | 5     | Empty, single, multiple nodes, reasons      |
+| `TestCacheCounters`               | 2     | Structure, admin endpoint inclusion         |
+
+**Acceptance Criteria**:
+
+- [x] `cache_summary_this_turn` emitted when `cache_events` exists
+- [x] Standardized reasons implemented + tests cover all
+- [x] `/v1/admin/planner` includes `cache_counters`
+
+---
+
+## Strategy Output Size Limits (V23)
+
+Hard caps on strategy node output to prevent runaway LLM responses from bloating
+the response payload or causing downstream issues.
+
+### Truncation Helper Function
+
+Located near `GATE_PRECEDENCE_VERSION` constant:
+
+```python
+def truncate_preserving_newlines(
+    text: str,
+    cap: int,
+    footer: str = _STRATEGY_TRUNCATION_FOOTER,
+) -> Tuple[str, bool]:
+```
+
+**Behavior**:
+
+1. Returns `(text, False)` if text length <= cap
+2. Finds last newline before `cap - len(footer)`
+3. Falls back to word boundary if no newline found
+4. Closes unclosed markdown code blocks (counts ` ``` ` occurrences)
+5. Appends footer: `"\n\nAsk if you want me to expand any section."`
+6. Returns `(truncated_text, True)`
+
+### Strategy Node Integration
+
+Applied in `strategy_node` after LLM response processing:
+
+```python
+# Determine cap based on stage
+_strategy_cap = (
+    settings.strategy_expansion_max_output_chars
+    if stage_name == "stage2"
+    else settings.strategy_max_output_chars
+)
+
+# Apply truncation
+state.last_summary, _was_truncated = truncate_preserving_newlines(
+    state.last_summary, _strategy_cap
+)
+
+# Set metadata flags
+if _was_truncated:
+    state.metadata["strategy_truncated"] = True
+    state.metadata["strategy_truncate_cap"] = _strategy_cap
+```
+
+**Integration Points**:
+
+1. Normal LLM response path (after `state.last_summary = j.get("assistant_message", "")`)
+2. JSON recovery fallback path (after message extraction)
+
+### Configuration Settings
+
+In `config.py`:
+
+```python
+strategy_max_output_chars: int = 4000       # Stage 0/1 cap
+strategy_expansion_max_output_chars: int = 8000  # Stage 2 (full itinerary)
+```
+
+Rationale:
+
+- Stage 1 outline: 4000 chars (~1000 tokens)
+- Stage 2 expansion: 8000 chars (~2000 tokens) for full itinerary
+
+### Strategy Output Tests
+
+Tests in `tests/langgraph/test_strategy_output_caps.py`:
+
+| Test Class                       | Tests | Coverage                                 |
+| -------------------------------- | ----- | ---------------------------------------- |
+| `TestTruncatePreservingNewlines` | 7     | Unit tests for truncation helper         |
+| `TestStrategyCapSettings`        | 3     | Config values and relationships          |
+| `TestStrategyNodeTruncation`     | 3     | Integration with strategy node, metadata |
+
+**Acceptance Criteria**:
+
+- [x] `truncate_preserving_newlines()` helper added
+- [x] Truncation applied in strategy_node LLM response path
+- [x] Truncation applied in JSON recovery fallback path
+- [x] `state.metadata["strategy_truncated"]` set when truncated
+- [x] `state.metadata["strategy_truncate_cap"]` records the cap used
+- [x] Stage 2 uses `strategy_expansion_max_output_chars` (8000)
+- [x] Stage 0/1 uses `strategy_max_output_chars` (4000)
+
+---
+
+## JSON Utilities Extraction (V24)
+
+PR-D: Mechanical extraction of JSON parsing utilities from `plan_graph.py` to
+`graph_plan_utils.py` for better code organization.
+
+### Extracted Functions
+
+The following functions were moved to `graph_plan_utils.py`:
+
+| Original Name                            | New Public Name                         | Purpose                                    |
+| ---------------------------------------- | --------------------------------------- | ------------------------------------------ |
+| `_truncate_to_balanced_json()`           | `truncate_to_balanced_json()`           | Extract balanced JSON from malformed text  |
+| `jloads_safe()`                          | `jloads_safe()` (unchanged)             | Multi-fallback JSON parsing                |
+| `_extract_message_from_malformed_json()` | `extract_message_from_malformed_json()` | Extract assistant_message from broken JSON |
+
+### Backwards Compatibility
+
+To maintain backwards compatibility, `plan_graph.py` imports these functions
+from `graph_plan_utils.py` and re-exports them:
+
+```python
+from app.graph_plan_utils import (
+    # PR-D: JSON utilities extracted to graph_plan_utils
+    _extract_message_from_malformed_json,
+    _truncate_to_balanced_json,
+    jloads_safe,
+)
+```
+
+Private aliases are also available in `graph_plan_utils.py`:
+
+```python
+# Backwards compatibility aliases
+_truncate_to_balanced_json = truncate_to_balanced_json
+_extract_message_from_malformed_json = extract_message_from_malformed_json
+```
+
+### Extraction Tests
+
+Tests in `tests/langgraph/test_json_utils_extraction.py`:
+
+| Test Class                    | Tests | Coverage                                 |
+| ----------------------------- | ----- | ---------------------------------------- |
+| `TestJsonUtilitiesExtraction` | 7     | Import paths, aliases, backwards compat  |
+| `TestJloadsSafeFunctionality` | 4     | Valid JSON, empty, malformed, extra text |
+| `TestTruncateToBalancedJson`  | 5     | Simple, prefix, nested, strings, no JSON |
+
+**Acceptance Criteria**:
+
+- [x] `jloads_safe()` moved to `graph_plan_utils.py`
+- [x] `truncate_to_balanced_json()` moved with public name
+- [x] `extract_message_from_malformed_json()` moved with public name
+- [x] Private aliases (`_truncate_to_balanced_json`, etc.) preserved
+- [x] `plan_graph.py` imports from `graph_plan_utils.py`
+- [x] Existing tests in `test_error_handling.py` continue to pass
+- [x] New extraction verification tests added
+
+---
+
+## Debug Utilities Extraction (V25)
+
+PR-E: Mechanical extraction of debug logging utilities from `plan_graph.py` to
+new `debug_utils.py` module for better code organization.
+
+### Extracted Debug Functions
+
+The following functions were moved to `debug_utils.py`:
+
+| Function               | Purpose                                     |
+| ---------------------- | ------------------------------------------- |
+| `_debug()`             | Conditional debug logging (non-fatal)       |
+| `_debug_error()`       | Error logging with ❌ emoji prefix          |
+| `_debug_suggestions()` | Log user prompt suggestions                 |
+| `safe_debug()`         | Guaranteed non-throwing debug wrapper       |
+| `safe_debug_error()`   | Guaranteed non-throwing error debug wrapper |
+| `is_debug_enabled()`   | New: Check if debug logging is enabled      |
+
+### Debug Backwards Compatibility
+
+To maintain backwards compatibility, `plan_graph.py` imports these functions
+from `debug_utils.py` and re-exports them:
+
+```python
+from app.debug_utils import (
+    # PR-E: Debug utilities extracted to debug_utils.py
+    _debug,
+    _debug_error,
+    _debug_suggestions,
+    is_debug_enabled,
+    safe_debug,
+    safe_debug_error,
+)
+```
+
+### Debug Extraction Tests
+
+Tests in `tests/langgraph/test_debug_utils_extraction.py`:
+
+| Test Class                     | Tests | Coverage                                   |
+| ------------------------------ | ----- | ------------------------------------------ |
+| `TestDebugUtilitiesExtraction` | 9     | Import paths, aliases, backwards compat    |
+| `TestDebugFunctionality`       | 8     | Non-fatal behavior, truncation, edge cases |
+
+**Acceptance Criteria**:
+
+- [x] `_debug()` moved to `debug_utils.py`
+- [x] `_debug_error()` moved to `debug_utils.py`
+- [x] `_debug_suggestions()` moved to `debug_utils.py`
+- [x] `safe_debug()` moved to `debug_utils.py`
+- [x] `safe_debug_error()` moved to `debug_utils.py`
+- [x] `is_debug_enabled()` added for checking debug state
+- [x] `plan_graph.py` imports from `debug_utils.py`
+- [x] All functions remain non-fatal (never raise exceptions)
+- [x] New extraction verification tests added
+
+---
+
+## Metadata Helpers & Turn Init (V26)
+
+PR2: Centralized metadata key constants and helper functions to prevent string-literal
+drift and ensure consistent per-turn initialization across `run_turn()` and
+`run_turn_streaming()`.
+
+### Planner Package Structure
+
+New `backend/app/planner/` package structure:
+
+```
+backend/app/planner/
+├── __init__.py       # Facade module (PR1 will formalize exports)
+├── meta_keys.py      # Metadata key constants
+└── meta.py           # Metadata helper functions
+```
+
+### Metadata Key Constants
+
+Defined in `meta_keys.py`:
+
+| Constant                         | Value                              | Scope      | Purpose                              |
+| -------------------------------- | ---------------------------------- | ---------- | ------------------------------------ |
+| `LLM_CALLS_THIS_TURN`            | `"llm_calls_this_turn"`            | Per-turn   | Integer counter for LLM budget       |
+| `LLM_CALL_SITES`                 | `"llm_nodes_called_this_turn"`     | Per-turn   | List of nodes that called LLM        |
+| `LLM_CALL_BLOCKED_REASON`        | `"llm_call_blocked_reason"`        | Per-turn   | Dict of blocked nodes → reasons      |
+| `NODE_RUN_JOURNAL`               | `"node_run_journal"`               | Per-turn   | Append-only list of NodeRunEntry     |
+| `VISITED_NODES`                  | `"visited_nodes"`                  | Per-turn   | Set of nodes executed this turn      |
+| `STEP_COUNT`                     | `"step_count"`                     | Per-turn   | Counter for tripwire                 |
+| `RESPONSE_CLAIMED_BY`            | `"response_claimed_by"`            | Per-turn   | Guard for single response writer     |
+| `PLANNER_SNAPSHOT`               | `"planner_snapshot"`               | Per-turn   | Version/build info snapshot          |
+| `CACHE_EVENTS`                   | `"cache_events_this_turn"`         | Per-turn   | Cache event list for observability   |
+| `DUPLICATION_CLASS`              | `"duplication_class"`              | Per-turn   | Duplication detection classification |
+| `TURN_CANARY`                    | `"turn_canary"`                    | Per-turn   | UUID for state mutation validation   |
+| `MUTATION_COUNTER`               | `"mutation_counter"`               | Per-turn   | Counter for canary checks            |
+| `TRIPWIRE_TRIGGERED`             | `"tripwire_triggered"`             | Per-turn   | Tripwire detection flag              |
+| `DELTAS_APPLIED_THIS_TURN`       | `"deltas_applied_this_turn"`       | Per-turn   | Field change tracking list           |
+| `RESPONSE_SOURCE_NODE`           | `"response_source_node"`           | Per-turn   | First node to produce response       |
+| `RESPONSE_GENERATION_PROVENANCE` | `"response_generation_provenance"` | Per-turn   | Response generation provenance       |
+| `LLM_CALL_BLOCKED_COUNT`         | `"llm_call_blocked_count"`         | Cross-turn | Cumulative blocked count by node     |
+| `TODAY_ISO`                      | `"today_iso"`                      | Cross-turn | Today's date (set once per session)  |
+
+Validation tuples:
+
+- `ALL_META_KEYS`: Tuple of all metadata keys for uniqueness validation
+- `PER_TURN_KEYS`: Tuple of keys that reset at start of each turn
+
+### Metadata Helper Functions
+
+Defined in `meta.py`:
+
+| Function           | Signature                                                | Purpose                                |
+| ------------------ | -------------------------------------------------------- | -------------------------------------- |
+| `meta_get()`       | `(state, key, default=None) → Any`                       | Safe getter with default               |
+| `meta_set()`       | `(state, key, value) → None`                             | Set value on metadata                  |
+| `meta_set_once()`  | `(state, key, value, *, allow_overwrite_in_prod) → bool` | Set-once with test-mode assertion      |
+| `meta_append()`    | `(state, key, item) → None`                              | Append to list (creates if missing)    |
+| `meta_increment()` | `(state, key, amount=1) → int`                           | Increment counter (creates if missing) |
+| `is_test_mode()`   | `() → bool`                                              | Check if PYTEST_RUNNING env var is set |
+
+### Centralized Turn Initialization
+
+`init_turn_metadata(metadata, *, planner_snapshot_fn=None)`:
+
+Consolidates all per-turn metadata resets into a single function called at the
+start of both `run_turn()` and `run_turn_streaming()`.
+
+Initializes:
+
+- LLM budget tracking (`LLM_CALLS_THIS_TURN=0`, `LLM_CALL_SITES=[]`, etc.)
+- Node execution journal (`NODE_RUN_JOURNAL=[]`, `VISITED_NODES=set()`, etc.)
+- Response writer guard (`RESPONSE_CLAIMED_BY=None`)
+- Turn validation (`TURN_CANARY=uuid`, `MUTATION_COUNTER=0`)
+- Response provenance (`RESPONSE_SOURCE_NODE=None`, etc.)
+- Cache events (`CACHE_EVENTS=[]`)
+
+Clears (via `pop()`):
+
+- `TRIPWIRE_TRIGGERED`
+- `DUPLICATION_CLASS`
+
+Returns: `turn_canary` UUID for state mutation validation.
+
+`validate_turn_metadata(metadata) → List[str]`:
+
+Validates that all required per-turn keys exist with correct types.
+Returns list of error messages (empty if valid).
+
+### Metadata Helpers Tests
+
+Tests in `tests/langgraph/test_meta_keys.py`:
+
+| Test Class                 | Tests | Coverage                                       |
+| -------------------------- | ----- | ---------------------------------------------- |
+| `TestMetaKeysUniqueness`   | 4     | Key uniqueness, subset validation, type checks |
+| `TestInitTurnMetadata`     | 12    | All per-turn key initialization                |
+| `TestValidateTurnMetadata` | 3     | Validation of required keys and types          |
+| `TestMetaHelpers`          | 9     | meta_get/set/append/increment functionality    |
+| `TestMetaSetOnce`          | 4     | Set-once semantics with test-mode detection    |
+| `TestIsTestMode`           | 2     | PYTEST_RUNNING env var detection               |
+
+**Acceptance Criteria**:
+
+- [x] `backend/app/planner/` package created
+- [x] `meta_keys.py` with all frequently used constants
+- [x] `meta.py` with helper functions
+- [x] `ALL_META_KEYS` tuple for uniqueness validation
+- [x] `init_turn_metadata()` consolidates per-turn resets
+- [x] `plan_graph.py` imports and uses constants
+- [x] `can_call_llm()` updated to use constants
+- [x] `record_node_run()` updated to use constants
+- [x] `claim_response_writer()` updated to use constants
+- [x] Tests verify key uniqueness and initialization shapes
+
+---
+
+## Test-Mode Invariant Hard-Fails (V27)
+
+PR4: Converts logged anomalies into immediate test failures when `PYTEST_RUNNING=1`
+is set. This makes trace replay results trustworthy by failing fast on invariant
+violations instead of silently logging and continuing.
+
+### Test-Mode Detection
+
+`conftest.py` sets `PYTEST_RUNNING=1` before any test imports:
+
+```python
+# backend/tests/conftest.py
+import os
+os.environ["PYTEST_RUNNING"] = "1"
+```
+
+Detection helper in `backend/app/planner/test_mode.py`:
+
+| Function               | Signature                 | Purpose                                |
+| ---------------------- | ------------------------- | -------------------------------------- |
+| `is_test_mode()`       | `() → bool`               | Check if PYTEST_RUNNING env var is set |
+| `raise_if_test_mode()` | `(message: str) → None`   | Raise AssertionError if in test mode   |
+| `assert_invariant()`   | `(condition, message, *)` | Assert in tests, log in prod           |
+
+### Tripwire Hard-Fails
+
+The following tripwires now raise `AssertionError` in test mode:
+
+| Tripwire               | Condition                                 | Test-Mode Behavior      |
+| ---------------------- | ----------------------------------------- | ----------------------- |
+| `MAX_STEPS_TRIPWIRE`   | `step_count > MAX_STEPS_PER_TURN`         | Raises `AssertionError` |
+| `REPEAT_NODE_TRIPWIRE` | Node in `visited_nodes` (non-allowlisted) | Raises `AssertionError` |
+
+Production behavior unchanged: logs error and continues.
+
+### Response Writer Guard
+
+Single-response-writer invariant in `claim_response_writer()`:
+
+| Scenario              | Test-Mode Behavior                            | Prod Behavior         |
+| --------------------- | --------------------------------------------- | --------------------- |
+| First claim           | Returns `True`, sets `response_claimed_by`    | Same                  |
+| Same node re-claim    | Returns `True`                                | Same                  |
+| Different node claims | Raises `AssertionError("DOUBLE_WRITER: ...")` | Logs, returns `False` |
+
+### Gate Invariants
+
+Invariant: `ready_to_generate=True` implies no routing to `required_fields` via
+`MISSING_CORE` gate.
+
+Enforced in test via assertion in `test_gate_routing.py`.
+
+### Invariant Failure Tests
+
+Tests in `tests/langgraph/test_invariant_failures.py`:
+
+| Test Class                  | Tests | Coverage                                   |
+| --------------------------- | ----- | ------------------------------------------ |
+| `TestTestModeDetection`     | 2     | PYTEST_RUNNING detection                   |
+| `TestRaiseIfTestMode`       | 1     | raise_if_test_mode helper                  |
+| `TestDoubleWriterInvariant` | 3     | Double-claim raises, same-node allowed     |
+| `TestTripwireInvariants`    | 2     | Repeat node raises, allowlisted nodes pass |
+| `TestGateInvariants`        | 1     | ready_to_generate implies no MISSING_CORE  |
+
+**Acceptance Criteria**:
+
+- [x] `PYTEST_RUNNING=1` set in `conftest.py`
+- [x] `is_test_mode()` helper in `test_mode.py`
+- [x] `raise_if_test_mode()` helper for conditional raising
+- [x] `claim_response_writer()` raises on double-claim in tests
+- [x] `record_node_run()` raises on repeat-node tripwire in tests
+- [x] `record_node_run()` raises on max-steps tripwire in tests
+- [x] Production behavior unchanged (log+skip)
+- [x] Test cases for all invariant violations
+
+---
+
+## Cache Concurrency Safety (V28)
+
+PR3: Thread-safe cache accessors to prevent race conditions in FastAPI async/threaded
+environments. Introduces per-cache locks and safe counter updates.
+
+### Cache Access Module
+
+New module: `backend/app/planner/cache_access.py`
+
+Provides thread-safe wrappers around cache operations without relocating the cache
+instances (which remain in `plan_graph.py`).
+
+```python
+from app.planner.cache_access import (
+    init_cache_handles,  # Call once at startup
+    cache_get,           # Thread-safe get
+    cache_set,           # Thread-safe set
+    cache_pop,           # Thread-safe pop
+    cache_delete,        # Thread-safe delete
+    cache_clear,         # Thread-safe clear
+    update_counters_safe,        # Thread-safe counter increment
+    update_nested_counters_safe, # Thread-safe nested counter increment
+)
+```
+
+### Thread-Safe Accessors
+
+Each cache gets a `CacheHandle` wrapping the TTLCache with a `threading.Lock`:
+
+| Function           | Signature                                        | Purpose                           |
+| ------------------ | ------------------------------------------------ | --------------------------------- |
+| `cache_get()`      | `(name, key, *, record_event_fn) → Any`          | Get with lock, optional event     |
+| `cache_set()`      | `(name, key, value, *, record_event_fn) → None`  | Set with lock                     |
+| `cache_pop()`      | `(name, key, *, reason, record_event_fn) → Any`  | Pop with lock and eviction reason |
+| `cache_delete()`   | `(name, key, *, reason, record_event_fn) → bool` | Delete with lock                  |
+| `cache_clear()`    | `(name) → None`                                  | Clear cache                       |
+| `cache_len()`      | `(name) → int`                                   | Get cache size                    |
+| `cache_contains()` | `(name, key) → bool`                             | Check key existence               |
+
+Supported cache names: `"follow_up"`, `"router"`, `"required_fields"`, `"extractor"`, `"strategy"`, `"tile"`
+
+### Counter Safety
+
+Global `_cache_counters_lock` protects counter updates:
+
+| Function                        | Purpose                                      |
+| ------------------------------- | -------------------------------------------- |
+| `update_counters_safe()`        | Thread-safe increment of flat counter dict   |
+| `update_nested_counters_safe()` | Thread-safe increment of nested counter dict |
+
+### Cache Concurrency Tests
+
+Tests in `tests/langgraph/test_cache_concurrency.py`:
+
+| Test Class            | Tests | Coverage                                         |
+| --------------------- | ----- | ------------------------------------------------ |
+| `TestCacheHandleInit` | 4     | Handle creation, lock types, get_cache_handle    |
+| `TestCacheOperations` | 10    | get/set/pop/delete/len/contains/clear operations |
+| `TestConcurrency`     | 2     | Multi-thread get/set loops, mixed operations     |
+| `TestCounterSafety`   | 2     | Concurrent flat and nested counter updates       |
+| `TestEventRecording`  | 4     | record_event_fn callback on hit/miss/set/evict   |
+
+**Acceptance Criteria**:
+
+- [x] `cache_access.py` module created with lock wrappers
+- [x] `CacheHandle` dataclass with lock per cache
+- [x] `init_cache_handles()` for startup registration
+- [x] `cache_get/set/pop/delete/clear/len/contains` accessors
+- [x] `update_counters_safe()` for thread-safe counter updates
+- [x] `update_nested_counters_safe()` for nested counters
+- [x] Concurrent get/set tests with no exceptions
+- [x] Counter consistency tests under concurrent load
+
+---
+
+## Import Surface Freeze (V29)
+
+**PR1: Import surface freeze** - Defines a stable public API surface for the planner package, enabling internal refactoring without breaking external consumers.
+
+### Planner Facade Module
+
+Location: `backend/app/planner/__init__.py`
+
+The facade module exports the stable public API. External code should import from here rather than directly from `plan_graph.py`.
+
+```python
+# Correct usage:
+from app.planner import run_turn, run_turn_streaming
+from app.planner import GateEvaluator, GateResult, GatePrecedence
+
+# Banned (enforced by CI test):
+from app.plan_graph import run_turn  # ❌
+```
+
+### Exported Symbols
+
+| Category         | Symbols                                                                                        |
+| ---------------- | ---------------------------------------------------------------------------------------------- |
+| **Entry Points** | `run_turn`, `run_turn_streaming`                                                               |
+| **Gate Types**   | `GateEvaluator`, `GatePrecedence`, `GateResult`                                                |
+| **State Types**  | `GraphState`, `TripInputs`                                                                     |
+| **Debug**        | `get_planner_debug_info`, `get_planner_snapshot`                                               |
+| **Cache Utils**  | `clear_all_caches`, `clear_all_checkpoints`, etc.                                              |
+| **Cache Stats**  | `checkpoint_stats`, `response_cache_stats`, `get_graph_stats`                                  |
+| **Build Meta**   | `CACHE_SCHEMA_VERSION`, `PLANNER_BUILD_ID`, `PROMPT_BUNDLE_HASH`                               |
+| **Utilities**    | `condense_long_message`, `prewarm_prompts`, `validate_template_coverage`                       |
+| **Metadata**     | `meta_get`, `meta_set`, `meta_set_once`, `meta_append`, `meta_increment`, `init_turn_metadata` |
+| **Test Mode**    | `is_test_mode`, `raise_if_test_mode`                                                           |
+| **Cache Access** | `cache_get`, `cache_set`, `cache_pop`, `cache_delete`, etc.                                    |
+
+Full export list: ~50 symbols in `__all__`
+
+### Import Contract Enforcement
+
+**Banned patterns** (checked by `test_import_contract.py`):
+
+```python
+BANNED_IMPORT_PATTERNS = [
+    r"from\s+app\.plan_graph\s+import",
+    r"from\s+\.\.?plan_graph\s+import",
+    r"import\s+app\.plan_graph",
+]
+```
+
+**Allowlist** (files that MAY import directly):
+
+| Path                   | Reason                                   |
+| ---------------------- | ---------------------------------------- |
+| `backend/app/planner/` | Facade package itself                    |
+| `backend/tests/`       | Test files (temporary, for trace replay) |
+| `tests/`               | Root-level tests                         |
+
+### Migration Path
+
+1. **Phase 1** (complete): Create facade with exports from `plan_graph.py`
+2. **Phase 2** (complete): Migrate `main.py` to use facade imports
+3. **Phase 3** (future): Add allowlist entries for trace replay tests
+4. **Phase 4** (future): Remove allowlist, all external code uses facade
+
+### Import Contract Tests
+
+Tests in `backend/tests/test_import_contract.py`:
+
+| Test Class                 | Tests | Coverage                             |
+| -------------------------- | ----- | ------------------------------------ |
+| `TestImportContract`       | 2     | Grep-based ban on direct imports     |
+| `TestPlannerFacadeExports` | 12    | Smoke tests for each export category |
+
+**Key tests**:
+
+- `test_no_direct_plan_graph_imports_outside_allowlist`: Scans all `.py` files in `app/` for banned patterns
+- `test_main_py_uses_planner_facade`: Specific check that `main.py` imports from facade
+- `test_facade_exports_*`: Verify each symbol is accessible from `app.planner`
+- `test_facade_all_exports`: Verify `__all__` contains expected exports
+
+**Acceptance Criteria**:
+
+- [x] `planner/__init__.py` exports all public symbols
+- [x] `__all__` list with all exported symbols
+- [x] Grep-based test to ban direct `plan_graph.py` imports
+- [x] `main.py` migrated to use facade imports
+- [x] Smoke tests for each export category
+- [x] Allowlist for planner package and tests
+
+---
+
+## Stable Hashing Utilities (V30)
+
+**PR5: Stable hashing utilities** - Replaces Python's built-in `hash()` with stable alternatives that produce consistent results across processes.
+
+### Hashing Module
+
+Location: `backend/app/planner/hashing.py`
+
+**Problem**: Python's `hash()` uses `PYTHONHASHSEED` randomization by default, making cache keys non-reproducible across test runs and causing flaky tests.
+
+**Solution**: Use blake2s for fast, stable hashing with canonical JSON serialization.
+
+### Stable Hash Functions
+
+| Function              | Purpose                                       | Example                                       |
+| --------------------- | --------------------------------------------- | --------------------------------------------- |
+| `stable_hash()`       | String hash of any value (default 16 chars)   | `stable_hash("hello")` → `"9c22ff5f21f0b81b"` |
+| `stable_hash_short()` | Short 8-char hash for compact display         | `stable_hash_short(data)` → `"4f4e3e0b"`      |
+| `stable_hash_int()`   | Integer hash for cohort assignment            | `stable_hash_int(id, modulo=100)` → `42`      |
+| `stable_hash_index()` | Index into a list for deterministic selection | `stable_hash_index(msg, len(items))` → `3`    |
+
+**Key properties**:
+
+- Uses blake2s (faster than sha256 for short inputs)
+- Canonical JSON serialization with sorted keys
+- Stable across Python processes and restarts
+- Thread-safe (no shared state)
+
+### Canonicalization Helpers
+
+| Function                        | Purpose                                    |
+| ------------------------------- | ------------------------------------------ |
+| `canonicalize_destinations()`   | Sort/normalize destination lists           |
+| `canonicalize_missing_fields()` | Sort/normalize field name lists            |
+| `canonicalize_dict()`           | Canonical JSON with sorted keys            |
+| `make_cache_key()`              | Build stable cache key from multiple parts |
+
+**Example**:
+
+```python
+# Old (unstable):
+key = f"router::{hash(tuple(destinations))}"
+
+# New (stable):
+key = make_cache_key("router", "v6", destinations)
+# Result: "router::v6::london|paris"
+```
+
+### Hash Ban Enforcement
+
+The test file `test_hash_ban.py` enforces the ban on `hash()` in planner code:
+
+**Banned pattern**: `(?<![_a-zA-Z])hash\(` (matches `hash(` not preceded by identifier chars)
+
+**Scanned files**:
+
+- `plan_graph.py`
+- `planner/*.py` (except `hashing.py`)
+- `pattern_matching.py`
+- `graph_plan_utils.py`
+
+**Allowlist**: The `_hash_value()` function is allowlisted as a fallback for non-JSON-serializable types.
+
+### Migrated Usages
+
+| Location              | Old Pattern                      | New Pattern                                  |
+| --------------------- | -------------------------------- | -------------------------------------------- |
+| A/B cohort assignment | `hash(session_id) % 100`         | `stable_hash_int(session_id, modulo=100)`    |
+| Warm opener selection | `hash(msg) % len(_WARM_OPENERS)` | `stable_hash_index(msg, len(_WARM_OPENERS))` |
+| Warm closer selection | `hash(msg) % len(_WARM_CLOSERS)` | `stable_hash_index(msg, len(_WARM_CLOSERS))` |
+
+### Stable Hashing Tests
+
+Tests in `backend/tests/langgraph/test_stable_hashing.py`:
+
+| Test Class                      | Tests | Coverage                                    |
+| ------------------------------- | ----- | ------------------------------------------- |
+| `TestStableHash`                | 12    | String/dict/list hashing, length, stability |
+| `TestStableHashShort`           | 3     | Short hash format                           |
+| `TestStableHashInt`             | 6     | Integer hash, modulo, distribution          |
+| `TestStableHashIndex`           | 4     | List index selection                        |
+| `TestCanonicalizeDestinations`  | 7     | Destination normalization                   |
+| `TestCanonicalizeMissingFields` | 3     | Field normalization                         |
+| `TestCanonicalizeDict`          | 4     | Dict to JSON canonicalization               |
+| `TestMakeCacheKey`              | 5     | Cache key building                          |
+| `TestConcurrency`               | 2     | Thread safety                               |
+| `TestRealWorldPatterns`         | 3     | End-to-end usage patterns                   |
+
+Tests in `backend/tests/test_hash_ban.py`:
+
+| Test Class      | Tests | Coverage                                 |
+| --------------- | ----- | ---------------------------------------- |
+| `TestHashBan`   | 4     | Grep-based ban on hash() in planner code |
+| `TestAllowlist` | 1     | Verify allowlist entries still exist     |
+
+**Acceptance Criteria**:
+
+- [x] `hashing.py` module created with stable hash functions
+- [x] `stable_hash()` using blake2s
+- [x] `stable_hash_int()` for cohort assignment
+- [x] `stable_hash_index()` for list indexing
+- [x] Canonicalization helpers for destinations/fields/dicts
+- [x] `make_cache_key()` for building stable cache keys
+- [x] Grep-based test banning `hash(` in planner code
+- [x] Migrated hash() usages in plan_graph.py
+- [x] Thread safety tests for concurrent usage
+
+---
+
+## Telemetry Spine (V31)
+
+**PR-T: Telemetry instrumentation** - Implements live trace capture for production debugging and latency analysis, following the three-tier plan (PR-T1, PR-T2, PR-T3).
+
+### Telemetry Module
+
+Location: `backend/app/planner/telemetry.py`
+
+**Purpose**: Structured JSON logging with correlation IDs, sampling, and redaction for production-safe observability.
+
+**Key features**:
+
+- W3C traceparent header parsing for distributed tracing correlation
+- Per-request sampling decisions (standard vs verbose)
+- Automatic force-verbose on anomalies (tripwire, duplication, exception)
+- Console output matching `[PLAN_GRAPH DEBUG]` visibility pattern
+- Prompt/input redaction for PII protection
+
+### TraceEnvelope
+
+A `@dataclass` that carries trace context through the entire request lifecycle:
+
+```python
+@dataclass
+class TraceEnvelope:
+    trace_id: str          # 32-char hex from traceparent or generated
+    span_id: str           # 16-char hex, generated per request
+    parent_span_id: str    # From traceparent or empty
+    thread_id: str         # Conversation thread ID
+    session_id: str        # Session ID from cookie
+    request_id: str        # Unique request ID
+    trace_enabled: bool    # Whether to emit events at all
+    trace_verbose: bool    # Whether to include full payloads
+    redaction_mode: str    # "hash_only" | "verbose"
+    created_at_ns: int     # Request start time in nanoseconds
+```
+
+**Header precedence**:
+
+1. `traceparent` header (W3C format: `00-{trace_id}-{span_id}-{flags}`)
+2. `X-Request-ID` header
+3. Generate UUID-based trace_id
+
+### Event Types
+
+| Event                   | Stage  | Verbose Data                              |
+| ----------------------- | ------ | ----------------------------------------- |
+| `planner_request_start` | PR-T1  | message_length, redacted_preview          |
+| `planner_request_end`   | PR-T1  | latency_ms, cache_summary                 |
+| `gate_eval_end`         | PR-T2  | gate_name, fired, suppressed_by           |
+| `node_start`            | PR-T2  | node_name, step_count, router_decision    |
+| `node_end`              | PR-T2  | node_name, duration_ms, produced_response |
+| `llm_call_end`          | PR-T3  | model, prompt_tokens, completion_tokens   |
+| `cache_event`           | PR-T3  | cache_name, hit/miss, key_preview         |
+| `anomaly_bundle`        | Always | anomaly_type, full context                |
+
+### Sampling & Redaction
+
+**Sampling decision** (computed once at request start):
+
+- `trace_enabled` = `random() < TRACE_SAMPLE_RATE` (default 1.0 = 100%)
+- `trace_verbose` = `trace_enabled && random() < TRACE_VERBOSE_SAMPLE_RATE` (default 0.0 = 0%)
+
+**Force verbose trigger**:
+
+```python
+def force_verbose_on_anomaly(envelope: TraceEnvelope) -> None:
+    """Force verbose mode when anomaly detected."""
+    envelope.trace_enabled = True
+    envelope.trace_verbose = True
+```
+
+Called when:
+
+- `TRIPWIRE_TRIGGERED` set (max_steps or repeat_node)
+- `DUPLICATION_CLASS` set (same_node_twice or double_writer)
+- Exception caught in `run_turn`
+
+**Redaction modes**:
+
+- `hash_only`: Replace text with blake2s hash prefix (default)
+- `verbose`: Include full text (for debugging only)
+
+```python
+def redact_text(text: str, mode: str = "hash_only") -> str:
+    if mode == "verbose":
+        return text
+    return f"[redacted:{stable_hash_short(text)}]"
+```
+
+### Console Output
+
+Events print to console when `settings.trace_console_output` is True (default):
+
+```
+[TRACE] planner_request_start trace_id=abc123 thread_id=xyz session_id=def
+[TRACE] node_start node=extractor step=1
+[TRACE] node_end node=extractor duration_ms=42
+[TRACE:VERBOSE] llm_call_end model=gpt-4o prompt_tokens=1200
+[TRACE:ANOMALY] anomaly_bundle type=tripwire triggered=max_steps
+```
+
+Prefix rules:
+
+- `[TRACE]` - Standard events (always when trace_enabled)
+- `[TRACE:VERBOSE]` - Verbose-only events (when trace_verbose)
+- `[TRACE:ANOMALY]` - Anomaly events (always, regardless of sampling)
+
+### Integration Points
+
+**main.py** (request boundary):
+
+```python
+# Create envelope after session_id is available
+trace_envelope = create_envelope(
+    request=request,
+    thread_id=thread_id,
+    session_id=session_id,
+    redaction_mode=settings.trace_redaction_mode,
+)
+session_state["metadata"][TRACE_ENVELOPE] = trace_envelope.to_dict()
+
+# Emit request start
+request_start_ns = emit_request_start(trace_envelope, req.message)
+
+# After run_turn...
+emit_request_end(trace_envelope, request_start_ns, cache_summary)
+```
+
+**plan_graph.py** (node/gate boundary):
+
+```python
+# At node entry
+_, start_ns = _debug_node_entry("extractor", state)
+
+# At node exit
+_debug_node_exit("extractor", state, start_ns, produced_response=True)
+```
+
+The `_debug_node_entry` function calls `record_node_run` which emits `node_start`.
+The `_debug_node_exit` function calls `mark_node_end` which emits `node_end`.
+
+### Configuration Settings
+
+Added to `backend/app/config.py`:
+
+| Setting                     | Type  | Default     | Description                           |
+| --------------------------- | ----- | ----------- | ------------------------------------- |
+| `trace_sample_rate`         | float | 1.0         | Fraction of requests to trace         |
+| `trace_verbose_sample_rate` | float | 0.0         | Fraction of traces with full payloads |
+| `trace_redaction_mode`      | str   | "hash_only" | How to redact sensitive text          |
+| `trace_console_output`      | bool  | True        | Print trace events to console         |
+
+### Metadata Key
+
+Added to `backend/app/planner/meta_keys.py`:
+
+```python
+TRACE_ENVELOPE = "trace_envelope"  # Cross-turn telemetry context
+```
+
+### Telemetry Tests
+
+Tests to be added in `backend/tests/langgraph/test_telemetry.py`:
+
+| Test Class          | Tests | Coverage                                |
+| ------------------- | ----- | --------------------------------------- |
+| `TestTraceEnvelope` | 5     | Creation, serialization, header parsing |
+| `TestEventEmission` | 8     | All event types emit correct JSON       |
+| `TestSampling`      | 4     | Sample rate logic, force verbose        |
+| `TestRedaction`     | 4     | hash_only vs verbose mode               |
+| `TestConsoleOutput` | 3     | Console print when enabled/disabled     |
+| `TestAnomalyBundle` | 3     | Anomaly detection triggers verbose      |
+
+**Acceptance Criteria**:
+
+- [x] `telemetry.py` module created with TraceEnvelope dataclass
+- [x] W3C traceparent header parsing
+- [x] Sampling decisions computed once per request
+- [x] Force verbose on anomaly (tripwire, duplication, exception)
+- [x] `redact_text()` with hash_only and verbose modes
+- [x] Console output with `[TRACE]` prefix
+- [x] Integration in `main.py` for request boundary events
+- [x] Integration in `plan_graph.py` for node events
+- [x] Configuration settings in `config.py`
+- [x] `TRACE_ENVELOPE` added to `meta_keys.py`
+- [ ] Test coverage for telemetry module
+
+---
+
+## Date Compatibility Consolidation (V32)
+
+This section documents the consolidation of date compatibility checking into a single source of truth.
+
+### Problem
+
+When user answered "Tomorrow" to a dates question, the system incorrectly regenerated the
+hiking pitch with destination suggestions instead of acknowledging the date and transitioning
+to ask about the next missing field (origin). Root cause: **three separate implementations**
+of date compatibility checking that had drifted out of sync.
+
+| Location                          | Function                           | Missing "tomorrow"                   |
+| --------------------------------- | ---------------------------------- | ------------------------------------ |
+| `pattern_matching.py`             | `DATES_COMPATIBILITY_PATTERN`      | ❌ Yes                               |
+| `plan_graph.py` → `GateEvaluator` | `text_is_compatible_with_target()` | ❌ Yes                               |
+| `plan_graph.py`                   | `_is_date_like_text()`             | ✅ Had it via `_RELATIVE_DATE_WORDS` |
+
+### Solution: Single Source of Truth
+
+**New Architecture:**
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     pattern_matching.py                              │
+├─────────────────────────────────────────────────────────────────────┤
+│  RELATIVE_DATE_WORDS_SIMPLE = {"today", "tomorrow", "tonight", "weekend"}    │
+│  RELATIVE_DATE_WORDS_CONTEXTUAL = {"week", "month", "year", ...}    │
+│  RELATIVE_DATE_WORDS_ALL = SIMPLE | CONTEXTUAL | {"next", "this"}   │
+│                                                                      │
+│  DATES_COMPATIBILITY_PATTERN = re.compile(                          │
+│      r"(?:"                                                          │
+│      r"\b(?:today|tomorrow|tonight|weekend)\b|"  # Standalone       │
+│      r"\b(?:january|february|...)\b|"            # Month names      │
+│      r"\bnext\s+(?:week|month|...)\b|"           # Relative phrases │
+│      r"\b(?:spring|summer|fall|...)\b|"          # Seasons          │
+│      r"\b(?:flexible|whenever|anytime)\b"        # Flexibility      │
+│      r")"                                                            │
+│  )                                                                   │
+│                                                                      │
+│  def is_text_date_compatible(text: str) -> bool:  # ← SINGLE SOURCE │
+│      return DATES_COMPATIBILITY_PATTERN.search(text) or ...         │
+│                                                                      │
+│  def text_is_compatible_with_target(text, target) -> bool:          │
+│      if target in ("dates", "start_date"):                          │
+│          return is_text_date_compatible(text)  # ← DELEGATES        │
+└─────────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ imports
+                              │
+┌─────────────────────────────────────────────────────────────────────┐
+│                        plan_graph.py                                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  from app.pattern_matching import (                                  │
+│      is_text_date_compatible,                                        │
+│      RELATIVE_DATE_WORDS_ALL,                                        │
+│  )                                                                   │
+│                                                                      │
+│  _RELATIVE_DATE_WORDS = RELATIVE_DATE_WORDS_ALL  # Alias for compat │
+│                                                                      │
+│  def _is_date_like_text(text: str) -> bool:                         │
+│      return is_text_date_compatible(text)  # ← DELEGATES            │
+│                                                                      │
+│  class GateEvaluator:                                                │
+│      def text_is_compatible_with_target(cls, text, target):         │
+│          if target in ("dates", "start_date"):                      │
+│              return is_text_date_compatible(text)  # ← DELEGATES    │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Files Changed
+
+| File                                                 | Change                                          |
+| ---------------------------------------------------- | ----------------------------------------------- |
+| `backend/app/pattern_matching.py`                    | Added constants, `is_text_date_compatible()`    |
+| `backend/app/plan_graph.py`                          | Refactored to delegate to consolidated function |
+| `backend/tests/langgraph/test_text_compatibility.py` | Added 10+ test cases for relative date words    |
+
+### Patterns Now Recognized
+
+| Pattern              | Examples                          | Status  |
+| -------------------- | --------------------------------- | ------- |
+| Standalone relatives | "tomorrow", "today", "tonight"    | **NEW** |
+| Weekend              | "weekend"                         | **NEW** |
+| Months               | "November", "next June"           | ✅      |
+| Seasons              | "spring", "summer", "fall"        | ✅      |
+| Relative phrases     | "next month", "this week"         | ✅      |
+| Date formats         | "12/25/2024", "2024-12-25"        | ✅      |
+| Flexibility          | "flexible", "whenever", "anytime" | **NEW** |
+| Preposition + month  | "in December", "by March"         | ✅      |
+
+### Test Coverage
+
+New test class `TestIsTextDateCompatible`:
+
+```python
+@pytest.mark.parametrize("text,expected", [
+    ("tomorrow", True),
+    ("Tomorrow", True),   # Case insensitive
+    ("TOMORROW", True),   # All caps
+    ("today", True),
+    ("tonight", True),
+    ("weekend", True),
+    ("Paris", False),     # Not a date
+    ("Swiss Alps", False),
+])
+def test_relative_date_words(self, text, expected):
+    result = is_text_date_compatible(text)
+    assert result == expected
+```
+
+### Ownership Suppression Now Works
+
+With this fix, when `question_target="dates"` and user says "Tomorrow":
+
+```
+[PLAN_GRAPH DEBUG] strategy_pre_core_value_with_dest skipped: ownership suppression
+                   question_target=dates
+                   user_text_preview=Tomorrow
+                   reason=input compatible with question_target
+```
+
+The answer-collection path now owns the turn, and stage 0 does not re-fire.
+
+---
+
+## Stale Question Target Fix (V33)
+
+> **Added**: December 26, 2025
+> **Location**: `backend/app/plan_graph.py` - `_specialist()` function, `required_fields` block (~line 18110)
+
+### Problem
+
+When a user answered a `question_target` (e.g., origin), the stale `question_target` from the previous turn was not cleared. This caused the `required_fields` specialist to ask about an already-populated field.
+
+**Example bug flow:**
+
+1. System asks "Where's home base for this trip?" with `question_target=origin`
+2. User clicks suggestion "New York"
+3. Extractor correctly sets `origin="New York"` ✅
+4. Gate routes to `required_fields_node` with HIGH_CONFIDENCE
+5. **Bug:** `required_fields` uses stale `question_target=origin` and asks "Where will you be traveling from?" even though origin is already set
+
+### Root Cause
+
+The `required_fields` specialist at line ~18110 prioritized the stale `state.question_target` from the previous turn without validating whether the referenced field was actually still missing:
+
+```python
+# OLD CODE (buggy)
+question_target = state.question_target or state.metadata.get("last_question_field")
+if not question_target:
+    # Only computed from missing fields if question_target was empty
+    ...
+```
+
+### Solution: Validate Before Use
+
+Added validation to check if the `question_target` field is already populated before using it:
+
+```python
+# NEW CODE (fixed)
+# FIRST: Get candidate from state (may be stale from previous turn)
+question_target_candidate = state.question_target or state.metadata.get("last_question_field")
+
+# THEN: Validate that the candidate field is actually still missing
+if question_target_candidate:
+    field_values = {
+        "destinations": ti.destinations,
+        "origin": ti.origin,
+        "dates": ti.start_date,
+        "travelers": ti.adults,
+    }
+    # Check if the candidate field is already populated
+    if field_values.get(question_target_candidate):
+        _debug(
+            "🔄 STALE_TARGET: question_target was set but field is populated, clearing",
+            stale_target=question_target_candidate,
+            field_value=field_values.get(question_target_candidate),
+        )
+        # Clear stale target from state and metadata
+        state.question_target = None
+        state.metadata.pop("last_question_field", None)
+        question_target_candidate = None
+
+# If no valid candidate, compute from actual missing fields
+question_target = question_target_candidate
+if not question_target:
+    # ... existing logic to find next missing field
+```
+
+### Debug Output
+
+When the fix activates:
+
+```
+[PLAN_GRAPH DEBUG] 🔄 STALE_TARGET: question_target was set but field is populated, clearing
+                   stale_target=origin
+                   field_value=New York
+```
+
+### Files Changed
+
+| File                        | Change                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| `backend/app/plan_graph.py` | Added stale `question_target` validation in `_specialist()` required_fields block |
+
+### Invariant Enforced
+
+**Stale Question Target Guard:** Before using `state.question_target` in `required_fields`, validate that the referenced field is actually still missing. If populated, clear the stale target and recompute from actual missing fields.

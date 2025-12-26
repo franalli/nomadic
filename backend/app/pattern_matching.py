@@ -144,21 +144,68 @@ MONTH_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# =============================================================================
+# RELATIVE DATE WORDS (Single Source of Truth)
+# =============================================================================
+# These standalone words indicate a date answer when user is asked about dates.
+# Used by: DATES_COMPATIBILITY_PATTERN, text_is_compatible_with_target,
+#          _is_date_like_text (via is_text_date_compatible)
+# =============================================================================
+RELATIVE_DATE_WORDS_SIMPLE = frozenset(
+    {
+        "today",
+        "tomorrow",
+        "tonight",
+        "weekend",
+    }
+)
+
+# Extended relative date words (require context like "next" or "this")
+RELATIVE_DATE_WORDS_CONTEXTUAL = frozenset(
+    {
+        "week",
+        "month",
+        "year",
+        "morning",
+        "evening",
+        "afternoon",
+        "night",
+    }
+)
+
+# Combined set for general date-like detection
+RELATIVE_DATE_WORDS_ALL = (
+    RELATIVE_DATE_WORDS_SIMPLE
+    | RELATIVE_DATE_WORDS_CONTEXTUAL
+    | {
+        "next",
+        "this",  # Modifiers that signal date context
+    }
+)
+
 # Date compatibility pattern (for question-target matching)
+# NOTE: This is the canonical pattern for checking if text answers a dates question.
 DATES_COMPATIBILITY_PATTERN = re.compile(
     r"(?:"
+    # Standalone relative date words (tomorrow, today, tonight, weekend)
+    r"\b(?:today|tomorrow|tonight|weekend)\b|"
+    # Full month names
     r"\b(?:january|february|march|april|may|june|july|august|september|"
     r"october|november|december)\b|"
+    # Abbreviated month names
     r"\b(?:jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b|"
+    # Relative phrases with "next"
     r"\bnext\s+(?:week|month|year|summer|winter|spring|fall|autumn)\b|"
-    r"\bthis\s+(?:week|month|summer|winter|spring|fall|autumn)\b|"
+    # Relative phrases with "this"
+    r"\bthis\s+(?:week|month|year|summer|winter|spring|fall|autumn)\b|"
     r"\bfirst\s+week\s+of\b|"
     r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|"  # Date formats like 12/25/2024
     r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b|"  # ISO dates like 2024-12-25
-    r"\bweekend\b|"
     r"\bholiday\b|"
-    r"\bflexible\b.*(?:date|when|time)"
-    r")",
+    # Seasons (standalone)
+    r"\b(?:spring|summer|fall|autumn|winter)\b|"
+    # Flexibility expressions
+    r"\b(?:flexible|whenever|anytime)\b" r")",
     re.IGNORECASE,
 )
 
@@ -1157,6 +1204,51 @@ def is_traveler_detail_answer(text: str, question_target: str | None) -> bool:
     return False
 
 
+def is_text_date_compatible(text: str) -> bool:
+    """
+    Check if text looks like a date answer (Single Source of Truth).
+
+    This is the canonical function for determining if user text is answering
+    a dates question. It consolidates the logic from:
+    - DATES_COMPATIBILITY_PATTERN
+    - GateEvaluator.text_is_compatible_with_target (dates branch)
+    - _is_date_like_text
+
+    Args:
+        text: User input text
+
+    Returns:
+        True if the text appears to be a date-related answer
+    """
+    if not text:
+        return False
+
+    text_lower = text.lower().strip()
+
+    # Use the canonical pattern for most checks
+    if DATES_COMPATIBILITY_PATTERN.search(text_lower):
+        return True
+
+    # Additional checks for date-like numbers (ordinals, date formats)
+    # These are checked here rather than bloating the regex
+    import re
+
+    if re.search(r"\b(\d{1,2}[/.-]\d{1,2}|\d{4}|\d{1,2}(?:st|nd|rd|th))\b", text_lower):
+        return True
+
+    # Check for preposition + month patterns
+    if re.search(
+        r"\b(in|around|by|before|after)\s+"
+        r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|"
+        r"january|february|march|april|june|july|august|september|"
+        r"october|november|december)\b",
+        text_lower,
+    ):
+        return True
+
+    return False
+
+
 def text_is_compatible_with_target(text: str, question_target: str | None) -> bool:
     """
     Check if user text is compatible with the current question_target.
@@ -1177,7 +1269,8 @@ def text_is_compatible_with_target(text: str, question_target: str | None) -> bo
         return bool(BUDGET_COMPATIBILITY_PATTERN.search(text_lower))
 
     if target_lower in ("dates", "start_date", "end_date"):
-        return bool(DATES_COMPATIBILITY_PATTERN.search(text_lower))
+        # Use the consolidated date compatibility check
+        return is_text_date_compatible(text)
 
     if target_lower in ("travelers", "adults", "children"):
         return bool(TRAVELERS_COMPATIBILITY_PATTERN.search(text_lower))
@@ -1412,3 +1505,238 @@ def extract_date_range(text: str) -> tuple[int | None, int | None, str | None]:
 def has_age_qualified_travelers(text: str) -> bool:
     """Check if user mentioned age-qualified travelers (infants, toddlers, seniors, etc.)."""
     return bool(AGE_QUALIFIED_PATTERN.search(text))
+
+
+# =============================================================================
+# 14. DATE PARSING PATTERNS (from plan_graph.py DateNormalizer)
+# =============================================================================
+
+# Month-to-month range pattern for detecting date-like input
+# Matches: "June to November", "March through October", "Jan-Dec"
+MONTH_TO_MONTH_RANGE_PATTERN = re.compile(
+    r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)"
+    r"\s*(?:to|through|-|–|—)\s*"
+    r"(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
+    re.IGNORECASE,
+)
+
+# Single month pattern: "November", "next June"
+SINGLE_MONTH_PATTERN = re.compile(
+    r"^(?:next\s+|this\s+)?(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)$",
+    re.IGNORECASE,
+)
+
+# Ordinal suffix pattern: "15th", "1st", "22nd"
+ORDINAL_SUFFIX_PATTERN = re.compile(r"(\d+)(st|nd|rd|th)\b", re.IGNORECASE)
+
+# Partial date pattern: "December 2025", "Jan 2026"
+PARTIAL_DATE_PATTERN = re.compile(
+    r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{4})$",
+    re.IGNORECASE,
+)
+
+# Month + day without year: "December 15", "Dec 15"
+MONTH_DAY_PATTERN = re.compile(
+    r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(\d{1,2})(?:st|nd|rd|th)?$",
+    re.IGNORECASE,
+)
+
+# ISO date format: "2025-12-28"
+ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# Date range patterns: "December 20-27", "Dec 20-27", "20-27 December"
+DATE_RANGE_WITH_YEAR_PATTERNS: List[Pattern] = [
+    # "December 20-27" or "Dec 20-27" (optionally with year)
+    re.compile(
+        r"^(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+"
+        r"(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?$",
+        re.IGNORECASE,
+    ),
+    # "20-27 December" or "20-27 Dec" (optionally with year)
+    re.compile(
+        r"^(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?\s+"
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s*(\d{4}))?$",
+        re.IGNORECASE,
+    ),
+]
+
+# Week of month pattern: "first week of January", "last week of December"
+WEEK_OF_MONTH_PATTERN = re.compile(
+    r"^(first|second|third|fourth|last|1st|2nd|3rd|4th)\s+week\s+(?:of\s+)?"
+    r"(january|february|march|april|may|june|july|august|september|october|november|december"
+    r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s*(\d{4}))?$",
+    re.IGNORECASE,
+)
+
+# Explicit 4-digit year pattern
+EXPLICIT_YEAR_PATTERN = re.compile(r"\b(20\d{2}|19\d{2})\b")
+
+# Month-day extraction patterns (for use in normalize_extracted_dates)
+MONTH_DAY_EXTRACTION_PATTERNS: List[Pattern] = [
+    # "January 15, 2026" or "January 15 2026" or "January 15th, 2026"
+    re.compile(
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+"
+        r"(\d{1,2})(?!\d)(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?",
+        re.IGNORECASE,
+    ),
+    # "15 January 2026" or "15th of January 2026"
+    re.compile(
+        r"(\d{1,2})(?!\d)(?:st|nd|rd|th)?(?:\s+of)?\s+"
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s+(\d{4}))?",
+        re.IGNORECASE,
+    ),
+]
+
+
+# =============================================================================
+# 15. YEAR CLARIFICATION PATTERNS
+# =============================================================================
+
+# Year clarification patterns (for dates_clarify responses)
+YEAR_CLARIFY_PATTERNS: List[Pattern] = [
+    re.compile(
+        r"this\s+(december|january|february|march|april|may|june|july|august|september|october|november)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"next\s+(december|january|february|march|april|may|june|july|august|september|october|november|year)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"(20\d{2})", re.IGNORECASE),  # Explicit year like "2025" or "2026"
+    re.compile(r"this\s+year", re.IGNORECASE),
+    re.compile(r"next\s+year", re.IGNORECASE),
+]
+
+
+# =============================================================================
+# 16. USER INTENT ARCHETYPE PATTERNS
+# =============================================================================
+
+# Quick booking patterns - user wants streamlined, minimal questions
+QUICK_BOOKING_PATTERNS: List[Pattern] = [
+    re.compile(
+        r"\b(just\s+flights?|book\s+now|asap|fastest|quick\s+book|just\s+need)\b", re.IGNORECASE
+    ),
+    re.compile(r"\b(hurry|urgent|immediately|right\s+away)\b", re.IGNORECASE),
+]
+
+# Short trip patterns - focus on essentials, compact itineraries
+SHORT_TRIP_PATTERNS: List[Pattern] = [
+    re.compile(
+        r"\b(weekend|quick\s+trip|2-3\s+days|getaway|short\s+trip|day\s+trip)\b", re.IGNORECASE
+    ),
+    re.compile(r"\b(mini\s+vacation|long\s+weekend|brief\s+visit)\b", re.IGNORECASE),
+]
+
+# Adventurous patterns - hidden gems, off the beaten path
+ADVENTUROUS_PATTERNS: List[Pattern] = [
+    re.compile(
+        r"\b(explore|off\s+the?\s+beaten\s+path|unique|adventure|hidden\s+gems?)\b", re.IGNORECASE
+    ),
+    re.compile(r"\b(authentic|local\s+experience|undiscovered|unusual)\b", re.IGNORECASE),
+]
+
+# Undecided patterns - user needs suggestions and guidance
+UNDECIDED_PATTERNS: List[Pattern] = [
+    re.compile(
+        r"\b(not\s+sure|help\s+me|suggestions?|ideas?|recommend|where\s+should)\b", re.IGNORECASE
+    ),
+    re.compile(r"\b(can't\s+decide|options?|what\s+do\s+you\s+think)\b", re.IGNORECASE),
+]
+
+
+# =============================================================================
+# 17. USER TONE PATTERNS
+# =============================================================================
+
+# Enthusiastic tone patterns
+ENTHUSIASTIC_TONE_PATTERNS: List[Pattern] = [
+    re.compile(r"!{2,}", re.IGNORECASE),  # Multiple exclamation marks
+    re.compile(r"\b(can't\s+wait|so\s+excited|amazing|awesome|love\s+it|perfect)\b", re.IGNORECASE),
+    re.compile(r"\b(yay|woohoo|fantastic|incredible|thrilled)\b", re.IGNORECASE),
+]
+
+# Frustrated tone patterns
+FRUSTRATED_TONE_PATTERNS: List[Pattern] = [
+    re.compile(r"\b(ugh|again\??|still|already\s+told|not\s+working)\b", re.IGNORECASE),
+    re.compile(r"\b(confused|frustrat|annoying|wrong|doesn't\s+work)\b", re.IGNORECASE),
+]
+
+
+# =============================================================================
+# 18. STRATEGY TOPIC PATTERNS
+# =============================================================================
+
+# Strategy topic detection patterns - use word boundaries to avoid false positives
+# e.g., "skippered" should not match "ski"
+STRATEGY_TOPIC_PATTERNS: Dict[str, Pattern] = {
+    "hiking": re.compile(r"\b(?:hik(?:e|ing)|trek(?:king)?)\b", re.IGNORECASE),
+    "diving": re.compile(r"\b(?:div(?:e|ing)|scuba|snorkel(?:ing)?)\b", re.IGNORECASE),
+    "skiing": re.compile(r"\b(?:ski(?:ing)?|snowboard(?:ing)?)\b", re.IGNORECASE),
+    "cycling": re.compile(r"\b(?:cycl(?:e|ing)|bik(?:e|ing)|bicycle)\b", re.IGNORECASE),
+    "boating": re.compile(r"\b(?:boat(?:ing)?|sail(?:ing)?|yacht(?:ing)?)\b", re.IGNORECASE),
+}
+
+
+# =============================================================================
+# 19. STRATEGY BYPASS CONSTRAINT PATTERNS
+# =============================================================================
+
+# Date constraint pattern for strategy bypass detection
+BYPASS_DATE_CONSTRAINT_PATTERN = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|"
+    r"january|february|march|april|june|july|august|september|october|november|december|"
+    r"next\s+(?:week|month|year)|this\s+(?:week|month|year)|"
+    r"\d{1,2}[/-]\d{1,2}|\d{4})\b",
+    re.IGNORECASE,
+)
+
+# Budget constraint pattern for strategy bypass detection
+BYPASS_BUDGET_CONSTRAINT_PATTERN = re.compile(
+    r"\$\d+|€\d+|£\d+|\d+\s*(?:dollars|euros|pounds|usd|eur|gbp)|budget\s+(?:is|of|\d)",
+    re.IGNORECASE,
+)
+
+# Travelers constraint pattern for strategy bypass detection
+BYPASS_TRAVELERS_CONSTRAINT_PATTERN = re.compile(
+    r"\b(?:\d+\s*(?:adults?|people|persons?|travelers?|of\s+us)|"
+    r"(?:just\s+)?me|solo|alone|couple|family)\b",
+    re.IGNORECASE,
+)
+
+# Combined bypass constraint patterns dict
+BYPASS_CONSTRAINT_PATTERNS: Dict[str, Pattern] = {
+    "dates": BYPASS_DATE_CONSTRAINT_PATTERN,
+    "budget": BYPASS_BUDGET_CONSTRAINT_PATTERN,
+    "travelers": BYPASS_TRAVELERS_CONSTRAINT_PATTERN,
+}
+
+
+# =============================================================================
+# 20. WEEK ORDINALS MAPPING
+# =============================================================================
+
+# Mapping from ordinal word to week number (1-indexed)
+WEEK_ORDINALS: Dict[str, int] = {
+    "first": 1,
+    "1st": 1,
+    "second": 2,
+    "2nd": 2,
+    "third": 3,
+    "3rd": 3,
+    "fourth": 4,
+    "4th": 4,
+    "last": -1,  # Special: last week of month
+}
+
+# Today/tonight words for relative date detection
+TODAY_WORDS: FrozenSet[str] = frozenset({"today", "tonight", "now"})

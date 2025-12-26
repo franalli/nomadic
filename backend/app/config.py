@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     checkpoint_ttl_hours: int = 24  # Hours before idle checkpoints are purged
 
     # =============================================================================
+    # Strategy Output Limits (PR-C: Strategy Output Size Limits)
+    # =============================================================================
+    strategy_max_output_chars: int = 4000  # Hard cap on strategy response chars
+    strategy_expansion_max_output_chars: int = 8000  # Hard cap on expansion response chars
+
+    # =============================================================================
     # Trip Planning Configuration
     # =============================================================================
     default_trip_currency: str = "USD"  # Default currency for trip budgets
@@ -196,6 +202,17 @@ class Settings(BaseSettings):
     strategy_bootstrap_bypass_sample_rate: float = 1.0
     # Disable automatic cache clearing in production (allow only on deploy/admin)
     disable_autoclear_caches_in_prod: bool = True
+
+    # =============================================================================
+    # Telemetry Configuration (PR-T1..T3)
+    # =============================================================================
+    # Sampling rates for structured trace events
+    trace_sample_rate: float = 1.0  # Probability of enabling trace (0.0 to 1.0)
+    trace_verbose_sample_rate: float = 0.0  # Probability of verbose trace (0.0 to 1.0)
+    # Redaction mode: "hash_only" (default) or "verbose" (logs raw text)
+    trace_redaction_mode: str = "hash_only"
+    # Console output for trace events (like debug_plan_messages)
+    trace_console_output: bool = True
 
     # =============================================================================
     # LangSmith Tracing Configuration
