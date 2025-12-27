@@ -32,3 +32,14 @@ repos:
         args: [--fix]
         additional_dependencies: []
         files: ^backend/
+
+  # ----- P2: SSoT Violations Check -----
+  - repo: local
+    hooks:
+      - id: ssot-check
+        name: Check SSoT violations in plan_graph.py
+        entry: python backend/scripts/check_ssot_violations.py
+        language: python
+        files: ^backend/app/plan_graph\.py$
+        pass_filenames: false
+        always_run: false

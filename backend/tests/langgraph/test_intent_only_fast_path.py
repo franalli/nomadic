@@ -211,7 +211,9 @@ class TestIntentOnlyKeywordMapping:
             ("romantic", "romantic"),
             ("family", "family"),
             ("luxury", "luxury"),
-            ("budget", "budget"),
+            # NOTE: "budget" intentionally excluded to avoid collision with budget phrases
+            # Use "backpacking" instead to trigger budget-style intent
+            ("backpacking", "budget"),
         ],
     )
     def test_keyword_maps_to_expected_topic(self, keyword: str, expected_topic: str):

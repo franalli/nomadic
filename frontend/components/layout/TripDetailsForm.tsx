@@ -50,6 +50,85 @@ const HOTEL_AMENITIES = [
   { value: 'pet_friendly', label: 'Pet friendly' },
 ] as const;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity emoji mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ACTIVITY_EMOJIS: Record<string, string> = {
+  // Strategy activities (5 main types)
+  hiking: '🥾',
+  trekking: '🥾',
+  diving: '🤿',
+  scuba: '🤿',
+  snorkeling: '🤿',
+  skiing: '⛷️',
+  snowboarding: '🏂',
+  cycling: '🚴',
+  biking: '🚴',
+  boating: '⛵',
+  sailing: '⛵',
+  kayaking: '🚣',
+  // Adventure activities
+  adventure: '🏔️',
+  climbing: '🧗',
+  surfing: '🏄',
+  rafting: '🚣',
+  paragliding: '🪂',
+  zipline: '🎢',
+  bungee: '🎢',
+  // Nature & outdoors
+  camping: '🏕️',
+  wildlife: '🦁',
+  safari: '🦁',
+  birdwatching: '🦅',
+  fishing: '🎣',
+  // Cultural & city
+  sightseeing: '🏛️',
+  museums: '🏛️',
+  culture: '🎭',
+  food: '🍽️',
+  wine: '🍷',
+  nightlife: '🎉',
+  shopping: '🛍️',
+  // Relaxation
+  spa: '💆',
+  beach: '🏖️',
+  relaxation: '🧘',
+  yoga: '🧘',
+  // Sports
+  golf: '⛳',
+  tennis: '🎾',
+  // Water activities
+  swimming: '🏊',
+  waterpark: '🌊',
+  // Winter activities
+  ice_skating: '⛸️',
+  // Default fallback (empty string means no emoji)
+};
+
+/**
+ * Get emoji for an activity category.
+ * Matches against the activity name (case-insensitive, handles underscores).
+ */
+function getActivityEmoji(category: string): string {
+  const normalized = category.toLowerCase().replace(/[_-]/g, '').trim();
+
+  // Direct match
+  if (ACTIVITY_EMOJIS[category.toLowerCase()]) {
+    return ACTIVITY_EMOJIS[category.toLowerCase()];
+  }
+
+  // Check for partial matches (e.g., "mountain hiking" should match "hiking")
+  for (const [key, emoji] of Object.entries(ACTIVITY_EMOJIS)) {
+    if (normalized.includes(key) || key.includes(normalized)) {
+      return emoji;
+    }
+  }
+
+  // Default: adventure/activity emoji
+  return '✨';
+}
+
 const CURRENCY_OPTIONS = [
   { value: 'USD', label: 'USD ($)' },
   { value: 'EUR', label: 'EUR (€)' },
@@ -766,6 +845,7 @@ function TripDetailsFormInner({
                         key={`${category}-${index}`}
                         className={`inline-flex items-center gap-1 rounded-full border border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-pill-active ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}
                       >
+                        <span className="flex-shrink-0">{getActivityEmoji(category)}</span>
                         <span className="truncate">{category}</span>
                         <button
                           type="button"

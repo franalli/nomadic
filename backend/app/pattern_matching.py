@@ -22,7 +22,7 @@ Sections:
 """
 
 import re
-from typing import Dict, FrozenSet, List, Pattern
+from typing import Dict, FrozenSet, List, Pattern, Tuple
 
 # =============================================================================
 # 1. UTILITY PATTERNS
@@ -466,27 +466,65 @@ INLINE_BUDGET_PATTERN = re.compile(
 )
 
 # Budget compatibility pattern (for question-target matching)
+# Updated to include flexible/no-budget phrases from FLEXIBLE_BUDGET_PHRASES
 BUDGET_COMPATIBILITY_PATTERN = re.compile(
     r"(?:"
     r"[\$€£¥₹]|"  # Currency symbols
-    r"\b\d+(?:k|K)?\s*(?:dollars?|euros?|pounds?)?\b|"  # Numbers with optional currency
-    r"\bno\s*limit\b|"
-    r"\bbudget[- ]?friendly\b|"
-    r"\bcheap\b|"
-    r"\bluxury\b|"
-    r"\bexpensive\b|"
-    r"\baround\s+\d|"
-    r"\bunder\s+\d|"
-    r"\babout\s+\d|"
-    r"\bper\s+(?:person|night|day)\b|"
-    r"\bmid[- ]?range\b|"
-    r"\baffordable\b"
+    r"\b\d+(?:k|K)?\s*(?:dollars?|euros?|pounds?)\b|"  # Numbers WITH currency (require unit)
+    # Flexible budget phrases (canonical patterns from FLEXIBLE_BUDGET_PHRASES)
+    # "no budget", "no limit", "no specific budget", "no preference", "no idea"
+    r"\bno\s*(?:specific\s*)?(?:budget|limit|preference|max(?:imum)?|constraints?|spending\s*limit|idea)\b|"
+    r"\bflexible(?:\s*budget)?\b|"  # "flexible", "flexible budget"
+    r"\bunlimited\b|"  # "unlimited"
+    r"\bany\s*budget\b|"  # "any budget"
+    r"\bdon'?t\s*care\b|"  # "don't care", "dont care"
+    r"\bdoesn'?t\s*(?:really\s*)?matter\b|"  # "doesn't matter", "doesn't really matter"
+    r"\bwhatever\s*works\b|"  # "whatever works"
+    # "money is not an issue", "money isn't an issue"
+    r"\bmoney\s*(?:is\s*)?(?:not|n'?t)\s*(?:an?\s*)?(?:issue|object|important)\b|"
+    r"\bmoney\s*is\s*no\s*object\b|"  # "money is no object"
+    r"\bprice\s*(?:is\s*)?(?:not|doesn'?t)\s*(?:matter|important)\b|"  # "price doesn't matter"
+    r"\bopen(?:\s*budget)?\b|"  # "open", "open budget"
+    r"\bskip\b|"  # "skip"
+    r"\bpass\b|"  # "pass"
+    r"\bnot\s*(?:sure|decided)\b|"  # "not sure", "not decided"
+    r"\bhaven'?t\s*decided\b|"  # "haven't decided", "havent decided"
+    # Budget tier phrases (canonical patterns from BUDGET_TIER_PHRASES)
+    r"\bbudget[- ]?friendly\b|"  # "budget-friendly", "budget friendly"
+    r"\bcheap(?:est)?\b|"  # "cheap", "cheapest"
+    r"\blow[- ]?budget\b|"  # "low-budget", "low budget"
+    r"\beconom(?:y|ical)\b|"  # "economy", "economical"
+    r"\bmid[- ]?range\b|"  # "mid-range", "midrange", "mid range"
+    r"\bmoderate\b|"  # "moderate"
+    r"\baverage\b|"  # "average"
+    r"\bstandard\b|"  # "standard"
+    r"\breasonable\b|"  # "reasonable"
+    r"\bluxur(?:y|ious)\b|"  # "luxury", "luxurious"
+    r"\bhigh[- ]?end\b|"  # "high-end", "high end"
+    r"\bpremium\b|"  # "premium"
+    r"\bupscale\b|"  # "upscale"
+    r"\bsplurge\b|"  # "splurge"
+    r"\b(?:no\s*expense\s*spared|spare\s*no\s*expense)\b|"  # "no expense spared"
+    r"\bfirst\s*class\b|"  # "first class"
+    r"\btop\s*tier\b|"  # "top tier"
+    # Numeric qualifiers (require context)
+    r"\baffordable\b|"  # "affordable"
+    r"\bexpensive\b|"  # "expensive"
+    r"\baround\s+[\$€£¥₹]?\d|"  # "around $X"
+    r"\bunder\s+[\$€£¥₹]?\d|"  # "under $X"
+    r"\babout\s+[\$€£¥₹]?\d|"  # "about $X"
+    r"\bper\s+(?:person|night|day)\b"  # "per person", "per night", "per day"
     r")",
     re.IGNORECASE,
 )
 
-# "No budget" / "flexible" phrases (qualitative answers)
-NO_BUDGET_PHRASES: FrozenSet[str] = frozenset(
+# =============================================================================
+# FLEXIBLE BUDGET PHRASES (No constraint / open-ended answers)
+# =============================================================================
+# These phrases indicate the user has no specific budget constraint.
+# Used for: LQA parsing, compatibility checks, setting budget_answered=True
+
+FLEXIBLE_BUDGET_PHRASES: FrozenSet[str] = frozenset(
     {
         "no budget",
         "no limit",
@@ -497,12 +535,8 @@ NO_BUDGET_PHRASES: FrozenSet[str] = frozenset(
         "no preference",
         "any budget",
         "doesn't matter",
+        "doesn't really matter",
         "don't care",
-        "budget-friendly",
-        "budget friendly",
-        "cheap",
-        "cheapest",
-        "as cheap as possible",
         "not sure",
         "not decided",
         "haven't decided",
@@ -514,19 +548,61 @@ NO_BUDGET_PHRASES: FrozenSet[str] = frozenset(
         "open budget",
         "no max",
         "no maximum",
+        "no constraints",
+        "no spending limit",
+        "money is not an issue",
+        "money isn't an issue",
+        "price doesn't matter",
+        "price is not important",
+    }
+)
+
+# =============================================================================
+# BUDGET TIER PHRASES (Qualitative tier indicators)
+# =============================================================================
+# These phrases indicate a budget tier/preference without a specific amount.
+# Used for: LQA parsing, compatibility checks, inferring budget preferences
+
+BUDGET_TIER_PHRASES: FrozenSet[str] = frozenset(
+    {
+        "budget-friendly",
+        "budget friendly",
+        "cheap",
+        "cheapest",
+        "as cheap as possible",
+        "low budget",
+        "low-budget",
+        "economical",
+        "economy",
         "mid-range",
         "midrange",
+        "mid range",
         "moderate",
         "average",
         "standard",
+        "reasonable",
         "luxury",
+        "luxurious",
         "high-end",
         "high end",
         "premium",
         "splurge",
         "no expense spared",
+        "money is no object",
+        "spare no expense",
+        "first class",
+        "top tier",
+        "upscale",
     }
 )
+
+# =============================================================================
+# NO_BUDGET_PHRASES (Backward compatibility union)
+# =============================================================================
+# Union of FLEXIBLE_BUDGET_PHRASES and BUDGET_TIER_PHRASES for backward
+# compatibility with existing code that imports NO_BUDGET_PHRASES.
+
+NO_BUDGET_PHRASES: FrozenSet[str] = FLEXIBLE_BUDGET_PHRASES | BUDGET_TIER_PHRASES
 
 
 # =============================================================================
@@ -581,8 +657,14 @@ INITIAL_DESTINATION_PATTERN = re.compile(
 )
 
 # Origin-destination pattern (e.g., "from London to Paris")
+# The destination capture excludes trailing date/time words like "tomorrow",
+# "today", etc. and numbers (e.g., "2 days") to avoid capturing
+# "Amsterdam tomorrow" or "Amsterdam 2" as a destination.
+_DATE_STOP_WORDS = (
+    r"tomorrow|today|tonight|next|this|on|in|for|with|direct|nonstop|one[- ]?way|round[- ]?trip|\d"
+)
 ORIGIN_DESTINATION_PATTERN = re.compile(
-    r"(?:from\s+)?(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+\w+)?)",
+    rf"(?:from\s+)?(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+(?!{_DATE_STOP_WORDS})\w+)?)",
     re.IGNORECASE,
 )
 
@@ -1740,3 +1822,253 @@ WEEK_ORDINALS: Dict[str, int] = {
 
 # Today/tonight words for relative date detection
 TODAY_WORDS: FrozenSet[str] = frozenset({"today", "tonight", "now"})
+
+
+# =============================================================================
+# 21. TOPIC SWITCH PATTERNS
+# =============================================================================
+
+# Override phrases that bypass topic switch cooldown
+TOPIC_SWITCH_OVERRIDE_PHRASES: FrozenSet[str] = frozenset(
+    {
+        "actually",
+        "instead",
+        "switch to",
+        "change to",
+        "rather",
+        "forget",
+        "no wait",
+    }
+)
+
+# Intent verb patterns that indicate topic switch request
+TOPIC_SWITCH_INTENT_VERBS: FrozenSet[str] = frozenset(
+    {
+        "want",
+        "wanna",
+        "go",
+        "do",
+        "plan",
+        "try",
+        "include",
+        "add",
+        "also",
+    }
+)
+
+
+# =============================================================================
+# 22. QUESTION/DOMAIN KEYWORDS
+# =============================================================================
+
+# Question words for detecting question-word + domain keyword combos
+QUESTION_WORDS: FrozenSet[str] = frozenset(
+    {
+        "what",
+        "which",
+        "how",
+        "where",
+        "when",
+        "can",
+        "could",
+        "should",
+        "do",
+        "does",
+        "are",
+        "is",
+    }
+)
+
+# Domain keywords for question-word combo detection
+DOMAIN_KEYWORDS: Dict[str, FrozenSet[str]] = {
+    "flights": frozenset({"flight", "flights", "flying", "fly", "airline", "airlines", "airport"}),
+    "hotels": frozenset(
+        {
+            "hotel",
+            "hotels",
+            "stay",
+            "accommodation",
+            "lodging",
+            "room",
+            "rooms",
+            "resort",
+        }
+    ),
+    "transport": frozenset(
+        {
+            "transport",
+            "train",
+            "trains",
+            "bus",
+            "car rental",
+            "rental car",
+            "drive",
+            "driving",
+        }
+    ),
+    "activities": frozenset(
+        {
+            "activity",
+            "activities",
+            "things to do",
+            "tour",
+            "tours",
+            "excursion",
+            "sightseeing",
+        }
+    ),
+}
+
+
+# =============================================================================
+# 23. INTENT-ONLY KEYWORDS
+# =============================================================================
+
+# Intent-only keywords (for MVP fast path)
+# These indicate user is expressing trip intent without concrete details
+INTENT_ONLY_KEYWORDS: Dict[str, str] = {
+    "adventure": "adventure",
+    "hiking": "hiking",
+    "outdoors": "adventure",
+    "nature": "adventure",
+    "beach": "beach",
+    "relaxation": "relaxation",
+    "skiing": "skiing",
+    "snowboarding": "skiing",
+    "diving": "diving",
+    "snorkeling": "diving",
+    "cycling": "cycling",
+    "biking": "cycling",
+    "boating": "boating",
+    "sailing": "boating",
+    "romantic": "romantic",
+    "honeymoon": "romantic",
+    "family": "family",
+    "kids": "family",
+    "cultural": "cultural",
+    "historical": "cultural",
+    "food": "culinary",
+    "culinary": "culinary",
+    "wine": "culinary",
+    "luxury": "luxury",
+    # NOTE: "budget" intentionally excluded to avoid collision with budget phrases
+    "backpacking": "budget",
+}
+
+
+# =============================================================================
+# 24. STRATEGY INTENT KEYWORDS
+# =============================================================================
+
+# Phrases indicating user wants only questions (bypass strategy_pre_core_value)
+QUESTIONS_ONLY_PHRASES: FrozenSet[str] = frozenset(
+    {
+        "ask me questions",
+        "what do you need from me",
+        "what do you need to know",
+        "what info do you need",
+        "what information do you need",
+        "need more info",
+        "what else do you need",
+        "just ask me",
+        "go ahead and ask",
+    }
+)
+
+# Strategy topics that qualify for pre-core value-first responses
+STRATEGY_TOPICS: FrozenSet[str] = frozenset({"hiking", "skiing", "diving", "cycling", "boating"})
+
+# Keywords that indicate strategy intent (broader than strict topic names)
+STRATEGY_INTENT_KEYWORDS: Dict[str, FrozenSet[str]] = {
+    "hiking": frozenset(
+        {
+            "hike",
+            "hiking",
+            "trek",
+            "trekking",
+            "trail",
+            "trails",
+            "mountain",
+            "mountains",
+        }
+    ),
+    # boating MUST come before skiing: "skippered" and "bareboat" contain "ski"
+    "boating": frozenset(
+        {
+            "boat",
+            "boating",
+            "sail",
+            "sailing",
+            "yacht",
+            "kayak",
+            "canoe",
+            "cruise",
+            "skippered",
+            "bareboat",
+        }
+    ),
+    "skiing": frozenset({"skiing", "snowboard", "snowboarding", "slopes", "powder", "alpine"}),
+    "diving": frozenset({"dive", "diving", "scuba", "snorkel", "snorkeling", "underwater"}),
+    "cycling": frozenset({"bike", "biking", "bicycle", "cycling", "cycle", "ride", "pedal"}),
+}
+
+
+# =============================================================================
+# 25. MULTI-CITY INTENT PHRASES
+# =============================================================================
+
+# Phrases indicating user wants separate trips for each destination
+MULTI_CITY_SEPARATE_PHRASES: Tuple[str, ...] = (
+    "separate trip",
+    "separate trips",
+    "do them separately",
+    "different trips",
+    "compare destinations",
+    "compare them",
+    "separate itinerary",
+    "separate itineraries",
+)
+
+# Phrases indicating user wants a combined multi-city trip
+MULTI_CITY_COMBINED_PHRASES: Tuple[str, ...] = (
+    "multi city",
+    "multicity",
+    "one trip",
+    "single trip",
+    "same trip",
+    "together",
+    "all together",
+    "one itinerary",
+    "visit both",
+    "visit all",
+    "see both",
+    "do both",
+)
+
+# Additive patterns that imply combining destinations (AND logic)
+# These require checking the full phrase pattern, not just substring
+ADDITIVE_INTENT_PATTERN = re.compile(
+    r"\b(?:too|also|as\s+well|and\s+also)\b",
+    re.IGNORECASE,
+)
+
+
+# =============================================================================
+# 26. ENTITY DETECTION PATTERNS
+# =============================================================================
+
+# Combined pattern for detecting extractable entities in user text
+# Used to determine if LLM extraction is needed vs intent-only fast path
+ENTITY_DETECTION_PATTERN = re.compile(
+    r"(?:"
+    r"\d|"  # Numbers (dates, prices, travelers)
+    r"[\$€£¥₹]|"  # Currency symbols
+    # Month names (full and abbreviated)
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+    r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|"
+    r"\b(?:next|this|last)\b|"  # Relative time
+    r"\b(?:week|month|year)\b|"  # Time units
+    r"\b(?:from|departing)\b"  # Origin indicators
+    r")",
+    re.IGNORECASE,
+)

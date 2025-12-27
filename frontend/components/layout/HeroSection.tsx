@@ -112,7 +112,7 @@ export const HeroSection = memo(function HeroSection({
 }: HeroSectionProps) {
   if (variant === 'compact') {
     return (
-      <div className="relative overflow-hidden">
+      <div className="relative h-28 overflow-hidden">
         <HeroBackground />
         <HeroTitle typedTagline={typedTagline} variant="compact" />
       </div>
@@ -121,7 +121,10 @@ export const HeroSection = memo(function HeroSection({
 
   return (
     <div className="relative min-h-screen overflow-hidden">
-      <HeroBackground />
+      <div className="absolute inset-x-0 top-0 h-[400px] sm:h-[500px]">
+        <HeroBackground />
+      </div>
+      <div className="absolute inset-0 top-[400px] sm:top-[500px] bg-background" />
       <div className="relative z-10 flex min-h-screen flex-col">
         <div
           ref={chatPanelContainerRef}

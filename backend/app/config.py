@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     llm_timeout_router: float = 120.0  # No timeout limit
     llm_timeout_specialist: float = 120.0  # No timeout limit
 
+    # P0: Streaming timeouts (in milliseconds)
+    # Strategy responses can be large (~900 tokens), increased from 15s to 30s
+    streaming_timeout_strategy_ms: int = 30000  # 30s for strategy responses
+    streaming_timeout_default_ms: int = 20000  # 20s for other responses
+    streaming_warn_threshold_ms: int = 10000  # Log warning if streaming exceeds 10s
+
     # LLM configuration (parity with plan.py)
     plan_chat_history_limit: int = 20  # Max messages to include in context
     openai_plan_max_tokens: int = 800  # Token limit for LLM response

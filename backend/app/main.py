@@ -53,6 +53,9 @@ from app.planner import (
     PLANNER_BUILD_ID,
     PROMPT_BUNDLE_HASH,
     TRACE_ENVELOPE,
+    GateEvaluator,
+    GraphState,
+    TripInputs,
     checkpoint_stats,
     clear_all_caches,
     clear_all_checkpoints,
@@ -370,6 +373,71 @@ def admin_clear_all_checkpoints():
         "cleared": cleared,
         "before": before,
         "after": checkpoint_stats(),
+    }
+
+
+@app.post("/v1/admin/gate-trace")
+def admin_gate_trace(request_body: schemas.GateTraceRequest):
+    """
+    P2: Debug endpoint that shows gate evaluation trace without executing the graph.
+
+    Evaluates all gates for the provided state and returns detailed trace information
+    showing which gates were checked, which fired, and why.
+
+    This is useful for debugging routing issues without modifying state.
+
+    Request body:
+        user_text: str - The user message to evaluate
+        trip_inputs: dict - Current trip inputs (destinations, dates, etc.)
+        metadata: dict - Optional metadata (thread_id, today_iso, etc.)
+        turn_number: int - Current turn number (default 0)
+
+    Response:
+        gate_fired: str - Name of the gate that matched
+        destination: str - Node that would be routed to
+        reason: str - Human-readable explanation
+        gate_trace: list - Detailed trace of all gates evaluated
+        eval_time_ms: float - Time taken to evaluate gates
+    """
+    from datetime import date
+
+    # Build trip inputs from request
+    trip_inputs_dict = request_body.trip_inputs or {}
+    trip_inputs = TripInputs(**trip_inputs_dict)
+
+    # Build metadata with defaults
+    metadata = request_body.metadata or {}
+    if "thread_id" not in metadata:
+        metadata["thread_id"] = "gate_trace_debug"
+    if "today_iso" not in metadata:
+        metadata["today_iso"] = date.today().isoformat()
+
+    # Create minimal state for gate evaluation
+    state = GraphState(
+        user_text=request_body.user_text,
+        trip_inputs=trip_inputs,
+        metadata=metadata,
+        turn_number=request_body.turn_number,
+    )
+
+    # Evaluate gates
+    gate_result = GateEvaluator.evaluate(state)
+
+    # Extract gate trace from metadata
+    gate_trace = state.metadata.get("gate_trace", [])
+
+    return {
+        "gate_fired": gate_result.gate_fired.name if gate_result.gate_fired else None,
+        "gate_precedence": gate_result.gate_fired.value if gate_result.gate_fired else None,
+        "destination": gate_result.destination,
+        "reason": gate_result.reason,
+        "gate_trace": gate_trace,
+        "eval_time_ms": round(gate_result.eval_time_ms, 3),
+        "intent": gate_result.intent,
+        "strategy_topic": gate_result.strategy_topic,
+        "question_target": gate_result.question_target,
+        "skipped_gates": gate_result.skipped_gates,
+        "metadata_updates": gate_result.metadata_updates,
     }
 
 
@@ -923,6 +991,12 @@ async def graph_plan_stream_endpoint(
                     if token_count <= 5 or token_count % 50 == 0:
                         logger.debug(f"[{request_id}] Streaming token #{token_count}")
                     yield f"event: token\ndata: {json.dumps(event)}\n\n"
+                elif event["type"] == "node_status":
+                    # Forward strategy node status for frontend progress tracking
+                    node = event["data"].get("node")
+                    status = event["data"].get("status")
+                    logger.debug(f"[{request_id}] Node status: {node} - {status}")
+                    yield f"event: node_status\ndata: {json.dumps(event)}\n\n"
                 elif event["type"] == "complete":
                     logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
                     final_result = event["data"]

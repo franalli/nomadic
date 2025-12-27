@@ -6,7 +6,19 @@
       "Bash(npm run build:*)",
       "Bash(npm install:*)",
       "Bash(find:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\scripts\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\scripts\")",
+      "Bash(python scripts/check_ssot_violations.py:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python:*)",
+      "Bash(set PYTHONPATH=c:UsersFilippoDesktopnomadicbackend)",
+      "Bash(pushd:*)",
+      "Bash(set PYTHONPATH=%CD%)",
+      "Bash(popd)",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\state\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\state\")",
+      "Bash(git checkout:*)",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\checks\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\checks\")"
     ],
     "deny": [],
     "ask": []

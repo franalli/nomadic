@@ -15,7 +15,8 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { apiFetch, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { apiFetch, streamGraphPlan, trackSuggestionClick, type SSENodeStatusEvent } from '@/lib/api';
+import { StrategyProgress } from './StrategyProgress';
 import type { ChatMessage } from '@/types/chat';
 import type {
   DocumentBranch,
@@ -36,7 +37,7 @@ const READY_MESSAGE_ID_PREFIX = 'ready_';
 const PROMPT_SUGGESTIONS = [
   { label: '🏖️ Beach getaway', prompt: "I want a relaxing beach vacation" },
   { label: '🏔️ Adventure trip', prompt: "Plan an adventure trip with hiking and outdoor activities" },
-  { label: '🏛️ City break', prompt: "I'd like to explore a vibrant city with culture and nightlife" },
+  { label: '✈️ Quick flight', prompt: "I need to book a one-way flight" },
   { label: '👨‍👩‍👧 Family trip', prompt: "Plan a family-friendly vacation with activities for kids" },
 ];
 
@@ -226,6 +227,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     const [sessionState, setSessionState] = useState<Record<string, unknown> | null>(null);
+    // Strategy progress tracking for showing progress line instead of typing dots
+    const [strategyStatus, setStrategyStatus] = useState<{
+      active: boolean;
+      stage: number;
+      tier: 'outline' | 'section' | 'full';
+      topic: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
+      estimatedDurationMs: number;
+      startTime: number;
+    } | null>(null);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const tripInputsRef = useRef<HTMLDivElement | null>(null);
@@ -479,7 +489,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         await new Promise<void>((resolve) => {
           const abortStream = streamGraphPlan(body, {
             onToken: (token: string) => {
-              // Mark that we've received the first token (hides typing indicator)
+              // Mark that we've received the first token (hides typing/progress indicator)
               setHasReceivedFirstToken(true);
               // Append token to the streaming message
               setMessages((prev) =>
@@ -490,8 +500,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 )
               );
             },
+            onNodeStatus: (status: SSENodeStatusEvent['data']) => {
+              if (status.node === 'strategy_node' && status.status === 'started') {
+                setStrategyStatus({
+                  active: true,
+                  stage: status.stage,
+                  tier: status.tier,
+                  topic: status.topic,
+                  estimatedDurationMs: status.estimated_duration_ms,
+                  startTime: Date.now(),
+                });
+              }
+            },
             onComplete: (response) => {
               setStreamingMessageId(null);
+              setStrategyStatus(null); // Clear strategy progress on completion
 
               // Parse the response - it matches GraphPlanResponse structure
               const data = response as unknown as GraphPlanResponse;
@@ -552,6 +575,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             },
             onError: (error: Error) => {
               setStreamingMessageId(null);
+              setStrategyStatus(null); // Clear strategy progress on error
               console.error('Failed to plan trip', error);
 
               // Replace streaming message with specific error message
@@ -638,7 +662,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       });
 
     // Show typing indicator when loading and haven't received first streaming token yet
-    const showTypingIndicator = isLoading && !hasReceivedFirstToken;
+    // Don't show when strategy progress is active (we show progress bar instead)
+    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !strategyStatus?.active;
+    // Show strategy progress when strategy node is executing, hide once tokens start arriving
+    const showStrategyProgress = isLoading && !hasReceivedFirstToken && strategyStatus?.active;
 
     return (
       <div
@@ -710,6 +737,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 </div>
               ))}
               {showTypingIndicator && <TypingIndicator />}
+              {showStrategyProgress && strategyStatus && (
+                <StrategyProgress
+                  stage={strategyStatus.stage}
+                  tier={strategyStatus.tier}
+                  topic={strategyStatus.topic}
+                  estimatedDurationMs={strategyStatus.estimatedDurationMs}
+                  startTime={strategyStatus.startTime}
+                />
+              )}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
               <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
             </>

@@ -371,6 +371,24 @@ class TripInputValidationResponse(BaseModel):
 
 
 # =============================================================================
+# Gate Trace Debug Endpoint (P2)
+# =============================================================================
+
+
+class GateTraceRequest(BaseModel):
+    """P2: Request for gate trace debug endpoint.
+
+    Used to debug gate evaluation without executing the full graph.
+    Provides visibility into which gates fire and why for a given state.
+    """
+
+    user_text: str
+    trip_inputs: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    turn_number: int = 0
+
+
+# =============================================================================
 # Graph Plan Types - LangGraph-based planning route
 # =============================================================================
 

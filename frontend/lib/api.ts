@@ -195,7 +195,20 @@ export interface SSEErrorEvent {
   message: string;
 }
 
-export type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent;
+export interface SSENodeStatusEvent {
+  type: 'node_status';
+  data: {
+    node: string;
+    status: 'started' | 'completed';
+    stage: number;
+    tier: 'outline' | 'section' | 'full';
+    topic: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
+    max_tokens: number;
+    estimated_duration_ms: number;
+  };
+}
+
+export type SSEEvent = SSETokenEvent | SSECompleteEvent | SSEErrorEvent | SSENodeStatusEvent;
 
 /**
  * Callbacks for streaming graph plan responses.
@@ -207,6 +220,8 @@ export interface StreamGraphPlanCallbacks {
   onComplete: (response: SSECompleteEvent['data']) => void;
   /** Called when an error occurs */
   onError: (error: Error) => void;
+  /** Called when node status changes (e.g., strategy node starts) */
+  onNodeStatus?: (status: SSENodeStatusEvent['data']) => void;
 }
 
 /**
@@ -291,6 +306,8 @@ export function streamGraphPlan(
 
               if (parsed.type === 'token') {
                 callbacks.onToken(parsed.data);
+              } else if (parsed.type === 'node_status') {
+                callbacks.onNodeStatus?.(parsed.data);
               } else if (parsed.type === 'complete') {
                 callbacks.onComplete(parsed.data);
               } else if (parsed.type === 'error') {

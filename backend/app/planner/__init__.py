@@ -37,6 +37,18 @@ from app.planner.cache_access import (
     update_nested_counters_safe,
 )
 
+# P1: Gate system types - extracted from plan_graph.py
+# P3: Gate constants and readiness
+from app.planner.gates import (
+    CANONICAL_FIELD_ORDER,
+    CORE_FIELD_PRIORITY,
+    DATE_BLOCKING_ERROR_CODES,
+    DateErrorCode,
+    GatePrecedence,
+    GateResult,
+    TripReadiness,
+)
+
 # Stable hashing (PR5)
 from app.planner.hashing import (
     canonicalize_destinations,
@@ -64,6 +76,12 @@ from app.planner.meta_keys import (
     PER_TURN_KEYS,
     TRACE_ENVELOPE,
 )
+
+# P2: Node utilities - instrumentation and context
+from app.planner.nodes import NodeContext, node_decorator
+
+# P1: State management - SSoT enforcement
+from app.planner.state import StateWriter
 
 # Telemetry (PR-T1..T3)
 from app.planner.telemetry import (
@@ -93,13 +111,13 @@ from app.planner.test_mode import (
 
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
+    # P1: GatePrecedence and GateResult are now imported eagerly from planner.gates
+    # GateEvaluator still needs lazy import from plan_graph until full extraction
     from app.plan_graph import (
         CACHE_SCHEMA_VERSION,
         PLANNER_BUILD_ID,
         PROMPT_BUNDLE_HASH,
         GateEvaluator,
-        GatePrecedence,
-        GateResult,
         GraphState,
         TripInputs,
         checkpoint_stats,
@@ -122,14 +140,13 @@ if TYPE_CHECKING:
 
 def __getattr__(name: str):
     """Lazy import for plan_graph exports to avoid circular imports."""
-    # List of names that come from plan_graph
+    # P1: GatePrecedence and GateResult are now eagerly imported from planner.gates
+    # GateEvaluator still needs lazy import from plan_graph until full extraction
     _PLAN_GRAPH_EXPORTS = {
         "CACHE_SCHEMA_VERSION",
         "PLANNER_BUILD_ID",
         "PROMPT_BUNDLE_HASH",
-        "GateEvaluator",
-        "GatePrecedence",
-        "GateResult",
+        "GateEvaluator",  # P1: Still in plan_graph, will be extracted to gates/evaluator.py
         "GraphState",
         "TripInputs",
         "checkpoint_stats",
@@ -165,9 +182,20 @@ __all__ = [
     "GateEvaluator",
     "GatePrecedence",
     "GateResult",
+    # P3: Gate constants
+    "DateErrorCode",
+    "DATE_BLOCKING_ERROR_CODES",
+    "CORE_FIELD_PRIORITY",
+    "CANONICAL_FIELD_ORDER",
+    "TripReadiness",
     # State types
     "GraphState",
     "TripInputs",
+    # P1: State management
+    "StateWriter",
+    # P2: Node utilities
+    "NodeContext",
+    "node_decorator",
     # Debug/observability
     "get_planner_debug_info",
     "get_planner_snapshot",

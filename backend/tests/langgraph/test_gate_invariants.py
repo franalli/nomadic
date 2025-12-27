@@ -1,11 +1,12 @@
 """
-Gate Invariant Tests - PR0 Deliverable.
+Gate Invariant Tests - PR0 Deliverable + P0 Enhancements.
 
 These tests enforce critical routing invariants:
-1. Complete state → never routes to required_fields
+1. Complete state -> never routes to required_fields
 2. Empty response guard prevents None/empty responses
 3. RoutingDecisionFinal is emitted every turn
 4. Question target ownership prevents strategy trampling
+5. [P0] Gate trace metadata is stored for debugging
 
 These are unit tests that can run without full app context.
 """
@@ -316,3 +317,83 @@ class TestComputeTripReadiness:
             any("date" in field.lower() for field in readiness.missing_core + readiness.missing_all)
             or not readiness.missing_core
         )  # Or dates aren't strictly required
+
+
+# =============================================================================
+# TEST: P0 Gate Trace Metadata
+# =============================================================================
+
+
+class TestGateTraceMetadata:
+    """P0 Tests for gate trace functionality added for debugging."""
+
+    def test_gate_trace_stored_in_metadata(self):
+        """Gate trace should be stored in metadata for debugging."""
+        state = GraphState(
+            user_text="hello",
+            trip_inputs=TripInputs(),
+            metadata={"thread_id": "test_trace"},
+            turn_number=0,
+        )
+
+        GateEvaluator.evaluate(state)
+
+        # Gate trace should be in metadata
+        assert "gate_trace" in state.metadata, "Gate trace not found in metadata"
+        gate_trace = state.metadata["gate_trace"]
+
+        # Should have at least one entry
+        assert len(gate_trace) > 0, "Gate trace is empty"
+
+    def test_gate_trace_entries_have_required_fields(self):
+        """Each gate trace entry should have required fields."""
+        state = GraphState(
+            user_text="hello",
+            trip_inputs=TripInputs(),
+            metadata={"thread_id": "test_trace"},
+            turn_number=0,
+        )
+
+        GateEvaluator.evaluate(state)
+
+        gate_trace = state.metadata.get("gate_trace", [])
+
+        for entry in gate_trace:
+            assert "gate" in entry, f"Entry missing 'gate' field: {entry}"
+            assert "fired" in entry, f"Entry missing 'fired' field: {entry}"
+            assert "reason" in entry, f"Entry missing 'reason' field: {entry}"
+            assert isinstance(entry["fired"], bool), f"'fired' should be bool: {entry}"
+
+    def test_gate_trace_shows_fired_gate(self):
+        """Gate trace should indicate which gate actually fired."""
+        state = GraphState(
+            user_text="show me options",
+            trip_inputs=make_complete_trip_inputs(),
+            metadata={"thread_id": "test_trace"},
+            turn_number=0,
+        )
+
+        GateEvaluator.evaluate(state)
+
+        gate_trace = state.metadata.get("gate_trace", [])
+
+        # Should have at least one fired gate
+        fired_gates = [g for g in gate_trace if g.get("fired")]
+        assert len(fired_gates) >= 1, "No gates marked as fired in trace"
+
+    def test_gate_trace_has_timing_info(self):
+        """Gate trace entries should include elapsed timing."""
+        state = GraphState(
+            user_text="hello",
+            trip_inputs=TripInputs(),
+            metadata={"thread_id": "test_trace"},
+            turn_number=0,
+        )
+
+        GateEvaluator.evaluate(state)
+
+        gate_trace = state.metadata.get("gate_trace", [])
+
+        for entry in gate_trace:
+            assert "elapsed_ms" in entry, f"Entry missing 'elapsed_ms' field: {entry}"
+            assert entry["elapsed_ms"] >= 0, f"Invalid elapsed_ms: {entry['elapsed_ms']}"
