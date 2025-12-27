@@ -20,10 +20,10 @@ import pytest
 from app.plan_graph import (
     GraphState,
     TripInputs,
-    _is_strategy_enabled,
     _normalize_multi_city_intent,
     route_after_required_fields,
 )
+from app.planner.nodes.strategy import _is_strategy_enabled
 
 FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 

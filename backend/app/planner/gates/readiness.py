@@ -1,16 +1,33 @@
 """
-Trip Readiness - P3 Module Extraction.
+Trip Readiness - P4 Module Extraction.
 
-Defines the TripReadiness dataclass used for canonical trip state computation.
-This consolidates missing fields computation across all routing decisions.
+Defines the TripReadiness dataclass and compute_trip_readiness() function
+for canonical trip state computation. This consolidates missing fields
+computation across all routing decisions.
 
-The compute_trip_readiness() function remains in plan_graph.py for now
-due to dependencies on GraphState and error types. It will be migrated
-in a future phase.
+Usage:
+    from app.planner.gates import TripReadiness, compute_trip_readiness
+
+    readiness = compute_trip_readiness(trip_inputs, prefer_date_first=True)
+    if readiness.core_complete:
+        # Proceed with specialist routing
+    else:
+        # Ask about readiness.question_target
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from app.planner.gates.constants import (
+    CORE_FIELD_PRIORITY,
+    DATE_BLOCKING_ERROR_CODES,
+    DateErrorCode,
+)
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass
@@ -21,7 +38,7 @@ class TripReadiness:
     This consolidates _compute_missing_fields, _has_required_core_fields,
     and _get_missing_fields_summary into a single authoritative computation.
 
-    Created by compute_trip_readiness() in plan_graph.py.
+    Created by compute_trip_readiness().
     """
 
     # Core required fields (destinations, origin, start_date)
@@ -61,4 +78,152 @@ class TripReadiness:
         return len(self.blocking_errors) > 0
 
 
-__all__ = ["TripReadiness"]
+def compute_trip_readiness(
+    trip_inputs: Any,
+    prefer_date_first: bool = False,
+    errors: Optional[List[Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> TripReadiness:
+    """
+    Compute canonical trip readiness state.
+
+    This is the ONLY function that should compute missing fields.
+    All nodes must use this instead of inline checks.
+
+    Args:
+        trip_inputs: Current trip inputs (TripInputs object or dict)
+        prefer_date_first: If True, prioritize start_date over destinations
+            when determining question_target. Used for broad/open-ended queries.
+        errors: Optional list of errors to check for blocking errors.
+            Supports: ErrorRecord (new), NormalizationError, dict (legacy), str (legacy)
+        metadata: Optional metadata dict to check for date_clarify_mode
+
+    Returns:
+        TripReadiness with all computed fields including blocking_errors
+    """
+    # Handle both TripInputs object and dict
+    if hasattr(trip_inputs, "destinations"):
+        # TripInputs object
+        ti = trip_inputs
+        destinations = ti.destinations
+        origin = ti.origin
+        start_date = ti.start_date
+        end_date = ti.end_date
+        adults = ti.adults
+        budget = ti.budget
+    else:
+        # Dict
+        destinations = trip_inputs.get("destinations", [])
+        origin = trip_inputs.get("origin")
+        start_date = trip_inputs.get("start_date")
+        end_date = trip_inputs.get("end_date")
+        adults = trip_inputs.get("adults")
+        budget = trip_inputs.get("budget")
+
+    # Compute missing core fields using CORE_FIELD_PRIORITY as single source of truth
+    # This ensures priority order is consistent: destinations -> start_date -> end_date
+    # -> origin -> adults -> budget
+    field_values = {
+        "destinations": destinations if isinstance(destinations, list) and destinations else None,
+        "start_date": start_date,
+        "end_date": end_date,
+        "origin": origin,
+        "adults": adults,
+        "budget": budget,
+    }
+    missing_candidates = {f for f, v in field_values.items() if not v}
+    # Filter to only core fields (first 4 in CORE_FIELD_PRIORITY: destinations,
+    # start_date, end_date, origin)
+    core_fields = {"destinations", "start_date", "origin"}  # end_date handled separately below
+    missing_core = [f for f in CORE_FIELD_PRIORITY if f in missing_candidates and f in core_fields]
+
+    # Compute all missing fields (core + optional but useful)
+    missing_all = list(missing_core)
+    if not end_date:
+        missing_all.append("end_date")
+    if adults is None:
+        missing_all.append("travelers (adults)")
+    # Budget is optional - don't add to missing if user explicitly said "no budget"/"flexible"
+    budget_answered = metadata.get("budget_answered", False) if metadata else False
+    if budget is None and not budget_answered:
+        missing_all.append("budget")
+
+    # Compute blocking errors from errors list
+    # Supports: ErrorRecord (new), NormalizationError, dict (legacy), str (legacy)
+    blocking_errors: List[str] = []
+    if errors:
+        for err in errors:
+            # Check for ErrorRecord (Pydantic model with severity and code)
+            if hasattr(err, "severity") and hasattr(err, "code"):
+                if err.severity == "blocking" or err.code in DATE_BLOCKING_ERROR_CODES:
+                    blocking_errors.append(err.code)
+            # Check for NormalizationError (dataclass with code attribute)
+            elif hasattr(err, "code") and err.code in DATE_BLOCKING_ERROR_CODES:
+                blocking_errors.append(err.code)
+            elif isinstance(err, dict):
+                # Handle dict errors with "code" key (legacy)
+                code = err.get("code", "")
+                if code in DATE_BLOCKING_ERROR_CODES:
+                    blocking_errors.append(code)
+            elif isinstance(err, str):
+                for code in DATE_BLOCKING_ERROR_CODES:
+                    if code in err:
+                        blocking_errors.append(code)
+                        break
+    # Also check metadata for date_clarify_mode
+    if metadata and metadata.get("date_clarify_mode"):
+        if DateErrorCode.AMBIGUOUS_YEAR not in blocking_errors:
+            blocking_errors.append(DateErrorCode.AMBIGUOUS_YEAR)
+
+    # Determine question target (priority order)
+    # Context-aware: if prefer_date_first and both destinations and dates are missing,
+    # ask about dates first (helps with strategy recommendations)
+    # OVERRIDE: If blocking date errors exist, always ask about dates first
+    question_target = None
+    if blocking_errors:
+        question_target = "dates"
+    elif missing_core:
+        if prefer_date_first and "destinations" in missing_core and "start_date" in missing_core:
+            # Prefer start_date over destinations for open-ended queries
+            question_target = "dates"
+        else:
+            question_target = missing_core[0]
+            # Normalize "start_date" to "dates" for user-facing questions
+            if question_target == "start_date":
+                question_target = "dates"
+    elif missing_all:
+        # All core complete, ask about optional fields
+        first_optional = [
+            f for f in missing_all if f not in ["destinations", "origin", "start_date"]
+        ]
+        if first_optional:
+            field = first_optional[0]
+            # Normalize field names for user-facing
+            if field == "travelers (adults)":
+                question_target = "travelers"
+            else:
+                question_target = field
+
+    # Compute readiness
+    core_complete = len(missing_core) == 0
+    # ready_to_generate requires core complete AND no blocking errors
+    ready_to_generate = core_complete and len(blocking_errors) == 0
+
+    # Build summary string
+    if missing_all:
+        missing_summary = ", ".join(missing_all)
+    else:
+        missing_summary = "none - all required fields collected"
+
+    return TripReadiness(
+        missing_core=missing_core,
+        missing_all=missing_all,
+        question_target=question_target,
+        core_complete=core_complete,
+        ready_to_generate=ready_to_generate,
+        missing_summary=missing_summary,
+        blocking_errors=blocking_errors,
+    )
+
+
+__all__ = ["TripReadiness", "compute_trip_readiness"]

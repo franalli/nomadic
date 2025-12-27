@@ -19,9 +19,11 @@ from app.plan_graph import (
     GraphState,
     TripInputs,
     _infer_trip_shape,
+    compute_trip_readiness,
+)
+from app.planner.nodes.strategy import (
     _should_escalate_from_stage0,
     _track_strategy_pre_core_question,
-    compute_trip_readiness,
 )
 
 

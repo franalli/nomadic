@@ -97,7 +97,10 @@ class TestRoutingPerformance:
         assert result == "short_circuit_responder"
 
     def test_route_after_normalize_high_confidence(self, benchmark):
-        """High confidence bypass check should be fast."""
+        """High confidence bypass check should be fast.
+
+        When core fields are complete, READY_NO_FIELDS gate fires and routes to summarize.
+        """
         state = GraphState(
             user_text="ok",
             trip_inputs=TripInputs(
@@ -115,7 +118,8 @@ class TestRoutingPerformance:
             },
         )
         result = benchmark(route_after_normalize, state)
-        assert result in ("required_fields_node", "router")
+        # READY_NO_FIELDS gate fires when core_complete=True
+        assert result == "summarize"
 
 
 class TestCachePerformance:

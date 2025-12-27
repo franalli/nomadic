@@ -17,10 +17,10 @@ from app.plan_graph import (
     GatePrecedence,
     GraphState,
     TripInputs,
-    TripReadiness,
     _detect_strategy_topic_from_text,
     clear_all_caches,
 )
+from app.planner.gates.readiness import TripReadiness
 
 FUTURE_START = (date.today() + timedelta(days=30)).isoformat()
 FUTURE_END = (date.today() + timedelta(days=40)).isoformat()

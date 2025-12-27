@@ -18,7 +18,19 @@
       "Bash(popd)",
       "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\state\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\state\")",
       "Bash(git checkout:*)",
-      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\checks\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\checks\")"
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\checks\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\checks\")",
+      "Bash(dir:*)",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(sort:*)",
+      "Bash(xargs:*)",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\cache\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\cache\")",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\normalization\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\normalization\")",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\parsing\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\parsing\")",
+      "Bash(cd:*)",
+      "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\specialist\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\specialist\")",
+      "Bash(done)",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\tests\\\\langgraph\\\\test_confidence_routing.py\")"
     ],
     "deny": [],
     "ask": []

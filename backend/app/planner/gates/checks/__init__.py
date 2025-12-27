@@ -1,25 +1,49 @@
 """
-Gate Checks Package - P3 Module Extraction.
+Gate Checks Package - P4 Module Extraction.
 
-This package will contain individual gate check functions extracted from
+This package contains individual gate check functions extracted from
 GateEvaluator. Each check function tests a specific routing condition.
 
-Planned structure (P3+):
+Structure:
     checks/
     ├── __init__.py          # This file - package exports
-    ├── strategy.py          # Strategy-related gate checks
-    ├── short_circuit.py     # Short-circuit detection (greetings, etc.)
-    ├── intent.py            # Intent detection (question + keyword combos)
-    └── specialist.py        # Specialist routing checks
+    ├── strategy.py          # Strategy expansion detection
+    └── short_circuit.py     # Vague affirmation detection
 
-Current exports: None (structure only in P3)
-
-Future usage:
+Usage:
     from app.planner.gates.checks import (
-        check_strategy_expansion,
-        check_short_circuit,
-        check_intent_only,
+        is_strategy_expansion_request,
+        StrategyExpansionResult,
+        is_vague_affirmation,
     )
 """
 
-__all__: list[str] = []
+from app.planner.gates.checks.short_circuit import (
+    VAGUE_AFFIRMATIONS,
+    is_vague_affirmation,
+)
+from app.planner.gates.checks.strategy import (
+    FULL_EXPANSION_TRIGGERS,
+    GENERIC_EXPANSION_TRIGGERS,
+    SECTION_EXPANSION_PATTERNS,
+    STRATEGY_TIER_MAX_TOKENS,
+    StrategyExpansionResult,
+    StrategyExpansionTarget,
+    StrategyTier,
+    is_strategy_expansion_request,
+)
+
+__all__ = [
+    # Strategy expansion
+    "StrategyExpansionTarget",
+    "StrategyTier",
+    "STRATEGY_TIER_MAX_TOKENS",
+    "StrategyExpansionResult",
+    "is_strategy_expansion_request",
+    "FULL_EXPANSION_TRIGGERS",
+    "SECTION_EXPANSION_PATTERNS",
+    "GENERIC_EXPANSION_TRIGGERS",
+    # Short-circuit detection
+    "VAGUE_AFFIRMATIONS",
+    "is_vague_affirmation",
+]

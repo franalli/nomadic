@@ -65,12 +65,46 @@ class FakeLLM:
 
     Keying strategy:
     - Uses stable semantic keys (node_name, callsite_name) NOT prompt hash
+    - Node name is inferred from prompt content markers
     - Prompt hash checked for equality (fail-fast on drift) but not for selection
     - This allows tests to survive prompt formatting changes
     """
 
     _config: Optional[FakeLLMConfig] = None
     _original_call_llm: Optional[Callable] = None
+
+    # Markers in prompts to identify which node is calling
+    _PROMPT_NODE_MARKERS: Dict[str, str] = {
+        "Role: Intent router": "router",
+        "Intent router": "router",
+        "Role: Travel Itinerary Extractor": "extractor",
+        "Itinerary Extractor": "extractor",
+        "Role: Strategy specialist": "strategy",
+        "Strategy specialist": "strategy",
+        "Role: Hotels specialist": "hotels",
+        "Hotels specialist": "hotels",
+        "Role: Flights specialist": "flights",
+        "Flights specialist": "flights",
+        "Role: Activities specialist": "activities",
+        "Activities specialist": "activities",
+        "Role: Transport specialist": "transport",
+        "Transport specialist": "transport",
+        "Role: Required fields": "required_fields",
+        "Required fields": "required_fields",
+        "Role: General planner": "general",
+        "General planner": "general",
+        "Role: Correction handler": "correction",
+        "Correction handler": "correction",
+    }
+
+    @classmethod
+    def _infer_node_from_prompt(cls, prompt: str) -> str:
+        """Infer the node name from prompt content markers."""
+        prompt_lower = prompt[:500].lower()  # Check first 500 chars
+        for marker, node_name in cls._PROMPT_NODE_MARKERS.items():
+            if marker.lower() in prompt_lower:
+                return node_name
+        return "unknown"
 
     @classmethod
     def get_call_count(cls) -> int:
@@ -105,22 +139,34 @@ class FakeLLM:
             raise AssertionError(f"Expected {expected} LLM calls but got {actual}: {calls}")
 
     @classmethod
-    def _fake_call_llm(
+    async def _fake_call_llm(
         cls,
+        model: str,
         prompt: str,
+        timeout_seconds: float = 30.0,
         max_tokens: int = 512,
-        model: str = "gpt-4o-mini",
-        response_format: Optional[Dict[str, Any]] = None,
-        node_name: str = "unknown",
-        callsite_name: str = "default",
+        temperature: float = 0.2,
+        history: Any = None,
+        user_message: Optional[str] = None,
+        top_p: Optional[float] = None,
+        max_retries: int = 1,
         **kwargs,
     ) -> str:
-        """Fake LLM call that either raises or returns configured response."""
+        """Fake LLM call that either raises or returns configured response.
+
+        This matches the signature of call_llm_with_timeout.
+        Node name is inferred from prompt content since call_llm_with_timeout
+        doesn't pass semantic identifiers.
+        """
         import hashlib
 
         config = cls._config
         if config is None:
             raise AssertionError("FakeLLM not configured - use patch_strict() or patch_map()")
+
+        # Infer node name from prompt content
+        node_name = cls._infer_node_from_prompt(prompt)
+        callsite_name = "full"  # Default callsite
 
         # Compute prompt hash for drift detection
         prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]

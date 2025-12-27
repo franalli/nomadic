@@ -104,6 +104,26 @@ KEYWORD_TO_INTENT: Dict[str, Tuple[str, Optional[str]]] = {
     "yacht": ("strategy", "boating"),
     "kayak": ("strategy", "boating"),
     "kayaking": ("strategy", "boating"),
+    # PR7: Additional keywords for improved bypass rates
+    "canoeing": ("strategy", "boating"),
+    "paddleboard": ("strategy", "boating"),
+    "surfing": ("strategy", "boating"),
+    # More hotel variants
+    "motel": ("hotels", None),
+    "resort": ("hotels", None),
+    "villa": ("hotels", None),
+    "apartment": ("hotels", None),
+    "vrbo": ("hotels", None),
+    # More transport variants
+    "metro": ("transport", None),
+    "subway": ("transport", None),
+    "tram": ("transport", None),
+    "shuttle": ("transport", None),
+    "transfer": ("transport", None),
+    # More activity variants
+    "excursion": ("activities", None),
+    "experience": ("activities", None),
+    "adventure": ("activities", None),
 }
 
 
@@ -188,6 +208,20 @@ POSITIVE_INTENT_PATTERNS: FrozenSet[str] = frozenset(
         "planning a",
         "book a",
         "arrange",
+        # PR7: Additional patterns for improved bypass rates
+        "need help with",
+        "help with",
+        "interested in",
+        "thinking about",
+        "considering",
+        "check out",
+        "explore",
+        "discover",
+        "where can i",
+        "how can i",
+        "what are the",
+        "give me",
+        "looking to",
     }
 )
 

@@ -10,9 +10,8 @@ Tests cover:
 
 import pytest
 
+from app.pattern_matching import INLINE_TRAVELERS_PATTERN, TRAVELERS_PATTERN
 from app.plan_graph import (
-    _INLINE_TRAVELERS_PATTERN,
-    _TRAVELERS_PATTERN,
     GraphState,
     TripInputs,
     _try_initial_message_extraction,
@@ -50,7 +49,7 @@ class TestStandaloneTravelerPatterns:
     )
     def test_travelers_pattern(self, input_text: str, expected_adults: int):
         """Test standalone traveler pattern matching."""
-        match = _TRAVELERS_PATTERN.match(input_text)
+        match = TRAVELERS_PATTERN.match(input_text)
         assert match is not None, f"Pattern should match '{input_text}'"
 
 
@@ -89,7 +88,7 @@ class TestInlineTravelerPatterns:
     )
     def test_inline_travelers_pattern(self, input_text: str, expected_match: bool):
         """Test inline traveler detection patterns."""
-        match = _INLINE_TRAVELERS_PATTERN.search(input_text.lower())
+        match = INLINE_TRAVELERS_PATTERN.search(input_text.lower())
         if expected_match:
             assert match is not None, f"Pattern should match in '{input_text}'"
         else:

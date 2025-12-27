@@ -10,6 +10,7 @@ This module tests:
 
 import pytest
 
+from app.graph_plan_utils import _extract_message_from_malformed_json
 from app.pattern_matching import GENERATE_REQUEST_PATTERN
 from app.plan_graph import (
     GateEvaluator,
@@ -17,9 +18,8 @@ from app.plan_graph import (
     GraphState,
     TripInputs,
     _detect_short_circuit,
-    _extract_message_from_malformed_json,
-    _is_strategy_expansion_request,
 )
+from app.planner.gates.checks import is_strategy_expansion_request
 
 
 class TestGenerateRequestPattern:
@@ -145,14 +145,14 @@ class TestStrategyExpansionGate:
 
     def test_expansion_request_detected(self) -> None:
         """Test that expansion requests are properly detected."""
-        result = _is_strategy_expansion_request("Show more details")
+        result = is_strategy_expansion_request("Show more details")
         assert result.is_expansion is True
         # The pattern matches "more details" from the generic triggers
         assert "more details" in result.matched_phrase.lower()
 
     def test_non_expansion_request_not_detected(self) -> None:
         """Test that non-expansion requests are not falsely detected."""
-        result = _is_strategy_expansion_request("I want to go hiking")
+        result = is_strategy_expansion_request("I want to go hiking")
         assert result.is_expansion is False
 
     @pytest.mark.parametrize(
@@ -168,7 +168,7 @@ class TestStrategyExpansionGate:
     )
     def test_generic_expansion_triggers(self, text: str) -> None:
         """Test that generic expansion phrases trigger expansion."""
-        result = _is_strategy_expansion_request(text)
+        result = is_strategy_expansion_request(text)
         assert result.is_expansion is True
 
     def test_gate_evaluator_routes_expansion_when_pending(self) -> None:

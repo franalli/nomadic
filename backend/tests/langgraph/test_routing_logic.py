@@ -20,6 +20,7 @@ from app.plan_graph import (
     CONFIDENCE_THRESHOLD_SKIP_ROUTER,
     GraphState,
     TripInputs,
+    _apply_typo_corrections,
     route_after_extractor,
     route_after_lqa_prepass,
     route_after_normalize,
@@ -97,7 +98,11 @@ class TestRouteAfterNormalize:
         assert result == "short_circuit_responder"
 
     def test_high_confidence_bypass_all_conditions(self):
-        """High confidence + complete fields + short input should bypass router."""
+        """High confidence + complete fields + short input routes to summarize.
+
+        When all core fields are complete (destinations, origin, start_date) and there
+        are no blocking errors, the READY_NO_FIELDS gate fires and routes to summarize.
+        """
         state = GraphState(
             user_text="ok",  # Short, no intent keywords
             trip_inputs=TripInputs(
@@ -115,14 +120,16 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "required_fields_node"
-        # Confidence routing now uses "high_confidence:X.XX" format
-        conf_routing = state.metadata.get("confidence_routing", "")
-        assert conf_routing.startswith("high_confidence:")
+        # READY_NO_FIELDS gate fires when core_complete=True and ready_to_generate=True
+        assert result == "summarize"
 
     def test_bypass_blocked_by_intent_keywords(self):
-        """Input with intent keywords should route directly to appropriate node
-        (not generic router)."""
+        """Input with intent keywords and complete core fields routes to summarize.
+
+        When core fields are complete, READY_NO_FIELDS gate fires and routes to
+        summarize. Strategy keywords are only handled by STRATEGY_PRE_CORE_VALUE
+        when core is incomplete.
+        """
         state = GraphState(
             user_text="what about hiking?",
             trip_inputs=TripInputs(
@@ -140,12 +147,14 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        # New behavior: deterministic keyword router goes directly to strategy_node
-        # (skipping the LLM router entirely)
-        assert result == "strategy_node"
+        # READY_NO_FIELDS gate fires when core_complete=True
+        assert result == "summarize"
 
     def test_bypass_blocked_by_long_input(self):
-        """Long input (>30 chars) should go to router."""
+        """Long input with complete core fields routes to summarize.
+
+        READY_NO_FIELDS gate fires when core_complete=True regardless of input length.
+        """
         state = GraphState(
             user_text="I want to make sure we have enough time for everything",
             trip_inputs=TripInputs(
@@ -163,10 +172,14 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # READY_NO_FIELDS gate fires when core_complete=True
+        assert result == "summarize"
 
     def test_bypass_blocked_by_typos(self):
-        """Typo suggestions should force router."""
+        """Typo suggestions with complete core fields routes to summarize.
+
+        Typos don't block READY_NO_FIELDS gate when core fields are complete.
+        """
         state = GraphState(
             user_text="ok",
             trip_inputs=TripInputs(
@@ -184,7 +197,8 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        assert result == "router"
+        # READY_NO_FIELDS gate fires when core_complete=True
+        assert result == "summarize"
 
     def test_bypass_blocked_by_incomplete_fields(self):
         """Incomplete core fields should route to required_fields_node
@@ -219,6 +233,70 @@ class TestRouteAfterNormalize:
         result = route_after_normalize(state)
         # New behavior: CORE_COLLECTION gate catches missing core fields
         assert result == "required_fields_node"
+
+
+class TestApplyTypoCorrections:
+    """Tests for _apply_typo_corrections helper.
+
+    Merged from test_confidence_routing.py during test consolidation.
+    """
+
+    def test_applies_destination_corrections(self):
+        """Should correct typos in destinations."""
+        state = GraphState(
+            user_text="",
+            trip_inputs=TripInputs(
+                destinations=["Patogonia", "Londun"],
+                origin="Paris",
+            ),
+        )
+        corrections = {"Patogonia": "Patagonia", "Londun": "London"}
+        _apply_typo_corrections(state, corrections)
+
+        assert state.trip_inputs.destinations == ["Patagonia", "London"]
+        assert state.trip_inputs.origin == "Paris"  # Unchanged
+
+    def test_applies_origin_corrections(self):
+        """Should correct typos in origin."""
+        state = GraphState(
+            user_text="",
+            trip_inputs=TripInputs(
+                destinations=["Paris"],
+                origin="Londun",
+            ),
+        )
+        corrections = {"Londun": "London"}
+        _apply_typo_corrections(state, corrections)
+
+        assert state.trip_inputs.origin == "London"
+        assert state.trip_inputs.destinations == ["Paris"]  # Unchanged
+
+    def test_no_changes_when_no_matching_corrections(self):
+        """Should not change anything if corrections don't match."""
+        state = GraphState(
+            user_text="",
+            trip_inputs=TripInputs(
+                destinations=["Paris"],
+                origin="London",
+            ),
+        )
+        corrections = {"Tokyo": "Tokio"}  # Doesn't match anything
+        _apply_typo_corrections(state, corrections)
+
+        assert state.trip_inputs.destinations == ["Paris"]
+        assert state.trip_inputs.origin == "London"
+
+    def test_handles_empty_inputs(self):
+        """Should handle empty destinations/origin gracefully."""
+        state = GraphState(
+            user_text="",
+            trip_inputs=TripInputs(),
+        )
+        corrections = {"Paris": "Paris, France"}
+        _apply_typo_corrections(state, corrections)
+
+        assert state.trip_inputs.destinations is None or state.trip_inputs.destinations == []
+        assert state.trip_inputs.origin is None
 
 
 class TestRouteAfterRouter:

@@ -16,16 +16,16 @@ import pytest
 
 from app.plan_graph import (
     STRATEGY_TOPIC_TO_NODE,
-    DateErrorCode,
     GateEvaluator,
     GatePrecedence,
     GraphState,
     TripInputs,
-    TripReadiness,
     canonicalize_activity_categories,
     canonicalize_activity_category,
     compute_trip_readiness,
 )
+from app.planner.gates.constants import DateErrorCode
+from app.planner.gates.readiness import TripReadiness
 
 
 # =============================================================================

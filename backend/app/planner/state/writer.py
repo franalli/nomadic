@@ -234,6 +234,156 @@ class StateWriter:
             summary[m.mutation_type].append(m.field)
         return summary
 
+    def set_active_category(self, category: Optional[str]) -> "StateWriter":
+        """
+        Set active_category for specialist routing.
+
+        Args:
+            category: Category name (e.g., "flights", "hotels") or None
+
+        Returns:
+            self for method chaining
+        """
+        self.state.active_category = category
+
+        self._mutations.append(
+            StateMutation(
+                mutation_type="active_category",
+                field="active_category",
+                value=category,
+                source=self.node_name,
+            )
+        )
+        return self
+
+    def set_last_summary(self, summary: Optional[str]) -> "StateWriter":
+        """
+        Set last_summary for conversation continuity.
+
+        Args:
+            summary: Summary text or None
+
+        Returns:
+            self for method chaining
+        """
+        self.state.last_summary = summary
+
+        self._mutations.append(
+            StateMutation(
+                mutation_type="last_summary",
+                field="last_summary",
+                value=summary,
+                source=self.node_name,
+            )
+        )
+        return self
+
+    def set_suggested_responses(self, suggestions: Optional[List[str]]) -> "StateWriter":
+        """
+        Set suggested_responses for UI hints.
+
+        Args:
+            suggestions: List of suggestion strings or None
+
+        Returns:
+            self for method chaining
+        """
+        self.state.suggested_responses = suggestions
+
+        self._mutations.append(
+            StateMutation(
+                mutation_type="suggested_responses",
+                field="suggested_responses",
+                value=suggestions,
+                source=self.node_name,
+            )
+        )
+        return self
+
+    def set_pending_strategy_expansion(self, pending: bool) -> "StateWriter":
+        """
+        Set pending_strategy_expansion flag.
+
+        Args:
+            pending: Whether a strategy expansion is pending
+
+        Returns:
+            self for method chaining
+        """
+        self.state.pending_strategy_expansion = pending
+
+        self._mutations.append(
+            StateMutation(
+                mutation_type="pending_strategy_expansion",
+                field="pending_strategy_expansion",
+                value=pending,
+                source=self.node_name,
+            )
+        )
+        return self
+
+    def set_flag(self, key: str, value: bool) -> "StateWriter":
+        """
+        Set a boolean flag in state.
+
+        This is a convenience method for setting common boolean fields.
+        Maps known flag names to state attributes.
+
+        Args:
+            key: Flag name (e.g., "date_clarify_mode")
+            value: Boolean value
+
+        Returns:
+            self for method chaining
+        """
+        # Map flag names to state attributes
+        flag_attrs = {
+            "date_clarify_mode": "date_clarify_mode",
+            "pending_strategy_expansion": "pending_strategy_expansion",
+            "explicit_year_provided": "explicit_year_provided",
+        }
+
+        if key in flag_attrs:
+            setattr(self.state, flag_attrs[key], value)
+        else:
+            # Fall back to metadata for unknown flags
+            self.state.metadata[key] = value
+
+        self._mutations.append(
+            StateMutation(
+                mutation_type="flag",
+                field=key,
+                value=value,
+                source=self.node_name,
+            )
+        )
+        return self
+
+    def set_parsed_inputs(self, parsed: Dict[str, Any]) -> "StateWriter":
+        """
+        Set parsed_inputs from extractor.
+
+        This sets the intermediate extraction results that get merged
+        into trip_inputs during the extraction flow.
+
+        Args:
+            parsed: Dictionary of parsed field values
+
+        Returns:
+            self for method chaining
+        """
+        self.state.parsed_inputs = parsed
+
+        self._mutations.append(
+            StateMutation(
+                mutation_type="parsed_inputs",
+                field="parsed_inputs",
+                value=parsed,
+                source=self.node_name,
+            )
+        )
+        return self
+
     def apply(self) -> "GraphState":
         """
         Finalize and return the mutated state.

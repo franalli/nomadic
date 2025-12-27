@@ -24,6 +24,7 @@ class GatePrecedence(IntEnum):
     - STRATEGY_EXPANSION (10): User requesting expansion on existing strategy
     - GENERATE_REQUESTED (20): Explicit generate request detected
     - SHORT_CIRCUIT (30): High priority for greetings/confirmations
+    - STRATEGY_POST_CORE (35): Stage 1 trigger when core complete after stage 0
     - READY_NO_FIELDS (40): Plan is ready, no fields to ask
     - FAST_PATH (50): Bootstrap optimization (turn 1 only when strategy_bootstrap_active)
     - SPECIALIST_PRE_CORE (60): Domain keywords before core complete
@@ -38,6 +39,7 @@ class GatePrecedence(IntEnum):
     STRATEGY_EXPANSION = 10  # User requesting expansion on existing strategy content
     GENERATE_REQUESTED = 20  # Explicit generate request (pattern match or pending_action)
     SHORT_CIRCUIT = 30  # Greeting, acknowledgment, off-topic
+    STRATEGY_POST_CORE = 35  # Stage 1 trigger: core complete after stage 0
     READY_NO_FIELDS = 40  # Plan ready, missing_all empty, no blocking errors
     FAST_PATH = 50  # Direct field updates (bootstrap only when strategy_bootstrap_active)
     SPECIALIST_PRE_CORE = 60  # Specialist keyword when core fields missing (pre-core mode)

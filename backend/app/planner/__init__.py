@@ -83,6 +83,18 @@ from app.planner.nodes import NodeContext, node_decorator
 # P1: State management - SSoT enforcement
 from app.planner.state import StateWriter
 
+# Streaming utilities (true LLM streaming)
+from app.planner.streaming import (
+    DEFAULT_STREAMING_CONFIG,
+    StreamingConfig,
+    StreamingResult,
+    call_llm_streaming_with_accumulator,
+    get_streaming_mode,
+    should_use_true_streaming,
+    stream_specialist_response,
+    stream_strategy_response,
+)
+
 # Telemetry (PR-T1..T3)
 from app.planner.telemetry import (
     TraceEnvelope,
@@ -268,4 +280,13 @@ __all__ = [
     "redact_prompt",
     "now_ns",
     "compute_latency_breakdown",
+    # Streaming utilities
+    "StreamingConfig",
+    "StreamingResult",
+    "DEFAULT_STREAMING_CONFIG",
+    "call_llm_streaming_with_accumulator",
+    "stream_specialist_response",
+    "stream_strategy_response",
+    "get_streaming_mode",
+    "should_use_true_streaming",
 ]

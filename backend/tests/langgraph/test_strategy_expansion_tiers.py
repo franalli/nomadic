@@ -7,12 +7,12 @@ and max_tokens enforcement per tier.
 
 import pytest
 
-from app.plan_graph import (
+from app.planner.gates.checks import (
     STRATEGY_TIER_MAX_TOKENS,
     StrategyExpansionResult,
     StrategyExpansionTarget,
     StrategyTier,
-    _is_strategy_expansion_request,
+    is_strategy_expansion_request,
 )
 
 # =============================================================================
@@ -25,7 +25,7 @@ class TestTierDetection:
 
     def test_no_expansion_detected(self):
         """Non-expansion requests should return is_expansion=False."""
-        result = _is_strategy_expansion_request("I want to go hiking in the Alps")
+        result = is_strategy_expansion_request("I want to go hiking in the Alps")
         assert result.is_expansion is False
         assert result.target is None
         assert result.tier is None
@@ -33,7 +33,7 @@ class TestTierDetection:
     def test_implicit_confirmation_not_expansion(self):
         """Implicit confirmations like 'yes' should NOT trigger expansion."""
         for phrase in ["yes", "okay", "sounds good", "let's do it", "perfect"]:
-            result = _is_strategy_expansion_request(phrase)
+            result = is_strategy_expansion_request(phrase)
             assert result.is_expansion is False, f"'{phrase}' should not trigger expansion"
 
 
@@ -56,7 +56,7 @@ class TestFullTierDetection:
     )
     def test_full_tier_triggers(self, phrase):
         """FULL tier phrases should return tier=FULL and target=FULL_EXPANSION."""
-        result = _is_strategy_expansion_request(phrase)
+        result = is_strategy_expansion_request(phrase)
         assert result.is_expansion is True
         assert result.tier == StrategyTier.FULL
         assert result.target == StrategyExpansionTarget.FULL_EXPANSION
@@ -64,7 +64,7 @@ class TestFullTierDetection:
 
     def test_full_tier_embedded_in_sentence(self):
         """FULL tier should trigger even when embedded in longer text."""
-        result = _is_strategy_expansion_request("Can you show me the full itinerary please?")
+        result = is_strategy_expansion_request("Can you show me the full itinerary please?")
         assert result.is_expansion is True
         assert result.tier == StrategyTier.FULL
         assert result.target == StrategyExpansionTarget.FULL_EXPANSION
@@ -115,14 +115,14 @@ class TestSectionTierDetection:
     )
     def test_section_tier_triggers(self, phrase, expected_target):
         """Section-specific phrases should return tier=SECTION with correct target."""
-        result = _is_strategy_expansion_request(phrase)
+        result = is_strategy_expansion_request(phrase)
         assert result.is_expansion is True
         assert result.tier == StrategyTier.SECTION
         assert result.target == expected_target
 
     def test_section_embedded_in_question(self):
         """Section keywords should trigger when in natural questions."""
-        result = _is_strategy_expansion_request("What about the budget for this trip?")
+        result = is_strategy_expansion_request("What about the budget for this trip?")
         assert result.is_expansion is True
         assert result.tier == StrategyTier.SECTION
         assert result.target == StrategyExpansionTarget.BUDGET
@@ -146,7 +146,7 @@ class TestGenericExpansionDetection:
     )
     def test_generic_expansion_triggers(self, phrase):
         """Generic expansion phrases should default to ITINERARY_OUTLINE at SECTION tier."""
-        result = _is_strategy_expansion_request(phrase)
+        result = is_strategy_expansion_request(phrase)
         assert result.is_expansion is True
         assert result.tier == StrategyTier.SECTION
         assert result.target == StrategyExpansionTarget.ITINERARY_OUTLINE
@@ -158,12 +158,12 @@ class TestTierPrecedence:
     def test_full_takes_precedence_over_section(self):
         """FULL triggers should be checked before section-specific patterns."""
         # "detailed plan" is a FULL trigger, not a section trigger
-        result = _is_strategy_expansion_request("detailed plan")
+        result = is_strategy_expansion_request("detailed plan")
         assert result.tier == StrategyTier.FULL
 
     def test_full_with_section_keyword(self):
         """If user asks for 'everything including budget', should get FULL tier."""
-        result = _is_strategy_expansion_request("give me everything")
+        result = is_strategy_expansion_request("give me everything")
         assert result.is_expansion is True
         assert result.tier == StrategyTier.FULL
 

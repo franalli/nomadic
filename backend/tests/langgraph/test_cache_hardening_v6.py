@@ -42,9 +42,11 @@ from app.plan_graph import (
     _required_fields_cache,
     clear_all_caches,
     compute_trip_readiness,
-    finalize_parse_provenance,
     get_cached_response_v6,
     set_cached_response_v6,
+)
+from app.planner.parsing.provenance import (
+    finalize_parse_provenance,
     set_parse_provenance_once,
 )
 

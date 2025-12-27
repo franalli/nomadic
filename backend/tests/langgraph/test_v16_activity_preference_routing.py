@@ -22,14 +22,16 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 from app.plan_graph import (
-    _ACTIVITY_MODIFIER_WORDS,
-    _STRATEGY_KEYWORDS,
     GraphState,
     TripInputs,
-    _is_activity_preference_text,
-    _is_place_like_text,
     lqa_prepass,
     reset_graph_stats,
+)
+from app.planner.parsing.lqa_parsers import (
+    _ACTIVITY_MODIFIER_WORDS,
+    _STRATEGY_KEYWORDS,
+    _is_activity_preference_text,
+    _is_place_like_text,
 )
 
 

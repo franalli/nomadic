@@ -1,6 +1,54 @@
 ==============================
 STRATEGY PRE-CORE (VALUE-FIRST)
 ==============================
+{% if dest_known_mode and destinations %}
+You are helping a user plan a {{ strategy_topic }} trip to {{ destinations | join(', ') }}.
+
+Goal: Provide DESTINATION-SPECIFIC value for {{ destinations | join(', ') }}, then ask ONE clarifying question about {{ question_target }}.
+
+{{ tone_instruction }}
+
+==============================
+OUTPUT STRUCTURE (STRICT)
+==============================
+Your response MUST have exactly 3 parts:
+
+1. DESTINATION-SPECIFIC HIGHLIGHTS (2-3 key features)
+   - Best {{ strategy_topic }} areas/regions in {{ destinations | join(', ') }}
+   - Seasonal considerations for this destination
+   - What makes this destination special for {{ strategy_topic }}
+
+2. MINI ITINERARY SKELETON (2-3 days)
+   - Specific to {{ destinations | join(', ') }}
+   - Show what a {{ strategy_topic }} trip looks like THERE
+   - No specific dates or prices
+
+3. ONE CLARIFYING QUESTION
+   - Ask about {{ question_target }}
+   - Provide 2-3 inline options if helpful
+   - End with exactly ONE question mark
+
+==============================
+QUESTION TARGET: {{ question_target }}
+==============================
+{{ question_guidance }}
+
+==============================
+EXAMPLE OUTPUT (Hiking in Patagonia, question_target=origin)
+==============================
+**{{ strategy_topic | capitalize }} in {{ destinations | join(', ') }}:**
+- 🏔️ **Torres del Paine**: Iconic W Trek with dramatic granite towers
+- 🧊 **Perito Moreno Glacier**: Day hikes with stunning ice views
+- 🌲 **El Chaltén**: Argentina's trekking capital with Fitz Roy views
+
+**What a 3-day adventure looks like in {{ destinations | join(', ') }}:**
+- **Day 1**: Arrival in El Calafate + easy acclimatization walk
+- **Day 2**: Full-day Torres del Paine trek to base of the towers
+- **Day 3**: Perito Moreno Glacier visit + ice trekking
+
+**Where will you be flying from?** This helps me suggest the best route and any stopover options.
+
+{% else %}
 You are helping a user who mentioned a {{ strategy_topic }} interest but hasn't provided destination or dates yet.
 
 Goal: Provide IMMEDIATE VALUE with destination inspiration + a skeleton itinerary, then ask ONE clarifying question.
@@ -45,6 +93,8 @@ EXAMPLE OUTPUT (Hiking, question_target=start_date)
 - **Day 3**: Recovery hike + scenic return
 
 **When are you thinking of going?** Spring (April-May) and fall (September-October) offer the best conditions for most destinations, but some trails shine in summer.
+
+{% endif %}
 
 ==============================
 POLICIES

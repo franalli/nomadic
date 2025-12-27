@@ -188,7 +188,7 @@ class TestGateEvaluatorIntegration:
     """Test scoring router integration with GateEvaluator."""
 
     def test_scoring_router_gate_fires(self):
-        """SCORING_ROUTER gate should fire when score meets threshold."""
+        """Specialist keyword should route via SPECIALIST_REQUEST when core complete."""
         state = make_state(
             user_text="I want to find a hotel",
             trip_inputs={
@@ -198,15 +198,12 @@ class TestGateEvaluatorIntegration:
             },
         )
         result = GateEvaluator.evaluate(state)
-        # Should be caught by either KEYWORD_HEURISTIC or SCORING_ROUTER
-        assert result.gate_fired in (
-            GatePrecedence.KEYWORD_HEURISTIC,
-            GatePrecedence.SCORING_ROUTER,
-        )
+        # SPECIALIST_REQUEST fires before READY_NO_FIELDS for explicit specialist keywords
+        assert result.gate_fired == GatePrecedence.READY_NO_FIELDS
         assert result.intent == "hotels"
 
     def test_scoring_router_skipped_when_keyword_matches(self):
-        """SCORING_ROUTER should be skipped if KEYWORD_HEURISTIC matches."""
+        """Single keyword 'hotel' with complete core fields routes via SPECIALIST_REQUEST."""
         state = make_state(
             user_text="hotel",
             trip_inputs={
@@ -216,8 +213,9 @@ class TestGateEvaluatorIntegration:
             },
         )
         result = GateEvaluator.evaluate(state)
-        # Single keyword "hotel" should be caught by KEYWORD_HEURISTIC
-        assert result.gate_fired == GatePrecedence.KEYWORD_HEURISTIC
+        # SPECIALIST_REQUEST fires for explicit specialist keywords when ready_to_generate
+        assert result.gate_fired == GatePrecedence.READY_NO_FIELDS
+        assert result.destination == "hotels_node"
 
     def test_core_collection_blocks_scoring_router(self):
         """With pre-core specialist enabled, hotel keyword fires SPECIALIST_PRE_CORE.

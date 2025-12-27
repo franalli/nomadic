@@ -9,7 +9,6 @@ Verifies:
 - Per-node cache event tracking
 """
 
-import hashlib
 import time
 
 
@@ -85,76 +84,86 @@ class TestExtractorCacheV6:
         assert cached is None
 
     def test_extractor_cache_miss_on_prompt_bundle_hash_mismatch(self):
-        """Extractor cache discards entry when prompt_bundle_hash mismatches."""
-        from app.plan_graph import (
-            PROMPT_BUNDLE_HASH,
-            _extractor_cache,
-            _get_extractor_cached,
-            clear_response_caches,
-        )
+        """Extractor cache discards entry when prompt_bundle_hash mismatches.
+
+        NOTE: After migration to unified cache framework, version validation
+        is handled by CachePayload validation. This test verifies that the
+        framework correctly discards stale entries.
+        """
+        from app.plan_graph import clear_response_caches
+        from app.planner.cache import ExtractorCache
 
         clear_response_caches()
 
-        # Manually insert a payload with different prompt_bundle_hash
-        session_id = "test-session-1"
-        user_text = "I want to go to Paris"
-        core_hash = "abc123"
+        session_id = "test-session-stale"
+        user_text = "I want to go to Paris for stale test"
+        core_hash = "abc123stale"
         mode = "light"
         model_id = "gpt-4o-mini"
 
-        # Compute the key manually (matching V6 key computation)
-        text_hash = hashlib.md5(user_text.encode()).hexdigest()[:16]
-        key_parts = (
-            f"extractor_v6|{session_id}|{text_hash}|{core_hash}|{mode}|"
-            f"{model_id}|v1.1|{PROMPT_BUNDLE_HASH}|dev"
-        )
-        cache_key = hashlib.md5(key_parts.encode()).hexdigest()
+        cache = ExtractorCache.get_instance()
 
-        # Insert with WRONG prompt_bundle_hash
+        # Compute key using the framework
+        key = cache.compute_key(session_id, user_text, core_hash, mode, model_id)
+
+        # Manually insert a stale payload with wrong prompt_bundle_hash
         stale_payload = {
             "payload_kind": "extractor",
+            "node_name": "extractor",
             "schema_version": 1,
+            "logic_version": 1,
             "prompt_bundle_hash": "WRONG_HASH_12345",  # Mismatch!
             "planner_build_id": "dev",
-            "extra": {"extraction_result": {"parsed": {}}},
+            "created_at": 0,
+            "data": {"parsed": {"destinations": ["Paris"]}},
+            "extra": {},
         }
-        _extractor_cache[cache_key] = stale_payload
+        cache._cache[key] = stale_payload
 
         # Get should discard due to hash mismatch
-        cached = _get_extractor_cached(session_id, user_text, core_hash, mode)
+        cached = cache.get(key, None)
 
-        # The key mismatch means it won't find it anyway (key includes hash)
-        # But if found with wrong hash, should discard
+        # Should be None because the payload was discarded
         assert cached is None
 
     def test_extractor_cache_stats_tracked(self):
-        """Extractor cache tracks hits, misses, and discards."""
+        """Extractor cache tracks hits, misses, and discards.
+
+        NOTE: After migration to unified cache framework, stats are tracked
+        via CacheStats objects on each cache instance.
+        """
         from app.plan_graph import (
-            _cache_stats,
             _get_extractor_cached,
             _set_extractor_cached,
             clear_response_caches,
         )
+        from app.planner.cache import ExtractorCache
 
         clear_response_caches()
 
-        # Initial state
-        assert _cache_stats["extractor"]["hits"] == 0
-        assert _cache_stats["extractor"]["misses"] == 0
+        cache = ExtractorCache.get_instance()
+        cache.reset_stats()
 
-        session_id = "test-session-1"
-        user_text = "I want to go to Paris"
-        core_hash = "abc123"
+        # Initial state
+        stats = cache.get_stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+
+        session_id = "test-session-stats"
+        user_text = "I want to go to Paris for stats test"
+        core_hash = "abc123stats"
         mode = "light"
 
         # Miss
         _get_extractor_cached(session_id, user_text, core_hash, mode)
-        assert _cache_stats["extractor"]["misses"] == 1
+        stats = cache.get_stats()
+        assert stats["misses"] == 1
 
         # Set and hit
         _set_extractor_cached(session_id, user_text, core_hash, mode, {"parsed": {}})
         _get_extractor_cached(session_id, user_text, core_hash, mode)
-        assert _cache_stats["extractor"]["hits"] == 1
+        stats = cache.get_stats()
+        assert stats["hits"] == 1
 
 
 class TestStrategyCacheV6:
@@ -206,32 +215,42 @@ class TestStrategyCacheV6:
         assert cached is None
 
     def test_strategy_cache_stats_tracked(self):
-        """Strategy cache tracks hits and misses."""
+        """Strategy cache tracks hits and misses.
+
+        NOTE: After migration to unified cache framework, stats are tracked
+        via CacheStats objects on each cache instance.
+        """
         from app.plan_graph import (
-            _cache_stats,
             _get_strategy_cached,
             _set_strategy_cached,
             clear_response_caches,
         )
+        from app.planner.cache import StrategyCache
 
         clear_response_caches()
 
-        assert _cache_stats["strategy"]["hits"] == 0
-        assert _cache_stats["strategy"]["misses"] == 0
+        cache = StrategyCache.get_instance()
+        cache.reset_stats()
 
-        session_id = "test-session-1"
+        stats = cache.get_stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+
+        session_id = "test-session-strategy-stats"
         topic = "hiking"
-        core_hash = "abc123"
-        user_text_hash = "def456"
+        core_hash = "abc123strategy"
+        user_text_hash = "def456strategy"
 
         # Miss
         _get_strategy_cached(session_id, topic, core_hash, user_text_hash)
-        assert _cache_stats["strategy"]["misses"] == 1
+        stats = cache.get_stats()
+        assert stats["misses"] == 1
 
         # Set and hit
         _set_strategy_cached(session_id, topic, core_hash, user_text_hash, {"result": "ok"})
         _get_strategy_cached(session_id, topic, core_hash, user_text_hash)
-        assert _cache_stats["strategy"]["hits"] == 1
+        stats = cache.get_stats()
+        assert stats["hits"] == 1
 
 
 class TestTileCacheV6:

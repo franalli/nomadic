@@ -248,7 +248,7 @@ class TestBudgetWithFakeLLM:
 
     def test_short_circuit_patterns_skip_llm(self):
         """Short-circuit patterns should not increment LLM call counter."""
-        from app.plan_graph import text_is_compatible_with_target
+        from app.pattern_matching import text_is_compatible_with_target
 
         state = GraphState(
             session_id="test",
@@ -265,7 +265,7 @@ class TestBudgetWithFakeLLM:
 
     def test_confirmation_pattern_check_no_llm(self):
         """Confirmation pattern check should not increment LLM counter."""
-        from app.plan_graph import text_is_compatible_with_target
+        from app.pattern_matching import text_is_compatible_with_target
 
         state = GraphState(
             session_id="test",
