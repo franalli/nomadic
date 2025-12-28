@@ -347,7 +347,6 @@ class TestBridgeSuppression:
 
         # Strategy gates should be suppressed - route to collection instead
         assert result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
-        assert result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE_WITH_DEST
 
 
 # =============================================================================

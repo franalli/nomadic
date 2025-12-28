@@ -66,6 +66,7 @@ from app.planner.cache.framework import (
     # Enums and Types
     DiscardReason,
     ExtractorCache,
+    GateEvaluationCache,
     # Concrete Implementations
     ResponseCache,
     StrategyCache,
@@ -95,6 +96,7 @@ __all__ = [
     "ExtractorCache",
     "StrategyCache",
     "TileCache",
+    "GateEvaluationCache",
     # Event Functions
     "get_cache_events_this_turn",
     "clear_cache_events_this_turn",

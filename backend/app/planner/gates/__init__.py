@@ -29,7 +29,12 @@ from app.planner.gates.constants import (
     DATE_BLOCKING_ERROR_CODES,
     DateErrorCode,
 )
-from app.planner.gates.evaluator import GateEvaluator
+from app.planner.gates.evaluator_v2 import GateEvaluator
+from app.planner.gates.intent_detection import (
+    check_intent_only_input,
+    check_question_keyword_combo,
+)
+from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.readiness import TripReadiness, compute_trip_readiness
 from app.planner.gates.result import GateResult
@@ -77,4 +82,9 @@ __all__ = [
     "has_strategy_topic",
     "text_contains_strategy_keyword",
     "ALL_STRATEGY_KEYWORDS",
+    # Keyword matching utility
+    "keyword_match",
+    # Intent detection utilities
+    "check_intent_only_input",
+    "check_question_keyword_combo",
 ]

@@ -224,7 +224,9 @@ class TestContractMismatchEviction:
         # Manually poison the cache with mismatched suggestion_kind
         # Store a "travelers" response but we'll query for "dates"
         thread_id = "thread_123"
-        user_text_hash = hashlib.md5("When should I go?".encode()).hexdigest()[:16]
+        # Use normalized text for hash (matching _normalize_user_text_for_cache behavior)
+        normalized_text = state.user_text.strip().lower().rstrip("!.?")
+        user_text_hash = hashlib.md5(normalized_text.encode()).hexdigest()[:16]
         core_hash = _get_core_fields_state(state.trip_inputs)
 
         # Create a poisoned payload with wrong suggestion_kind

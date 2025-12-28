@@ -54,7 +54,9 @@ class Settings(BaseSettings):
     response_polish_warn_threshold_ms: int = 30000  # Log warning if polish exceeds this (30s)
 
     # LQA (Last Question Answer) pre-pass configuration
-    lqa_max_length: int = 50  # Max input length for LQA pre-pass (chars)
+    lqa_max_length: int = (
+        80  # Max input length for LQA pre-pass (chars) - increased from 50 to capture more patterns
+    )
 
     # Short-circuit configuration
     short_circuit_max_length: int = 200  # Max input length for short-circuit patterns (chars)
@@ -175,6 +177,11 @@ class Settings(BaseSettings):
     # The specialist will acknowledge intent and ask for minimal missing fields inline.
     specialist_pre_core_enabled: bool = True
 
+    # When True, use deterministic templates instead of LLM for missing_fields_guard.
+    # Saves ~200-250 tokens per guard call with minimal UX impact.
+    # Set to False to use LLM for more varied phrasing (original behavior).
+    guard_use_templates: bool = True
+
     # =============================================================================
     # Default Adults Configuration
     # =============================================================================
@@ -190,14 +197,18 @@ class Settings(BaseSettings):
     # =============================================================================
     # Extractor Cache Configuration
     # =============================================================================
-    extractor_cache_ttl_seconds: int = 60  # TTL for extractor cache entries
+    extractor_cache_ttl_seconds: int = (
+        300  # TTL for extractor cache entries (5 min for multi-turn reuse)
+    )
     extractor_cache_maxsize: int = 100  # Max entries in extractor cache
 
     # =============================================================================
     # Strategy Cache Configuration
     # =============================================================================
     strategy_cache_ttl_seconds: int = 300  # TTL for strategy cache (5 min)
-    strategy_cache_maxsize: int = 50  # Max entries in strategy cache
+    strategy_cache_maxsize: int = (
+        100  # Max entries in strategy cache (increased to reduce evictions)
+    )
 
     # =============================================================================
     # First-Turn Optimization: Strategy Bootstrap Bypass

@@ -21,6 +21,8 @@ from app.plan_graph import (
     _infer_trip_shape,
     compute_trip_readiness,
 )
+from app.planner.gates import GateContext
+from app.planner.gates.implementations import StrategyPreCoreValueGate
 from app.planner.nodes.strategy import (
     _should_escalate_from_stage0,
     _track_strategy_pre_core_question,
@@ -68,17 +70,20 @@ class TestStrategyPreCoreValueDetection:
     def test_strategy_topic_detection(self, input_text: str, expected_topic: str):
         """Test that strategy topics are detected correctly from user text."""
         ti = TripInputs()  # Empty - no destinations
-        readiness = compute_trip_readiness(ti)
-        extraction_conf = {}
-        metadata = {}  # No active question - won't trigger suppression
-
-        result = GateEvaluator._check_strategy_pre_core_value(
-            input_text.lower(), ti, readiness, extraction_conf, metadata
+        state = GraphState(
+            user_text=input_text,
+            trip_inputs=ti,
+            metadata={},  # No active question - won't trigger suppression
+            flags={},
         )
+        readiness = compute_trip_readiness(ti)
+        ctx = GateContext.from_state(state, readiness)
+
+        gate = StrategyPreCoreValueGate()
+        result = gate.evaluate(ctx)
 
         assert result is not None, f"Expected topic '{expected_topic}' for '{input_text}'"
-        topic, question_target = result
-        assert topic == expected_topic
+        assert result.strategy_topic == expected_topic
 
 
 class TestStrategyPreCoreValueGating:
@@ -100,8 +105,15 @@ class TestStrategyPreCoreValueGating:
         assert gate_result.destination == "strategy_node"
         assert gate_result.metadata_updates.get("strategy_stage") == 0
 
-    def test_does_not_fire_when_destinations_present(self):
-        """Gate should NOT fire when destinations are already set."""
+    def test_fires_with_destinations_present(self):
+        """Gate should fire when destinations are set (consolidated behavior).
+
+        After gate consolidation, STRATEGY_PRE_CORE_VALUE handles both cases:
+        - Without destinations: asks for dates/origin
+        - With destinations: asks for remaining core fields (typically dates)
+
+        The gate adds '_with_dest' suffix to the reason when destinations exist.
+        """
         state = GraphState(
             user_text="Plan a hiking trip",
             trip_inputs=TripInputs(destinations=["Swiss Alps"]),
@@ -111,8 +123,11 @@ class TestStrategyPreCoreValueGating:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT fire STRATEGY_PRE_CORE_VALUE (destinations present)
-        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
+        # Should fire STRATEGY_PRE_CORE_VALUE (consolidated gate handles both cases)
+        assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
+        assert gate_result.destination == "strategy_node"
+        # Reason should include '_with_dest' suffix when destinations present
+        assert "_with_dest" in gate_result.reason
 
     def test_does_not_fire_when_questions_only_requested(self):
         """Gate should NOT fire when user asks for 'questions only'."""
@@ -144,47 +159,56 @@ class TestQuestionTargetPriority:
     def test_prefers_dates_when_strategy_topic_no_destinations(self):
         """Should ask about dates before destinations for open-ended queries."""
         ti = TripInputs()  # No destinations, no dates
-        readiness = compute_trip_readiness(ti)
-        extraction_conf = {}
-        metadata = {}  # No active question - won't trigger suppression
-
-        result = GateEvaluator._check_strategy_pre_core_value(
-            "plan a hiking adventure", ti, readiness, extraction_conf, metadata
+        state = GraphState(
+            user_text="plan a hiking adventure",
+            trip_inputs=ti,
+            metadata={},  # No active question - won't trigger suppression
+            flags={},
         )
+        readiness = compute_trip_readiness(ti)
+        ctx = GateContext.from_state(state, readiness)
+
+        gate = StrategyPreCoreValueGate()
+        result = gate.evaluate(ctx)
 
         assert result is not None
-        topic, question_target = result
-        assert question_target == "dates", "Should ask about dates first"
+        assert result.question_target == "dates", "Should ask about dates first"
 
     def test_asks_origin_after_dates_set(self):
         """Should ask about origin when dates are set."""
         ti = TripInputs(start_date="2025-06-01")  # Has dates, no origin
-        readiness = compute_trip_readiness(ti)
-        extraction_conf = {}
-        metadata = {}  # No active question - won't trigger suppression
-
-        result = GateEvaluator._check_strategy_pre_core_value(
-            "plan a hiking adventure", ti, readiness, extraction_conf, metadata
+        state = GraphState(
+            user_text="plan a hiking adventure",
+            trip_inputs=ti,
+            metadata={},  # No active question - won't trigger suppression
+            flags={},
         )
+        readiness = compute_trip_readiness(ti)
+        ctx = GateContext.from_state(state, readiness)
+
+        gate = StrategyPreCoreValueGate()
+        result = gate.evaluate(ctx)
 
         assert result is not None
-        topic, question_target = result
-        assert question_target == "origin", "Should ask about origin after dates"
+        assert result.question_target == "origin", "Should ask about origin after dates"
 
     def test_asks_destination_last(self):
         """Should ask about destination only after dates and origin set."""
         ti = TripInputs(start_date="2025-06-01", origin="London")
-        readiness = compute_trip_readiness(ti)
-        extraction_conf = {}
-        metadata = {}  # No active question - won't trigger suppression
-
-        result = GateEvaluator._check_strategy_pre_core_value(
-            "plan a hiking adventure", ti, readiness, extraction_conf, metadata
+        state = GraphState(
+            user_text="plan a hiking adventure",
+            trip_inputs=ti,
+            metadata={},  # No active question - won't trigger suppression
+            flags={},
         )
+        readiness = compute_trip_readiness(ti)
+        ctx = GateContext.from_state(state, readiness)
+
+        gate = StrategyPreCoreValueGate()
+        result = gate.evaluate(ctx)
 
         assert result is not None
-        topic, question_target = result
-        assert question_target == "destinations", "Should ask about destination last"
+        assert result.question_target == "destinations", "Should ask about destination last"
 
 
 class TestTripShapeInference:
@@ -329,10 +353,13 @@ class TestGateShadowingPrevention:
         )
         assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
-    def test_activities_intent_with_destination_routes_to_activities(self):
+    def test_hiking_query_with_destination_routes_to_strategy(self):
         """
-        'What hikes should I do in Chamonix?' has a destination, so should
-        route to activities_node (pre-core or full depending on core fields).
+        'What hikes should I do in Chamonix?' has a hiking strategy topic,
+        so should route to strategy_node even with destinations present.
+
+        After gate consolidation, STRATEGY_PRE_CORE_VALUE handles both
+        with and without destinations for strategy topics.
         """
         state = GraphState(
             user_text="What hikes should I do in Chamonix?",
@@ -343,8 +370,10 @@ class TestGateShadowingPrevention:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT be STRATEGY_PRE_CORE_VALUE (has destinations)
-        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
+        # With hiking strategy topic, should fire STRATEGY_PRE_CORE_VALUE
+        assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
+        assert gate_result.destination == "strategy_node"
+        assert "_with_dest" in gate_result.reason
 
     def test_specialist_pre_core_blocked_when_strategy_eligible(self):
         """
@@ -406,10 +435,7 @@ class TestGatePrecedenceGuard:
             GatePrecedence.SPECIALIST_PRE_CORE,
             GatePrecedence.STRATEGY_PRE_CORE_VALUE,
             GatePrecedence.CORE_COLLECTION,
-            GatePrecedence.HIGH_CONFIDENCE,
             GatePrecedence.QUESTION_KEYWORD,
-            GatePrecedence.KEYWORD_HEURISTIC,
-            GatePrecedence.SCORING_ROUTER,
             GatePrecedence.ROUTER_LLM,
         ]
 
@@ -444,25 +470,48 @@ class TestGatePrecedenceGuard:
         assert GatePrecedence.CORE_COLLECTION.value == 90
 
     def test_is_strategy_pre_core_eligible_helper(self):
-        """Test the eligibility helper used to suppress SPECIALIST_PRE_CORE."""
+        """Test gate eligibility by checking if evaluate() returns a result.
+
+        After gate consolidation, STRATEGY_PRE_CORE_VALUE handles both
+        with and without destinations cases.
+        """
+        gate = StrategyPreCoreValueGate()
+
         # Eligible case: strategy topic + no destinations + core incomplete
         ti = TripInputs()
+        state = GraphState(
+            user_text="hiking trip with activities",
+            trip_inputs=ti,
+            metadata={},
+            flags={},
+        )
         readiness = compute_trip_readiness(ti)
-        eligible = GateEvaluator._is_strategy_pre_core_eligible(
-            "hiking trip with activities", ti, readiness
-        )
-        assert eligible is True, "Should be eligible for strategy pre-core"
+        ctx = GateContext.from_state(state, readiness)
+        result = gate.evaluate(ctx)
+        assert result is not None, "Should be eligible for strategy pre-core"
 
-        # Not eligible: has destinations
+        # Also eligible: has destinations (after gate consolidation)
         ti_with_dest = TripInputs(destinations=["Alps"])
-        readiness_with_dest = compute_trip_readiness(ti_with_dest)
-        not_eligible = GateEvaluator._is_strategy_pre_core_eligible(
-            "hiking trip", ti_with_dest, readiness_with_dest
+        state_with_dest = GraphState(
+            user_text="hiking trip",
+            trip_inputs=ti_with_dest,
+            metadata={},
+            flags={},
         )
-        assert not_eligible is False, "Should NOT be eligible when destinations present"
+        readiness_with_dest = compute_trip_readiness(ti_with_dest)
+        ctx_with_dest = GateContext.from_state(state_with_dest, readiness_with_dest)
+        result_with_dest = gate.evaluate(ctx_with_dest)
+        assert (
+            result_with_dest is not None
+        ), "Should be eligible even with destinations (consolidated gate)"
 
         # Not eligible: questions only phrase
-        questions_eligible = GateEvaluator._is_strategy_pre_core_eligible(
-            "hiking trip - ask me questions", ti, readiness
+        state_questions = GraphState(
+            user_text="hiking trip - ask me questions",
+            trip_inputs=ti,
+            metadata={},
+            flags={},
         )
-        assert questions_eligible is False, "Should NOT be eligible with 'ask me questions'"
+        ctx_questions = GateContext.from_state(state_questions, readiness)
+        result_questions = gate.evaluate(ctx_questions)
+        assert result_questions is None, "Should NOT be eligible with 'ask me questions'"

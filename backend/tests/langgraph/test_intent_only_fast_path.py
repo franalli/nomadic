@@ -10,19 +10,21 @@ MVP Hardening tests covering:
 
 import pytest
 
+from app.pattern_matching import INTENT_ONLY_KEYWORDS
 from app.plan_graph import (
     GateEvaluator,
     GraphState,
     TripInputs,
 )
+from app.planner.gates import check_intent_only_input
 
 
 class TestIntentOnlyDetection:
-    """Test _check_intent_only_input detection logic."""
+    """Test check_intent_only_input detection logic."""
 
     def test_detects_adventure_hiking(self):
         """Should detect 'adventure hiking' as intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "adventure hiking outdoors",
             TripInputs(),
         )
@@ -31,7 +33,7 @@ class TestIntentOnlyDetection:
 
     def test_detects_beach_vacation(self):
         """Should detect 'beach vacation' as intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "beach vacation relaxation",
             TripInputs(),
         )
@@ -40,7 +42,7 @@ class TestIntentOnlyDetection:
 
     def test_detects_skiing_trip(self):
         """Should detect 'skiing trip' as intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "skiing trip",
             TripInputs(),
         )
@@ -48,7 +50,7 @@ class TestIntentOnlyDetection:
 
     def test_detects_diving_adventure(self):
         """Should detect 'diving adventure' as intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "diving snorkeling trip",
             TripInputs(),
         )
@@ -56,7 +58,7 @@ class TestIntentOnlyDetection:
 
     def test_not_intent_only_with_destination(self):
         """Input with destinations already set is not intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "adventure hiking",
             TripInputs(destinations=["Paris"]),
         )
@@ -64,7 +66,7 @@ class TestIntentOnlyDetection:
 
     def test_not_intent_only_with_dates(self):
         """Input with dates already set is not intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "beach vacation",
             TripInputs(start_date="2026-01-15"),
         )
@@ -72,7 +74,7 @@ class TestIntentOnlyDetection:
 
     def test_not_intent_only_with_numbers(self):
         """Input containing numbers (dates/budget) is not intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "beach vacation for 2 weeks in march",
             TripInputs(),
         )
@@ -81,7 +83,7 @@ class TestIntentOnlyDetection:
 
     def test_not_intent_only_with_currency(self):
         """Input containing currency symbols is not intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "adventure trip $5000 budget",
             TripInputs(),
         )
@@ -89,7 +91,7 @@ class TestIntentOnlyDetection:
 
     def test_not_intent_only_with_month_names(self):
         """Input containing month names is not intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "beach vacation in december",
             TripInputs(),
         )
@@ -97,7 +99,7 @@ class TestIntentOnlyDetection:
 
     def test_not_intent_only_with_relative_time(self):
         """Input with relative time (next, this) is not intent-only."""
-        result = GateEvaluator._check_intent_only_input(
+        result = check_intent_only_input(
             "hiking trip next week",
             TripInputs(),
         )
@@ -219,5 +221,5 @@ class TestIntentOnlyKeywordMapping:
     def test_keyword_maps_to_expected_topic(self, keyword: str, expected_topic: str):
         """Each intent keyword should map to expected topic."""
         # Check that keyword is in the mapping
-        assert keyword in GateEvaluator.INTENT_ONLY_KEYWORDS
-        assert GateEvaluator.INTENT_ONLY_KEYWORDS[keyword] == expected_topic
+        assert keyword in INTENT_ONLY_KEYWORDS
+        assert INTENT_ONLY_KEYWORDS[keyword] == expected_topic

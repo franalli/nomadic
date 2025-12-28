@@ -41,15 +41,19 @@ class StrategyTier(str, Enum):
     """Output tier for strategy responses, controlling max_tokens."""
 
     OUTLINE = "outline"  # 512 tokens - Stage 1 shortlist + skeleton
-    SECTION = "section"  # 768 tokens - Single section expansion
-    FULL = "full"  # 2048 tokens - Complete expansion (user must explicitly request)
+    SECTION = "section"  # 600 tokens - Single section expansion
+    FULL = "full"  # 1536 tokens - Complete expansion (user must explicitly request)
 
 
 # Map tiers to max_tokens
+# Token limits optimized for typical output sizes:
+# - OUTLINE: Stage 1 shortlist + skeleton (typical 300-450 tokens)
+# - SECTION: Single section expansion (typical 350-500 tokens)
+# - FULL: Complete detailed itinerary (typical 800-1200 tokens)
 STRATEGY_TIER_MAX_TOKENS: Dict[StrategyTier, int] = {
     StrategyTier.OUTLINE: 512,
-    StrategyTier.SECTION: 768,
-    StrategyTier.FULL: 2048,
+    StrategyTier.SECTION: 600,  # Reduced from 768 - single sections rarely exceed 500
+    StrategyTier.FULL: 1536,  # Reduced from 2048 - still substantial, better constrained
 }
 
 

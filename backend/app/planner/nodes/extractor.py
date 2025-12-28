@@ -20,6 +20,18 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Dict
 
+# P2: Module-level imports for non-circular dependencies
+from app.config import settings
+from app.debug_utils import _debug, _debug_error
+from app.graph_plan_utils import jloads_safe
+from app.pattern_matching import text_is_compatible_with_target
+from app.planner.node_utils import ti_short, today_iso
+from app.planner.nodes.confidence import (
+    build_extraction_confidence,
+    high_confidence,
+    low_confidence_error,
+)
+
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
 
@@ -38,11 +50,7 @@ async def extractor(state: "GraphState") -> "GraphState":
     - Confirmations: "yes"/"no" with pending_action -> execute or clear action
     - Off-topic: weather, math, general knowledge -> redirect to travel
     """
-    # Late imports to avoid circular dependencies
-    from app.config import settings
-    from app.debug_utils import _debug, _debug_error
-    from app.graph_plan_utils import jloads_safe
-    from app.pattern_matching import text_is_compatible_with_target
+    # Late imports for plan_graph functions (circular dependency)
     from app.plan_graph import (
         _apply_typo_corrections,
         _debug_node_entry,
@@ -60,19 +68,12 @@ async def extractor(state: "GraphState") -> "GraphState":
         _record_llm_time,
         _record_node_tokens,
         _set_extractor_cached,
-        _today_iso,
         _try_initial_message_extraction,
         _try_strategy_bootstrap_bypass,
         _write_trip_inputs,
         call_llm_with_timeout,
         load_prompt,
         set_parse_provenance,
-        ti_short,
-    )
-    from app.planner.nodes.confidence import (
-        build_extraction_confidence,
-        high_confidence,
-        low_confidence_error,
     )
 
     _, start_ns = _debug_node_entry("extractor", state)
@@ -361,17 +362,17 @@ async def extractor(state: "GraphState") -> "GraphState":
             max_tokens=llm_config["max_tokens"],
         )
 
-    today_iso = state.metadata.get("today_iso") or _today_iso()
+    today_str = state.metadata.get("today_iso") or today_iso()
 
     try:
         prompt = load_prompt(prompt_name)
 
         # Light mode uses simpler template (no trip_inputs context needed)
         if extractor_mode == "light":
-            tpl = prompt.replace("{today}", today_iso).replace("{user_text}", text)
+            tpl = prompt.replace("{today}", today_str).replace("{user_text}", text)
         else:
             tpl = (
-                prompt.replace("{today}", today_iso)
+                prompt.replace("{today}", today_str)
                 .replace("{trip_inputs}", json.dumps(ti_short(state.trip_inputs)))
                 .replace("{user_text}", text)
             )

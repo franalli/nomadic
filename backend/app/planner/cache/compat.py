@@ -238,6 +238,7 @@ def get_cached_response(
     follow_up_hash: str,
     user_text_hash: str,
     state: Optional["GraphState"] = None,
+    model_id: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     Get cached response (backward-compatible signature).
@@ -253,6 +254,7 @@ def get_cached_response(
         follow_up_hash: Hash of follow-up context
         user_text_hash: Hash of user text
         state: Optional GraphState for metadata updates
+        model_id: LLM model ID for cache isolation
 
     Returns:
         Cached response dict or None if not found/invalid
@@ -264,6 +266,7 @@ def get_cached_response(
         core_fields_hash=core_fields_hash,
         follow_up_hash=follow_up_hash,
         user_text_hash=user_text_hash,
+        model_id=model_id,
     )
 
     return cache.get(key, state)
@@ -275,6 +278,7 @@ def set_cached_response(
     follow_up_hash: str,
     user_text_hash: str,
     response: Dict[str, Any],
+    model_id: str = "",
 ) -> None:
     """
     Cache response (backward-compatible signature).
@@ -290,6 +294,7 @@ def set_cached_response(
         follow_up_hash: Hash of follow-up context
         user_text_hash: Hash of user text
         response: Response dict to cache
+        model_id: LLM model ID for cache isolation
     """
     cache = ResponseCache.get_instance()
 
@@ -298,6 +303,7 @@ def set_cached_response(
         core_fields_hash=core_fields_hash,
         follow_up_hash=follow_up_hash,
         user_text_hash=user_text_hash,
+        model_id=model_id,
     )
 
     cache.set(key, response)
@@ -318,7 +324,10 @@ def get_tile_cached(
     intent: str,
     destinations: List[str],
     start_date: Optional[str],
+    end_date: Optional[str],
     origin: Optional[str],
+    adults: Optional[int],
+    children: Optional[int],
     state: Optional["GraphState"] = None,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -330,7 +339,10 @@ def get_tile_cached(
         intent: Tile intent (hotels, flights, etc.)
         destinations: List of destination cities
         start_date: Trip start date
+        end_date: Trip end date
         origin: Trip origin
+        adults: Number of adults
+        children: Number of children
         state: Optional GraphState for metadata updates
 
     Returns:
@@ -339,7 +351,16 @@ def get_tile_cached(
     cache = TileCache.get_instance()
 
     # Compute query hash from parameters
-    query_str = f"{intent}|{','.join(sorted(destinations))}|{start_date}|{origin}"
+    # v2: Include end_date, adults, children for correct tile prices/night counts
+    query_str = (
+        f"{intent}|"
+        f"{','.join(sorted(destinations or []))}|"
+        f"{start_date or 'none'}|"
+        f"{end_date or 'none'}|"
+        f"{origin or 'none'}|"
+        f"{adults or 0}|"
+        f"{children or 0}"
+    )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
     # Use a session placeholder since tile cache is session-scoped
@@ -358,7 +379,10 @@ def set_tile_cached(
     intent: str,
     destinations: List[str],
     start_date: Optional[str],
+    end_date: Optional[str],
     origin: Optional[str],
+    adults: Optional[int],
+    children: Optional[int],
     result: Dict[str, Any],
 ) -> None:
     """
@@ -370,13 +394,25 @@ def set_tile_cached(
         intent: Tile intent (hotels, flights, etc.)
         destinations: List of destination cities
         start_date: Trip start date
+        end_date: Trip end date
         origin: Trip origin
+        adults: Number of adults
+        children: Number of children
         result: Tile result to cache
     """
     cache = TileCache.get_instance()
 
     # Compute query hash from parameters
-    query_str = f"{intent}|{','.join(sorted(destinations))}|{start_date}|{origin}"
+    # v2: Include end_date, adults, children for correct tile prices/night counts
+    query_str = (
+        f"{intent}|"
+        f"{','.join(sorted(destinations or []))}|"
+        f"{start_date or 'none'}|"
+        f"{end_date or 'none'}|"
+        f"{origin or 'none'}|"
+        f"{adults or 0}|"
+        f"{children or 0}"
+    )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
     # Use a session placeholder since tile cache is session-scoped
@@ -395,7 +431,10 @@ def set_tile_cached(
             "intent": intent,
             "destinations": destinations,
             "start_date": start_date,
+            "end_date": end_date,
             "origin": origin,
+            "adults": adults,
+            "children": children,
         },
     )
 

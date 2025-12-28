@@ -13,7 +13,14 @@ Extracted from plan_graph.py as part of the P2 module extraction initiative.
 from __future__ import annotations
 
 import json
+import random as _random_module
 from typing import TYPE_CHECKING
+
+# P2: Module-level imports for non-circular dependencies
+from app.config import settings
+from app.debug_utils import _debug, _debug_error
+from app.graph_plan_utils import jloads_safe
+from app.planner.nodes.llm_utils import measure_llm_call
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
@@ -24,19 +31,13 @@ async def router(state: "GraphState") -> "GraphState":
     Router node to determine intent. Uses timeout but NO retry (router should be fast and reliable).
     Also refines user intent classification for conversational style adaptation.
     """
-    # Late imports to avoid circular dependencies
-    import random as _random_module
-
-    from app.config import settings
-    from app.graph_plan_utils import jloads_safe
+    # Late imports for plan_graph functions (circular dependency)
     from app.plan_graph import (
         _OFF_TOPIC_DEFLECTIONS,
         USER_INTENT_ARCHETYPES,
         StateViewBuilder,
         _compute_cache_key,
-        _debug,
         _debug_cache_hit,
-        _debug_error,
         _debug_node_entry,
         _debug_node_exit,
         _estimate_prompt_tokens,
@@ -50,7 +51,6 @@ async def router(state: "GraphState") -> "GraphState":
         call_llm_with_timeout,
         load_prompt,
     )
-    from app.planner.nodes.llm_utils import measure_llm_call
 
     _, start_ns = _debug_node_entry("router", state)
 

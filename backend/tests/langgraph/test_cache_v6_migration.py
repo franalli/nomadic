@@ -277,10 +277,15 @@ class TestTileCacheV6:
         intent = "hotels"
         destinations = ["Paris", "Rome"]
         start_date = "2025-03-15"
+        end_date = "2025-03-20"
         origin = "New York"
+        adults = 2
+        children = 0
         result = {"tiles": [{"id": "tile1"}, {"id": "tile2"}]}
 
-        set_tile_cached(intent, destinations, start_date, origin, result)
+        set_tile_cached(
+            intent, destinations, start_date, end_date, origin, adults, children, result
+        )
 
         stats = get_tile_cache_stats()
         assert stats["cache_size"] == 1

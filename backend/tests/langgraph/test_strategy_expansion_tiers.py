@@ -177,10 +177,16 @@ class TestMaxTokensConfig:
     """Tests for STRATEGY_TIER_MAX_TOKENS configuration."""
 
     def test_tier_max_tokens_values(self):
-        """Verify max_tokens for each tier are correctly configured."""
+        """Verify max_tokens for each tier are correctly configured.
+
+        Token limits optimized for typical output sizes:
+        - OUTLINE: 512 tokens - Stage 1 shortlist + skeleton
+        - SECTION: 600 tokens - Single section expansion (reduced from 768)
+        - FULL: 1536 tokens - Complete expansion (reduced from 2048)
+        """
         assert STRATEGY_TIER_MAX_TOKENS[StrategyTier.OUTLINE] == 512
-        assert STRATEGY_TIER_MAX_TOKENS[StrategyTier.SECTION] == 768
-        assert STRATEGY_TIER_MAX_TOKENS[StrategyTier.FULL] == 2048
+        assert STRATEGY_TIER_MAX_TOKENS[StrategyTier.SECTION] == 600
+        assert STRATEGY_TIER_MAX_TOKENS[StrategyTier.FULL] == 1536
 
     def test_all_tiers_have_max_tokens(self):
         """All StrategyTier values should have max_tokens defined."""

@@ -6,25 +6,19 @@ mentions them before core fields are complete.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, FrozenSet, Optional
+from typing import TYPE_CHECKING, Optional
 
 from app.debug_utils import _debug
+from app.pattern_matching import SPECIALIST_KEYWORDS
 from app.planner.gates.base import Gate, GateContext
+from app.planner.gates.constants import SPECIALIST_NODE_MAP
+from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.result import GateResult
 from app.planner.gates.topic_detection import detect_strategy_topic_from_text
 
 if TYPE_CHECKING:
     pass
-
-
-# Specialist keywords that trigger pre-core routing
-SPECIALIST_PRE_CORE_KEYWORDS: Dict[str, FrozenSet[str]] = {
-    "flights": frozenset({"flight", "flights", "fly", "flying", "airline", "airfare"}),
-    "hotels": frozenset({"hotel", "hotels", "stay", "accommodation", "lodging", "hostel"}),
-    "transport": frozenset({"car rental", "rent a car", "taxi", "uber", "train", "bus"}),
-    "activities": frozenset({"activities", "things to do", "attractions", "tours", "excursions"}),
-}
 
 
 class SpecialistPreCoreGate(Gate):
@@ -59,7 +53,9 @@ class SpecialistPreCoreGate(Gate):
             metadata_updates={
                 "router_path": f"specialist_pre_core:{intent_name}",
                 "router_bypassed": True,
+                "router_bypass_reason": f"specialist_pre_core:{intent_name}",
                 "pre_core_mode": True,
+                "missing_core_fields": ctx.readiness.missing_core,
             },
         )
 
@@ -68,8 +64,8 @@ class SpecialistPreCoreGate(Gate):
         text_lower = ctx.user_text_lower
         readiness = ctx.readiness
 
-        for intent_name, keywords in SPECIALIST_PRE_CORE_KEYWORDS.items():
-            if any(kw in text_lower for kw in keywords):
+        for intent_name, keywords in SPECIALIST_KEYWORDS.items():
+            if keyword_match(text_lower, keywords):
                 # Yield to strategy gate for "activities" when strategy topic detected
                 if intent_name == "activities":
                     strategy_topic = detect_strategy_topic_from_text(text_lower)
@@ -81,17 +77,11 @@ class SpecialistPreCoreGate(Gate):
                         )
                         return None
 
-                destination_map = {
-                    "flights": "flights_node",
-                    "hotels": "hotels_node",
-                    "transport": "transport_node",
-                    "activities": "activities_node",
-                }
                 _debug(
                     "specialist_pre_core triggered",
                     intent=intent_name,
                     missing_core=readiness.missing_core,
                 )
-                return (intent_name, destination_map[intent_name])
+                return (intent_name, SPECIALIST_NODE_MAP[intent_name])
 
         return None

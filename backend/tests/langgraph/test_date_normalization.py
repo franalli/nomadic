@@ -11,7 +11,7 @@ Tests cover:
 - Edge cases and error handling
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -23,6 +23,7 @@ from app.plan_graph import (
     _trip_normalizer,
     normalize_inputs,
 )
+from app.planner.normalization import DateNormalizer
 
 
 class TestNormalizeDateFormats:
@@ -180,7 +181,16 @@ class TestPartialDates:
 
 
 class TestDateRangeParsing:
-    """Test date range parsing (e.g., 'December 20-27')."""
+    """Test date range parsing (e.g., 'December 20-27').
+
+    Uses a fixed reference date (December 1, 2025) for deterministic year inference.
+    """
+
+    @pytest.fixture
+    def date_normalizer(self):
+        """DateNormalizer with fixed reference date for deterministic tests."""
+        # Use December 1, 2025 so "December 20-27" is still in the future
+        return DateNormalizer(reference_date=date(2025, 12, 1))
 
     @pytest.mark.parametrize(
         "input_range,expected_start,expected_end",
@@ -203,9 +213,11 @@ class TestDateRangeParsing:
             ("December 20 to 27", "2025-12-20", "2025-12-27"),
         ],
     )
-    def test_date_range_parsing(self, input_range: str, expected_start: str, expected_end: str):
+    def test_date_range_parsing(
+        self, date_normalizer, input_range: str, expected_start: str, expected_end: str
+    ):
         """Test parsing of date ranges like 'December 20-27'."""
-        start, end = _date_normalizer.parse_date_range(input_range)
+        start, end = date_normalizer.parse_date_range(input_range)
         assert start == expected_start, f"Start date mismatch for '{input_range}'"
         assert end == expected_end, f"End date mismatch for '{input_range}'"
 
@@ -219,9 +231,9 @@ class TestDateRangeParsing:
             "I want to go to Rome",  # Sentence
         ],
     )
-    def test_non_range_inputs_return_none(self, input_text: str):
+    def test_non_range_inputs_return_none(self, date_normalizer, input_text: str):
         """Test that non-range inputs return (None, None)."""
-        start, end = _date_normalizer.parse_date_range(input_text)
+        start, end = date_normalizer.parse_date_range(input_text)
         assert start is None, f"Expected None for start with '{input_text}'"
         assert end is None, f"Expected None for end with '{input_text}'"
 

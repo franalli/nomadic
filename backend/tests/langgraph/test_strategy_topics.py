@@ -13,13 +13,13 @@ import pytest
 from app.pattern_matching import STRATEGY_TOPIC_PATTERNS
 from app.plan_graph import (
     STRATEGY_TOPIC_TO_NODE,
-    GateEvaluator,
     GatePrecedence,
     GraphState,
     TripInputs,
     _detect_strategy_topic_from_text,
     clear_all_caches,
 )
+from app.planner.gates.implementations import StrategyTopicSwitchGate
 from app.planner.gates.readiness import TripReadiness
 
 FUTURE_START = (date.today() + timedelta(days=30)).isoformat()
@@ -226,7 +226,8 @@ class TestStrategyTopicSwitchGate:
         )
         metadata = {"last_strategy_topic": "hiking", "turn_number": 3}
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="i want to go diving instead",
             ti=ti,
             readiness=readiness,
@@ -254,7 +255,8 @@ class TestStrategyTopicSwitchGate:
         )
         metadata = {"last_strategy_topic": "hiking", "turn_number": 3}
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="diving is cool",  # No intent verb
             ti=ti,
             readiness=readiness,

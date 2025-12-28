@@ -12,6 +12,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# P2: Module-level imports for non-circular dependencies
+from app.config import settings
+from app.debug_utils import _debug
+from app.pattern_matching import LQA_BAIL_PATTERNS, is_traveler_detail_answer
+from app.planner.nodes.confidence import high_confidence
+from app.planner.parsing import (
+    _LQA_FIELD_PARSERS,
+    _extract_negation_alternative,
+    _is_activity_preference_text,
+    _is_date_like_text,
+    _is_place_like_text,
+)
+
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
 
@@ -34,10 +47,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
     Returns:
         Updated state with flags["lqa_prepass"] = True/False
     """
-    # Late imports to avoid circular dependencies
-    from app.config import settings
-    from app.debug_utils import _debug
-    from app.pattern_matching import LQA_BAIL_PATTERNS, is_traveler_detail_answer
+    # Late imports for plan_graph functions (circular dependency)
     from app.plan_graph import (
         _date_stats,
         _debug_node_entry,
@@ -47,13 +57,6 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
         _write_trip_inputs,
         canonicalize_question_target,
         set_parse_provenance,
-    )
-    from app.planner.nodes.confidence import high_confidence
-    from app.planner.parsing import (
-        _LQA_FIELD_PARSERS,
-        _is_activity_preference_text,
-        _is_date_like_text,
-        _is_place_like_text,
     )
 
     _, start_ns = _debug_node_entry("lqa_prepass", state)
@@ -205,6 +208,69 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                     additional_info=f"{existing_info} {text.strip()}".strip(),
                 )
     else:
+        # =====================================================================
+        # P4.1: NEGATION ALTERNATIVE EXTRACTION (before generic bail)
+        # =====================================================================
+        # Try to extract alternative from negation patterns like "not Paris, maybe Barcelona"
+        # If successful, parse the alternative and treat as LQA hit
+        negation_result = _extract_negation_alternative(text, state)
+        if negation_result:
+            alternative = negation_result.get("alternative")
+            negation_type = negation_result.get("negation_type")
+
+            if alternative and question_target and question_target in _LQA_FIELD_PARSERS:
+                # Try to parse the alternative text
+                parser = _LQA_FIELD_PARSERS[question_target]
+                parsed = parser(alternative, state)
+
+                if parsed:
+                    # Successfully parsed alternative - treat as LQA hit
+                    _lqa_stats["successes"] += 1
+                    state.parsed_inputs = parsed
+                    state.flags["lqa_prepass"] = True
+                    state.flags["lqa_field"] = question_target
+                    state.metadata["negation_alternative_extracted"] = True
+                    state.metadata["negation_type"] = negation_type
+                    state.metadata["extraction_confidence"] = high_confidence(
+                        f"lqa:negation:{negation_type}", overall=0.92
+                    )
+                    state.metadata["parse_path"] = f"lqa:negation:{negation_type}"
+                    _debug(
+                        "[LQA] NEGATION_ALTERNATIVE: parsed successfully",
+                        alternative=alternative[:40],
+                        negation_type=negation_type,
+                        parsed_keys=list(parsed.keys()),
+                        tokens_saved="~500 (negation extracted without LLM)",
+                    )
+                    _debug_node_exit("lqa_prepass", state, start_ns)
+                    return state
+                else:
+                    # Alternative found but couldn't parse - mark for extractor
+                    _debug(
+                        "[LQA] NEGATION_ALTERNATIVE: found but unparsable, marking for extractor",
+                        alternative=alternative[:40],
+                        negation_type=negation_type,
+                    )
+                    state.metadata["negation_alternative_raw"] = alternative
+                    state.metadata["negation_type"] = negation_type
+                    # Fall through to extractor (don't bail)
+                    state.flags["lqa_prepass"] = False
+                    state.flags["lqa_bail_reason"] = f"negation_unparsable:{negation_type}"
+                    _debug_node_exit("lqa_prepass", state, start_ns)
+                    return state
+            elif negation_type == "simple_rejection":
+                # User rejected without alternative - bail to re-ask
+                _lqa_stats["bails"] += 1
+                state.flags["lqa_prepass"] = False
+                state.flags["lqa_bail_reason"] = "simple_rejection"
+                _debug(
+                    "[LQA] NEGATION: simple rejection, will re-ask",
+                    text=text[:30],
+                )
+                _debug_node_exit("lqa_prepass", state, start_ns)
+                return state
+
+        # Standard bail pattern check
         for i, pattern in enumerate(LQA_BAIL_PATTERNS):
             if pattern.search(text):
                 bail_types = ["multi_intent", "multi_intent", "negation"]

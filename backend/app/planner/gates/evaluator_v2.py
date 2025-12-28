@@ -11,20 +11,25 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import time
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from app.debug_utils import _debug
 from app.planner.gates.base import Gate, GateContext
 
 # Import all gate implementations
+# Note: Consolidated gates (removed):
+#   - HighConfidenceGate (100) -> removed, READY_NO_FIELDS handles core_complete
+#   - KeywordHeuristicGate (120) -> merged into QuestionKeywordGate
+#   - StrategyPreCoreValueWithDestGate (85) -> merged into StrategyPreCoreValueGate
 from app.planner.gates.implementations import (
     CoreCollectionGate,
     FastPathGate,
     GenerateRequestedGate,
-    HighConfidenceGate,
     InfeasibilityGate,
-    KeywordHeuristicGate,
     QuestionKeywordGate,
     ReadyNoFieldsGate,
     RouterLLMGate,
@@ -33,7 +38,6 @@ from app.planner.gates.implementations import (
     StrategyExpansionGate,
     StrategyPostCoreGate,
     StrategyPreCoreValueGate,
-    StrategyPreCoreValueWithDestGate,
     StrategyTopicSwitchGate,
 )
 from app.planner.gates.precedence import GatePrecedence
@@ -45,10 +49,13 @@ if TYPE_CHECKING:
     from app.plan_graph import GraphState, TripInputs
 
 # Re-export for backward compatibility
+from app.known_places import is_known_place
 from app.pattern_matching import (
     INTENT_ONLY_KEYWORDS,
     QUESTION_WORDS,
+    is_text_date_compatible,
 )
+from app.planner.gates.topic_detection import ALL_STRATEGY_KEYWORDS
 
 
 class GateEvaluator:
@@ -64,6 +71,10 @@ class GateEvaluator:
     INTENT_ONLY_KEYWORDS = INTENT_ONLY_KEYWORDS
 
     # Gate registry - ordered by precedence (lowest number = highest priority)
+    # Consolidated from 16 to 13 gates:
+    #   - Removed: StrategyPreCoreValueWithDestGate (85) -> merged into 80
+    #   - Removed: HighConfidenceGate (100) -> READY_NO_FIELDS handles core_complete
+    #   - Removed: KeywordHeuristicGate (120) -> merged into QuestionKeywordGate
     _gates: List[Gate] = [
         StrategyExpansionGate(),  # 10
         GenerateRequestedGate(),  # 20
@@ -74,12 +85,9 @@ class GateEvaluator:
         FastPathGate(),  # 50
         SpecialistPreCoreGate(),  # 60
         StrategyTopicSwitchGate(),  # 70
-        StrategyPreCoreValueGate(),  # 80
-        StrategyPreCoreValueWithDestGate(),  # 85
+        StrategyPreCoreValueGate(),  # 80 (now handles both with/without destinations)
         CoreCollectionGate(),  # 90
-        HighConfidenceGate(),  # 100
-        QuestionKeywordGate(),  # 110
-        KeywordHeuristicGate(),  # 120
+        QuestionKeywordGate(),  # 110 (now includes keyword heuristic fallback)
         RouterLLMGate(),  # 999 (default fallback)
     ]
 
@@ -89,6 +97,7 @@ class GateEvaluator:
         Evaluate all gates and return the result.
 
         This is the ONLY place where routing decisions should be made.
+        Gate results are cached for efficiency when the same state is encountered.
 
         Args:
             state: Current graph state
@@ -97,9 +106,20 @@ class GateEvaluator:
             GateResult with gate_fired, destination, and metadata
         """
         start_time = time.perf_counter()
+        user_text = state.user_text or ""
+
+        # Try cache first
+        cache_result = cls._try_gate_cache(state, user_text)
+        if cache_result is not None:
+            cache_key, cached_result = cache_result
+            if cached_result is not None:
+                # Update state metadata to indicate cache hit
+                state.metadata["gate_cache_hit"] = True
+                return cached_result
+        else:
+            cache_key = None
 
         # Determine if we should prefer dates over destinations
-        user_text = state.user_text or ""
         user_text_lower = user_text.lower()
         ti = state.trip_inputs
         prefer_date_first = cls._should_prefer_date_first(user_text_lower, ti)
@@ -133,6 +153,10 @@ class GateEvaluator:
                 eval_time_ms=ctx.elapsed_ms(),
                 skipped_gates=skipped_gates,
             )
+
+        # Cache the result
+        if cache_key is not None:
+            cls._cache_gate_result(cache_key, result)
 
         return result
 
@@ -213,3 +237,172 @@ class GateEvaluator:
             return True
 
         return False
+
+    @classmethod
+    def text_is_compatible_with_target(cls, user_text: str, question_target: Optional[str]) -> bool:
+        """
+        Check if user_text looks like an answer to the given question_target.
+
+        This is used to determine if a user is answering a pending question
+        (e.g., providing dates when question_target="dates") vs making a new
+        request (e.g., topic switch).
+
+        Args:
+            user_text: The user's input text
+            question_target: The current question target ("dates", "origin", etc.)
+
+        Returns:
+            True if the text appears to be answering the question_target
+        """
+        if not question_target or not user_text:
+            return False
+
+        text_lower = user_text.strip().lower()
+        text_stripped = user_text.strip()
+
+        if question_target in ("dates", "start_date"):
+            # Delegate to consolidated date compatibility check
+            return is_text_date_compatible(user_text)
+
+        elif question_target == "origin":
+            # Check if looks like a city/place name (capitalized, no strategy keywords)
+            if not any(kw in text_lower for kw in ALL_STRATEGY_KEYWORDS):
+                # Simple heuristic: short input that's capitalized or known place
+                if len(text_stripped) < 50 and (
+                    text_stripped[0].isupper() or is_known_place(text_stripped)
+                ):
+                    return True
+
+        elif question_target == "destinations":
+            # Similar to origin but allow multiple places
+            if is_known_place(text_stripped):
+                return True
+
+        elif question_target == "travelers":
+            # Look for number patterns
+            traveler_pattern = (
+                r"\b("
+                r"\d+|one|two|three|four|five|six|seven|eight|nine|ten|"
+                r"couple|family|solo|alone|just me"
+                r")\b"
+            )
+            if re.search(traveler_pattern, text_lower):
+                return True
+
+        elif question_target == "budget":
+            # Look for currency/budget patterns
+            if re.search(
+                r"\b(\$|€|£|\d+|budget|cheap|luxury|mid-range|moderate|flexible)\b",
+                text_lower,
+            ):
+                return True
+
+        return False
+
+    # =========================================================================
+    # CACHE UTILITY METHODS
+    # =========================================================================
+
+    @classmethod
+    def _hash_trip_inputs(cls, ti: "TripInputs") -> str:
+        """Hash trip inputs for gate cache key."""
+        trip_dict = {
+            "destinations": sorted(ti.destinations or []),
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "adults": ti.adults,
+            "budget": ti.budget,
+        }
+        return hashlib.md5(json.dumps(trip_dict, sort_keys=True).encode()).hexdigest()[:16]
+
+    @classmethod
+    def _hash_metadata(
+        cls, metadata: Dict[str, Any], flags: Dict[str, Any], state: "GraphState"
+    ) -> str:
+        """Hash gate-determining metadata for cache key.
+
+        Includes metadata, flags, and state fields that affect gate decisions.
+        """
+        meta_dict = {
+            # Metadata fields
+            "question_target": metadata.get("question_target"),
+            "date_clarify_mode": metadata.get("date_clarify_mode", False),
+            "has_blocking_errors": bool(metadata.get("date_blocking_errors")),
+            "last_strategy_topic": metadata.get("last_strategy_topic"),
+            "auto_fire_topic_switch": metadata.get("auto_fire_topic_switch"),
+            "fast_path": metadata.get("fast_path"),
+            "strategy_bootstrap_active": metadata.get("strategy_bootstrap_active"),
+            # Flags
+            "flags_fast_path": flags.get("fast_path"),
+            "flags_strategy_bootstrap": flags.get("strategy_bootstrap_active"),
+            # State fields that affect gates
+            "pending_strategy_expansion": getattr(state, "pending_strategy_expansion", False),
+            "strategy_expansion_tier": getattr(state, "strategy_expansion_tier", None),
+        }
+        return hashlib.md5(json.dumps(meta_dict, sort_keys=True).encode()).hexdigest()[:16]
+
+    @classmethod
+    def _try_gate_cache(
+        cls, state: "GraphState", user_text: str
+    ) -> Optional[Tuple[str, Optional[GateResult]]]:
+        """Try to get gate result from cache.
+
+        Returns:
+            (cache_key, cached_result) if hit, (cache_key, None) if miss
+        """
+        from app.planner.cache import GateEvaluationCache
+
+        session_id = state.metadata.get("session_id", "unknown")
+        user_text_hash = hashlib.md5(user_text.lower().encode()).hexdigest()[:16]
+        trip_inputs_hash = cls._hash_trip_inputs(state.trip_inputs)
+        metadata_hash = cls._hash_metadata(state.metadata, state.flags or {}, state)
+
+        cache = GateEvaluationCache.get_instance()
+        cache_key = cache.compute_key(session_id, user_text_hash, trip_inputs_hash, metadata_hash)
+
+        cached = cache.get(cache_key, state)
+        if cached is not None:
+            # Reconstruct GateResult from cached dict
+            result = GateResult(
+                gate_fired=GatePrecedence(cached["gate_fired"]),
+                destination=cached["destination"],
+                reason=cached["reason"],
+                skipped_gates=cached.get("skipped_gates", []),
+                eval_time_ms=cached.get("eval_time_ms", 0.0),
+                intent=cached.get("intent"),
+                strategy_topic=cached.get("strategy_topic"),
+                question_target=cached.get("question_target"),
+                metadata_updates=cached.get("metadata_updates", {}),
+                lqa_reason=cached.get("lqa_reason"),
+                llm_budget_used=cached.get("llm_budget_used", 0),
+                date_clarify_mode=cached.get("date_clarify_mode", False),
+            )
+            _debug("gate_cache_hit", cache_key=cache_key[:16], gate=result.gate_fired.name)
+            return (cache_key, result)
+
+        return (cache_key, None)
+
+    @classmethod
+    def _cache_gate_result(cls, cache_key: str, result: GateResult) -> None:
+        """Cache gate evaluation result."""
+        from app.planner.cache import GateEvaluationCache
+
+        cache = GateEvaluationCache.get_instance()
+        cache.set(
+            cache_key,
+            {
+                "gate_fired": result.gate_fired.value,
+                "destination": result.destination,
+                "reason": result.reason,
+                "skipped_gates": result.skipped_gates,
+                "eval_time_ms": result.eval_time_ms,
+                "intent": result.intent,
+                "strategy_topic": result.strategy_topic,
+                "question_target": result.question_target,
+                "metadata_updates": result.metadata_updates,
+                "lqa_reason": result.lqa_reason,
+                "llm_budget_used": result.llm_budget_used,
+                "date_clarify_mode": result.date_clarify_mode,
+            },
+        )

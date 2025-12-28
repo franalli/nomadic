@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -98,7 +99,7 @@ class CacheStats:
     """Statistics for a single cache instance.
 
     Tracks hits, misses, discards, and evictions for observability.
-    Thread-safe counters would require threading.Lock in production.
+    Thread-safe via threading.Lock for multi-worker deployments.
     """
 
     hits: int = 0
@@ -106,50 +107,61 @@ class CacheStats:
     discards: int = 0
     evictions: int = 0
     sets: int = 0
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def hit_rate(self) -> float:
-        """Calculate hit rate as hits / (hits + misses)."""
-        total = self.hits + self.misses
-        return self.hits / total if total > 0 else 0.0
+        """Calculate hit rate as hits / (hits + misses). Thread-safe."""
+        with self._lock:
+            total = self.hits + self.misses
+            return self.hits / total if total > 0 else 0.0
 
     def record_hit(self) -> None:
-        """Record a cache hit."""
-        self.hits += 1
+        """Record a cache hit. Thread-safe."""
+        with self._lock:
+            self.hits += 1
 
     def record_miss(self) -> None:
-        """Record a cache miss."""
-        self.misses += 1
+        """Record a cache miss. Thread-safe."""
+        with self._lock:
+            self.misses += 1
 
     def record_discard(self) -> None:
-        """Record a cache discard (stale entry)."""
-        self.discards += 1
+        """Record a cache discard (stale entry). Thread-safe."""
+        with self._lock:
+            self.discards += 1
 
     def record_eviction(self) -> None:
-        """Record a cache eviction (capacity limit)."""
-        self.evictions += 1
+        """Record a cache eviction (capacity limit). Thread-safe."""
+        with self._lock:
+            self.evictions += 1
 
     def record_set(self) -> None:
-        """Record a cache set operation."""
-        self.sets += 1
+        """Record a cache set operation. Thread-safe."""
+        with self._lock:
+            self.sets += 1
 
     def reset(self) -> None:
-        """Reset all counters to zero."""
-        self.hits = 0
-        self.misses = 0
-        self.discards = 0
-        self.evictions = 0
-        self.sets = 0
+        """Reset all counters to zero. Thread-safe."""
+        with self._lock:
+            self.hits = 0
+            self.misses = 0
+            self.discards = 0
+            self.evictions = 0
+            self.sets = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "hits": self.hits,
-            "misses": self.misses,
-            "discards": self.discards,
-            "evictions": self.evictions,
-            "sets": self.sets,
-            "hit_rate": self.hit_rate(),
-        }
+        """Convert to dictionary for JSON serialization. Thread-safe."""
+        with self._lock:
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "discards": self.discards,
+                "evictions": self.evictions,
+                "sets": self.sets,
+                "hit_rate": (
+                    self.hits / (self.hits + self.misses) if (self.hits + self.misses) > 0 else 0.0
+                ),
+            }
 
 
 # =============================================================================
@@ -566,6 +578,7 @@ class ResponseCache(CacheNode[Dict[str, Any]]):
     - core_fields_hash: Hash of current trip state
     - follow_up_hash: Hash of follow-up question context
     - user_text_hash: Hash of user input
+    - model_id: LLM model isolation (prevents cross-model cache hits)
     """
 
     _instance: Optional["ResponseCache"] = None
@@ -597,9 +610,10 @@ class ResponseCache(CacheNode[Dict[str, Any]]):
         core_fields_hash: str,
         follow_up_hash: str,
         user_text_hash: str,
+        model_id: str = "",
     ) -> str:
         """Compute key parts for response cache."""
-        return f"{node_name}|{core_fields_hash}|{follow_up_hash}|{user_text_hash}"
+        return f"{node_name}|{core_fields_hash}|{follow_up_hash}|{user_text_hash}|{model_id}"
 
     def _update_state_on_hit(self, state: "GraphState") -> None:
         super()._update_state_on_hit(state)
@@ -749,6 +763,57 @@ class TileCache(CacheNode[Dict[str, Any]]):
         return f"{session_id}|{tile_type}|{query_hash}"
 
 
+class GateEvaluationCache(CacheNode[Dict[str, Any]]):
+    """Cache for gate evaluation routing decisions.
+
+    Caches the result of GateEvaluator.evaluate() to avoid redundant
+    gate evaluation when the same state is encountered.
+
+    Key components:
+    - session_id: Session isolation
+    - user_text_hash: Input text isolation
+    - trip_inputs_hash: Trip state isolation (destinations, dates, etc.)
+    - metadata_hash: Metadata flags isolation (question_target, date_clarify_mode)
+
+    Expected cache hit scenarios:
+    - User repeats input (typo correction)
+    - Multiple identical suggestions sent
+    - Rapid refires within TTL window
+    """
+
+    _instance: Optional["GateEvaluationCache"] = None
+
+    def __init__(self, maxsize: int = 200, ttl: float = 300.0) -> None:
+        super().__init__(maxsize=maxsize, ttl=ttl)
+
+    @classmethod
+    def get_instance(cls) -> "GateEvaluationCache":
+        """Get singleton instance."""
+        if cls._instance is None:
+            cls._instance = cls(maxsize=200, ttl=300.0)
+        return cls._instance
+
+    def get_node_name(self) -> str:
+        return "gate_evaluation"
+
+    def get_payload_kind(self) -> str:
+        return "gate_evaluation"
+
+    def _compute_key_parts(
+        self,
+        session_id: str,
+        user_text_hash: str,
+        trip_inputs_hash: str,
+        metadata_hash: str,
+    ) -> str:
+        """Compute key parts for gate evaluation cache."""
+        return f"{session_id}|{user_text_hash}|{trip_inputs_hash}|{metadata_hash}"
+
+    def _update_state_on_hit(self, state: "GraphState") -> None:
+        super()._update_state_on_hit(state)
+        state.metadata["gate_cache_hit"] = True
+
+
 # =============================================================================
 # GLOBAL CACHE MANAGEMENT
 # =============================================================================
@@ -764,6 +829,8 @@ def clear_all_caches() -> None:
         StrategyCache._instance.clear()
     if TileCache._instance:
         TileCache._instance.clear()
+    if GateEvaluationCache._instance:
+        GateEvaluationCache._instance.clear()
 
 
 def reset_all_cache_stats() -> None:
@@ -776,6 +843,8 @@ def reset_all_cache_stats() -> None:
         StrategyCache._instance.reset_stats()
     if TileCache._instance:
         TileCache._instance.reset_stats()
+    if GateEvaluationCache._instance:
+        GateEvaluationCache._instance.reset_stats()
 
 
 def get_all_cache_stats() -> Dict[str, Dict[str, Any]]:
@@ -794,5 +863,7 @@ def get_all_cache_stats() -> Dict[str, Dict[str, Any]]:
         stats["strategy"] = StrategyCache._instance.get_stats()
     if TileCache._instance:
         stats["tile"] = TileCache._instance.get_stats()
+    if GateEvaluationCache._instance:
+        stats["gate_evaluation"] = GateEvaluationCache._instance.get_stats()
 
     return stats

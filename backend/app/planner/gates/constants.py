@@ -7,7 +7,7 @@ Defines constants used across gate evaluation, including:
 - Canonical field ordering for observability
 """
 
-from typing import List
+from typing import Dict, List
 
 # =============================================================================
 # CORE FIELD PRIORITY
@@ -68,9 +68,30 @@ DATE_BLOCKING_ERROR_CODES = frozenset(
 )
 
 
+# =============================================================================
+# SPECIALIST NODE MAPPING
+# =============================================================================
+# Maps specialist intent names to their corresponding node destinations.
+# Used by multiple gates to route to domain-specific handlers.
+SPECIALIST_NODE_MAP: Dict[str, str] = {
+    "flights": "flights_node",
+    "hotels": "hotels_node",
+    "activities": "activities_node",
+    "transport": "transport_node",
+}
+
+# Extended map including strategy (for keyword heuristic fallback)
+SPECIALIST_NODE_MAP_EXTENDED: Dict[str, str] = {
+    **SPECIALIST_NODE_MAP,
+    "strategy": "strategy_node",
+}
+
+
 __all__ = [
     "CORE_FIELD_PRIORITY",
     "CANONICAL_FIELD_ORDER",
     "DateErrorCode",
     "DATE_BLOCKING_ERROR_CODES",
+    "SPECIALIST_NODE_MAP",
+    "SPECIALIST_NODE_MAP_EXTENDED",
 ]

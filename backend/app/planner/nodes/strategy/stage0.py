@@ -1,8 +1,11 @@
 """
-Strategy Stage 0 - Pre-core value-first strategy response.
+Strategy Stage 0 Coordinator - Pre-core value-first strategy response.
 
 Provides immediate value (destination archetypes + mini itinerary) with
 a single clarifying question, before core fields are complete.
+
+This is the authoritative implementation for Stage 0 logic.
+The _strategy_stage0 function in strategy_main.py delegates to this module.
 """
 
 from __future__ import annotations
@@ -12,6 +15,33 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
+
+
+class Stage0Coordinator:
+    """
+    Coordinator for Stage 0: Pre-core field collection.
+
+    Handles the value-first approach where we provide destination
+    archetypes and helpful information before asking for missing
+    core fields (dates, origin, etc.).
+    """
+
+    @staticmethod
+    async def execute(state: "GraphState", topic: str) -> "GraphState":
+        """
+        Execute Stage 0 logic.
+
+        This is the main entry point for Stage 0 processing.
+        Delegates to strategy_stage0 for the actual implementation.
+
+        Args:
+            state: Current graph state
+            topic: Strategy topic (hiking, skiing, diving, etc.)
+
+        Returns:
+            Updated graph state
+        """
+        return await strategy_stage0(state, topic)
 
 
 # Deterministic fallback templates with value + single question

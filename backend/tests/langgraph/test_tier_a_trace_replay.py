@@ -212,7 +212,6 @@ class TestOwnershipSuppressionInvariant:
         strategy_gates = {
             GatePrecedence.STRATEGY_EXPANSION,
             GatePrecedence.STRATEGY_PRE_CORE_VALUE,
-            GatePrecedence.STRATEGY_PRE_CORE_VALUE_WITH_DEST,
             GatePrecedence.STRATEGY_TOPIC_SWITCH,
         }
 

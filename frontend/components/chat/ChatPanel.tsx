@@ -2,7 +2,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -244,6 +244,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
     const isUserScrolledUpRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const abortStreamRef = useRef<(() => void) | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
     // Show suggestions only when no user messages yet, not generating, not ready to generate, and not in planning mode (hasBranches)
@@ -316,6 +317,31 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
       });
     }, []);
+
+    // Stop streaming when user clicks the stop button
+    const handleStopStreaming = useCallback(() => {
+      if (abortStreamRef.current) {
+        abortStreamRef.current();
+        abortStreamRef.current = null;
+      }
+
+      // Mark message as interrupted
+      if (streamingMessageId) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === streamingMessageId
+              ? { ...msg, content: (msg.content || '') + '...[interrupted]' }
+              : msg
+          )
+        );
+      }
+
+      // Reset states
+      setStreamingMessageId(null);
+      setStrategyStatus(null);
+      setHasReceivedFirstToken(false);
+      setIsLoading(false);
+    }, [streamingMessageId]);
 
     // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
     useEffect(() => {
@@ -487,7 +513,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         // Create a promise that resolves when streaming completes
         await new Promise<void>((resolve) => {
-          const abortStream = streamGraphPlan(body, {
+          abortStreamRef.current = streamGraphPlan(body, {
             onToken: (token: string) => {
               // Mark that we've received the first token (hides typing/progress indicator)
               setHasReceivedFirstToken(true);
@@ -515,6 +541,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onComplete: (response) => {
               setStreamingMessageId(null);
               setStrategyStatus(null); // Clear strategy progress on completion
+              abortStreamRef.current = null; // Clear abort ref
 
               // Parse the response - it matches GraphPlanResponse structure
               const data = response as unknown as GraphPlanResponse;
@@ -576,6 +603,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onError: (error: Error) => {
               setStreamingMessageId(null);
               setStrategyStatus(null); // Clear strategy progress on error
+              abortStreamRef.current = null; // Clear abort ref
               console.error('Failed to plan trip', error);
 
               // Replace streaming message with specific error message
@@ -596,9 +624,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               resolve(); // Resolve instead of reject to prevent unhandled promise rejection
             },
           });
-
-          // Store abort function for potential cleanup (not currently used but available)
-          void abortStream;
         });
       },
       [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState]
@@ -826,18 +851,31 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             }}
             rows={1}
           />
-          <button
-            type="submit"
-            className={`absolute right-2 top-[6px] flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
-              input.trim() && !isLoading
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
-                : 'bg-muted/80 text-muted-foreground hover:bg-muted'
-            }`}
-            disabled={isLoading || !input.trim()}
-            title="Send message (Enter)"
-          >
-            <ArrowUp className={`h-5 w-5 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'send-arrow-shimmer' : ''}`} />
-          </button>
+          {isLoading && hasReceivedFirstToken ? (
+            // Stop streaming button - orange square
+            <button
+              type="button"
+              onClick={handleStopStreaming}
+              className="absolute right-2 top-[6px] flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all bg-orange-500 text-white hover:bg-orange-600 hover:scale-105 shadow-md"
+              title="Stop streaming"
+            >
+              <Square className="h-5 w-5 fill-current" />
+            </button>
+          ) : (
+            // Send button
+            <button
+              type="submit"
+              className={`absolute right-2 top-[6px] flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
+                input.trim() && !isLoading
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
+                  : 'bg-muted/80 text-muted-foreground hover:bg-muted'
+              }`}
+              disabled={isLoading || !input.trim()}
+              title="Send message (Enter)"
+            >
+              <ArrowUp className={`h-5 w-5 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'send-arrow-shimmer' : ''}`} />
+            </button>
+          )}
           </form>
 
           {/* Generate button - directly under input */}

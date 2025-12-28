@@ -3,10 +3,10 @@ Strategy Subpackage - Modular strategy node components.
 
 This package contains extracted components from the monolithic strategy_main.py:
 - base.py: Constants, feature flags, topic detection helpers
-- stage0.py: Pre-core value-first strategy response
+- stage0.py: Pre-core value-first strategy response (Stage0Coordinator)
 
 The main strategy_node function is in nodes/strategy_main.py and re-exported here
-for backward compatibility.
+for backward compatibility. Stage 1 and Stage 2 logic remains inline in strategy_main.py.
 """
 
 # Re-export the main strategy functions for backward compatibility
@@ -29,6 +29,7 @@ from app.planner.nodes.strategy.base import (
 )
 from app.planner.nodes.strategy.stage0 import (
     STAGE0_FALLBACK_TEMPLATES,
+    Stage0Coordinator,
     get_dest_known_fallback,
     strategy_stage0,
 )
@@ -59,7 +60,8 @@ __all__ = [
     "detect_topic_switch",
     "detect_strategy_switch",
     "get_question_guidance",
-    # Stage 0 (modular version)
+    # Stage 0 coordinator
+    "Stage0Coordinator",
     "strategy_stage0",
     "get_dest_known_fallback",
 ]

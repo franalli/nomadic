@@ -9,7 +9,26 @@ Extracted from plan_graph.py as part of the P6 module extraction initiative.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, List
+
+# P2: Module-level imports for non-circular dependencies
+from app.config import settings
+from app.debug_utils import _debug, _debug_error
+from app.graph_plan_utils import jloads_safe
+from app.planner.nodes.llm_utils import measure_llm_call
+from app.planner.nodes.specialist.groundedness import check_groundedness_guardrail
+from app.planner.nodes.specialist.guards import (
+    apply_noop_gate_response,
+    check_core_field_guard,
+    check_default_adults_gate,
+    check_domain_keyword_for_default_adults,
+    check_noop_gate,
+)
+from app.planner.nodes.specialist.response_processor import (
+    cache_required_fields_response,
+    process_llm_response,
+)
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
@@ -50,10 +69,11 @@ def _select_required_fields_prompt(state: "GraphState") -> str:
 
 async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List[str]) -> bool:
     """
-    Invoke the lightweight missing_fields_guard prompt to generate a question.
+    Invoke the missing_fields_guard to generate a question for missing core fields.
 
     This is called when a domain specialist is entered but core fields are missing.
-    Uses a small model for minimal latency.
+    By default uses deterministic templates (saves ~200-250 tokens per call).
+    Set settings.guard_use_templates=False to use LLM for more varied phrasing.
 
     Args:
         state: Current graph state (will be mutated with response)
@@ -62,12 +82,7 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
     Returns:
         True if guard was successful and state was updated, False on error
     """
-    # Late imports to avoid circular dependencies
-    import json
-
-    from app.config import settings
-    from app.debug_utils import _debug, _debug_error
-    from app.graph_plan_utils import jloads_safe
+    # Late imports for plan_graph functions (circular dependency)
     from app.plan_graph import (
         ToneAdapter,
         _count_tokens,
@@ -82,8 +97,92 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
         store_suggestions_with_field,
         ti_short,
     )
-    from app.planner.nodes.llm_utils import measure_llm_call
 
+    # =========================================================================
+    # TEMPLATE PATH (Default): Deterministic response without LLM
+    # =========================================================================
+    # Saves ~200-250 tokens per guard call with minimal UX impact.
+    # The questions and suggestions are the same as what the LLM would generate.
+    if settings.guard_use_templates:
+        # Check if we're in date_clarify_mode - if so, force dates question
+        in_date_clarify_mode = state.metadata.get("date_clarify_mode", False)
+        has_blocking_errors = bool(state.metadata.get("date_blocking_errors"))
+
+        # Determine question target based on priority and constraints
+        if in_date_clarify_mode or has_blocking_errors:
+            # Force dates when in date_clarify_mode
+            question_target = "dates"
+        elif "dates" in missing_fields or "start_date" in missing_fields:
+            question_target = "dates"
+        elif "destinations" in missing_fields:
+            question_target = "destinations"
+        elif "origin" in missing_fields:
+            question_target = "origin"
+        else:
+            question_target = missing_fields[0] if missing_fields else "dates"
+
+        # Template questions and suggestions (same as LLM would generate)
+        template_responses = {
+            "destinations": {
+                "question": "Where are you dreaming of going?",
+                "suggestions": ["Bali, Indonesia", "Paris, France", "Tokyo, Japan"],
+            },
+            "origin": {
+                "question": "Where will you be flying from?",
+                "suggestions": ["New York", "London", "Los Angeles"],
+            },
+            "dates": {
+                "question": "When are you looking to travel?",
+                "suggestions": ["Next month", "December 20-27", "First week of January"],
+            },
+            "adults": {
+                "question": "How many travelers will be joining?",
+                "suggestions": ["Just me", "2 adults", "Family of 4"],
+            },
+            "budget": {
+                "question": "What's your approximate budget for this trip?",
+                "suggestions": ["$2,000", "$5,000", "Flexible budget"],
+            },
+        }
+
+        response = template_responses.get(
+            question_target,
+            {"question": "Could you tell me more about your trip?", "suggestions": []},
+        )
+
+        state.last_summary = response["question"]
+        state.suggested_responses = response["suggestions"][:3]
+        set_question_target(state, question_target, source="missing_fields_guard:template")
+
+        # Map question_target to last_question_field for short-circuit context
+        target_to_field = {
+            "destinations": "destinations",
+            "origin": "origin",
+            "dates": "start_date",
+            "start_date": "start_date",
+        }
+        state.metadata["last_question_field"] = target_to_field.get(
+            question_target, question_target
+        )
+
+        # Store suggestions with field for LQA matching
+        store_suggestions_with_field(state, state.suggested_responses, question_target)
+
+        # Track that response was produced this turn (no-stale-summary invariant)
+        state.metadata["last_response_turn"] = state.turn_number
+        state.metadata["guard_template_path"] = True
+
+        _debug(
+            "missing_fields_guard: using template path",
+            question_target=question_target,
+            question=response["question"],
+            tokens_saved="~200-250",
+        )
+        return True
+
+    # =========================================================================
+    # LLM PATH: Use LLM for varied phrasing (when guard_use_templates=False)
+    # =========================================================================
     llm_config = _get_node_llm_config("missing_fields_guard")
 
     # Generate tone instruction using ToneAdapter (replaces _adapt_tone.txt include)
@@ -217,7 +316,7 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
 
 
 async def _specialist(
-    name: str, state: "GraphState", retry_on_json_error: bool = True
+    name: str, state: "GraphState", retry_on_json_error: bool = False
 ) -> "GraphState":
     """
     Shared handler for specialist nodes with JSON retry logic.
@@ -225,25 +324,18 @@ async def _specialist(
     Args:
         name: Prompt name to load (also used to look up per-node LLM config).
         state: Current graph state.
-        retry_on_json_error: If True, attempt one repair retry on JSON parse failure.
+        retry_on_json_error: If True, attempt repair retries on JSON parse failure.
+            Default False to save tokens - relies on deterministic fallbacks instead.
     """
-    # Late imports to avoid circular dependencies
-    import json
-    from typing import Any, Dict, Optional
+    # Type imports (used for local type hints only)
+    from typing import Optional
 
-    from app.config import settings
-    from app.debug_utils import _debug, _debug_error, _debug_suggestions
-    from app.graph_plan_utils import jloads_safe
+    # Late imports for plan_graph functions (circular dependency)
     from app.plan_graph import (
-        FALLBACK_SUGGESTIONS,
         INVALID_JSON_HINT,
-        QUESTION_TARGET_VALUES,
-        TRIP_VALIDATOR,
         StateViewBuilder,
         ToneAdapter,
-        _apply_llm_delta,
         _compute_cache_key,
-        _count_tokens,
         _debug_cache_hit,
         _debug_node_entry,
         _debug_node_exit,
@@ -254,14 +346,8 @@ async def _specialist(
         _get_core_fields_state,
         _get_missing_fields_summary,
         _get_node_llm_config,
-        _get_suggestions_with_fallback,
-        _get_template_response,
-        _increment_state_counter,
-        _maybe_append_safety_snippet,
-        _normalize_branch_spec,
         _record_llm_failure,
         _record_node_tokens,
-        _set_cached_response,
         _today_iso,
         call_llm_with_timeout,
         can_call_llm,
@@ -269,26 +355,16 @@ async def _specialist(
         llm_blocked_fallback,
         load_prompt,
         load_specialist_prompt,
-        set_question_target,
-        store_suggestions_with_field,
         ti_short,
-        track_question_asked,
-    )
-    from app.planner.gates.constants import CORE_FIELD_PRIORITY
-    from app.planner.gates.readiness import compute_trip_readiness
-    from app.planner.nodes.llm_utils import measure_llm_call
-    from app.planner.nodes.specialist.guards import (
-        apply_noop_gate_response,
-        check_core_field_guard,
-        check_default_adults_gate,
-        check_domain_keyword_for_default_adults,
-        check_noop_gate,
     )
     from app.planner.nodes.specialist.templates import (
+        apply_confirmation_template,
+        apply_pre_core_template_response,
         apply_template_response,
         check_requires_llm,
         determine_question_target,
         handle_loop_guard,
+        select_confirmation_template,
     )
 
     _, start_ns = _debug_node_entry(f"specialist:{name}", state)
@@ -315,79 +391,14 @@ async def _specialist(
             # =====================================================================
             # PRE-CORE MODE (MVP): Deterministic response - bypass LLM entirely
             # =====================================================================
-            # Instead of invoking LLM, generate a template-based response that:
-            # 1. Acknowledges the user's intent/topic
-            # 2. Asks for the next missing core field deterministically
-            # 3. Provides template suggestions
+            # P3: Extracted to templates.apply_pre_core_template_response
             _debug(
                 f"PRE-CORE MODE (DETERMINISTIC): {name} bypassing LLM",
                 specialist=name,
                 missing=missing_core,
                 tokens_saved="~1000-2000 (specialist LLM call avoided)",
             )
-            state.metadata["specialist_pre_core_active"] = True
-            state.metadata["specialist_pre_core_deterministic"] = True
-
-            # Determine next missing field using priority order
-            question_target = None
-            for field in CORE_FIELD_PRIORITY:
-                # Normalize field names for comparison
-                check_field = field
-                if field == "start_date":
-                    check_field = "start_date"
-                if check_field in missing_core or field in missing_core:
-                    question_target = "dates" if field == "start_date" else field
-                    break
-
-            if not question_target and missing_core:
-                question_target = (
-                    "destinations" if "destinations" in missing_core else missing_core[0]
-                )
-
-            # Build acknowledgment based on specialist type and user text
-            topic_acknowledgments = {
-                "hotels": "hotels and accommodation",
-                "flights": "flights",
-                "activities": "activities and things to do",
-                "transport": "transportation",
-                "strategy": state.strategy_topic or "trip planning",
-            }
-            topic_name = topic_acknowledgments.get(name, name)
-
-            # Get template question and suggestions
-            template_response = _get_template_response(question_target, state.strategy_topic)
-            if template_response:
-                question = template_response["question"]
-                suggestions = template_response["suggestions"][:3]
-            else:
-                # Fallback question
-                question = (
-                    "Where would you like to go?"
-                    if question_target == "destinations"
-                    else f"Could you tell me your {question_target}?"
-                )
-                suggestions = FALLBACK_SUGGESTIONS.copy()
-
-            # Build warm acknowledgment + question
-            state.last_summary = f"I'd love to help you find great {topic_name}! {question}"
-            state.suggested_responses = suggestions
-            set_question_target(state, question_target, source=f"specialist:{name}:pre_core")
-            state.metadata["last_question_field"] = question_target
-            state.metadata["from_template"] = True
-            state.metadata["pre_core_deterministic_path"] = f"{name}:{question_target}"
-
-            # Track question for loop guard
-            track_question_asked(state, question_target, state.last_summary)
-
-            # Set provenance for final response tracking (pre-core deterministic)
-            state.metadata["response_writer_node"] = f"specialist:{name}:pre_core"
-            state.metadata["response_generation_provenance"] = "template"
-
-            _debug(
-                f"PRE-CORE DETERMINISTIC: {name} -> {question_target}",
-                question=state.last_summary[:80],
-                suggestions=suggestions,
-            )
+            apply_pre_core_template_response(state, name, missing_core)
             _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state
         else:
@@ -471,6 +482,19 @@ async def _specialist(
 
         # Check if LLM is required (typos, ambiguity, multi-city)
         requires_llm, llm_reason = check_requires_llm(state, question_target)
+
+        # =====================================================================
+        # P4.2: CONFIRMATION TEMPLATES (before regular template path)
+        # =====================================================================
+        # Check if we can use deterministic confirmation templates instead of LLM.
+        # This handles: multiple_destinations, typo_detected, low_confidence cases.
+        if requires_llm and question_target:
+            confirmation = select_confirmation_template(state, question_target)
+            if confirmation:
+                if apply_confirmation_template(state, confirmation):
+                    _debug_node_exit(f"specialist:{name}", state, start_ns)
+                    return state
+                # If application failed, fall through to regular path
 
         if not requires_llm and question_target:
             # Handle loop guard (prevents repeated questions)
@@ -619,87 +643,8 @@ async def _specialist(
     # =========================================================================
     # GROUNDEDNESS GUARDRAIL: Track when we suppress invented details
     # =========================================================================
-    # Increment invented_detail_block_count ONLY when ALL conditions are true:
-    # 1. Intent is grounding-required: hotels|flights|activities
-    # 2. User asked for concrete options OR specialist in "recommendation mode"
-    # 3. available_options_context is empty or invalid
-    # 4. Specialist output policy explicitly suppresses naming/pricing
-    groundedness_warning = ""
-    tile_based_specialists = {"hotels", "flights", "activities"}
-
-    if name in tile_based_specialists:
-        options_empty = not available_options.strip()
-        options_invalid = available_options.strip() and "error" in available_options.lower()
-
-        # Check if user asked for options or specialist is in recommendation mode
-        user_text_lower = (state.user_text or "").lower()
-        user_asked_for_options = any(
-            phrase in user_text_lower
-            for phrase in [
-                "recommend",
-                "suggest",
-                "options",
-                "choices",
-                "what about",
-                "show me",
-                "find me",
-                "any good",
-                "best",
-                "where to stay",
-                "which hotel",
-                "which flight",
-                "which activit",
-            ]
-        )
-        pre_core_mode = state.metadata.get("pre_core_mode") if state.metadata else False
-
-        # In pre_core_mode, the specialist focuses on collecting missing fields,
-        # NOT on providing recommendations. So we should NOT trigger groundedness
-        # warnings in pre_core_mode - the specialist will ask for destinations/dates first.
-        recommendation_mode = user_asked_for_options and not pre_core_mode
-
-        if (options_empty or options_invalid) and recommendation_mode:
-            # Determine reason for blocking
-            if options_empty:
-                block_reason = "no_tiles"
-            elif options_invalid:
-                block_reason = "tiles_invalid"
-            else:
-                block_reason = "tiles_stale"
-
-            groundedness_warning = (
-                "\n\nGROUNDEDNESS CONSTRAINT\n"
-                "No verified options are currently available for this category.\n"
-                "DO NOT invent or fabricate specific names, prices, or details.\n"
-                "Instead, acknowledge the request and explain that specific options "
-                "are being searched for or will be available shortly.\n"
-            )
-
-            # Track with proper tags for observability
-            _increment_state_counter("invented_detail_block_count")
-            _debug(
-                "[GROUNDEDNESS] Blocking potential invention due to missing tiles",
-                intent=name,
-                node=f"specialist:{name}",
-                pre_core_mode=pre_core_mode,
-                reason=block_reason,
-                user_asked_for_options=user_asked_for_options,
-            )
-
-            # Store tags in metadata for downstream analysis
-            if state.metadata is None:
-                state.metadata = {}
-            groundedness_blocks = state.metadata.get("groundedness_blocks", [])
-            groundedness_blocks.append(
-                {
-                    "intent": name,
-                    "node": f"specialist:{name}",
-                    "pre_core_mode": pre_core_mode,
-                    "reason": block_reason,
-                    "turn": state.turn_number,
-                }
-            )
-            state.metadata["groundedness_blocks"] = groundedness_blocks
+    # P3: Extracted to groundedness.check_groundedness_guardrail
+    groundedness_warning = check_groundedness_guardrail(state, name, available_options)
 
     # Format questions_already_asked for loop prevention in required_fields specialist
     questions_already_asked = "None yet"
@@ -770,225 +715,15 @@ async def _specialist(
                 ),
             )
 
-            # Capture assistant_message early - even if field processing fails, we want this
-            assistant_msg = j.get("assistant_message", "")
-            if assistant_msg:
-                state.last_summary = assistant_msg
-
-            # Apply trip_inputs delta using centralized helper
-            delta = j.get("trip_inputs", {}) or {}
-
-            # Handle strategy_hint separately - it belongs in parsed_inputs, not trip_inputs
-            # (LLM may return it in trip_inputs when confirming strategy intent)
-            if "strategy_hint" in delta:
-                strategy_hint = delta.pop("strategy_hint")
-                if strategy_hint and isinstance(strategy_hint, str):
-                    state.parsed_inputs["strategy_hint"] = strategy_hint
-                    _debug(f"Captured strategy_hint from LLM: {strategy_hint}")
-
-            # Domain specialists (flights, hotels, activities, transport) should not overwrite
-            # core fields extracted by the extractor. Only required_fields and correction can
-            # modify these fields (required_fields for collection, correction for fixing
-            # infeasibility).
-            _CORE_FIELDS = {
-                "destinations",
-                "origin",
-                "start_date",
-                "end_date",
-                "adults",
-                "children",
-                "budget",
-                "currency",
-            }
-
-            # Correction node can only modify core fields + specific correction-relevant fields
-            # This prevents over-broad changes from correction requests
-            _CORRECTION_ALLOWED_FIELDS = {
-                "destinations",
-                "origin",
-                "start_date",
-                "end_date",
-                "adults",
-                "children",
-                "budget",
-                "currency",
-                # Allow removal of specific settings if user explicitly rejects
-                "flight_settings",
-                "hotel_settings",
-                "transport_settings",
-                "activity_settings",
-            }
-
-            # Fields that correction should NEVER modify (to prevent scope creep)
-            _CORRECTION_SKIP_FIELDS = {
-                "strategy_settings",  # Strategy is complex, shouldn't be corrected inline
-                "booking_types",  # Auto-managed, not user-correctable
-            }
-
-            # required_fields can modify all fields; correction has restricted scope
-            if name == "required_fields":
-                skip_fields = None  # Allow all field modifications
-            elif name == "correction":
-                skip_fields = _CORRECTION_SKIP_FIELDS  # Block specific fields
-                _debug(
-                    "Correction node field permissions",
-                    allowed="core + settings",
-                    blocked=list(_CORRECTION_SKIP_FIELDS),
-                )
-            else:
-                skip_fields = _CORE_FIELDS  # Domain specialists: block core fields
-            _apply_llm_delta(state, f"specialist:{name}", delta, skip_fields=skip_fields)
-
-            # Validate the updated trip_inputs
-            TRIP_VALIDATOR.validate(state.trip_inputs.model_dump())
-            llm_message = j.get("assistant_message", "")
-
-            # Check if there's a failed input message to prepend
-            failed_msg = state.metadata.get("failed_input_message")
-            if failed_msg:
-                state.last_summary = f"{failed_msg}\n\n{llm_message}"
-                # Clear the message so it's not repeated on next turn
-                state.metadata.pop("failed_input_message", None)
-                _debug("Prepended failed_input_message to LLM response")
-            else:
-                state.last_summary = llm_message
-
-            # Early safety snippet injection for international travel
-            # This triggers as soon as we have destination+origin, not just at summarize
-            if state.last_summary and state.trip_inputs.destinations:
-                state.last_summary = _maybe_append_safety_snippet(state)
-
-            # Parse question_target from LLM response for suggestion relevance
-            raw_question_target = j.get("question_target")
-            if raw_question_target and isinstance(raw_question_target, str):
-                normalized_target = raw_question_target.lower().strip()
-                if normalized_target in QUESTION_TARGET_VALUES:
-                    # =========================================================================
-                    # VALIDATION: Prevent LLM from asking about already-set fields
-                    # =========================================================================
-                    # The LLM may hallucinate and ask about a field that's already set.
-                    # This fix validates the question_target against trip_inputs and overrides
-                    # if the field is already populated. When this happens, we also replace
-                    # the response with a template to avoid showing the wrong question.
-                    # =========================================================================
-                    ti = state.trip_inputs
-
-                    # Map question_target to field check - covers ALL core field targets
-                    # Note: "activities" and "general" are domain targets, not core fields,
-                    # so they don't need the "already set" check
-                    _QUESTION_TARGET_FIELD_CHECK = {
-                        "dates": lambda t: bool(t.start_date),
-                        "start_date": lambda t: bool(t.start_date),  # alias
-                        "end_date": lambda t: bool(t.end_date),
-                        "destinations": lambda t: bool(t.destinations),
-                        "origin": lambda t: bool(t.origin),
-                        "travelers": lambda t: t.adults is not None,
-                        "adults": lambda t: t.adults is not None,  # alias
-                        "budget": lambda t: t.budget is not None,
-                        "currency": lambda t: bool(t.currency),
-                    }
-
-                    field_check = _QUESTION_TARGET_FIELD_CHECK.get(normalized_target)
-                    field_is_set = field_check(ti) if field_check else False
-
-                    if field_is_set:
-                        # LLM asked about a field that's already set - override to next missing
-                        readiness = compute_trip_readiness(ti, metadata=state.metadata)
-                        corrected_target = readiness.question_target
-                        _debug(
-                            "LLM_QUESTION_TARGET_OVERRIDE: LLM asked about already-set field",
-                            llm_target=normalized_target,
-                            corrected_target=corrected_target,
-                            start_date=ti.start_date,
-                            origin=ti.origin,
-                            destinations=ti.destinations,
-                        )
-                        normalized_target = corrected_target
-
-                        # Also replace the response with a template for the corrected target
-                        # to avoid showing the user a question about an already-set field
-                        if corrected_target:
-                            template_response = _get_template_response(
-                                corrected_target, state.strategy_topic
-                            )
-                            if template_response:
-                                state.last_summary = template_response["question"]
-                                state.suggested_responses = template_response["suggestions"]
-                                store_suggestions_with_field(
-                                    state, template_response["suggestions"], corrected_target
-                                )
-                                _debug(
-                                    "LLM_RESPONSE_REPLACED: Using template for corrected target",
-                                    corrected_target=corrected_target,
-                                    question=template_response["question"][:50],
-                                )
-
-                    if normalized_target:
-                        set_question_target(
-                            state, normalized_target, source=f"specialist:{name}:llm_response"
-                        )
-                        # Track this question for loop guard
-                        track_question_asked(state, normalized_target, state.last_summary)
-                    else:
-                        set_question_target(state, None, source=f"specialist:{name}:llm_all_set")
-                elif normalized_target == "null" or normalized_target == "none":
-                    set_question_target(state, None, source=f"specialist:{name}:llm_null")
-                else:
-                    _debug(f"Unknown question_target from LLM: {raw_question_target}")
-                    set_question_target(state, None, source=f"specialist:{name}:llm_unknown")
-            else:
-                set_question_target(state, None, source=f"specialist:{name}:no_target")
-
-            # Filter suggested responses with contextual fallback
-            raw_suggestions = j.get("suggested_responses", []) or []
-            _debug(f"Raw LLM suggested_responses: {raw_suggestions}")
-            state.suggested_responses = _get_suggestions_with_fallback(
-                raw_suggestions, state, state.question_target
-            )
-            _debug_suggestions(state.suggested_responses, source=f"specialist:{name}")
-
-            # Only set ready_to_generate if explicitly triggered
-            state.ready_to_generate = bool(j.get("ready_to_generate", False)) and state.flags.get(
-                "generate_requested", False
-            )
-
-            # Only emit branches if generate was explicitly requested
-            if state.flags.get("generate_requested", False):
-                raw_branches = j.get("branches", []) or []
-                fallback = ti.model_dump(exclude_none=True)
-                normalized_branches: List[Dict[str, Any]] = []
-                for b in raw_branches:
-                    normalized = _normalize_branch_spec(b, fallback)
-                    if normalized:
-                        normalized_branches.append(normalized)
-                state.branches = normalized_branches
-
-            state.metadata["model_used"] = llm_config["model_hint"]
-            state.metadata["token_estimate"] = _count_tokens(out)
-
-            # Set provenance for final response tracking (LLM path)
-            state.metadata["response_writer_node"] = f"specialist:{name}"
-            state.metadata["response_generation_provenance"] = "llm"
+            # =====================================================================
+            # P3: Process LLM response using extracted module
+            # =====================================================================
+            process_llm_response(state, j, name, llm_config)
 
             # Cache the response for required_fields node
             if name == "required_fields" and cache_key is not None:
-                _set_cached_response(
-                    _follow_up_cache,
-                    cache_key,
-                    {
-                        "assistant_message": state.last_summary,
-                        "question_target": state.question_target,
-                        "suggested_responses": state.suggested_responses,
-                    },
-                )
-                # Record path trace for required_fields
-                state.metadata["required_fields_path"] = "llm"
+                cache_required_fields_response(state, cache_key)
 
-            _debug(
-                f"Specialist {name} completed",
-                ready=state.ready_to_generate,
-                branches=len(state.branches),
-            )
             _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state
 

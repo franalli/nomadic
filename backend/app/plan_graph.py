@@ -16,7 +16,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 import grapheme
 from cachetools import TTLCache
@@ -122,7 +121,8 @@ from app.planner.gates.constants import (
     CORE_FIELD_PRIORITY,
     DATE_BLOCKING_ERROR_CODES,
 )
-from app.planner.gates.evaluator import GateEvaluator
+from app.planner.gates.evaluator_v2 import GateEvaluator
+from app.planner.gates.intent_detection import check_question_keyword_combo
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.readiness import compute_trip_readiness
 from app.planner.gates.result import GateResult
@@ -149,6 +149,12 @@ from app.planner.meta_keys import (
     TRIPWIRE_TRIGGERED,
     TURN_CANARY,
     VISITED_NODES,
+)
+from app.planner.node_utils import (  # P2: Simple utilities for node files
+    ti_short as _ti_short_impl,
+)
+from app.planner.node_utils import (
+    today_iso as _today_iso_impl,
 )
 from app.planner.nodes import (  # PR6: Extracted node functions
     _specialist,
@@ -1159,9 +1165,7 @@ _gate_stats = {
     "fast_path_fired": 0,  # FAST_PATH gate
     "strategy_pre_core_value_fired": 0,  # STRATEGY_PRE_CORE_VALUE gate (value-first strategy)
     "core_collection_fired": 0,  # CORE_COLLECTION gate
-    "high_confidence_fired": 0,  # HIGH_CONFIDENCE gate
-    "keyword_heuristic_fired": 0,  # KEYWORD_HEURISTIC gate
-    "question_keyword_fired": 0,  # Phase 6: Question-word + keyword combo gate
+    "question_keyword_fired": 0,  # QUESTION_KEYWORD gate (question-word + keyword combo)
     "scoring_router_fired": 0,  # Phase 3: Scoring-based deterministic router
     "router_llm_fired": 0,  # ROUTER_LLM fallback
     "total_gate_evaluations": 0,  # Total routing decisions
@@ -1647,7 +1651,7 @@ def _try_deterministic_router(
     # =========================================================================
     # SIGNAL 5: Question pattern with domain keyword (core positive signal)
     # =========================================================================
-    question_keyword_result = GateEvaluator._check_question_keyword_combo(text_lower)
+    question_keyword_result = check_question_keyword_combo(text_lower)
     if question_keyword_result:
         score += _INTENT_SIGNAL_WEIGHTS["question_pattern"]
         intent_name, _ = question_keyword_result
@@ -1747,7 +1751,7 @@ NODE_LOGIC_VERSION = {
     "router": 1,  # Bump when router logic changes
     "extractor": 1,  # Bump when extractor logic/schema changes
     "strategy": 1,  # Bump when strategy logic changes
-    "tile": 1,  # Bump when tile logic changes
+    "tile": 2,  # v2: Cache key includes end_date, adults, children; budget filtered client-side
 }
 
 
@@ -1757,8 +1761,34 @@ def _compute_prompt_bundle_hash() -> str:
     Compute stable hash of prompt templates for cache invalidation.
 
     Hash normalized raw prompt sources (not rendered) for stability.
+    All prompts that affect LLM responses must be included here.
     """
-    prompt_files = ["required_fields.txt", "router.txt"]
+    # All prompts that affect cached LLM responses
+    prompt_files = [
+        # Core extraction and routing
+        "extractor.txt",
+        "extractor_light.txt",
+        "router.txt",
+        "required_fields.txt",
+        # Specialist nodes
+        "flights.txt",
+        "hotels.txt",
+        "transport.txt",
+        "activities.txt",
+        "correction.txt",
+        "general.txt",
+        # Strategy nodes
+        "strategy_pre_core.txt",
+        "strategy_hiking.txt",
+        "strategy_diving.txt",
+        "strategy_skiing.txt",
+        "strategy_cycling.txt",
+        "strategy_boating.txt",
+        # Post-processing
+        "response_polish.txt",
+        # Template-based responses (no LLM but affects user experience)
+        "required_fields_templates.json",
+    ]
     prompt_dir = Path(__file__).parent / "prompts"
     content_parts = []
     for pf in sorted(prompt_files):
@@ -2306,7 +2336,8 @@ def _validate_cache_payload(
         (is_valid, discard_reason) - reason is None if valid
     """
     thread_id = state.metadata.get("thread_id", state.session_id or "")
-    user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+    normalized_text = _normalize_user_text_for_cache(state.user_text or "")
+    user_text_hash = hashlib.md5(normalized_text.encode()).hexdigest()[:16]
 
     # =========================================================================
     # V6 VERSION CHECKS (fail fast on deploy/prompt changes)
@@ -2425,7 +2456,8 @@ def get_cached_response_v6(
     """
     cache = _get_node_cache(node_name)
     thread_id = state.metadata.get("thread_id", state.session_id or "")
-    user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+    normalized_text = _normalize_user_text_for_cache(state.user_text or "")
+    user_text_hash = hashlib.md5(normalized_text.encode()).hexdigest()[:16]
     core_hash = _get_core_fields_state(state.trip_inputs)
     model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
     intent = state.intent
@@ -2514,7 +2546,8 @@ def set_cached_response_v6(
     """
     cache = _get_node_cache(node_name)
     thread_id = state.metadata.get("thread_id", state.session_id or "")
-    user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+    normalized_text = _normalize_user_text_for_cache(state.user_text or "")
+    user_text_hash = hashlib.md5(normalized_text.encode()).hexdigest()[:16]
     core_hash = _get_core_fields_state(state.trip_inputs)
     model_id = settings.llm_model if hasattr(settings, "llm_model") else "gpt-4o-mini"
     intent = state.intent
@@ -2657,7 +2690,8 @@ def _compute_extractor_cache_key_v6(
     - model_id: Model isolation
     - CACHE_SCHEMA_VERSION, NODE_LOGIC_VERSION, PROMPT_BUNDLE_HASH, PLANNER_BUILD_ID
     """
-    text_hash = hashlib.md5(user_text.encode()).hexdigest()[:16]
+    normalized_text = _normalize_user_text_for_cache(user_text)
+    text_hash = hashlib.md5(normalized_text.encode()).hexdigest()[:16]
     node_version = NODE_LOGIC_VERSION.get("extractor", 0)
     key_parts = (
         f"extractor_v6|{session_id}|{text_hash}|{core_fields_hash}|{extractor_mode}|"
@@ -3156,6 +3190,7 @@ def clear_response_caches() -> int:
     """
     from app.planner.cache.framework import (
         ExtractorCache,
+        GateEvaluationCache,
         ResponseCache,
         StrategyCache,
         TileCache,
@@ -3167,6 +3202,7 @@ def clear_response_caches() -> int:
     extractor_count = 0
     strategy_count = 0
     tile_count = 0
+    gate_evaluation_count = 0
 
     if ResponseCache._instance:
         response_count = len(ResponseCache._instance._cache)
@@ -3183,6 +3219,10 @@ def clear_response_caches() -> int:
     if TileCache._instance:
         tile_count = len(TileCache._instance._cache)
         TileCache._instance.clear()
+
+    if GateEvaluationCache._instance:
+        gate_evaluation_count = len(GateEvaluationCache._instance._cache)
+        GateEvaluationCache._instance.clear()
 
     # Clear node-scoped caches (still using direct TTLCache)
     required_fields_count = len(_required_fields_cache)
@@ -3203,13 +3243,14 @@ def clear_response_caches() -> int:
         + extractor_count
         + strategy_count
         + tile_count
+        + gate_evaluation_count
         + required_fields_count
         + router_count
     )
     message_prefix = "Cleared response caches: "
     message_counts = (
         f"{total} entries (response: {response_count}, extractor: {extractor_count}, "
-        f"strategy: {strategy_count}, tile: {tile_count}, "
+        f"strategy: {strategy_count}, tile: {tile_count}, gate_eval: {gate_evaluation_count}, "
         f"required_fields: {required_fields_count}, router: {router_count})"
     )
     _debug(message_prefix + message_counts)
@@ -5148,7 +5189,7 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "extractor_light": {
         "model_hint": "small",
         "temperature": 0.1,  # Very deterministic for extraction
-        "max_tokens": 128,  # Minimal output for core fields only
+        "max_tokens": 80,  # Reduced from 128; typical output 50-80 tokens
         "top_p": None,
     },
     "router": {
@@ -5160,7 +5201,7 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "required_fields": {
         "model_hint": "small",
         "temperature": 0.3,  # Slightly creative for warm phrasing
-        "max_tokens": 256,  # Phase 5: Reduced from 512; fallback never uses full 512
+        "max_tokens": 180,  # Reduced from 256; typical output 100-150 tokens
         "top_p": None,
     },
     "flights": {
@@ -5196,7 +5237,7 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "strategy": {
         "model_hint": "medium",
         "temperature": 0.3,  # Slightly creative for topic advice
-        "max_tokens": 2048,  # Deep planning needs more space (used for stage 2)
+        "max_tokens": 1536,  # Deep planning (reduced from 2048, aligned with FULL tier)
         "top_p": None,
     },
     "strategy_stage1": {
@@ -5208,7 +5249,7 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "strategy_stage2": {
         "model_hint": "medium",
         "temperature": 0.3,  # Slightly creative for topic advice
-        "max_tokens": 2048,  # Stage 2: full detailed itinerary
+        "max_tokens": 1536,  # Stage 2: full detailed itinerary (reduced from 2048)
         "top_p": None,
     },
     "response_polish": {
@@ -6090,6 +6131,17 @@ def _run_deterministic_pipeline(
     result = _try_suggestion_echo(text, state)
     if result:
         return result
+
+    # 1.5 P2.3: Compound travelers+date parsing
+    # Catches patterns like "2 adults for next month" in one pass
+    from app.planner.parsing import _parse_compound_travelers_date
+
+    compound_result = _parse_compound_travelers_date(text, state)
+    if compound_result:
+        _deterministic_parse_stats["compound_parse_hits"] = (
+            _deterministic_parse_stats.get("compound_parse_hits", 0) + 1
+        )
+        return compound_result
 
     # 2. Date/season parser (if question_target is dates or if date-like)
     if question_target in ("dates", "start_date", "end_date") or _is_date_like_text(text):
@@ -7471,21 +7523,8 @@ def _serialize_branches_for_llm(
 
 
 def _today_iso(timezone_name: Optional[str] = None) -> str:
-    """
-    Get today's date in ISO format (YYYY-MM-DD).
-
-    Uses the provided timezone if valid, otherwise falls back to UTC.
-    """
-    tz = None
-    if timezone_name:
-        try:
-            tz = ZoneInfo(timezone_name)
-        except Exception:
-            pass  # Invalid timezone, fall back to UTC
-
-    if tz:
-        return datetime.now(tz).strftime("%Y-%m-%d")
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    """Backward-compatible wrapper - delegates to node_utils.today_iso."""
+    return _today_iso_impl(timezone_name)
 
 
 # =============================================================================
@@ -10506,11 +10545,9 @@ def load_specialist_prompt(
     # Determine if we can strip includes
     metadata = state.metadata or {}
 
-    # Gate verified = routing was done by KEYWORD_HEURISTIC or QUESTION_KEYWORD gate
+    # Gate verified = routing was done by QUESTION_KEYWORD gate
     gate_verified = metadata.get("router_bypassed", False) and metadata.get("first_gate_fired") in (
-        "KEYWORD_HEURISTIC",
         "QUESTION_KEYWORD",
-        GatePrecedence.KEYWORD_HEURISTIC.name,
         GatePrecedence.QUESTION_KEYWORD.name,
     )
 
@@ -11131,7 +11168,8 @@ async def fast_stream_buffered(text: str):
 
 
 def ti_short(ti: TripInputs) -> Dict[str, Any]:
-    return ti.model_dump(exclude_none=True)
+    """Backward-compatible wrapper - delegates to node_utils.ti_short."""
+    return _ti_short_impl(ti)
 
 
 # =============================================================================
@@ -12816,6 +12854,60 @@ def _graceful_truncate(message: str, max_length: int) -> str:
 
 
 # =============================================================================
+# TILE BUDGET FILTERING (CLIENT-SIDE)
+# =============================================================================
+# Filter cached tiles by budget constraint without requiring refetch.
+# This enables instant budget changes without API calls.
+
+# Budget allocation per vertical (matches mock_provider.py allocations)
+_TILE_BUDGET_ALLOCATIONS = {
+    "hotel": 0.40,  # 40% of budget for hotels
+    "flight": 0.30,  # 30% for flights
+    "activity": 0.30,  # 30% for activities
+}
+
+
+def filter_tiles_by_budget(
+    tiles_dict: Dict[str, Any],
+    budget: Optional[float],
+) -> Dict[str, Any]:
+    """
+    Filter cached tiles by budget constraint (client-side filtering).
+
+    This enables instant budget changes without requiring a refetch of tiles.
+    Budget is excluded from the cache key specifically to allow this optimization.
+
+    Args:
+        tiles_dict: Dict of tile_id -> tile data
+        budget: Total trip budget (filters all tiles)
+
+    Returns:
+        Filtered tiles dict with only budget-compliant tiles
+    """
+    if not budget or not tiles_dict:
+        return tiles_dict
+
+    filtered = {}
+    for tile_id, tile in tiles_dict.items():
+        tile_type = tile.get("type")
+        price = tile.get("price_estimate") or tile.get("live_price")
+
+        if price is None:
+            # Keep tiles without price info
+            filtered[tile_id] = tile
+            continue
+
+        # Calculate budget limit for this tile type
+        allocation = _TILE_BUDGET_ALLOCATIONS.get(tile_type, 0.33)
+        limit = budget * allocation
+
+        if price <= limit:
+            filtered[tile_id] = tile
+
+    return filtered
+
+
+# =============================================================================
 # TILE CONTEXT FORMATTING FOR PROMPTS
 # =============================================================================
 # Format tile data as bullet lists for inclusion in specialist prompts.
@@ -13459,7 +13551,17 @@ def ensure_tiles(
     tile_cache = TileCache.get_instance()
 
     # Compute query hash from parameters (matches compat.py pattern)
-    query_str = f"{intent}|{','.join(sorted(ti.destinations or []))}|{ti.start_date}|{ti.origin}"
+    # v2: Include end_date, adults, children for correct tile prices/night counts
+    # Note: budget excluded - filtered client-side for instant budget changes
+    query_str = (
+        f"{intent}|"
+        f"{','.join(sorted(ti.destinations or []))}|"
+        f"{ti.start_date or 'none'}|"
+        f"{ti.end_date or 'none'}|"
+        f"{ti.origin or 'none'}|"
+        f"{ti.adults or 0}|"
+        f"{ti.children or 0}"
+    )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
     cache_key = tile_cache.compute_key(
@@ -13486,7 +13588,10 @@ def set_tile_cached(
     intent: str,
     destinations: List[str],
     start_date: Optional[str],
+    end_date: Optional[str],
     origin: Optional[str],
+    adults: Optional[int],
+    children: Optional[int],
     result: Dict[str, Any],
 ) -> None:
     """MIGRATED: Now delegates to unified caching framework."""
@@ -13494,8 +13599,17 @@ def set_tile_cached(
 
     tile_cache = TileCache.get_instance()
 
-    # Compute query hash from parameters (matches compat.py pattern)
-    query_str = f"{intent}|{','.join(sorted(destinations or []))}|{start_date}|{origin}"
+    # Compute query hash from parameters (matches ensure_tiles pattern)
+    # v2: Include end_date, adults, children for correct tile prices/night counts
+    query_str = (
+        f"{intent}|"
+        f"{','.join(sorted(destinations or []))}|"
+        f"{start_date or 'none'}|"
+        f"{end_date or 'none'}|"
+        f"{origin or 'none'}|"
+        f"{adults or 0}|"
+        f"{children or 0}"
+    )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
     cache_key = tile_cache.compute_key(
@@ -13511,7 +13625,10 @@ def set_tile_cached(
             "intent": intent,
             "destinations": destinations,
             "start_date": start_date,
+            "end_date": end_date,
             "origin": origin,
+            "adults": adults,
+            "children": children,
         },
     )
 
@@ -13612,36 +13729,92 @@ def tile_search(state: GraphState) -> GraphState:
             continue
 
         try:
-            tiles_request = TilesSearchRequest(
-                branch_id=branch_id,
-                destination=primary_dest,
-                destination_hint=primary_dest,
-                origin=branch.get("origin") or ti.origin,
-                start_date=branch.get("start_date") or ti.start_date,
-                end_date=branch.get("end_date") or ti.end_date,
-                adults=branch.get("adults") or ti.adults,
-                children=branch.get("children") or ti.children,
-                requires_assistance=branch.get("requires_assistance") or ti.requires_assistance,
-                currency=branch.get("currency") or ti.currency or DEFAULT_CURRENCY,
-                verticals=verticals,  # type: ignore
-                max_results_per_vertical=5,
-                budget=ti.budget,  # Pass budget for tile filtering
-            )
+            # =================================================================
+            # CACHE CHECK: Try to get cached tiles for each vertical
+            # =================================================================
+            verticals_to_fetch: List[str] = []
+            cache_hits = 0
+            cache_misses = 0
 
-            _debug(f"Searching tiles for branch {branch_id}", destination=primary_dest)
-            tiles_response = search_tiles(tiles_request)
+            for vertical in verticals:
+                cached_result = ensure_tiles(state, vertical)
+                if cached_result:
+                    # Cache hit - use cached tiles
+                    cache_hits += 1
+                    cached_tiles = cached_result if isinstance(cached_result, dict) else {}
+                    for tile_id, tile_data in cached_tiles.items():
+                        tiles_dict[tile_id] = tile_data
+                    _debug(f"Tile cache HIT for {vertical}", count=len(cached_tiles))
+                else:
+                    # Cache miss - need to fetch this vertical
+                    cache_misses += 1
+                    verticals_to_fetch.append(vertical)
+                    _debug(f"Tile cache MISS for {vertical}")
+
+            # =================================================================
+            # FETCH: Only fetch verticals that are cache misses
+            # =================================================================
+            if verticals_to_fetch:
+                tiles_request = TilesSearchRequest(
+                    branch_id=branch_id,
+                    destination=primary_dest,
+                    destination_hint=primary_dest,
+                    origin=branch.get("origin") or ti.origin,
+                    start_date=branch.get("start_date") or ti.start_date,
+                    end_date=branch.get("end_date") or ti.end_date,
+                    adults=branch.get("adults") or ti.adults,
+                    children=branch.get("children") or ti.children,
+                    requires_assistance=branch.get("requires_assistance") or ti.requires_assistance,
+                    currency=branch.get("currency") or ti.currency or DEFAULT_CURRENCY,
+                    verticals=verticals_to_fetch,  # type: ignore
+                    max_results_per_vertical=5,
+                    budget=ti.budget,  # Pass budget for tile filtering
+                )
+
+                _debug(
+                    f"Fetching tiles for branch {branch_id}",
+                    destination=primary_dest,
+                    verticals=verticals_to_fetch,
+                )
+                tiles_response = search_tiles(tiles_request)
+
+                # Group fetched tiles by vertical for caching
+                tiles_by_vertical: Dict[str, Dict[str, Any]] = {}
+                for tile in tiles_response.tiles:
+                    tile_data = tile.model_dump()
+                    tiles_dict[tile.id] = tile_data
+                    vertical_key = tile.type
+                    if vertical_key not in tiles_by_vertical:
+                        tiles_by_vertical[vertical_key] = {}
+                    tiles_by_vertical[vertical_key][tile.id] = tile_data
+
+                # =================================================================
+                # CACHE SET: Store fetched tiles in cache per vertical
+                # =================================================================
+                for vertical, vertical_tiles in tiles_by_vertical.items():
+                    set_tile_cached(
+                        intent=vertical,
+                        destinations=ti.destinations or [],
+                        start_date=ti.start_date,
+                        end_date=ti.end_date,
+                        origin=ti.origin,
+                        adults=ti.adults,
+                        children=ti.children,
+                        result=vertical_tiles,
+                    )
+                    _debug(f"Cached {len(vertical_tiles)} tiles for {vertical}")
 
             # Store tiles and update branch tile IDs
             branch_tiles: Dict[str, List[str]] = {"stays": [], "flights": [], "activities": []}
 
-            for tile in tiles_response.tiles:
-                tiles_dict[tile.id] = tile.model_dump()
-                if tile.type == "hotel":
-                    branch_tiles["stays"].append(tile.id)
-                elif tile.type == "flight":
-                    branch_tiles["flights"].append(tile.id)
-                elif tile.type == "activity":
-                    branch_tiles["activities"].append(tile.id)
+            for tile_id, tile_data in tiles_dict.items():
+                tile_type = tile_data.get("type")
+                if tile_type == "hotel":
+                    branch_tiles["stays"].append(tile_id)
+                elif tile_type == "flight":
+                    branch_tiles["flights"].append(tile_id)
+                elif tile_type == "activity":
+                    branch_tiles["activities"].append(tile_id)
 
             # Update branch with tile IDs
             branch["tiles"] = branch_tiles
@@ -13651,11 +13824,20 @@ def tile_search(state: GraphState) -> GraphState:
                 hotels=len(branch_tiles["stays"]),
                 flights=len(branch_tiles["flights"]),
                 activities=len(branch_tiles["activities"]),
+                cache_hits=cache_hits,
+                cache_misses=cache_misses,
             )
 
         except Exception as e:
             _debug_error(f"Tile search failed for branch {branch_id}", error=str(e))
             continue
+
+    # =================================================================
+    # BUDGET FILTER: Apply client-side budget filtering to all tiles
+    # =================================================================
+    if ti.budget:
+        tiles_dict = filter_tiles_by_budget(tiles_dict, ti.budget)
+        _debug(f"Applied budget filter ({ti.budget})", remaining_tiles=len(tiles_dict))
 
     # Store tiles in metadata for later persistence
     state.metadata["tiles"] = tiles_dict
@@ -13830,15 +14012,12 @@ def route_after_normalize(state: GraphState) -> str:
     Phase 6: Uses centralized GateEvaluator for all routing decisions.
     Gate evaluation is done once and results are applied to state.
 
-    Routing priority (via GateEvaluator):
+    Routing priority (via GateEvaluator - see GatePrecedence enum for full list):
     1. SHORT_CIRCUIT → short_circuit_responder (no LLM)
-    2. INFEASIBILITY_DETECTION → correction_node (no LLM)
-    3. FAST_PATH → required_fields_node (no LLM)
-    4. CORE_COLLECTION → required_fields_node (no LLM)
-    5. HIGH_CONFIDENCE → required_fields_node (no LLM)
-    6. QUESTION_KEYWORD → specialist nodes (no LLM) [Phase 6]
-    7. KEYWORD_HEURISTIC → specialist nodes (no LLM)
-    8. ROUTER_LLM → router (LLM fallback)
+    2. FAST_PATH → required_fields_node (no LLM)
+    3. CORE_COLLECTION → required_fields_node (no LLM)
+    4. QUESTION_KEYWORD → specialist nodes (no LLM)
+    5. ROUTER_LLM → router (LLM fallback)
     """
     # Track total turns for observability
     _routing_stats["total_turns"] += 1
@@ -13871,10 +14050,7 @@ def route_after_normalize(state: GraphState) -> str:
         "SHORT_CIRCUIT": "short_circuit_fired",
         "FAST_PATH": "fast_path_fired",
         "CORE_COLLECTION": "core_collection_fired",
-        "HIGH_CONFIDENCE": "high_confidence_fired",
         "QUESTION_KEYWORD": "question_keyword_fired",
-        "KEYWORD_HEURISTIC": "keyword_heuristic_fired",
-        "SCORING_ROUTER": "scoring_router_fired",
         "ROUTER_LLM": "router_llm_fired",
     }
 
@@ -13890,9 +14066,7 @@ def route_after_normalize(state: GraphState) -> str:
         _routing_stats["router_calls"] += 1
     elif gate_fired_name == "CORE_COLLECTION":
         _routing_stats["core_fields_gate_bypasses"] += 1
-    elif gate_fired_name == "HIGH_CONFIDENCE":
-        _routing_stats["high_conf_bypasses"] += 1
-    elif gate_fired_name in ("KEYWORD_HEURISTIC", "QUESTION_KEYWORD", "SCORING_ROUTER"):
+    elif gate_fired_name == "QUESTION_KEYWORD":
         _routing_stats["keyword_bypasses"] += 1
 
     # Store first_gate_fired for observability (may already be set by normalize_inputs)

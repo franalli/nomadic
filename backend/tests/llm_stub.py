@@ -20,6 +20,12 @@ def _safe_json_loads(text: str) -> Dict[str, Any]:
     text = text.strip()
     if not text:
         return {}
+    # Strip delimiter lines (======) that may wrap the JSON in prompt templates
+    lines = text.split("\n")
+    cleaned_lines = [line for line in lines if not line.strip().startswith("=====")]
+    text = "\n".join(cleaned_lines).strip()
+    if not text:
+        return {}
     try:
         return json.loads(text)
     except Exception:
@@ -200,7 +206,10 @@ def llm_json_for_prompt(
             "suggested_responses": ["Economy is fine", "Business class", "Direct flights only"],
         }
 
-    if "Role: Experienced travel agent helping plan trips" in prompt:
+    if (
+        "Role: Experienced travel agent helping plan trips" in prompt
+        or "REQUIRED FIELDS SPECIALIST" in prompt
+    ):
         # Used for both normal required_fields and for generation.
         if (user_message or "").strip().upper() == "GENERATE_PLAN_NOW":
             # Minimal branches, no tiles.
@@ -226,7 +235,10 @@ def llm_json_for_prompt(
             }
 
         # Parse STATE from prompt to check what's already set
-        state_raw = _extract_between(prompt, "STATE:", "PARSED_INPUTS:")
+        # Try multiple marker formats (prompt format may vary)
+        state_raw = _extract_between(prompt, "CURRENT STATE", "CHECK STATE BEFORE ASKING")
+        if not state_raw:
+            state_raw = _extract_between(prompt, "STATE:", "PARSED_INPUTS:")
         state = _safe_json_loads(state_raw)
         has_destinations = bool(state.get("destinations"))
         has_origin = bool(state.get("origin"))

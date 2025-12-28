@@ -146,11 +146,11 @@ MULTI_CITY_INFERENCE_TRACE = TraceFixture(
 
 DIVING_IN_MALDIVES_TRACE = TraceFixture(
     name="diving_in_maldives_destination_known",
-    description="Verify STRATEGY_PRE_CORE_VALUE_WITH_DEST fires for 'diving in maldives'",
+    description="Verify STRATEGY_PRE_CORE_VALUE fires for 'diving in maldives' with destination",
     turns=[
         TurnExpectation(
             user_text="I want to go diving in the Maldives",
-            expected_gate="STRATEGY_PRE_CORE_VALUE_WITH_DEST",
+            expected_gate="STRATEGY_PRE_CORE_VALUE",
             expected_destination="strategy_node",
             expected_question_target="dates",  # Always ask dates when destination known
             expected_selected_specialist="strategy_diving",
@@ -182,7 +182,7 @@ VALUE_FIRST_NOT_STICKY_TRACE = TraceFixture(
     turns=[
         TurnExpectation(
             user_text="I want to go diving in the Maldives",
-            expected_gate="STRATEGY_PRE_CORE_VALUE_WITH_DEST",
+            expected_gate="STRATEGY_PRE_CORE_VALUE",
             expected_question_target="dates",
         ),
         TurnExpectation(
@@ -194,7 +194,7 @@ VALUE_FIRST_NOT_STICKY_TRACE = TraceFixture(
 
 BLOCKING_ERROR_GUARDS_DEST_KNOWN_TRACE = TraceFixture(
     name="blocking_error_guards_dest_known",
-    description="Blocking date errors should prevent destination-known value-first gate",
+    description="Blocking date errors should prevent value-first gate",
     initial_state={
         "trip_inputs": {"destinations": ["Maldives"]},
         "metadata": {"date_clarify_mode": True},
@@ -202,7 +202,7 @@ BLOCKING_ERROR_GUARDS_DEST_KNOWN_TRACE = TraceFixture(
     turns=[
         TurnExpectation(
             user_text="Let's go diving",
-            # Should NOT fire STRATEGY_PRE_CORE_VALUE_WITH_DEST due to blocking errors
+            # Should NOT fire STRATEGY_PRE_CORE_VALUE due to blocking errors
             # Instead should route to required_fields for date clarification
             expected_destination="required_fields_node",
             expected_question_target="dates",
@@ -486,10 +486,10 @@ async def test_topic_switch_turn_1_guard(mock_llm):
 @pytest.mark.skip(reason="Requires full app context - enable in integration tests")
 async def test_diving_in_maldives_destination_known(mock_llm):
     """
-    Test 'diving in maldives' routes to STRATEGY_PRE_CORE_VALUE_WITH_DEST.
+    Test 'diving in maldives' routes to STRATEGY_PRE_CORE_VALUE.
 
     This validates that when user provides both strategy topic AND destination,
-    the new gate fires and asks for dates (not origin).
+    the gate fires and asks for dates (not origin).
     """
     harness = TraceReplayHarness(DIVING_IN_MALDIVES_TRACE)
     success = await harness.replay()
@@ -543,10 +543,10 @@ async def test_value_first_not_sticky(mock_llm):
 @pytest.mark.skip(reason="Requires full app context - enable in integration tests")
 async def test_blocking_error_guards_dest_known(mock_llm):
     """
-    Test that blocking date errors prevent destination-known value-first gate.
+    Test that blocking date errors prevent value-first gate.
 
     When date_clarify_mode is set (blocking errors), the
-    STRATEGY_PRE_CORE_VALUE_WITH_DEST gate should NOT fire.
+    STRATEGY_PRE_CORE_VALUE gate should NOT fire.
     """
     harness = TraceReplayHarness(BLOCKING_ERROR_GUARDS_DEST_KNOWN_TRACE)
     success = await harness.replay()

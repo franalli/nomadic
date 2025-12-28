@@ -36,13 +36,18 @@
       "low_confidence": [
         "Just to make sure I got it right - you want to go to \"{extracted_value}\"?",
         "I want to make sure I understood - your destination is \"{extracted_value}\"?"
+      ],
+      "multiple_destinations": [
+        "I found multiple destinations: {destinations_list}. Would you like to visit all of them on the same trip?",
+        "Are you planning to visit {destinations_list} together, or just one of them?"
       ]
     },
     "suggestions": {
       "ambiguous_place": ["Show me options", "I'll type it differently"],
       "unknown_place": ["Let me try again", "Show popular destinations"],
       "typo_detected": ["Yes, that's right", "No, let me retype"],
-      "low_confidence": ["Yes, correct", "No, that's wrong"]
+      "low_confidence": ["Yes, correct", "No, that's wrong"],
+      "multiple_destinations": ["Visit all together", "Just the first one", "Let me clarify"]
     }
   },
 
@@ -81,7 +86,12 @@
       "When would you like to go?"
     ],
     "suggestions": {
-      "default": ["Next month", "Next monday", "Tomorrow"]
+      "default": ["Next month", "Next monday", "Tomorrow"],
+      "hiking": ["Best season for trails", "Spring or Fall", "Next month"],
+      "skiing": ["Powder season", "Winter months", "February"],
+      "diving": ["Best visibility season", "Summer months", "When water is warmest"],
+      "cycling": ["Perfect cycling weather", "Spring or Fall", "Next month"],
+      "boating": ["Sailing season", "Summer months", "When seas are calm"]
     }
   },
 
@@ -105,7 +115,12 @@
       "How many travelers should I plan for?"
     ],
     "suggestions": {
-      "default": ["Just me", "2 adults", "Family of 4"]
+      "default": ["Just me", "2 adults", "Family of 4"],
+      "hiking": ["Solo adventurer", "Hiking buddy", "Small group"],
+      "skiing": ["Just me", "Ski buddy", "Family ski trip"],
+      "diving": ["Solo diver", "Dive partner", "Small dive group"],
+      "cycling": ["Solo rider", "Cycling partner", "Small group"],
+      "boating": ["Just me", "Couple", "Group of friends"]
     }
   },
 
@@ -116,7 +131,12 @@
       "Do you have a budget in mind?"
     ],
     "suggestions": {
-      "default": ["Around $2000", "Budget-friendly", "No limit"]
+      "default": ["Around $2000", "Budget-friendly", "No limit"],
+      "hiking": ["Budget-friendly", "Mid-range", "Guided luxury trek"],
+      "skiing": ["Budget resort", "Mid-range ski trip", "Luxury ski chalet"],
+      "diving": ["Budget dive package", "Mid-range liveaboard", "Luxury dive resort"],
+      "cycling": ["Self-guided budget", "Supported tour", "Luxury cycling tour"],
+      "boating": ["Budget charter", "Mid-range yacht", "Luxury sailing"]
     }
   }
 }

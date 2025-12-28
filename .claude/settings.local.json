@@ -30,7 +30,14 @@
       "Bash(cd:*)",
       "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\specialist\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\specialist\")",
       "Bash(done)",
-      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\tests\\\\langgraph\\\\test_confidence_routing.py\")"
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\tests\\\\langgraph\\\\test_confidence_routing.py\")",
+      "Bash(ren:*)",
+      "Bash(move:*)",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\gates\\\\evaluator_legacy.py\")",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\strategy\\\\llm_handler.py\")",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\strategy\\\\output_processor.py\")",
+      "Bash(del \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\backend\\\\app\\\\planner\\\\nodes\\\\strategy\\\\lifecycle.py\")",
+      "Bash(set:*)"
     ],
     "deny": [],
     "ask": []

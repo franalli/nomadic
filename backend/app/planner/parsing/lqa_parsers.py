@@ -22,11 +22,16 @@ from app.known_places import is_known_place, normalize_place_synonym
 from app.pattern_matching import (
     ARTICLE_PREFIX_PATTERN,
     BUDGET_PATTERN,
+    COMPOUND_DATE_TRAVELERS_PATTERN,
+    COMPOUND_KEYWORDS,
+    COMPOUND_TRAVELERS_DATE_PATTERN,
     DURATION_PATTERN,
     INLINE_BUDGET_PATTERN,
+    NEGATION_ALTERNATIVE_PATTERN,
     NO_BUDGET_PHRASES,
     ORIGIN_PREFIX_PATTERN,
     RELATIVE_DATE_WORDS_ALL,
+    SIMPLE_NEGATION_PATTERN,
     TRAVELERS_PATTERN,
     TRAVELERS_WITH_KIDS_PATTERN,
     WORD_TO_NUMBER,
@@ -705,6 +710,164 @@ def _parse_duration_answer(text: str, state: "GraphState") -> Optional[Dict[str,
 
 
 # =============================================================================
+# P4.1: NEGATION ALTERNATIVE EXTRACTION
+# =============================================================================
+
+
+def _extract_negation_alternative(
+    text: str,
+    state: "GraphState",
+) -> Optional[Dict[str, Any]]:
+    """
+    Extract alternative value from negation patterns (P4.1 Optimization).
+
+    Handles patterns like:
+    - "not Paris, maybe Barcelona" -> "Barcelona"
+    - "instead of Rome, try Venice" -> "Venice"
+    - "actually Tokyo" -> "Tokyo"
+    - "change to London" -> "London"
+    - "Barcelona instead" -> "Barcelona"
+
+    Returns:
+        Dict with:
+        - alternative: str - The extracted alternative text
+        - negation_type: str - Type of negation pattern matched
+        Or None if no alternative found
+    """
+    text_stripped = text.strip()
+
+    # First check for simple negation without alternative
+    if SIMPLE_NEGATION_PATTERN.match(text_stripped):
+        # User is rejecting without providing alternative
+        return {
+            "alternative": None,
+            "negation_type": "simple_rejection",
+        }
+
+    # Check for negation with alternative
+    match = NEGATION_ALTERNATIVE_PATTERN.search(text_stripped)
+    if match:
+        # Find the first non-None capture group (alternative text)
+        alternative = None
+        for group in match.groups():
+            if group:
+                alternative = group.strip()
+                break
+
+        if alternative:
+            # Clean up the alternative text
+            # Remove trailing punctuation
+            alternative = alternative.rstrip(".,!?")
+
+            # Determine negation type based on pattern matched
+            # Note: Order matters - check more specific patterns first
+            text_lower = text_stripped.lower()
+            if "instead of" in text_lower:
+                negation_type = "instead_of"
+            elif text_lower.endswith("instead"):
+                negation_type = "x_instead"
+            elif "maybe" in text_lower or "try" in text_lower:
+                negation_type = "not_maybe"
+            elif "but" in text_lower:
+                negation_type = "not_but"
+            elif "change" in text_lower or "switch" in text_lower:
+                negation_type = "change_to"
+            elif "actually" in text_lower:
+                negation_type = "actually"
+            else:
+                negation_type = "generic"
+
+            return {
+                "alternative": alternative,
+                "negation_type": negation_type,
+            }
+
+    return None
+
+
+# =============================================================================
+# P2.3: COMPOUND TRAVELERS+DATE PARSING
+# =============================================================================
+
+
+def _parse_compound_travelers_date(
+    text: str,
+    state: "GraphState",
+    date_normalizer: Optional[DateNormalizerProtocol] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Parse compound travelers+date expressions (P2.3 Optimization).
+
+    Handles patterns like:
+    - "2 adults for next month" -> adults=2 + date
+    - "family of 4 in December" -> adults=2, children=2 + date
+    - "couple for next week" -> adults=2 + date
+    - "just me in January" -> adults=1 + date
+    - "next month for 3 people" -> adults=3 + date
+
+    Returns:
+        Dict with combined fields (adults_delta, children_delta, start_date_hint, etc.)
+        or None if no compound pattern matched
+    """
+    text_stripped = text.strip()
+    text_lower = text_stripped.lower()
+
+    # Quick bail: no compound keywords
+    if not any(kw in text_lower for kw in COMPOUND_KEYWORDS):
+        return None
+
+    # Get date_normalizer if not provided
+    if date_normalizer is None:
+        from app.plan_graph import _date_normalizer
+
+        date_normalizer = date_normalizer or _date_normalizer
+
+    result: Dict[str, Any] = {}
+
+    # Try travelers-first pattern: "2 adults for next month"
+    match = COMPOUND_TRAVELERS_DATE_PATTERN.match(text_stripped)
+    if match:
+        travelers_text = match.group("travelers")
+        date_text = match.group("date")
+
+        # Parse travelers
+        travelers_parsed = _parse_travelers_answer(travelers_text, state)
+        if travelers_parsed:
+            result.update(travelers_parsed)
+
+        # Parse date
+        date_parsed = _parse_date_answer(date_text, state, date_normalizer)
+        if date_parsed:
+            result.update(date_parsed)
+
+        if result:
+            result["lqa_reason"] = "deterministic:compound_travelers_date"
+            return result
+
+    # Try date-first pattern: "next month for 2 adults"
+    match = COMPOUND_DATE_TRAVELERS_PATTERN.match(text_stripped)
+    if match:
+        date_text = match.group("date")
+        travelers_text = match.group("travelers")
+
+        # Parse date
+        date_parsed = _parse_date_answer(date_text, state, date_normalizer)
+        if date_parsed:
+            result.update(date_parsed)
+
+        # Parse travelers
+        travelers_parsed = _parse_travelers_answer(travelers_text, state)
+        if travelers_parsed:
+            result.update(travelers_parsed)
+
+        if result:
+            result["lqa_reason"] = "deterministic:compound_date_travelers"
+            return result
+
+    return None
+
+
+# =============================================================================
 # PARSER REGISTRY
 # =============================================================================
 
@@ -749,6 +912,10 @@ __all__ = [
     "_parse_travelers_answer",
     "_parse_budget_answer",
     "_parse_duration_answer",
+    # P4.1: Negation extraction
+    "_extract_negation_alternative",
+    # P2.3: Compound parsing
+    "_parse_compound_travelers_date",
     # Registry
     "LQA_FIELD_PARSERS",
     "_LQA_FIELD_PARSERS",

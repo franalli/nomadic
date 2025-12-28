@@ -40,11 +40,15 @@ from app.planner.parsing.lqa_parsers import (
     # Registry
     LQA_FIELD_PARSERS,
     LQAParserFunc,
+    # P4.1: Negation extraction
+    _extract_negation_alternative,
     _is_activity_preference_text,
     # Detection helpers
     _is_date_like_text,
     _is_place_like_text,
     _parse_budget_answer,
+    # P2.3: Compound parsing
+    _parse_compound_travelers_date,
     _parse_date_answer,
     # Parsers
     _parse_destination_answer,
@@ -84,6 +88,10 @@ __all__ = [
     "_parse_travelers_answer",
     "_parse_budget_answer",
     "_parse_duration_answer",
+    # P4.1: Negation extraction
+    "_extract_negation_alternative",
+    # P2.3: Compound parsing
+    "_parse_compound_travelers_date",
     # LQA registry
     "LQA_FIELD_PARSERS",
     "_LQA_FIELD_PARSERS",

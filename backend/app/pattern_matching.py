@@ -1123,6 +1123,77 @@ LQA_BAIL_PATTERNS: List[Pattern] = [
     re.compile(r"\b(not|instead|change|actually|but)\b", re.IGNORECASE),  # Negation/correction
 ]
 
+# =============================================================================
+# P4.1: NEGATION ALTERNATIVE PATTERNS
+# =============================================================================
+# These patterns extract alternatives from negation expressions like "not X, maybe Y"
+# Used in lqa_prepass to parse alternatives instead of bailing to LLM
+
+# Pattern to extract alternatives from negation phrases
+NEGATION_ALTERNATIVE_PATTERN: Pattern = re.compile(
+    r"(?:"
+    # "not Paris, maybe Barcelona"
+    r"\bnot\s+[\w\s]+[,\-]\s*(?:maybe|try|how\s*about|instead)\s+(.+)|"
+    r"\binstead\s+of\s+[\w\s]+[,\s]+(?:try\s+)?(.+)|"  # "instead of Rome, try Venice"
+    r"\bnot\s+([\w\s]+)\s*(?:,\s*|\s+)but\s+(.+)|"  # "not Paris, but Barcelona"
+    r"\b(?:change|switch)\s+(?:from\s+[\w\s]+\s+)?to\s+(.+)|"  # "change to London"
+    r"\bactually[,\s]+(.+)|"  # "actually Tokyo"
+    r"^(.+?)\s+instead$"  # "Barcelona instead"
+    r")",
+    re.IGNORECASE,
+)
+
+# Simple negation without an alternative (just reject, ask again)
+SIMPLE_NEGATION_PATTERN: Pattern = re.compile(
+    r"^(?:no(?:\s+thanks?)?|not\s+(?:that|this)|(?:I\s+)?don'?t\s+want|never\s*mind)[\s\.\!\?]*$",
+    re.IGNORECASE,
+)
+
+
+# =============================================================================
+# P2.3: COMPOUND TRAVELERS+DATE PATTERNS
+# =============================================================================
+# These patterns match combined travelers and date expressions like:
+# - "2 adults for next month"
+# - "family of 4 in December"
+# - "couple for next week"
+# Used in _run_deterministic_pipeline to parse both fields in one pass
+
+# Pattern for travelers-first compound: "2 adults for next month"
+COMPOUND_TRAVELERS_DATE_PATTERN: Pattern = re.compile(
+    r"^(?P<travelers>"
+    r"(?:\d+\s*(?:adults?|people|persons?|travelers?))"
+    r"|(?:just\s+me|solo|myself)"
+    r"|(?:couple|a\s+couple)"
+    r"|(?:family\s+of\s+\d+)"
+    r"|(?:\d+\s+of\s+us)"
+    r")"
+    r"\s+(?:for|in|during)\s+"
+    r"(?P<date>.+)$",
+    re.IGNORECASE,
+)
+
+# Pattern for date-first compound: "next month for 2 adults"
+COMPOUND_DATE_TRAVELERS_PATTERN: Pattern = re.compile(
+    r"^(?P<date>"
+    r"(?:next\s+(?:week|month|year))"
+    r"|(?:this\s+(?:week|month|year))"
+    r"|(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+    r"(?:\s+\d{4})?"
+    r")"
+    r"\s+(?:for|with)\s+"
+    r"(?P<travelers>"
+    r"(?:\d+\s*(?:adults?|people|persons?|travelers?))"
+    r"|(?:a\s+couple|couple)"
+    r"|(?:family\s+of\s+\d+)"
+    r"|(?:\d+\s+of\s+us)"
+    r")$",
+    re.IGNORECASE,
+)
+
+# Compound keywords to detect multi-field input before parsing
+COMPOUND_KEYWORDS: FrozenSet[str] = frozenset({"for", "in", "during", "with"})
+
 
 # =============================================================================
 # DENSE INPUT KEYWORDS
@@ -1915,6 +1986,83 @@ DOMAIN_KEYWORDS: Dict[str, FrozenSet[str]] = {
             "tours",
             "excursion",
             "sightseeing",
+        }
+    ),
+}
+
+# Specialist keywords for gate routing (unified definition)
+# Used by: SpecialistPreCoreGate, ReadyNoFieldsGate, GateEvaluator
+# Superset of all gate-specific keyword definitions
+SPECIALIST_KEYWORDS: Dict[str, FrozenSet[str]] = {
+    "flights": frozenset(
+        {
+            "flight",
+            "flights",
+            "fly",
+            "flying",
+            "airline",
+            "airlines",
+            "airport",
+            "airfare",
+            "plane",
+            "direct flight",
+            "nonstop",
+            "layover",
+        }
+    ),
+    "hotels": frozenset(
+        {
+            "hotel",
+            "hotels",
+            "hostel",
+            "hostels",
+            "boutique hotel",
+            "accommodation",
+            "lodging",
+            "where to stay",
+            "stay",
+            "airbnb",
+            "resort",
+            "resorts",
+            "motel",
+            "guest house",
+            "guesthouse",
+            "bed and breakfast",
+            "b&b",
+        }
+    ),
+    "activities": frozenset(
+        {
+            "activities",
+            "activity",
+            "things to do",
+            "what to do",
+            "tour",
+            "tours",
+            "excursion",
+            "excursions",
+            "sightseeing",
+            "attractions",
+            "visit",
+        }
+    ),
+    "transport": frozenset(
+        {
+            "transport",
+            "transportation",
+            "train",
+            "trains",
+            "bus",
+            "buses",
+            "car rental",
+            "rental car",
+            "rent a car",
+            "drive",
+            "driving",
+            "taxi",
+            "uber",
+            "get around",
+            "getting around",
         }
     ),
 }

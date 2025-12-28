@@ -18,6 +18,8 @@ from app.plan_graph import (
     TripInputs,
     compute_trip_readiness,
 )
+from app.planner.gates import GateContext
+from app.planner.gates.implementations import SpecialistPreCoreGate
 
 
 class TestSpecialistPreCoreConfig:
@@ -64,17 +66,22 @@ class TestSpecialistKeywordDetection:
     )
     def test_specialist_keyword_detection(self, input_text: str, expected_intent: str):
         """Test that specialist keywords are detected correctly."""
-        text_lower = input_text.lower()
         ti = TripInputs()
-
-        result = GateEvaluator._check_specialist_pre_core(
-            text_lower, compute_trip_readiness(ti), ti
+        state = GraphState(
+            user_text=input_text,
+            trip_inputs=ti,
+            metadata={},
+            flags={},
         )
+        readiness = compute_trip_readiness(ti)
+        ctx = GateContext.from_state(state, readiness)
+
+        gate = SpecialistPreCoreGate()
+        result = gate.evaluate(ctx)
 
         if result:
-            intent, destination = result
             assert (
-                intent == expected_intent
+                result.intent == expected_intent
             ), f"Expected intent '{expected_intent}' for '{input_text}'"
 
 

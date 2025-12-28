@@ -380,8 +380,10 @@ def test_graph_plan_unknown_intent_falls_back_to_required_fields(client):
         out = _post(client, {"message": "do something weird"})
 
     # With gate-based routing, unknown/ambiguous inputs route to required_fields
-    # The router LLM may be bypassed, so intent could be 'required_fields' or 'unknown'
-    assert out["observability"]["router_intent"] in ("unknown", "required_fields")
+    # The router LLM may be bypassed entirely, so intent could be:
+    # - 'required_fields' or 'unknown' if router was called
+    # - None if router was bypassed by gate evaluation
+    assert out["observability"]["router_intent"] in ("unknown", "required_fields", None)
     assert out["document"]["assistant_message"]
 
 

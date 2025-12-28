@@ -16,7 +16,6 @@ import pytest
 
 from app.plan_graph import (
     STRATEGY_TOPIC_TO_NODE,
-    GateEvaluator,
     GatePrecedence,
     GraphState,
     TripInputs,
@@ -25,6 +24,7 @@ from app.plan_graph import (
     compute_trip_readiness,
 )
 from app.planner.gates.constants import DateErrorCode
+from app.planner.gates.implementations import StrategyTopicSwitchGate
 from app.planner.gates.readiness import TripReadiness
 
 
@@ -84,7 +84,8 @@ class TestCheckStrategyTopicSwitch:
         )
         metadata = {"last_strategy_topic": "hiking", "turn_number": 5}
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="i wanna go diving in argentina too",
             ti=ti,
             readiness=readiness,
@@ -113,7 +114,8 @@ class TestCheckStrategyTopicSwitch:
         )
         metadata = {"last_strategy_topic": "hiking", "turn_number": 5}
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="diving in argentina",
             ti=ti,
             readiness=readiness,
@@ -134,7 +136,8 @@ class TestCheckStrategyTopicSwitch:
             "turn_number": 7,
         }
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="i want to try diving",
             ti=ti,
             readiness=readiness,
@@ -155,7 +158,8 @@ class TestCheckStrategyTopicSwitch:
             "turn_number": 7,
         }
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="actually, i want to go diving instead",
             ti=ti,
             readiness=readiness,
@@ -178,7 +182,8 @@ class TestCheckStrategyTopicSwitch:
             "turn_number": 7,
         }
 
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="yes, march 15-22",  # User answering date question
             ti=ti,
             readiness=readiness,
@@ -386,7 +391,8 @@ class TestDivingMidSessionScenario:
         assert not readiness.has_blocking_errors
 
         # Check topic switch detection
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower=state.user_text.lower(),
             ti=ti,
             readiness=readiness,
@@ -425,7 +431,8 @@ class TestDivingMidSessionScenario:
         assert readiness.has_blocking_errors
 
         # Topic switch is detected but should store pending
-        result = GateEvaluator._check_strategy_topic_switch(
+        gate = StrategyTopicSwitchGate()
+        result = gate._check_strategy_topic_switch(
             text_lower="i wanna go diving",
             ti=ti,
             readiness=readiness,
