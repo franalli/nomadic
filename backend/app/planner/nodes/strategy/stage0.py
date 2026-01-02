@@ -1,8 +1,9 @@
 """
-Strategy Stage 0 Coordinator - Pre-core value-first strategy response.
+Strategy Stage 0 Coordinator - Duration-aware strategy response.
 
-Provides immediate value (destination archetypes + mini itinerary) with
-a single clarifying question, before core fields are complete.
+Provides immediate value (destination archetypes + tailored suggestions) with
+a single clarifying question. Now requires dates and destinations before firing
+to provide meaningful, duration-aware suggestions.
 
 This is the authoritative implementation for Stage 0 logic.
 The _strategy_stage0 function in strategy_main.py delegates to this module.
@@ -11,10 +12,76 @@ The _strategy_stage0 function in strategy_main.py delegates to this module.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Optional, Tuple
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
+
+
+def calculate_trip_duration(ti) -> Tuple[Optional[int], str]:
+    """
+    Calculate trip duration in days and return duration context string.
+
+    Args:
+        ti: TripInputs with start_date and optionally end_date
+
+    Returns:
+        Tuple of (duration_days, duration_context_string)
+        - duration_days is None if dates are incomplete
+        - duration_context is empty string if can't determine duration
+    """
+    if not ti.start_date:
+        return None, ""
+
+    try:
+        start = datetime.strptime(ti.start_date, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None, ""
+
+    if ti.end_date:
+        try:
+            end = datetime.strptime(ti.end_date, "%Y-%m-%d")
+            days = (end - start).days + 1
+        except (ValueError, TypeError):
+            return None, ""
+    else:
+        # No end_date, can't determine duration
+        return None, ""
+
+    # Generate context based on duration
+    if days <= 0:
+        return None, ""
+    elif days <= 3:
+        return days, (
+            f"This is a short {days}-day trip. "
+            "Focus on highlights and compact experiences that maximize the limited time. "
+            "Suggest intensive but achievable itineraries."
+        )
+    elif days <= 5:
+        return days, (
+            f"This is a {days}-day trip. "
+            "Balance key highlights with some flexibility for exploration. "
+            "Include the must-see experiences plus one or two hidden gems."
+        )
+    elif days <= 7:
+        return days, (
+            f"This is a week-long trip ({days} days). "
+            "Balance exploration with relaxation time. "
+            "Suggest a mix of active days and easier-paced experiences."
+        )
+    elif days <= 14:
+        return days, (
+            f"This is an extended {days}-day trip. "
+            "Include regional exploration and deeper immersion opportunities. "
+            "Suggest multi-region itineraries or in-depth single-area focus."
+        )
+    else:
+        return days, (
+            f"This is a long {days}-day adventure. "
+            "Design a comprehensive journey with multiple regions or themes. "
+            "Include rest days and flexibility for spontaneous discoveries."
+        )
 
 
 class Stage0Coordinator:
@@ -47,49 +114,49 @@ class Stage0Coordinator:
 # Deterministic fallback templates with value + single question
 STAGE0_FALLBACK_TEMPLATES = {
     "hiking": (
-        "Great choice! Hiking adventures are incredibly rewarding.\n\n"
-        "Here are some amazing destinations to consider:\n"
-        "- **Swiss Alps** - Iconic trails like the Haute Route\n"
-        "- **Patagonia, Chile** - Torres del Paine circuit\n"
-        "- **New Zealand** - Milford Track and Routeburn\n"
-        "- **Nepal** - Classic Annapurna or Everest base camp\n\n"
-        "When are you thinking of going?"
+        "🥾 Great choice! Hiking adventures are incredibly rewarding.\n\n"
+        "**✨ Top Destinations to Explore:**\n"
+        "🏔️ **Swiss Alps** — Iconic trails like the Haute Route\n"
+        "🌲 **Patagonia, Chile** — Torres del Paine circuit\n"
+        "🌿 **New Zealand** — Milford Track and Routeburn\n"
+        "⛰️ **Nepal** — Classic Annapurna or Everest base camp\n\n"
+        "📅 When are you thinking of going?"
     ),
     "skiing": (
-        "Exciting! Let's plan an amazing ski trip.\n\n"
-        "Top destinations to consider:\n"
-        "- **French Alps** - Chamonix, Val d'Isère, Les 3 Vallées\n"
-        "- **Swiss Alps** - Zermatt, Verbier, St. Moritz\n"
-        "- **Japan** - Niseko, Hakuba for legendary powder\n"
-        "- **Colorado** - Vail, Aspen, Breckenridge\n\n"
-        "When are you thinking of hitting the slopes?"
+        "⛷️ Exciting! Let's plan an amazing ski trip.\n\n"
+        "**✨ Top Destinations to Explore:**\n"
+        "🎿 **French Alps** — Chamonix, Val d'Isère, Les 3 Vallées\n"
+        "❄️ **Swiss Alps** — Zermatt, Verbier, St. Moritz\n"
+        "🏔️ **Japan** — Niseko, Hakuba for legendary powder\n"
+        "🗻 **Colorado** — Vail, Aspen, Breckenridge\n\n"
+        "📅 When are you thinking of hitting the slopes?"
     ),
     "diving": (
-        "Fantastic! Diving opens up a whole underwater world.\n\n"
-        "World-class dive destinations:\n"
-        "- **Maldives** - Pristine reefs and manta rays\n"
-        "- **Great Barrier Reef, Australia** - Bucket-list diving\n"
-        "- **Red Sea, Egypt** - Wrecks and colorful reefs\n"
-        "- **Indonesia** - Raja Ampat biodiversity hotspot\n\n"
-        "When are you thinking of diving?"
+        "🤿 Fantastic! Diving opens up a whole underwater world.\n\n"
+        "**✨ World-Class Dive Destinations:**\n"
+        "🐠 **Maldives** — Pristine reefs and manta rays\n"
+        "🌊 **Great Barrier Reef, Australia** — Bucket-list diving\n"
+        "🐢 **Red Sea, Egypt** — Wrecks and colorful reefs\n"
+        "🦈 **Indonesia** — Raja Ampat biodiversity hotspot\n\n"
+        "📅 When are you thinking of diving?"
     ),
     "cycling": (
-        "Love it! Cycling trips offer amazing ways to explore.\n\n"
-        "Epic cycling destinations:\n"
-        "- **Netherlands** - Classic flat cycling with canals\n"
-        "- **French countryside** - Loire Valley vineyards\n"
-        "- **Italian Dolomites** - Stunning mountain passes\n"
-        "- **Vietnam** - Ha Long Bay to Hoi An adventure\n\n"
-        "When are you thinking of cycling?"
+        "🚴 Love it! Cycling trips offer amazing ways to explore.\n\n"
+        "**✨ Epic Cycling Destinations:**\n"
+        "🛤️ **Netherlands** — Classic flat cycling with canals\n"
+        "🍇 **French countryside** — Loire Valley vineyards\n"
+        "🏔️ **Italian Dolomites** — Stunning mountain passes\n"
+        "🌾 **Vietnam** — Ha Long Bay to Hoi An adventure\n\n"
+        "📅 When are you thinking of cycling?"
     ),
     "boating": (
-        "Wonderful! Sailing adventures are unforgettable.\n\n"
-        "Amazing sailing destinations:\n"
-        "- **Greek Islands** - Island-hop through the Cyclades\n"
-        "- **Croatia** - Dalmatian coast beauty\n"
-        "- **Caribbean** - BVI, Grenadines, or Bahamas\n"
-        "- **Thailand** - Phuket and the Andaman Sea\n\n"
-        "When are you thinking of setting sail?"
+        "⛵ Wonderful! Sailing adventures are unforgettable.\n\n"
+        "**✨ Amazing Sailing Destinations:**\n"
+        "🏝️ **Greek Islands** — Island-hop through the Cyclades\n"
+        "🌅 **Croatia** — Dalmatian coast beauty\n"
+        "🚤 **Caribbean** — BVI, Grenadines, or Bahamas\n"
+        "🐬 **Thailand** — Phuket and the Andaman Sea\n\n"
+        "📅 When are you thinking of setting sail?"
     ),
 }
 
@@ -98,57 +165,57 @@ def get_dest_known_fallback(topic: str, dest_name: str) -> str:
     """Get destination-specific fallback template."""
     templates = {
         "diving": (
-            f"Excellent choice! {dest_name} offers incredible diving opportunities.\n\n"
-            "Here's what makes it special:\n"
-            "- **Pristine reefs** - World-class visibility and marine life\n"
-            "- **Best conditions** - Varies by season, so timing matters\n"
-            "- **Options** - Liveaboard vs resort-based diving\n"
-            "- **Experience levels** - Sites for beginners to advanced\n\n"
-            "When are you thinking of going? The season really impacts conditions."
+            f"🤿 Excellent choice! **{dest_name}** offers incredible diving opportunities.\n\n"
+            "**✨ What Makes It Special:**\n"
+            "🐠 **Pristine reefs** — World-class visibility and marine life\n"
+            "🌊 **Best conditions** — Varies by season, so timing matters\n"
+            "🐢 **Options** — Liveaboard vs resort-based diving\n"
+            "🦈 **Experience levels** — Sites for beginners to advanced\n\n"
+            "📅 When are you thinking of going? The season really impacts conditions."
         ),
         "hiking": (
-            f"Great pick! {dest_name} has amazing hiking trails.\n\n"
-            "Key things to know:\n"
-            "- **Trail variety** - Routes for all fitness levels\n"
-            "- **Seasonal access** - Weather affects trail conditions\n"
-            "- **Permits** - Some routes require advance booking\n"
-            "- **Altitude** - May need acclimatization time\n\n"
-            "When are you planning to hike? Season affects trail access."
+            f"🥾 Great pick! **{dest_name}** has amazing hiking trails.\n\n"
+            "**✨ Key Things to Know:**\n"
+            "🏔️ **Trail variety** — Routes for all fitness levels\n"
+            "🌲 **Seasonal access** — Weather affects trail conditions\n"
+            "📋 **Permits** — Some routes require advance booking\n"
+            "⛰️ **Altitude** — May need acclimatization time\n\n"
+            "📅 When are you planning to hike? Season affects trail access."
         ),
         "skiing": (
-            f"Awesome! {dest_name} is a fantastic ski destination.\n\n"
-            "What to expect:\n"
-            "- **Terrain** - Varied runs for all skill levels\n"
-            "- **Snow season** - Peak conditions vary by month\n"
-            "- **Lift access** - Multiple areas to explore\n"
-            "- **Off-piste** - Options for advanced skiers\n\n"
-            "When are you thinking of skiing? Season matters for snow quality."
+            f"⛷️ Awesome! **{dest_name}** is a fantastic ski destination.\n\n"
+            "**✨ What to Expect:**\n"
+            "🎿 **Terrain** — Varied runs for all skill levels\n"
+            "❄️ **Snow season** — Peak conditions vary by month\n"
+            "🚡 **Lift access** — Multiple areas to explore\n"
+            "🏔️ **Off-piste** — Options for advanced skiers\n\n"
+            "📅 When are you thinking of skiing? Season matters for snow quality."
         ),
         "cycling": (
-            f"Perfect! {dest_name} offers fantastic cycling.\n\n"
-            "Here's the overview:\n"
-            "- **Routes** - Scenic roads and dedicated paths\n"
-            "- **Terrain** - Mix of flat and challenging climbs\n"
-            "- **Weather** - Best conditions vary by season\n"
-            "- **Bike rentals** - Quality bikes available locally\n\n"
-            "When are you thinking of cycling? Weather is key."
+            f"🚴 Perfect! **{dest_name}** offers fantastic cycling.\n\n"
+            "**✨ Here's the Overview:**\n"
+            "🛤️ **Routes** — Scenic roads and dedicated paths\n"
+            "🏔️ **Terrain** — Mix of flat and challenging climbs\n"
+            "🌡️ **Weather** — Best conditions vary by season\n"
+            "🚲 **Bike rentals** — Quality bikes available locally\n\n"
+            "📅 When are you thinking of cycling? Weather is key."
         ),
         "boating": (
-            f"Wonderful! {dest_name} is beautiful for sailing.\n\n"
-            "Key considerations:\n"
-            "- **Waters** - Calm harbors and open passages\n"
-            "- **Season** - Wind and weather patterns vary\n"
-            "- **Charter options** - Bareboat or crewed\n"
-            "- **Island-hopping** - Multiple stops possible\n\n"
-            "When are you thinking of sailing? Season affects conditions."
+            f"⛵ Wonderful! **{dest_name}** is beautiful for sailing.\n\n"
+            "**✨ Key Considerations:**\n"
+            "🌊 **Waters** — Calm harbors and open passages\n"
+            "🌅 **Season** — Wind and weather patterns vary\n"
+            "🚤 **Charter options** — Bareboat or crewed\n"
+            "🏝️ **Island-hopping** — Multiple stops possible\n\n"
+            "📅 When are you thinking of sailing? Season affects conditions."
         ),
     }
     return templates.get(
         topic,
         (
-            f"Exciting! {dest_name} is a great choice for your trip.\n\n"
+            f"✨ Exciting! **{dest_name}** is a great choice for your trip.\n\n"
             "I'll help you plan an amazing adventure there.\n\n"
-            "When are you thinking of traveling?"
+            "📅 When are you thinking of traveling?"
         ),
     )
 
@@ -228,9 +295,24 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
             "local conditions, and practical tips specific to this destination."
         )
 
+    # Calculate trip duration for duration-aware suggestions
+    duration_days, duration_context = calculate_trip_duration(ti)
+    _debug(
+        "Stage 0 duration context",
+        duration_days=duration_days,
+        start_date=ti.start_date,
+        end_date=ti.end_date,
+    )
+
     # Load the pre-core prompt with Jinja2 templating
+    # Select prompt based on whether destination is known (saves 300-400 tokens)
+    prompt_file = (
+        "strategy_pre_core_known_dest.txt"
+        if dest_known_mode and destinations
+        else "strategy_pre_core_discovery.txt"
+    )
     try:
-        template = _JINJA_ENV.get_template("strategy_pre_core.txt")
+        template = _JINJA_ENV.get_template(prompt_file)
         prompt = template.render(
             strategy_topic=topic,
             question_target=question_target,
@@ -241,15 +323,22 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
             trip_inputs=ti.model_dump_json(exclude_none=True),
             destination_context=destination_context,
             destinations=destinations,
+            # Duration-aware context (Issue 3)
+            duration_days=duration_days,
+            duration_context=duration_context,
+        )
+        _debug(
+            "strategy_pre_core prompt selected",
+            prompt_file=prompt_file,
             dest_known_mode=dest_known_mode,
         )
     except FileNotFoundError:
-        _debug_error("strategy_pre_core.txt not found, falling back to required_fields")
+        _debug_error(f"{prompt_file} not found, falling back to required_fields")
         return await required_fields_node(state)
 
     # Use conservative token limit for stage 0
     llm_config = _get_node_llm_config("strategy_stage1")
-    llm_config["max_output_tokens"] = 300  # Hard cap for value-first response
+    llm_config["max_output_tokens"] = 450  # Increased from 300 to avoid JSON truncation
 
     timeout = settings.llm_timeout_specialist
     attempts = settings.llm_max_retries
@@ -282,7 +371,18 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
 
             j = jloads_safe(out)
             if not j:
-                raise json.JSONDecodeError("No JSON block found", out, 0)
+                # Try to extract message from truncated/malformed JSON
+                from app.graph_plan_utils import extract_message_from_malformed_json
+
+                recovered_message = extract_message_from_malformed_json(out)
+                if recovered_message:
+                    _debug(
+                        "Stage 0 recovered message from truncated JSON",
+                        length=len(recovered_message),
+                    )
+                    j = {"assistant_message": recovered_message}
+                else:
+                    raise json.JSONDecodeError("No JSON block found", out, 0)
 
             # Extract response
             response = j.get("assistant_message", j.get("response", ""))

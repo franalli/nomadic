@@ -480,14 +480,17 @@ class TripInputNormalizer:
         Merge nested settings dict with special handling for list fields.
 
         For list fields (like 'amenities'), extends rather than replaces.
+
+        MUTATION PROTECTION (Tier 3): Creates copies of lists before extending
+        to prevent shared reference mutations.
         """
         list_fields = list_fields or {"amenities", "categories"}
         result = dict(existing) if existing else {}
 
         for key, value in delta.items():
             if key in list_fields and isinstance(value, list):
-                # Extend list, avoiding duplicates
-                existing_list = result.get(key, [])
+                # MUTATION PROTECTION: Create a new list to avoid mutating original
+                existing_list = list(result.get(key, []))  # Copy, don't reference
                 for item in value:
                     if item not in existing_list:
                         existing_list.append(item)

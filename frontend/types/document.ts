@@ -65,6 +65,7 @@ export type HotelSettings = {
 // Activity-specific search settings
 export type ActivitySettings = {
   categories: string[]; // e.g., ['tours', 'experiences', 'outdoor']
+  skill_level: string | null; // "beginner", "intermediate", "advanced"
 };
 
 // Ground transport settings - which modes to include

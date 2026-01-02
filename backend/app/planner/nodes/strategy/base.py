@@ -159,6 +159,93 @@ def detect_strategy_switch(user_text: str, current_topic: str) -> Optional[str]:
     return None
 
 
+# Field modification request patterns
+# Maps field keywords to canonical field names
+FIELD_MODIFICATION_KEYWORDS: Dict[str, str] = {
+    "budget": "budget",
+    "price": "budget",
+    "cost": "budget",
+    "spending": "budget",
+    "travelers": "travelers",
+    "travellers": "travelers",
+    "people": "travelers",
+    "group": "travelers",
+    "adults": "travelers",
+    "children": "travelers",
+    "kids": "travelers",
+    "dates": "dates",
+    "date": "dates",
+    "when": "dates",
+    "timing": "dates",
+    "origin": "origin",
+    "departure": "origin",
+    "leaving from": "origin",
+    "departing": "origin",
+}
+
+# Phrases that indicate user wants to add/change a field
+FIELD_MODIFICATION_PHRASES = frozenset(
+    {
+        "want to add",
+        "i want to add",
+        "need to add",
+        "i need to add",
+        "let me add",
+        "can i add",
+        "add my",
+        "add a",
+        "want to set",
+        "want to change",
+        "want to update",
+        "change the",
+        "update the",
+        "set the",
+        "set my",
+        "specify",
+        "include",
+        "also add",
+        "wait",  # Often precedes modification requests
+        "hold on",
+        "actually",
+    }
+)
+
+
+def detect_field_modification_request(user_text: str) -> Optional[str]:
+    """
+    Detect if user wants to add or modify a specific trip field.
+
+    Patterns like "I want to add budget", "Wait, I need to add travelers",
+    "Can I set my dates?", etc.
+
+    Returns the detected field name or None.
+
+    Examples:
+        >>> detect_field_modification_request("I want to add budget")
+        'budget'
+        >>> detect_field_modification_request("Wait, I need to add travelers")
+        'travelers'
+        >>> detect_field_modification_request("Advanced hiking spots")
+        None
+    """
+    user_text_lower = user_text.lower()
+
+    # Check if text contains a modification phrase
+    has_modification_phrase = any(
+        phrase in user_text_lower for phrase in FIELD_MODIFICATION_PHRASES
+    )
+
+    if not has_modification_phrase:
+        return None
+
+    # Look for field keywords in the text
+    for keyword, field in FIELD_MODIFICATION_KEYWORDS.items():
+        if keyword in user_text_lower:
+            return field
+
+    return None
+
+
 def get_question_guidance(question_target: str) -> str:
     """Get question guidance for a given target."""
     return STRATEGY_PRE_CORE_QUESTION_GUIDANCE.get(

@@ -50,6 +50,7 @@ class GateContext:
         readiness: Computed TripReadiness for field status
         start_time: perf_counter timestamp when evaluation started
         gate_trace: List to record gate evaluation history
+        detected_strategy_topic: Pre-computed strategy topic (hiking, diving, etc.)
     """
 
     state: "GraphState"
@@ -62,6 +63,8 @@ class GateContext:
     readiness: "TripReadiness"
     start_time: float
     gate_trace: List[Dict[str, Any]] = field(default_factory=list)
+    # Pre-computed strategy topic to avoid redundant detection in gates
+    detected_strategy_topic: Optional[str] = None
 
     # Callbacks from evaluator (injected to avoid circular imports)
     record_gate: Optional[Callable[..., None]] = None
@@ -72,6 +75,7 @@ class GateContext:
         state: "GraphState",
         readiness: "TripReadiness",
         start_time: Optional[float] = None,
+        detected_strategy_topic: Optional[str] = None,
     ) -> "GateContext":
         """Create a GateContext from a GraphState.
 
@@ -79,21 +83,37 @@ class GateContext:
             state: The GraphState to extract values from
             readiness: Pre-computed TripReadiness
             start_time: Optional start time (defaults to now)
+            detected_strategy_topic: Pre-computed strategy topic (passed from evaluator).
+                                     If None, will be auto-computed from user text.
 
         Returns:
             Populated GateContext
         """
         user_text = state.user_text or ""
+        user_text_lower = user_text.lower()
+
+        # Auto-compute strategy topic if not provided (for backward compatibility)
+        if detected_strategy_topic is None:
+            from app.planner.gates.topic_detection import detect_strategy_topic
+
+            activity_settings = (
+                state.trip_inputs.activity_settings
+                if hasattr(state.trip_inputs, "activity_settings")
+                else None
+            )
+            detected_strategy_topic = detect_strategy_topic(user_text_lower, activity_settings)
+
         return cls(
             state=state,
             user_text=user_text,
-            user_text_lower=user_text.lower(),
+            user_text_lower=user_text_lower,
             ti=state.trip_inputs,
             flags=state.flags,
             metadata=state.metadata,
             extraction_conf=state.metadata.get("extraction_confidence", {}),
             readiness=readiness,
             start_time=start_time if start_time is not None else time.perf_counter(),
+            detected_strategy_topic=detected_strategy_topic,
         )
 
     def elapsed_ms(self) -> float:

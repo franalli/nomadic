@@ -150,8 +150,82 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
             {"question": "Could you tell me more about your trip?", "suggestions": []},
         )
 
-        state.last_summary = response["question"]
-        state.suggested_responses = response["suggestions"][:3]
+        # Check for season clarification with specific month suggestions (Issue 4)
+        clarify_suggestions = state.metadata.get("date_clarify_suggestions")
+        pending_text = state.metadata.get("pending_date_text", "")
+
+        # Build acknowledgment for any newly extracted fields
+        ti = state.trip_inputs
+        ack_parts = []
+        if ti.destinations and "destinations" not in missing_fields:
+            ack_parts.append(f"{', '.join(ti.destinations[:2])}")
+        if ti.origin and "origin" not in missing_fields:
+            ack_parts.append(f"from {ti.origin}")
+
+        ack_prefix = f"{' '.join(ack_parts)} - got it! " if ack_parts else ""
+
+        if in_date_clarify_mode and clarify_suggestions:
+            # Use specific month suggestions for season clarification
+            state.last_summary = (
+                f'{ack_prefix}You mentioned "{pending_text}" - could you be more specific? '
+                f"For example, {clarify_suggestions[0]} or {clarify_suggestions[-1]}?"
+            )
+            state.suggested_responses = clarify_suggestions[:3]
+        elif in_date_clarify_mode and pending_text:
+            # Generic clarification with context
+            state.last_summary = (
+                f'{ack_prefix}Could you be more specific about "{pending_text}"? '
+                "When exactly are you thinking?"
+            )
+            state.suggested_responses = response["suggestions"][:3]
+        else:
+            # Check for extraction failure - add graceful messaging if confidence is low
+            extraction_conf = state.metadata.get("extraction_confidence", {})
+            confidence_level = extraction_conf.get("level", "high")
+            questions_asked = state.metadata.get("questions_asked", {})
+
+            # Graceful failure: same field asked multiple times or low confidence
+            times_asked = questions_asked.get(question_target, 0)
+            is_low_confidence = confidence_level in ("low", "very_low")
+            is_repeated = times_asked >= 1
+
+            if is_low_confidence and is_repeated:
+                # Graceful failure message for repeated low-confidence extraction
+                failure_hints = {
+                    "destinations": (
+                        "I'm having trouble finding that destination. "
+                        "Could you try a city name or nearby region?"
+                    ),
+                    "origin": (
+                        "I couldn't recognize that location. "
+                        "Could you try a different city name or airport?"
+                    ),
+                    "dates": (
+                        "I'm having trouble parsing those dates. "
+                        "Could you try a specific format like 'March 15-22'?"
+                    ),
+                    "travelers": (
+                        "I couldn't understand the traveler count. "
+                        "Could you say something like '2 adults' or 'solo'?"
+                    ),
+                    "budget": (
+                        "I couldn't parse that budget. "
+                        "Could you provide a number like '$2,000' or '2000 dollars'?"
+                    ),
+                }
+                graceful_msg = failure_hints.get(question_target, response["question"])
+                state.last_summary = f"{ack_prefix}{graceful_msg}"
+                _debug(
+                    "GRACEFUL_FAILURE: extraction failed",
+                    question_target=question_target,
+                    times_asked=times_asked,
+                    confidence_level=confidence_level,
+                )
+            else:
+                state.last_summary = (
+                    f"{ack_prefix}{response['question']}" if ack_prefix else response["question"]
+                )
+            state.suggested_responses = response["suggestions"][:3]
         set_question_target(state, question_target, source="missing_fields_guard:template")
 
         # Map question_target to last_question_field for short-circuit context
@@ -257,6 +331,17 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
                     llm_target=llm_question_target,
                     forced_target="dates",
                 )
+                # Build acknowledgment for any extracted fields before redirecting
+                ti = state.trip_inputs
+                ack_parts = []
+                if ti.destinations and "destinations" not in missing_fields:
+                    ack_parts.append(f"{', '.join(ti.destinations[:2])}")
+                if ti.origin and "origin" not in missing_fields:
+                    ack_parts.append(f"from {ti.origin}")
+                if ack_parts:
+                    ack_prefix = f"{' '.join(ack_parts)} - got it! "
+                    # Prepend acknowledgment to the LLM response
+                    state.last_summary = f"{ack_prefix}Now, when are you looking to travel?"
                 set_question_target(state, "dates", source="missing_fields_guard:date_clarify")
             else:
                 set_question_target(state, llm_question_target, source="missing_fields_guard:llm")
@@ -665,7 +750,10 @@ async def _specialist(
             "{extraction_sources}", json.dumps(extraction_sources) if extraction_sources else "{}"
         )
         .replace("{missing_fields}", _get_missing_fields_summary(state))
-        .replace("{conversation_summary}", _generate_conversation_summary(state.chat_history))
+        .replace(
+            "{conversation_summary}",
+            _generate_conversation_summary(state.chat_history, state=state),
+        )
         .replace("{available_options}", available_options + groundedness_warning)
         .replace("{questions_already_asked}", questions_already_asked)
     )

@@ -452,25 +452,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       }
     }, [readyToGenerate]);
 
-    // Show ready to generate message when all details are collected
+    // Note: Ready-to-generate message is now handled by the backend in summarize()
+    // The backend sends: "Great news! I have everything I need to plan your trip..."
+    // No need for a separate frontend message
     useEffect(() => {
       if (readyToGenerate && !readyMessageShown && !hasBranches && !generateTriggered) {
         setReadyMessageShown(true);
-        setMessages((prev) => {
-          // Check if a ready message already exists (e.g., from streaming response)
-          const hasReadyMessage = prev.some((msg) => msg.id.startsWith(READY_MESSAGE_ID_PREFIX));
-          if (hasReadyMessage) {
-            return prev; // Don't add duplicate
-          }
-          return [
-            ...prev,
-            {
-              id: `${READY_MESSAGE_ID_PREFIX}${Date.now()}`,
-              role: 'assistant' as const,
-              content: "✨ All details collected — ready to generate your trip options!",
-            },
-          ];
-        });
+        // Backend now provides the ready message via streaming response
       }
     }, [readyToGenerate, readyMessageShown, hasBranches, generateTriggered]);
 

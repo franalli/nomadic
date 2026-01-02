@@ -124,11 +124,11 @@ class TestRouteAfterNormalize:
         assert result == "summarize"
 
     def test_bypass_blocked_by_intent_keywords(self):
-        """Input with intent keywords and complete core fields routes to summarize.
+        """Input with strategy keywords and complete core fields routes to strategy_node.
 
-        When core fields are complete, READY_NO_FIELDS gate fires and routes to
-        summarize. Strategy keywords are only handled by STRATEGY_PRE_CORE_VALUE
-        when core is incomplete.
+        When core fields are complete and a strategy topic is detected,
+        READY_NO_FIELDS gate fires and routes to strategy_node to provide
+        value-first strategy advice (e.g., hiking recommendations).
         """
         state = GraphState(
             user_text="what about hiking?",
@@ -147,8 +147,8 @@ class TestRouteAfterNormalize:
             },
         )
         result = route_after_normalize(state)
-        # READY_NO_FIELDS gate fires when core_complete=True
-        assert result == "summarize"
+        # READY_NO_FIELDS gate detects strategy topic and routes to strategy_node
+        assert result == "strategy_node"
 
     def test_bypass_blocked_by_long_input(self):
         """Long input with complete core fields routes to summarize.

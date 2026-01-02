@@ -2,13 +2,21 @@
 Unit tests for STRATEGY_PRE_CORE_VALUE gate functionality in plan_graph.py.
 
 Tests cover:
-- STRATEGY_PRE_CORE_VALUE gate at precedence 4 (between SPECIALIST_PRE_CORE and CORE_COLLECTION)
+- STRATEGY_PRE_CORE_VALUE gate at precedence 80 (between STRATEGY_TOPIC_SWITCH and CORE_COLLECTION)
 - Strategy topic detection for open-ended queries
+- Duration-aware strategy responses (requires ALL core fields OR explicit request)
 - Value-first response with single clarifying question
 - Context-aware question ordering (prefer dates over destinations)
 - Loop guard for repeated questions
 - Fallback to required_fields on errors
 - "Questions only" bypass
+- Explicit itinerary request detection
+
+Note: After the January 2026 routing improvements, STRATEGY_PRE_CORE_VALUE requires:
+1. ALL core fields (origin, destinations, dates, AND travelers), OR
+2. Explicit itinerary request (e.g., "plan my trip", "create an itinerary")
+
+This prevents premature itinerary generation while core fields are still missing.
 """
 
 import pytest
@@ -44,7 +52,11 @@ class TestStrategyPreCoreGatePrecedence:
 
 
 class TestStrategyPreCoreValueDetection:
-    """Test strategy topic detection for pre-core value routing."""
+    """Test strategy topic detection for pre-core value routing.
+
+    Note: Gate now requires ALL core fields (origin, destinations, dates, travelers)
+    OR explicit itinerary request. Tests provide all core fields.
+    """
 
     @pytest.mark.parametrize(
         "input_text,expected_topic",
@@ -68,8 +80,17 @@ class TestStrategyPreCoreValueDetection:
         ],
     )
     def test_strategy_topic_detection(self, input_text: str, expected_topic: str):
-        """Test that strategy topics are detected correctly from user text."""
-        ti = TripInputs()  # Empty - no destinations
+        """Test that strategy topics are detected correctly from user text.
+
+        Gate requires ALL core fields to fire, so we provide all of them.
+        """
+        # Provide ALL core fields (required for gate to fire without explicit request)
+        ti = TripInputs(
+            destinations=["Swiss Alps"],
+            start_date="2026-06-01",
+            origin="London",
+            adults=2,
+        )
         state = GraphState(
             user_text=input_text,
             trip_inputs=ti,
@@ -87,47 +108,127 @@ class TestStrategyPreCoreValueDetection:
 
 
 class TestStrategyPreCoreValueGating:
-    """Test gate firing conditions."""
+    """Test gate firing conditions.
 
-    def test_fires_when_strategy_topic_and_no_destinations(self):
-        """Gate should fire when strategy topic detected but no destinations."""
+    Note: Gate now requires ALL core fields (origin, destinations, dates, travelers)
+    OR explicit itinerary request before firing.
+    """
+
+    def test_does_not_fire_without_dates(self):
+        """Gate should NOT fire when dates are missing (no explicit request)."""
         state = GraphState(
             user_text="Plan an adventure trip with hiking",
-            trip_inputs=TripInputs(),  # No destinations
+            trip_inputs=TripInputs(
+                destinations=["Alps"],
+                origin="London",
+                adults=2,
+            ),  # Has everything but dates
             metadata={},
             flags={},
         )
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should route to strategy_node via STRATEGY_PRE_CORE_VALUE gate
-        assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
-        assert gate_result.destination == "strategy_node"
-        assert gate_result.metadata_updates.get("strategy_stage") == 0
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no dates, no explicit request)
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
-    def test_fires_with_destinations_present(self):
-        """Gate should fire when destinations are set (consolidated behavior).
+    def test_does_not_fire_without_destinations(self):
+        """Gate should NOT fire when destinations are missing (no explicit request)."""
+        state = GraphState(
+            user_text="Plan an adventure trip with hiking",
+            trip_inputs=TripInputs(
+                start_date="2026-06-01",
+                origin="London",
+                adults=2,
+            ),  # Has everything but destinations
+            metadata={},
+            flags={},
+        )
 
-        After gate consolidation, STRATEGY_PRE_CORE_VALUE handles both cases:
-        - Without destinations: asks for dates/origin
-        - With destinations: asks for remaining core fields (typically dates)
+        gate_result = GateEvaluator.evaluate(state)
 
-        The gate adds '_with_dest' suffix to the reason when destinations exist.
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no destinations, no explicit request)
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
+
+    def test_does_not_fire_without_origin(self):
+        """Gate should NOT fire when origin is missing (no explicit request)."""
+        state = GraphState(
+            user_text="Plan a hiking trip",
+            trip_inputs=TripInputs(
+                destinations=["Swiss Alps"],
+                start_date="2026-06-01",
+                adults=2,
+            ),  # Has everything but origin
+            metadata={},
+            flags={},
+        )
+
+        gate_result = GateEvaluator.evaluate(state)
+
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no origin, no explicit request)
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
+
+    def test_does_not_fire_without_travelers(self):
+        """Gate should NOT fire when travelers are missing (no explicit request)."""
+        state = GraphState(
+            user_text="Plan a hiking trip",
+            trip_inputs=TripInputs(
+                destinations=["Swiss Alps"],
+                start_date="2026-06-01",
+                origin="London",
+            ),  # Has everything but travelers
+            metadata={},
+            flags={},
+        )
+
+        gate_result = GateEvaluator.evaluate(state)
+
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no travelers, no explicit request)
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
+
+    def test_fires_with_all_core_fields(self):
+        """Gate should route to strategy when ALL core fields are present.
+
+        Note: When all fields are complete, READY_NO_FIELDS (precedence 40)
+        may fire before STRATEGY_PRE_CORE_VALUE (precedence 80), but both
+        route to strategy_node with a strategy topic. We verify the destination.
         """
         state = GraphState(
             user_text="Plan a hiking trip",
-            trip_inputs=TripInputs(destinations=["Swiss Alps"]),
+            trip_inputs=TripInputs(
+                destinations=["Swiss Alps"],
+                start_date="2026-06-01",
+                origin="London",
+                adults=2,
+            ),  # All core fields present
             metadata={},
             flags={},
         )
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should fire STRATEGY_PRE_CORE_VALUE (consolidated gate handles both cases)
+        # Should route to strategy_node (either via READY_NO_FIELDS or STRATEGY_PRE_CORE_VALUE)
+        assert gate_result.destination == "strategy_node"
+        assert gate_result.strategy_topic == "hiking"
+
+    def test_fires_with_explicit_itinerary_request(self):
+        """Gate should fire with explicit itinerary request even without all fields."""
+        state = GraphState(
+            user_text="Help me plan my hiking trip",  # Explicit request phrase
+            trip_inputs=TripInputs(
+                destinations=["Swiss Alps"],
+                start_date="2026-06-01",
+            ),  # Missing origin and travelers
+            metadata={},
+            flags={},
+        )
+
+        gate_result = GateEvaluator.evaluate(state)
+
+        # Should fire STRATEGY_PRE_CORE_VALUE (has explicit request)
         assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
         assert gate_result.destination == "strategy_node"
-        # Reason should include '_with_dest' suffix when destinations present
-        assert "_with_dest" in gate_result.reason
+        assert "explicit_request" in gate_result.reason
 
     def test_does_not_fire_when_questions_only_requested(self):
         """Gate should NOT fire when user asks for 'questions only'."""
@@ -141,7 +242,12 @@ class TestStrategyPreCoreValueGating:
         for phrase in questions_only_phrases:
             state = GraphState(
                 user_text=f"Plan a hiking trip - {phrase}",
-                trip_inputs=TripInputs(),
+                trip_inputs=TripInputs(
+                    destinations=["Alps"],
+                    start_date="2026-06-01",
+                    origin="London",
+                    adults=2,
+                ),  # All fields present
                 metadata={},
                 flags={},
             )
@@ -154,11 +260,18 @@ class TestStrategyPreCoreValueGating:
 
 
 class TestQuestionTargetPriority:
-    """Test context-aware question ordering."""
+    """Test context-aware question ordering.
 
-    def test_prefers_dates_when_strategy_topic_no_destinations(self):
-        """Should ask about dates before destinations for open-ended queries."""
-        ti = TripInputs()  # No destinations, no dates
+    Note: Gate now requires ALL core fields OR explicit request.
+    """
+
+    def test_does_not_fire_when_only_origin_missing(self):
+        """Gate should NOT fire when origin is missing (without explicit request)."""
+        ti = TripInputs(
+            destinations=["Swiss Alps"],
+            start_date="2026-06-01",
+            adults=2,
+        )  # Has dates + destinations + travelers, missing origin
         state = GraphState(
             user_text="plan a hiking adventure",
             trip_inputs=ti,
@@ -171,12 +284,17 @@ class TestQuestionTargetPriority:
         gate = StrategyPreCoreValueGate()
         result = gate.evaluate(ctx)
 
-        assert result is not None
-        assert result.question_target == "dates", "Should ask about dates first"
+        # Should NOT fire - missing origin and no explicit request
+        assert result is None, "Gate should not fire when origin is missing"
 
-    def test_asks_origin_after_dates_set(self):
-        """Should ask about origin when dates are set."""
-        ti = TripInputs(start_date="2025-06-01")  # Has dates, no origin
+    def test_fires_when_all_core_complete(self):
+        """Gate SHOULD fire when all core fields are complete."""
+        ti = TripInputs(
+            destinations=["Swiss Alps"],
+            start_date="2026-06-01",
+            origin="London",
+            adults=2,
+        )  # All core fields complete
         state = GraphState(
             user_text="plan a hiking adventure",
             trip_inputs=ti,
@@ -189,16 +307,21 @@ class TestQuestionTargetPriority:
         gate = StrategyPreCoreValueGate()
         result = gate.evaluate(ctx)
 
-        assert result is not None
-        assert result.question_target == "origin", "Should ask about origin after dates"
+        # Should fire when all core fields are complete
+        assert result is not None, "Gate should fire when all core fields are complete"
+        assert result.destination == "strategy_node"
+        assert "all_fields_complete" in result.reason
 
-    def test_asks_destination_last(self):
-        """Should ask about destination only after dates and origin set."""
-        ti = TripInputs(start_date="2025-06-01", origin="London")
+    def test_fires_with_explicit_request_and_missing_fields(self):
+        """Gate should fire with explicit request even when fields missing."""
+        ti = TripInputs(
+            destinations=["Swiss Alps"],
+            start_date="2026-06-01",
+        )  # Missing origin and travelers
         state = GraphState(
-            user_text="plan a hiking adventure",
+            user_text="help me plan my hiking adventure",  # Explicit request
             trip_inputs=ti,
-            metadata={},  # No active question - won't trigger suppression
+            metadata={},
             flags={},
         )
         readiness = compute_trip_readiness(ti)
@@ -207,8 +330,12 @@ class TestQuestionTargetPriority:
         gate = StrategyPreCoreValueGate()
         result = gate.evaluate(ctx)
 
-        assert result is not None
-        assert result.question_target == "destinations", "Should ask about destination last"
+        # Should fire with explicit request
+        assert result is not None, "Gate should fire with explicit itinerary request"
+        assert result.destination == "strategy_node"
+        assert "explicit_request" in result.reason
+        # Should still track missing fields for question_target
+        assert result.question_target == "origin", "Should ask about origin"
 
 
 class TestTripShapeInference:
@@ -302,7 +429,7 @@ class TestPreferDateFirst:
     def test_prefer_date_first_only_affects_missing_both(self):
         """prefer_date_first only matters when both destinations and dates missing."""
         # When only destinations missing, should still ask for destinations
-        ti = TripInputs(start_date="2025-06-01")
+        ti = TripInputs(start_date="2026-06-01")
         readiness = compute_trip_readiness(ti, prefer_date_first=True)
 
         assert readiness.question_target == "destinations"
@@ -311,23 +438,56 @@ class TestPreferDateFirst:
 class TestSpecificPromptBehavior:
     """Test that specific prompts still work normally."""
 
-    def test_specific_destination_bypasses_strategy_pre_core(self):
-        """Prompts with specific destinations should go to normal flow."""
+    def test_complete_state_with_strategy_topic_routes_to_strategy(self):
+        """Prompts with all core fields AND strategy topic should route to strategy.
+
+        Note: When all fields complete, may route via READY_NO_FIELDS or STRATEGY_PRE_CORE_VALUE.
+        """
         state = GraphState(
-            user_text="Plan a trip to Patagonia in March",
-            trip_inputs=TripInputs(destinations=["Patagonia"]),  # Has destination
+            user_text="Plan a hiking trip to Patagonia",  # Has strategy topic
+            trip_inputs=TripInputs(
+                destinations=["Patagonia"],
+                start_date="2026-03-01",
+                end_date="2026-03-15",
+                origin="London",
+                adults=2,
+            ),  # All core fields complete
             metadata={},
             flags={},
         )
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT fire STRATEGY_PRE_CORE_VALUE
+        # SHOULD route to strategy_node (has all core fields + strategy topic)
+        assert gate_result.destination == "strategy_node"
+        assert gate_result.strategy_topic == "hiking"
+
+    def test_complete_state_without_strategy_topic_bypasses_strategy(self):
+        """Prompts with all core fields but NO strategy topic should bypass strategy_pre_core."""
+        state = GraphState(
+            user_text="Plan a trip to Paris",  # No strategy topic (no hiking/skiing/etc.)
+            trip_inputs=TripInputs(
+                destinations=["Paris"],
+                start_date="2026-03-01",
+                end_date="2026-03-15",
+                origin="London",
+                adults=2,
+            ),  # All core fields complete
+            metadata={},
+            flags={},
+        )
+
+        gate_result = GateEvaluator.evaluate(state)
+
+        # Should NOT fire STRATEGY_PRE_CORE_VALUE (no strategy topic)
         assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
 
 class TestGateShadowingPrevention:
-    """Test that STRATEGY_PRE_CORE_VALUE is not shadowed by SPECIALIST_PRE_CORE."""
+    """Test that STRATEGY_PRE_CORE_VALUE is not shadowed by SPECIALIST_PRE_CORE.
+
+    Note: Gate now requires ALL core fields OR explicit request.
+    """
 
     def test_strategy_topic_with_activities_keyword_routes_to_strategy(self):
         """
@@ -335,11 +495,16 @@ class TestGateShadowingPrevention:
         to strategy_node, NOT activities_node.
 
         The word 'activities' matches SPECIALIST_PRE_CORE_KEYWORDS, but the
-        strategy topic 'hiking' should take precedence.
+        strategy topic 'hiking' should take precedence when conditions are met.
         """
         state = GraphState(
             user_text="Plan an adventure trip with hiking and outdoor activities",
-            trip_inputs=TripInputs(),  # No destinations
+            trip_inputs=TripInputs(
+                destinations=["Alps"],
+                start_date="2026-06-01",
+                origin="London",
+                adults=2,
+            ),  # Has ALL core fields
             metadata={},
             flags={},
         )
@@ -347,78 +512,101 @@ class TestGateShadowingPrevention:
         gate_result = GateEvaluator.evaluate(state)
 
         # CRITICAL: Must route to strategy_node, NOT activities_node
+        # (may be via READY_NO_FIELDS or STRATEGY_PRE_CORE_VALUE when fields complete)
         assert gate_result.destination == "strategy_node", (
             f"Expected strategy_node but got {gate_result.destination}. "
-            f"SPECIALIST_PRE_CORE is shadowing STRATEGY_PRE_CORE_VALUE"
+            f"SPECIALIST_PRE_CORE is shadowing strategy routing"
         )
-        assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
+        assert gate_result.strategy_topic == "hiking"
 
-    def test_hiking_query_with_destination_routes_to_strategy(self):
+    def test_hiking_query_with_all_fields_routes_to_strategy(self):
         """
         'What hikes should I do in Chamonix?' has a hiking strategy topic,
-        so should route to strategy_node even with destinations present.
-
-        After gate consolidation, STRATEGY_PRE_CORE_VALUE handles both
-        with and without destinations for strategy topics.
+        so should route to strategy_node when all core fields are present.
         """
         state = GraphState(
             user_text="What hikes should I do in Chamonix?",
-            trip_inputs=TripInputs(destinations=["Chamonix"]),
+            trip_inputs=TripInputs(
+                destinations=["Chamonix"],
+                start_date="2026-06-01",
+                origin="London",
+                adults=2,
+            ),  # Has ALL core fields
             metadata={},
             flags={},
         )
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # With hiking strategy topic, should fire STRATEGY_PRE_CORE_VALUE
+        # With hiking strategy topic + all core fields, should route to strategy_node
+        # (may be via READY_NO_FIELDS or STRATEGY_PRE_CORE_VALUE when fields complete)
+        assert gate_result.destination == "strategy_node"
+        assert gate_result.strategy_topic == "hiking"
+
+    def test_specialist_pre_core_wins_when_strategy_missing_fields(self):
+        """
+        When strategy_pre_core is not eligible (missing fields, no explicit request),
+        SPECIALIST_PRE_CORE should win if specialist keywords match.
+        """
+        # Test phrases that have strategy keywords but missing core fields
+        state = GraphState(
+            user_text="Plan a hiking trip with outdoor activities",
+            trip_inputs=TripInputs(
+                destinations=["Alps"],
+                start_date="2026-06-01",
+            ),  # Missing origin and travelers
+            metadata={},
+            flags={},
+        )
+
+        gate_result = GateEvaluator.evaluate(state)
+
+        # Without all fields and no explicit request, should NOT fire strategy
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE, (
+            f"STRATEGY_PRE_CORE_VALUE should not win without all fields. "
+            f"Got gate={gate_result.gate_fired}, dest={gate_result.destination}"
+        )
+
+    def test_strategy_fires_with_explicit_request_missing_fields(self):
+        """Strategy should fire with explicit request even if fields missing."""
+        state = GraphState(
+            user_text="Help me plan a hiking trip with activities",  # Explicit request
+            trip_inputs=TripInputs(
+                destinations=["Alps"],
+                start_date="2026-06-01",
+            ),  # Missing origin and travelers
+            metadata={},
+            flags={},
+        )
+
+        gate_result = GateEvaluator.evaluate(state)
+
+        # With explicit request, should fire strategy
         assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
         assert gate_result.destination == "strategy_node"
-        assert "_with_dest" in gate_result.reason
 
-    def test_specialist_pre_core_blocked_when_strategy_eligible(self):
+    def test_pure_activities_query_routes_appropriately(self):
         """
-        When strategy_pre_core is eligible, SPECIALIST_PRE_CORE should not win
-        even if specialist keywords match.
-        """
-        # Test multiple phrases that have both strategy and specialist keywords
-        test_cases = [
-            "Plan a hiking trip with outdoor activities",
-            "I want skiing activities",
-            "Biking tour with activities",
-            "Diving activities somewhere tropical",
-        ]
-
-        for text in test_cases:
-            state = GraphState(
-                user_text=text,
-                trip_inputs=TripInputs(),  # No destinations
-                metadata={},
-                flags={},
-            )
-
-            gate_result = GateEvaluator.evaluate(state)
-
-            assert gate_result.gate_fired != GatePrecedence.SPECIALIST_PRE_CORE, (
-                f"SPECIALIST_PRE_CORE should not win for '{text}'. "
-                f"Got gate={gate_result.gate_fired}, dest={gate_result.destination}"
-            )
-
-    def test_pure_activities_query_still_routes_to_activities(self):
-        """
-        Pure activities query without strategy topic should still go to activities.
+        Pure activities query without strategy topic should NOT go via strategy gates.
         """
         state = GraphState(
-            user_text="What activities can I do there?",
-            trip_inputs=TripInputs(destinations=["Paris"]),  # Has destination
+            user_text="What activities can I do in Paris?",
+            trip_inputs=TripInputs(
+                destinations=["Paris"],
+                start_date="2026-06-01",
+                origin="London",
+                adults=2,
+            ),  # Has all fields but no strategy topic (no hiking/skiing/etc.)
             metadata={},
             flags={},
         )
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # This is a pure activities query with destination, should go to activities
-        # (either pre-core or full depending on other core fields)
-        assert gate_result.destination in ["activities_node", "required_fields_node"]
+        # This is a pure activities query without strategy keywords,
+        # it should NOT fire STRATEGY_PRE_CORE_VALUE specifically
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
+        # Note: may route via other gates like READY_NO_FIELDS or QUESTION_KEYWORD
 
 
 class TestGatePrecedenceGuard:
@@ -472,13 +660,17 @@ class TestGatePrecedenceGuard:
     def test_is_strategy_pre_core_eligible_helper(self):
         """Test gate eligibility by checking if evaluate() returns a result.
 
-        After gate consolidation, STRATEGY_PRE_CORE_VALUE handles both
-        with and without destinations cases.
+        Gate now requires ALL core fields OR explicit itinerary request.
         """
         gate = StrategyPreCoreValueGate()
 
-        # Eligible case: strategy topic + no destinations + core incomplete
-        ti = TripInputs()
+        # Eligible case: strategy topic + ALL core fields
+        ti = TripInputs(
+            destinations=["Alps"],
+            start_date="2026-06-01",
+            origin="London",
+            adults=2,
+        )
         state = GraphState(
             user_text="hiking trip with activities",
             trip_inputs=ti,
@@ -488,24 +680,44 @@ class TestGatePrecedenceGuard:
         readiness = compute_trip_readiness(ti)
         ctx = GateContext.from_state(state, readiness)
         result = gate.evaluate(ctx)
-        assert result is not None, "Should be eligible for strategy pre-core"
+        assert result is not None, "Should be eligible for strategy pre-core (has all core fields)"
 
-        # Also eligible: has destinations (after gate consolidation)
-        ti_with_dest = TripInputs(destinations=["Alps"])
-        state_with_dest = GraphState(
+        # Not eligible: missing origin (no explicit request)
+        ti_no_origin = TripInputs(
+            destinations=["Alps"],
+            start_date="2026-06-01",
+            adults=2,
+        )
+        state_no_origin = GraphState(
             user_text="hiking trip",
-            trip_inputs=ti_with_dest,
+            trip_inputs=ti_no_origin,
             metadata={},
             flags={},
         )
-        readiness_with_dest = compute_trip_readiness(ti_with_dest)
-        ctx_with_dest = GateContext.from_state(state_with_dest, readiness_with_dest)
-        result_with_dest = gate.evaluate(ctx_with_dest)
+        readiness_no_origin = compute_trip_readiness(ti_no_origin)
+        ctx_no_origin = GateContext.from_state(state_no_origin, readiness_no_origin)
+        result_no_origin = gate.evaluate(ctx_no_origin)
         assert (
-            result_with_dest is not None
-        ), "Should be eligible even with destinations (consolidated gate)"
+            result_no_origin is None
+        ), "Should NOT be eligible without origin (no explicit request)"
 
-        # Not eligible: questions only phrase
+        # Eligible: missing fields but has explicit request
+        ti_partial = TripInputs(
+            destinations=["Alps"],
+            start_date="2026-06-01",
+        )
+        state_explicit = GraphState(
+            user_text="help me plan my hiking trip",  # Explicit request
+            trip_inputs=ti_partial,
+            metadata={},
+            flags={},
+        )
+        readiness_partial = compute_trip_readiness(ti_partial)
+        ctx_explicit = GateContext.from_state(state_explicit, readiness_partial)
+        result_explicit = gate.evaluate(ctx_explicit)
+        assert result_explicit is not None, "Should be eligible with explicit itinerary request"
+
+        # Not eligible: questions only phrase (even with all fields)
         state_questions = GraphState(
             user_text="hiking trip - ask me questions",
             trip_inputs=ti,

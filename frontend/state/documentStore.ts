@@ -47,6 +47,7 @@ export const DEFAULT_HOTEL_SETTINGS: HotelSettings = {
 
 export const DEFAULT_ACTIVITY_SETTINGS: ActivitySettings = {
   categories: [],
+  skill_level: null,
 };
 
 export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
@@ -135,6 +136,10 @@ type DocumentState = {
   isCommitting: boolean;
   error: string | null;
 
+  // Comparison mode state
+  isComparisonMode: boolean;
+  comparisonBranchIds: [string, string] | null;
+
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields: Set<LLMUpdatableField>;
 
@@ -166,6 +171,11 @@ type DocumentState = {
   // Clear sparkle for a field when user interacts with it
   acknowledgeLLMUpdate: (field: LLMUpdatableField) => void;
 
+  // Comparison mode actions
+  setComparisonMode: (enabled: boolean) => void;
+  toggleBranchForComparison: (branchId: string) => void;
+  exitComparisonMode: () => void;
+
   // Reset
   reset: () => void;
 };
@@ -179,6 +189,8 @@ const initialState = {
   isLoading: false,
   isCommitting: false,
   error: null as string | null,
+  isComparisonMode: false,
+  comparisonBranchIds: null as [string, string] | null,
   llmUpdatedFields: new Set<LLMUpdatableField>(),
 };
 
@@ -623,6 +635,68 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       newSet.delete(field);
       set({ llmUpdatedFields: newSet });
     }
+  },
+
+  // Comparison mode actions
+  setComparisonMode: (enabled: boolean) => {
+    if (!enabled) {
+      set({ isComparisonMode: false, comparisonBranchIds: null });
+    } else {
+      // When entering comparison mode, reset comparison state
+      set({
+        isComparisonMode: true,
+        // Don't set comparisonBranchIds yet - user needs to select second branch
+        comparisonBranchIds: null,
+      });
+    }
+  },
+
+  toggleBranchForComparison: (branchId: string) => {
+    const { isComparisonMode, comparisonBranchIds, selectedBranchId } = get();
+
+    if (!isComparisonMode) {
+      // Enter comparison mode with this branch as first
+      set({
+        isComparisonMode: true,
+        comparisonBranchIds: null,
+        selectedBranchId: branchId,
+      });
+      return;
+    }
+
+    if (!comparisonBranchIds) {
+      // First branch selection in comparison mode
+      // Use selectedBranchId as first, clicked branch as second
+      const firstBranch = selectedBranchId || branchId;
+      if (firstBranch !== branchId) {
+        set({ comparisonBranchIds: [firstBranch, branchId] });
+      }
+      return;
+    }
+
+    const [first, second] = comparisonBranchIds;
+
+    if (branchId === first || branchId === second) {
+      // Clicking an already-selected branch - deselect and exit comparison
+      set({
+        isComparisonMode: false,
+        comparisonBranchIds: null,
+        selectedBranchId: branchId === first ? second : first,
+      });
+    } else {
+      // Replace second branch with new selection
+      set({ comparisonBranchIds: [first, branchId] });
+    }
+  },
+
+  exitComparisonMode: () => {
+    const { comparisonBranchIds } = get();
+    set({
+      isComparisonMode: false,
+      comparisonBranchIds: null,
+      // Keep first comparison branch as selected
+      selectedBranchId: comparisonBranchIds?.[0] || get().selectedBranchId,
+    });
   },
 
   reset: () => {

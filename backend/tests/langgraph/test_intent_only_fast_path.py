@@ -110,10 +110,11 @@ class TestIntentOnlyFastPathRouting:
     """Test that intent-only inputs route to required_fields."""
 
     def test_adventure_hiking_routes_to_required_fields(self):
-        """Intent-only 'adventure hiking' should route to strategy_node (value-first).
+        """Intent-only 'adventure hiking' routes to required_fields to collect core first.
 
-        Note: Strategy topics now route via STRATEGY_PRE_CORE_VALUE gate
-        to provide value-first responses before collecting core fields.
+        Note: STRATEGY_PRE_CORE_VALUE requires dates OR destinations to fire.
+        With empty TripInputs, CORE_COLLECTION routes to required_fields_node
+        to collect core fields first.
         """
         state = GraphState(
             user_text="adventure hiking outdoors",
@@ -124,12 +125,10 @@ class TestIntentOnlyFastPathRouting:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Strategy topics now route to strategy_node via STRATEGY_PRE_CORE_VALUE
-        assert gate_result.destination == "strategy_node"
-        # Should ask for dates first (not destinations) for value-first UX
-        assert gate_result.question_target == "dates"
-        # Strategy topic should be set
-        assert gate_result.strategy_topic == "hiking"
+        # With no dates or destinations, routes to required_fields_node via CORE_COLLECTION
+        assert gate_result.destination == "required_fields_node"
+        # Asks for destinations (standard core field collection order)
+        assert gate_result.question_target == "destinations"
 
     def test_beach_vacation_routes_to_required_fields(self):
         """Intent-only 'beach vacation' should route to required_fields."""

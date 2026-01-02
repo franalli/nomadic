@@ -25,6 +25,69 @@ TOPIC_ACKNOWLEDGMENTS: Dict[str, str] = {
     "transport": "transportation",
 }
 
+
+# Strategy topic emoji mapping for context-aware acknowledgments (Tier 6)
+STRATEGY_TOPIC_EMOJIS = {
+    "hiking": "🥾",
+    "skiing": "⛷️",
+    "diving": "🤿",
+    "cycling": "🚴",
+    "boating": "⛵",
+}
+
+
+def _build_context_acknowledgment(
+    state: "GraphState",
+    specialist_name: str,
+) -> str:
+    """
+    Build a context-aware acknowledgment based on fields already extracted.
+
+    E.g., if user said "I want flights to Paris", returns "Paris for flights - got it!"
+    If user said "Hotels in Tokyo from New York", returns "Tokyo from New York - got it!"
+    If user said "I want to go hiking", returns "🥾 Hiking sounds amazing! "
+
+    Returns empty string if no context to acknowledge.
+    """
+    ti = state.trip_inputs
+    parts = []
+
+    # Check for pending strategy topic (Tier 6: strategy preconditions UX)
+    pending_topic = state.metadata.get("pending_strategy_topic")
+    if pending_topic and not ti.destinations and not ti.start_date:
+        # User mentioned a strategy topic but we need destinations/dates
+        emoji = STRATEGY_TOPIC_EMOJIS.get(pending_topic, "✨")
+        return f"{emoji} {pending_topic.capitalize()} sounds amazing! "
+
+    # Collect known context
+    if ti.destinations:
+        dest_str = ", ".join(ti.destinations[:2])  # Limit to first 2
+        parts.append(dest_str)
+
+    if ti.origin:
+        parts.append(f"from {ti.origin}")
+
+    if ti.start_date:
+        # Format date nicely
+        try:
+            from datetime import datetime
+
+            dt = datetime.strptime(ti.start_date, "%Y-%m-%d")
+            parts.append(f"on {dt.strftime('%B %d')}")
+        except ValueError:
+            pass
+
+    if ti.adults:
+        traveler_word = "traveler" if ti.adults == 1 else "travelers"
+        parts.append(f"for {ti.adults} {traveler_word}")
+
+    if not parts:
+        return ""
+
+    context = " ".join(parts)
+    return f"{context} - got it! "
+
+
 # Domain-specific warm acknowledgments for pre-core mode (saves ~200-400 tokens)
 # Maps (specialist_name, question_target) -> personalized intro
 DOMAIN_PRE_CORE_TEMPLATES: Dict[str, Dict[str, str]] = {
@@ -107,27 +170,36 @@ def apply_pre_core_template_response(
         template_response["suggestions"][:3] if template_response else FALLBACK_SUGGESTIONS.copy()
     )
 
-    # Try domain-specific template first (includes integrated question)
-    domain_templates = DOMAIN_PRE_CORE_TEMPLATES.get(specialist_name, {})
-    domain_question = domain_templates.get(question_target)
+    # Build context-aware acknowledgment based on already-extracted fields
+    context_ack = _build_context_acknowledgment(state, specialist_name)
 
-    if domain_question:
-        # Use domain-specific integrated message (acknowledgment + question in one)
-        state.last_summary = domain_question
+    # Get the question for the missing field
+    if template_response:
+        question = template_response["question"]
     else:
-        # Fallback to generic pattern
-        topic_name = TOPIC_ACKNOWLEDGMENTS.get(
-            specialist_name, state.strategy_topic or "trip planning"
+        question = (
+            "Where would you like to go?"
+            if question_target == "destinations"
+            else f"Could you tell me your {question_target}?"
         )
-        if template_response:
-            question = template_response["question"]
+
+    # Compose final response
+    if context_ack:
+        # We have context to acknowledge - use context-aware pattern
+        # E.g., "Paris - got it! When are you looking to travel?"
+        state.last_summary = f"{context_ack}{question}"
+    else:
+        # No context yet - use domain-specific warm intro or fallback
+        domain_templates = DOMAIN_PRE_CORE_TEMPLATES.get(specialist_name, {})
+        domain_question = domain_templates.get(question_target)
+
+        if domain_question:
+            state.last_summary = domain_question
         else:
-            question = (
-                "Where would you like to go?"
-                if question_target == "destinations"
-                else f"Could you tell me your {question_target}?"
+            topic_name = TOPIC_ACKNOWLEDGMENTS.get(
+                specialist_name, state.strategy_topic or "trip planning"
             )
-        state.last_summary = f"I'd love to help you find great {topic_name}! {question}"
+            state.last_summary = f"I'd love to help you find great {topic_name}! {question}"
     state.suggested_responses = suggestions
     set_question_target(state, question_target, source=f"specialist:{specialist_name}:pre_core")
     state.metadata["last_question_field"] = question_target
@@ -592,8 +664,8 @@ def handle_loop_guard(
             )
             state.suggested_responses = [
                 "Looks good!",
-                "Add more details",
-                "Change something",
+                "Hold on, I want to add more",
+                "I'd like to change something",
             ]
             _debug(
                 "LOOP GUARD: No alternative fields, emitting recovery summary",

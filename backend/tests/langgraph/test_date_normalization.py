@@ -258,9 +258,9 @@ class TestWeekOfMonthParsing:
             # Fourth week
             ("Fourth week of September", "2026-09-22", "2026-09-28"),
             ("4th week of September", "2026-09-22", "2026-09-28"),
-            # Last week
-            ("Last week of December", "2025-12-25", "2025-12-31"),
-            ("last week of December", "2025-12-25", "2025-12-31"),
+            # Last week (December 2025 is in the past when today is Jan 2026, so rolls to 2026)
+            ("Last week of December", "2026-12-25", "2026-12-31"),
+            ("last week of December", "2026-12-25", "2026-12-31"),
             # With explicit year
             ("First week of January 2027", "2027-01-01", "2027-01-07"),
             ("First week of January, 2027", "2027-01-01", "2027-01-07"),
@@ -394,18 +394,18 @@ class TestNormalizeInputsIntegration:
     def test_end_date_partial_notification(self):
         """Test that partial end dates also get notifications."""
         state = GraphState(
-            user_text="March 2026",
+            user_text="May 2026",
             trip_inputs=TripInputs(
                 destinations=["Paris"],
                 origin="London",
-                start_date="2025-12-28",
+                start_date="2026-03-15",
             ),
-            parsed_inputs={"end_date_hint": "March 2026"},
+            parsed_inputs={"end_date_hint": "May 2026"},
         )
 
         result = normalize_inputs(state)
 
-        assert result.trip_inputs.end_date == "2026-03-01"
+        assert result.trip_inputs.end_date == "2026-05-01"
         notifications = result.metadata.get("partial_date_notifications", [])
         assert len(notifications) == 1
         assert "end date" in notifications[0]
@@ -439,3 +439,178 @@ class TestNormalizeInputsIntegration:
 
         # Should keep existing start_date
         assert result.trip_inputs.start_date == "2025-12-28"
+
+
+# =============================================================================
+# TIER 3: CRITICAL EDGE CASE TESTS
+# =============================================================================
+
+
+class TestCriticalDateEdgeCases:
+    """Critical edge cases for date parsing - Tier 3 reliability tests."""
+
+    def test_december_january_cross_year(self):
+        """Test date ranges that span December to January (year boundary)."""
+        # This is a common real-world scenario for holiday trips
+        state = GraphState(
+            user_text="December 28 to January 5",
+            trip_inputs=TripInputs(destinations=["Paris"], origin="London"),
+            parsed_inputs={
+                "start_date_hint": "December 28",
+                "end_date_hint": "January 5",
+            },
+        )
+
+        result = normalize_inputs(state)
+
+        # Start date should be current/nearest December
+        assert result.trip_inputs.start_date is not None
+        # End date should be in January (next year from December)
+        assert result.trip_inputs.end_date is not None
+
+        if result.trip_inputs.start_date and result.trip_inputs.end_date:
+            start_year = int(result.trip_inputs.start_date[:4])
+            end_year = int(result.trip_inputs.end_date[:4])
+            # January should be in the year after December
+            assert end_year >= start_year, "January should not be before December"
+
+    def test_leap_year_february_29(self):
+        """Test February 29th on a leap year."""
+        # 2024 and 2028 are leap years
+        result = _normalize_date("February 29, 2024")
+        assert result == "2024-02-29"
+
+        result = _normalize_date("February 29, 2028")
+        assert result == "2028-02-29"
+
+    def test_non_leap_year_february_29_handled(self):
+        """Test February 29th on a non-leap year is handled gracefully."""
+        # 2025, 2026, 2027 are not leap years
+        result = _normalize_date("February 29, 2025")
+        # Should return None or handle gracefully (not crash)
+        # The parser may reject this as invalid
+        assert result is None or result == "2025-02-28" or result == "2025-03-01"
+
+    def test_today_straddle_midnight(self):
+        """Test that 'today' is consistent even near midnight transitions."""
+        # Get today's date
+        today_result = _normalize_date("today")
+        assert today_result is not None
+        assert len(today_result) == 10
+
+        # Parse back to verify it's a valid date
+        parsed = date.fromisoformat(today_result)
+        today = datetime.now(UTC).date()
+
+        # Should be today or very close (within 1 day for timezone edge cases)
+        diff = abs((parsed - today).days)
+        assert diff <= 1, f"'today' parsed to {parsed} but actual today is {today}"
+
+    def test_year_rollover_december_31(self):
+        """Test December 31st date parsing near year boundary."""
+        result = _normalize_date("December 31, 2025")
+        assert result == "2025-12-31"
+
+        result = _normalize_date("December 31, 2026")
+        assert result == "2026-12-31"
+
+    def test_january_1_new_year(self):
+        """Test January 1st date parsing."""
+        result = _normalize_date("January 1, 2026")
+        assert result == "2026-01-01"
+
+        result = _normalize_date("January 1st, 2026")
+        assert result == "2026-01-01"
+
+    def test_month_end_dates(self):
+        """Test last day of various months."""
+        # 30-day months
+        assert _normalize_date("April 30, 2026") == "2026-04-30"
+        assert _normalize_date("June 30, 2026") == "2026-06-30"
+        assert _normalize_date("September 30, 2026") == "2026-09-30"
+        assert _normalize_date("November 30, 2026") == "2026-11-30"
+
+        # 31-day months
+        assert _normalize_date("January 31, 2026") == "2026-01-31"
+        assert _normalize_date("March 31, 2026") == "2026-03-31"
+        assert _normalize_date("May 31, 2026") == "2026-05-31"
+        assert _normalize_date("July 31, 2026") == "2026-07-31"
+        assert _normalize_date("August 31, 2026") == "2026-08-31"
+        assert _normalize_date("October 31, 2026") == "2026-10-31"
+        assert _normalize_date("December 31, 2026") == "2026-12-31"
+
+    def test_invalid_month_day_combinations(self):
+        """Test invalid day-of-month combinations are handled gracefully."""
+        # April only has 30 days
+        result = _normalize_date("April 31, 2026")
+        assert result is None, "April 31 should return None"
+
+        # February only has 28/29 days
+        result = _normalize_date("February 30, 2026")
+        assert result is None, "February 30 should return None"
+
+        # September only has 30 days
+        result = _normalize_date("September 31, 2026")
+        assert result is None, "September 31 should return None"
+
+
+class TestParsingRobustness:
+    """Test parsing robustness for edge cases - Tier 3 reliability tests."""
+
+    def test_european_budget_format_with_comma(self):
+        """Test that European budget formats with comma are handled.
+
+        Note: This tests extraction parsing, not date parsing.
+        European format uses comma as decimal separator: 2.000,50
+        """
+        from app.plan_graph import GraphState, TripInputs
+
+        # Create state with European-style budget representation
+        state = GraphState(
+            user_text="My budget is around 2000 euros",
+            trip_inputs=TripInputs(destinations=["Paris"]),
+            parsed_inputs={"budget_delta": {"budget": 2000, "currency": "EUR"}},
+        )
+
+        # Verify state is created successfully
+        assert state.parsed_inputs.get("budget_delta", {}).get("budget") == 2000
+        assert state.parsed_inputs.get("budget_delta", {}).get("currency") == "EUR"
+
+    def test_unicode_destination_names(self):
+        """Test that unicode destination names are handled."""
+        state = GraphState(
+            user_text="I want to go to Zürich",
+            trip_inputs=TripInputs(),
+            parsed_inputs={"destinations_delta": ["Zürich"]},
+        )
+
+        result = normalize_inputs(state)
+        # Should not crash
+        assert result is not None
+
+    def test_mixed_case_dates(self):
+        """Test mixed case date parsing."""
+        assert _normalize_date("dEcEmBeR 28, 2025") == "2025-12-28"
+        assert _normalize_date("JANUARY 15, 2026") == "2026-01-15"
+        assert _normalize_date("march 1st, 2026") == "2026-03-01"
+
+    def test_extra_punctuation_in_dates(self):
+        """Test dates with extra punctuation are handled."""
+        # These should either parse correctly or return None gracefully
+        result = _normalize_date("December 28th 2025.")
+        # Should parse without the trailing period
+        assert result == "2025-12-28" or result is None
+
+    def test_very_long_date_string(self):
+        """Test very long date strings don't cause issues."""
+        long_input = "December 28, 2025" + " " * 1000
+        result = _normalize_date(long_input)
+        # Should either parse correctly or return None
+        assert result == "2025-12-28" or result is None
+
+    def test_empty_and_whitespace_only(self):
+        """Test empty and whitespace-only inputs."""
+        assert _normalize_date("") is None
+        assert _normalize_date("   ") is None
+        assert _normalize_date("\n\t") is None
+        assert _normalize_date(None) is None

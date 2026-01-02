@@ -56,6 +56,7 @@ from app.graph_plan_utils import (
 )
 from app.known_places import (
     KNOWN_COUNTRIES,
+    extract_city_from_location,
     is_known_place,
     normalize_place_synonym,
     normalize_place_with_fuzzy,
@@ -66,6 +67,7 @@ from app.pattern_matching import (
     # Utility patterns
     ANSI_ESCAPE_PATTERN,
     BUDGET_PATTERN,
+    BUDGET_TIER_ESTIMATES,
     BYPASS_CONSTRAINT_PATTERNS,
     # Transport patterns
     COMMA_LIST_PATTERN,
@@ -82,6 +84,7 @@ from app.pattern_matching import (
     # Destination patterns
     INITIAL_DESTINATION_PATTERN,
     INLINE_BUDGET_PATTERN,
+    INLINE_DURATION_PATTERN,
     INLINE_TRAVELERS_PATTERN,
     ISO_DATE_PATTERN,
     MONTH_TO_MONTH_RANGE_PATTERN,
@@ -92,6 +95,7 @@ from app.pattern_matching import (
     NO_BUDGET_PHRASES,
     NO_PATTERN,
     ORIGIN_DESTINATION_PATTERN,
+    ORIGIN_LOCATION_PATTERN,
     ORIGIN_PREFIX_PATTERN,
     PLACE_SEPARATORS_PATTERN,
     QUICK_BOOKING_PATTERNS,
@@ -106,6 +110,7 @@ from app.pattern_matching import (
     TRAVELERS_MICRO_PATTERNS,
     TRAVELERS_PATTERN,
     UNDECIDED_PATTERNS,
+    WORD_TO_NUMBER,
     YES_PATTERN,
     # Date compatibility (consolidated)
     is_traveler_detail_answer,
@@ -5861,7 +5866,66 @@ def _try_season_date_parse(
 
             # Determine year: "next" prefix or season in past
             is_next = "next" in text_lower
+            is_this = "this" in text_lower
             year = today.year
+
+            # Check if season straddles today (ambiguous without qualifier)
+            # Only trigger clarification if no explicit "this" or "next" qualifier
+            if not is_next and not is_this:
+                season_start_this_year = date(year, start_month, start_day)
+                season_end_this_year = date(
+                    year if end_month >= start_month else year + 1,
+                    end_month,
+                    min(end_day, 28) if end_month == 2 else end_day,
+                )
+
+                # Check if we're currently in this season (straddle case)
+                if season_start_this_year <= today <= season_end_this_year:
+                    # Generate specific month suggestions for clarification
+                    import calendar
+
+                    current_year = today.year
+                    next_year = current_year + 1
+
+                    # Remaining months in current season (this year)
+                    remaining_months = []
+                    for month in range(today.month, end_month + 1):
+                        if month <= 12:
+                            month_name = calendar.month_name[month]
+                            remaining_months.append(f"{month_name} {current_year}")
+
+                    # Next year's season months
+                    next_year_months = []
+                    for month in range(start_month, min(end_month + 1, start_month + 3)):
+                        if month <= 12:
+                            month_name = calendar.month_name[month]
+                            next_year_months.append(f"{month_name} {next_year}")
+
+                    # Build suggestions: 2 from remaining + 1 from next year
+                    clarify_suggestions = remaining_months[:2] + next_year_months[:1]
+                    if not clarify_suggestions:
+                        clarify_suggestions = [
+                            f"This {season.capitalize()}",
+                            f"Next {season.capitalize()}",
+                        ]
+
+                    _debug(
+                        "[DETERMINISTIC] Season straddles today, triggering clarification",
+                        season=season,
+                        today=today.strftime("%Y-%m-%d"),
+                        suggestions=clarify_suggestions,
+                    )
+                    _deterministic_parse_stats["season_ambiguous_count"] = (
+                        _deterministic_parse_stats.get("season_ambiguous_count", 0) + 1
+                    )
+
+                    return {
+                        "lqa_reason": "deterministic:season_ambiguous",
+                        "_date_clarify_mode": True,
+                        "_pending_date_text": text,
+                        "_clarify_suggestions": clarify_suggestions,
+                        "_season_name": season.capitalize(),
+                    }
 
             # For winter, handle cross-year
             if season == "winter":
@@ -6770,6 +6834,38 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
                 fields_extracted.append("origin")
                 _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: origin={origin_norm}")
 
+    # Try "based in" origin pattern (Pattern 2b)
+    # Note: For explicit "based in X" patterns, we're lenient about is_known_place
+    # since the user is explicitly stating their origin location
+    if not parsed.get("origin_delta"):
+        origin_location_match = ORIGIN_LOCATION_PATTERN.search(text_clean)
+        if origin_location_match:
+            origin_text = origin_location_match.group(1).strip()
+
+            # Extract city from "city country" patterns (e.g., "Torun Poland" -> "Torun")
+            # This prevents fuzzy matching from mangling "Torun Poland" to just "Poland"
+            origin_text = extract_city_from_location(origin_text)
+
+            origin_norm = normalize_place_synonym(origin_text)
+
+            # Check if it's a known place (exact or synonym match)
+            if is_known_place(origin_norm):
+                # Use fuzzy normalizer to get proper casing (e.g., "new york" -> "New York")
+                origin_norm = normalize_place_with_fuzzy(origin_text)
+                parsed["origin_delta"] = origin_norm
+                fields_extracted.append("origin")
+                _debug(f"[INITIAL_EXTRACT] Pattern 2b matched: origin={origin_norm}")
+            else:
+                # Accept anyway - user explicitly said "based in X"
+                # Use Title Case for proper formatting, but don't fuzzy match
+                # (fuzzy matching might mangle unknown places)
+                parsed["origin_delta"] = origin_norm.title()
+                fields_extracted.append("origin")
+                _debug(
+                    f"[INITIAL_EXTRACT] Pattern 2b matched (unverified): "
+                    f"origin={origin_norm.title()}"
+                )
+
     # Try pattern 3: Multi-field comma-separated input
     multi_match = MULTI_FIELD_PATTERN.match(text_clean)
     if multi_match:
@@ -6976,6 +7072,15 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
                 _debug(f"[INITIAL_EXTRACT] Pattern 6: budget={budget_value}")
                 break
 
+    # Try qualitative budget phrases (Pattern 6b: "limited budget", "cheap trip")
+    if not parsed.get("budget_delta"):
+        for phrase, estimate in BUDGET_TIER_ESTIMATES.items():
+            if phrase in text_lower:
+                parsed["budget_delta"] = estimate
+                fields_extracted.append("budget")
+                _debug(f"[INITIAL_EXTRACT] Pattern 6b: qualitative '{phrase}' -> budget={estimate}")
+                break
+
     # Try inline date extraction (Pattern 7: "tomorrow", "today", "next week", etc.)
     if not parsed.get("start_date_hint"):
         date_patterns = [
@@ -6999,6 +7104,27 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
                     fields_extracted.append("dates")
                     _debug(f"[INITIAL_EXTRACT] Pattern 7: inline date={date_str} -> {iso_date}")
                     break
+
+    # Try duration extraction (Pattern 8: "10 days", "for a week")
+    if not parsed.get("duration_delta"):
+        duration_match = INLINE_DURATION_PATTERN.search(text_lower)
+        if duration_match:
+            num_str = duration_match.group(1)
+            unit = duration_match.group(2).lower()
+
+            # Convert word to number if needed
+            if num_str.isdigit():
+                num = int(num_str)
+            else:
+                num = WORD_TO_NUMBER.get(num_str.lower(), 0)
+
+            if num > 0:
+                # Convert to days
+                if "week" in unit:
+                    num *= 7
+                parsed["duration_delta"] = num
+                fields_extracted.append("duration")
+                _debug(f"[INITIAL_EXTRACT] Pattern 8: duration={num} days")
 
     # Try extracting flight settings from the message
     flight_settings: Dict[str, Any] = {}
@@ -8773,16 +8899,27 @@ def _is_low_quality_suggestion(text: str) -> bool:
 def _generate_conversation_summary(
     chat_history: List[Dict[str, str]],
     max_turns: int = 5,
+    state: Optional["GraphState"] = None,
 ) -> str:
     """Generate a natural language summary of recent conversation for suggestion context.
 
     Args:
         chat_history: List of {role, content} message dicts
         max_turns: Maximum number of turns to include (default 5)
+        state: Optional GraphState for per-turn caching (Tier 4 optimization)
 
     Returns:
         Natural language summary of recent conversation context
+
+    Tier 4 Optimization: Caches the summary in state.metadata to avoid
+    recomputation within the same turn. Saves ~100-200 tokens per specialist call.
     """
+    # Check for cached summary (Tier 4: avoid recomputation within turn)
+    cache_key = f"conversation_summary_{max_turns}"
+    if state and cache_key in state.metadata:
+        _debug("📦 CONVERSATION_SUMMARY_CACHE_HIT: Using cached summary", turns=max_turns)
+        return state.metadata[cache_key]
+
     if not chat_history:
         return "No prior conversation."
 
@@ -8812,7 +8949,13 @@ def _generate_conversation_summary(
     if not summary_parts:
         return "No prior conversation."
 
-    return " → ".join(summary_parts)
+    result = " → ".join(summary_parts)
+
+    # Cache the result for this turn
+    if state:
+        state.metadata[cache_key] = result
+
+    return result
 
 
 def _get_missing_fields_summary(state: "GraphState") -> str:
@@ -9481,7 +9624,8 @@ def _summarize_trip_inputs_for_recovery(trip_inputs: Dict[str, Any]) -> str:
         currency = trip_inputs.get("currency", "USD")
         parts.append(f"**Budget:** {trip_inputs['budget']} {currency}")
 
-    return "\n".join(parts) if parts else "No trip details recorded yet."
+    # Use double newlines for proper markdown paragraph breaks
+    return "\n\n".join(parts) if parts else "No trip details recorded yet."
 
 
 def apply_turn_update(
@@ -10300,6 +10444,29 @@ def _predict_strategy_execution(
                     max_tokens=300,
                     estimated_duration_ms=6000,  # 6 seconds for initial response
                 )
+
+    # Also check for generic adventure keywords that map to hiking
+    # These are used in READY_NO_FIELDS gate for post-ready strategy triggers
+    ADVENTURE_KEYWORDS = {"adventure", "activities", "things to do", "what can i do"}
+    if any(kw in text_lower for kw in ADVENTURE_KEYWORDS):
+        if stage0_completed:
+            return StrategyPrediction(
+                will_execute=True,
+                stage=1,
+                tier="outline",
+                topic="hiking",  # Default adventure topic
+                max_tokens=512,
+                estimated_duration_ms=8000,
+            )
+        else:
+            return StrategyPrediction(
+                will_execute=True,
+                stage=0,
+                tier="outline",
+                topic="hiking",  # Default adventure topic
+                max_tokens=450,  # Matches stage0.py max_tokens
+                estimated_duration_ms=6000,
+            )
 
     return None
 
@@ -11731,6 +11898,13 @@ def normalize_inputs(state: GraphState) -> GraphState:
     ti = state.trip_inputs  # Read-only reference for reading current values
 
     # =========================================================================
+    # CAPTURE READINESS STATE BEFORE NORMALIZATION
+    # =========================================================================
+    # Used to detect transition to core_complete (for plan_just_became_ready flag)
+    readiness_before = compute_trip_readiness(ti.model_dump(exclude_none=True))
+    was_core_complete = readiness_before.core_complete
+
+    # =========================================================================
     # FALLBACK: Parse user_text directly for date ranges if LLM missed it
     # =========================================================================
     # If no dates were extracted but user_text looks like a date range, parse it
@@ -11973,12 +12147,12 @@ def normalize_inputs(state: GraphState) -> GraphState:
     # =========================================================================
     # AUTO-INFER MULTI_CITY_INTENT FROM USER TEXT
     # =========================================================================
-    # Requires TWO signals to avoid false positives:
-    # 1. Additive marker (too/also/as well) in user text
-    # 2. Destination count increased from prior state
+    # Uses multiple signals to detect multi-city trips:
+    # 1. multi_city_signal from deterministic parser (e.g., "Paris and Barcelona")
+    # 2. Additive markers (too/also/as well) + destination count increase
     #
-    # Single "too" without destination increase is ignored (user might say
-    # "too hot" or "me too" casually).
+    # The multi_city_signal is set when the deterministic parser detects
+    # conjunction patterns like "Paris and Barcelona" or "Paris, Barcelona".
     if "destinations" in updates and not updates.get("multi_city_intent"):
         new_dests = updates.get("destinations", [])
         old_dests = ti.destinations or []
@@ -11993,35 +12167,46 @@ def normalize_inputs(state: GraphState) -> GraphState:
         if destination_count_increased and has_multiple_destinations:
             # Check if multi_city_intent is not already set on trip_inputs
             if not ti.multi_city_intent:
-                # Check user text for additive phrases
-                user_text_lower = (state.user_text or "").lower()
-                additive_patterns = [
-                    r"\btoo\b",  # "go to X too", "visit X too"
-                    r"\balso\b",  # "also visit X", "also go to X"
-                    r"\bas well\b",  # "visit X as well"
-                    r"\band\s+also\b",  # "and also X"
-                    r"\badd\b",  # "add X to the trip"
-                ]
-
-                # Count how many additive patterns match
-                pattern_matches = sum(
-                    1 for pattern in additive_patterns if re.search(pattern, user_text_lower)
-                )
-
-                # Require at least one additive pattern match
-                if pattern_matches >= 1:
+                # Priority 1: Check multi_city_signal from deterministic parser
+                # This is set when "Paris and Barcelona" or "Paris, Barcelona" is parsed
+                if state.metadata.get("multi_city_signal"):
                     updates["multi_city_intent"] = "multi_city"
-                    state.metadata["multi_city_confidence"] = min(
-                        0.3 + (pattern_matches * 0.2), 1.0
-                    )
+                    state.metadata["multi_city_confidence"] = 0.9
                     _debug(
-                        "Auto-inferred multi_city_intent from additive phrase + "
-                        "destination increase",
-                        pattern_matches=pattern_matches,
-                        confidence=state.metadata["multi_city_confidence"],
-                        old_count=len(old_dests),
-                        new_count=len(new_dests),
+                        "Auto-inferred multi_city_intent from deterministic multi_city_signal",
+                        destinations=new_dests,
+                        confidence=0.9,
                     )
+                else:
+                    # Priority 2: Check user text for additive phrases
+                    user_text_lower = (state.user_text or "").lower()
+                    additive_patterns = [
+                        r"\btoo\b",  # "go to X too", "visit X too"
+                        r"\balso\b",  # "also visit X", "also go to X"
+                        r"\bas well\b",  # "visit X as well"
+                        r"\band\s+also\b",  # "and also X"
+                        r"\badd\b",  # "add X to the trip"
+                    ]
+
+                    # Count how many additive patterns match
+                    pattern_matches = sum(
+                        1 for pattern in additive_patterns if re.search(pattern, user_text_lower)
+                    )
+
+                    # Require at least one additive pattern match
+                    if pattern_matches >= 1:
+                        updates["multi_city_intent"] = "multi_city"
+                        state.metadata["multi_city_confidence"] = min(
+                            0.3 + (pattern_matches * 0.2), 1.0
+                        )
+                        _debug(
+                            "Auto-inferred multi_city_intent from additive phrase + "
+                            "destination increase",
+                            pattern_matches=pattern_matches,
+                            confidence=state.metadata["multi_city_confidence"],
+                            old_count=len(old_dests),
+                            new_count=len(new_dests),
+                        )
 
     # =========================================================================
     # INFER TRIP SHAPE FROM USER TEXT (Deterministic, no LLM)
@@ -12137,6 +12322,24 @@ def normalize_inputs(state: GraphState) -> GraphState:
                 severity=err.severity,
             )
         _debug(f"Normalization produced {len(norm_errors)} errors/warnings")
+
+    # =========================================================================
+    # READINESS TRANSITION DETECTION (plan_just_became_ready)
+    # =========================================================================
+    # Detect when core_complete transitions from False → True.
+    # This triggers the "ready to generate" message in summarize node.
+    ti_after = state.trip_inputs
+    readiness_after = compute_trip_readiness(ti_after.model_dump(exclude_none=True))
+
+    if not was_core_complete and readiness_after.core_complete:
+        state.metadata["plan_just_became_ready"] = True
+        # Clear stale last_summary so summarize generates fresh response
+        state.last_summary = None
+        _debug(
+            "READINESS_TRANSITION: core_complete became True",
+            missing_before=readiness_before.missing_core,
+            missing_after=readiness_after.missing_core,
+        )
 
     # =========================================================================
     # PRE-COMPUTE GATE EVALUATION (for routing and observability)
@@ -13172,15 +13375,42 @@ def summarize(state: GraphState) -> GraphState:
         destinations = ti.destinations or []
         dest_str = ", ".join(destinations) if destinations else "your destination"
 
-        # Generate fresh ready-to-generate message
-        state.last_summary = (
-            f"Great news! I have everything I need to plan your trip to {dest_str}. "
-            "Would you like me to generate your personalized itinerary now?"
-        )
+        # Build trip summary preview for confirmation
+        preview_parts = []
+        if destinations:
+            preview_parts.append(f"**Destination:** {dest_str}")
+        if ti.start_date:
+            date_info = ti.start_date
+            if ti.end_date:
+                date_info = f"{ti.start_date} to {ti.end_date}"
+            preview_parts.append(f"**Dates:** {date_info}")
+        if ti.adults:
+            traveler_str = f"{ti.adults} adult{'s' if ti.adults > 1 else ''}"
+            if ti.children:
+                traveler_str += f", {ti.children} child{'ren' if ti.children > 1 else ''}"
+            preview_parts.append(f"**Travelers:** {traveler_str}")
+        if ti.origin:
+            preview_parts.append(f"**From:** {ti.origin}")
+
+        # Use double newlines for proper markdown paragraph breaks
+        preview = "\n\n".join(preview_parts) if preview_parts else ""
+
+        # Generate fresh ready-to-generate message with preview
+        if preview:
+            state.last_summary = (
+                f"Perfect! Here's what I have:\n\n{preview}\n\n"
+                "Ready to generate your plan, or want to add/change anything?"
+            )
+        else:
+            state.last_summary = (
+                f"Great news! I have everything I need to plan your trip to {dest_str}. "
+                "Keep chatting to refine your trip and get additional inspiration, "
+                "or click on the generate button below."
+            )
         state.suggested_responses = [
             "Yes, generate my itinerary!",
-            "I want to add more details first",
-            "Show me hotel options",
+            "Wait, I want to add budget",
+            "Let me change something",
         ]
         state.question_target = None  # Clear stale question target
         state.metadata["question_target"] = None  # SSoT sync
@@ -15374,7 +15604,11 @@ async def run_turn(
                 result.suggested_responses = ["Next month", "This summer", "I'm flexible"]
             else:
                 result.last_summary = "What else would you like to tell me about your trip?"
-                result.suggested_responses = ["Add details", "Generate plan", "Start over"]
+                result.suggested_responses = [
+                    "Let me add more details",
+                    "Generate my plan!",
+                    "Let's start fresh",
+                ]
         # Update last_response_turn to current
         result_meta["last_response_turn"] = current_turn
         result.metadata = result_meta

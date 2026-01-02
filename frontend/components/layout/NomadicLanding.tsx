@@ -385,7 +385,7 @@ export function NomadicLanding() {
           onPlanResult={handlePlanResult}
           onGeneratePlanStart={handleGeneratePlanStart}
           onFreshStart={handleStartNewSession}
-          tripDetails={tripDetailsSection}
+          tripDetails={fullHeight ? undefined : tripDetailsSection}
           fullHeight={fullHeight}
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}

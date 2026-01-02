@@ -15,7 +15,6 @@ from app.planner.gates.constants import SPECIALIST_NODE_MAP
 from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.result import GateResult
-from app.planner.gates.topic_detection import detect_strategy_topic_from_text
 
 if TYPE_CHECKING:
     pass
@@ -67,13 +66,13 @@ class SpecialistPreCoreGate(Gate):
         for intent_name, keywords in SPECIALIST_KEYWORDS.items():
             if keyword_match(text_lower, keywords):
                 # Yield to strategy gate for "activities" when strategy topic detected
+                # Use pre-computed topic from GateContext (avoids redundant detection)
                 if intent_name == "activities":
-                    strategy_topic = detect_strategy_topic_from_text(text_lower)
-                    if strategy_topic:
+                    if ctx.detected_strategy_topic:
                         _debug(
                             "specialist_pre_core yielding to strategy_pre_core",
                             intent=intent_name,
-                            strategy_topic=strategy_topic,
+                            strategy_topic=ctx.detected_strategy_topic,
                         )
                         return None
 

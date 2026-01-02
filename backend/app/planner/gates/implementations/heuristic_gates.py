@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 from app.pattern_matching import DOMAIN_KEYWORDS, QUESTION_WORDS
 from app.planner.gates.base import Gate, GateContext
 from app.planner.gates.constants import SPECIALIST_NODE_MAP, SPECIALIST_NODE_MAP_EXTENDED
+from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.result import GateResult
 
@@ -135,9 +136,9 @@ class QuestionKeywordGate(Gate):
         if not has_question_indicator:
             return None
 
-        # Check for domain keywords
+        # Check for domain keywords using pre-compiled patterns
         for intent_name, keywords in DOMAIN_KEYWORDS.items():
-            if any(kw in text_lower for kw in keywords):
+            if keyword_match(text_lower, keywords):
                 return (intent_name, SPECIALIST_NODE_MAP[intent_name])
 
         return None

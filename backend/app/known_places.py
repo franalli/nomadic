@@ -1277,15 +1277,26 @@ def fuzzy_match_place(
 
         # Search against lowercase place names for case-insensitive matching
         # Using the lowercase set for matching, then map back to canonical form
-        result = process.extractOne(
+        #
+        # IMPORTANT: Get top 5 matches and prefer longer ones when scores are equal.
+        # This prevents "torun poland" from matching "la" (from "po-la-nd") instead
+        # of "poland" when both have the same score.
+        results = process.extract(
             place_lower,
             list(_ALL_KNOWN_PLACES_LOWER),
             scorer=fuzz.WRatio,
             score_cutoff=threshold,
+            limit=5,
         )
 
-        if result:
-            matched_lower, score, _ = result
+        if results:
+            # Sort by score DESC, then by length DESC (prefer longer matches)
+            # This ensures "poland" beats "la" when both have score 90
+            sorted_results = sorted(
+                results,
+                key=lambda x: (-x[1], -len(x[0])),  # -score, -length
+            )
+            matched_lower, score, _ = sorted_results[0]
             # Map back to canonical form (proper casing)
             canonical = _CANONICAL_PLACES.get(matched_lower, matched_lower.title())
             logger.debug(f"[FUZZY_MATCH] '{place}' → '{canonical}' (score={score:.1f})")
@@ -1345,3 +1356,65 @@ def normalize_place_with_fuzzy(place: str, fuzzy_threshold: int = _FUZZY_DEFAULT
     if result != place:
         logger.debug(f"[PLACE_NORMALIZE] title_case: '{place}' → '{result}'")
     return result
+
+
+# =============================================================================
+# CITY/COUNTRY EXTRACTION
+# =============================================================================
+# Pre-compute lowercase country set for O(1) lookup
+_KNOWN_COUNTRIES_LOWER: frozenset = frozenset(c.lower() for c in KNOWN_COUNTRIES)
+
+
+def extract_city_from_location(text: str) -> str:
+    """
+    Extract city from "city country" patterns like "Torun Poland".
+
+    When users say "based in Torun Poland" or "from New York USA", they mean
+    the city, not the country. This function detects such patterns and extracts
+    just the city part.
+
+    Handles patterns like:
+    - "Torun Poland" -> "Torun"
+    - "New York USA" -> "New York"
+    - "Paris France" -> "Paris"
+    - "London UK" -> "London"
+    - "San Francisco United States" -> "San Francisco"
+    - "New York United States of America" -> "New York"
+    - "Los Angeles" -> "Los Angeles" (no change, no country detected)
+
+    Args:
+        text: Location text that may contain "city country" pattern
+
+    Returns:
+        - Just the city if pattern detected and suffix is a known country
+        - Original text if no country suffix detected
+    """
+    if not text or " " not in text:
+        return text
+
+    words = text.split()
+    if len(words) < 2:
+        return text
+
+    # Find all possible country suffixes and pick the LONGEST match
+    # This ensures "United States of America" is matched over "America"
+    best_match = None
+    best_city = None
+
+    for i in range(1, len(words)):
+        potential_country = " ".join(words[i:])
+        potential_city = " ".join(words[:i])
+
+        if potential_country.lower() in _KNOWN_COUNTRIES_LOWER:
+            # Found a match - keep looking for longer ones
+            if best_match is None or len(potential_country) > len(best_match):
+                best_match = potential_country
+                best_city = potential_city
+
+    if best_city is not None:
+        logger.debug(
+            f"[CITY_EXTRACT] '{text}' → city='{best_city}' (stripped country='{best_match}')"
+        )
+        return best_city
+
+    return text

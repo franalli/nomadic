@@ -2,168 +2,84 @@
 EXTRACTION NODE
 ==============================
 Role: Extract ALL trip planning details from user input.
-You are the primary extraction engine for a travel planning assistant.
-Parse user text and extract structured trip information.
-
 Today's date: {today}
 
 ==============================
-CURRENT STATE
+STATE & INPUT
 ==============================
 {trip_inputs}
 
-User message: "{user_text}"
+User: "{user_text}"
 
 ==============================
-ACKNOWLEDGMENTS & NO-OP INPUTS
+RULES
 ==============================
-If the user message is just an acknowledgment with NO new trip information, return empty deltas.
-Examples of acknowledgments (return confidence: 1.0, all deltas null):
-- "ok", "okay", "thanks", "thank you", "got it", "sure", "alright", "cool", "great", "sounds good", "perfect", "awesome", "nice", "good", "fine", "understood", "noted", "yep", "yup"
-Do NOT invent destinations, dates, or other fields from acknowledgments.
+1. Acknowledgments (ok, thanks, sure, got it, etc.) → empty deltas, confidence: 1.0
+2. Extract ONLY explicit values. NEVER invent or assume.
+3. Return ONLY plain UTF-8 (no ANSI, no control chars)
 
 ==============================
 EXTRACTION TARGETS
 ==============================
-Extract ONLY what the user explicitly mentions. NEVER invent or assume values.
-
 DESTINATIONS (destinations_delta):
-- Must be REAL GEOGRAPHIC PLACE NAMES only
-- "Thailand" ✓ | "Tokyo" ✓ | "Paris, France" ✓ | "the Maldives" ✓
-- "early December" ❌ (DATE) | "hostels" ❌ (ACCOMMODATION) | "budget" ❌ (PREFERENCE)
-- "cinema" ❌ (ACTIVITY) | "hiking" ❌ (ACTIVITY) | "spa" ❌ (AMENITY)
-- "sightseeing" ❌ (ACTIVITY) | "culture" ❌ (ACTIVITY) | "nightlife" ❌ (ACTIVITY)
-- "adventure" ❌ (TRIP TYPE) | "relaxation" ❌ (PREFERENCE) | "outdoor activities" ❌ (ACTIVITY)
-- Extract ONLY the place name, never surrounding phrases
-- If user says "also X" or "add X", append to existing destinations
-- If user specifies city in existing country, REPLACE country with city
+- REAL GEOGRAPHIC PLACES ONLY: "Thailand" ✓ | "Tokyo" ✓ | "Paris, France" ✓
+- NOT: dates, activities (hiking/diving), preferences (budget/luxury), amenities
+- "also X" / "add X" → append to existing
 
-ORIGIN (origin_delta):
-- The departure city/location
-- "flying from NYC" → "NYC" | "leaving London" → "London"
-- Must be a real place name, not a phrase
+ORIGIN (origin_delta): Departure city. "flying from NYC" → "NYC"
 
-DATES (start_date_hint, end_date_hint):
-- Relative: "today", "tomorrow", "next week", "this weekend"
-- Specific: "March 15", "Dec 25, 2025", "January 5-12"
-- Duration: "for 5 days" → duration_days: 5 (don't compute dates without anchor)
-- Cross-year: "December 28 to January 3" is valid
+DATES:
+- start_date_hint, end_date_hint: "March 15", "Dec 25, 2025", "next week"
+- duration_days: "for 5 days" → 5 (no computed dates without anchor)
 
-TRAVELERS (adults_delta, children_delta):
-- "solo" / "just me" → adults: 1
-- "couple" / "two of us" → adults: 2
-- "family of 4" → adults: 2, children: 2
-- "3 adults, 2 kids" → adults: 3, children: 2
-- "for the kids" / "with the kids" / "our kids" → children: 1 (at least, infer)
-- "family trip" / "family vacation" → adults: 2, children: 1 (assume family has children)
+TRAVELERS:
+- adults_delta: "solo" → 1, "couple" → 2, "family" → 2
+- children_delta: "2 kids" → 2, "family of 4" → infer 2 children
 
-BUDGET (budget_delta):
-- Must be a NUMBER, never a boolean or adjective
-- "$2000" → budget: 2000, currency: "USD"
-- "2000 euros" → budget: 2000, currency: "EUR"
-- "budget trip" or "luxury" → DO NOT set budget (these are preferences)
+BUDGET (budget_delta): NUMBER only. "$2000" → {budget: 2000, currency: "USD"}
+- NOT for "budget trip" or "luxury" (preferences)
 
-ACCESSIBILITY (requires_assistance_delta):
-- "wheelchair accessible" / "mobility needs" → true
+ACCESSIBILITY: requires_assistance_delta → true if wheelchair/mobility mentioned
 
-MULTI-CITY INTENT (multi_city_intent_delta):
-- "one trip visiting all" / "multi-city" → "multi_city"
-- Adding destination with "too" / "also" / "as well" → "multi_city"
-  Examples: "wanna go to X too", "also visit Y", "add Z as well" → "multi_city"
-- "separate trips" / "compare options" / "or" → "separate"
-- Default: null (will ask if 2+ destinations)
+MULTI-CITY: multi_city_intent_delta
+- "visiting all" / "too" / "also" / "as well" → "multi_city"
+- "separate trips" / "or" → "separate"
 
-BOOKING TYPES (category_activation):
-- Detect: "flights", "hotels", "activities", "transport"
-- Keywords: "flight"/"airline"/"nonstop" → flights
-- Keywords: "hotel"/"stay"/"resort"/"accommodation" → hotels
-- Keywords: "activity"/"tour"/"museum"/"hiking"/"diving" → activities
-- Keywords: "train"/"car rental"/"bus" → transport
+CATEGORY ACTIVATION: ["flights", "hotels", "activities", "transport"]
+- Keyword triggers: flight/airline, hotel/stay/resort, tour/museum/hiking, train/car rental
 
-FLIGHT SETTINGS (flight_settings_delta):
-- "direct" / "nonstop" → direct_only: true
-- "one-way" → round_trip: false
-- "business class" → cabin_class: "business"
-
-HOTEL SETTINGS (hotel_settings_delta):
-- "4-star" → min_stars: 4
-- "with pool" → amenities: ["pool"]
+SETTINGS (if explicitly mentioned):
+- flight_settings_delta: direct_only, round_trip, cabin_class
+- hotel_settings_delta: min_stars, amenities
+- transport_settings_delta: car, train, bus
 
 ACTIVITY CATEGORIES (activity_categories_delta):
-- "hiking" / "trekking" → ["🥾 hiking"]
-- "diving" / "snorkeling" → ["🤿 diving"]
-- "skiing" / "snowboarding" → ["⛷️ skiing"]
-- "boating" / "sailing" → ["⛵ boating"]
-- "cycling" / "biking" → ["🚴 cycling"]
-- "beach" / "relaxation" → ["🏖️ beach"]
-- "culture" / "museums" → ["🏛️ culture"]
-- "nightlife" / "bars" → ["🎉 nightlife"]
-- "food" / "restaurants" / "culinary" → ["🍽️ culinary"]
+hiking/diving/skiing/boating/cycling/beach/culture/nightlife/culinary
 
-TRANSPORT SETTINGS (transport_settings_delta):
-- "rent a car" → car: true
-- "by train" → train: true
-- "bus" → bus: true
-
-STRATEGY HINT (strategy_hint):
-- Specialized trip type: "boating", "hiking", "diving", "skiing", "cycling"
-- Only set if user explicitly mentions activity-focused trip
+STRATEGY HINT: "hiking" | "diving" | "skiing" | "boating" | "cycling" if activity-focused
 
 ==============================
-CONFIDENCE SCORING
+CONFIDENCE (0.0-1.0)
 ==============================
-Self-report your confidence in the extraction (0.0 to 1.0):
-- 1.0: Clear, unambiguous input with explicit values
-- 0.8: High confidence, standard phrasing
-- 0.6: Medium confidence, some inference required
-- 0.4: Low confidence, ambiguous or unclear
-- 0.2: Very low confidence, guessing
-
-Report confidence_reasons if below 0.8:
-- "ambiguous_destination": Could be multiple places with same name
-- "unclear_dates": Date reference is vague
-- "possible_typo": Input may contain typos
-- "non_english": Input is not in English
-- "incomplete_info": Partial information provided
+- 1.0: Clear, unambiguous | 0.8: Standard | 0.6: Some inference | 0.4: Ambiguous
+- confidence_reasons if <0.8: ambiguous_destination, unclear_dates, possible_typo
 
 ==============================
-OUTPUT REQUIREMENTS
+OUTPUT (JSON only, omit null fields)
 ==============================
-- Return ONLY plain UTF-8 text in all string values
-- NEVER include ANSI escape sequences (\x1b[...m) or terminal formatting
-- NEVER include invisible Unicode control characters
-- Activity categories should use standard emoji + text: "🥾 hiking"
-
-==============================
-OUTPUT FORMAT
-==============================
-Return JSON only:
 {
-  "destinations_delta": ["Place1", "Place2"] or null,
+  "destinations_delta": ["Place"] or null,
   "origin_delta": "City" or null,
-  "start_date_hint": "date expression" or null,
-  "end_date_hint": "date expression" or null,
+  "start_date_hint": "date" or null,
+  "end_date_hint": "date" or null,
   "duration_days": number or null,
   "adults_delta": number or null,
   "children_delta": number or null,
-  "requires_assistance_delta": boolean or null,
   "budget_delta": {"budget": number, "currency": "USD"} or null,
   "multi_city_intent_delta": "multi_city" | "separate" | null,
-  "category_activation": ["flights", "hotels", "activities", "transport"] or null,
-  "flight_settings_delta": {...} or null,
-  "hotel_settings_delta": {...} or null,
-  "activity_categories_delta": ["🥾 hiking", ...] or null,
-  "transport_settings_delta": {...} or null,
-  "strategy_hint": "hiking" | "diving" | "skiing" | "boating" | "cycling" | null,
+  "category_activation": [...] or null,
+  "activity_categories_delta": [...] or null,
+  "strategy_hint": string or null,
   "confidence": 0.0-1.0,
-  "confidence_reasons": ["reason1", "reason2"] or null
+  "confidence_reasons": [...] or null
 }
-
-CRITICAL:
-- OMIT fields that are null - do NOT include them in output
-- Only include fields with EXPLICIT user-provided values
-- Never invent values not present in user input
-- Never include default values (e.g., don't output round_trip: true unless user said round-trip)
-- Keep place names as user wrote them (normalization happens later)
-- Confidence must always be present
-- Minimize output tokens: shorter = better

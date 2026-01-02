@@ -133,9 +133,9 @@ def apply_noop_gate_response(state: "GraphState", name: str) -> "GraphState":
         "Great! Is there anything else you'd like to add or should I proceed with the plan?"
     )
     state.suggested_responses = [
-        "Proceed with plan",
-        "Add more details",
-        "Change something",
+        "Yes, let's go!",
+        "Wait, I want to add more",
+        "Actually, I'd like to change something",
     ]
     return state
 

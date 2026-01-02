@@ -31,6 +31,7 @@ from app.planner.nodes.llm_utils import measure_llm_call
 
 # Import shared strategy utilities from base module (avoid duplication)
 from app.planner.nodes.strategy.base import (
+    detect_field_modification_request,
     detect_strategy_switch,
     detect_topic_switch,
 )
@@ -338,6 +339,53 @@ async def strategy_node(state: "GraphState") -> "GraphState":
             _debug_node_exit("strategy_node", state, start_ns)
             return await _specialist("general", state)
 
+        # V38: Check if user wants to modify a trip field (e.g., "I want to add budget")
+        # This handles cases where user interrupts strategy flow to add/modify fields
+        detected_field = detect_field_modification_request(user_text)
+        if detected_field:
+            _debug(
+                "📝 Strategy relevance gate: field modification request detected",
+                topic=topic,
+                detected_field=detected_field,
+                user_text_preview=user_text[:50],
+                action="asking for field value",
+            )
+            state.metadata["strategy_gate_fallback"] = True
+            state.metadata["strategy_gate_reason"] = f"field_modification:{detected_field}"
+
+            # Generate field-specific question and suggestions
+            field_questions = {
+                "budget": "What's your budget for this trip?",
+                "travelers": "How many people will be traveling?",
+                "dates": "When are you planning to travel?",
+                "origin": "Where will you be traveling from?",
+            }
+            field_suggestions = {
+                "budget": ["$2,000", "$5,000", "Flexible budget"],
+                "travelers": ["Just me", "2 adults", "Family of 4"],
+                "dates": ["Next month", "In 3 months", "I'm flexible"],
+                "origin": [],  # Location-specific, leave empty
+            }
+
+            state.last_summary = field_questions.get(
+                detected_field, f"What {detected_field} would you like to set?"
+            )
+            state.suggested_responses = field_suggestions.get(detected_field, [])
+            state.metadata["last_question_field"] = detected_field
+            state.question_target = detected_field
+
+            # Set provenance for streaming mode decision
+            state.metadata["response_writer_node"] = (
+                f"strategy_node:field_modification:{detected_field}"
+            )
+            state.metadata["response_generation_provenance"] = "template"
+            _debug_suggestions(
+                state.suggested_responses,
+                source=f"strategy_node:field_modification:{detected_field}",
+            )
+            _debug_node_exit("strategy_node", state, start_ns)
+            return state
+
         # No topic switch detected - ask about current strategy topic
         _debug(
             "⚠️ Strategy relevance gate: topic keywords not found in user text",
@@ -531,12 +579,43 @@ async def strategy_node(state: "GraphState") -> "GraphState":
     # Use minimal state view for strategy (saves ~75% tokens vs full trip_inputs)
     strategy_state_view = StateViewBuilder.for_strategy(state)
 
+    # =========================================================================
+    # STAGE 2 SKELETON REUSE (Tier 3 optimization)
+    # =========================================================================
+    # For Stage 2, check if we have a cached Stage 1 skeleton.
+    # If yes, use condensed context instead of full conversation_summary.
+    # This saves ~1000-1500 tokens per Stage 2 expansion call.
+    # =========================================================================
+    if is_stage2 and state.metadata.get("stage1_skeleton"):
+        cached_skeleton = state.metadata["stage1_skeleton"]
+        skeleton_topic = state.metadata.get("stage1_skeleton_topic", topic)
+
+        # Build condensed context with skeleton reference
+        expansion_desc = (
+            expansion_target.value.replace("_", " ") if expansion_target else "full itinerary"
+        )
+        conversation_context = (
+            f"Previous {skeleton_topic} skeleton:\n"
+            f"---\n{cached_skeleton[:1500]}{'...' if len(cached_skeleton) > 1500 else ''}\n---\n"
+            f"User requested expansion of: {expansion_desc}"
+        )
+        _debug(
+            "📦 STAGE2_SKELETON_REUSE: Using cached Stage 1 skeleton",
+            topic=topic,
+            skeleton_topic=skeleton_topic,
+            skeleton_len=len(cached_skeleton),
+            tokens_saved="~1000-1500 (vs full conversation_summary)",
+        )
+    else:
+        # Fallback to full conversation summary (with caching via state)
+        conversation_context = _generate_conversation_summary(state.chat_history, state=state)
+
     system_prompt = (
         prompt.replace("{trip_inputs}", json.dumps(strategy_state_view))
         .replace("{parsed_inputs}", json.dumps(state.parsed_inputs))
         .replace("{topic}", topic)
         .replace("{missing_fields}", _get_missing_fields_summary(state))
-        .replace("{conversation_summary}", _generate_conversation_summary(state.chat_history))
+        .replace("{conversation_summary}", conversation_context)
         .replace("{tone_instruction}", tone_instruction)
     )
 
@@ -741,6 +820,16 @@ async def strategy_node(state: "GraphState") -> "GraphState":
                 )
                 state.metadata["stage1_completed_sig"] = stage1_sig
 
+                # =====================================================================
+                # STAGE 1 SKELETON CACHING (Tier 3 optimization)
+                # =====================================================================
+                # Cache Stage 1 output for Stage 2 context reuse.
+                # When Stage 2 fires, it uses this cached skeleton instead of
+                # regenerating full conversation_summary - saves ~1000-1500 tokens.
+                # =====================================================================
+                state.metadata["stage1_skeleton"] = state.last_summary
+                state.metadata["stage1_skeleton_topic"] = topic
+
                 # Add expansion prompt to suggestions
                 if "Show more details" not in state.suggested_responses:
                     state.suggested_responses = ["Show more details"] + state.suggested_responses[
@@ -750,6 +839,7 @@ async def strategy_node(state: "GraphState") -> "GraphState":
                     "📋 STRATEGY STAGE 1 COMPLETE: pending_strategy_expansion=True",
                     topic=topic,
                     stage1_sig=stage1_sig,
+                    skeleton_cached=True,
                 )
             elif stage_name == "stage2":
                 # Stage 2 complete: Clear pending expansion flag
@@ -828,6 +918,10 @@ async def strategy_node(state: "GraphState") -> "GraphState":
                         state.trip_inputs.origin,
                     )
                     state.metadata["stage1_completed_sig"] = stage1_sig
+
+                    # Cache Stage 1 skeleton for Stage 2 reuse (even on recovery)
+                    state.metadata["stage1_skeleton"] = state.last_summary
+                    state.metadata["stage1_skeleton_topic"] = topic
 
                 _debug_node_exit("strategy_node", state, start_ns)
                 return state

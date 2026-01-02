@@ -308,10 +308,16 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             state.flags["lqa_bail_reason"] = lqa_reason
             state.metadata["date_clarify_mode"] = True
             state.metadata["pending_date_text"] = det_result.get("_pending_date_text")
+            # Store suggestions for season clarification (Issue 4)
+            if det_result.get("_clarify_suggestions"):
+                state.metadata["date_clarify_suggestions"] = det_result["_clarify_suggestions"]
+            if det_result.get("_season_name"):
+                state.metadata["date_clarify_season_name"] = det_result["_season_name"]
             set_parse_provenance(state, "deterministic")
             _debug(
                 "[LQA] DETERMINISTIC: date ambiguous, triggering clarify mode",
                 pending_text=det_result.get("_pending_date_text"),
+                suggestions=det_result.get("_clarify_suggestions"),
             )
             _debug_node_exit("lqa_prepass", state, start_ns)
             return state

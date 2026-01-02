@@ -13,6 +13,7 @@ repeated LLM calls for common inputs.
 
 import json
 import os
+import random
 import time
 from typing import Any, Literal, Optional
 
@@ -210,7 +211,10 @@ def _call_llm_validation(
     model_name = _get_model_name()
     last_error: Optional[Exception] = None
 
-    for _attempt in range(max_retries):
+    initial_delay = 0.5
+    max_delay = 10.0
+
+    for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
                 model=model_name,
@@ -228,9 +232,10 @@ def _call_llm_validation(
         except Exception as exc:
             last_error = exc
             status_code = getattr(exc, "status_code", None)
-            # Retry on rate limit or server errors
+            # Retry on rate limit or server errors with exponential backoff + jitter
             if status_code == 429 or (isinstance(status_code, int) and status_code >= 500):
-                time.sleep(0.5)  # Fixed delay
+                wait_time = min(initial_delay * (2**attempt), max_delay) + random.uniform(0, 1)
+                time.sleep(wait_time)
                 continue
             raise
 

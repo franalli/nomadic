@@ -596,6 +596,44 @@ BUDGET_TIER_PHRASES: FrozenSet[str] = frozenset(
     }
 )
 
+# Qualitative budget phrases mapped to numeric estimates (in USD)
+BUDGET_TIER_ESTIMATES: Dict[str, int] = {
+    # Low tier phrases -> budget-conscious estimates
+    "limited budget": 1500,
+    "tight budget": 1500,
+    "small budget": 1500,
+    "budget-friendly": 1500,
+    "budget friendly": 1500,
+    "cheap": 1000,
+    "cheapest": 800,
+    "as cheap as possible": 800,
+    "low budget": 1200,
+    "low-budget": 1200,
+    "economical": 1500,
+    "economy": 1500,
+    # Mid tier phrases -> moderate estimates
+    "moderate": 3000,
+    "mid-range": 3000,
+    "midrange": 3000,
+    "mid range": 3000,
+    "average": 2500,
+    "standard": 2500,
+    "reasonable": 2500,
+    # High tier phrases -> luxury estimates
+    "luxury": 8000,
+    "luxurious": 8000,
+    "high-end": 10000,
+    "high end": 10000,
+    "premium": 7000,
+    "splurge": 10000,
+    "no expense spared": 15000,
+    "money is no object": 15000,
+    "spare no expense": 15000,
+    "first class": 10000,
+    "top tier": 10000,
+    "upscale": 8000,
+}
+
 # =============================================================================
 # NO_BUDGET_PHRASES (Backward compatibility union)
 # =============================================================================
@@ -614,6 +652,14 @@ DURATION_PATTERN = re.compile(
     r"^(?:(?:for\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
     r"\s*(day|days|night|nights|week|weeks))"
     r"(?:\s*(?:trip|vacation|holiday))?$",
+    re.IGNORECASE,
+)
+
+# Inline duration pattern for searching within text (no anchors)
+# Note: Longer alternatives listed first to ensure proper match (days before day)
+INLINE_DURATION_PATTERN = re.compile(
+    r"(?:for\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"\s*(days|day|nights|night|weeks|week)",
     re.IGNORECASE,
 )
 
@@ -639,6 +685,13 @@ WORD_TO_NUMBER: Dict[str, int] = {
 # Origin prefix pattern (e.g., "from London", "leaving from NYC")
 ORIGIN_PREFIX_PATTERN = re.compile(
     r"^(from|leaving\s+from|departing\s+from|flying\s+from|starting\s+from)\s+(.+)$",
+    re.IGNORECASE,
+)
+
+# Origin location pattern for inline extraction (e.g., "based in London", "I'm from NYC")
+ORIGIN_LOCATION_PATTERN = re.compile(
+    r"(?:based\s+in|living\s+in|located\s+in|coming\s+from|residing\s+in|"
+    r"i(?:'?m|\s+am)\s+(?:from|in))\s+(.+?)(?:[.,]|$)",
     re.IGNORECASE,
 )
 

@@ -26,11 +26,11 @@
 
 ## Architecture Overview
 
-LangGraph-based conversational trip planning system with **18 nodes**.
+LangGraph-based conversational trip planning system with **19 nodes**.
 
 | Category            | Count | Description                       |
 | ------------------- | ----- | --------------------------------- |
-| LLM-Powered Nodes   | 10    | Use OpenAI API for generation     |
+| LLM-Powered Nodes   | 11    | Use OpenAI API for generation     |
 | Deterministic Nodes | 8     | Pure Python logic, no LLM         |
 | Short Circuit Types | 7     | Bypass patterns for fast response |
 | Caching Strategies  | 4     | Token-saving cache mechanisms     |
@@ -68,8 +68,8 @@ backend/app/planner/
 ├── normalization/           # Trip input normalization
 │   ├── __init__.py          # Normalization exports
 │   ├── types.py             # NormalizationError dataclass
-│   ├── date.py              # DateNormalizer, DateProvenance (~580 lines)
-│   └── trip_inputs.py       # TripInputNormalizer (~890 lines)
+│   ├── date.py              # DateNormalizer, DateProvenance (~690 lines)
+│   └── trip_inputs.py       # TripInputNormalizer (~1050 lines)
 ├── parsing/                 # Parse functions consolidation
 │   ├── __init__.py          # Parsing exports
 │   ├── provenance.py        # Parse provenance tracking (precedence-based)
@@ -80,7 +80,7 @@ backend/app/planner/
 │   ├── result.py            # GateResult dataclass
 │   ├── constants.py         # DateErrorCode, CORE_FIELD_PRIORITY, CANONICAL_FIELD_ORDER
 │   ├── readiness.py         # TripReadiness dataclass + compute_trip_readiness()
-│   ├── evaluator_v2.py      # GateEvaluator orchestrator (~550 lines, class-based gates)
+│   ├── evaluator_v2.py      # GateEvaluator orchestrator (~410 lines, class-based gates)
 │   ├── types.py             # GraphMetadata TypedDict (70+ keys)
 │   ├── suppression.py       # SuppressionPredicates (bridge, lifecycle, etc.)
 │   ├── checks/
@@ -114,7 +114,7 @@ backend/app/planner/
     ├── confidence.py        # build_extraction_confidence(), high_confidence(), low_confidence_error()
     ├── llm_utils.py         # measure_llm_call() context manager, LLMCallTimer
     ├── lqa_prepass.py       # LQA pre-pass node (~469 lines, includes P4.1 negation handling)
-    ├── router.py            # Router node (~130 lines)
+    ├── router.py            # Router node (~180 lines)
     ├── extractor.py         # Extractor node (~504 lines)
     ├── specialist_main.py   # Shared specialist handler (~765 lines, includes P4.2 confirmation)
     ├── strategy_main.py     # Strategy nodes (decomposed, uses base.py/stage0.py)
@@ -127,7 +127,7 @@ backend/app/planner/
     │   └── response_processor.py  # P3: process_llm_response, validate_question_target
     └── strategy/            # Strategy subpackage (P4: Stage0 consolidated)
         ├── __init__.py      # Re-exports from strategy_main.py + submodules
-        ├── base.py          # STRATEGY_KEYWORDS, is_strategy_enabled, has_strategy_keyword, detect_*
+        ├── base.py          # STRATEGY_KEYWORDS, is_strategy_enabled, has_strategy_keyword, detect_*, detect_field_modification_request (V38)
         └── stage0.py        # Stage0Coordinator, strategy_stage0(), STAGE0_FALLBACK_TEMPLATES
 ```
 
@@ -136,11 +136,11 @@ backend/app/planner/
 | Module                       | Exports                                                                                        |
 | ---------------------------- | ---------------------------------------------------------------------------------------------- |
 | `planner`                    | `run_turn`, `run_turn_streaming`, `GateEvaluator`                                              |
-| `planner`                    | `StreamingMode`, `INTERNAL_PROCESSING_NODES`, `get_streaming_mode`, `should_use_true_streaming`|
+| `planner`                    | `get_streaming_mode`, `should_use_true_streaming`, `StreamingConfig`, `StreamingResult`|
 | `planner.gates`              | `GatePrecedence`, `GateResult`, `TripReadiness`, `compute_trip_readiness`, `GateEvaluator`     |
 | `planner.gates`              | `GraphMetadata`, `SuppressionPredicates`, `keyword_match`, `check_intent_only_input`, `check_question_keyword_combo` |
 | `planner.gates.checks`       | `is_strategy_expansion_request`, `is_vague_affirmation`, `StrategyTier`                        |
-| `planner.gates.implementations` | `Gate`, `GateContext`, `GATE_REGISTRY`, all 13 individual gate classes                      |
+| `planner.gates.implementations` | All 13 individual gate classes (see gate precedence table)                                  |
 | `planner.cache`              | `CacheNode`, `ResponseCache`, `ExtractorCache`, `StrategyCache`, `TileCache`, `GateEvaluationCache` |
 | `planner.cache`              | `CacheStats`, `CachePayload`, `DiscardReason`, `clear_all_caches`, `get_all_cache_stats`       |
 | `planner.cache.compat`       | `get_extractor_cached`, `set_extractor_cached`, `get_strategy_cached`, `set_strategy_cached`   |
@@ -153,8 +153,8 @@ backend/app/planner/
 | `planner.nodes`              | `build_extraction_confidence`, `high_confidence`, `low_confidence_error`, `measure_llm_call`   |
 | `planner.nodes.specialist`   | `CORE_FIELDS`, `check_core_field_guard`, `check_noop_gate`, `apply_template_response`          |
 | `planner.nodes.specialist`   | `process_llm_response`, `validate_question_target`, `check_groundedness_guardrail` (P3)        |
-| `planner.nodes.specialist`   | `select_confirmation_template`, `apply_confirmation_template` (P4.2)                           |
-| `planner.nodes.strategy`     | `STRATEGY_KEYWORDS`, `has_strategy_keyword`, `detect_topic_switch`, `strategy_stage0`          |
+| `planner.nodes.specialist.templates` | `select_confirmation_template`, `apply_confirmation_template` (P4.2)                   |
+| `planner.nodes.strategy`     | `STRATEGY_KEYWORDS`, `has_strategy_keyword`, `detect_topic_switch`, `detect_field_modification_request`, `strategy_stage0` |
 
 ---
 
@@ -292,10 +292,12 @@ backend/app/planner/
 | ------------------ | ------------------------------------ | ----------------------------------------- |
 | Short-circuit      | "hi", "thanks", "yes", "no"          | lqa → short_circuit_responder → summarize |
 | LQA fast path      | Simple answer to question_target     | lqa → normalize → validate → summarize    |
-| Strategy pre-core  | "plan hiking trip" + no destinations | extractor → strategy_node(stage0)         |
+| Strategy pre-core  | Strategy topic + dates + destinations | extractor → strategy_node(stage0)         |
 | Strategy post-core | core complete + last_strategy_topic  | GateEvaluator → strategy_node(stage1)     |
+| Strategy post-ready| core complete + activity keyword     | READY_NO_FIELDS → strategy_node(stage0)   |
 | Strategy expansion | "show more" + pending expansion      | GateEvaluator → strategy_node(stage2)     |
 | Generate request   | "generate my itinerary"              | GateEvaluator → generate_responder        |
+| Readiness transition| core_complete False → True          | normalize → summarize (ready message)     |
 | Intent-only        | "what hotels?" (no context)          | GateEvaluator → summarize (template)      |
 | Negation with alt. | "not Paris, maybe Barcelona" (P4.1)  | lqa → parse alternative → normalize       |
 | Compound parsing   | "2 adults for next month" (P2.3)     | deterministic_pipeline → compound parse   |
@@ -308,7 +310,7 @@ backend/app/planner/
 | Node                      | Prompt File            | LLM Model   | Max Tokens | Purpose                        |
 | ------------------------- | ---------------------- | ----------- | ---------- | ------------------------------ |
 | `lqa_prepass`             | —                      | —           | —          | Zero-LLM answer extraction     |
-| `extractor`               | `extractor.txt`        | gpt-4o-mini | 400        | Extract trip data from text    |
+| `extractor`               | `extractor.txt`        | gpt-4o-mini | 200        | Extract trip data (condensed Tier 2) |
 | `normalize_inputs`        | —                      | —           | —          | Normalize extracted inputs     |
 | `router`                  | `router.txt`           | gpt-4o-mini | 256        | Intent classification          |
 | `required_fields_node`    | `required_fields.txt`  | gpt-4o-mini | 180        | Collect missing core fields    |
@@ -318,13 +320,13 @@ backend/app/planner/
 | `activities_node`         | `activities.txt`       | gpt-4o-mini | 512        | Activity preferences           |
 | `correction_node`         | `correction.txt`       | gpt-4o-mini | 512        | Handle corrections             |
 | `general_node`            | `general.txt`          | gpt-4o-mini | 512        | Multi-domain queries           |
-| `strategy_node`           | `strategy_{topic}.txt` | gpt-4o-mini | 300-1536   | Adventure activity planning    |
+| `strategy_node`           | `strategy_{topic}.txt` | gpt-4o-mini | 300-1536   | Adventure planning (skeleton caching Tier 3) |
 | `validate_and_merge`      | —                      | —           | —          | Compute readiness              |
 | `branch_postprocess`      | —                      | —           | —          | Split multi-city branches      |
 | `tile_search`             | —                      | —           | —          | Search for tiles               |
 | `short_circuit_responder` | —                      | —           | —          | Handle greetings/confirmations |
 | `generate_responder`      | —                      | —           | —          | Handle generation requests     |
-| `summarize`               | —                      | —           | —          | Generate follow-ups            |
+| `summarize`               | —                      | —           | —          | Generate follow-ups + confirmation preview (Tier 2) |
 | `response_polish`         | `response_polish.txt`  | gpt-4o-mini | 512        | Polish message tone            |
 
 ---
@@ -408,6 +410,59 @@ Extracts structured trip data from user text. Operates in two modes.
 | `_try_strategy_bootstrap_bypass`  | Skip extractor for simple strategy prompts |
 | `_merge_extraction_result`        | Merge new extraction with existing state   |
 | `_compute_extraction_confidence`  | Confidence score for routing decisions     |
+
+#### Initial Message Extraction Patterns
+
+`_try_initial_message_extraction()` applies 8 pattern types to extract fields without LLM:
+
+| Pattern | Regex/Logic | Example | Extracted Fields |
+|---------|-------------|---------|------------------|
+| Pattern 1 | `INITIAL_DESTINATION_PATTERN` | "I want to go to Paris" | destinations |
+| Pattern 2 | `ORIGIN_DESTINATION_PATTERN` | "from London to Paris" | origin, destinations |
+| Pattern 2b | `ORIGIN_LOCATION_PATTERN` + `extract_city_from_location` | "based in Torun Poland" → "Torun" | origin (city extracted) |
+| Pattern 3 | `MULTI_FIELD_PATTERN` | "2 adults, Barcelona, next month" | travelers, destinations, dates |
+| Pattern 4 | `INLINE_TRAVELERS_PATTERN` | "traveling solo", "couple" | travelers |
+| Pattern 5 | `FAMILY_COMPOSITION_PATTERN` | "family of 4", "2 adults and 2 kids" | travelers, children |
+| Pattern 6 | `INLINE_BUDGET_PATTERN` | "budget of $2000", "spending 5k" | budget (numeric) |
+| Pattern 6b | `BUDGET_TIER_ESTIMATES` | "limited budget", "luxury" | budget (inferred) |
+| Pattern 7 | Date patterns | "tomorrow", "next week" | start_date_hint |
+| Pattern 8 | `INLINE_DURATION_PATTERN` | "10 days", "for a week" | duration |
+
+**Gate conditions** (all must be true):
+- Input length < 100 chars
+- No `question_target` set (first turn)
+- Core fields not yet complete
+
+**Key patterns** (from `pattern_matching.py`):
+
+```python
+# Origin from "based in" phrases (Pattern 2b)
+ORIGIN_LOCATION_PATTERN = re.compile(
+    r"(?:based\s+in|living\s+in|located\s+in|coming\s+from|residing\s+in|"
+    r"i(?:'?m|\s+am)\s+(?:from|in))\s+(.+?)(?:[.,]|$)",
+    re.IGNORECASE,
+)
+
+# Duration from "10 days" phrases (Pattern 8)
+INLINE_DURATION_PATTERN = re.compile(
+    r"(?:for\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"\s*(days|day|nights|night|weeks|week)",
+    re.IGNORECASE,
+)
+
+# Qualitative budget to numeric estimates (Pattern 6b)
+BUDGET_TIER_ESTIMATES = {
+    "limited budget": 1500,
+    "cheap": 1000,
+    "luxury": 8000,
+    # ... more mappings
+}
+
+# City-country extraction helper (used by Pattern 2b)
+# From known_places.py - strips country suffix from "city country" patterns
+extract_city_from_location("Torun Poland")  # → "Torun"
+extract_city_from_location("New York USA")  # → "New York"
+```
 
 ### Router
 
@@ -511,21 +566,32 @@ The `strategy_node` operates in three progressive stages for adventure activity 
 
 ### Stage Overview
 
-| Stage | Name      | Trigger                          | Max Tokens | Output                                 |
-| ----- | --------- | -------------------------------- | ---------- | -------------------------------------- |
-| 0     | Pre-Core  | Strategy topic + no destinations | 300        | Destination archetypes + 1 question    |
-| 1     | Outline   | Core fields complete             | 512        | Activity outline with sections         |
-| 2     | Expansion | User requests "show more"        | 600-1536   | Expanded section or full detailed plan |
+| Stage | Name      | Trigger                              | Max Tokens | Output                                     |
+| ----- | --------- | ------------------------------------ | ---------- | ------------------------------------------ |
+| 0     | Pre-Core  | Strategy topic + dates + destination | 300        | Duration-aware itinerary + 1 question      |
+| 1     | Outline   | Core fields complete                 | 512        | Activity outline with sections             |
+| 2     | Expansion | User requests "show more"            | 600-1536   | Expanded section or full detailed plan     |
 
-### Stage 0: Pre-Core Value
+### Stage 0: Pre-Core Value (Duration-Aware)
 
-Provides immediate value before core fields are collected.
+Provides immediate, duration-aware value when dates and destinations are known.
 
-- **Gate**: `STRATEGY_PRE_CORE_VALUE` (precedence 80) - handles both with/without destinations
-- **Function**: `_strategy_stage0(state, topic)`
-- **Prompt**: `strategy_pre_core.txt`
-- **Output**: Destination archetypes, mini itinerary, exactly 1 clarifying question
+- **Gate**: `STRATEGY_PRE_CORE_VALUE` (precedence 80)
+- **Requirements**: Requires BOTH `start_date` AND `destinations` before firing
+- **Function**: `_strategy_stage0(state, topic)` → delegates to `Stage0Coordinator.execute()`
+- **Prompt**: `strategy_pre_core.txt` (duration-aware template)
+- **Duration Context**: Uses `calculate_trip_duration()` to provide trip-length-aware suggestions
+- **Output**: Destination-specific highlights, duration-aware mini itinerary, exactly 1 clarifying question
 - **Lifecycle**: Tracked via `stage0_completed_sig` to prevent re-firing
+
+**Duration Context Levels**:
+| Days | Context |
+|------|---------|
+| ≤3 | Short trip - focus on highlights and compact experiences |
+| 4-5 | Standard trip - balance key highlights with some free time |
+| 6-7 | Week trip - deeper exploration with relaxation time |
+| 8-14 | Extended trip - regional exploration with immersive experiences |
+| >14 | Long trip - comprehensive exploration with slow travel |
 
 ### Stage 1: Initial Strategy
 
@@ -555,9 +621,11 @@ Expands sections on user request ("show more", "tell me about X").
 | `_strategy_stage0`                  | Pre-core value-first response     |
 | `_strategy_stage1`                  | Initial strategy outline          |
 | `_strategy_stage2`                  | Section/full expansion            |
+| `calculate_trip_duration`           | Compute trip days + context string |
 | `_is_strategy_expansion_request`    | Detect expansion triggers         |
 | `_check_strategy_pre_core_value`    | Check stage 0 eligibility         |
 | `_check_strategy_topic_switch`      | Detect mid-session topic changes  |
+| `detect_field_modification_request` | Detect "I want to add budget" patterns (V38) |
 | `compute_stage0_signature`          | Lifecycle tracking for stage 0    |
 | `compute_stage1_signature`          | Lifecycle tracking for stage 1    |
 | `_track_strategy_pre_core_question` | Loop guard for repeated questions |
@@ -569,6 +637,38 @@ Mid-session topic changes (e.g., "I wanna go diving too") are handled by:
 - **Gate**: `STRATEGY_TOPIC_SWITCH` (precedence 70)
 - **Trigger**: Intent verb + new strategy keyword + cooldown expired
 - **Deferred**: If blocking errors exist, stores `pending_strategy_topic` for next turn
+
+### Field Modification Detection (V38)
+
+When users interrupt strategy flow to add/modify trip fields (e.g., "Wait, I want to add budget"), the relevance gate now detects these requests and routes appropriately instead of asking about the current strategy topic.
+
+- **Function**: `detect_field_modification_request(user_text)` in `strategy/base.py`
+- **Trigger**: Modification phrase + field keyword (e.g., "want to add" + "budget")
+- **Response**: Field-specific question with suggestions
+- **Node**: `strategy_node:field_modification:{field}` (template provenance)
+
+**Supported Fields**:
+| Field | Keywords | Question |
+|-------|----------|----------|
+| `budget` | budget, price, cost, spending | "What's your budget for this trip?" |
+| `travelers` | travelers, people, group, adults, children | "How many people will be traveling?" |
+| `dates` | dates, date, when, timing | "When are you planning to travel?" |
+| `origin` | origin, departure, departing | "Where will you be traveling from?" |
+
+**Modification Phrases**:
+- "want to add", "need to add", "let me add", "can i add"
+- "want to set", "want to change", "want to update"
+- "change the", "update the", "set the", "specify"
+- "wait", "hold on", "actually" (often precede modification requests)
+
+**Example Flow**:
+```
+User: "Plan a hiking trip to Patagonia from London, Dec 20-27"
+Bot: [hiking strategy response with suggestions]
+User: "Wait, I want to add budget"           ← V38 detects field modification
+Bot: "What's your budget for this trip?"     ← Field-specific question
+     Suggestions: [$2,000 | $5,000 | Flexible budget]
+```
 
 ---
 
@@ -583,11 +683,11 @@ Mid-session topic changes (e.g., "I wanna go diving too") are handled by:
 | 30         | `SHORT_CIRCUIT`           | `short_circuit_responder` | Greetings, confirmations                         |
 | 30         | `INFEASIBILITY_DETECTION` | `correction_node`         | Infeasibility signals, conflicts detected        |
 | 35         | `STRATEGY_POST_CORE`      | `strategy_node` (stage 1) | Stage 1 trigger after core complete              |
-| 40         | `READY_NO_FIELDS`         | `summarize` or specialist | Ready; routes to specialist if keyword           |
+| 40         | `READY_NO_FIELDS`         | `summarize`, specialist, or `strategy_node` | Ready; routes to strategy/specialist if keyword |
 | 50         | `FAST_PATH`               | `required_fields_node`    | Bootstrap optimization (strategy_bootstrap only) |
 | 60         | `SPECIALIST_PRE_CORE`     | Specialists (pre-core)    | Domain keyword, core missing                     |
 | 70         | `STRATEGY_TOPIC_SWITCH`   | `strategy_{topic}`        | Mid-session topic switch                         |
-| 80         | `STRATEGY_PRE_CORE_VALUE` | `strategy_node` (stage 0) | Strategy topic (with or without destinations)    |
+| 80         | `STRATEGY_PRE_CORE_VALUE` | `strategy_node` (stage 0) | Strategy topic + dates + destination (duration-aware) |
 | 90         | `CORE_COLLECTION`         | `required_fields_node`    | Core fields missing                              |
 | 110        | `QUESTION_KEYWORD`        | Based on keyword          | Question + domain keyword combo + heuristic      |
 | 999        | `ROUTER_LLM`              | `router` node             | Fallback to LLM classification                   |
@@ -612,6 +712,7 @@ The following gates were consolidated to reduce complexity:
 
 - `SPECIALIST_PRE_CORE` yields to `STRATEGY_PRE_CORE_VALUE` when strategy topic detected
 - `READY_NO_FIELDS` includes SPECIALIST_REQUEST logic - routes to specialist nodes when explicit domain keywords detected (hotels, flights, etc.)
+- `READY_NO_FIELDS` includes STRATEGY_REQUEST logic - routes to `strategy_node` when strategy topic keywords detected (hiking, diving, adventure, etc.) even after core fields are complete
 
 ---
 
@@ -809,6 +910,7 @@ Streaming mode is determined by two sources:
 | `strategy_node:stage0:fallback`  | User | `template`     | `simulated:template` | ✨ Token-by-token |
 | `strategy_node:guard1.5`         | User | `template`     | `simulated:template` | ✨ Token-by-token |
 | `strategy_node:relevance_gate`   | User | `template`     | `simulated:template` | ✨ Token-by-token |
+| `strategy_node:field_modification:{field}` | User | `template` | `simulated:template` | ✨ Token-by-token |
 | `strategy_node:no_prompt`        | User | `template`     | `simulated:template` | ✨ Token-by-token |
 | `strategy_node:{topic}:cache`    | User | `cached`       | `simulated:cached`   | ✨ Token-by-token |
 | `strategy_node:{topic}:stage1`   | User | `llm`          | `true_stream`        | 🌊 Real-time      |
@@ -903,23 +1005,26 @@ Streaming mode is determined by two sources:
 
 ### Main Prompts
 
-| File                         | Used By                | Max Tokens | In Hash |
-| ---------------------------- | ---------------------- | ---------- | ------- |
-| `extractor.txt`              | `extractor`            | 400        | ✓       |
-| `extractor_light.txt`        | `extractor` (light)    | 80         | ✓       |
-| `router.txt`                 | `router`               | 256        | ✓       |
-| `required_fields.txt`        | `required_fields_node` | 180        | ✓       |
-| `required_fields_confirm.txt`| `required_fields_node` | 180        | ✗       |
-| `flights.txt`                | `flights_node`         | 512        | ✓       |
-| `hotels.txt`                 | `hotels_node`          | 512        | ✓       |
-| `transport.txt`              | `transport_node`       | 512        | ✓       |
-| `activities.txt`             | `activities_node`      | 512        | ✓       |
-| `correction.txt`             | `correction_node`      | 512        | ✓       |
-| `general.txt`                | `general_node`         | 512        | ✓       |
-| `response_polish.txt`        | `response_polish`      | 512        | ✓       |
-| `strategy_pre_core.txt`      | `strategy_node` (s0)   | 300        | ✓       |
-| `condense.txt`               | `condense_long_message`| 256        | ✗       |
-| `missing_fields_guard.txt`   | `_invoke_guard`        | 180        | ✗       |
+| File                         | Used By                | Max Tokens | In Hash | Notes |
+| ---------------------------- | ---------------------- | ---------- | ------- | ----- |
+| `extractor.txt`              | `extractor`            | 200        | ✓       | Condensed ~50% (Tier 2) |
+| `extractor_light.txt`        | `extractor` (light)    | 80         | ✓       | |
+| `router.txt`                 | `router`               | 256        | ✓       | |
+| `required_fields.txt`        | `required_fields_node` | 180        | ✓       | |
+| `required_fields_confirm.txt`| `required_fields_node` | 180        | ✗       | |
+| `required_fields_templates.json` | Template responses | N/A       | ✗       | 6 variations/field (Tier 4) |
+| `flights.txt`                | `flights_node`         | 512        | ✓       | |
+| `hotels.txt`                 | `hotels_node`          | 512        | ✓       | |
+| `transport.txt`              | `transport_node`       | 512        | ✓       | |
+| `activities.txt`             | `activities_node`      | 512        | ✓       | |
+| `correction.txt`             | `correction_node`      | 512        | ✓       | |
+| `general.txt`                | `general_node`         | 512        | ✓       | |
+| `response_polish.txt`        | `response_polish`      | 512        | ✓       | |
+| `strategy_pre_core.txt`      | `strategy_node` (s0)   | 300        | ✓       | Unified, selects child prompts |
+| `strategy_pre_core_known_dest.txt` | `strategy_node` (s0) | 150    | ✓       | Split prompt (Tier 2) |
+| `strategy_pre_core_discovery.txt` | `strategy_node` (s0) | 150     | ✓       | Split prompt (Tier 2) |
+| `condense.txt`               | `condense_long_message`| 256        | ✗       | |
+| `missing_fields_guard.txt`   | `_invoke_guard`        | 180        | ✗       | |
 
 ### Strategy Prompts
 
@@ -1173,6 +1278,10 @@ Full Stage 1/2 coordinator extraction remains available if needed:
 | P4.1 | Parse Negation Alternatives | ✅ Complete | ~500 tokens per successful extraction |
 | P4.2 | Confirmation Templates | ✅ Complete | ~900-1500 tokens per confirmation |
 | P5 | Tile Cache V2 (Wiring + Key Expansion) | ✅ Complete | Correct tiles for travelers/dates; instant budget changes |
+| P6 | Stage0 Requires Dates + Destination | ✅ Complete | Duration-aware suggestions instead of generic archetypes |
+| P6 | Multi-City Signal Wiring | ✅ Complete | "Paris and Barcelona" correctly sets multi_city_intent |
+| P6 | Stage0 Duration Context | ✅ Complete | Trip-length-aware itinerary suggestions |
+| P6 | Season Clarification | ✅ Complete | Specific month suggestions instead of generic date loop |
 
 ---
 
@@ -1494,3 +1603,1054 @@ NODE_LOGIC_VERSION = {
 | API calls saved | None | ~5 min saved per repeated query |
 | Budget change latency | Requires refetch | Instant (client-side filter) |
 | Traveler change | Stale prices | Correct prices (cache miss → refetch) |
+
+---
+
+## Graph Routing Improvements (December 2024)
+
+Four improvements to the plan graph routing logic for better user experience.
+
+### 1. Stage0 Requires Dates + Destination
+
+**Problem**: Strategy Stage0 (precedence 80) fired before CORE_COLLECTION (90), providing random destination suggestions before knowing trip duration.
+
+**Solution**: Added requirement for BOTH `start_date` AND `destinations` before Stage0 can fire.
+
+**Files Modified**:
+- [strategy_pre_core.py](backend/app/planner/gates/implementations/strategy_pre_core.py)
+
+**Gate Changes**:
+```python
+def evaluate(self, ctx: GateContext) -> Optional[GateResult]:
+    # Must have missing core fields
+    if ctx.readiness.core_complete:
+        self.record(ctx, fired=False, reason="core_complete")
+        return None
+
+    # NEW: Require dates for duration-aware suggestions
+    if not ctx.ti.start_date:
+        self.record(ctx, fired=False, reason="no_dates_for_strategy")
+        return None
+
+    # NEW: Require destinations for location-aware suggestions
+    if not ctx.ti.destinations:
+        self.record(ctx, fired=False, reason="no_destinations_for_strategy")
+        return None
+```
+
+**Impact**: Stage0 now provides meaningful, duration-specific content instead of generic archetypes.
+
+### 2. Multi-City Detection (OR vs AND)
+
+**Problem**: When user says "Paris and Barcelona", the system correctly parses both destinations and sets `_multi_city_signal = True`, but never uses this signal to set `multi_city_intent`. Result: destinations treated as separate (OR) by default.
+
+**Solution**: Wired up existing `multi_city_signal` metadata to automatically set `multi_city_intent = "multi_city"`.
+
+**Files Modified**:
+- [plan_graph.py](backend/app/plan_graph.py) (~line 11993)
+
+**Code Change**:
+```python
+if destination_count_increased and has_multiple_destinations:
+    if not ti.multi_city_intent:
+        # Priority 1: Check multi_city_signal from deterministic parser
+        if state.metadata.get("multi_city_signal"):
+            updates["multi_city_intent"] = "multi_city"
+            state.metadata["multi_city_confidence"] = 0.9
+            _debug(
+                "Auto-inferred multi_city_intent from deterministic multi_city_signal",
+                destinations=new_dests,
+                confidence=0.9,
+            )
+```
+
+**Impact**: "Paris and Barcelona" now correctly sets `multi_city_intent = "multi_city"` with 0.9 confidence.
+
+### 3. Stage0 Duration-Aware Suggestions
+
+**Problem**: Stage0 provided generic archetypes regardless of trip length. A 3-day hiking trip should get different suggestions than a 2-week trip.
+
+**Solution**: Added duration calculation and context to Stage0 responses.
+
+**Files Modified**:
+- [stage0.py](backend/app/planner/nodes/strategy/stage0.py) - Added `calculate_trip_duration()`
+- [strategy_pre_core.txt](backend/app/prompts/strategy_pre_core.txt) - Added duration context to template
+
+**New Function**:
+```python
+def calculate_trip_duration(ti) -> Tuple[Optional[int], str]:
+    """Calculate trip duration in days and return duration context string."""
+    if not ti.start_date:
+        return None, ""
+    # Parse start_date and end_date to calculate days
+    # Return (days, context_string) where context describes trip length
+```
+
+**Duration Context Examples**:
+| Duration | Context |
+|----------|---------|
+| 3 days | "Short trip - focus on highlights and compact experiences" |
+| 5 days | "Standard trip - balance key highlights with some free time" |
+| 7 days | "Week trip - deeper exploration with relaxation time" |
+| 14 days | "Extended trip - regional exploration with immersive experiences" |
+
+**Impact**: Stage0 mini-itineraries now match the actual trip duration.
+
+### 4. Season Clarification with Month Suggestions
+
+**Problem**: When user says "Fall" or "Best season for trails" while in October, system detects season straddles today, sets `date_clarify_mode = True`, but asks same generic "When are you looking to travel?" without helpful suggestions. Loop continues until user provides explicit date.
+
+**Solution**: Generate specific month suggestions when season is ambiguous.
+
+**Files Modified**:
+- [plan_graph.py](backend/app/plan_graph.py) - Season straddle detection with month suggestions
+- [lqa_prepass.py](backend/app/planner/nodes/lqa_prepass.py) - Pass suggestions to state
+- [specialist_main.py](backend/app/planner/nodes/specialist_main.py) - Use suggestions in response
+
+**Season Detection Flow**:
+```python
+if straddles_today:
+    # Generate specific month suggestions for this season
+    # e.g., ["October 2024", "November 2024", "September 2025"]
+    return {
+        "_date_clarify_mode": True,
+        "_pending_date_text": text,
+        "_clarify_suggestions": clarify_suggestions,
+        "_season_name": season.capitalize(),
+    }
+```
+
+**Improved Clarification Message**:
+```
+You mentioned "Fall" - could you be more specific?
+For example, October 2024 or September 2025?
+```
+
+**Impact**: Users get actionable suggestions instead of generic date questions.
+
+### Testing Checklist
+
+| Scenario | Expected Behavior |
+|----------|-------------------|
+| "I want to go hiking" | Should NOT trigger Stage0 (no dates/destination) |
+| "Hiking in Patagonia next month" | Should trigger Stage0 with duration context |
+| "Paris and Barcelona" | Should set `multi_city_intent = "multi_city"` |
+| "Fall" (in October) | Should suggest "October 2024", "November 2024", "September 2025" |
+
+---
+
+## Readiness Transition & Post-Ready Strategy (December 2024)
+
+Improvements to handle the transition to "ready to generate" state and enable strategy routing after core fields are complete.
+
+### 1. Readiness Transition Detection (`plan_just_became_ready`)
+
+**Problem**: When user provides the final missing field (e.g., "Next month" for dates), the system successfully parsed and stored the date but repeated the OLD question asking about dates instead of showing a "ready to generate" message.
+
+**Root Cause**: The `plan_just_became_ready` flag was checked in `summarize` node but **never set anywhere** in the codebase.
+
+**Solution**: Added readiness transition detection in `normalize_inputs`.
+
+**Files Modified**:
+- [plan_graph.py](backend/app/plan_graph.py) - `normalize_inputs()` function
+
+**Code Changes**:
+```python
+# At function start (~line 11793):
+readiness_before = compute_trip_readiness(ti.model_dump(exclude_none=True))
+was_core_complete = readiness_before.core_complete
+
+# Before gate evaluation (~line 12223):
+ti_after = state.trip_inputs
+readiness_after = compute_trip_readiness(ti_after.model_dump(exclude_none=True))
+
+if not was_core_complete and readiness_after.core_complete:
+    state.metadata["plan_just_became_ready"] = True
+    state.last_summary = None  # Clear stale summary
+```
+
+**Impact**: When core fields transition from incomplete to complete, the system now generates a fresh "Great news! I have everything I need..." message instead of repeating stale questions.
+
+### 2. Updated Ready-to-Generate Suggestions
+
+**Problem**: When plan became ready, suggestions only offered generation and basic options.
+
+**Solution**: Added activity-focused and exploration suggestions.
+
+**Files Modified**:
+- [plan_graph.py](backend/app/plan_graph.py) - `summarize()` function (~line 13272)
+
+**Before**:
+```python
+state.suggested_responses = [
+    "Yes, generate my itinerary!",
+    "I want to add more details first",
+    "Show me hotel options",
+]
+```
+
+**After**:
+```python
+state.suggested_responses = [
+    "Yes, generate my itinerary!",
+    "Plan adventure activities",
+    "What can I do there?",
+    "Show me hotel options",
+]
+```
+
+### 3. Post-Ready Strategy Routing in READY_NO_FIELDS Gate
+
+**Problem**: After core fields were complete, clicking "Plan adventure activities" would not trigger strategy stage0 because `STRATEGY_PRE_CORE_VALUE` explicitly skips when `core_complete == True`.
+
+**Solution**: Added strategy topic detection to `READY_NO_FIELDS` gate (precedence 40).
+
+**Files Modified**:
+- [ready_no_fields.py](backend/app/planner/gates/implementations/ready_no_fields.py)
+
+**New Constants**:
+```python
+ADVENTURE_KEYWORDS = frozenset({
+    "adventure", "activities", "things to do", "what can i do"
+})
+```
+
+**Gate Logic** (checked before specialist keywords):
+```python
+# Detect strategy topic from text (hiking, diving, skiing, etc.)
+strategy_topic = detect_strategy_topic_from_text(user_text_lower)
+
+# Also check for generic "adventure" keywords
+if not strategy_topic:
+    if any(kw in user_text_lower for kw in ADVENTURE_KEYWORDS):
+        strategy_topic = "hiking"  # Default adventure topic
+
+if strategy_topic:
+    return self.build_result(
+        ctx,
+        destination="strategy_node",
+        reason=f"strategy_ready:{strategy_topic}",
+        metadata_updates={
+            "strategy_stage": 0,
+            "strategy_dest_known": bool(ctx.ti.destinations),
+            "post_ready_strategy": True,
+        },
+    )
+```
+
+**Impact**: Users can now trigger strategy content (hiking tips, diving info, etc.) even after all core fields are complete.
+
+### Flow Summary
+
+```
+User: "Next month" (final missing field)
+   ↓
+normalize_inputs:
+   - Detects core_complete transition False → True
+   - Sets plan_just_became_ready = True
+   - Clears stale last_summary
+   ↓
+READY_NO_FIELDS gate: Routes to summarize
+   ↓
+summarize:
+   - Sees plan_just_became_ready = True
+   - Generates: "Great news! I have everything I need..."
+   - Shows: ["Yes, generate!", "Plan adventure", "What can I do?", "Hotels"]
+   ↓
+User: "Plan adventure activities"
+   ↓
+READY_NO_FIELDS gate:
+   - Detects "adventure" keyword
+   - Routes to strategy_node with topic="hiking"
+   ↓
+strategy_node (stage0): Generates activity-specific content
+```
+
+### Testing Checklist
+
+| Scenario | Expected Behavior |
+|----------|-------------------|
+| Provide final missing field | Should show "Great news! I have everything I need..." |
+| Click "Plan adventure activities" when ready | Should trigger strategy stage0 with hiking topic |
+| Click "What can I do there?" when ready | Should trigger strategy with activity exploration |
+| Say "I want to go diving" when ready | Should trigger strategy stage0 with diving topic |
+
+---
+
+## Multi-Field Initial Message Extraction (January 2025)
+
+### Overview
+
+Enhanced `_try_initial_message_extraction()` to extract multiple fields from a single initial message without LLM calls. Previously, only destination was extracted; now origin, budget, and duration are also captured.
+
+### Problem Statement
+
+| Issue | Impact |
+|-------|--------|
+| "based in London" not recognized | Origin required separate question |
+| "limited budget" not parsed | Qualitative budget ignored |
+| "10 days" not extracted | Duration required separate question |
+| Multi-sentence inputs | Only first field extracted |
+
+**Example before**:
+```
+Input: "i want to go to patagonia, i am based in torun poland. i have limited budget. take me for 10 days"
+Extracted: destinations=["Patagonia"] (only 1 field)
+```
+
+### Solution
+
+Added three new extraction patterns to `_try_initial_message_extraction()`:
+
+**Files Modified**:
+- [pattern_matching.py](backend/app/pattern_matching.py) - Added `ORIGIN_LOCATION_PATTERN`, `INLINE_DURATION_PATTERN`, `BUDGET_TIER_ESTIMATES`
+- [plan_graph.py](backend/app/plan_graph.py) - Added Pattern 2b, 6b, 8 extraction logic
+
+### Pattern 2b: Origin from "based in" Phrases
+
+Extracts origin from phrases like "based in London", "I'm from NYC", "living in Paris".
+
+```python
+ORIGIN_LOCATION_PATTERN = re.compile(
+    r"(?:based\s+in|living\s+in|located\s+in|coming\s+from|residing\s+in|"
+    r"i(?:'?m|\s+am)\s+(?:from|in))\s+(.+?)(?:[.,]|$)",
+    re.IGNORECASE,
+)
+```
+
+**Supported phrases**:
+- `based in`, `living in`, `located in`, `residing in`
+- `coming from`
+- `I'm from`, `I am from`, `I'm in`, `I am in`
+
+### Pattern 6b: Qualitative Budget Estimates
+
+Maps qualitative budget phrases to numeric estimates (USD):
+
+```python
+BUDGET_TIER_ESTIMATES = {
+    # Low tier
+    "limited budget": 1500,
+    "tight budget": 1500,
+    "cheap": 1000,
+    "cheapest": 800,
+    "low budget": 1200,
+    "economical": 1500,
+    # Mid tier
+    "moderate": 3000,
+    "mid-range": 3000,
+    "reasonable": 2500,
+    # High tier
+    "luxury": 8000,
+    "high-end": 10000,
+    "splurge": 10000,
+}
+```
+
+**Priority**: Pattern 6 (numeric) takes precedence over 6b (qualitative).
+
+### Pattern 8: Duration Extraction
+
+Extracts trip duration from phrases like "10 days", "for a week", "two weeks".
+
+```python
+INLINE_DURATION_PATTERN = re.compile(
+    r"(?:for\s+)?(\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+    r"\s*(days|day|nights|night|weeks|week)",
+    re.IGNORECASE,
+)
+```
+
+**Conversion**: Weeks converted to days (1 week = 7 days).
+
+### City-Country Extraction Helper
+
+When origin patterns match "city country" text like "Torun Poland", we extract just the city:
+
+```python
+# In known_places.py
+def extract_city_from_location(text: str) -> str:
+    """
+    Extract city from 'city country' patterns like 'Torun Poland'.
+
+    Handles: "Torun Poland" → "Torun", "New York USA" → "New York"
+    Uses KNOWN_COUNTRIES frozenset for O(1) lookup.
+    Returns original text if no country suffix detected.
+    """
+```
+
+**Supported patterns**:
+| Input | Output | Why |
+|-------|--------|-----|
+| `"Torun Poland"` | `"Torun"` | "Poland" is a known country |
+| `"New York USA"` | `"New York"` | Multi-word city, "USA" is known |
+| `"San Francisco United States"` | `"San Francisco"` | Multi-word country handled |
+| `"Los Angeles"` | `"Los Angeles"` | No country suffix, unchanged |
+
+### Integration
+
+Patterns added to `_try_initial_message_extraction()` in `plan_graph.py`:
+
+```python
+# Pattern 2b: "based in" origin (after Pattern 2)
+# Lenient matching: accepts unknown places since user explicitly stated "based in X"
+if not parsed.get("origin_delta"):
+    origin_location_match = ORIGIN_LOCATION_PATTERN.search(text_clean)
+    if origin_location_match:
+        origin_text = origin_location_match.group(1).strip()
+
+        # NEW: Extract city from "city country" patterns (e.g., "Torun Poland" → "Torun")
+        origin_text = extract_city_from_location(origin_text)
+
+        origin_norm = normalize_place_synonym(origin_text)
+        # Use fuzzy normalization for known places, title case for unknown
+        if is_known_place(origin_norm):
+            origin_norm = normalize_place_with_fuzzy(origin_text)
+            parsed["origin_delta"] = origin_norm
+        else:
+            # Accept anyway - user explicitly said "based in X"
+            parsed["origin_delta"] = origin_norm.title()
+        fields_extracted.append("origin")
+
+# Pattern 6b: Qualitative budget (after Pattern 6)
+if not parsed.get("budget_delta"):
+    for phrase, estimate in BUDGET_TIER_ESTIMATES.items():
+        if phrase in text_lower:
+            parsed["budget_delta"] = estimate
+            fields_extracted.append("budget")
+            break
+
+# Pattern 8: Duration (before flight settings)
+if not parsed.get("duration_delta"):
+    duration_match = INLINE_DURATION_PATTERN.search(text_lower)
+    if duration_match:
+        num_str = duration_match.group(1)
+        unit = duration_match.group(2).lower()
+        num = int(num_str) if num_str.isdigit() else WORD_TO_NUMBER.get(num_str.lower(), 0)
+        if "week" in unit:
+            num *= 7
+        parsed["duration_delta"] = num
+        fields_extracted.append("duration")
+```
+
+### Impact
+
+**Example after**:
+```
+Input: "i want to go to patagonia, i am based in torun poland. i have limited budget. take me for 10 days"
+Extracted:
+  - destinations_delta: ["Patagonia"]  (Pattern 1)
+  - origin_delta: "Torun"              (Pattern 2b)
+  - budget_delta: 1500                 (Pattern 6b)
+  - duration_delta: 10                 (Pattern 8)
+```
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Fields extracted per initial message | 1-2 | Up to 6 |
+| Questions saved per conversation | 0 | 2-3 |
+| LLM calls saved | 0 | 1 (extractor bypassed more often) |
+
+### Test Coverage
+
+| Test File | Tests | Purpose |
+|-----------|-------|---------|
+| `test_initial_message_multi_field.py` | 82 tests | Pattern matching, extraction, city-country extraction, edge cases |
+
+**Key test cases**:
+- Origin: "based in London", "I'm from NYC", "living in Paris"
+- City-country extraction: "Torun Poland" → "Torun", "New York USA" → "New York"
+- Budget: "limited budget" → 1500, "luxury" → 8000
+- Duration: "10 days" → 10, "two weeks" → 14
+- Multi-field: Full message with all four fields
+
+---
+
+## Tier 1: UX Quick Wins (January 2026)
+
+### Overview
+
+Four high-impact, low-effort improvements to conversational UX.
+
+### 1. Fix Suggested Responses (Instructions → User Speech)
+
+**Problem**: Suggested responses were system instructions, not example user speech.
+
+**Before**:
+```python
+["Proceed with plan", "Add more details", "Change something"]
+```
+
+**After**:
+```python
+["Yes, let's go!", "Wait, I want to add more", "Actually, I'd like to change something"]
+```
+
+**Files Modified**:
+- [guards.py](backend/app/planner/nodes/specialist/guards.py:135-139)
+- [templates.py](backend/app/planner/nodes/specialist/templates.py:593-597)
+- [plan_graph.py](backend/app/plan_graph.py:15562)
+
+### 2. Add Logging to Silent Pass Statements
+
+**Problem**: 7+ silent failures via `pass` statements swallowed errors without logging.
+
+**Solution**: Added `_debug()` logging to critical parse failure paths.
+
+**Files Modified**:
+- [lqa_parsers.py](backend/app/planner/parsing/lqa_parsers.py:381-388, 511-517)
+
+**Example**:
+```python
+except ValueError:
+    _debug(
+        "LQA_DATE_PARSE: Failed to parse month-to-month range",
+        start_month=start_month_str,
+        end_month=end_month_str,
+    )
+    # Fall through to other parsers
+```
+
+### 3. Context-Aware Template Responses
+
+**Problem**: Templates ignored prior context. "Where would you like to fly to?" after user said "I want flights to Paris" was redundant.
+
+**Solution**: Added `_build_context_acknowledgment()` function that builds context-aware prefixes based on already-extracted fields.
+
+**Files Modified**:
+- [templates.py](backend/app/planner/nodes/specialist/templates.py:29-69, 153-182)
+
+**New Function**:
+```python
+def _build_context_acknowledgment(state, specialist_name) -> str:
+    """
+    Build context-aware acknowledgment based on fields already extracted.
+    E.g., "Paris for flights - got it!" or "Tokyo from New York - got it!"
+    """
+```
+
+**Before**: "I can help with your flight search! Where would you like to fly to?"
+**After**: "Paris - got it! When are you looking to travel?"
+
+### 4. Add Acknowledgments Before Redirects
+
+**Problem**: Date clarification loops didn't acknowledge user input before redirecting.
+
+**Solution**: When redirecting to dates, prepend acknowledgment of extracted fields.
+
+**Files Modified**:
+- [specialist_main.py](backend/app/planner/nodes/specialist_main.py:158-178, 287-297)
+
+**Before**: User says "I'm leaving from New York" → "When are you traveling?" (no ack)
+**After**: "New York - got it! Now, when are you looking to travel?"
+
+### Testing Checklist
+
+| Scenario | Expected Behavior |
+|----------|-------------------|
+| User says "ok" after setting destination | Shows "Yes, let's go!" not "Proceed with plan" |
+| User provides destination during date clarification | Acknowledges destination before asking for dates |
+| Date parsing fails | Debug log shows failure reason |
+| User says "flights to Paris" | Response acknowledges Paris, asks for dates |
+
+---
+
+## Tier 2: Cost & Reliability Improvements (January 2026)
+
+### Overview
+
+Five improvements focused on token reduction, reliability, and UX polish.
+
+### 1. Condense Extractor Prompt (Save 400-600 tokens/call)
+
+**Problem**: `extractor.txt` was 170 lines with redundant examples and repeated rules.
+
+**Solution**: Condensed to 85 lines (~50% reduction) by:
+- Removing redundant "DO NOT include ANSI" warnings
+- Consolidating field examples
+- Shortening output format schema
+
+**Files Modified**:
+- [extractor.txt](backend/app/prompts/extractor.txt)
+
+### 2. Graceful Extraction Failure Messages
+
+**Problem**: Extraction failures silently asked the same question again.
+
+**Solution**: Added `failure_hints` dictionary with field-specific graceful failure messages.
+
+**Files Modified**:
+- [specialist_main.py](backend/app/planner/nodes/specialist_main.py:191-209)
+
+**Example**:
+```python
+failure_hints = {
+    "destinations": "I'm having trouble finding that destination. Could you try a city name?",
+    "origin": "I couldn't recognize that location. Could you try a different city?",
+    "dates": "I'm having trouble parsing those dates. Try 'March 15-22'?",
+}
+```
+
+### 3. Exponential Backoff for LLM Retries
+
+**Problem**: Fixed 0.5s retry delay could cause thundering herd.
+
+**Solution**: Implemented exponential backoff with jitter.
+
+**Files Modified**:
+- [validation.py](backend/app/validation.py:214-239)
+
+**Formula**:
+```python
+wait_time = min(initial_delay * (2 ** attempt), max_delay) + random.uniform(0, 1)
+```
+
+### 4. Split Strategy Pre-Core Prompt (Save 300-400 tokens/call)
+
+**Problem**: `strategy_pre_core.txt` had 128 lines with dual modes via Jinja2 conditionals.
+
+**Solution**: Split into two separate prompts:
+- `strategy_pre_core_known_dest.txt` - For when destination is known
+- `strategy_pre_core_discovery.txt` - For destination exploration
+
+**Files Created**:
+- [strategy_pre_core_known_dest.txt](backend/app/prompts/strategy_pre_core_known_dest.txt)
+- [strategy_pre_core_discovery.txt](backend/app/prompts/strategy_pre_core_discovery.txt)
+
+**Files Modified**:
+- [stage0.py](backend/app/planner/nodes/strategy/stage0.py:307-337)
+
+### 5. Confirmation Before Ready-to-Generate
+
+**Problem**: System jumped to generation without showing user what was collected.
+
+**Solution**: Added trip summary preview before confirmation.
+
+**Files Modified**:
+- [plan_graph.py](backend/app/plan_graph.py:13352-13393)
+
+**Before**: "Great news! I have everything I need..."
+**After**:
+```
+Perfect! Here's what I have:
+
+**Destination:** Tokyo
+**Dates:** 2026-03-15 to 2026-03-22
+**Travelers:** 2 adults
+**From:** New York
+
+Ready to generate your plan, or want to add/change anything?
+```
+
+### Token Savings Summary
+
+| Improvement | Tokens Saved |
+|-------------|-------------|
+| Condense extractor prompt | 400-600/call |
+| Split strategy pre-core | 300-400/call |
+| **Total per strategy flow** | **700-1000/call** |
+
+---
+
+## Tier 3: Strategic Wins (January 2026)
+
+### Overview
+
+Four improvements focused on performance optimization, reliability testing, and state safety.
+
+| Improvement | Impact | Files Modified |
+|-------------|--------|----------------|
+| Stage 2 expansion caching | 1000-1500 tokens/expansion | strategy_main.py |
+| Stage 1 context reuse | 1000-1500 tokens/expansion | strategy_main.py |
+| Critical edge case tests | Reliability | test_date_normalization.py |
+| State mutation protection | Reliability | trip_inputs.py |
+
+### 1. Stage 2 Expansion Caching + Stage 1 Context Reuse
+
+**Problem**: Stage 2 resent full Stage 1 itinerary context to generate ONE section expansion.
+
+**Solution**: Cache Stage 1 skeleton output in `state.metadata["stage1_skeleton"]`. When Stage 2 fires, use cached skeleton directly instead of regenerating full `conversation_summary`.
+
+**Token Savings**: ~1000-1500 tokens per Stage 2 expansion call.
+
+**Files Modified**:
+- [strategy_main.py:744-764](backend/app/planner/nodes/strategy_main.py) - Cache skeleton after Stage 1 completion
+- [strategy_main.py:534-560](backend/app/planner/nodes/strategy_main.py) - Use cached skeleton in Stage 2 prompt
+
+**Implementation**:
+```python
+# After Stage 1 completes:
+state.metadata["stage1_skeleton"] = state.last_summary
+state.metadata["stage1_skeleton_topic"] = topic
+
+# In Stage 2 prompt construction:
+if is_stage2 and state.metadata.get("stage1_skeleton"):
+    cached_skeleton = state.metadata["stage1_skeleton"]
+    conversation_context = (
+        f"Previous {topic} skeleton:\n---\n{cached_skeleton[:1500]}...\n---\n"
+        f"User requested expansion of: {expansion_target.value}"
+    )
+```
+
+### 2. Critical Edge Case Tests
+
+**Problem**: Missing test coverage for critical date parsing edge cases and parsing robustness.
+
+**Solution**: Added 14 new tests covering:
+- December/January year boundary crossing
+- Leap year February 29 handling
+- Month end dates (30/31 days)
+- Invalid day-of-month combinations
+- Unicode destination names
+- Very long input handling
+
+**Files Added**:
+- [test_date_normalization.py](backend/tests/langgraph/test_date_normalization.py) - `TestCriticalDateEdgeCases`, `TestParsingRobustness` classes
+
+**Test Classes**:
+- `TestCriticalDateEdgeCases`: 8 tests for date boundary conditions
+- `TestParsingRobustness`: 6 tests for input validation edge cases
+
+### 3. State Mutation Protection
+
+**Problem**: Shared list references could be mutated unexpectedly in `merge_nested_settings`.
+
+**Solution**: Create copies of lists before extending to prevent shared reference mutations.
+
+**Files Modified**:
+- [trip_inputs.py:473-501](backend/app/planner/normalization/trip_inputs.py) - `merge_nested_settings`
+
+**Before**:
+```python
+existing_list = result.get(key, [])  # Shared reference risk
+existing_list.append(item)
+```
+
+**After**:
+```python
+existing_list = list(result.get(key, []))  # Copy, don't reference
+existing_list.append(item)
+```
+
+### Token Savings Summary
+
+| Improvement | Tokens Saved |
+|-------------|-------------|
+| Stage 2 expansion caching | 1000-1500/expansion |
+| Stage 1 context reuse | (included above) |
+| **Total per expansion** | **1000-1500/expansion** |
+
+### Test Coverage Added
+
+| Test Class | Tests Added |
+|------------|-------------|
+| `TestCriticalDateEdgeCases` | 8 |
+| `TestParsingRobustness` | 6 |
+| **Total new tests** | **14** |
+
+---
+
+## Tier 4: Nice-to-Have Improvements (January 2026)
+
+### Overview
+
+Four improvements focused on UX polish and minor token optimizations.
+
+| Improvement | Impact | Files Modified |
+|-------------|--------|----------------|
+| More question variations | UX - Less repetition | required_fields_templates.json |
+| Pre-compile template includes | Already optimized | (no changes needed) |
+| Cache conversation summaries | 100-200 tokens/call | plan_graph.py, specialist_main.py, strategy_main.py |
+| Strategy templates for popular destinations | Deferred | (infrastructure ready) |
+
+### 1. More Question Variations per Field
+
+**Problem**: Only 3 question variations per field led to repetition after 4+ attempts.
+
+**Solution**: Doubled variations from 3 to 6 per field.
+
+**Files Modified**:
+- [required_fields_templates.json](backend/app/prompts/required_fields_templates.json)
+
+**Changes**:
+- `destinations`: Added 3 new variations ("Any place in particular?", "Which corner of the world?", "Where should we plan your adventure?")
+- `origin`: Added 3 new variations ("Which airport?", "Where should I look for flights from?", "What's your departure city?")
+- `dates`: Added 3 new variations ("Specific dates in mind?", "What time of year?", "When are you planning?")
+- `travelers`: Added 3 new variations ("Solo or others coming?", "How big is your group?", "Will anyone else be joining?")
+- `budget`: Added 3 new variations ("Target price range?", "Any budget constraints?", "Roughly how much?")
+
+### 2. Pre-compile Template Includes
+
+**Status**: Already optimized.
+
+The existing implementation uses:
+- LRU cache (maxsize=32) for `_load_prompt_cached`
+- Jinja2's internal template caching
+- 27 total prompt files < 32 cache entries
+
+No additional changes needed - caching is already efficient.
+
+### 3. Cache Conversation Summaries
+
+**Problem**: `_generate_conversation_summary` was called every specialist call, regenerating the same summary.
+
+**Solution**: Added per-turn caching in `state.metadata`.
+
+**Token Savings**: ~100-200 tokens per specialist call.
+
+**Files Modified**:
+- [plan_graph.py:8897-8956](backend/app/plan_graph.py) - Added `state` parameter and caching logic
+- [specialist_main.py:735](backend/app/planner/nodes/specialist_main.py) - Updated caller
+- [strategy_main.py:560](backend/app/planner/nodes/strategy_main.py) - Updated caller
+
+**Implementation**:
+```python
+def _generate_conversation_summary(
+    chat_history: List[Dict[str, str]],
+    max_turns: int = 5,
+    state: Optional["GraphState"] = None,
+) -> str:
+    # Check for cached summary (Tier 4: avoid recomputation within turn)
+    cache_key = f"conversation_summary_{max_turns}"
+    if state and cache_key in state.metadata:
+        return state.metadata[cache_key]
+
+    # ... generate summary ...
+
+    # Cache the result for this turn
+    if state:
+        state.metadata[cache_key] = result
+
+    return result
+```
+
+### 4. Strategy Templates for Popular Destinations
+
+**Status**: Deferred.
+
+Infrastructure is in place for destination-specific templates. Templates can be added incrementally for popular destination+topic combinations (e.g., "hiking in Patagonia", "diving in Maldives").
+
+### Token Savings Summary (Tier 4)
+
+| Improvement | Tokens Saved |
+|-------------|-------------|
+| Cache conversation summaries | 100-200/call |
+| **Total per specialist call** | **100-200/call** |
+
+---
+
+## Tier 5: Strategy Output Formatting (January 2026)
+
+### Overview
+
+Strategy node fallback responses were plain and dry despite LLM prompts having emoji instructions. Root cause: hardcoded fallback templates lacked visual polish.
+
+| Improvement | Impact | Files Modified |
+|-------------|--------|----------------|
+| Add emojis to fallback templates | UX ★★★★★ | stage0.py |
+| Improve header formatting | UX ★★★★☆ | stage0.py |
+| Add visual separators | UX ★★★☆☆ | stage0.py |
+| Consistent bullet style | UX ★★★☆☆ | stage0.py |
+
+### 1. Add Emojis to Fallback Templates
+
+**Problem**: `STAGE0_FALLBACK_TEMPLATES` and `get_dest_known_fallback()` in stage0.py were hardcoded without emojis.
+
+**Solution**: Added topic-specific emoji mapping and formatting.
+
+**Files Modified**:
+- [stage0.py:115-220](backend/app/planner/nodes/strategy/stage0.py)
+
+**Emoji Mapping**:
+| Topic | Lead Emoji | Bullet Emojis |
+|-------|-----------|---------------|
+| hiking | 🥾 | 🏔️ 🌲 🌿 ⛰️ |
+| skiing | ⛷️ | 🎿 ❄️ 🏔️ 🗻 |
+| diving | 🤿 | 🐠 🌊 🐢 🦈 |
+| cycling | 🚴 | 🛤️ 🍇 🏔️ 🌾 |
+| boating | ⛵ | 🏝️ 🌅 🚤 🐬 |
+
+**Before**:
+```python
+"hiking": (
+    "Great choice! Hiking adventures are incredibly rewarding.\n\n"
+    "Here are some amazing destinations to consider:\n"
+    "- **Swiss Alps** - Iconic trails like the Haute Route\n"
+    ...
+)
+```
+
+**After**:
+```python
+"hiking": (
+    "🥾 Great choice! Hiking adventures are incredibly rewarding.\n\n"
+    "**✨ Top Destinations to Explore:**\n"
+    "🏔️ **Swiss Alps** — Iconic trails like the Haute Route\n"
+    "🌲 **Patagonia, Chile** — Torres del Paine circuit\n"
+    "🌿 **New Zealand** — Milford Track and Routeburn\n"
+    "⛰️ **Nepal** — Classic Annapurna or Everest base camp\n\n"
+    "📅 When are you thinking of going?"
+)
+```
+
+### 2. Improve Header Formatting
+
+**Problem**: Headers were ALL CAPS and dry.
+
+**Solution**: Changed to title case with emoji decoration.
+
+**Before**: `1. DESTINATION-SPECIFIC HIGHLIGHTS`
+**After**: `✨ **Destination Highlights**`
+
+### 3. Add Visual Separators
+
+**Problem**: Content sections blended together.
+
+**Solution**: Added `---` dividers and consistent spacing between major sections.
+
+### 4. Consistent Bullet Style
+
+**Problem**: Mix of `-` and `•` for bullets.
+
+**Solution**: Standardized on emoji bullets for destination/activity items, `•` for generic lists.
+
+---
+
+## Tier 6: Additional Quick Wins (January 2026)
+
+### Overview
+
+Additional improvements identified from codebase analysis, TODOs, and plan_graph documentation review.
+
+| Improvement | Impact | Files Modified |
+|-------------|--------|----------------|
+| Router cache key optimization | Cost ★★★★★ | Already correct |
+| Domain-specific required fields | UX ★★★★☆ | required_fields_templates.json, templates.py |
+| Cache thread-safety | Reliability ★★★★☆ | framework.py |
+| Strategy missing preconditions UX | UX ★★★★☆ | strategy_pre_core.py, templates.py |
+
+### 1. Router Cache Key Optimization
+
+**Status**: Already correctly implemented.
+
+**Analysis**: Reviewed router cache key construction and found that volatile metadata (`router_notes`, `router_confidence`) is stored in the cache value, not the key. No changes needed.
+
+### 2. Domain-Specific Required Fields Questions
+
+**Problem**: Questions were generic across specialists. "Where are you dreaming of traveling?" for hotels should be "Where are you dreaming of staying?"
+
+**Solution**: Added `questions_by_domain` to required_fields_templates.json.
+
+**Files Modified**:
+- [required_fields_templates.json](backend/app/prompts/required_fields_templates.json)
+- [templates.py](backend/app/planner/nodes/specialist/templates.py)
+
+**Domain-Specific Questions Added**:
+| Field | Domain | Question |
+|-------|--------|----------|
+| destinations | hotels | "Where are you dreaming of staying?" |
+| destinations | flights | "Where would you like to fly to?" |
+| destinations | activities | "Where would you like to explore activities?" |
+| destinations | transport | "Where do you need transportation?" |
+| origin | flights | "Where will you be flying from?" |
+| origin | hotels | "Where will you be traveling from?" |
+
+### 3. Cache Thread-Safety with threading.Lock
+
+**Problem**: `TTLCache` from cachetools is not thread-safe. Multi-worker deployments (gunicorn/uvicorn) could experience race conditions.
+
+**Solution**: Added `threading.Lock` to all `CacheNode` operations.
+
+**Files Modified**:
+- [framework.py:356-510](backend/app/planner/cache/framework.py)
+
+**Implementation**:
+```python
+class CacheNode(ABC, Generic[T]):
+    def __init__(self, maxsize: int, ttl: float, ...) -> None:
+        self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=ttl)
+        self._lock = threading.Lock()  # Thread-safe cache access (Tier 6)
+        ...
+
+    def get(self, key: str, state: Optional["GraphState"] = None) -> Optional[T]:
+        """Get cached value if valid. Thread-safe."""
+        with self._lock:
+            cached_raw = self._cache.get(key)
+        # ... validation logic (outside lock for performance)
+
+    def set(self, key: str, value: T, ...) -> None:
+        """Set cached value with version metadata. Thread-safe."""
+        # ... payload construction
+        with self._lock:
+            self._cache[key] = payload.to_dict()
+```
+
+**Note**: Lock is released during validation to avoid holding it during I/O operations.
+
+### 4. Strategy Missing Preconditions UX
+
+**Problem**: When Stage 0 gate doesn't fire (missing dates/destination), user sees nothing - no guidance to provide missing fields.
+
+**Solution**: Store `pending_strategy_topic` in metadata when gate detects topic but can't fire. Templates then acknowledge the topic while asking for missing info.
+
+**Files Modified**:
+- [strategy_pre_core.py:46-71](backend/app/planner/gates/implementations/strategy_pre_core.py)
+- [templates.py:29-87](backend/app/planner/nodes/specialist/templates.py)
+
+**Implementation**:
+```python
+# strategy_pre_core.py - Store pending topic in metadata
+def evaluate(self, ctx: GateContext) -> Optional[GateResult]:
+    detected_topic = ctx.detected_strategy_topic
+    if detected_topic:
+        ctx.metadata["pending_strategy_topic"] = detected_topic
+        ctx.metadata["strategy_topic_detected_at"] = "strategy_pre_core"
+    ...
+
+# templates.py - Acknowledge pending topic
+STRATEGY_TOPIC_EMOJIS = {
+    "hiking": "🥾", "skiing": "⛷️", "diving": "🤿",
+    "cycling": "🚴", "boating": "⛵",
+}
+
+def _build_context_acknowledgment(state: "GraphState", ...) -> str:
+    pending_topic = state.metadata.get("pending_strategy_topic")
+    if pending_topic and not ti.destinations and not ti.start_date:
+        emoji = STRATEGY_TOPIC_EMOJIS.get(pending_topic, "✨")
+        return f"{emoji} {pending_topic.capitalize()} sounds amazing! "
+    ...
+```
+
+**Before**: "Where are you dreaming of going?" (no context)
+**After**: "🥾 Hiking sounds amazing! Where are you dreaming of going?"
+
+---
+
+## Total Token Savings Summary (All Tiers)
+
+| Tier | Improvement | Tokens Saved |
+|------|-------------|-------------|
+| Tier 2 | Condense extractor prompt | 400-600/call |
+| Tier 2 | Split strategy pre-core | 300-400/call |
+| Tier 3 | Stage 2 expansion caching | 1000-1500/expansion |
+| Tier 4 | Cache conversation summaries | 100-200/call |
+| Tier 6 | Router cache (already optimized) | N/A |
+| **Total per complex conversation** | **~3000-4500 tokens** |
+
+## Total Test Coverage Added (All Tiers)
+
+| Tier | Tests Added |
+|------|-------------|
+| Tier 3 | 14 new tests (date edge cases + parsing robustness) |
+| **Total** | **14 new tests** |
+
+## Implementation Timeline
+
+| Date | Tier | Status |
+|------|------|--------|
+| January 2026 | Tier 1 (Quick Wins) | ✅ Complete |
+| January 2026 | Tier 2 (Medium Wins) | ✅ Complete |
+| January 2026 | Tier 3 (Strategic Wins) | ✅ Complete |
+| January 2026 | Tier 4 (Nice-to-Have) | ✅ Complete |
+| January 2026 | Tier 5 (Strategy Formatting) | ✅ Complete |
+| January 2026 | Tier 6 (Additional Quick Wins) | ✅ Complete |

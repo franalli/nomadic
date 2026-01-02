@@ -297,10 +297,10 @@ class TestNormalizeAll:
     def test_normalize_all_dates(self):
         """normalize_all normalizes date fields."""
         ti = TripInputs()
-        deltas = {"start_date_hint": "December 28, 2025", "end_date_hint": "January 5, 2026"}
+        deltas = {"start_date_hint": "March 15, 2026", "end_date_hint": "March 25, 2026"}
         updates, errors = _trip_normalizer.normalize_all(ti, deltas)
-        assert updates.get("start_date") == "2025-12-28"
-        assert updates.get("end_date") == "2026-01-05"
+        assert updates.get("start_date") == "2026-03-15"
+        assert updates.get("end_date") == "2026-03-25"
 
     def test_normalize_all_currency(self):
         """normalize_all normalizes currency."""

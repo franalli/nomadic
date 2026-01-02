@@ -17,7 +17,6 @@ from app.planner.gates.base import Gate, GateContext
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.result import GateResult
 from app.planner.gates.suppression import SuppressionPredicates
-from app.planner.gates.topic_detection import detect_strategy_topic_from_text
 
 if TYPE_CHECKING:
     from app.plan_graph import TripInputs
@@ -62,6 +61,7 @@ class StrategyTopicSwitchGate(Gate):
             ctx.readiness,
             ctx.metadata,
             ctx.state.turn_number,
+            ctx.detected_strategy_topic,  # Pass pre-computed topic
         )
 
         if not topic_switch_result:
@@ -132,9 +132,18 @@ class StrategyTopicSwitchGate(Gate):
         readiness: "TripReadiness",
         metadata: Dict[str, Any],
         turn_number: int,
+        precomputed_topic: Optional[str] = None,
     ) -> Optional[tuple[str, str]]:
         """
         Check if user is requesting a mid-session strategy topic switch.
+
+        Args:
+            text_lower: Lowercased user text
+            ti: TripInputs
+            readiness: TripReadiness
+            metadata: State metadata
+            turn_number: Current turn number
+            precomputed_topic: Pre-computed strategy topic from GateContext
 
         Returns:
             (new_topic, switch_reason) if topic switch should fire, None otherwise
@@ -161,8 +170,8 @@ class StrategyTopicSwitchGate(Gate):
             )
             return None
 
-        # Detect strategy topic from user text
-        detected_topic = detect_strategy_topic_from_text(text_lower)
+        # Use pre-computed strategy topic from GateContext (avoids redundant detection)
+        detected_topic = precomputed_topic
         if not detected_topic:
             return None
 

@@ -55,6 +55,7 @@ from app.pattern_matching import (
     QUESTION_WORDS,
     is_text_date_compatible,
 )
+from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.topic_detection import ALL_STRATEGY_KEYWORDS
 
 
@@ -122,15 +123,24 @@ class GateEvaluator:
         # Determine if we should prefer dates over destinations
         user_text_lower = user_text.lower()
         ti = state.trip_inputs
-        prefer_date_first = cls._should_prefer_date_first(user_text_lower, ti)
+
+        # PRE-COMPUTE STRATEGY TOPIC ONCE (avoids 4+ redundant calls in gates)
+        detected_topic = detect_strategy_topic(user_text_lower, ti.activity_settings)
+
+        # Use pre-computed topic for prefer_date_first check
+        prefer_date_first = cls._should_prefer_date_first_with_topic(
+            user_text_lower, ti, detected_topic
+        )
 
         # Compute trip readiness
         readiness = compute_trip_readiness(
             ti, prefer_date_first=prefer_date_first, metadata=state.metadata
         )
 
-        # Build context for gates
-        ctx = GateContext.from_state(state, readiness, start_time)
+        # Build context for gates (pass pre-computed topic)
+        ctx = GateContext.from_state(
+            state, readiness, start_time, detected_strategy_topic=detected_topic
+        )
 
         # Evaluate gates in order
         skipped_gates: List[str] = []
@@ -215,20 +225,26 @@ class GateEvaluator:
         )
 
     @classmethod
-    def _should_prefer_date_first(cls, text_lower: str, ti: "TripInputs") -> bool:
+    def _should_prefer_date_first_with_topic(
+        cls, text_lower: str, ti: "TripInputs", detected_topic: Optional[str]
+    ) -> bool:
         """
         Check if we should prefer asking about dates before destinations.
 
         Returns True when intent is broad (strategy topic detected) but no
         destination entities have been extracted. In these cases, asking about
         timing first helps provide better strategy recommendations.
+
+        Args:
+            text_lower: Lowercased user text
+            ti: TripInputs
+            detected_topic: Pre-computed strategy topic (avoids re-detection)
         """
         # If destinations already exist, use normal priority
         if ti.destinations:
             return False
 
-        # Check if strategy topic is detected
-        detected_topic = detect_strategy_topic(text_lower, ti.activity_settings)
+        # Use pre-computed topic instead of re-detecting
         if detected_topic:
             _debug(
                 "prefer_date_first: strategy topic detected without destinations",
@@ -237,6 +253,17 @@ class GateEvaluator:
             return True
 
         return False
+
+    @classmethod
+    def _should_prefer_date_first(cls, text_lower: str, ti: "TripInputs") -> bool:
+        """
+        Check if we should prefer asking about dates before destinations.
+
+        DEPRECATED: Use _should_prefer_date_first_with_topic with pre-computed topic.
+        Kept for backward compatibility with external callers.
+        """
+        detected_topic = detect_strategy_topic(text_lower, ti.activity_settings)
+        return cls._should_prefer_date_first_with_topic(text_lower, ti, detected_topic)
 
     @classmethod
     def text_is_compatible_with_target(cls, user_text: str, question_target: Optional[str]) -> bool:
@@ -266,7 +293,8 @@ class GateEvaluator:
 
         elif question_target == "origin":
             # Check if looks like a city/place name (capitalized, no strategy keywords)
-            if not any(kw in text_lower for kw in ALL_STRATEGY_KEYWORDS):
+            # Use keyword_match for pre-compiled regex efficiency
+            if not keyword_match(text_lower, ALL_STRATEGY_KEYWORDS):
                 # Simple heuristic: short input that's capitalized or known place
                 if len(text_stripped) < 50 and (
                     text_stripped[0].isupper() or is_known_place(text_stripped)

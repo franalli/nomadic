@@ -368,6 +368,7 @@ class CacheNode(ABC, Generic[T]):
             validate_versions: Whether to validate version fields on get
         """
         self._cache: TTLCache = TTLCache(maxsize=maxsize, ttl=ttl)
+        self._lock = threading.Lock()  # Thread-safe cache access (Tier 6)
         self._stats = CacheStats()
         self._maxsize = maxsize
         self._ttl = ttl
@@ -412,7 +413,7 @@ class CacheNode(ABC, Generic[T]):
         key: str,
         state: Optional["GraphState"] = None,
     ) -> Optional[T]:
-        """Get cached value if valid.
+        """Get cached value if valid. Thread-safe.
 
         Args:
             key: Cache key from compute_key()
@@ -421,14 +422,15 @@ class CacheNode(ABC, Generic[T]):
         Returns:
             Cached data or None if not found/invalid
         """
-        cached_raw = self._cache.get(key)
+        with self._lock:
+            cached_raw = self._cache.get(key)
 
         if cached_raw is None:
             self._stats.record_miss()
             _event_tracker.record(self.get_node_name(), "miss")
             return None
 
-        # Parse and validate payload
+        # Parse and validate payload (outside lock - read-only on cached_raw)
         if isinstance(cached_raw, dict):
             payload = CachePayload.from_dict(cached_raw)
             if payload is None:
@@ -462,7 +464,7 @@ class CacheNode(ABC, Generic[T]):
         value: T,
         extra: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Set cached value with version metadata.
+        """Set cached value with version metadata. Thread-safe.
 
         Args:
             key: Cache key from compute_key()
@@ -481,27 +483,30 @@ class CacheNode(ABC, Generic[T]):
             extra=extra or {},
         )
 
-        self._cache[key] = payload.to_dict()
+        with self._lock:
+            self._cache[key] = payload.to_dict()
         self._stats.record_set()
         _event_tracker.record(self.get_node_name(), "set")
 
     def invalidate(self, key: str) -> bool:
-        """Remove a specific key from cache.
+        """Remove a specific key from cache. Thread-safe.
 
         Returns:
             True if key was present and removed
         """
-        try:
-            del self._cache[key]
-            self._stats.record_eviction()
-            _event_tracker.record(self.get_node_name(), "evict", "manual")
-            return True
-        except KeyError:
-            return False
+        with self._lock:
+            try:
+                del self._cache[key]
+                self._stats.record_eviction()
+                _event_tracker.record(self.get_node_name(), "evict", "manual")
+                return True
+            except KeyError:
+                return False
 
     def clear(self) -> None:
-        """Clear all entries from cache."""
-        self._cache.clear()
+        """Clear all entries from cache. Thread-safe."""
+        with self._lock:
+            self._cache.clear()
 
     def get_stats(self) -> Dict[str, Any]:
         """Get cache statistics.
@@ -546,11 +551,12 @@ class CacheNode(ABC, Generic[T]):
         return None
 
     def _discard(self, key: str, reason: DiscardReason) -> None:
-        """Discard a cached entry and record the event."""
-        try:
-            del self._cache[key]
-        except KeyError:
-            pass
+        """Discard a cached entry and record the event. Thread-safe."""
+        with self._lock:
+            try:
+                del self._cache[key]
+            except KeyError:
+                pass
         self._stats.record_discard()
         _event_tracker.record(self.get_node_name(), "discard", reason.value)
 

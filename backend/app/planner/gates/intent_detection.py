@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 from app.pattern_matching import DOMAIN_KEYWORDS, INTENT_ONLY_KEYWORDS, QUESTION_WORDS
 from app.planner.gates.constants import SPECIALIST_NODE_MAP
+from app.planner.gates.keyword_utils import keyword_match
 
 if TYPE_CHECKING:
     from app.plan_graph import TripInputs
@@ -114,9 +115,9 @@ def check_question_keyword_combo(text_lower: str) -> Optional[Tuple[str, str]]:
     if first_word not in QUESTION_WORDS:
         return None
 
-    # Check for domain keywords
+    # Check for domain keywords using pre-compiled patterns
     for intent_name, keywords in DOMAIN_KEYWORDS.items():
-        if any(kw in text_lower for kw in keywords):
+        if keyword_match(text_lower, keywords):
             return (intent_name, SPECIALIST_NODE_MAP[intent_name])
 
     return None

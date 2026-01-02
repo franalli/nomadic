@@ -1,7 +1,9 @@
 'use client';
 
-import { MapPin } from 'lucide-react';
+import { CheckCircle2, MapPin } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
+
+import { cn } from '@/lib/utils';
 
 import {
   resolveTabForTile,
@@ -14,6 +16,10 @@ import { DETAIL_PRESETS } from '@/lib/mocks';
 import { formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
+
+import { BranchComparisonView } from './BranchComparisonView';
+import { ComparisonToggle } from './ComparisonToggle';
+import { useComparisonMode } from './hooks/useComparisonMode';
 
 // Skeleton component for branch cards
 const BranchCardSkeleton = memo(function BranchCardSkeleton() {
@@ -123,6 +129,14 @@ export const BranchPanel = memo(function BranchPanel({
         branches.findIndex((branch) => branch.id === selected?.id)
       )
     : 0;
+
+  // Comparison mode
+  const {
+    isComparisonMode,
+    isComparisonReady,
+    isBranchInComparison,
+    toggleBranchForComparison,
+  } = useComparisonMode();
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
@@ -290,12 +304,21 @@ export const BranchPanel = memo(function BranchPanel({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-          Trip options
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
+            Trip options
+          </p>
+          <ComparisonToggle />
+        </div>
+        {isComparisonMode && !isComparisonReady && (
+          <p className="text-muted-foreground text-xs">
+            Select {isComparisonMode ? '1 more trip' : '2 trips'} to compare side-by-side
+          </p>
+        )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {branches.map((b, idx) => {
             const isActive = selected !== null && b.id === selected.id;
+            const isInComparison = isBranchInComparison(b.id);
             const preset = DETAIL_PRESETS[idx % DETAIL_PRESETS.length];
             const selection = branchSelections?.[b.id] ?? { activities: [] };
             const statusReady =
@@ -310,16 +333,29 @@ export const BranchPanel = memo(function BranchPanel({
               formatBudgetDisplay(branchBudget.amount, branchBudget.currency) ?? preset.budget;
             const duration =
               resolveDurationForBranch(b, tripInputs)?.summary ?? preset.duration;
+
+            const handleCardClick = () => {
+              if (isComparisonMode) {
+                toggleBranchForComparison(b.id);
+              } else {
+                onBranchSelect(b.id);
+              }
+            };
+
             return (
               <button
                 key={b.id}
                 type="button"
-                onClick={() => onBranchSelect(b.id)}
-                className={`focus-visible:outline-primary relative overflow-hidden rounded-2xl border text-left shadow-lg transition hover:translate-y-[-2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
-                  isActive
-                    ? 'ring-accent border-accent shadow-accent/20 ring-2'
-                    : 'border-border/40'
-                }`}
+                onClick={handleCardClick}
+                aria-selected={isComparisonMode ? isInComparison : isActive}
+                className={cn(
+                  'focus-visible:outline-primary relative overflow-hidden rounded-2xl border text-left shadow-lg transition hover:translate-y-[-2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
+                  isComparisonMode && isInComparison
+                    ? 'ring-indigo-500 border-indigo-500 ring-2'
+                    : isActive && !isComparisonMode
+                      ? 'ring-accent border-accent shadow-accent/20 ring-2'
+                      : 'border-border/40'
+                )}
               >
                 <div
                   className="h-full w-full"
@@ -331,11 +367,18 @@ export const BranchPanel = memo(function BranchPanel({
                 >
                   <div className="flex h-full flex-col justify-between gap-3 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <span
-                        className={`${badgeColor} ${badgeTextColor} inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
-                      >
-                        {badgeLabel}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        {isComparisonMode && isInComparison && (
+                          <span className="inline-flex items-center justify-center rounded-full bg-indigo-600 p-1 shadow-md">
+                            <CheckCircle2 className="h-4 w-4 text-white" />
+                          </span>
+                        )}
+                        <span
+                          className={`${badgeColor} ${badgeTextColor} inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
+                        >
+                          {badgeLabel}
+                        </span>
+                      </div>
                       <span className="shrink-0 rounded-full bg-black/30 px-2 py-1 text-[11px] font-semibold text-white">
                         Suggestion {idx + 1}
                       </span>
@@ -359,33 +402,37 @@ export const BranchPanel = memo(function BranchPanel({
         </div>
       </div>
 
-      <div className="via-card/80 to-background relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 shadow-lg backdrop-blur">
-        <div className="bg-primary/20 pointer-events-none absolute -right-24 -top-12 h-48 w-48 rounded-full blur-3xl" />
-        <div className="bg-accent/15 pointer-events-none absolute bottom-0 left-0 h-36 w-36 rounded-full blur-2xl" />
-        <div className="relative space-y-5 p-4 sm:p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <p className="text-primary text-xs font-semibold uppercase tracking-wide">
-                Selected suggestion
-              </p>
-              <div className="flex items-center gap-2">
-                <MapPin className="text-primary h-5 w-5" aria-hidden="true" />
-                <h4 className="text-foreground font-display text-2xl font-bold">
-                  {selected?.destinations.join(', ') || 'Unknown Destination'}
-                </h4>
-              </div>
-              {selected?.description && (
-                <p className="text-muted-foreground text-sm leading-relaxed">
-                  {selected.description}
+      {/* Show comparison view when 2 branches are selected, otherwise show detail panel */}
+      {isComparisonReady ? (
+        <BranchComparisonView tripInputs={tripInputs} />
+      ) : (
+        <div className="via-card/80 to-background relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 shadow-lg backdrop-blur">
+          <div className="bg-primary/20 pointer-events-none absolute -right-24 -top-12 h-48 w-48 rounded-full blur-3xl" />
+          <div className="bg-accent/15 pointer-events-none absolute bottom-0 left-0 h-36 w-36 rounded-full blur-2xl" />
+          <div className="relative space-y-5 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-primary text-xs font-semibold uppercase tracking-wide">
+                  Selected suggestion
                 </p>
-              )}
+                <div className="flex items-center gap-2">
+                  <MapPin className="text-primary h-5 w-5" aria-hidden="true" />
+                  <h4 className="text-foreground font-display text-2xl font-bold">
+                    {selected?.destinations.join(', ') || 'Unknown Destination'}
+                  </h4>
+                </div>
+                {selected?.description && (
+                  <p className="text-muted-foreground text-sm leading-relaxed">
+                    {selected.description}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
 
           <div className="flex flex-wrap items-center gap-4 pb-1">
             {(Object.keys(TAB_CONFIG) as TileTabKey[]).map((tabKey) => {
               const isOpen = openTab === tabKey;
-              const count = countsForSelected?.[tabKey] ?? 0;
+              const count = tilesByTab[tabKey]?.length ?? 0;
               const Icon = TAB_CONFIG[tabKey].icon;
               return (
                 <button
@@ -616,6 +663,7 @@ export const BranchPanel = memo(function BranchPanel({
           </div>
         </div>
       </div>
+      )}
 
       <div className="flex items-center justify-between gap-4">
         {selectedTotal && (

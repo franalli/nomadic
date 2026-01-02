@@ -233,6 +233,7 @@ class TestStrategyTopicSwitchGate:
             readiness=readiness,
             metadata=metadata,
             turn_number=3,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         assert result is not None
@@ -262,6 +263,7 @@ class TestStrategyTopicSwitchGate:
             readiness=readiness,
             metadata=metadata,
             turn_number=3,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         # Should NOT switch without intent verb

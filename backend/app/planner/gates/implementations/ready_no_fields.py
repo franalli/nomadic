@@ -16,6 +16,10 @@ from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.result import GateResult
 
+# Additional keywords that trigger strategy when core is complete
+# "adventure" maps to hiking as the most common adventure activity
+ADVENTURE_KEYWORDS = frozenset({"adventure", "activities", "things to do", "what can i do"})
+
 if TYPE_CHECKING:
     pass
 
@@ -69,8 +73,34 @@ class ReadyNoFieldsGate(Gate):
             )
             return None
 
-        # SPECIALIST_REQUEST: Check for explicit specialist keywords when ready
+        # STRATEGY_REQUEST: Use pre-computed strategy topic from GateContext
+        # This allows users to trigger strategy stage0 even after core fields are complete
         user_text_lower = ctx.user_text_lower
+        strategy_topic = ctx.detected_strategy_topic
+
+        # Also check for generic "adventure" keywords that map to hiking
+        if not strategy_topic:
+            if any(kw in user_text_lower for kw in ADVENTURE_KEYWORDS):
+                strategy_topic = "hiking"  # Default adventure topic
+
+        if strategy_topic:
+            self.record(ctx, fired=True, reason=f"strategy_request:{strategy_topic}")
+            return self.build_result(
+                ctx,
+                destination="strategy_node",
+                reason=f"strategy_ready:{strategy_topic}",
+                intent="strategy",
+                strategy_topic=strategy_topic,
+                metadata_updates={
+                    "router_path": f"strategy_ready:{strategy_topic}",
+                    "router_bypassed": True,
+                    "strategy_stage": 0,
+                    "strategy_dest_known": bool(ctx.ti.destinations),
+                    "post_ready_strategy": True,  # Flag to indicate strategy after ready
+                },
+            )
+
+        # SPECIALIST_REQUEST: Check for explicit specialist keywords when ready
         for specialist, keywords in SPECIALIST_KEYWORDS.items():
             if keyword_match(user_text_lower, keywords):
                 destination = SPECIALIST_NODE_MAP.get(specialist, "hotels_node")

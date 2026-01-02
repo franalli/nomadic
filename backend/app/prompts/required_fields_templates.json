@@ -1,13 +1,39 @@
 {
   "_description": "Template-based questions for required fields (no LLM needed)",
   "_usage": "When missing a simple field with no ambiguity, use these templates instead of LLM",
+  "_version": "3.0 - Added domain-specific questions (Tier 6)",
 
   "destinations": {
     "questions": [
       "Where would you like to go?",
       "What destination is calling your name?",
-      "Where are you dreaming of traveling?"
+      "Where are you dreaming of traveling?",
+      "Any place in particular you have in mind?",
+      "Which corner of the world interests you?",
+      "Where should we plan your adventure?"
     ],
+    "questions_by_domain": {
+      "hotels": [
+        "Where are you dreaming of staying?",
+        "Which destination are you looking for accommodation?",
+        "Where should I search for hotels?"
+      ],
+      "flights": [
+        "Where would you like to fly to?",
+        "What's your destination for flights?",
+        "Where are you heading?"
+      ],
+      "activities": [
+        "Where would you like to explore activities?",
+        "Which destination for things to do?",
+        "Where should I look for activities?"
+      ],
+      "transport": [
+        "Where do you need transportation?",
+        "Which destination for ground transport?",
+        "Where will you need to get around?"
+      ]
+    },
     "suggestions": {
       "default": ["Paris, France", "Tokyo, Japan", "Bali, Indonesia"],
       "hiking": ["Swiss Alps", "Patagonia", "Nepal"],
@@ -55,7 +81,10 @@
     "questions": [
       "Where will you be traveling from?",
       "What city will you be departing from?",
-      "Where's home base for this trip?"
+      "Where's home base for this trip?",
+      "Which airport will you be flying out of?",
+      "Where should I start looking for flights from?",
+      "What's your departure city?"
     ],
     "suggestions": {
       "default": ["New York", "London", "Los Angeles"]
@@ -83,7 +112,10 @@
     "questions": [
       "When are you looking to travel?",
       "What dates work for you?",
-      "When would you like to go?"
+      "When would you like to go?",
+      "Do you have specific dates in mind?",
+      "What time of year are you thinking?",
+      "When are you planning to take this trip?"
     ],
     "suggestions": {
       "default": ["Next month", "Next monday", "Tomorrow"],
@@ -112,7 +144,10 @@
     "questions": [
       "How many people will be traveling?",
       "Who's joining you on this adventure?",
-      "How many travelers should I plan for?"
+      "How many travelers should I plan for?",
+      "Is this a solo trip or are others coming?",
+      "How big is your travel group?",
+      "Will anyone else be joining you?"
     ],
     "suggestions": {
       "default": ["Just me", "2 adults", "Family of 4"],
@@ -128,7 +163,10 @@
     "questions": [
       "What's your budget for this trip?",
       "How much are you looking to spend?",
-      "Do you have a budget in mind?"
+      "Do you have a budget in mind?",
+      "What's your target price range?",
+      "Any budget constraints I should know about?",
+      "Roughly how much would you like to spend?"
     ],
     "suggestions": {
       "default": ["Around $2000", "Budget-friendly", "No limit"],

@@ -91,6 +91,7 @@ class TestCheckStrategyTopicSwitch:
             readiness=readiness,
             metadata=metadata,
             turn_number=5,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         assert result is not None
@@ -121,6 +122,7 @@ class TestCheckStrategyTopicSwitch:
             readiness=readiness,
             metadata=metadata,
             turn_number=5,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         # No intent verb → no switch
@@ -143,6 +145,7 @@ class TestCheckStrategyTopicSwitch:
             readiness=readiness,
             metadata=metadata,
             turn_number=7,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         # Cooldown active → no switch
@@ -165,6 +168,7 @@ class TestCheckStrategyTopicSwitch:
             readiness=readiness,
             metadata=metadata,
             turn_number=7,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         assert result is not None
@@ -189,6 +193,7 @@ class TestCheckStrategyTopicSwitch:
             readiness=readiness,
             metadata=metadata,
             turn_number=7,
+            precomputed_topic=None,  # No topic in user text, but auto_fire takes precedence
         )
 
         assert result is not None
@@ -398,6 +403,7 @@ class TestDivingMidSessionScenario:
             readiness=readiness,
             metadata=state.metadata,
             turn_number=5,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         assert result is not None, "Topic switch should be detected"
@@ -438,6 +444,7 @@ class TestDivingMidSessionScenario:
             readiness=readiness,
             metadata=metadata,
             turn_number=5,
+            precomputed_topic="diving",  # Pass pre-computed topic
         )
 
         # Detection still works (but gate logic will store as pending)

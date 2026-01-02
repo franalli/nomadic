@@ -18,6 +18,7 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Protocol
 
+from app.debug_utils import _debug
 from app.known_places import is_known_place, normalize_place_synonym
 from app.pattern_matching import (
     ARTICLE_PREFIX_PATTERN,
@@ -377,8 +378,14 @@ def _parse_date_answer(
                     start_dt = datetime.strptime(ti.start_date, "%Y-%m-%d").date()
                     end_dt = start_dt + timedelta(days=duration_days)
                     return {"end_date_hint": end_dt.strftime("%Y-%m-%d")}
-                except (ValueError, TypeError):
-                    pass  # Fall through to other parsers
+                except (ValueError, TypeError) as e:
+                    _debug(
+                        "LQA_DATE_PARSE: Failed to compute end date from duration",
+                        start_date=ti.start_date,
+                        duration_days=duration_days,
+                        error=str(e),
+                    )
+                    # Fall through to other parsers
 
     # First, check for year clarification patterns
     for pattern in YEAR_CLARIFY_PATTERNS:
@@ -502,7 +509,12 @@ def _parse_date_answer(
             start_month_num = datetime.strptime(start_month_str[:3], "%b").month
             end_month_num = datetime.strptime(end_month_str[:3], "%b").month
         except ValueError:
-            pass  # Fall through to other parsers
+            _debug(
+                "LQA_DATE_PARSE: Failed to parse month-to-month range",
+                start_month=start_month_str,
+                end_month=end_month_str,
+            )
+            # Fall through to other parsers
         else:
             year = reference_date.year
 
@@ -542,9 +554,18 @@ def _parse_date_answer(
         return {"start_date_hint": iso_date}
 
     # Handle bare month names (e.g., "December", "January")
+    # Also handle "In December", "in January" (strip leading preposition)
     # This is a valid answer - user is saying they want to travel in that month
     text_lower = text_stripped.lower()
-    if text_lower in _MONTH_NAMES:
+
+    # Strip common date prepositions: "in", "on", "around", "during", "for"
+    date_preposition_stripped = text_lower
+    for prep in ("in ", "on ", "around ", "during ", "for "):
+        if text_lower.startswith(prep):
+            date_preposition_stripped = text_lower[len(prep) :].strip()
+            break
+
+    if date_preposition_stripped in _MONTH_NAMES:
         # Get reference date from state if available
         metadata = state.metadata or {}
         today_iso = metadata.get("today_iso")
@@ -556,9 +577,9 @@ def _parse_date_answer(
         else:
             reference_date = datetime.now(UTC).date()
 
-        # Get month number by parsing the month name
+        # Get month number by parsing the month name (use stripped version)
         try:
-            month_dt = datetime.strptime(text_lower[:3], "%b")
+            month_dt = datetime.strptime(date_preposition_stripped[:3], "%b")
             month_num = month_dt.month
         except ValueError:
             return None
