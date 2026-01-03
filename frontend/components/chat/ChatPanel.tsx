@@ -15,8 +15,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { apiFetch, streamGraphPlan, trackSuggestionClick, type SSENodeStatusEvent } from '@/lib/api';
-import { StrategyProgress } from './StrategyProgress';
+import { apiFetch, type SSENodeStatusEvent,streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import type { ChatMessage } from '@/types/chat';
 import type {
   DocumentBranch,
@@ -24,6 +23,10 @@ import type {
   GraphPlanResponse,
 } from '@/types/document';
 import type { Tile } from '@/types/tile';
+
+import { ChatSkeleton } from './ChatSkeleton';
+import { determineStage,FlowStageIndicator } from './FlowStageIndicator';
+import { StrategyProgress } from './StrategyProgress';
 
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
 const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
@@ -249,6 +252,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
     // Show suggestions only when no user messages yet, not generating, not ready to generate, and not in planning mode (hasBranches)
     const showSuggestions = !hasUserMessage && !isLoadingHistory && !hasBranches && !isGenerating && !readyToGenerate;
+
+    // Compute current planning stage for flow indicator
+    const planningStage = determineStage({
+      hasUserMessage,
+      readyToGenerate,
+      isGenerating,
+      hasBranches,
+      missingFields: tripDetails?.missingFields,
+    });
     // Dynamic height - grows with content naturally
     const panelHeightClass = fullHeight
       ? 'h-full'
@@ -710,6 +722,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           </div>
         </div>
 
+        {/* Flow stage indicator - helps users understand their progress */}
+        {hasUserMessage && !isLoadingHistory && (
+          <div className="flex justify-center -mt-1 mb-1">
+            <FlowStageIndicator
+              stage={planningStage}
+              missingFields={tripDetails?.missingFields}
+              visible={hasUserMessage}
+            />
+          </div>
+        )}
+
         <div
           ref={scrollContainerRef}
           className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm no-scrollbar"
@@ -720,10 +743,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onScroll={handleScroll}
         >
           {isLoadingHistory ? (
-            <div className="flex items-center justify-center py-4" role="status" aria-label="Loading chat history">
-              <Compass className="text-muted-foreground compass-spin h-5 w-5" aria-hidden="true" />
-              <span className="sr-only">Loading chat history...</span>
-            </div>
+            /* Tier 9: Skeleton loading for better perceived performance */
+            <ChatSkeleton count={2} />
           ) : (
             <>
               {visibleMessages.map((m, idx) => (

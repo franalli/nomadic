@@ -18,13 +18,13 @@ import {
 import { Fragment, memo, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Switch } from '@/components/ui/switch';
 import { ExpandablePill } from '@/components/pill/ExpandablePill';
 import { InlineEditPill } from '@/components/pill/InlineEditPill';
 import { LocationBadge } from '@/components/pill/LocationBadge';
 import { TruncatedDestinationList } from '@/components/pill/TruncatedDestinationList';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Switch } from '@/components/ui/switch';
 import { formatDateForDisplay } from '@/lib/utils';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import type {
@@ -295,7 +295,7 @@ export interface TripDetailsFormProps {
 function TripDetailsFormInner({
   tripInputs,
   tripInputsDraft,
-  editingField: _editingField,
+  // editingField - intentionally unused, kept for interface compatibility
   hasOrigin,
   hasDestination,
   hasDates,
@@ -308,26 +308,26 @@ function TripDetailsFormInner({
   selectedLocationBadge,
   datePresets,
   originInput,
-  originInputExpanded: _originInputExpanded,
+  // originInputExpanded - intentionally unused, kept for interface compatibility
   destinationInput,
-  destinationInputExpanded: _destinationInputExpanded,
+  // destinationInputExpanded - intentionally unused, kept for interface compatibility
   pendingOrigin,
   pendingDestination,
   validationError,
   onClearValidationError,
-  onStartEditingField: _onStartEditingField,
+  // onStartEditingField - intentionally unused, kept for interface compatibility
   onFieldChange,
   onCommitField,
-  setTripInputsDraft: _setTripInputsDraft,
-  setEditingField: _setEditingField,
+  // setTripInputsDraft - intentionally unused, kept for interface compatibility
+  // setEditingField - intentionally unused, kept for interface compatibility
   onSetOrigin,
   onRemoveOrigin,
   setOriginInput,
-  setOriginInputExpanded: _setOriginInputExpanded,
+  // setOriginInputExpanded - intentionally unused, kept for interface compatibility
   onAddDestination,
   onRemoveDestination,
   setDestinationInput,
-  setDestinationInputExpanded: _setDestinationInputExpanded,
+  // setDestinationInputExpanded - intentionally unused, kept for interface compatibility
   onToggleMultiCity,
   onCalendarOpenChange,
   onCalendarDayClick,
@@ -335,11 +335,11 @@ function TripDetailsFormInner({
   onCalendarMouseLeave,
   onDatePresetClick,
   onResetDates,
-  onRemoveTravelers: _onRemoveTravelers,
+  // onRemoveTravelers - intentionally unused, kept for interface compatibility
   onUpdateAdults,
   onUpdateChildren,
   onToggleRequiresAssistance,
-  onRemoveBudget: _onRemoveBudget,
+  // onRemoveBudget - intentionally unused, kept for interface compatibility
   onUpdateCurrency,
   onSelectLocationBadge,
   bookingTypes,
@@ -350,7 +350,7 @@ function TripDetailsFormInner({
   onUpdateBookingTypes,
   onUpdateFlightSettings,
   onUpdateHotelSettings,
-  onUpdateActivitySettings,
+  // onUpdateActivitySettings - intentionally unused, kept for interface compatibility
   onUpdateTransportSettings,
   onAddActivity,
   onRemoveActivity,

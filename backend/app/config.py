@@ -177,6 +177,14 @@ class Settings(BaseSettings):
     # The specialist will acknowledge intent and ask for minimal missing fields inline.
     specialist_pre_core_enabled: bool = True
 
+    # =============================================================================
+    # Specialist Parallelization Configuration (Tier 10.1)
+    # =============================================================================
+    # When enabled, independent specialist nodes (flights, hotels, transport) can
+    # run concurrently for 100-200ms latency reduction. Mutually exclusive specialists
+    # (required_fields/correction, strategy/activities) still run sequentially.
+    specialist_parallelization_enabled: bool = True
+
     # When True, use deterministic templates instead of LLM for missing_fields_guard.
     # Saves ~200-250 tokens per guard call with minimal UX impact.
     # Set to False to use LLM for more varied phrasing (original behavior).

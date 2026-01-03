@@ -18,6 +18,7 @@ from app.planner.nodes.strategy.base import (
     _is_strategy_enabled,
     _should_escalate_from_stage0,
     _track_strategy_pre_core_question,
+    detect_field_modification_request,
     detect_strategy_switch,
     detect_topic_switch,
     generate_date_suggestions,
@@ -59,6 +60,7 @@ __all__ = [
     "has_strategy_keyword",
     "detect_topic_switch",
     "detect_strategy_switch",
+    "detect_field_modification_request",
     "get_question_guidance",
     # Stage 0 coordinator
     "Stage0Coordinator",

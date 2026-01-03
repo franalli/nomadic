@@ -60,6 +60,15 @@ export const StrategyProgress = ({
   const topicLabel = TOPIC_LABELS[topic] || topic;
   const isComplete = progress >= 0.98;
 
+  // Tier 10.7: Calculate remaining time estimate
+  const remainingMs = Math.max(0, estimatedDurationMs - elapsed);
+  const remainingSec = Math.ceil(remainingMs / 1000);
+  const timeLabel = isComplete
+    ? 'Finishing up...'
+    : remainingSec <= 1
+      ? 'Almost done...'
+      : `~${remainingSec}s remaining`;
+
   return (
     <div className="text-left message-enter">
       <div className="border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-flex flex-col gap-2 rounded-2xl rounded-bl-md px-4 py-3 shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -70,12 +79,15 @@ export const StrategyProgress = ({
           <span className="text-muted-foreground">{stageLabel}</span>
         </div>
 
-        {/* Progress bar */}
-        <div className="w-48 h-1.5 bg-muted-foreground/20 rounded-full overflow-hidden">
-          <div
-            className={`h-full transition-all duration-500 ease-out rounded-full ${isComplete ? 'bg-amber-500' : 'bg-primary'}`}
-            style={{ width: `${Math.min(progress * 100, 100)}%` }}
-          />
+        {/* Progress bar with time estimate */}
+        <div className="flex items-center gap-2">
+          <div className="w-40 h-1.5 bg-muted-foreground/20 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-500 ease-out rounded-full ${isComplete ? 'bg-amber-500' : 'bg-primary'}`}
+              style={{ width: `${Math.min(progress * 100, 100)}%` }}
+            />
+          </div>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{timeLabel}</span>
         </div>
       </div>
     </div>

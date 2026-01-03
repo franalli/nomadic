@@ -9,8 +9,8 @@ import { isActivityType, isFlightType } from '@/lib/utils';
 import type { DocumentBranch } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
-// Skeleton component for tile cards
-const TileCardSkeleton = memo(function TileCardSkeleton() {
+// Skeleton component for tile cards (Tier 10.6: Exported for branch switch loading)
+export const TileCardSkeleton = memo(function TileCardSkeleton() {
   return (
     <div className="rounded-2xl border border-border/40 bg-card overflow-hidden shadow-lg">
       {/* Image skeleton */}

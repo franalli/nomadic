@@ -176,8 +176,10 @@ export function NomadicLanding() {
     onToast: addToast,
   });
 
-  // Update ref after tripInputsEditor is created
-  tripInputsEditorRef.current = tripInputsEditor;
+  // Update ref after tripInputsEditor is created (must be in useEffect, not during render)
+  useEffect(() => {
+    tripInputsEditorRef.current = tripInputsEditor;
+  }, [tripInputsEditor]);
 
   // Destructure commonly used values from the hook
   // Note: resetDraft is accessed via tripInputsEditorRef.current in branchManager callback
@@ -529,75 +531,91 @@ export function NomadicLanding() {
         </AnimatePresence>
       </div>
 
-      {/* Split layout when generating or branches are ready. Don't show split layout just for hydration
-          unless we already have branches - otherwise we flash the branch view before knowing if there's a session. */}
-      {(isGenerating || hasBranchesReady) ? (
-        <SplitLayoutView
-          sidebarContent={chatPanelContent(true)}
-          mainContent={branchPanelContent}
-          typedTagline={typedTagline}
-          isGenerating={isGenerating}
-          hasBranchesReady={hasBranchesReady}
-          tripDetailsContent={tripDetailsSection.content}
-        />
-      ) : (
-        /* Original centered layout when no branches */
-        <>
-          <HeroSection
-            typedTagline={typedTagline}
-            variant="full"
-            chatPanelContainerRef={chatPanelContainerRef}
+      {/* Layout transition with AnimatePresence for smooth switching.
+          Uses mode="wait" to complete exit animation before entering new layout. */}
+      <AnimatePresence mode="wait">
+        {(isGenerating || hasBranchesReady) ? (
+          <motion.div
+            key="split-layout"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
           >
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-              className="mt-2 w-full sm:max-w-[605px]"
+            <SplitLayoutView
+              sidebarContent={chatPanelContent(true)}
+              mainContent={branchPanelContent}
+              typedTagline={typedTagline}
+              isGenerating={isGenerating}
+              hasBranchesReady={hasBranchesReady}
+              tripDetailsContent={tripDetailsSection.content}
+            />
+          </motion.div>
+        ) : (
+          /* Original centered layout when no branches */
+          <motion.div
+            key="centered-layout"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+          >
+            <HeroSection
+              typedTagline={typedTagline}
+              variant="full"
+              chatPanelContainerRef={chatPanelContainerRef}
             >
-              <Card className="bg-card/75 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
-                <CardContent className="p-0 sm:p-3 sm:pb-0">
-                  {chatPanelContent(false)}
-                </CardContent>
-              </Card>
-            </motion.div>
-          </HeroSection>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+                className="mt-2 w-full sm:max-w-[605px]"
+              >
+                <Card className="bg-card/75 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
+                  <CardContent className="p-0 sm:p-3 sm:pb-0">
+                    {chatPanelContent(false)}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </HeroSection>
 
-          {hasBranchesReady ? (
-            <motion.section
-              initial={{ opacity: 0, y: 40 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: 'easeOut' }}
-              className="bg-background pb-14 pt-10"
-            >
-              <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.1, ease: 'easeOut' }}
-                  className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div>
-                    <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                      Branches stretched wide with tiles nested inside
-                    </h2>
-                  </div>
-                </motion.div>
+            {hasBranchesReady ? (
+              <motion.section
+                initial={{ opacity: 0, y: 40 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, ease: 'easeOut' }}
+                className="bg-background pb-14 pt-10"
+              >
+                <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, delay: 0.1, ease: 'easeOut' }}
+                    className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div>
+                      <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
+                        Branches stretched wide with tiles nested inside
+                      </h2>
+                    </div>
+                  </motion.div>
 
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.2, ease: 'easeOut' }}
-                >
-                  {branchPanelContent}
-                </motion.div>
-              </div>
-            </motion.section>
-          ) : null}
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, delay: 0.2, ease: 'easeOut' }}
+                  >
+                    {branchPanelContent}
+                  </motion.div>
+                </div>
+              </motion.section>
+            ) : null}
 
-          <FeaturesSection />
-          <Footer />
-        </>
-      )}
+            <FeaturesSection />
+            <Footer />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

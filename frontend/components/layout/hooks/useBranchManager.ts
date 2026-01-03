@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { clearSessionLocalStorage, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
 import { useDocumentStore } from '@/state/documentStore';
-import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanDocumentResponse } from '@/types/document';
+import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';

@@ -41,7 +41,10 @@
       "Bash(findstr:*)",
       "Bash(git stash:*)",
       "Bash(if not exist \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\components\\\\branches\\\\hooks\" mkdir \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\components\\\\branches\\\\hooks\")",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(pre-commit run:*)",
+      "Bash(npm run lint:*)"
     ],
     "deny": [],
     "ask": []

@@ -137,13 +137,14 @@ export const TileCard = memo(function TileCard({
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
 
+        {/* Tier 9: Increased touch target to 44x44px for mobile accessibility */}
         <button
           type="button"
-          className="text-muted-foreground absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-card/90 shadow-sm transition hover:bg-card hover:text-red-500"
+          className="text-muted-foreground absolute right-2 top-2 inline-flex h-11 w-11 items-center justify-center rounded-full bg-card/90 shadow-sm transition touch-manipulation hover:bg-card hover:text-red-500 active:scale-95"
           onClick={handleLikeToggle}
           aria-label={isLiked ? 'Unlike option' : 'Like option'}
         >
-          <Heart className={`h-4 w-4 ${isLiked ? 'fill-red-500 text-red-500' : ''}`} />
+          <Heart className={`h-5 w-5 ${isLiked ? 'fill-red-500 text-red-500' : ''}`} />
         </button>
       </div>
 

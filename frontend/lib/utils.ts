@@ -372,10 +372,10 @@ const startsWithEmoji = (str: string): boolean => {
  */
 const stripControlChars = (text: string): string => {
   // Remove ANSI escape sequences (ESC[ and CSI)
-  // eslint-disable-next-line no-control-regex
+
   const withoutAnsi = text.replace(/(\x1b|\x9b)\[[0-9;:]*[A-Za-z]/g, '');
   // Remove non-printable control characters (except space, tab, newline)
-  // eslint-disable-next-line no-control-regex
+
   return withoutAnsi.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '');
 };
 

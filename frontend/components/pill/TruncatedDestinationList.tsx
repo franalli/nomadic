@@ -4,6 +4,7 @@ import { Loader2 } from 'lucide-react';
 import { Fragment, memo, useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+
 import { LocationBadge } from './LocationBadge';
 
 // ─────────────────────────────────────────────────────────────────────────────

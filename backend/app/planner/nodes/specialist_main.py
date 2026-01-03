@@ -9,6 +9,7 @@ Extracted from plan_graph.py as part of the P6 module extraction initiative.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, List
 
@@ -821,6 +822,8 @@ async def _specialist(
             if attempt < attempts - 1:
                 # Add repair hint to prompt for retry
                 system_prompt += INVALID_JSON_HINT
+                # Tier 10.12: Exponential backoff - 10ms, 20ms, 40ms
+                await asyncio.sleep(0.01 * (2**attempt))
                 continue
             break
         except TimeoutError as e:

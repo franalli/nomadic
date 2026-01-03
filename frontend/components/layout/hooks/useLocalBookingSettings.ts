@@ -3,14 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
-  DEFAULT_TRIP_INPUTS,
-  useDocumentStore,
-} from '@/state/documentStore';
-import {
   areActivitiesDuplicate,
   deduplicateActivities,
   normalizeActivityWithEmoji,
 } from '@/lib/utils';
+import {
+  DEFAULT_TRIP_INPUTS,
+  useDocumentStore,
+} from '@/state/documentStore';
 import type {
   ActivitySettings,
   BookingTypes,
@@ -21,6 +21,35 @@ import type {
   TransportSettings,
 } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
+
+/**
+ * 8.1.2: Shallow object comparison for settings objects (avoids JSON.stringify on every render).
+ * Returns true if objects are shallowly equal.
+ */
+function shallowSettingsEqual<T extends Record<string, unknown>>(
+  a: T | null | undefined,
+  b: T | null | undefined
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return a === b;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    const valA = a[key];
+    const valB = b[key];
+    // For arrays, compare by length and elements
+    if (Array.isArray(valA) && Array.isArray(valB)) {
+      if (valA.length !== valB.length) return false;
+      for (let i = 0; i < valA.length; i++) {
+        if (valA[i] !== valB[i]) return false;
+      }
+    } else if (valA !== valB) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export interface UseLocalBookingSettingsReturn {
   bookingTypes: BookingTypes;
@@ -105,48 +134,64 @@ export function useLocalBookingSettings(
   useEffect(() => { transportSettingsRef.current = localTransportSettings; }, [localTransportSettings]);
   useEffect(() => { activitySettingsRef.current = localActivitySettings; }, [localActivitySettings]);
 
+  // 8.1.2: Refs to track previous store values for shallow comparison (avoids JSON.stringify on every render)
+  const prevStoreBookingTypes = useRef(storeTripInputs?.booking_types);
+  const prevStoreFlightSettings = useRef(storeTripInputs?.flight_settings);
+  const prevStoreHotelSettings = useRef(storeTripInputs?.hotel_settings);
+  const prevStoreTransportSettings = useRef(storeTripInputs?.transport_settings);
+  const prevStoreActivitySettings = useRef(storeTripInputs?.activity_settings);
+
   // Sync local state from store when store values change (only if no pending local changes)
-  // Using JSON.stringify for deep comparison to avoid unnecessary updates from reference changes
-  const storeBookingTypesJson = JSON.stringify(storeTripInputs?.booking_types);
-  const storeFlightSettingsJson = JSON.stringify(storeTripInputs?.flight_settings);
-  const storeHotelSettingsJson = JSON.stringify(storeTripInputs?.hotel_settings);
-  const storeTransportSettingsJson = JSON.stringify(storeTripInputs?.transport_settings);
-  const storeActivitySettingsJson = JSON.stringify(storeTripInputs?.activity_settings);
+  // 8.1.2: Using shallow comparison instead of JSON.stringify for better performance
+  useEffect(() => {
+    const storeVal = storeTripInputs?.booking_types;
+    if (storeVal && !hasPendingBookingTypesChanges.current) {
+      if (!shallowSettingsEqual(storeVal, prevStoreBookingTypes.current)) {
+        setLocalBookingTypes(storeVal);
+      }
+    }
+    prevStoreBookingTypes.current = storeVal;
+  }, [storeTripInputs?.booking_types]);
 
   useEffect(() => {
-    if (storeTripInputs?.booking_types && !hasPendingBookingTypesChanges.current) {
-      setLocalBookingTypes(storeTripInputs.booking_types);
+    const storeVal = storeTripInputs?.flight_settings;
+    if (storeVal && !hasPendingFlightChanges.current) {
+      if (!shallowSettingsEqual(storeVal, prevStoreFlightSettings.current)) {
+        setLocalFlightSettings(storeVal);
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeBookingTypesJson]);
+    prevStoreFlightSettings.current = storeVal;
+  }, [storeTripInputs?.flight_settings]);
 
   useEffect(() => {
-    if (storeTripInputs?.flight_settings && !hasPendingFlightChanges.current) {
-      setLocalFlightSettings(storeTripInputs.flight_settings);
+    const storeVal = storeTripInputs?.hotel_settings;
+    if (storeVal && !hasPendingHotelChanges.current) {
+      if (!shallowSettingsEqual(storeVal, prevStoreHotelSettings.current)) {
+        setLocalHotelSettings(storeVal);
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeFlightSettingsJson]);
+    prevStoreHotelSettings.current = storeVal;
+  }, [storeTripInputs?.hotel_settings]);
 
   useEffect(() => {
-    if (storeTripInputs?.hotel_settings && !hasPendingHotelChanges.current) {
-      setLocalHotelSettings(storeTripInputs.hotel_settings);
+    const storeVal = storeTripInputs?.transport_settings;
+    if (storeVal && !hasPendingTransportChanges.current) {
+      if (!shallowSettingsEqual(storeVal, prevStoreTransportSettings.current)) {
+        setLocalTransportSettings(storeVal);
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeHotelSettingsJson]);
+    prevStoreTransportSettings.current = storeVal;
+  }, [storeTripInputs?.transport_settings]);
 
   useEffect(() => {
-    if (storeTripInputs?.transport_settings && !hasPendingTransportChanges.current) {
-      setLocalTransportSettings(storeTripInputs.transport_settings);
+    const storeVal = storeTripInputs?.activity_settings;
+    if (storeVal && !hasPendingActivityChanges.current) {
+      if (!shallowSettingsEqual(storeVal, prevStoreActivitySettings.current)) {
+        setLocalActivitySettings(storeVal);
+      }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeTransportSettingsJson]);
-
-  useEffect(() => {
-    if (storeTripInputs?.activity_settings && !hasPendingActivityChanges.current) {
-      setLocalActivitySettings(storeTripInputs.activity_settings);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeActivitySettingsJson]);
+    prevStoreActivitySettings.current = storeVal;
+  }, [storeTripInputs?.activity_settings]);
 
   // Flush queued commits when document becomes available
   useEffect(() => {

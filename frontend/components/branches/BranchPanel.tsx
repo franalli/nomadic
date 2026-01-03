@@ -1,19 +1,18 @@
 'use client';
 
-import { CheckCircle2, MapPin } from 'lucide-react';
+import { ArrowRightLeft, CheckCircle2, MapPin } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
-
-import { cn } from '@/lib/utils';
 
 import {
   resolveTabForTile,
   TAB_CONFIG,
+  TileCardSkeleton,
   TilesGrid,
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DETAIL_PRESETS } from '@/lib/mocks';
-import { formatBudgetDisplay } from '@/lib/utils';
+import { cn , formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -136,6 +135,7 @@ export const BranchPanel = memo(function BranchPanel({
     isComparisonReady,
     isBranchInComparison,
     toggleBranchForComparison,
+    canCompare,
   } = useComparisonMode();
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
@@ -342,6 +342,19 @@ export const BranchPanel = memo(function BranchPanel({
               }
             };
 
+            // Quick compare: allow single-click comparison when another branch is selected
+            const handleQuickCompare = (e: React.MouseEvent) => {
+              e.stopPropagation(); // Don't trigger card click
+              // This will: 1) enter comparison mode with selected branch, 2) add this branch
+              if (selected) {
+                toggleBranchForComparison(selected.id); // First branch (enters comparison mode)
+                toggleBranchForComparison(b.id); // Second branch
+              }
+            };
+
+            // Show quick compare button on cards that aren't selected
+            const showQuickCompare = !isComparisonMode && selected && !isActive && canCompare;
+
             return (
               <button
                 key={b.id}
@@ -349,7 +362,7 @@ export const BranchPanel = memo(function BranchPanel({
                 onClick={handleCardClick}
                 aria-selected={isComparisonMode ? isInComparison : isActive}
                 className={cn(
-                  'focus-visible:outline-primary relative overflow-hidden rounded-2xl border text-left shadow-lg transition hover:translate-y-[-2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
+                  'focus-visible:outline-primary group relative overflow-hidden rounded-2xl border text-left shadow-lg transition hover:translate-y-[-2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
                   isComparisonMode && isInComparison
                     ? 'ring-indigo-500 border-indigo-500 ring-2'
                     : isActive && !isComparisonMode
@@ -357,6 +370,20 @@ export const BranchPanel = memo(function BranchPanel({
                       : 'border-border/40'
                 )}
               >
+                {/* Quick compare button - visible on mobile, hover on desktop (Tier 9) */}
+                {showQuickCompare && (
+                  <button
+                    type="button"
+                    onClick={handleQuickCompare}
+                    className="absolute top-2 right-2 z-10 touch-manipulation opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200"
+                    aria-label={`Compare with ${b.destinations[0] || 'this option'}`}
+                  >
+                    <span className="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-semibold px-3 py-2 rounded-full shadow-lg cursor-pointer transition-colors min-h-[44px] min-w-[44px]">
+                      <ArrowRightLeft className="h-4 w-4" />
+                      <span className="hidden sm:inline">Compare</span>
+                    </span>
+                  </button>
+                )}
                 <div
                   className="h-full w-full"
                   style={{
@@ -434,12 +461,13 @@ export const BranchPanel = memo(function BranchPanel({
               const isOpen = openTab === tabKey;
               const count = tilesByTab[tabKey]?.length ?? 0;
               const Icon = TAB_CONFIG[tabKey].icon;
+              // Tier 9: Increased touch target to 44px minimum
               return (
                 <button
                   key={tabKey}
                   type="button"
                   onClick={() => setOpenTab((prev) => (prev === tabKey ? null : tabKey))}
-                  className={`focus-visible:outline-primary group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+                  className={`focus-visible:outline-primary group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition touch-manipulation min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-95 ${
                     isOpen
                       ? 'border-primary text-primary'
                       : 'text-muted-foreground hover:text-foreground border-transparent'
@@ -447,13 +475,13 @@ export const BranchPanel = memo(function BranchPanel({
                   aria-pressed={isOpen}
                 >
                   <span
-                    className={`flex h-8 w-8 items-center justify-center rounded-full border transition ${
+                    className={`flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded-full border transition ${
                       isOpen
                         ? 'border-primary/30 bg-primary/10 text-primary'
                         : 'border-border/70 text-muted-foreground bg-white'
                     }`}
                   >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
+                    <Icon className="h-5 w-5 sm:h-4 sm:w-4" aria-hidden="true" />
                   </span>
                   <span>{TAB_CONFIG[tabKey].label}</span>
                   <span
@@ -478,8 +506,11 @@ export const BranchPanel = memo(function BranchPanel({
             }`}
           >
             {openTab === null ? null : isStaleTiles && !hasTilesForSelected ? (
-              <div className="border-primary/30 bg-primary/5 text-muted-foreground rounded-xl border border-dashed p-4 text-sm shadow-inner">
-                Switch to this suggestion to refresh matching options.
+              // Tier 10.6: Show animated skeleton loaders during branch switch instead of static message
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                <TileCardSkeleton />
+                <TileCardSkeleton />
+                <TileCardSkeleton />
               </div>
             ) : tilesByTab[openTab]?.length ? (
               <TilesGrid
