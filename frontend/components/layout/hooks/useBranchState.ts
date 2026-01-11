@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 
-import { apiFetch } from '@/lib/api';
+import { fetchWithRetry } from '@/lib/api';
 import type { DocumentBranch, PlanDocumentResponse } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -312,11 +312,19 @@ export function useBranchState(options: UseBranchStateOptions): UseBranchStateRe
       const errorMessageOverride = overrides?.errorMessageOverride;
 
       try {
-        const res = await apiFetch(
+        // Use fetchWithRetry for automatic retry on transient errors (network timeouts, 503s)
+        const res = await fetchWithRetry(
           `/v1/document/tiles/${encodeURIComponent(branchId)}`,
           {
             method: 'POST',
             signal: controller.signal,
+          },
+          {
+            maxRetries: 3,
+            baseDelay: 1000,
+            onRetry: (attempt, error) => {
+              console.info(`Tile fetch retry ${attempt}:`, error);
+            },
           }
         );
 

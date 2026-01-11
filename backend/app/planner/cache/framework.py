@@ -585,6 +585,8 @@ class ResponseCache(CacheNode[Dict[str, Any]]):
     - follow_up_hash: Hash of follow-up question context
     - user_text_hash: Hash of user input
     - model_id: LLM model isolation (prevents cross-model cache hits)
+    - settings_hash: Hash of domain-specific settings (e.g., flight_settings for flights_node)
+                     Ensures cache invalidation when user changes preferences like direct_only
     """
 
     _instance: Optional["ResponseCache"] = None
@@ -617,9 +619,23 @@ class ResponseCache(CacheNode[Dict[str, Any]]):
         follow_up_hash: str,
         user_text_hash: str,
         model_id: str = "",
+        settings_hash: str = "",
     ) -> str:
-        """Compute key parts for response cache."""
-        return f"{node_name}|{core_fields_hash}|{follow_up_hash}|{user_text_hash}|{model_id}"
+        """Compute key parts for response cache.
+
+        Args:
+            node_name: Which node generated the response
+            core_fields_hash: Hash of core trip fields
+            follow_up_hash: Hash of follow-up question context
+            user_text_hash: Hash of user input
+            model_id: LLM model ID for isolation
+            settings_hash: Hash of domain-specific settings (flight_settings, hotel_settings, etc.)
+                          This ensures cache is invalidated when user changes preferences.
+        """
+        return (
+            f"{node_name}|{core_fields_hash}|{follow_up_hash}|"
+            f"{user_text_hash}|{model_id}|{settings_hash}"
+        )
 
     def _update_state_on_hit(self, state: "GraphState") -> None:
         super()._update_state_on_hit(state)

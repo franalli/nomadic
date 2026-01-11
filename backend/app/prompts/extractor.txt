@@ -26,7 +26,10 @@ DESTINATIONS (destinations_delta):
 - NOT: dates, activities (hiking/diving), preferences (budget/luxury), amenities
 - "also X" / "add X" → append to existing
 
-ORIGIN (origin_delta): Departure city. "flying from NYC" → "NYC"
+ORIGIN (origin_delta): Departure city with state/country if mentioned.
+- "flying from NYC" → "NYC"
+- "from south bend indiana" → "south bend indiana"
+- Keep the full location name including state or country.
 
 DATES:
 - start_date_hint, end_date_hint: "March 15", "Dec 25, 2025", "next week"

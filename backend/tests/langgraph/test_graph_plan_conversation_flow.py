@@ -253,13 +253,13 @@ def test_graph_plan_one_way_flights_multi_turn(client):
         turn1 = _post(
             client,
             {
-                "message": "One-way flight from Rome to Dubai on 2026-01-10",
+                "message": "One-way flight from Rome to Dubai on 2026-02-10",
             },
         )
         assert turn1["observability"]["router_intent"] == "flights"
         assert turn1["document"]["trip_inputs"]["origin"] == "Rome"
         assert turn1["document"]["trip_inputs"]["destinations"] == ["Dubai"]
-        assert turn1["document"]["trip_inputs"]["start_date"] == "2026-01-10"
+        assert turn1["document"]["trip_inputs"]["start_date"] == "2026-02-10"
 
         state = turn1["session_state"]
 
@@ -361,7 +361,8 @@ def test_graph_plan_correction_needed_routes_to_correction_specialist(client):
 
     assert out["observability"]["router_intent"] == "correction_needed"
     assert out["document"]["ready_to_generate"] is False
-    assert (out["document"]["assistant_message"] or "").startswith("⚠️")
+    # Message starts with bold marker indicating a correction
+    assert (out["document"]["assistant_message"] or "").startswith("**That won't quite work**")
     assert len(out["document"].get("suggested_responses") or []) <= 3
 
 

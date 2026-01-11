@@ -727,3 +727,111 @@ class TestGatePrecedenceGuard:
         ctx_questions = GateContext.from_state(state_questions, readiness)
         result_questions = gate.evaluate(ctx_questions)
         assert result_questions is None, "Should NOT be eligible with 'ask me questions'"
+
+
+# =============================================================================
+# Destination-Specific Templates Tests (Tier 10.22)
+# =============================================================================
+class TestDestinationSpecificTemplates:
+    """Tests for DESTINATION_TOPIC_TEMPLATES expert knowledge system."""
+
+    def test_destination_topic_templates_populated(self):
+        """DESTINATION_TOPIC_TEMPLATES should have entries for popular combinations."""
+        from app.planner.nodes.strategy.stage0 import DESTINATION_TOPIC_TEMPLATES
+
+        # Should have at least 10 popular destination+topic combinations
+        assert len(DESTINATION_TOPIC_TEMPLATES) >= 10
+
+        # Check some expected entries exist
+        expected_entries = [
+            ("patagonia", "hiking"),
+            ("maldives", "diving"),
+            ("switzerland", "skiing"),
+            ("croatia", "boating"),
+            ("france", "cycling"),
+        ]
+        for entry in expected_entries:
+            assert entry in DESTINATION_TOPIC_TEMPLATES, f"Missing entry: {entry}"
+
+    def test_get_destination_specific_template_returns_expert_content(self):
+        """get_destination_specific_template should return expert content for known destinations."""
+        from app.planner.nodes.strategy.stage0 import get_destination_specific_template
+
+        # Patagonia hiking should return expert template
+        result = get_destination_specific_template("hiking", ["Patagonia"])
+        assert result is not None
+        assert "Torres del Paine" in result
+        assert "refugios" in result.lower() or "Refugios" in result
+
+        # Maldives diving should return expert template
+        result = get_destination_specific_template("diving", ["Maldives"])
+        assert result is not None
+        assert "Manta ray" in result or "manta" in result.lower()
+        assert "liveaboard" in result.lower()
+
+    def test_get_destination_specific_template_partial_match(self):
+        """get_destination_specific_template should match partial destination names."""
+        from app.planner.nodes.strategy.stage0 import get_destination_specific_template
+
+        # "Torres del Paine, Patagonia" should match "patagonia"
+        result = get_destination_specific_template("hiking", ["Torres del Paine, Patagonia"])
+        assert result is not None
+        assert "W Trek" in result or "Fitz Roy" in result
+
+        # "Swiss Alps" should match "switzerland"
+        result = get_destination_specific_template("skiing", ["Swiss Alps, Switzerland"])
+        assert result is not None
+        assert "Zermatt" in result or "Verbier" in result
+
+    def test_get_destination_specific_template_returns_none_for_unknown(self):
+        """get_destination_specific_template should return None for unknown destinations."""
+        from app.planner.nodes.strategy.stage0 import get_destination_specific_template
+
+        # Unknown destination should return None
+        result = get_destination_specific_template("hiking", ["Unknown City"])
+        assert result is None
+
+        # Known destination but wrong topic should return None
+        result = get_destination_specific_template("skiing", ["Maldives"])
+        assert result is None
+
+    def test_get_destination_specific_template_empty_destinations(self):
+        """get_destination_specific_template should handle empty destinations."""
+        from app.planner.nodes.strategy.stage0 import get_destination_specific_template
+
+        assert get_destination_specific_template("hiking", []) is None
+        assert get_destination_specific_template("diving", None) is None  # type: ignore
+
+    def test_template_content_structure(self):
+        """Each template entry should have required keys."""
+        from app.planner.nodes.strategy.stage0 import DESTINATION_TOPIC_TEMPLATES
+
+        required_keys = ["highlights", "best_season", "key_tips", "duration_note"]
+
+        for (dest, topic), content in DESTINATION_TOPIC_TEMPLATES.items():
+            for key in required_keys:
+                assert key in content, f"Missing '{key}' in ({dest}, {topic}) template"
+                assert isinstance(
+                    content[key], str
+                ), f"'{key}' should be string in ({dest}, {topic})"
+                assert len(content[key]) > 0, f"'{key}' should not be empty in ({dest}, {topic})"
+
+    def test_format_destination_template_includes_all_sections(self):
+        """_format_destination_template should include all content sections."""
+        from app.planner.nodes.strategy.stage0 import _format_destination_template
+
+        content = {
+            "highlights": "Amazing views and trails",
+            "best_season": "Summer months",
+            "key_tips": "Book ahead",
+            "duration_note": "5-7 days ideal",
+        }
+
+        result = _format_destination_template(content, "Test Destination", "hiking")
+
+        assert "Test Destination" in result
+        assert "Amazing views and trails" in result
+        assert "Summer months" in result
+        assert "Book ahead" in result
+        assert "5-7 days ideal" in result
+        assert "🥾" in result  # Hiking emoji

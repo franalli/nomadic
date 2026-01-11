@@ -1,15 +1,25 @@
 import { Heart, MapPin, Star } from 'lucide-react';
-import { type KeyboardEvent, memo, type MouseEvent, useCallback, useMemo, useState } from 'react';
+import {
+  type KeyboardEvent,
+  memo,
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { apiFetch } from '@/lib/api';
 import {
   ACTIVITY_FEATURE_SETS,
   FLIGHT_FEATURE_SETS,
   HOTEL_FEATURE_SETS,
 } from '@/lib/mocks';
-import { isActivityType, isFlightType } from '@/lib/utils';
+import { cn, isActivityType, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
@@ -17,6 +27,8 @@ type TileCardProps = {
   branchId?: string;
   isSelected?: boolean;
   onToggleSelect?: (tile: Tile) => void;
+  /** Callback to show a toast notification when tile is selected */
+  onSelectionToast?: (message: string) => void;
 };
 
 const getFeaturesForTile = (tile: Tile): string[] => {
@@ -54,10 +66,31 @@ export const TileCard = memo(function TileCard({
   branchId,
   isSelected,
   onToggleSelect,
+  onSelectionToast,
 }: TileCardProps) {
   const [isLiked, setIsLiked] = useState(false);
+  // Track just-selected state for animation feedback
+  const [justSelected, setJustSelected] = useState(false);
+  // Track previous selection state to detect transitions
+  const prevSelectedRef = useRef(isSelected);
+  // Tier 11.7: Track image loading state for skeleton feedback
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
+
+  // Detect when tile becomes selected and trigger animation
+  useEffect(() => {
+    // Only animate when going from unselected to selected
+    if (isSelected && !prevSelectedRef.current) {
+      setJustSelected(true);
+      // Reset animation state after animation completes
+      const timer = setTimeout(() => setJustSelected(false), 300);
+      return () => clearTimeout(timer);
+    }
+    prevSelectedRef.current = isSelected;
+    return undefined;
+  }, [isSelected]);
 
   // Memoize click tracking payload to avoid recreating on each render
   const trackClick = useCallback(() => {
@@ -87,9 +120,17 @@ export const TileCard = memo(function TileCard({
     (event: MouseEvent | KeyboardEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.stopPropagation();
+
+      // Show toast if we're selecting (not deselecting) and callback is provided
+      if (!isSelected && onSelectionToast) {
+        // Truncate long titles for the toast message
+        const displayTitle = tile.title.length > 30 ? tile.title.slice(0, 27) + '...' : tile.title;
+        onSelectionToast(`Added ${displayTitle} to your trip`);
+      }
+
       onToggleSelect?.(tile);
     },
-    [onToggleSelect, tile]
+    [onToggleSelect, tile, isSelected, onSelectionToast]
   );
 
   const handleLikeToggle = useCallback((event: MouseEvent) => {
@@ -118,20 +159,36 @@ export const TileCard = memo(function TileCard({
   return (
     <Card
       onClick={handleToggleSelect}
-      className={`bg-card group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-sm transition-all hover:shadow-md ${
-        isSelected ? 'ring-primary border-primary ring-2' : 'border-border'
-      }`}
+      className={cn(
+        'bg-card group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-sm transition-all hover:shadow-md',
+        isSelected ? 'ring-primary border-primary ring-2' : 'border-border',
+        // Scale animation on selection for visual feedback (Tier 10.19)
+        justSelected && 'scale-[1.02]',
+        'transition-transform duration-200 ease-out'
+      )}
       role="button"
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
       <div className="relative aspect-[4/3] w-full overflow-hidden">
-        {tile.image_url ? (
-          <img
-            src={tile.image_url}
-            alt={tile.title}
-            className="h-full w-full object-cover transition duration-700 group-hover:scale-105"
-          />
+        {tile.image_url && !imageError ? (
+          <>
+            {/* Tier 11.7: Skeleton shown while image loads */}
+            {!imageLoaded && (
+              <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
+            )}
+            <img
+              src={tile.image_url}
+              alt={tile.title}
+              loading="lazy"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageError(true)}
+              className={cn(
+                'h-full w-full object-cover transition duration-700 group-hover:scale-105',
+                !imageLoaded && 'opacity-0'
+              )}
+            />
+          </>
         ) : (
           <div className="from-primary/15 via-card to-background h-full w-full bg-gradient-to-br" />
         )}

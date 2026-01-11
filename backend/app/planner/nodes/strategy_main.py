@@ -322,22 +322,29 @@ async def strategy_node(state: "GraphState") -> "GraphState":
             _debug_node_exit("strategy_node", state, start_ns)
             return await strategy_node(state)
 
-        # V37: If user is clearly asking about a different category, route to general
-        # instead of asking them to clarify about the current strategy topic
+        # V37: If user is clearly asking about a different category, route to that specialist
         if detected_topic_switch:
+            # Map category names to specialist names
+            specialist_map = {
+                "hotels": "hotels",
+                "flights": "flights",
+                "ground_transport": "transport",
+                "activities": "activities",
+            }
+            specialist_name = specialist_map.get(detected_topic_switch, detected_topic_switch)
             _debug(
                 "⚠️ Strategy relevance gate: topic switch detected",
                 topic=topic,
                 detected_switch=detected_topic_switch,
                 user_text_preview=user_text[:50],
-                action="routing to general node",
+                action=f"routing to {specialist_name} specialist",
             )
             state.metadata["strategy_gate_fallback"] = True
             state.metadata["strategy_gate_reason"] = f"topic_switch:{detected_topic_switch}"
-            state.intent = "general"
-            # Let general node handle this request
+            state.intent = specialist_name
+            # Route to the appropriate domain specialist
             _debug_node_exit("strategy_node", state, start_ns)
-            return await _specialist("general", state)
+            return await _specialist(specialist_name, state)
 
         # V38: Check if user wants to modify a trip field (e.g., "I want to add budget")
         # This handles cases where user interrupts strategy flow to add/modify fields

@@ -146,6 +146,29 @@ class TestNormalizePlaceWithFuzzy:
         result = normalize_place_with_fuzzy("  paris  ")
         assert result == "Paris"
 
+    def test_us_state_not_matched_to_other_country(self):
+        """US state mention should not match to non-US places."""
+        # This was a bug: "south bend indiana" was matching "New Zealand South Island"
+        result = normalize_place_with_fuzzy("south bend indiana")
+        # Key requirement: should NOT match to non-US places
+        assert "Zealand" not in result
+        assert "New Zealand" not in result
+        assert "Australia" not in result
+        # Should be geocoded to proper US location with both city and state
+        assert "South Bend" in result
+        assert "Indiana" in result
+
+    def test_us_state_abbreviation_not_matched_to_other_country(self):
+        """US state abbreviation should not match to non-US places."""
+        result = normalize_place_with_fuzzy("south bend in")
+        assert "Zealand" not in result
+
+    def test_explicit_usa_not_matched_to_other_country(self):
+        """Explicit USA mention should not match to non-US places."""
+        result = normalize_place_with_fuzzy("small town usa")
+        assert "Zealand" not in result
+        assert "Australia" not in result
+
 
 class TestNormalizePlaceSynonym:
     """Tests for normalize_place_synonym function (original synonym-only function)."""

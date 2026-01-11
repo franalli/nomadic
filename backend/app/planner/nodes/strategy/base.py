@@ -50,27 +50,35 @@ STRATEGY_KEYWORDS: Dict[str, Set[str]] = {
 }
 
 # Keywords that indicate user wants a different category (not strategy)
+# Note: Keywords should be specific enough to avoid false positives.
+# e.g., "rental" alone would match "equipment rental" which should stay in strategy context.
 TOPIC_SWITCH_KEYWORDS: Dict[str, str] = {
-    "car": "ground_transport",
-    "rental": "ground_transport",
     "rent a car": "ground_transport",
     "car rental": "ground_transport",
-    "drive": "ground_transport",
-    "driving": "ground_transport",
+    "rental car": "ground_transport",
+    "hire a car": "ground_transport",
+    "drive there": "ground_transport",
+    "driving directions": "ground_transport",
     "train": "ground_transport",
     "bus": "ground_transport",
-    "transport": "ground_transport",
+    "taxi": "ground_transport",
+    "uber": "ground_transport",
+    "shuttle": "ground_transport",
+    "ground transport": "ground_transport",
     "hotel": "hotels",
     "hotels": "hotels",
     "accommodation": "hotels",
-    "stay": "hotels",
     "where to stay": "hotels",
     "lodging": "hotels",
+    "hostel": "hotels",
+    "airbnb": "hotels",
     "flight": "flights",
     "flights": "flights",
     "fly": "flights",
     "flying": "flights",
     "airline": "flights",
+    "book flights": "flights",
+    "book hotels": "hotels",
 }
 
 

@@ -260,8 +260,15 @@ class TestLqaPrepass:
         assert _lqa_stats["bail_no_question_target"] == 1
 
     def test_bail_on_too_long(self):
-        """Should bail when input exceeds lqa_max_length."""
-        long_text = "I want to go to Paris and Rome and Barcelona and Madrid"
+        """Should bail when input exceeds lqa_max_length (150 chars)."""
+        # Create a text that exceeds 150 characters WITHOUT multiple commas
+        # (multiple commas trigger multi_intent bail which has higher priority)
+        long_text = (
+            "I would really love to visit the beautiful and amazing city of Paris in France "
+            "because I have always dreamed of seeing the Eiffel Tower and the Louvre Museum"
+        )
+        # Verify it's actually > 150 chars
+        assert len(long_text) > 150, f"Test text too short: {len(long_text)} chars"
         state = GraphState(
             user_text=long_text,
             trip_inputs=TripInputs(),

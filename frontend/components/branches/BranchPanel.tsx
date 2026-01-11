@@ -101,6 +101,8 @@ type BranchPanelProps = {
   tripInputs?: DocumentTripInputs | null;
   /** Show skeleton loaders while branches are loading */
   isLoading?: boolean;
+  /** Callback to show toast notification when tile is selected (Tier 10.19) */
+  onSelectionToast?: (message: string) => void;
 };
 
 export const BranchPanel = memo(function BranchPanel({
@@ -117,6 +119,7 @@ export const BranchPanel = memo(function BranchPanel({
   canBookTrip = true,
   tripInputs,
   isLoading = false,
+  onSelectionToast,
 }: BranchPanelProps) {
   const hasBranches = branches.length > 0;
   const selected = hasBranches
@@ -361,6 +364,16 @@ export const BranchPanel = memo(function BranchPanel({
                 type="button"
                 onClick={handleCardClick}
                 aria-selected={isComparisonMode ? isInComparison : isActive}
+                // Tier 11.10: Descriptive ARIA label for screen readers
+                aria-label={`${b.destinations[0] || 'Trip option'} - ${
+                  isComparisonMode
+                    ? isInComparison
+                      ? 'Selected for comparison'
+                      : 'Click to add to comparison'
+                    : isActive
+                      ? 'Currently selected'
+                      : 'Click to view'
+                }`}
                 className={cn(
                   'focus-visible:outline-primary group relative overflow-hidden rounded-2xl border text-left shadow-lg transition hover:translate-y-[-2px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2',
                   isComparisonMode && isInComparison
@@ -520,6 +533,7 @@ export const BranchPanel = memo(function BranchPanel({
                 onTileToggle={(tile) => onTileToggle?.(tile, openTab)}
                 forcedTab={openTab}
                 hideTabSwitcher
+                onSelectionToast={onSelectionToast}
               />
             ) : (
               <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
@@ -540,9 +554,11 @@ export const BranchPanel = memo(function BranchPanel({
             <div className="grid grid-cols-3 gap-3">
               <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
                 <div className="relative aspect-video">
+                  {/* Tier 11.13: Lazy load hero images for bandwidth savings */}
                   <img
                     src={detailPreset.heroImages[0]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} overview`}
+                    loading="lazy"
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-tr from-black/30 via-transparent to-black/10" />
@@ -556,6 +572,7 @@ export const BranchPanel = memo(function BranchPanel({
                   <img
                     src={detailPreset.heroImages[1]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} detail`}
+                    loading="lazy"
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 left-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
@@ -568,6 +585,7 @@ export const BranchPanel = memo(function BranchPanel({
                   <img
                     src={detailPreset.heroImages[2]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} night detail`}
+                    loading="lazy"
                     className="h-full w-full object-cover"
                   />
                   <div className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">

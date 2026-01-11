@@ -24,6 +24,10 @@ from typing import TYPE_CHECKING, Any, Dict
 from app.config import settings
 from app.debug_utils import _debug, _debug_error
 from app.graph_plan_utils import jloads_safe
+from app.known_places import (
+    _fuzzy_match_is_non_us,
+    _input_mentions_us_location,
+)
 from app.pattern_matching import text_is_compatible_with_target
 from app.planner.node_utils import ti_short, today_iso
 from app.planner.nodes.confidence import (
@@ -34,6 +38,60 @@ from app.planner.nodes.confidence import (
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
+
+
+def _validate_origin_extraction(user_text: str, extracted_origin: str) -> str:
+    """
+    Validate LLM-extracted origin against geographic context in user text.
+
+    This catches cases where the LLM mishears US locations as non-US places.
+    Example: "south bend indiana" extracted as "South Island" (New Zealand).
+
+    Args:
+        user_text: Original user input text
+        extracted_origin: Origin extracted by LLM
+
+    Returns:
+        Validated origin - either the LLM extraction if valid, or raw text
+        that mentioned the origin if there's a geographic mismatch.
+    """
+    if not extracted_origin:
+        return extracted_origin
+
+    # Check for geographic mismatch:
+    # User mentions US location but LLM extracted something non-US
+    if _input_mentions_us_location(user_text) and _fuzzy_match_is_non_us(extracted_origin):
+        _debug(
+            "ORIGIN_VALIDATION: Geographic mismatch detected",
+            user_text=user_text[:50],
+            extracted=extracted_origin,
+            reason="User mentions US state but LLM extracted non-US location",
+        )
+        # Extract origin from user text instead
+        # Look for common origin patterns
+        text_lower = user_text.lower()
+        origin_markers = ["from ", "leaving ", "departing ", "flying from "]
+        for marker in origin_markers:
+            if marker in text_lower:
+                idx = text_lower.find(marker) + len(marker)
+                # Take the rest as origin (will be normalized later)
+                raw_origin = user_text[idx:].strip()
+                if raw_origin:
+                    _debug(
+                        "ORIGIN_VALIDATION: Using raw text instead",
+                        marker=marker,
+                        raw_origin=raw_origin[:30],
+                    )
+                    return raw_origin
+
+        # No marker found - use the full text (normalization will handle it)
+        _debug(
+            "ORIGIN_VALIDATION: No origin marker found, using full text",
+            fallback=user_text[:30],
+        )
+        return user_text
+
+    return extracted_origin
 
 
 async def extractor(state: "GraphState") -> "GraphState":
@@ -400,7 +458,10 @@ async def extractor(state: "GraphState") -> "GraphState":
         if extracted.get("destinations_delta"):
             parsed["destinations_delta"] = extracted["destinations_delta"]
         if extracted.get("origin_delta"):
-            parsed["origin_delta"] = extracted["origin_delta"]
+            # Validate origin extraction against user text to catch geographic mismatches
+            # (e.g., LLM extracting "South Island" from "south bend indiana")
+            validated_origin = _validate_origin_extraction(text, extracted["origin_delta"])
+            parsed["origin_delta"] = validated_origin
         if extracted.get("start_date_hint"):
             parsed["start_date_hint"] = extracted["start_date_hint"]
         if extracted.get("end_date_hint"):

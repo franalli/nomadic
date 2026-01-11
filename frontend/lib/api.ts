@@ -62,6 +62,139 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
   return res;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Retry Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Check if an error is a transient/retryable error.
+ *
+ * Transient errors include:
+ * - Network errors (TypeError: Failed to fetch)
+ * - Timeout errors
+ * - 5xx server errors (503 Service Unavailable, etc.)
+ *
+ * @param error - The error to check
+ * @returns true if the error is transient and should be retried
+ */
+export function isTransientError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('failed to fetch') ||
+      message.includes('503') ||
+      message.includes('502') ||
+      message.includes('504')
+    );
+  }
+  return false;
+}
+
+/**
+ * Check if a Response status indicates a transient error.
+ *
+ * @param status - HTTP status code
+ * @returns true if status indicates a retryable error
+ */
+export function isTransientStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504 || status === 429;
+}
+
+/**
+ * Sleep for a given number of milliseconds.
+ *
+ * @param ms - Milliseconds to sleep
+ * @returns Promise that resolves after the delay
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Options for fetchWithRetry.
+ */
+export interface FetchWithRetryOptions {
+  /** Maximum number of retry attempts (default: 3) */
+  maxRetries?: number;
+  /** Base delay in ms before first retry (default: 1000) */
+  baseDelay?: number;
+  /** Maximum delay in ms between retries (default: 10000) */
+  maxDelay?: number;
+  /** Callback when a retry is attempted */
+  onRetry?: (attempt: number, error: unknown) => void;
+}
+
+/**
+ * Wrapper around apiFetch that automatically retries on transient errors.
+ *
+ * Uses exponential backoff with jitter:
+ * - Retry 1: baseDelay * 1 + random(0-500)ms
+ * - Retry 2: baseDelay * 2 + random(0-500)ms
+ * - Retry 3: baseDelay * 4 + random(0-500)ms
+ *
+ * @param path - API path to fetch
+ * @param options - fetch options (same as apiFetch)
+ * @param retryOptions - retry configuration
+ * @returns Response from the successful fetch
+ * @throws Last error if all retries fail
+ *
+ * @example
+ * ```ts
+ * const res = await fetchWithRetry('/v1/document/tiles/abc', { method: 'POST' }, {
+ *   maxRetries: 3,
+ *   onRetry: (attempt) => console.log(`Retrying (attempt ${attempt})...`)
+ * });
+ * ```
+ */
+export async function fetchWithRetry(
+  path: string,
+  options?: RequestInit,
+  retryOptions: FetchWithRetryOptions = {}
+): Promise<Response> {
+  const { maxRetries = 3, baseDelay = 1000, maxDelay = 10000, onRetry } = retryOptions;
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await apiFetch(path, options);
+
+      // Check for transient HTTP status codes
+      if (isTransientStatus(res.status) && attempt < maxRetries) {
+        onRetry?.(attempt + 1, new Error(`HTTP ${res.status}`));
+        const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay) + Math.random() * 500;
+        await sleep(delay);
+        continue;
+      }
+
+      return res;
+    } catch (error) {
+      lastError = error;
+
+      // Don't retry abort errors - those are intentional
+      if ((error as DOMException)?.name === 'AbortError') {
+        throw error;
+      }
+
+      // Check if this is a transient error worth retrying
+      if (isTransientError(error) && attempt < maxRetries) {
+        onRetry?.(attempt + 1, error);
+        const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay) + Math.random() * 500;
+        await sleep(delay);
+        continue;
+      }
+
+      // Non-transient error or max retries reached
+      throw error;
+    }
+  }
+
+  // This should only be reached if all retries failed
+  throw lastError;
+}
+
 /**
  * Reset the current session by calling DELETE /v1/session.
  * The backend will clear the session cookies.
@@ -168,6 +301,74 @@ export function trackSuggestionClick(
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tile Refresh API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Tile data returned from API.
+ * Matches the Tile type from types/tile.ts.
+ */
+interface ApiTile {
+  id: string;
+  type: string;
+  title: string;
+  subtitle?: string;
+  image_url?: string;
+  price_estimate?: number;
+  currency: string;
+  deeplink_url: string;
+  rating?: number;
+  location_label?: string;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * Response from the tile refresh endpoint.
+ */
+export interface TileRefreshResponse {
+  tiles: ApiTile[];
+  refreshed_at: string;
+  verticals_refreshed: string[];
+}
+
+/**
+ * Refresh tiles for a branch with current settings.
+ *
+ * Use this when user preferences (hotel_settings, flight_settings,
+ * activity_settings) change to get updated tiles reflecting the new filters.
+ *
+ * @param branchId - The branch to refresh tiles for
+ * @param verticals - Optional list of verticals to refresh. If not provided, refreshes all.
+ * @returns The refreshed tiles and metadata
+ */
+export async function refreshTiles(
+  branchId: string,
+  verticals?: ('hotel' | 'flight' | 'activity')[]
+): Promise<TileRefreshResponse> {
+  const res = await fetchWithRetry(
+    '/v1/tiles/refresh',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        branch_id: branchId,
+        verticals: verticals,
+      }),
+    },
+    {
+      maxRetries: 2,
+      baseDelay: 500,
+    }
+  );
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => 'Unknown error');
+    throw new Error(`Failed to refresh tiles: ${res.status} - ${errorText}`);
+  }
+
+  return res.json();
+}
+
 /**
  * SSE Event types for streaming graph plan responses.
  */
@@ -200,11 +401,14 @@ export interface SSENodeStatusEvent {
   data: {
     node: string;
     status: 'started' | 'completed';
-    stage: number;
-    tier: 'outline' | 'section' | 'full';
-    topic: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
-    max_tokens: number;
+    label: string; // Human-readable label for UI (e.g., "Finding flights")
+    icon_key: string; // Icon identifier for frontend (e.g., "plane", "hiking")
     estimated_duration_ms: number;
+    // Strategy-specific fields (optional, only present for strategy_node)
+    stage?: number;
+    tier?: 'outline' | 'section' | 'full';
+    topic?: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
+    max_tokens?: number;
   };
 }
 

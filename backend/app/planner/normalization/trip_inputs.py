@@ -800,17 +800,27 @@ class TripInputNormalizer:
 
         # --- Budget & Currency ---
         if "budget_delta" in deltas:
-            budget = self._normalize_budget(deltas["budget_delta"])
+            budget_raw = deltas["budget_delta"]
+            budget = self._normalize_budget(budget_raw)
             if budget is not None:
                 updates["budget"] = budget
+                # Extract currency from dict format if present and not already provided
+                if (
+                    isinstance(budget_raw, dict)
+                    and "currency" in budget_raw
+                    and "currency_delta" not in deltas
+                ):
+                    currency = self.normalize_currency(budget_raw["currency"])
+                    if currency:
+                        updates["currency"] = currency
             else:
                 failed_inputs.append(
                     {
                         "field": "budget",
-                        "raw_value": deltas["budget_delta"],
+                        "raw_value": budget_raw,
                         "reason": "Could not parse as a valid budget amount",
                         "user_message": (
-                            f"I couldn't understand '{deltas['budget_delta']}' as a budget. "
+                            f"I couldn't understand '{budget_raw}' as a budget. "
                             "Could you specify an amount (e.g., '$2000' or "
                             "'around 3000 euros')?"
                         ),
@@ -818,7 +828,7 @@ class TripInputNormalizer:
                 )
                 _debug(
                     "🚫 USER INPUT FAILED: budget",
-                    raw_value=deltas["budget_delta"],
+                    raw_value=budget_raw,
                     reason="could not parse as valid budget amount",
                 )
 
@@ -917,8 +927,16 @@ class TripInputNormalizer:
         # --- Category Activation (booking types) ---
         if "category_activation" in deltas:
             activation = deltas["category_activation"]
-            if isinstance(activation, dict):
-                booking_types = dict(trip_inputs.booking_types or self._default_booking_types)
+            booking_types = dict(trip_inputs.booking_types or self._default_booking_types)
+
+            if isinstance(activation, list):
+                # Handle array format from extractor: ["flights", "hotels"]
+                for cat in activation:
+                    if cat in booking_types:
+                        booking_types[cat] = True
+                updates["booking_types"] = booking_types
+            elif isinstance(activation, dict):
+                # Handle dict format: {"flights": true, "hotels": true}
                 for cat, enabled in activation.items():
                     if cat in booking_types and isinstance(enabled, bool):
                         booking_types[cat] = enabled
@@ -994,9 +1012,17 @@ def _default_normalize_int(value: Any) -> Optional[int]:
 
 
 def _default_normalize_budget(value: Any) -> Optional[float]:
-    """Normalize a budget value to a float, handling currency symbols."""
+    """Normalize a budget value to a float, handling currency symbols and dict format."""
     if value is None:
         return None
+
+    # Handle dict format from LLM: {"budget": number, "currency": "USD"}
+    if isinstance(value, dict):
+        budget_value = value.get("budget")
+        if budget_value is not None:
+            return _default_normalize_budget(budget_value)  # Recurse to handle the inner value
+        return None
+
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):

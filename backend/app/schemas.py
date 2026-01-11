@@ -112,11 +112,31 @@ class TilesSearchRequest(BaseModel):
     budget: Optional[float] = None  # Total trip budget
     budget_per_category: Optional[float] = None  # Suggested allocation per category
 
+    # User preference settings for filtering tiles
+    flight_settings: Optional["FlightSettings"] = None
+    hotel_settings: Optional["HotelSettings"] = None
+    activity_settings: Optional["ActivitySettings"] = None
+
 
 class TilesSearchResponse(BaseModel):
     tiles_request_id: str
     tiles: List[Tile]
     summary: dict
+
+
+class TileRefreshRequest(BaseModel):
+    """Request to refresh tiles with current settings."""
+
+    branch_id: str
+    verticals: Optional[List[TileType]] = None  # None = refresh all verticals
+
+
+class TileRefreshResponse(BaseModel):
+    """Response from tile refresh."""
+
+    tiles: List[Tile]
+    refreshed_at: str
+    verticals_refreshed: List[str]
 
 
 class TileClickEvent(BaseModel):

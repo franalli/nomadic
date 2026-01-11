@@ -101,6 +101,8 @@ class ReadyNoFieldsGate(Gate):
             )
 
         # SPECIALIST_REQUEST: Check for explicit specialist keywords when ready
+        # This takes precedence over settings_changed because explicit keywords
+        # in user text are a stronger signal than implicit settings inference
         for specialist, keywords in SPECIALIST_KEYWORDS.items():
             if keyword_match(user_text_lower, keywords):
                 destination = SPECIALIST_NODE_MAP.get(specialist, "hotels_node")
@@ -116,6 +118,33 @@ class ReadyNoFieldsGate(Gate):
                         "explicit_specialist_request": specialist,
                     },
                 )
+
+        # SETTINGS_CHANGE: Route to specialist when user answered a preference question
+        # This triggers when user says "open to layovers" and flight_settings changes
+        settings_changed = ctx.metadata.get("settings_changed_this_turn", {})
+        if settings_changed:
+            # Map settings field to specialist
+            settings_to_specialist = {
+                "flight_settings": ("flights", "flights_node"),
+                "hotel_settings": ("hotels", "hotels_node"),
+                "activity_settings": ("activities", "activities_node"),
+                "transport_settings": ("transport", "transport_node"),
+            }
+            # Pick the first changed setting (usually only one changes per turn)
+            for field, (specialist, destination) in settings_to_specialist.items():
+                if field in settings_changed:
+                    self.record(ctx, fired=True, reason=f"settings_changed:{field}")
+                    return self.build_result(
+                        ctx,
+                        destination=destination,
+                        reason=f"settings_changed:{specialist}",
+                        intent=specialist,
+                        metadata_updates={
+                            "router_path": f"settings_changed:{specialist}",
+                            "router_bypassed": True,
+                            "settings_changed_specialist": specialist,
+                        },
+                    )
 
         self.record(ctx, fired=True, reason="plan_ready_to_generate")
         return self.build_result(

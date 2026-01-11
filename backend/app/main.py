@@ -89,12 +89,19 @@ from app.schemas import (
     PlanDocumentData,
     PlanDocumentPatch,
     PlanDocumentResponse,
+    TileRefreshRequest,
+    TileRefreshResponse,
     TilesSearchRequest,
     TripInputValidationRequest,
     TripInputValidationResponse,
 )
 from app.tile_service.service import search_tiles
-from app.validation import cache_stats, clear_cache, prewarm_cache, validate_input
+from app.validation import (
+    cache_stats,
+    clear_cache,
+    prewarm_cache,
+    validate_input_async,
+)
 
 # Configure logging for the graph plan route
 logger = logging.getLogger(__name__)
@@ -215,7 +222,7 @@ def health():
 
 
 @app.post("/v1/validate-trip-input", response_model=TripInputValidationResponse)
-def validate_trip_input(req: TripInputValidationRequest, request: Request):
+async def validate_trip_input(req: TripInputValidationRequest, request: Request):
     """
     Validate a trip input (origin or destination).
 
@@ -224,10 +231,13 @@ def validate_trip_input(req: TripInputValidationRequest, request: Request):
     places (e.g., "Paris and Rome" -> ["Paris", "Rome"]).
 
     Raises HTTP 503 if validation fails after retries.
+
+    Tier 11.1: Uses async validation with non-blocking retries for better concurrency.
     """
     try:
         session_id = get_session_from_request(request)
-        result = validate_input(req.value, req.field_type, session_id=session_id)
+        # Tier 11.1: Use async validation with non-blocking retries
+        result = await validate_input_async(req.value, req.field_type, session_id=session_id)
         return TripInputValidationResponse(
             corrected_values=result.corrected_values,
             is_valid=result.is_valid,
@@ -1423,6 +1433,7 @@ async def fetch_tiles_for_branch(
 
     # Fetch tiles for this branch
     primary_dest = branch.destinations[0] if branch.destinations else None
+    ti = doc_data.trip_inputs
     tiles_request = TilesSearchRequest(
         session_id=session_id,
         destination=primary_dest,
@@ -1433,6 +1444,10 @@ async def fetch_tiles_for_branch(
         adults=branch.adults,
         children=branch.children,
         requires_assistance=branch.requires_assistance,
+        # Pass user preference settings for filtering
+        flight_settings=ti.flight_settings,
+        hotel_settings=ti.hotel_settings,
+        activity_settings=ti.activity_settings,
     )
 
     tiles_response = search_tiles(tiles_request)
@@ -1465,6 +1480,84 @@ async def fetch_tiles_for_branch(
         document=doc_data,
         updated_at=doc.updated_at.isoformat(),
         changes_made=False,
+    )
+
+
+@app.post("/v1/tiles/refresh", response_model=TileRefreshResponse)
+async def refresh_tiles(
+    request: Request,
+    body: TileRefreshRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Force refresh tiles for a branch with current settings.
+
+    Use this endpoint when user preferences (hotel_settings, flight_settings,
+    activity_settings) change to get updated tiles reflecting the new filters.
+
+    The cache key includes settings hashes, so changing settings will trigger
+    a cache miss and fresh fetch.
+    """
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    doc = await get_document(db, session=session)
+    if not doc:
+        raise HTTPException(status_code=404, detail="No plan document for this session")
+
+    doc_data = get_document_data(doc)
+
+    # Find the branch in the document
+    branch = next((b for b in doc_data.branches if b.id == body.branch_id), None)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found in document")
+
+    # Determine which verticals to refresh
+    verticals = body.verticals or ["hotel", "flight", "activity"]
+
+    # Get current settings from trip_inputs
+    ti = doc_data.trip_inputs
+    primary_dest = branch.destinations[0] if branch.destinations else None
+
+    # Build request with current settings
+    tiles_request = TilesSearchRequest(
+        session_id=session_id,
+        destination=primary_dest,
+        destination_hint=primary_dest,
+        origin=branch.origin,
+        start_date=branch.start_date,
+        end_date=branch.end_date,
+        adults=branch.adults,
+        children=branch.children,
+        requires_assistance=branch.requires_assistance,
+        verticals=verticals,  # type: ignore
+        # Pass current settings - cache key includes settings hash
+        # so changed settings will cause cache miss and fresh fetch
+        flight_settings=ti.flight_settings,
+        hotel_settings=ti.hotel_settings,
+        activity_settings=ti.activity_settings,
+    )
+
+    # Fetch fresh tiles (cache will miss due to changed settings hash)
+    tiles_response = search_tiles(tiles_request)
+
+    # Update document with new tiles
+    if tiles_response.tiles:
+        await add_tiles_to_branch(
+            db,
+            doc=doc,
+            branch_id=body.branch_id,
+            tiles=tiles_response.tiles,
+            updated_by="planner",
+        )
+        await db.commit()
+
+    return TileRefreshResponse(
+        tiles=tiles_response.tiles,
+        refreshed_at=datetime.utcnow().isoformat(),
+        verticals_refreshed=verticals,
     )
 
 

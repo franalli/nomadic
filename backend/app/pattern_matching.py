@@ -2061,6 +2061,11 @@ SPECIALIST_KEYWORDS: Dict[str, FrozenSet[str]] = {
             "direct flight",
             "nonstop",
             "layover",
+            "layovers",  # plural form for word boundary matching
+            "stopover",
+            "stopovers",
+            "connection",
+            "connections",
         }
     ),
     "hotels": frozenset(
@@ -2073,7 +2078,9 @@ SPECIALIST_KEYWORDS: Dict[str, FrozenSet[str]] = {
             "accommodation",
             "lodging",
             "where to stay",
-            "stay",
+            # Note: "stay" alone is too broad - matches "during my stay" (duration)
+            # Use "where to stay" or "place to stay" for accommodation intent
+            "place to stay",
             "airbnb",
             "resort",
             "resorts",

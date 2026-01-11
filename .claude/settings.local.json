@@ -44,7 +44,13 @@
       "Bash(python3:*)",
       "Bash(git add:*)",
       "Bash(pre-commit run:*)",
-      "Bash(npm run lint:*)"
+      "Bash(npm run lint:*)",
+      "Bash(PYTHONPATH=\"c:/Users/Filippo/Desktop/nomadic/backend\" python -m pytest:*)",
+      "Bash(PYTHONPATH=c:/Users/Filippo/Desktop/nomadic/backend python -m pytest:*)",
+      "Bash(PYTHONPATH=c:/Users/Filippo/Desktop/nomadic/backend python:*)",
+      "Bash(curl:*)",
+      "Bash(echo \"No database files found in backend root\" ls -la c:/Users/Filippo/Desktop/nomadic/backend/data/*.db c:/Users/Filippo/Desktop/nomadic/backend/data/*.sqlite)",
+      "Bash(npx depcheck:*)"
     ],
     "deny": [],
     "ask": []

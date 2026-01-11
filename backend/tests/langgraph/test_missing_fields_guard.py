@@ -17,7 +17,10 @@ import pytest
 
 from app.config import settings
 from app.plan_graph import GraphState, TripInputs
-from app.planner.nodes.specialist_main import _invoke_missing_fields_guard
+from app.planner.nodes.specialist_main import (
+    _invoke_missing_fields_guard,
+    _set_question_field_metadata,
+)
 
 
 class TestGuardTemplateConfig:
@@ -372,3 +375,89 @@ class TestGuardTemplateEdgeCases:
 
         assert result is True
         assert state.question_target == "dates"
+
+
+class TestSetQuestionFieldMetadata:
+    """Test the _set_question_field_metadata helper function.
+
+    This helper was extracted from duplicate code blocks in template and LLM paths
+    to consolidate the target_to_field mapping logic.
+    """
+
+    def test_maps_destinations_to_destinations(self):
+        """destinations should map to destinations."""
+        state = GraphState(
+            user_text="Test",
+            trip_inputs=TripInputs(),
+            metadata={},
+            turn_number=1,
+        )
+
+        _set_question_field_metadata(state, "destinations")
+
+        assert state.metadata["last_question_field"] == "destinations"
+
+    def test_maps_origin_to_origin(self):
+        """origin should map to origin."""
+        state = GraphState(
+            user_text="Test",
+            trip_inputs=TripInputs(),
+            metadata={},
+            turn_number=1,
+        )
+
+        _set_question_field_metadata(state, "origin")
+
+        assert state.metadata["last_question_field"] == "origin"
+
+    def test_maps_dates_to_start_date(self):
+        """dates should map to start_date for LQA matching."""
+        state = GraphState(
+            user_text="Test",
+            trip_inputs=TripInputs(),
+            metadata={},
+            turn_number=1,
+        )
+
+        _set_question_field_metadata(state, "dates")
+
+        assert state.metadata["last_question_field"] == "start_date"
+
+    def test_maps_start_date_to_start_date(self):
+        """start_date should map to start_date."""
+        state = GraphState(
+            user_text="Test",
+            trip_inputs=TripInputs(),
+            metadata={},
+            turn_number=1,
+        )
+
+        _set_question_field_metadata(state, "start_date")
+
+        assert state.metadata["last_question_field"] == "start_date"
+
+    def test_unknown_field_passes_through(self):
+        """Unknown fields should pass through unchanged."""
+        state = GraphState(
+            user_text="Test",
+            trip_inputs=TripInputs(),
+            metadata={},
+            turn_number=1,
+        )
+
+        _set_question_field_metadata(state, "budget")
+
+        assert state.metadata["last_question_field"] == "budget"
+
+    def test_overwrites_existing_metadata(self):
+        """Should overwrite any existing last_question_field value."""
+        state = GraphState(
+            user_text="Test",
+            trip_inputs=TripInputs(),
+            metadata={"last_question_field": "old_value"},
+            turn_number=1,
+        )
+
+        _set_question_field_metadata(state, "origin")
+
+        assert state.metadata["last_question_field"] == "origin"

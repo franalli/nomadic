@@ -41,9 +41,11 @@ from app.planner.gates.result import GateResult
 from app.planner.gates.suppression import SuppressionPredicates
 from app.planner.gates.topic_detection import (
     ALL_STRATEGY_KEYWORDS,
+    STRATEGY_TOPIC_PATTERNS,
     detect_strategy_topic,
     detect_strategy_topic_from_settings,
     detect_strategy_topic_from_text,
+    detect_strategy_topic_from_text_precise,
     has_strategy_topic,
     text_contains_strategy_keyword,
 )
@@ -78,10 +80,12 @@ __all__ = [
     # Topic detection utilities
     "detect_strategy_topic",
     "detect_strategy_topic_from_text",
+    "detect_strategy_topic_from_text_precise",
     "detect_strategy_topic_from_settings",
     "has_strategy_topic",
     "text_contains_strategy_keyword",
     "ALL_STRATEGY_KEYWORDS",
+    "STRATEGY_TOPIC_PATTERNS",
     # Keyword matching utility
     "keyword_match",
     # Intent detection utilities

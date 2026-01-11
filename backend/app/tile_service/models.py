@@ -2,7 +2,12 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from app.schemas import TileType  # reuse your existing Tile model
+from app.schemas import (
+    ActivitySettings,
+    FlightSettings,
+    HotelSettings,
+    TileType,
+)
 
 
 class SearchContext(BaseModel):
@@ -29,3 +34,8 @@ class SearchContext(BaseModel):
     # Budget constraints for filtering tiles
     budget: Optional[float] = None  # Total trip budget
     budget_per_category: Optional[float] = None  # Suggested allocation per category
+
+    # User preference settings for filtering tiles
+    flight_settings: Optional[FlightSettings] = None
+    hotel_settings: Optional[HotelSettings] = None
+    activity_settings: Optional[ActivitySettings] = None

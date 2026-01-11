@@ -4,22 +4,48 @@ Provides consolidated logic for detecting strategy topics (hiking, diving, skiin
 cycling, boating) from user text and activity settings.
 
 Extracted from evaluator.py to eliminate duplicate topic detection loops.
+
+Provides two detection modes:
+- Substring matching (detect_strategy_topic_from_text): Fast, may have false positives
+- Regex word boundaries (detect_strategy_topic_from_text_precise): Precise, no false positives
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Optional, Set
+import re
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, Optional, Pattern, Set
 
 from app.pattern_matching import STRATEGY_INTENT_KEYWORDS, STRATEGY_TOPICS
+
+# Pre-compiled regex patterns for precise topic detection (word boundaries)
+# Avoids false positives like "skippered" matching "ski" or "skilled" matching "ski"
+STRATEGY_TOPIC_PATTERNS: Dict[str, Pattern[str]] = {}
+
+
+def _init_topic_patterns() -> None:
+    """Initialize regex patterns with word boundaries for precise matching."""
+    global STRATEGY_TOPIC_PATTERNS
+    for topic, keywords in STRATEGY_INTENT_KEYWORDS.items():
+        # Build alternation pattern: \b(hike|hiking|trek|...)\b
+        pattern_str = r"\b(" + "|".join(re.escape(kw) for kw in keywords) + r")\b"
+        STRATEGY_TOPIC_PATTERNS[topic] = re.compile(pattern_str, re.IGNORECASE)
+
+
+# Initialize patterns at module load time
+_init_topic_patterns()
 
 if TYPE_CHECKING:
     pass
 
 
 def detect_strategy_topic_from_text(text: str) -> Optional[str]:
-    """Detect strategy topic from user text keywords.
+    """Detect strategy topic from user text keywords (substring matching).
 
     Checks text against STRATEGY_INTENT_KEYWORDS for each topic.
+    Uses simple substring matching which is fast but may have false positives
+    (e.g., "skippered" matches "ski").
+
+    For precise matching with word boundaries, use detect_strategy_topic_from_text_precise().
 
     Args:
         text: User input text
@@ -30,6 +56,35 @@ def detect_strategy_topic_from_text(text: str) -> Optional[str]:
     text_lower = text.lower()
     for topic, keywords in STRATEGY_INTENT_KEYWORDS.items():
         if any(kw in text_lower for kw in keywords):
+            return topic
+    return None
+
+
+def detect_strategy_topic_from_text_precise(text: str) -> Optional[str]:
+    """Detect strategy topic from user text using regex word boundaries.
+
+    Uses pre-compiled regex patterns with word boundaries to avoid false positives.
+    For example, "skippered" will NOT match "ski" because "ski" is not at a word boundary.
+
+    This is more precise than detect_strategy_topic_from_text() but slightly slower.
+    Use this when precision matters (e.g., strategy bootstrap bypass).
+
+    Args:
+        text: User input text
+
+    Returns:
+        Topic name (hiking, diving, skiing, cycling, boating) or None if no match
+
+    Examples:
+        >>> detect_strategy_topic_from_text_precise("I want to go skiing")
+        'skiing'
+        >>> detect_strategy_topic_from_text_precise("I need a skippered yacht")  # No false positive
+        None
+        >>> detect_strategy_topic_from_text_precise("bareboat charter please")  # No false positive
+        None
+    """
+    for topic, pattern in STRATEGY_TOPIC_PATTERNS.items():
+        if pattern.search(text):
             return topic
     return None
 

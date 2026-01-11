@@ -15,7 +15,7 @@ import {
   Wallet,
   X,
 } from 'lucide-react';
-import { Fragment, memo, useState } from 'react';
+import { Fragment, memo, useEffect, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
 import { ExpandablePill } from '@/components/pill/ExpandablePill';
@@ -409,6 +409,15 @@ function TripDetailsFormInner({
   // Activity input state
   const [activityInput, setActivityInput] = useState('');
 
+  // Tier 11.9: Responsive calendar - detect mobile for single month view
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 640);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
   return (
     <div className="flex flex-col gap-3">
       {/* Row 1: Always-visible inline editing pills */}
@@ -446,6 +455,7 @@ function TripDetailsFormInner({
                 }}
                 className="flex-1"
               >
+                {/* Tier 11.11: ARIA linking for accessibility */}
                 <input
                   type="text"
                   value={originInput}
@@ -454,6 +464,8 @@ function TripDetailsFormInner({
                     if (validationError?.field === 'origin') onClearValidationError();
                   }}
                   placeholder="Enter city..."
+                  aria-invalid={validationError?.field === 'origin'}
+                  aria-describedby={validationError?.field === 'origin' ? 'origin-error' : undefined}
                   className={`w-full bg-transparent border-none text-sm placeholder:text-muted-foreground/50 focus:outline-none ${
                     validationError?.field === 'origin' ? 'text-destructive' : ''
                   }`}
@@ -471,7 +483,7 @@ function TripDetailsFormInner({
             )}
           </InlineEditPill>
           {validationError?.field === 'origin' && (
-            <p className="text-[11px] text-destructive flex items-center gap-1 px-2">
+            <p id="origin-error" className="text-[11px] text-destructive flex items-center gap-1 px-2" role="alert">
               <AlertCircle className="h-3 w-3 flex-shrink-0" />
               <span>{validationError.message}</span>
             </p>
@@ -506,7 +518,7 @@ function TripDetailsFormInner({
             />
           </InlineEditPill>
           {validationError?.field === 'destination' && (
-            <p className="text-[11px] text-destructive flex items-center gap-1 px-2">
+            <p id="destination-error" className="text-[11px] text-destructive flex items-center gap-1 px-2" role="alert">
               <AlertCircle className="h-3 w-3 flex-shrink-0" />
               <span>{validationError.message}</span>
             </p>
@@ -565,7 +577,7 @@ function TripDetailsFormInner({
                     onSelect={() => {}}
                     onDayClick={onCalendarDayClick}
                     onDayMouseEnter={onCalendarDayMouseEnter}
-                    numberOfMonths={2}
+                    numberOfMonths={isMobile ? 1 : 2}
                     disabled={{ before: new Date() }}
                     modifiers={{ preview: previewDays }}
                     modifiersClassNames={{ preview: 'bg-muted/50' }}
@@ -761,7 +773,7 @@ function TripDetailsFormInner({
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-muted-foreground">Min stars:</span>
-                  <div className={`flex gap-0.5 rounded-lg p-0.5 ${isSubFieldUpdated('hotel_settings.min_stars') ? 'sparkle-control' : ''}`}>
+                  <div className={`flex gap-1 rounded-lg p-0.5 ${isSubFieldUpdated('hotel_settings.min_stars') ? 'sparkle-control' : ''}`}>
                     {[1, 2, 3, 4, 5].map((star) => (
                       <button
                         key={star}
@@ -770,7 +782,8 @@ function TripDetailsFormInner({
                           onUpdateHotelSettings({ min_stars: hotelSettings.min_stars === star ? 0 : star });
                           acknowledgeField('hotel_settings.min_stars' as LLMUpdatableField);
                         }}
-                        className={`w-6 h-6 rounded text-[11px] font-medium transition-all duration-200 ${
+                        // Tier 11.8: Increased touch target from 24x24 to 36x36 for mobile accessibility
+                        className={`min-w-9 min-h-9 rounded text-xs font-medium transition-all duration-200 touch-manipulation active:scale-95 ${
                           star <= hotelSettings.min_stars
                             ? 'bg-gradient-to-b from-primary/20 to-primary/15 text-primary border border-primary/50 shadow-pill-active'
                             : 'bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground border border-border/40 shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'

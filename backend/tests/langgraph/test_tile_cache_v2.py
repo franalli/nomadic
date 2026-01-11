@@ -147,8 +147,8 @@ class TestTileCacheWiring:
 
         tile_cache = TileCache.get_instance()
 
-        # Compute matching key
-        query_str = "hotel|Tokyo|2025-05-01|2025-05-07|Los Angeles|2|0"
+        # Compute matching key (v3: includes settings_hash, defaults to "default")
+        query_str = "hotel|Tokyo|2025-05-01|2025-05-07|Los Angeles|2|0|default"
         query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
         key = tile_cache.compute_key(
             session_id="global",
@@ -189,8 +189,8 @@ class TestTileCacheKeyExpansion:
         # Query with 3 adults - should miss
         tile_cache = TileCache.get_instance()
 
-        # Compute key for 3 adults
-        query_str_3_adults = "hotel|Barcelona|2025-06-01|2025-06-07|Madrid|3|0"
+        # Compute key for 3 adults (v3: includes settings_hash)
+        query_str_3_adults = "hotel|Barcelona|2025-06-01|2025-06-07|Madrid|3|0|default"
         query_hash_3 = hashlib.md5(query_str_3_adults.encode()).hexdigest()[:16]
         key_3_adults = tile_cache.compute_key(
             session_id="global",
@@ -201,8 +201,8 @@ class TestTileCacheKeyExpansion:
         result = tile_cache.get(key_3_adults, None)
         assert result is None, "Different adults count should cause cache miss"
 
-        # Compute key for 2 adults - should hit
-        query_str_2_adults = "hotel|Barcelona|2025-06-01|2025-06-07|Madrid|2|0"
+        # Compute key for 2 adults - should hit (v3: includes settings_hash)
+        query_str_2_adults = "hotel|Barcelona|2025-06-01|2025-06-07|Madrid|2|0|default"
         query_hash_2 = hashlib.md5(query_str_2_adults.encode()).hexdigest()[:16]
         key_2_adults = tile_cache.compute_key(
             session_id="global",
@@ -237,8 +237,8 @@ class TestTileCacheKeyExpansion:
 
         tile_cache = TileCache.get_instance()
 
-        # Query with different end_date - should miss
-        query_str_diff_end = "hotel|Amsterdam|2025-07-01|2025-07-10|Berlin|2|0"
+        # Query with different end_date - should miss (v3: includes settings_hash)
+        query_str_diff_end = "hotel|Amsterdam|2025-07-01|2025-07-10|Berlin|2|0|default"
         query_hash_diff = hashlib.md5(query_str_diff_end.encode()).hexdigest()[:16]
         key_diff_end = tile_cache.compute_key(
             session_id="global",
@@ -249,8 +249,8 @@ class TestTileCacheKeyExpansion:
         result = tile_cache.get(key_diff_end, None)
         assert result is None, "Different end_date should cause cache miss"
 
-        # Query with same end_date - should hit
-        query_str_same_end = "hotel|Amsterdam|2025-07-01|2025-07-07|Berlin|2|0"
+        # Query with same end_date - should hit (v3: includes settings_hash)
+        query_str_same_end = "hotel|Amsterdam|2025-07-01|2025-07-07|Berlin|2|0|default"
         query_hash_same = hashlib.md5(query_str_same_end.encode()).hexdigest()[:16]
         key_same_end = tile_cache.compute_key(
             session_id="global",
@@ -285,8 +285,8 @@ class TestTileCacheKeyExpansion:
 
         tile_cache = TileCache.get_instance()
 
-        # Query with 2 children - should miss
-        query_str_2_children = "hotel|Vienna|2025-08-01|2025-08-05|Prague|2|2"
+        # Query with 2 children - should miss (v3: includes settings_hash)
+        query_str_2_children = "hotel|Vienna|2025-08-01|2025-08-05|Prague|2|2|default"
         query_hash_2c = hashlib.md5(query_str_2_children.encode()).hexdigest()[:16]
         key_2_children = tile_cache.compute_key(
             session_id="global",
@@ -324,8 +324,8 @@ class TestTileCacheKeyExpansion:
         tile_cache = TileCache.get_instance()
 
         # Query with same parameters (budget change doesn't affect cache key)
-        # Budget is filtered client-side, not part of cache key
-        query_str = "hotel|Dublin|2025-09-01|2025-09-05|Edinburgh|2|0"
+        # Budget is filtered client-side, not part of cache key (v3: includes settings_hash)
+        query_str = "hotel|Dublin|2025-09-01|2025-09-05|Edinburgh|2|0|default"
         query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
         key = tile_cache.compute_key(
             session_id="global",
@@ -477,8 +477,8 @@ class TestTileCacheVersionMigration:
 
         tile_cache = TileCache.get_instance()
 
-        # Compute expected key with all v2 fields
-        query_str = "hotel|Miami|2025-10-01|2025-10-10|Atlanta|3|2"
+        # Compute expected key with all v2 fields (v3: includes settings_hash)
+        query_str = "hotel|Miami|2025-10-01|2025-10-10|Atlanta|3|2|default"
         query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
         key = tile_cache.compute_key(
             session_id="global",
@@ -553,8 +553,8 @@ class TestSetTileCachedIntegration:
             result={"flight_cairo": {"id": "flight_cairo", "type": "flight"}},
         )
 
-        # Get the cached entry directly
-        query_str = "flight|Cairo|2025-12-01|2025-12-07|Dubai|2|1"
+        # Get the cached entry directly (v3: includes settings_hash)
+        query_str = "flight|Cairo|2025-12-01|2025-12-07|Dubai|2|1|default"
         query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
         key = tile_cache.compute_key(
             session_id="global",
@@ -593,8 +593,8 @@ class TestSetTileCachedIntegration:
             result={"activity_lisbon": {"id": "activity_lisbon", "type": "activity"}},
         )
 
-        # Verify version info is included
-        query_str = "activity|Lisbon|2025-09-01|2025-09-05|Porto|3|0"
+        # Verify version info is included (v3: includes settings_hash)
+        query_str = "activity|Lisbon|2025-09-01|2025-09-05|Porto|3|0|default"
         query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
         key = tile_cache.compute_key(
             session_id="global",

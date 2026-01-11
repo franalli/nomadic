@@ -13,6 +13,68 @@ from typing import Dict, FrozenSet, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # =============================================================================
+# US STATE ABBREVIATIONS (for geographic coherence validation)
+# =============================================================================
+# Note: Full US_STATES set is defined later in the file (around line 1049)
+# with title-cased values like "Indiana", "California", etc.
+
+# Common US state abbreviations (lowercase for case-insensitive matching)
+US_STATE_ABBREVS: FrozenSet[str] = frozenset(
+    {
+        "al",
+        "ak",
+        "az",
+        "ar",
+        "ca",
+        "co",
+        "ct",
+        "de",
+        "fl",
+        "ga",
+        "hi",
+        "id",
+        "il",
+        "in",
+        "ia",
+        "ks",
+        "ky",
+        "la",
+        "me",
+        "md",
+        "ma",
+        "mi",
+        "mn",
+        "ms",
+        "mo",
+        "mt",
+        "ne",
+        "nv",
+        "nh",
+        "nj",
+        "nm",
+        "ny",
+        "nc",
+        "nd",
+        "oh",
+        "ok",
+        "or",
+        "pa",
+        "ri",
+        "sc",
+        "sd",
+        "tn",
+        "tx",
+        "ut",
+        "vt",
+        "va",
+        "wa",
+        "wv",
+        "wi",
+        "wy",
+    }
+)
+
+# =============================================================================
 # KNOWN PLACES DATABASE
 # =============================================================================
 
@@ -1235,8 +1297,118 @@ def is_known_place(place: str) -> bool:
 # Minimum input length for fuzzy matching (avoid false positives on very short strings)
 _FUZZY_MIN_LENGTH = 3
 
-# Default similarity threshold (0-100). 80% catches typos while avoiding false positives
+# Default similarity threshold (0-100). 80% catches typos while avoiding false positives.
+# Geographic coherence check handles cases like "south bend indiana" → not "New Zealand"
 _FUZZY_DEFAULT_THRESHOLD = 80
+
+# Countries/regions that should NOT match when input mentions a US state
+_NON_US_PREFIXES = frozenset(
+    {
+        "new zealand",
+        "australia",
+        "canada",
+        "united kingdom",
+        "uk",
+        "england",
+        "scotland",
+        "wales",
+        "ireland",
+        "france",
+        "germany",
+        "italy",
+        "spain",
+        "japan",
+        "china",
+        "india",
+        "brazil",
+        "mexico",
+        "south africa",
+    }
+)
+
+# Known non-US place names that could be confused with US locations
+# These are exact matches (case-insensitive) for places outside the US
+_NON_US_PLACES = frozenset(
+    {
+        "south island",  # New Zealand
+        "north island",  # New Zealand
+        "south africa",
+        "south australia",
+        "south korea",
+        "south america",
+    }
+)
+
+
+def _input_mentions_us_location(text: str) -> bool:
+    """
+    Check if the input text mentions a US state or abbreviation.
+
+    This helps detect geographic context to avoid matching
+    "south bend indiana" to "New Zealand South Island".
+    """
+    text_lower = text.lower()
+    words = set(text_lower.split())
+
+    # Check for state abbreviations (exact word match)
+    if words & US_STATE_ABBREVS:
+        return True
+
+    # Check for full state names (may be multi-word like "new york")
+    # US_STATES is title-cased, so we need to compare lowercase
+    for state in US_STATES:
+        if state.lower() in text_lower:
+            return True
+
+    # Check for explicit US indicators
+    if "usa" in words or "u.s.a" in text_lower or "united states" in text_lower:
+        return True
+
+    return False
+
+
+def _fuzzy_match_is_non_us(matched_place: str) -> bool:
+    """Check if a fuzzy match result is clearly from outside the US."""
+    matched_lower = matched_place.lower()
+
+    # If the match is a US state, it's NOT non-US
+    for state in US_STATES:
+        if state.lower() == matched_lower:
+            return False
+
+    # Check if it's a known non-US place name (e.g., "South Island")
+    if matched_lower in _NON_US_PLACES:
+        return True
+
+    # Check if it starts with known non-US prefixes
+    return any(matched_lower.startswith(prefix) for prefix in _NON_US_PREFIXES)
+
+
+def _fuzzy_match_loses_city(original: str, fuzzy_result: str) -> bool:
+    """
+    Check if fuzzy match loses important location info (like city name).
+
+    Example: "south bend indiana" → "Indiana" loses "South Bend"
+    We detect this by checking if the input has significantly more content
+    than the fuzzy result and the result is just a state/country name.
+    """
+    original_lower = original.lower().strip()
+    result_lower = fuzzy_result.lower()
+
+    # Count meaningful words in original (exclude common prepositions)
+    skip_words = {"in", "at", "to", "from", "the", "a", "an"}
+    original_words = [w for w in original_lower.split() if w not in skip_words]
+    result_words = result_lower.split()
+
+    # If original has significantly more words and result is just a state name,
+    # we're likely losing city information
+    if len(original_words) >= 2 and len(result_words) == 1:
+        # Check if result is a US state
+        for state in US_STATES:
+            if state.lower() == result_lower:
+                return True
+
+    return False
 
 
 def fuzzy_match_place(
@@ -1251,8 +1423,8 @@ def fuzzy_match_place(
     Args:
         place: The place name to match (possibly with typos)
         threshold: Minimum similarity score (0-100) to accept a match.
-                   Default is 80, which catches most typos while avoiding
-                   false positives (e.g., "Paris" vs "Parma").
+                   Default is 80, which catches typos while avoiding most
+                   false positives. Geographic coherence check adds extra safety.
 
     Returns:
         Tuple of (matched_place, similarity_score) if a match is found above threshold,
@@ -1309,21 +1481,28 @@ def fuzzy_match_place(
         return None, None
 
 
-def normalize_place_with_fuzzy(place: str, fuzzy_threshold: int = _FUZZY_DEFAULT_THRESHOLD) -> str:
+def normalize_place_with_fuzzy(
+    place: str,
+    fuzzy_threshold: int = _FUZZY_DEFAULT_THRESHOLD,
+    use_geocoding: bool = True,
+) -> str:
     """
-    Normalize a place name using synonym map first, then fuzzy matching.
+    Normalize a place name using synonym map, fuzzy matching, and geocoding.
 
     This is the recommended function for place normalization as it:
     1. First tries exact synonym lookup (fast, deterministic)
     2. Falls back to fuzzy matching for typo correction
-    3. Applies title case as final fallback
+    3. Validates geographic coherence (rejects non-US matches for US locations)
+    4. Uses geocoding API for unknown places (if enabled)
+    5. Applies title case as final fallback
 
     Args:
         place: The place name to normalize
-        fuzzy_threshold: Minimum similarity for fuzzy match (default 85)
+        fuzzy_threshold: Minimum similarity for fuzzy match (default 80)
+        use_geocoding: Whether to use geocoding API for unknown places (default True)
 
     Returns:
-        Normalized place name (canonical form, or title-cased original if no match)
+        Normalized place name (canonical form, geocoded name, or title-cased original)
     """
     if not place:
         return place
@@ -1348,14 +1527,58 @@ def normalize_place_with_fuzzy(place: str, fuzzy_threshold: int = _FUZZY_DEFAULT
     # Step 3: Try fuzzy matching for typos
     fuzzy_result, score = fuzzy_match_place(place_stripped, fuzzy_threshold)
     if fuzzy_result:
-        logger.debug(f"[PLACE_NORMALIZE] fuzzy: '{place}' → '{fuzzy_result}' (score={score})")
-        return fuzzy_result
+        # Geographic coherence check: reject non-US matches when input mentions US location
+        if _input_mentions_us_location(place_stripped) and _fuzzy_match_is_non_us(fuzzy_result):
+            logger.debug(
+                f"[PLACE_NORMALIZE] rejecting fuzzy match '{fuzzy_result}' "
+                f"for US location '{place}'"
+            )
+        # Check if fuzzy match loses important information (e.g., city name)
+        # If input has more words than the fuzzy match, prefer geocoding for full location
+        elif _fuzzy_match_loses_city(place_stripped, fuzzy_result):
+            logger.debug(
+                f"[PLACE_NORMALIZE] fuzzy match loses city, preferring geocoding: "
+                f"'{place}' → '{fuzzy_result}'"
+            )
+            # Fall through to geocoding
+        else:
+            logger.debug(f"[PLACE_NORMALIZE] fuzzy: '{place}' → '{fuzzy_result}' (score={score})")
+            return fuzzy_result
 
-    # Step 4: Fallback - apply title case for proper capitalization
+    # Step 4: Try geocoding API for unknown places
+    if use_geocoding:
+        geocoded = _try_geocoding(place_stripped)
+        if geocoded:
+            return geocoded
+
+    # Step 5: Fallback - apply title case for proper capitalization
     result = place_stripped.title()
     if result != place:
         logger.debug(f"[PLACE_NORMALIZE] title_case: '{place}' → '{result}'")
     return result
+
+
+def _try_geocoding(place: str) -> Optional[str]:
+    """
+    Try to geocode a place name using the geocoding service.
+
+    Returns the short name (city, state/country) if successful, None otherwise.
+    """
+    try:
+        from app.geocoding import geocode_place_sync
+
+        result = geocode_place_sync(place, timeout=3.0)
+        if result:
+            normalized = result.short_name
+            logger.debug(f"[PLACE_NORMALIZE] geocoded: '{place}' → '{normalized}'")
+            return normalized
+        return None
+    except ImportError:
+        logger.debug("[PLACE_NORMALIZE] geocoding module not available")
+        return None
+    except Exception as e:
+        logger.debug(f"[PLACE_NORMALIZE] geocoding error: {e}")
+        return None
 
 
 # =============================================================================

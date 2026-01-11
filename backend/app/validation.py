@@ -11,7 +11,9 @@ for fast, cheap responses. Results are cached in a TTL memory cache to avoid
 repeated LLM calls for common inputs.
 """
 
+import asyncio
 import json
+import logging
 import os
 import random
 import time
@@ -19,7 +21,9 @@ from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
 
-from app.config import get_openai_client, settings
+from app.config import get_async_openai_client, get_openai_client, settings
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CACHE INITIALIZATION
@@ -244,6 +248,63 @@ def _call_llm_validation(
     return None
 
 
+# Tier 11.1: Async version with non-blocking sleep for better concurrency
+async def _call_llm_validation_async(
+    prompt: str,
+    max_retries: int = 3,
+) -> Optional[dict]:
+    """
+    Call the LLM for validation with async retry logic.
+
+    Uses asyncio.sleep instead of time.sleep for non-blocking retries.
+
+    Args:
+        prompt: The validation prompt.
+        max_retries: Number of retry attempts.
+
+    Returns:
+        Parsed JSON dict from LLM, or None if all retries failed.
+    """
+    client = get_async_openai_client()
+    if client is None:
+        return None
+
+    model_name = _get_model_name()
+    last_error: Optional[Exception] = None
+
+    initial_delay = 0.5
+    max_delay = 10.0
+
+    for attempt in range(max_retries):
+        try:
+            response = await client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=settings.validation_max_tokens,
+                temperature=0,
+                response_format={"type": "json_object"},
+            )
+
+            if response and response.choices:
+                content = response.choices[0].message.content
+                if content:
+                    return json.loads(content)
+
+        except Exception as exc:
+            last_error = exc
+            status_code = getattr(exc, "status_code", None)
+            # Tier 11.1: Non-blocking retry with exponential backoff + jitter
+            if status_code == 429 or (isinstance(status_code, int) and status_code >= 500):
+                wait_time = min(initial_delay * (2**attempt), max_delay) + random.uniform(0, 1)
+                await asyncio.sleep(wait_time)  # Non-blocking!
+                continue
+            raise
+
+    if last_error:
+        raise last_error
+    return None
+
+
 # =============================================================================
 # PUBLIC VALIDATION FUNCTIONS
 # =============================================================================
@@ -322,6 +383,14 @@ def validate_input(
     if llm_response is None:
         fallback = _fallback_cache.get(cache_key)
         if fallback is not None:
+            # Tier 11.5: Log fallback usage for observability
+            logger.warning(
+                "VALIDATION_LLM_FALLBACK: Using cached fallback for %s=%r "
+                "(LLM call failed, cache TTL<%ds)",
+                field_type,
+                normalized_value,
+                settings.validation_cache_ttl,
+            )
             return ValidationResult(**fallback)
         raise RuntimeError(f"Validation failed for {field_type}: {normalized_value}")
 
@@ -347,6 +416,123 @@ def validate_input(
     )
 
     # Cache only valid results (typos should be re-validated)
+    if is_valid:
+        result_dict = result.to_dict()
+        _validation_cache[cache_key] = result_dict
+        _fallback_cache[cache_key] = result_dict
+
+        if field_type == "destination" and len(result.corrected_values) > 1:
+            _split_cache[split_key] = result_dict
+    elif settings.validation_negative_cache_enabled:
+        _negative_cache[cache_key] = reason or "Invalid input"
+
+    return result
+
+
+# Tier 11.1: Async version for better concurrency
+async def validate_input_async(
+    value: str,
+    field_type: Literal["origin", "destination"],
+    *,
+    session_id: Optional[str] = None,
+) -> ValidationResult:
+    """
+    Async version of validate_input with non-blocking LLM retries.
+
+    Uses asyncio.sleep instead of time.sleep during rate limit retries,
+    allowing other requests to be processed while waiting.
+
+    Args:
+        value: The raw input value to validate.
+        field_type: Type of input ("origin" or "destination").
+        session_id: Optional session token for rate limiting.
+
+    Returns:
+        ValidationResult with corrected values, validity flag, and optional reason.
+
+    Raises:
+        RuntimeError: If LLM call fails after all retries.
+    """
+    # Normalize input (cache keys remain case-insensitive)
+    normalized_value = value.strip()
+    if not normalized_value:
+        return ValidationResult(
+            corrected_values=[],
+            is_valid=False,
+            reason="Empty input",
+        )
+
+    # Lightweight per-session rate limiting
+    rate_limit_reason = _check_rate_limit(session_id)
+    if rate_limit_reason:
+        return ValidationResult(
+            corrected_values=[],
+            is_valid=False,
+            reason=rate_limit_reason,
+        )
+
+    # Check cache (sync - caches are in-memory)
+    cache_key = _cache_key(field_type, normalized_value)
+    cached = _validation_cache.get(cache_key)
+    if cached is not None:
+        return ValidationResult(**cached)
+
+    if settings.validation_negative_cache_enabled:
+        negative_reason = _negative_cache.get(cache_key)
+        if negative_reason is not None:
+            return ValidationResult(
+                corrected_values=[],
+                is_valid=False,
+                reason=negative_reason,
+            )
+
+    # Destination splitting cache
+    split_key = normalized_value.lower()
+    if field_type == "destination":
+        split_cached = _split_cache.get(split_key)
+        if split_cached is not None:
+            return ValidationResult(**split_cached)
+
+    # Build prompt
+    prompt = _build_prompt(field_type, normalized_value)
+
+    # Tier 11.1: Use async LLM call with non-blocking retries
+    llm_response = await _call_llm_validation_async(prompt)
+
+    if llm_response is None:
+        fallback = _fallback_cache.get(cache_key)
+        if fallback is not None:
+            logger.warning(
+                "VALIDATION_LLM_FALLBACK: Using cached fallback for %s=%r "
+                "(LLM call failed, cache TTL<%ds)",
+                field_type,
+                normalized_value,
+                settings.validation_cache_ttl,
+            )
+            return ValidationResult(**fallback)
+        raise RuntimeError(f"Validation failed for {field_type}: {normalized_value}")
+
+    # Parse response
+    corrected_values = llm_response.get("v", [])
+    if not isinstance(corrected_values, list):
+        corrected_values = [corrected_values] if corrected_values else []
+    corrected_values = [str(v).strip() for v in corrected_values if v]
+
+    is_valid = llm_response.get("ok", False)
+    reason = llm_response.get("r") or llm_response.get("reason")
+
+    # For origin, enforce single value
+    if field_type == "origin" and len(corrected_values) > 1:
+        corrected_values = corrected_values[:1]
+        reason = "Please enter a single origin location"
+
+    result = ValidationResult(
+        corrected_values=corrected_values,
+        is_valid=is_valid,
+        reason=reason,
+    )
+
+    # Cache only valid results
     if is_valid:
         result_dict = result.to_dict()
         _validation_cache[cache_key] = result_dict

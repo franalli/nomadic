@@ -239,6 +239,7 @@ def get_cached_response(
     user_text_hash: str,
     state: Optional["GraphState"] = None,
     model_id: str = "",
+    settings_hash: str = "",
 ) -> Optional[Dict[str, Any]]:
     """
     Get cached response (backward-compatible signature).
@@ -255,6 +256,8 @@ def get_cached_response(
         user_text_hash: Hash of user text
         state: Optional GraphState for metadata updates
         model_id: LLM model ID for cache isolation
+        settings_hash: Hash of domain-specific settings (flight_settings, hotel_settings, etc.)
+                      Ensures cache invalidation when user changes preferences.
 
     Returns:
         Cached response dict or None if not found/invalid
@@ -267,6 +270,7 @@ def get_cached_response(
         follow_up_hash=follow_up_hash,
         user_text_hash=user_text_hash,
         model_id=model_id,
+        settings_hash=settings_hash,
     )
 
     return cache.get(key, state)
@@ -279,6 +283,7 @@ def set_cached_response(
     user_text_hash: str,
     response: Dict[str, Any],
     model_id: str = "",
+    settings_hash: str = "",
 ) -> None:
     """
     Cache response (backward-compatible signature).
@@ -295,6 +300,8 @@ def set_cached_response(
         user_text_hash: Hash of user text
         response: Response dict to cache
         model_id: LLM model ID for cache isolation
+        settings_hash: Hash of domain-specific settings (flight_settings, hotel_settings, etc.)
+                      Ensures cache invalidation when user changes preferences.
     """
     cache = ResponseCache.get_instance()
 
@@ -304,6 +311,7 @@ def set_cached_response(
         follow_up_hash=follow_up_hash,
         user_text_hash=user_text_hash,
         model_id=model_id,
+        settings_hash=settings_hash,
     )
 
     cache.set(key, response)
@@ -384,6 +392,7 @@ def set_tile_cached(
     adults: Optional[int],
     children: Optional[int],
     result: Dict[str, Any],
+    settings_hash: str = "default",
 ) -> None:
     """
     Cache tile result (backward-compatible signature).
@@ -399,11 +408,13 @@ def set_tile_cached(
         adults: Number of adults
         children: Number of children
         result: Tile result to cache
+        settings_hash: Hash of relevant settings for this vertical
     """
     cache = TileCache.get_instance()
 
     # Compute query hash from parameters
     # v2: Include end_date, adults, children for correct tile prices/night counts
+    # v3: Include settings hash for cache invalidation on preference changes
     query_str = (
         f"{intent}|"
         f"{','.join(sorted(destinations or []))}|"
@@ -411,7 +422,8 @@ def set_tile_cached(
         f"{end_date or 'none'}|"
         f"{origin or 'none'}|"
         f"{adults or 0}|"
-        f"{children or 0}"
+        f"{children or 0}|"
+        f"{settings_hash}"
     )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
@@ -435,6 +447,7 @@ def set_tile_cached(
             "origin": origin,
             "adults": adults,
             "children": children,
+            "settings_hash": settings_hash,
         },
     )
 

@@ -38,6 +38,10 @@ def _build_search_context(req: TilesSearchRequest) -> SearchContext:
         response_mode=req.response_mode,
         budget=req.budget,
         budget_per_category=req.budget_per_category,
+        # Pass user preference settings for filtering
+        flight_settings=req.flight_settings,
+        hotel_settings=req.hotel_settings,
+        activity_settings=req.activity_settings,
     )
 
 

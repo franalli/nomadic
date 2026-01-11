@@ -633,3 +633,71 @@ class TestCacheCounters:
         assert debug_info["cache_counters_scope"] == "process"
         assert "cache_counters_reset_on_restart" in debug_info
         assert debug_info["cache_counters_reset_on_restart"] is True
+
+
+class TestUserTextHashNormalization:
+    """Tests for user text hash normalization for cache key stability."""
+
+    def test_confirmation_variants_hash_identically(self):
+        """All confirmation variants should produce the same hash."""
+        from app.plan_graph import _hash_user_text
+
+        confirmation_variants = [
+            "ok",
+            "okay",
+            "yes",
+            "sure",
+            "sounds good",
+            "yes!",
+            "OK.",
+            "Yes!",
+            "  ok  ",
+            "SURE",
+        ]
+
+        hashes = [_hash_user_text(variant) for variant in confirmation_variants]
+        # All hashes should be identical
+        assert (
+            len(set(hashes)) == 1
+        ), f"Confirmation variants produced different hashes: {set(hashes)}"
+
+    def test_non_confirmation_hashes_differ(self):
+        """Non-confirmation texts should produce different hashes."""
+        from app.plan_graph import _hash_user_text
+
+        texts = [
+            "I want to go to Paris",
+            "Book a hotel",
+            "Find flights",
+            "ok",  # Confirmation for contrast
+        ]
+
+        hashes = [_hash_user_text(text) for text in texts]
+        # Non-confirmations should have unique hashes
+        non_confirm_hashes = hashes[:3]
+        assert len(set(non_confirm_hashes)) == 3, "Non-confirmations should have unique hashes"
+
+    def test_normalize_user_text_for_cache_returns_confirm(self):
+        """_normalize_user_text_for_cache should return [CONFIRM] for confirmation variants."""
+        from app.plan_graph import _normalize_user_text_for_cache
+
+        assert _normalize_user_text_for_cache("ok") == "[CONFIRM]"
+        assert _normalize_user_text_for_cache("yes") == "[CONFIRM]"
+        assert _normalize_user_text_for_cache("sure") == "[CONFIRM]"
+        assert _normalize_user_text_for_cache("sounds good") == "[CONFIRM]"
+
+    def test_normalize_user_text_preserves_non_confirmations(self):
+        """_normalize_user_text_for_cache should preserve non-confirmation text."""
+        from app.plan_graph import _normalize_user_text_for_cache
+
+        assert _normalize_user_text_for_cache("I want to go to Paris") == "i want to go to paris"
+        assert _normalize_user_text_for_cache("  Book a Hotel!  ") == "book a hotel"
+
+    def test_hash_with_normalize_false_uses_raw_text(self):
+        """_hash_user_text with normalize=False should use raw text."""
+        from app.plan_graph import _hash_user_text
+
+        # With normalization disabled, "ok" and "yes" should hash differently
+        hash_ok = _hash_user_text("ok", normalize=False)
+        hash_yes = _hash_user_text("yes", normalize=False)
+        assert hash_ok != hash_yes, "Without normalization, 'ok' and 'yes' should hash differently"

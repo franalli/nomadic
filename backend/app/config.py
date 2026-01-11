@@ -54,9 +54,7 @@ class Settings(BaseSettings):
     response_polish_warn_threshold_ms: int = 30000  # Log warning if polish exceeds this (30s)
 
     # LQA (Last Question Answer) pre-pass configuration
-    lqa_max_length: int = (
-        80  # Max input length for LQA pre-pass (chars) - increased from 50 to capture more patterns
-    )
+    lqa_max_length: int = 150  # Max input length for LQA pre-pass (chars)
 
     # Short-circuit configuration
     short_circuit_max_length: int = 200  # Max input length for short-circuit patterns (chars)
@@ -71,6 +69,17 @@ class Settings(BaseSettings):
     streaming_timeout_strategy_ms: int = 30000  # 30s for strategy responses
     streaming_timeout_default_ms: int = 20000  # 20s for other responses
     streaming_warn_threshold_ms: int = 10000  # Log warning if streaming exceeds 10s
+
+    # Node progress bar estimated durations (in milliseconds)
+    # These are used by the frontend to show progress bars during LLM node execution
+    node_progress_required_fields_ms: int = 3000  # Understanding trip fields
+    node_progress_flights_ms: int = 5000  # Finding flights
+    node_progress_hotels_ms: int = 5000  # Searching hotels
+    node_progress_transport_ms: int = 4000  # Planning transport
+    node_progress_activities_ms: int = 5000  # Discovering activities
+    node_progress_general_ms: int = 4000  # Processing general request
+    node_progress_correction_ms: int = 3000  # Adjusting plan
+    node_progress_response_polish_ms: int = 2000  # Polishing response
 
     # LLM configuration (parity with plan.py)
     plan_chat_history_limit: int = 20  # Max messages to include in context

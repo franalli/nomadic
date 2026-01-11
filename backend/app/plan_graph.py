@@ -259,9 +259,9 @@ ROUTING_DECISION_SCHEMA_VERSION: int = 1
 
 # Fallback suggestions when template is missing for a field
 FALLBACK_SUGGESTIONS: List[str] = [
-    "Not sure yet",
+    "I want to book flights",
+    "I want to book hotels",
     "I'm flexible",
-    "Suggest options",
 ]
 
 # =============================================================================
@@ -1469,7 +1469,15 @@ def _detect_intent_from_keywords(user_text_lower: str) -> tuple[str, str | None]
             "airline",
             "airport",
         },
-        "hotels": {"hotel", "hotels", "accommodation", "stay", "lodging", "hostel", "airbnb"},
+        "hotels": {
+            "hotel",
+            "hotels",
+            "accommodation",
+            "lodging",
+            "hostel",
+            "airbnb",
+            "where to stay",
+        },
         "transport": {
             "transport",
             "train",
@@ -2263,6 +2271,23 @@ def _get_node_cache(node_name: str) -> TTLCache:
         return ResponseCache.get_instance()._cache
 
 
+# Tier 11.4: Common version suffix for cache keys
+def _cache_version_suffix(node_name: str) -> str:
+    """
+    Build the common version suffix used in all cache keys.
+
+    Consolidates the version string logic that was duplicated across:
+    - _compute_cache_key_v6
+    - _compute_extractor_cache_key_v6
+    - _compute_strategy_cache_key_v6
+
+    Returns:
+        Version suffix string: v{schema}.{node}|{prompt_hash}|{build_id}
+    """
+    node_version = NODE_LOGIC_VERSION.get(node_name, 0)
+    return f"v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+
+
 def _compute_cache_key_v6(
     node_name: str,
     thread_id: str,
@@ -2301,12 +2326,12 @@ def _compute_cache_key_v6(
     missing_str = ",".join(sorted(missing_all)) if missing_all else "none"
     intent_str = intent or "none"
     ready_str = "1" if ready_state else "0"
-    node_version = NODE_LOGIC_VERSION.get(node_name, 0)
 
+    # Tier 11.4: Use shared version suffix
     key_parts = (
         f"{node_name}|{thread_id}|{user_text_hash}|{qt_str}:{qid_str}|"
         f"{missing_str}|{intent_str}|{core_hash}|{ready_str}|{model_id}|"
-        f"v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+        f"{_cache_version_suffix(node_name)}"
     )
     return hashlib.md5(key_parts.encode()).hexdigest()
 
@@ -2697,10 +2722,10 @@ def _compute_extractor_cache_key_v6(
     """
     normalized_text = _normalize_user_text_for_cache(user_text)
     text_hash = hashlib.md5(normalized_text.encode()).hexdigest()[:16]
-    node_version = NODE_LOGIC_VERSION.get("extractor", 0)
+    # Tier 11.4: Use shared version suffix
     key_parts = (
         f"extractor_v6|{session_id}|{text_hash}|{core_fields_hash}|{extractor_mode}|"
-        f"{model_id}|v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+        f"{model_id}|{_cache_version_suffix('extractor')}"
     )
     return hashlib.md5(key_parts.encode()).hexdigest()
 
@@ -2790,10 +2815,10 @@ def _compute_strategy_cache_key_v6(
     """
     section_part = section_id or "stage1"
     lifecycle_part = stage0_lifecycle_hash or "none"
-    node_version = NODE_LOGIC_VERSION.get("strategy", 0)
+    # Tier 11.4: Use shared version suffix
     key_parts = (
         f"strategy_v6|{session_id}|{topic}|{section_part}|{core_fields_hash}|{user_text_hash}|"
-        f"{lifecycle_part}|{model_id}|v{CACHE_SCHEMA_VERSION}.{node_version}|{PROMPT_BUNDLE_HASH}|{PLANNER_BUILD_ID}"
+        f"{lifecycle_part}|{model_id}|{_cache_version_suffix('strategy')}"
     )
     return hashlib.md5(key_parts.encode()).hexdigest()
 
@@ -3107,12 +3132,19 @@ def _hash_user_text(text: str, normalize: bool = True) -> str:
 
     Returns:
         MD5 hash string
+
+    Note:
+        For confirmations ("[CONFIRM]"), we don't include length suffix since
+        the canonical form has a fixed length. This ensures all confirmation
+        variants ("ok", "yes", "sure", etc.) hash identically.
     """
     if normalize:
         normalized = _normalize_user_text_for_cache(text)
         # Track cache normalization for observability
         if normalized == "[CONFIRM]":
             _router_stats["cache_normalization_hits"] += 1
+            # No length suffix needed - canonical form is always same length
+            return hashlib.md5(normalized.encode()).hexdigest()
         return hashlib.md5((normalized[:100] + str(len(normalized))).encode()).hexdigest()
     return hashlib.md5((text[:100] + str(len(text))).encode()).hexdigest()
 
@@ -3407,6 +3439,25 @@ def prewarm_prompts() -> Dict[str, int]:
         "router",
         # Shared includes get compiled when their parent is compiled
     ]
+
+    # Tier 11.3: Pre-warm strategy topic prompts for common adventure types
+    # These are loaded on first request for each topic; warming them eliminates cold-start latency
+    strategy_topic_prompts = [
+        "strategy_hiking",
+        "strategy_diving",
+        "strategy_skiing",
+        "strategy_cycling",
+        "strategy_boating",
+    ]
+    for topic_prompt in strategy_topic_prompts:
+        try:
+            load_prompt(topic_prompt)
+            prompts_warmed += 1
+        except FileNotFoundError:
+            # Topic may not have a dedicated prompt file; this is expected
+            pass
+        except Exception as e:
+            _debug_error(f"Failed to prewarm strategy topic prompt: {topic_prompt}", error=str(e))
 
     for prompt_name in critical_prompts:
         try:
@@ -5194,7 +5245,7 @@ _NODE_LLM_CONFIG: Dict[str, Dict[str, Any]] = {
     "extractor_light": {
         "model_hint": "small",
         "temperature": 0.1,  # Very deterministic for extraction
-        "max_tokens": 80,  # Reduced from 128; typical output 50-80 tokens
+        "max_tokens": 200,  # Allow room for full JSON with multiple fields
         "top_p": None,
     },
     "router": {
@@ -8087,9 +8138,17 @@ def _normalize_int(value: Any) -> Optional[int]:
 
 
 def _normalize_budget(value: Any) -> Optional[float]:
-    """Normalize a budget value to a float, handling currency symbols."""
+    """Normalize a budget value to a float, handling currency symbols and dict format."""
     if value is None:
         return None
+
+    # Handle dict format from LLM: {"budget": number, "currency": "USD"}
+    if isinstance(value, dict):
+        budget_value = value.get("budget")
+        if budget_value is not None:
+            return _normalize_budget(budget_value)  # Recurse to handle the inner value
+        return None
+
     if isinstance(value, (int, float)):
         return float(value)
     if isinstance(value, str):
@@ -10471,6 +10530,195 @@ def _predict_strategy_execution(
     return None
 
 
+# =============================================================================
+# Node Progress Configuration for SSE Progress Tracking
+# =============================================================================
+# Maps node names to human-readable labels and icon keys for frontend display.
+# These are used when emitting node_status SSE events.
+# =============================================================================
+
+NODE_PROGRESS_CONFIG: dict[str, dict[str, str]] = {
+    "required_fields_node": {
+        "label": "Understanding your trip",
+        "icon_key": "clipboard",
+    },
+    "flights_node": {
+        "label": "Finding flights",
+        "icon_key": "plane",
+    },
+    "hotels_node": {
+        "label": "Searching hotels",
+        "icon_key": "building",
+    },
+    "transport_node": {
+        "label": "Planning transport",
+        "icon_key": "car",
+    },
+    "activities_node": {
+        "label": "Discovering activities",
+        "icon_key": "map-pin",
+    },
+    "general_node": {
+        "label": "Processing request",
+        "icon_key": "globe",
+    },
+    "correction_node": {
+        "label": "Adjusting plan",
+        "icon_key": "alert-circle",
+    },
+    "response_polish": {
+        "label": "Polishing response",
+        "icon_key": "sparkles",
+    },
+}
+
+
+def _get_node_progress_duration_ms(node_name: str) -> int:
+    """Get the estimated duration in milliseconds for a node's progress bar."""
+    duration_map = {
+        "required_fields_node": settings.node_progress_required_fields_ms,
+        "flights_node": settings.node_progress_flights_ms,
+        "hotels_node": settings.node_progress_hotels_ms,
+        "transport_node": settings.node_progress_transport_ms,
+        "activities_node": settings.node_progress_activities_ms,
+        "general_node": settings.node_progress_general_ms,
+        "correction_node": settings.node_progress_correction_ms,
+        "response_polish": settings.node_progress_response_polish_ms,
+    }
+    return duration_map.get(node_name, 4000)  # Default 4s
+
+
+@dataclass
+class NodeExecutionPrediction:
+    """Prediction of node execution for SSE progress tracking."""
+
+    will_execute: bool
+    node: str  # Node name (e.g., "flights_node")
+    label: str  # Human-readable label for UI
+    icon_key: str  # Frontend icon key
+    estimated_duration_ms: int = 4000
+
+
+def _predict_node_execution(
+    state: "GraphState",
+    user_text: str,
+) -> Optional[NodeExecutionPrediction]:
+    """
+    Predict which LLM-based node will execute for SSE progress tracking.
+
+    This function is called before graph execution to emit node_status events
+    for frontend progress bars. It uses the same routing logic as the graph
+    to predict which node will handle the request.
+
+    Args:
+        state: Current graph state
+        user_text: User's message
+
+    Returns:
+        NodeExecutionPrediction if an LLM node will execute, None otherwise
+    """
+    # Skip if strategy will execute (handled separately)
+    strategy_pred = _predict_strategy_execution(state, user_text)
+    if strategy_pred and strategy_pred.will_execute:
+        return None
+
+    # Check if we have intent from previous extraction or can predict it
+    intent = state.intent
+
+    # If no intent yet, try to predict from user text keywords
+    if not intent:
+        text_lower = user_text.lower().strip()
+
+        # Simple keyword matching for common intents
+        # Note: Keywords should be specific enough to avoid false positives.
+        # e.g., "stay" alone would match "during my stay" which is not about hotels.
+        if any(
+            kw in text_lower
+            for kw in ["flight", "flights", "fly", "airline", "airport", "book flights"]
+        ):
+            intent = "flights"
+        elif any(
+            kw in text_lower
+            for kw in [
+                "hotel",
+                "hotels",
+                "accommodation",
+                "hostel",
+                "airbnb",
+                "lodging",
+                "where to stay",
+                "book hotel",
+            ]
+        ):
+            intent = "hotels"
+        elif any(
+            kw in text_lower
+            for kw in [
+                "car rental",
+                "rent a car",
+                "train",
+                "bus",
+                "taxi",
+                "uber",
+                "shuttle",
+                "ground transport",
+            ]
+        ):
+            intent = "transport"
+        elif any(
+            kw in text_lower
+            for kw in ["activity", "activities", "things to do", "attractions", "sightseeing"]
+        ):
+            intent = "activities"
+        elif any(
+            kw in text_lower for kw in ["change", "modify", "update", "correct", "fix", "wrong"]
+        ):
+            intent = "correction"
+
+    # Map intent to specialist node
+    intent_to_node = {
+        "flights": "flights_node",
+        "hotels": "hotels_node",
+        "transport": "transport_node",
+        "activities": "activities_node",
+        "general": "general_node",
+        "correction": "correction_node",
+    }
+
+    predicted_node = intent_to_node.get(intent)
+
+    # Check if this node has progress config
+    if predicted_node and predicted_node in NODE_PROGRESS_CONFIG:
+        config = NODE_PROGRESS_CONFIG[predicted_node]
+        return NodeExecutionPrediction(
+            will_execute=True,
+            node=predicted_node,
+            label=config["label"],
+            icon_key=config["icon_key"],
+            estimated_duration_ms=_get_node_progress_duration_ms(predicted_node),
+        )
+
+    # Check for required_fields (when core fields are incomplete)
+    # This happens when destination, dates, or other core fields are missing
+    trip_inputs = state.trip_inputs
+    if trip_inputs:
+        has_destination = bool(trip_inputs.destinations)
+        has_dates = bool(trip_inputs.start_date and trip_inputs.end_date)
+
+        # If missing core fields and no clear specialist intent, likely required_fields
+        if (not has_destination or not has_dates) and not predicted_node:
+            config = NODE_PROGRESS_CONFIG["required_fields_node"]
+            return NodeExecutionPrediction(
+                will_execute=True,
+                node="required_fields_node",
+                label=config["label"],
+                icon_key=config["icon_key"],
+                estimated_duration_ms=_get_node_progress_duration_ms("required_fields_node"),
+            )
+
+    return None
+
+
 TRIP_JSON_SCHEMA = {
     "type": "object",
     "properties": {
@@ -11496,6 +11744,29 @@ class StateViewBuilder:
         )
         return view
 
+    @staticmethod
+    def for_general(state: "GraphState") -> Dict[str, Any]:
+        """
+        Minimal view for general specialist node.
+        Handles generic requests that don't fit specific domains.
+        Provides core trip context for generating helpful responses.
+        """
+        ti = state.trip_inputs
+        view = {
+            "destinations": ti.destinations or [],
+            "origin": ti.origin,
+            "start_date": ti.start_date,
+            "end_date": ti.end_date,
+            "adults": ti.adults,
+            "budget": ti.budget,
+            "currency": ti.currency,
+        }
+        _debug(
+            "StateView:general",
+            field_count=len([v for v in view.values() if v]),
+        )
+        return view
+
     # -------------------------------------------------------------------------
     # Phase 6: Runtime Validation
     # -------------------------------------------------------------------------
@@ -12304,12 +12575,55 @@ def normalize_inputs(state: GraphState) -> GraphState:
                 reason=inp.get("reason"),
             )
 
+    # =========================================================================
+    # SETTINGS CHANGE DETECTION (for response invalidation)
+    # =========================================================================
+    # Track when domain-specific settings change. This is used to:
+    # 1. Clear stale last_summary (prevents asking same question twice)
+    # 2. Invalidate cached responses for the affected specialist
+    # 3. Route to appropriate specialist to acknowledge the change
+    settings_changed_this_turn: Dict[str, bool] = {}
+    if updates:
+        settings_fields = ["flight_settings", "hotel_settings", "activity_settings"]
+        for field in settings_fields:
+            if field in updates:
+                old_value = getattr(ti, field, None)
+                new_value = updates[field]
+                # Consider it changed if values differ (comparing dicts)
+                if old_value != new_value:
+                    settings_changed_this_turn[field] = True
+                    _debug(
+                        f"SETTINGS_CHANGE_DETECTED: {field}",
+                        old=old_value,
+                        new=new_value,
+                    )
+
     # Apply all updates via the helper (this does ownership checking and deep copy)
     if updates:
         _write_trip_inputs(state, "normalize_inputs", **updates)  # Ignore fields_changed
         _debug(
             "normalize_inputs applied updates via _write_trip_inputs", fields=list(updates.keys())
         )
+
+    # =========================================================================
+    # CLEAR STALE RESPONSE WHEN SETTINGS CHANGE (prevents question loop)
+    # =========================================================================
+    # When user answers a preference question (e.g., "open to layovers"),
+    # the settings change (direct_only: false). We clear last_summary to
+    # prevent echoing the old response that asked the same question.
+    if settings_changed_this_turn:
+        state.metadata["settings_changed_this_turn"] = settings_changed_this_turn
+        # Clear stale last_summary so specialist/summarize generates fresh response
+        if state.last_summary:
+            _debug(
+                "SETTINGS_CHANGE: Clearing stale last_summary",
+                changed_settings=list(settings_changed_this_turn.keys()),
+                old_summary_preview=state.last_summary[:80] if state.last_summary else "",
+            )
+            state.last_summary = None
+        # Also clear stale suggested_responses
+        if state.suggested_responses:
+            state.suggested_responses = []
 
     # Add normalization errors to state errors
     if norm_errors:
@@ -13353,6 +13667,86 @@ def _maybe_append_safety_snippet(state: GraphState) -> str:
         return f"{msg}\n\n{snippet}"
 
 
+def _are_suggestions_stale(ti: "TripInputs", suggestions: List[str]) -> bool:
+    """
+    Check if suggestions are stale (about booking types already enabled).
+
+    Returns True if suggestions mention booking types that are already complete,
+    indicating they should be refreshed with new booking options.
+    """
+    if not suggestions:
+        return True
+
+    booking_types = ti.booking_types or {}
+    suggestions_lower = [s.lower() for s in suggestions]
+    joined = " ".join(suggestions_lower)
+
+    # Check if suggestions are about flights when flights already enabled
+    if booking_types.get("flights"):
+        flight_keywords = ["economy", "business", "first class", "direct flight", "cabin", "flight"]
+        if any(kw in joined for kw in flight_keywords):
+            return True
+
+    # Check if suggestions are about hotels when hotels already enabled
+    if booking_types.get("hotels"):
+        hotel_keywords = ["star", "hotel", "amenities", "resort", "boutique"]
+        if any(kw in joined for kw in hotel_keywords):
+            return True
+
+    # Check if suggestions are about activities when activities already enabled
+    if booking_types.get("activities"):
+        activity_keywords = ["activity", "tour", "adventure", "excursion"]
+        if any(kw in joined for kw in activity_keywords):
+            return True
+
+    return False
+
+
+def _build_booking_suggestions(
+    ti: "TripInputs",
+    primary_action: Optional[str] = None,
+    max_suggestions: int = 3,
+) -> List[str]:
+    """
+    Build context-aware suggestions that advance the booking.
+
+    Prioritizes booking actions (flights, hotels, activities) that aren't yet enabled,
+    then falls back to budget if missing.
+
+    Args:
+        ti: TripInputs to check booking_types and budget
+        primary_action: Optional primary suggestion to always include first (e.g., "Yes, generate!")
+        max_suggestions: Maximum number of suggestions to return
+
+    Returns:
+        List of actionable suggestions
+    """
+    suggestions = []
+
+    # Add primary action first if provided
+    if primary_action:
+        suggestions.append(primary_action)
+
+    # Suggest booking types that aren't enabled yet
+    booking_types = ti.booking_types or {}
+    if not booking_types.get("flights") and len(suggestions) < max_suggestions:
+        suggestions.append("I want to book flights")
+    if not booking_types.get("hotels") and len(suggestions) < max_suggestions:
+        suggestions.append("I want to book hotels")
+    if not booking_types.get("activities") and len(suggestions) < max_suggestions:
+        suggestions.append("I want to book activities")
+
+    # Fallback: suggest budget if still missing and we have room
+    if len(suggestions) < max_suggestions and ti.budget is None:
+        suggestions.append("I'd like to set a budget")
+
+    # If still need more suggestions, add a generic one
+    if len(suggestions) < max_suggestions:
+        suggestions.append("Tell me more about my options")
+
+    return suggestions[:max_suggestions]
+
+
 def summarize(state: GraphState) -> GraphState:
     """Optional micro-summarizer node."""
     _, start_ns = _debug_node_entry("summarize", state)
@@ -13407,11 +13801,10 @@ def summarize(state: GraphState) -> GraphState:
                 "Keep chatting to refine your trip and get additional inspiration, "
                 "or click on the generate button below."
             )
-        state.suggested_responses = [
-            "Yes, generate my itinerary!",
-            "Wait, I want to add budget",
-            "Let me change something",
-        ]
+        # Build context-aware suggestions focused on advancing the booking
+        state.suggested_responses = _build_booking_suggestions(
+            ti, primary_action="Yes, generate my itinerary!"
+        )
         state.question_target = None  # Clear stale question target
         state.metadata["question_target"] = None  # SSoT sync
         state.metadata["response_writer_node"] = "summarize:ready"
@@ -13489,6 +13882,15 @@ def summarize(state: GraphState) -> GraphState:
             "Summarize: last_summary already set",
             preview=state.last_summary[:80] if state.last_summary else "",
         )
+        # Even when message is set, refresh suggestions to reflect current booking state
+        # This prevents stale suggestions from specialists when their category is complete
+        ti = state.trip_inputs
+        if not state.suggested_responses or _are_suggestions_stale(ti, state.suggested_responses):
+            state.suggested_responses = _build_booking_suggestions(ti)
+            _debug(
+                "Summarize: refreshed stale suggestions",
+                new_suggestions=state.suggested_responses,
+            )
 
     # =========================================================================
     # SAFETY SNIPPET AUGMENTATION
@@ -13521,7 +13923,9 @@ def summarize(state: GraphState) -> GraphState:
                 f"I'd love to help you plan your {topic} trip to {dest_str}! "
                 "Would you like me to show you more details about the itinerary?"
             )
-            state.suggested_responses = ["Show more details", "Yes, generate my plan"]
+            state.suggested_responses = _build_booking_suggestions(
+                ti, primary_action="Yes, generate my plan"
+            )
             state.metadata["response_writer_node"] = "summarize:strategy_fallback"
         elif len(destinations) > 0:
             # Has destinations - offer to generate
@@ -13533,26 +13937,25 @@ def summarize(state: GraphState) -> GraphState:
                     f"Your trip to {dest_str} is ready! "
                     "Would you like me to generate your detailed itinerary now?"
                 )
-                state.suggested_responses = [
-                    "Yes, generate my itinerary!",
-                    "I want to add more details first",
-                ]
+                state.suggested_responses = _build_booking_suggestions(
+                    ti, primary_action="Yes, generate my itinerary!"
+                )
                 state.metadata["pending_action"] = "generate_plan"
             else:
-                # Still missing core fields
+                # Still missing core fields - still offer booking options
                 missing_str = ", ".join(readiness.missing_core[:2])
                 state.last_summary = (
                     f"I'm excited to help plan your trip to {dest_str}! "
                     f"I just need a few more details: {missing_str}."
                 )
-                state.suggested_responses = ["Let me tell you more"]
+                state.suggested_responses = _build_booking_suggestions(ti)
             state.metadata["response_writer_node"] = "summarize:dest_fallback"
         else:
-            # No context - generic greeting
+            # No context - generic greeting with travel styles
             state.last_summary = (
                 "I'm here to help plan your perfect trip! " "Where would you like to go?"
             )
-            state.suggested_responses = ["I want to go hiking", "Beach vacation", "City break"]
+            state.suggested_responses = ["Beach vacation", "City adventure", "Mountain retreat"]
             state.metadata["response_writer_node"] = "summarize:generic_fallback"
 
         state.metadata["response_generation_provenance"] = "template"
@@ -13737,6 +14140,46 @@ _TILE_CACHE_MAXSIZE = 100
 _tile_cache: TTLCache = TTLCache(maxsize=_TILE_CACHE_MAXSIZE, ttl=_TILE_CACHE_TTL)
 
 
+def _compute_settings_hash(intent: str, trip_inputs: "TripInputs") -> str:
+    """
+    Compute a hash of the settings relevant to a specific vertical.
+
+    This ensures cache invalidation when user preferences change:
+    - hotel: min_stars, amenities
+    - flight: cabin_class, direct_only, round_trip
+    - activity: categories, skill_level
+
+    Args:
+        intent: The vertical type (hotel, flight, activity)
+        trip_inputs: The TripInputs containing settings
+
+    Returns:
+        16-char hash of relevant settings, or "default" if no settings
+    """
+    settings_str = ""
+
+    if intent == "hotel" and trip_inputs.hotel_settings:
+        hs = trip_inputs.hotel_settings
+        # Sort amenities for consistent hashing
+        amenities = ",".join(sorted(hs.amenities or []))
+        settings_str = f"stars:{hs.min_stars}|amenities:{amenities}"
+
+    elif intent == "flight" and trip_inputs.flight_settings:
+        fs = trip_inputs.flight_settings
+        settings_str = f"cabin:{fs.cabin_class}|direct:{fs.direct_only}|rt:{fs.round_trip}"
+
+    elif intent == "activity" and trip_inputs.activity_settings:
+        acts = trip_inputs.activity_settings
+        # Sort categories for consistent hashing
+        categories = ",".join(sorted(acts.categories or []))
+        settings_str = f"cats:{categories}|skill:{acts.skill_level or 'any'}"
+
+    if not settings_str:
+        return "default"
+
+    return hashlib.md5(settings_str.encode()).hexdigest()[:16]
+
+
 def _compute_tile_cache_key_v6(
     intent: str,
     destinations: List[str],
@@ -13782,7 +14225,9 @@ def ensure_tiles(
 
     # Compute query hash from parameters (matches compat.py pattern)
     # v2: Include end_date, adults, children for correct tile prices/night counts
+    # v3: Include settings hash for cache invalidation on preference changes
     # Note: budget excluded - filtered client-side for instant budget changes
+    settings_hash = _compute_settings_hash(intent, ti)
     query_str = (
         f"{intent}|"
         f"{','.join(sorted(ti.destinations or []))}|"
@@ -13790,7 +14235,8 @@ def ensure_tiles(
         f"{ti.end_date or 'none'}|"
         f"{ti.origin or 'none'}|"
         f"{ti.adults or 0}|"
-        f"{ti.children or 0}"
+        f"{ti.children or 0}|"
+        f"{settings_hash}"
     )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
@@ -13823,6 +14269,7 @@ def set_tile_cached(
     adults: Optional[int],
     children: Optional[int],
     result: Dict[str, Any],
+    settings_hash: str = "default",
 ) -> None:
     """MIGRATED: Now delegates to unified caching framework."""
     from app.planner.cache.framework import TileCache
@@ -13831,6 +14278,7 @@ def set_tile_cached(
 
     # Compute query hash from parameters (matches ensure_tiles pattern)
     # v2: Include end_date, adults, children for correct tile prices/night counts
+    # v3: Include settings hash for cache invalidation on preference changes
     query_str = (
         f"{intent}|"
         f"{','.join(sorted(destinations or []))}|"
@@ -13838,7 +14286,8 @@ def set_tile_cached(
         f"{end_date or 'none'}|"
         f"{origin or 'none'}|"
         f"{adults or 0}|"
-        f"{children or 0}"
+        f"{children or 0}|"
+        f"{settings_hash}"
     )
     query_hash = hashlib.md5(query_str.encode()).hexdigest()[:16]
 
@@ -13859,6 +14308,7 @@ def set_tile_cached(
             "origin": origin,
             "adults": adults,
             "children": children,
+            "settings_hash": settings_hash,
         },
     )
 
@@ -13999,6 +14449,10 @@ def tile_search(state: GraphState) -> GraphState:
                     verticals=verticals_to_fetch,  # type: ignore
                     max_results_per_vertical=5,
                     budget=ti.budget,  # Pass budget for tile filtering
+                    # Pass user preference settings for filtering
+                    flight_settings=ti.flight_settings,
+                    hotel_settings=ti.hotel_settings,
+                    activity_settings=ti.activity_settings,
                 )
 
                 _debug(
@@ -14031,6 +14485,7 @@ def tile_search(state: GraphState) -> GraphState:
                         adults=ti.adults,
                         children=ti.children,
                         result=vertical_tiles,
+                        settings_hash=_compute_settings_hash(vertical, ti),
                     )
                     _debug(f"Cached {len(vertical_tiles)} tiles for {vertical}")
 
@@ -15106,7 +15561,7 @@ async def run_turn(
         Dict with assistant_message, trip_inputs, ready_to_generate, branches, etc.
     """
     _debug("=" * 60)
-    _debug("RUN_TURN START", user_text=user_text[:100] if len(user_text) > 100 else user_text)
+    _debug("RUN_TURN START", user_text=user_text)
     _debug("=" * 60)
 
     session_state = session_state or {}
@@ -15605,9 +16060,9 @@ async def run_turn(
             else:
                 result.last_summary = "What else would you like to tell me about your trip?"
                 result.suggested_responses = [
-                    "Let me add more details",
+                    "I want to book flights",
+                    "I want to book hotels",
                     "Generate my plan!",
-                    "Let's start fresh",
                 ]
         # Update last_response_turn to current
         result_meta["last_response_turn"] = current_turn
@@ -15827,9 +16282,7 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     """
 
     _debug("=" * 60)
-    _debug(
-        "RUN_TURN_STREAMING START", user_text=user_text[:100] if len(user_text) > 100 else user_text
-    )
+    _debug("RUN_TURN_STREAMING START", user_text=user_text)
     _debug("=" * 60)
 
     session_state = session_state or {}
@@ -15952,18 +16405,21 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     turn_thread_id = f"{thread_id}_{uuid4().hex[:8]}"
 
     # ==========================================================================
-    # PREDICT STRATEGY EXECUTION FOR SSE PROGRESS TRACKING
+    # PREDICT NODE EXECUTION FOR SSE PROGRESS TRACKING
     # ==========================================================================
-    # Check if this turn will execute strategy node and emit node_status event
-    # for frontend to show progress line instead of loading dots
+    # Check if this turn will execute an LLM node and emit node_status event
+    # for frontend to show progress bar instead of loading dots
     # ==========================================================================
     strategy_prediction = _predict_strategy_execution(state, user_text)
     if strategy_prediction and strategy_prediction.will_execute:
+        # Strategy node has special handling with stage/tier/topic
         yield {
             "type": "node_status",
             "data": {
                 "node": "strategy_node",
                 "status": "started",
+                "label": f"Planning {strategy_prediction.topic}",
+                "icon_key": strategy_prediction.topic,
                 "stage": strategy_prediction.stage,
                 "tier": strategy_prediction.tier,
                 "topic": strategy_prediction.topic,
@@ -15971,6 +16427,20 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
                 "estimated_duration_ms": strategy_prediction.estimated_duration_ms,
             },
         }
+    else:
+        # Check for other LLM-based nodes (specialist nodes, required_fields, etc.)
+        node_prediction = _predict_node_execution(state, user_text)
+        if node_prediction and node_prediction.will_execute:
+            yield {
+                "type": "node_status",
+                "data": {
+                    "node": node_prediction.node,
+                    "status": "started",
+                    "label": node_prediction.label,
+                    "icon_key": node_prediction.icon_key,
+                    "estimated_duration_ms": node_prediction.estimated_duration_ms,
+                },
+            }
 
     # Run the full graph (non-streaming) to get final state
     # Note: We run the full graph first, then stream the final message

@@ -35,6 +35,21 @@ if TYPE_CHECKING:
     from app.plan_graph import GraphState
 
 
+def _set_question_field_metadata(state: "GraphState", question_target: str) -> None:
+    """Set last_question_field metadata from question_target.
+
+    Maps question_target to the appropriate field name for short-circuit context.
+    Consolidated from duplicate code blocks in template and LLM paths.
+    """
+    target_to_field = {
+        "destinations": "destinations",
+        "origin": "origin",
+        "dates": "start_date",
+        "start_date": "start_date",
+    }
+    state.metadata["last_question_field"] = target_to_field.get(question_target, question_target)
+
+
 def _select_required_fields_prompt(state: "GraphState") -> str:
     """
     Select the appropriate prompt for required_fields based on state.
@@ -230,15 +245,7 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
         set_question_target(state, question_target, source="missing_fields_guard:template")
 
         # Map question_target to last_question_field for short-circuit context
-        target_to_field = {
-            "destinations": "destinations",
-            "origin": "origin",
-            "dates": "start_date",
-            "start_date": "start_date",
-        }
-        state.metadata["last_question_field"] = target_to_field.get(
-            question_target, question_target
-        )
+        _set_question_field_metadata(state, question_target)
 
         # Store suggestions with field for LQA matching
         store_suggestions_with_field(state, state.suggested_responses, question_target)
@@ -350,15 +357,7 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
             set_question_target(state, llm_question_target, source="missing_fields_guard:llm")
 
         # Map question_target to last_question_field for short-circuit context
-        target_to_field = {
-            "destinations": "destinations",
-            "origin": "origin",
-            "dates": "start_date",
-            "start_date": "start_date",
-        }
-        state.metadata["last_question_field"] = target_to_field.get(
-            state.question_target, state.question_target
-        )
+        _set_question_field_metadata(state, state.question_target)
 
         # Track that response was produced this turn (no-stale-summary invariant)
         state.metadata["last_response_turn"] = state.turn_number
@@ -694,13 +693,17 @@ async def _specialist(
         # Correction needs core fields + all settings for conflict detection
         state_view = StateViewBuilder.for_correction(state)
         view_type = "correction"
+    elif name == "general":
+        # General specialist handles generic requests
+        state_view = StateViewBuilder.for_general(state)
+        view_type = "general"
     else:
         # Fallback to full state for unknown nodes - this should be avoided
         state_view = ti_short(state.trip_inputs)
         view_type = "full"
         _debug(
-            f"StateView:FALLBACK:{name}",
-            message="Using full state view - consider adding dedicated builder method",
+            f"StateView:FALLBACK:{name} - Using full state view, "
+            "consider adding dedicated builder method",
         )
 
     # Phase 6: Validate state view size to catch regressions
@@ -778,13 +781,36 @@ async def _specialist(
         )
         return state
 
+    # Store original prompt to avoid accumulating INVALID_JSON_HINT on retries
+    # (Tier 10 fix: each retry should only add the hint once, not cumulatively)
+    original_system_prompt = system_prompt
+    # Tier 11.6: Track last invalid response for context in retries
+    last_invalid_output: Optional[str] = None
+
     for attempt in range(attempts):
+        # Build current prompt - only add hint after first failure (not cumulatively)
+        current_prompt = original_system_prompt
+        if attempt > 0:
+            # Tier 11.6: Include truncated previous response so LLM can see what failed
+            context_hint = INVALID_JSON_HINT
+            if last_invalid_output:
+                # Truncate to ~200 chars to avoid token bloat
+                truncated = last_invalid_output[:200]
+                if len(last_invalid_output) > 200:
+                    truncated += "..."
+                context_hint = (
+                    f"\n\nIMPORTANT: Your previous response was not valid JSON. "
+                    f"Here's what you returned:\n```\n{truncated}\n```\n"
+                    f"Please respond with ONLY valid JSON."
+                )
+            current_prompt = original_system_prompt + context_hint
+
         try:
             # Pass history as separate messages for better context
             async with measure_llm_call(state):
                 out = await call_llm_with_timeout(
                     model=llm_config["model_hint"],
-                    prompt=system_prompt,
+                    prompt=current_prompt,
                     timeout_seconds=timeout,
                     max_tokens=llm_config["max_tokens"],
                     temperature=llm_config["temperature"],
@@ -818,10 +844,10 @@ async def _specialist(
 
         except json.JSONDecodeError as e:
             last_error = e
+            # Tier 11.6: Store invalid output for context in next retry
+            last_invalid_output = out if "out" in dir() else None
             _debug_error(f"Specialist {name} JSON error on attempt {attempt + 1}", error=str(e))
             if attempt < attempts - 1:
-                # Add repair hint to prompt for retry
-                system_prompt += INVALID_JSON_HINT
                 # Tier 10.12: Exponential backoff - 10ms, 20ms, 40ms
                 await asyncio.sleep(0.01 * (2**attempt))
                 continue

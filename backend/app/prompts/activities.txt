@@ -69,3 +69,10 @@ RULES
 {% include "_never_invent.txt" %}
 
 {% include "_json_output.txt" %}
+
+==============================
+OUTPUT STRUCTURE REMINDER
+==============================
+- assistant_message: Put all activity suggestions and details HERE
+- suggested_responses: SHORT actionable next steps only (2-5 words each), e.g.:
+  ["Add spa activities", "Book hotels too", "Show adventure options"]

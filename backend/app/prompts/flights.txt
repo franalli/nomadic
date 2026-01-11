@@ -53,3 +53,10 @@ RULES
 - Bad: "I prefer...", "Class:", "Select cabin"
 
 {% include "_json_output.txt" %}
+
+==============================
+OUTPUT STRUCTURE REMINDER
+==============================
+- assistant_message: Put all explanations and details HERE
+- suggested_responses: SHORT actionable next steps only (2-5 words each), e.g.:
+  ["Direct flights only", "Business class", "Book hotels too"]

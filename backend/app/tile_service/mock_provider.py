@@ -28,6 +28,15 @@ def _parse_budget(value) -> Optional[float]:
 class MockHotelProvider(Provider):
     name = "mock_hotel"
 
+    # Mock amenities per hotel tier (higher index = more amenities)
+    MOCK_AMENITIES = {
+        1: ["wifi", "breakfast"],
+        2: ["wifi", "breakfast", "parking"],
+        3: ["wifi", "breakfast", "parking", "pool"],
+        4: ["wifi", "breakfast", "parking", "pool", "gym"],
+        5: ["wifi", "breakfast", "parking", "pool", "gym", "spa"],
+    }
+
     @staticmethod
     def _parse_date(value: Optional[str]) -> Optional[date]:
         if not value:
@@ -56,6 +65,33 @@ class MockHotelProvider(Provider):
         traveler_part = f"{travelers} traveler{'s' if travelers != 1 else ''}"
         return f"{date_part} · {nights} nights · {traveler_part}"
 
+    def _get_hotel_rating(self, index: int) -> float:
+        """Map hotel index to star rating (1-5 scale)."""
+        # Hotels 1-2 are 3-star, 3-4 are 4-star, 5 is 5-star
+        if index <= 2:
+            return 3.0 + 0.2 * index
+        elif index <= 4:
+            return 4.0 + 0.1 * (index - 2)
+        else:
+            return 4.5 + 0.1 * (index - 4)
+
+    def _get_hotel_stars(self, index: int) -> int:
+        """Map hotel index to star category (integer 1-5)."""
+        if index <= 2:
+            return 3
+        elif index <= 4:
+            return 4
+        else:
+            return 5
+
+    def _has_required_amenities(self, hotel_amenities: List[str], required: List[str]) -> bool:
+        """Check if hotel has all required amenities."""
+        if not required:
+            return True
+        hotel_set = set(a.lower() for a in hotel_amenities)
+        required_set = set(a.lower() for a in required)
+        return required_set.issubset(hotel_set)
+
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Return simple mock hotels for the given destination."""
         dest = ctx.destination or "Somewhere"
@@ -73,8 +109,26 @@ class MockHotelProvider(Provider):
                 # Allocate ~40% of total budget to hotels
                 budget_limit = parsed_budget * 0.4
 
+        # Extract hotel settings for filtering
+        min_stars = 0
+        required_amenities: List[str] = []
+        if ctx.hotel_settings:
+            min_stars = ctx.hotel_settings.min_stars or 0
+            required_amenities = ctx.hotel_settings.amenities or []
+
         base_count = ctx.max_results_per_vertical
         for i in range(1, base_count + 1):
+            hotel_stars = self._get_hotel_stars(i)
+            hotel_amenities = self.MOCK_AMENITIES.get(i, ["wifi"])
+
+            # Filter by minimum stars
+            if min_stars > 0 and hotel_stars < min_stars:
+                continue
+
+            # Filter by required amenities
+            if not self._has_required_amenities(hotel_amenities, required_amenities):
+                continue
+
             nightly_rate = 120 + 18 * i
             price = round(
                 nightly_rate * max(nights, 1) * (1 + 0.08 * max(total_travelers - 1, 0)), 2
@@ -99,14 +153,14 @@ class MockHotelProvider(Provider):
                     price_basis="per_trip",
                     is_estimate_only=source_mode == "cache",
                     deeplink_url="https://example.com/hotel/mock?aff_id=DEMO",
-                    rating=4.0 + 0.1 * i,
+                    rating=self._get_hotel_rating(i),
                     review_count=100 * i,
                     location_label=f"Central {dest}",
                     geo=Geo(lat=38.72 + 0.01 * i, lon=-9.13),
                     tags=(
-                        ["central", "mock", "within-budget"]
+                        ["central", "mock", f"{hotel_stars}-star", "within-budget"]
                         if budget_limit
-                        else ["central", "mock"]
+                        else ["central", "mock", f"{hotel_stars}-star"]
                     ),
                     availability_status="available" if source_mode == "live" else "unknown",
                     meta={
@@ -119,6 +173,8 @@ class MockHotelProvider(Provider):
                         "children": ctx.children,
                         "nights": nights,
                         "budget_limit": budget_limit,
+                        "stars": hotel_stars,
+                        "amenities": hotel_amenities,
                     },
                     score=0.7 + 0.05 * i,
                     source=source_mode,
@@ -130,6 +186,14 @@ class MockHotelProvider(Provider):
 
 class MockFlightProvider(Provider):
     name = "mock_flight"
+
+    # Price multipliers for cabin classes
+    CABIN_MULTIPLIERS = {
+        "economy": 1.0,
+        "premium_economy": 1.5,
+        "business": 3.0,
+        "first": 5.0,
+    }
 
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Return simple mock flights for the given route."""
@@ -149,40 +213,69 @@ class MockFlightProvider(Provider):
                 # Allocate ~30% of total budget to flights
                 budget_limit = parsed_budget * 0.3
 
+        # Extract flight settings for filtering
+        cabin_class = "economy"
+        direct_only = False
+        round_trip = True
+        if ctx.flight_settings:
+            cabin_class = ctx.flight_settings.cabin_class or "economy"
+            direct_only = ctx.flight_settings.direct_only or False
+            round_trip = (
+                ctx.flight_settings.round_trip
+                if ctx.flight_settings.round_trip is not None
+                else True
+            )
+
+        cabin_multiplier = self.CABIN_MULTIPLIERS.get(cabin_class, 1.0)
+
         options = [
             {
                 "title": "Morning express",
                 "depart": "08:10",
                 "duration": "7h 50m",
-                "price": 610.0,
+                "base_price": 610.0,
                 "stops": "Nonstop",
+                "is_direct": True,
                 "image_url": "https://images.unsplash.com/photo-1489515217757-5fd1be406fef?auto=format&fit=crop&w=1200&q=80",
             },
             {
                 "title": "Evening sleeper",
                 "depart": "19:20",
                 "duration": "9h 10m",
-                "price": 480.0,
+                "base_price": 480.0,
                 "stops": "1 stop via AMS",
+                "is_direct": False,
                 "image_url": "https://images.unsplash.com/photo-1485939420040-3e4a274307d0?auto=format&fit=crop&w=1200&q=80",
             },
             {
                 "title": "Weekend saver",
                 "depart": "22:05",
                 "duration": "11h 05m",
-                "price": 420.0,
+                "base_price": 420.0,
                 "stops": "1 stop via LHR",
+                "is_direct": False,
                 "image_url": "https://images.unsplash.com/photo-1474302770737-173ee21bab63?auto=format&fit=crop&w=1200&q=80",
             },
         ]
 
         for idx, option in enumerate(options[:max_results]):
-            base_price = option["price"]
+            # Filter by direct_only preference
+            if direct_only and not option["is_direct"]:
+                continue
+
+            # Calculate price based on cabin class and round trip
+            base_price = option["base_price"] * cabin_multiplier
+            if round_trip:
+                base_price *= 2  # Round trip doubles the price
             price = round(base_price * total_travelers, 2)
 
             # Skip tiles that exceed budget (if budget is set)
             if budget_limit and price > budget_limit:
                 continue
+
+            # Format cabin class for display
+            cabin_display = cabin_class.replace("_", " ").title()
+            trip_type = "Round trip" if round_trip else "One way"
 
             tiles.append(
                 Tile(
@@ -193,7 +286,7 @@ class MockFlightProvider(Provider):
                     title=f"{option['title']} · {origin} → {dest}",
                     subtitle=(
                         f"{option['depart']} departure · {option['duration']} · "
-                        f"{option['stops']}"
+                        f"{option['stops']} · {cabin_display}"
                     ),
                     image_url=option["image_url"],
                     price_estimate=price,
@@ -205,11 +298,16 @@ class MockFlightProvider(Provider):
                     rating=4.3 + 0.05 * idx,
                     review_count=120 + 35 * idx,
                     location_label=f"{origin} → {dest}",
-                    tags=["flight", option["stops"]] + (["within-budget"] if budget_limit else []),
+                    tags=["flight", option["stops"], cabin_class]
+                    + (["within-budget"] if budget_limit else []),
                     availability_status="available",
                     meta={
                         "stops": option["stops"],
-                        "fare_class": "Main cabin",
+                        "is_direct": option["is_direct"],
+                        "fare_class": cabin_display,
+                        "cabin_class": cabin_class,
+                        "trip_type": trip_type,
+                        "round_trip": round_trip,
                         "destination": dest,
                         "origin": origin,
                         "adults": ctx.adults,
@@ -244,6 +342,13 @@ class MockActivityProvider(Provider):
                 # Allocate ~30% of total budget to activities
                 budget_limit = parsed_budget * 0.3
 
+        # Extract activity settings for filtering
+        requested_categories: List[str] = []
+        skill_level: Optional[str] = None
+        if ctx.activity_settings:
+            requested_categories = [c.lower() for c in (ctx.activity_settings.categories or [])]
+            skill_level = ctx.activity_settings.skill_level
+
         activities = [
             {
                 "title": f"Sunrise ridge hike in {dest}",
@@ -251,7 +356,9 @@ class MockActivityProvider(Provider):
                 "price": 95.0,
                 "image_url": "https://images.unsplash.com/photo-1452626038306-9aae5e071dd3?auto=format&fit=crop&w=1200&q=80",
                 "duration": "3h",
+                "category": "hiking",
                 "tag": "outdoors",
+                "skill_level": "intermediate",
                 "availability": "available",
             },
             {
@@ -260,7 +367,9 @@ class MockActivityProvider(Provider):
                 "price": 68.0,
                 "image_url": "https://images.unsplash.com/photo-1440404653325-ab127d49abb4?auto=format&fit=crop&w=1200&q=80",
                 "duration": "2.5h",
+                "category": "food",
                 "tag": "food",
+                "skill_level": "beginner",
                 "availability": "available",
             },
             {
@@ -269,12 +378,59 @@ class MockActivityProvider(Provider):
                 "price": 125.0,
                 "image_url": "https://images.unsplash.com/photo-1500375592092-40eb2168fd21?auto=format&fit=crop&w=1200&q=80",
                 "duration": "2h",
+                "category": "boating",
                 "tag": "water",
+                "skill_level": "beginner",
                 "availability": "low",
+            },
+            {
+                "title": f"Scuba diving adventure in {dest}",
+                "subtitle": "Discover underwater wonders with certified instructors",
+                "price": 180.0,
+                "image_url": "https://images.unsplash.com/photo-1544551763-46a013bb70d5?auto=format&fit=crop&w=1200&q=80",
+                "duration": "4h",
+                "category": "diving",
+                "tag": "water",
+                "skill_level": "intermediate",
+                "availability": "available",
+            },
+            {
+                "title": f"Mountain biking trails near {dest}",
+                "subtitle": "Technical trails through scenic landscapes",
+                "price": 110.0,
+                "image_url": "https://images.unsplash.com/photo-1541625602330-2277a4c46182?auto=format&fit=crop&w=1200&q=80",
+                "duration": "3h",
+                "category": "cycling",
+                "tag": "outdoors",
+                "skill_level": "advanced",
+                "availability": "available",
             },
         ]
 
-        for idx, activity in enumerate(activities[:max_results]):
+        filtered_activities = []
+        for activity in activities:
+            # Filter by category if categories are specified
+            if requested_categories:
+                activity_category = activity.get("category", "").lower()
+                if activity_category not in requested_categories:
+                    continue
+
+            # Filter by skill level if specified
+            if skill_level:
+                activity_skill = activity.get("skill_level", "beginner")
+                # Skill level matching: beginner can do beginner,
+                # intermediate can do beginner+intermediate, etc.
+                skill_order = ["beginner", "intermediate", "advanced"]
+                if skill_level in skill_order and activity_skill in skill_order:
+                    user_level_idx = skill_order.index(skill_level)
+                    activity_level_idx = skill_order.index(activity_skill)
+                    # User can only do activities at or below their skill level
+                    if activity_level_idx > user_level_idx:
+                        continue
+
+            filtered_activities.append(activity)
+
+        for idx, activity in enumerate(filtered_activities[:max_results]):
             per_person = round(activity["price"], 2)
             total = round(per_person * total_travelers, 2)
 
@@ -300,11 +456,13 @@ class MockActivityProvider(Provider):
                     rating=4.5 + 0.06 * idx,
                     review_count=220 + 55 * idx,
                     location_label=dest,
-                    tags=["activity", activity["tag"]]
+                    tags=["activity", activity["tag"], activity["category"]]
                     + (["within-budget"] if budget_limit else []),
                     availability_status=activity["availability"],
                     meta={
                         "duration": activity["duration"],
+                        "category": activity["category"],
+                        "skill_level": activity["skill_level"],
                         "destination": dest,
                         "adults": ctx.adults,
                         "children": ctx.children,

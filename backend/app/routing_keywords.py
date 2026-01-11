@@ -22,15 +22,18 @@ from typing import Dict, FrozenSet, Optional, Tuple
 
 KEYWORD_TO_INTENT: Dict[str, Tuple[str, Optional[str]]] = {
     # Hotel keywords
+    # Note: Avoid overly broad keywords that could match non-hotel contexts
+    # e.g., "stay" matches "during my stay" which is not about hotels
     "hotel": ("hotels", None),
     "hotels": ("hotels", None),
     "accommodation": ("hotels", None),
     "accommodations": ("hotels", None),
-    "stay": ("hotels", None),
+    "where to stay": ("hotels", None),
+    "place to stay": ("hotels", None),
     "lodging": ("hotels", None),
     "hostel": ("hotels", None),
     "airbnb": ("hotels", None),
-    "booking": ("hotels", None),
+    "book a room": ("hotels", None),
     # Hotel preference keywords (route to hotels for settings updates)
     "star": ("hotels", None),
     "breakfast": ("hotels", None),

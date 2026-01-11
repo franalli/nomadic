@@ -91,3 +91,11 @@ RULES
 {% include "_never_invent.txt" %}
 
 {% include "_json_output.txt" %}
+
+==============================
+OUTPUT STRUCTURE REMINDER
+==============================
+- assistant_message: Put all hotel suggestions, descriptions, and explanations HERE
+- suggested_responses: SHORT actionable next steps only (2-5 words each), e.g.:
+  ["I prefer 5-star hotels", "Show budget options", "Book flights too"]
+  NOT hotel listings - those go in assistant_message!

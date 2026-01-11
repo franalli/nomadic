@@ -191,9 +191,9 @@ def llm_json_for_prompt(
         if cabin:
             flight_settings["cabin_class"] = cabin
 
-        assistant = "✈️ Flights noted. Any cabin class or direct preference?"
+        assistant = "Flights noted. Any cabin class or direct preference?"
         if flight_settings:
-            assistant = "✈️ Got it—updated your flight preferences."
+            assistant = "Got it - updated your flight preferences."
 
         return {
             "assistant_message": assistant,
@@ -214,7 +214,7 @@ def llm_json_for_prompt(
         if (user_message or "").strip().upper() == "GENERATE_PLAN_NOW":
             # Minimal branches, no tiles.
             return {
-                "assistant_message": "✓ Great—here are a couple of trip options.",
+                "assistant_message": "Great - here are a couple of trip options.",
                 "trip_inputs": {},
                 "ready_to_generate": True,
                 "branches": [
@@ -275,7 +275,7 @@ def llm_json_for_prompt(
         if has_destinations and has_origin and not has_start_date:
             dest_name = state.get("destinations", ["your destination"])[0]
             return {
-                "assistant_message": f"Great—when are you planning to visit {dest_name}?",
+                "assistant_message": f"Great - when are you planning to visit {dest_name}?",
                 "trip_inputs": trip_inputs,
                 "ready_to_generate": False,
                 "branches": [],
@@ -296,7 +296,7 @@ def llm_json_for_prompt(
         if trip_inputs:
             return {
                 "assistant_message": (
-                    "Got it — I’ve noted your dates. " "Anything else you want to optimize for?"
+                    "Got it - I've noted your dates. " "Anything else you want to optimize for?"
                 ),
                 "trip_inputs": trip_inputs,
                 "ready_to_generate": False,
@@ -348,7 +348,7 @@ def llm_json_for_prompt(
 
         return {
             "assistant_message": (
-                "Here’s a safe hiking approach: choose 1–2 core trails, plan a rest day, "
+                "Here's a safe hiking approach: choose 1-2 core trails, plan a rest day,"
                 "and keep a conservative mileage target.\n\n"
                 "Trail essentials:\n- **Water**: 2L/person\n- **Footwear**: boots\n"
                 "- **Weather**: layers + rain shell"
@@ -605,7 +605,7 @@ def llm_json_for_prompt(
     if "SCOPE: CORRECTION" in prompt.upper():
         return {
             "assistant_message": (
-                "⚠️ **That won’t quite work** because the plan has a conflict. "
+                "**That won't quite work** because the plan has a conflict."
                 "We could **adjust the destination** or **adjust the activity focus**. "
                 "Which should I apply?"
             ),
@@ -620,7 +620,7 @@ def llm_json_for_prompt(
         parsed = _safe_json_loads(parsed_raw)
         hotel_delta = parsed.get("hotel_settings_delta") or {}
         return {
-            "assistant_message": "🏨 Hotel preferences noted. Any must-have neighborhood?",
+            "assistant_message": " Hotel preferences noted. Any must-have neighborhood?",
             "trip_inputs": {
                 "booking_types": {"hotels": True},
                 "hotel_settings": hotel_delta,
@@ -648,7 +648,7 @@ def llm_json_for_prompt(
 
         return {
             "assistant_message": (
-                "🚆 Transport preferences noted. " "Any must-haves (direct, scenic, budget)?"
+                " Transport preferences noted. " "Any must-haves (direct, scenic, budget)?"
             ),
             "trip_inputs": {
                 "booking_types": {"ground_transport": True},
@@ -662,7 +662,7 @@ def llm_json_for_prompt(
     if "SCOPE: ACTIVITY PREFERENCES ONLY" in prompt.upper():
         cats = _infer_activity_categories(user_message or "")
         return {
-            "assistant_message": "🎭 Activities noted. Any pace preference (relaxed vs packed)?",
+            "assistant_message": " Activities noted. Any pace preference (relaxed vs packed)?",
             "trip_inputs": {
                 "booking_types": {"activities": True},
                 "activity_settings": {"categories": cats},

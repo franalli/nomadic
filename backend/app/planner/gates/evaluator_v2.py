@@ -208,6 +208,9 @@ class GateEvaluator:
         date_clarify_mode = bool(state.metadata.get("date_clarify_mode", False))
 
         # Create updated result with all fields
+        # Use detected strategy topic as fallback if gate didn't set one explicitly
+        # This preserves the topic even when routing to required_fields
+        final_strategy_topic = result.strategy_topic or ctx.detected_strategy_topic
         return GateResult(
             gate_fired=result.gate_fired,
             destination=result.destination,
@@ -215,7 +218,7 @@ class GateEvaluator:
             skipped_gates=skipped_gates,
             eval_time_ms=eval_time_ms,
             intent=result.intent,
-            strategy_topic=result.strategy_topic,
+            strategy_topic=final_strategy_topic,
             question_target=result.question_target,
             metadata_updates=result.metadata_updates,
             # v5 Routing Observability fields

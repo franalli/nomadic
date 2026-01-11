@@ -71,6 +71,8 @@ type TilesGridProps = {
   loadError?: boolean;
   /** Callback to retry loading tiles */
   onRetry?: () => void;
+  /** Callback to show toast notification when tile is selected (Tier 10.19) */
+  onSelectionToast?: (message: string) => void;
 };
 
 export const TilesGrid = memo(function TilesGrid({
@@ -83,6 +85,7 @@ export const TilesGrid = memo(function TilesGrid({
   isLoading = false,
   loadError = false,
   onRetry,
+  onSelectionToast,
 }: TilesGridProps) {
   const [activeTab, setActiveTab] = useState<TileTabKey>(forcedTab ?? 'stays');
   const effectiveTab = forcedTab ?? activeTab;
@@ -224,6 +227,7 @@ export const TilesGrid = memo(function TilesGrid({
                       ) ?? false)
               }
               onToggleSelect={() => onTileToggle?.(tile, effectiveTab)}
+              onSelectionToast={onSelectionToast}
             />
           ))
         )}

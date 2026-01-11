@@ -437,6 +437,7 @@ export function NomadicLanding() {
             onBookTrip={handleBookTrip}
             canBookTrip={missingFields.length === 0}
             tripInputs={tripInputs}
+            onSelectionToast={(message) => addToast(message, 'confirmation')}
           />
         )}
       </CardContent>

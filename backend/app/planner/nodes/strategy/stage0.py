@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
@@ -159,6 +159,115 @@ STAGE0_FALLBACK_TEMPLATES = {
         "📅 When are you thinking of setting sail?"
     ),
 }
+
+
+# Destination+topic specific templates for enhanced guidance (Tier 10.22)
+# These provide expert knowledge for popular destination+activity combinations
+DESTINATION_TOPIC_TEMPLATES: Dict[Tuple[str, str], Dict[str, Any]] = {
+    ("patagonia", "hiking"): {
+        "highlights": "Torres del Paine W Trek, Fitz Roy circuits, Perito Moreno views",
+        "best_season": "December-February (Patagonian summer)",
+        "key_tips": "Book refugios 6+ months ahead, expect strong winds",
+        "duration_note": "W Trek: 4-5 days, O Circuit: 8-10 days",
+    },
+    ("maldives", "diving"): {
+        "highlights": "Manta ray season, whale sharks at Ari Atoll, pristine house reefs",
+        "best_season": "January-April (dry), November-December (mantas)",
+        "key_tips": "Liveaboards reach outer atolls, resorts for convenience",
+        "duration_note": "5-7 days ideal for multiple dive sites",
+    },
+    ("switzerland", "skiing"): {
+        "highlights": "Zermatt (Matterhorn), Verbier backcountry, St. Moritz glamour",
+        "best_season": "December-April, peak January-March",
+        "key_tips": "Swiss Pass for transport, book mountain restaurants ahead",
+        "duration_note": "7+ days to explore multiple resorts",
+    },
+    ("japan", "skiing"): {
+        "highlights": "Niseko powder, Hakuba variety, Nozawa Onsen tradition",
+        "best_season": "January-February for best powder",
+        "key_tips": "JR Pass for transport, combine with hot springs",
+        "duration_note": "7-10 days for skiing + cultural stops",
+    },
+    ("croatia", "boating"): {
+        "highlights": "Dubrovnik to Split route, Kornati archipelago, Hvar nightlife",
+        "best_season": "May-June or September (avoid August crowds)",
+        "key_tips": "Skippered charters popular, book marina berths in advance",
+        "duration_note": "7-10 days for leisurely island-hopping",
+    },
+    ("greece", "boating"): {
+        "highlights": "Cyclades island-hopping, Ionian calm waters, Saronic near Athens",
+        "best_season": "May-October, shoulder months less crowded",
+        "key_tips": "Meltemi winds July-August, Ionian calmer for beginners",
+        "duration_note": "7-14 days depending on route ambition",
+    },
+    ("france", "cycling"): {
+        "highlights": "Loire Valley chateaux, Provence lavender, Tour de France cols",
+        "best_season": "May-June or September for pleasant weather",
+        "key_tips": "E-bikes available everywhere, wine tasting en route",
+        "duration_note": "5-7 days per region, 2+ weeks for grand tour",
+    },
+    ("italy", "cycling"): {
+        "highlights": "Tuscany hills, Dolomites climbs, Amalfi Coast (challenging)",
+        "best_season": "April-May or September-October",
+        "key_tips": "Book agriturismos early, start climbs early morning",
+        "duration_note": "7-10 days for immersive cycling experience",
+    },
+    ("red sea", "diving"): {
+        "highlights": "SS Thistlegorm wreck, Ras Mohammed sharks, Brothers Islands",
+        "best_season": "March-May and September-November",
+        "key_tips": "Egypt visa on arrival, liveaboards for best sites",
+        "duration_note": "7-day liveaboard ideal, 4-5 days shore-based",
+    },
+    ("nepal", "hiking"): {
+        "highlights": "Everest Base Camp, Annapurna Circuit, Langtang Valley",
+        "best_season": "October-November (post-monsoon), March-May (pre-monsoon)",
+        "key_tips": "Acclimatize properly, hire local guides/porters",
+        "duration_note": "EBC: 12-14 days, Annapurna Circuit: 15-21 days",
+    },
+}
+
+
+def _format_destination_template(content: Dict[str, str], dest_name: str, topic: str) -> str:
+    """Format destination-specific template into a response string."""
+    emoji_map = {
+        "hiking": "🥾",
+        "diving": "🤿",
+        "skiing": "⛷️",
+        "cycling": "🚴",
+        "boating": "⛵",
+    }
+    emoji = emoji_map.get(topic, "✨")
+    return (
+        f"{emoji} Excellent choice! **{dest_name}** is incredible for {topic}.\n\n"
+        f"**✨ Why It's Special:**\n"
+        f"🏆 **Highlights:** {content['highlights']}\n"
+        f"📅 **Best Season:** {content['best_season']}\n"
+        f"💡 **Pro Tips:** {content['key_tips']}\n"
+        f"⏱️ **Ideal Duration:** {content['duration_note']}\n\n"
+        "📅 When are you thinking of going? I can tailor recommendations to your dates."
+    )
+
+
+def get_destination_specific_template(topic: str, destinations: List[str]) -> Optional[str]:
+    """Get destination+topic specific template if available.
+
+    Checks DESTINATION_TOPIC_TEMPLATES for expert knowledge about popular
+    destination+activity combinations before falling back to generic templates.
+
+    Args:
+        topic: Strategy topic (hiking, diving, skiing, cycling, boating)
+        destinations: List of destination names from trip inputs
+
+    Returns:
+        Formatted template string if a specific match is found, None otherwise
+    """
+    if not destinations:
+        return None
+    dest_lower = destinations[0].lower()
+    for (dest_key, topic_key), content in DESTINATION_TOPIC_TEMPLATES.items():
+        if dest_key in dest_lower and topic_key == topic:
+            return _format_destination_template(content, destinations[0], topic)
+    return None
 
 
 def get_dest_known_fallback(topic: str, dest_name: str) -> str:
@@ -500,10 +609,14 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
     state.metadata["strategy_stage0_error"] = str(last_error)
     state.metadata["strategy_stage0_deterministic"] = True
 
-    # Destination-known mode: use destination-specific fallback
+    # Destination-known mode: check for expert templates first, then fallback
     if dest_known_mode and destinations:
-        dest_name = destinations[0] if destinations else "your destination"
-        fallback_response = get_dest_known_fallback(topic, dest_name)
+        # Try destination-specific expert templates first (Tier 10.22)
+        fallback_response = get_destination_specific_template(topic, destinations)
+        if fallback_response is None:
+            # Fall back to generic destination templates
+            dest_name = destinations[0] if destinations else "your destination"
+            fallback_response = get_dest_known_fallback(topic, dest_name)
     else:
         fallback_response = STAGE0_FALLBACK_TEMPLATES.get(
             topic,

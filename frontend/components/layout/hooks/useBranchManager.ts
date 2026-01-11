@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { clearSessionLocalStorage, resetSession } from '@/lib/api';
+import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse } from '@/types/document';
@@ -261,6 +261,22 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Used to enforce minimum loading duration.
    */
   const generatingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  /**
+   * Previous settings values for change detection.
+   * Used to determine when to trigger tile refresh.
+   */
+  const prevSettingsRef = useRef<{
+    hotel_settings?: DocumentTripInputs['hotel_settings'];
+    flight_settings?: DocumentTripInputs['flight_settings'];
+    activity_settings?: DocumentTripInputs['activity_settings'];
+  } | null>(null);
+
+  /**
+   * Flag to track if tiles refresh is in progress.
+   * Prevents concurrent refresh requests.
+   */
+  const isRefreshingRef = useRef(false);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Computed Values
@@ -524,6 +540,105 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       }
     };
   }, []);
+
+  /**
+   * Detect settings changes and refresh tiles accordingly.
+   *
+   * When hotel_settings, flight_settings, or activity_settings change,
+   * this effect triggers a tile refresh for the affected verticals.
+   * This ensures tiles always reflect the current user preferences.
+   */
+  useEffect(() => {
+    const tripInputs = documentStore.document?.trip_inputs;
+    const selectedBranchId = branchState.selectedBranchId;
+
+    // Skip if no trip inputs, no branch selected, or currently generating
+    if (!tripInputs || !selectedBranchId || isGenerating) {
+      return;
+    }
+
+    const currentSettings = {
+      hotel_settings: tripInputs.hotel_settings,
+      flight_settings: tripInputs.flight_settings,
+      activity_settings: tripInputs.activity_settings,
+    };
+
+    const prevSettings = prevSettingsRef.current;
+
+    // Initialize on first run
+    if (!prevSettings) {
+      prevSettingsRef.current = currentSettings;
+      return;
+    }
+
+    // Detect which verticals have changed settings
+    const changedVerticals: ('hotel' | 'flight' | 'activity')[] = [];
+
+    // Compare hotel settings
+    const prevHotel = prevSettings.hotel_settings;
+    const currHotel = currentSettings.hotel_settings;
+    if (
+      prevHotel?.min_stars !== currHotel?.min_stars ||
+      JSON.stringify(prevHotel?.amenities) !== JSON.stringify(currHotel?.amenities)
+    ) {
+      changedVerticals.push('hotel');
+    }
+
+    // Compare flight settings
+    const prevFlight = prevSettings.flight_settings;
+    const currFlight = currentSettings.flight_settings;
+    if (
+      prevFlight?.cabin_class !== currFlight?.cabin_class ||
+      prevFlight?.direct_only !== currFlight?.direct_only ||
+      prevFlight?.round_trip !== currFlight?.round_trip
+    ) {
+      changedVerticals.push('flight');
+    }
+
+    // Compare activity settings
+    const prevActivity = prevSettings.activity_settings;
+    const currActivity = currentSettings.activity_settings;
+    if (
+      JSON.stringify(prevActivity?.categories) !== JSON.stringify(currActivity?.categories) ||
+      prevActivity?.skill_level !== currActivity?.skill_level
+    ) {
+      changedVerticals.push('activity');
+    }
+
+    // Update ref before triggering refresh
+    prevSettingsRef.current = currentSettings;
+
+    // If no changes or already refreshing, skip
+    if (changedVerticals.length === 0 || isRefreshingRef.current) {
+      return;
+    }
+
+    // Trigger tile refresh for changed verticals
+    isRefreshingRef.current = true;
+
+    refreshTiles(selectedBranchId, changedVerticals)
+      .then((response) => {
+        // Update tiles map with refreshed tiles
+        const newTilesMap: Record<string, typeof branchState.tilesMap[string]> = {};
+        for (const tile of response.tiles) {
+          newTilesMap[tile.id] = tile;
+        }
+        branchState.setTilesMap((prev) => ({ ...prev, ...newTilesMap }));
+      })
+      .catch((error) => {
+        console.error('Failed to refresh tiles after settings change:', error);
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
+      });
+  }, [
+    documentStore.document?.trip_inputs?.hotel_settings,
+    documentStore.document?.trip_inputs?.flight_settings,
+    documentStore.document?.trip_inputs?.activity_settings,
+    branchState.selectedBranchId,
+    branchState.setTilesMap,
+    isGenerating,
+  ]);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Return

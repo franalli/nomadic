@@ -1,14 +1,19 @@
 """
-Tests for the /v1/graph_plan endpoint.
+Tests for the /v1/graph_plan endpoint and related utilities.
 
 Tests include:
-- Feature flag gating
-- Content-Type validation
-- Payload size validation
-- Session state handling
+- Feature flag gating (503 when disabled)
+- Content-Type validation (415 for non-JSON)
+- Thread ID validation (400 for invalid UUID)
+- Session state handling and sanitization
 - today_iso injection
-- Optimistic concurrency
-- Error handling
+- Optimistic concurrency (409 version conflict)
+- Reset parameter behavior (new thread creation)
+- Timeout handling (504 for timeouts)
+- JSON parsing utilities (malformed JSON recovery)
+- Currency normalization (symbols to ISO codes)
+- Destination normalization (deduplication, country stripping)
+- Suggested response validation
 """
 
 import os
@@ -165,10 +170,16 @@ def mock_run_turn():
             "branches": [],
             "suggested_responses": ["Tell me more about hotels", "Show me flights"],
             "errors": [],
+            "run_id": "mock-run-id-12345",  # LangSmith trace ID
             "session_state": {
                 "trip_inputs": {"destinations": ["Paris"], "origin": "London"},
                 "metadata": {},
                 "flags": {},
+                "last_summary": "I can help you plan your trip!",
+                "branches": [],
+                "suggested_responses": ["Tell me more about hotels", "Show me flights"],
+                "errors": [],
+                "thread_id": "test-thread-id",
             },
         }
         yield mock
@@ -221,6 +232,35 @@ class TestGraphPlanValidation:
         )
         # May succeed or fail based on validation - just ensure no 500
         assert response.status_code != 500
+
+    def test_invalid_thread_id_rejected(self, client, mock_run_turn):
+        """Invalid thread_id format returns 400."""
+        response = client.post(
+            "/v1/graph_plan",
+            json={
+                "message": "Test message",
+                "thread_id": "not-a-valid-uuid",
+            },
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        assert response.status_code == 400
+        data = response.json()
+        assert data["detail"]["error_code"] == GraphPlanErrorCode.INVALID_THREAD_ID
+
+    def test_valid_thread_id_accepted(self, client, mock_run_turn):
+        """Valid UUID thread_id is accepted."""
+        import uuid
+
+        valid_uuid = str(uuid.uuid4())
+        response = client.post(
+            "/v1/graph_plan",
+            json={
+                "message": "Test message",
+                "thread_id": valid_uuid,
+            },
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        assert response.status_code == 200
 
 
 class TestGraphPlanHappyPath:
@@ -368,6 +408,101 @@ class TestGraphPlanOptimisticConcurrency:
         assert data["detail"]["error_code"] == GraphPlanErrorCode.VERSION_CONFLICT
 
 
+class TestGraphPlanReset:
+    """Tests for reset parameter behavior."""
+
+    def test_reset_creates_new_thread(self, client, mock_run_turn):
+        """Reset parameter with empty session_state creates new thread."""
+        response = client.post(
+            "/v1/graph_plan",
+            json={
+                "message": "Start fresh",
+                "reset": True,
+                "session_state": None,
+            },
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        assert response.status_code == 200
+
+        # Verify run_turn was called with a new thread_id
+        call_args = mock_run_turn.call_args
+        session_state = call_args[0][1]
+        assert "thread_id" in session_state
+        # thread_id should be a valid UUID
+        import uuid
+
+        try:
+            uuid.UUID(session_state["thread_id"])
+        except ValueError:
+            pytest.fail("thread_id should be a valid UUID")
+
+    def test_reset_with_trip_inputs(self, client, mock_run_turn):
+        """Reset with trip_inputs initializes session state, but document takes precedence.
+
+        Note: Document trip_inputs are source of truth - they override request trip_inputs
+        when a document exists for the session. For a fresh session with empty document,
+        the request trip_inputs would be used, but after document hydration they may
+        be overwritten by document defaults.
+        """
+        response = client.post(
+            "/v1/graph_plan",
+            json={
+                "message": "Plan new trip",
+                "reset": True,
+                "session_state": None,
+                "trip_inputs": {
+                    "destinations": ["Tokyo"],
+                    "adults": 2,
+                },
+            },
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        assert response.status_code == 200
+
+        # Verify session state was created and passed to run_turn
+        call_args = mock_run_turn.call_args
+        session_state = call_args[0][1]
+        assert "trip_inputs" in session_state
+        # Note: Document trip_inputs override request trip_inputs (document is source of truth)
+        # so destinations may be empty if document was just created with defaults
+
+
+class TestGraphPlanTimeout:
+    """Tests for timeout handling."""
+
+    def test_timeout_returns_504(self, client):
+        """Route timeout returns 504 Gateway Timeout."""
+        import asyncio
+
+        with patch("app.main.run_turn") as mock:
+            # Make run_turn raise TimeoutError
+            mock.side_effect = asyncio.TimeoutError()
+
+            response = client.post(
+                "/v1/graph_plan",
+                json={"message": "Slow request"},
+                headers={"X-CSRF-Token": "test-csrf-token"},
+            )
+
+            assert response.status_code == 504
+            data = response.json()
+            assert data["detail"]["error_code"] == GraphPlanErrorCode.LLM_TIMEOUT
+
+    def test_general_exception_returns_500(self, client):
+        """Unhandled exception returns 500 Internal Server Error."""
+        with patch("app.main.run_turn") as mock:
+            mock.side_effect = RuntimeError("Unexpected error")
+
+            response = client.post(
+                "/v1/graph_plan",
+                json={"message": "Failing request"},
+                headers={"X-CSRF-Token": "test-csrf-token"},
+            )
+
+            # Should return 500 (unhandled exception)
+            assert response.status_code == 500
+
+
 class TestGraphPlanUtilities:
     """Tests for utility functions."""
 
@@ -463,3 +598,141 @@ class TestGraphPlanUtilities:
             assert r  # Not empty
             assert len(r.split()) >= 1
             assert len(r.split()) <= 8
+
+
+class TestGraphPlanJsonParsing:
+    """Tests for JSON parsing utilities (PR-D extraction)."""
+
+    def test_truncate_to_balanced_json_valid(self):
+        """Extracts valid JSON from garbage-wrapped input."""
+        from app.graph_plan_utils import truncate_to_balanced_json
+
+        # Valid JSON wrapped in garbage
+        raw = 'Some prefix text {"key": "value", "nested": {"a": 1}} trailing garbage'
+        result = truncate_to_balanced_json(raw)
+        assert result == '{"key": "value", "nested": {"a": 1}}'
+
+    def test_truncate_to_balanced_json_truncated(self):
+        """Returns None for truncated JSON."""
+        from app.graph_plan_utils import truncate_to_balanced_json
+
+        # Truncated JSON (unclosed brace)
+        raw = '{"key": "value", "nested": {"a": 1'
+        result = truncate_to_balanced_json(raw)
+        assert result is None
+
+    def test_truncate_to_balanced_json_string_escapes(self):
+        """Handles escaped quotes in strings correctly."""
+        from app.graph_plan_utils import truncate_to_balanced_json
+
+        # JSON with escaped quotes
+        raw = '{"message": "He said \\"hello\\"", "count": 1}'
+        result = truncate_to_balanced_json(raw)
+        assert result == '{"message": "He said \\"hello\\"", "count": 1}'
+
+    def test_jloads_safe_valid_json(self):
+        """Parses valid JSON correctly."""
+        from app.graph_plan_utils import jloads_safe
+
+        result = jloads_safe('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_jloads_safe_malformed_recovers(self):
+        """Recovers from malformed JSON with garbage around it."""
+        from app.graph_plan_utils import jloads_safe
+
+        # Garbage before JSON
+        raw = 'Here is the output: {"key": "value"}'
+        result = jloads_safe(raw)
+        assert result.get("key") == "value"
+
+    def test_jloads_safe_empty_returns_empty_dict(self):
+        """Returns empty dict for empty input."""
+        from app.graph_plan_utils import jloads_safe
+
+        assert jloads_safe("") == {}
+
+    def test_extract_message_from_malformed_json(self):
+        """Extracts assistant_message from truncated JSON."""
+        from app.graph_plan_utils import extract_message_from_malformed_json
+
+        # Truncated JSON with complete assistant_message
+        raw = (
+            '{"assistant_message": "I can help you plan a trip to Paris. '
+            'This is a complete message that ends properly.", "trip_inputs": {'
+        )
+        result = extract_message_from_malformed_json(raw)
+        # Should extract the message even though JSON is truncated
+        assert result is not None
+        assert "Paris" in result
+
+    def test_extract_message_returns_none_for_short_message(self):
+        """Returns None if extracted message is too short."""
+        from app.graph_plan_utils import extract_message_from_malformed_json
+
+        # Very short message
+        raw = '{"assistant_message": "Hi"}'
+        result = extract_message_from_malformed_json(raw)
+        # Should return None because message is < 50 chars
+        assert result is None
+
+
+class TestGraphPlanCurrencyNormalization:
+    """Tests for currency normalization."""
+
+    def test_normalize_currency_code(self):
+        """ISO currency codes are uppercased."""
+        from app.graph_plan_utils import normalize_currency
+
+        assert normalize_currency("usd") == "USD"
+        assert normalize_currency("eur") == "EUR"
+        assert normalize_currency("GBP") == "GBP"
+
+    def test_normalize_currency_symbol(self):
+        """Currency symbols are mapped to ISO codes."""
+        from app.graph_plan_utils import normalize_currency
+
+        assert normalize_currency("$") == "USD"
+        assert normalize_currency("€") == "EUR"
+        assert normalize_currency("£") == "GBP"
+
+    def test_normalize_currency_invalid(self):
+        """Invalid currencies return None."""
+        from app.graph_plan_utils import normalize_currency
+
+        assert normalize_currency("invalid") is None
+        assert normalize_currency("") is None
+        assert normalize_currency(None) is None
+
+
+class TestGraphPlanDestinationNormalization:
+    """Tests for destination normalization."""
+
+    def test_normalize_destinations_basic(self):
+        """Basic destination normalization works."""
+        from app.graph_plan_utils import normalize_destinations
+
+        result = normalize_destinations(["paris", "LONDON", "tokyo"])
+        assert result == ["Paris", "London", "Tokyo"]
+
+    def test_normalize_destinations_deduplication(self):
+        """Duplicate destinations are removed (case-insensitive)."""
+        from app.graph_plan_utils import normalize_destinations
+
+        result = normalize_destinations(["Paris", "paris", "PARIS"])
+        assert result == ["Paris"]
+
+    def test_normalize_destinations_strips_country(self):
+        """Country suffixes are stripped."""
+        from app.graph_plan_utils import normalize_destinations
+
+        result = normalize_destinations(["Banff, Canada", "Tokyo, Japan"])
+        assert result == ["Banff", "Tokyo"]
+
+    def test_normalize_destinations_preserves_short_codes(self):
+        """Short all-caps codes are preserved."""
+        from app.graph_plan_utils import normalize_destinations
+
+        result = normalize_destinations(["EBC", "NYC"])
+        assert "EBC" in result
+        assert "NYC" in result

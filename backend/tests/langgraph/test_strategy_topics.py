@@ -21,6 +21,9 @@ from app.plan_graph import (
 )
 from app.planner.gates.implementations import StrategyTopicSwitchGate
 from app.planner.gates.readiness import TripReadiness
+from app.planner.gates.topic_detection import (
+    detect_strategy_topic_from_text_precise,
+)
 
 FUTURE_START = (date.today() + timedelta(days=30)).isoformat()
 FUTURE_END = (date.today() + timedelta(days=40)).isoformat()
@@ -198,6 +201,101 @@ class TestTopicDetectionNegative:
         """Non-strategy texts should not detect a topic."""
         topic = _detect_strategy_topic_from_text(text)
         assert topic is None, f"'{text}' should not detect topic, got '{topic}'"
+
+
+# =============================================================================
+# Precise Topic Detection Tests (Word Boundaries)
+# =============================================================================
+class TestPreciseTopicDetection:
+    """Tests for detect_strategy_topic_from_text_precise() with word boundaries."""
+
+    def test_patterns_compiled_for_all_topics(self):
+        """All strategy topics should have compiled regex patterns."""
+        expected_topics = {"hiking", "diving", "skiing", "cycling", "boating"}
+        assert set(STRATEGY_TOPIC_PATTERNS.keys()) == expected_topics
+
+    @pytest.mark.parametrize(
+        "text,expected_topic",
+        [
+            # Skiing - note: "ski" alone is NOT a keyword, only "skiing"
+            ("I want to go skiing", "skiing"),
+            ("skiing vacation please", "skiing"),
+            ("snowboarding trip", "skiing"),
+            ("powder day in the alps", "skiing"),
+            # Hiking
+            ("going hiking tomorrow", "hiking"),
+            ("plan a hike", "hiking"),
+            ("trekking adventure", "hiking"),
+            ("mountain trails", "hiking"),
+            # Diving
+            ("let's go diving", "diving"),
+            ("scuba dive trip", "diving"),
+            ("snorkeling adventure", "diving"),
+            # Cycling
+            ("cycling tour of France", "cycling"),
+            ("bike through wine country", "cycling"),
+            ("bicycle trip", "cycling"),
+            # Boating - note: "skippered" and "bareboat" ARE boating keywords
+            ("sailing adventure", "boating"),
+            ("yacht charter please", "boating"),
+            ("skippered charter", "boating"),  # skippered is a boating keyword
+            ("bareboat rental", "boating"),  # bareboat is a boating keyword
+        ],
+    )
+    def test_precise_positive_cases(self, text: str, expected_topic: str):
+        """Precise detection should match valid topic keywords."""
+        topic = detect_strategy_topic_from_text_precise(text)
+        assert topic == expected_topic, f"'{text}' should detect '{expected_topic}', got '{topic}'"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "skilled worker",  # Should NOT match 'ski' (ski not a keyword anyway)
+            "skipping stones",  # Should NOT match any
+            "bikini beach",  # Should NOT match 'bike'
+            "diver-sion tactics",  # Should NOT match 'dive' (hyphen breaks word)
+            "I want to ski",  # 'ski' alone is NOT in keywords, only 'skiing'
+        ],
+    )
+    def test_precise_no_false_positives(self, text: str):
+        """Precise detection should NOT have false positives from partial matches."""
+        topic = detect_strategy_topic_from_text_precise(text)
+        assert topic is None, f"'{text}' should not detect topic, got '{topic}'"
+
+    def test_skippered_matches_boating_not_skiing(self):
+        """'skippered' is a boating keyword, should match boating not skiing."""
+        text = "I need a skippered yacht charter"
+        topic = detect_strategy_topic_from_text_precise(text)
+        assert topic != "skiing", "'skippered' incorrectly matched skiing"
+        # Should match boating because 'skippered' and 'yacht' are boating keywords
+        assert topic == "boating", f"Should detect boating, got '{topic}'"
+
+    def test_bareboat_matches_boating(self):
+        """'bareboat' is a boating keyword, should match boating."""
+        text = "bareboat charter"
+        topic = detect_strategy_topic_from_text_precise(text)
+        # 'bareboat' is explicitly in boating keywords
+        assert topic == "boating", f"'bareboat' should match boating, got '{topic}'"
+
+    def test_ski_alone_not_keyword(self):
+        """'ski' alone is not in keywords - only 'skiing' is."""
+        # This tests that word boundaries work correctly
+        # "ski" is not in STRATEGY_INTENT_KEYWORDS["skiing"], only "skiing" is
+        text = "we love to ski"
+        topic = detect_strategy_topic_from_text_precise(text)
+        assert topic is None, f"'ski' alone should not match, got '{topic}'"
+
+    def test_case_insensitive_matching(self):
+        """Precise detection should be case-insensitive."""
+        assert detect_strategy_topic_from_text_precise("SKIING") == "skiing"
+        assert detect_strategy_topic_from_text_precise("Hiking Trip") == "hiking"
+        assert detect_strategy_topic_from_text_precise("SCUBA DIVING") == "diving"
+
+    def test_empty_and_whitespace(self):
+        """Empty and whitespace-only strings should return None."""
+        assert detect_strategy_topic_from_text_precise("") is None
+        assert detect_strategy_topic_from_text_precise("   ") is None
+        assert detect_strategy_topic_from_text_precise("\n\t") is None
 
 
 # =============================================================================

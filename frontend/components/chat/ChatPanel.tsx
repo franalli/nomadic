@@ -26,7 +26,7 @@ import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
 import { determineStage,FlowStageIndicator } from './FlowStageIndicator';
-import { StrategyProgress } from './StrategyProgress';
+import { NodeProgress } from './NodeProgress';
 
 // Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
 const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
@@ -89,6 +89,22 @@ function getErrorMessage(error: Error): string {
 
   // Default fallback
   return "I ran into an issue planning your trip. Try again or adjust your message.";
+}
+
+// Tier 11.12: Check if an error message is retryable (transient network/server issues)
+function isRetryableError(content: string): boolean {
+  const retryablePatterns = [
+    "couldn't connect",
+    'check your internet',
+    'took too long',
+    'check your connection',
+    'too quickly',
+    'wait a moment',
+    'went wrong on our end',
+    'try again in a few',
+  ];
+  const lowerContent = content.toLowerCase();
+  return retryablePatterns.some((pattern) => lowerContent.includes(pattern));
 }
 
 // Typing indicator component - extracted to module level to prevent recreation
@@ -226,18 +242,27 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [isMobile, setIsMobile] = useState(false);
     const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
     const [generateTriggered, setGenerateTriggered] = useState(false);
-    const [hasShownHint, setHasShownHint] = useState(false);
+    // Initialize from localStorage to persist hint state across sessions
+    const [hasShownHint, setHasShownHint] = useState(() => {
+      if (typeof window === 'undefined') return false;
+      return localStorage.getItem('nomadic-trip-details-hint-shown') === 'true';
+    });
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     const [sessionState, setSessionState] = useState<Record<string, unknown> | null>(null);
-    // Strategy progress tracking for showing progress line instead of typing dots
-    const [strategyStatus, setStrategyStatus] = useState<{
+    // Tier 11.12: Track last user message for retry on transient errors
+    const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
+    // Node progress tracking for showing progress bar instead of typing dots
+    const [nodeStatus, setNodeStatus] = useState<{
       active: boolean;
-      stage: number;
-      tier: 'outline' | 'section' | 'full';
-      topic: 'hiking' | 'skiing' | 'diving' | 'cycling' | 'boating';
+      node: string;
+      label: string;
+      iconKey: string;
       estimatedDurationMs: number;
       startTime: number;
+      // Strategy-specific (optional)
+      stage?: number;
+      topic?: string;
     } | null>(null);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -337,12 +362,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         abortStreamRef.current = null;
       }
 
-      // Mark message as interrupted
+      // Mark message as interrupted with a user-friendly message
       if (streamingMessageId) {
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === streamingMessageId
-              ? { ...msg, content: (msg.content || '') + '...[interrupted]' }
+              ? {
+                  ...msg,
+                  content:
+                    (msg.content || '').trim() +
+                    '\n\n*[Response stopped. You can continue the conversation or ask me to elaborate.]*',
+                }
               : msg
           )
         );
@@ -350,7 +380,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
       // Reset states
       setStreamingMessageId(null);
-      setStrategyStatus(null);
+      setNodeStatus(null);
       setHasReceivedFirstToken(false);
       setIsLoading(false);
     }, [streamingMessageId]);
@@ -445,10 +475,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     }, [hasUserMessage, isMobile, hasShownHint]);
 
     // Track when hint animation should show (first time trip details appear)
+    // Persist hint state to localStorage so users don't see it repeatedly
     useEffect(() => {
       if (hasUserMessage && !hasShownHint) {
-        // Mark hint as shown after animation duration
-        const timer = setTimeout(() => setHasShownHint(true), 2000);
+        // Mark hint as shown after animation duration and persist to localStorage
+        const timer = setTimeout(() => {
+          setHasShownHint(true);
+          localStorage.setItem('nomadic-trip-details-hint-shown', 'true');
+        }, 2000);
         return () => clearTimeout(timer);
       }
     }, [hasUserMessage, hasShownHint]);
@@ -494,6 +528,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         };
         setMessages((prev) => [...prev, userMessage]);
         setSuggestedResponses([]); // Clear suggestions when user sends a message
+        setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
 
         // Create a message bubble for streaming tokens into
@@ -527,20 +562,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               );
             },
             onNodeStatus: (status: SSENodeStatusEvent['data']) => {
-              if (status.node === 'strategy_node' && status.status === 'started') {
-                setStrategyStatus({
+              if (status.status === 'started') {
+                setNodeStatus({
                   active: true,
-                  stage: status.stage,
-                  tier: status.tier,
-                  topic: status.topic,
+                  node: status.node,
+                  label: status.label,
+                  iconKey: status.icon_key,
                   estimatedDurationMs: status.estimated_duration_ms,
                   startTime: Date.now(),
+                  // Strategy-specific fields (optional)
+                  stage: status.stage,
+                  topic: status.topic,
                 });
               }
             },
             onComplete: (response) => {
               setStreamingMessageId(null);
-              setStrategyStatus(null); // Clear strategy progress on completion
+              setNodeStatus(null); // Clear strategy progress on completion
               abortStreamRef.current = null; // Clear abort ref
 
               // Parse the response - it matches GraphPlanResponse structure
@@ -602,7 +640,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             },
             onError: (error: Error) => {
               setStreamingMessageId(null);
-              setStrategyStatus(null); // Clear strategy progress on error
+              setNodeStatus(null); // Clear strategy progress on error
               abortStreamRef.current = null; // Clear abort ref
               console.error('Failed to plan trip', error);
 
@@ -673,6 +711,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Simple render - no content-based filters, just show all non-empty messages
     // During generation, hide the initial welcome message to keep focus on the "All details collected" message
     // After branches are ready, replace the welcome message with a prompt to refine the trip
+    // Split assistant messages by paragraph breaks into separate bubbles for better readability
     const visibleMessages = messages
       .filter((m) => {
         if (!m.content || m.content.trim().length === 0) return false;
@@ -684,13 +723,31 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           return { ...m, content: '💬 Keep chatting to refine and book your trip!' };
         }
         return m;
+      })
+      .flatMap((m) => {
+        // Only split assistant messages by paragraph breaks
+        if (m.role === 'assistant') {
+          const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
+          if (paragraphs.length > 1) {
+            return paragraphs.map((paragraph, idx) => ({
+              ...m,
+              id: `${m.id}_p${idx}`,
+              content: paragraph.trim(),
+              // Mark as part of a split message for styling consistency
+              _isPartOfSplit: true,
+              _isFirstPart: idx === 0,
+              _isLastPart: idx === paragraphs.length - 1,
+            }));
+          }
+        }
+        return m;
       });
 
     // Show typing indicator when loading and haven't received first streaming token yet
-    // Don't show when strategy progress is active (we show progress bar instead)
-    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !strategyStatus?.active;
-    // Show strategy progress when strategy node is executing, hide once tokens start arriving
-    const showStrategyProgress = isLoading && !hasReceivedFirstToken && strategyStatus?.active;
+    // Don't show when node progress is active (we show progress bar instead)
+    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !nodeStatus?.active;
+    // Show node progress when an LLM node is executing, hide once tokens start arriving
+    const showNodeProgress = isLoading && !hasReceivedFirstToken && nodeStatus?.active;
 
     return (
       <div
@@ -747,37 +804,68 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <ChatSkeleton count={2} />
           ) : (
             <>
-              {visibleMessages.map((m, idx) => (
-                <div
-                  key={m.id}
-                  className={`${m.role === 'user' ? 'text-right' : 'text-left'} message-enter`}
-                  style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
-                >
+              {visibleMessages.map((m, idx) => {
+                // Check if this is part of a split message (for styling and retry button logic)
+                const isSplitMessage = '_isPartOfSplit' in m && m._isPartOfSplit;
+                const isFirstPart = '_isFirstPart' in m && m._isFirstPart;
+                const isLastPart = '_isLastPart' in m && m._isLastPart;
+                // Extract original message ID for streaming check (handles split messages)
+                const originalId = m.id.replace(/_p\d+$/, '');
+                const isStreaming = streamingMessageId === originalId && !isSplitMessage;
+                // Tighter spacing for consecutive parts of split messages
+                const spacingClass = isSplitMessage && !isFirstPart ? '-mt-1.5' : '';
+
+                return (
                   <div
-                    className={
-                      m.role === 'user'
-                        ? 'border border-primary/40 dark:border-accent/40 bg-gradient-to-br from-primary via-primary to-primary/70 text-primary-foreground dark:from-amber-500 dark:via-accent dark:to-amber-600/70 dark:text-white inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.2)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.15)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.25)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:border-primary/60 dark:hover:border-accent/60'
-                        : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${streamingMessageId === m.id ? 'typing-pulse' : ''}`
-                    }
+                    key={m.id}
+                    className={`${m.role === 'user' ? 'text-right' : 'text-left'} message-enter ${spacingClass}`}
+                    style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
                   >
-                    {m.role === 'assistant' ? (
-                      <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                        {m.content}
-                      </Markdown>
-                    ) : (
-                      m.content
-                    )}
+                    <div
+                      className={
+                        m.role === 'user'
+                          ? 'border border-primary/40 dark:border-accent/40 bg-gradient-to-br from-primary via-primary to-primary/70 text-primary-foreground dark:from-amber-500 dark:via-accent dark:to-amber-600/70 dark:text-white inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.2)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.15)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.25)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:border-primary/60 dark:hover:border-accent/60'
+                          : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${isStreaming ? 'typing-pulse' : ''}`
+                      }
+                    >
+                      {m.role === 'assistant' ? (
+                        <>
+                          <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                            {m.content}
+                          </Markdown>
+                          {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
+                          {originalId.startsWith('a_err_') &&
+                            lastUserMessage &&
+                            isRetryableError(m.content) &&
+                            !isLoading &&
+                            (!isSplitMessage || isLastPart) && (
+                              <button
+                                type="button"
+                                onClick={() => sendMessageCore(lastUserMessage)}
+                                className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Retry
+                              </button>
+                            )}
+                        </>
+                      ) : (
+                        m.content
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {showTypingIndicator && <TypingIndicator />}
-              {showStrategyProgress && strategyStatus && (
-                <StrategyProgress
-                  stage={strategyStatus.stage}
-                  tier={strategyStatus.tier}
-                  topic={strategyStatus.topic}
-                  estimatedDurationMs={strategyStatus.estimatedDurationMs}
-                  startTime={strategyStatus.startTime}
+              {showNodeProgress && nodeStatus && (
+                <NodeProgress
+                  node={nodeStatus.node}
+                  label={nodeStatus.label}
+                  iconKey={nodeStatus.iconKey}
+                  estimatedDurationMs={nodeStatus.estimatedDurationMs}
+                  startTime={nodeStatus.startTime}
+                  stage={nodeStatus.stage}
+                  topic={nodeStatus.topic}
                 />
               )}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
@@ -915,12 +1003,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         {/* Trip inputs section - positioned below chat input */}
         {showTripDetails && (
           <div ref={tripInputsRef} className="mt-1.5 pt-1.5 pb-3 border-t border-border/50 space-y-4">
-            <Collapsible.Root open={tripDetailsOpen} onOpenChange={setTripDetailsOpen}>
+            <Collapsible.Root open={tripDetailsOpen} onOpenChange={(open) => {
+              setTripDetailsOpen(open);
+              // Mark hint as shown when user manually opens trip details
+              if (open && !hasShownHint) {
+                setHasShownHint(true);
+                localStorage.setItem('nomadic-trip-details-hint-shown', 'true');
+              }
+            }}>
               <div>
                 <Collapsible.Trigger asChild>
                   <button className={`w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
                     Trip Details
+                    {/* Show hint text on collapsed state for mobile users who haven't seen it yet */}
+                    {!tripDetailsOpen && !hasShownHint && (
+                      <span className="ml-auto text-[10px] text-muted-foreground font-normal normal-case tracking-normal">
+                        Tap to customize preferences
+                      </span>
+                    )}
                   </button>
                 </Collapsible.Trigger>
                 <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
