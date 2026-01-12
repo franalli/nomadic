@@ -28,3 +28,4 @@ langsmith==0.5.1
 langchain-openai==1.1.6
 pytest==9.0.2
 grapheme==0.6.0
+claude-agent-sdk==0.1.19

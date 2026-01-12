@@ -224,7 +224,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Use chat store for messages, history loading, and session state
     const messages = useChatStore((state) => state.messages);
-    const setMessages = useChatStore((state) => state.setMessages);
     const addMessage = useChatStore((state) => state.addMessage);
     const updateMessage = useChatStore((state) => state.updateMessage);
     const appendToMessage = useChatStore((state) => state.appendToMessage);
