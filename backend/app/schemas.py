@@ -56,6 +56,14 @@ class ChatHistoryResponse(BaseModel):
     messages: List[ChatMessageResponse]
 
 
+class DeleteLastMessageResponse(BaseModel):
+    """Response from deleting the last user message and its assistant response."""
+
+    deleted_count: int
+    restored_trip_inputs: Optional[dict] = None
+    messages: List[ChatMessageResponse]  # Remaining messages after deletion
+
+
 class Tile(BaseModel):
     id: str
     type: TileType

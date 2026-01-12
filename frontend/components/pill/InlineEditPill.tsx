@@ -52,6 +52,10 @@ function InlineEditPillInner({
       const timer = setTimeout(() => setShowGotIt(false), 2000);
       return () => clearTimeout(timer);
     }
+    // Hide badge immediately when field is no longer LLM-updated (e.g., after undo)
+    if (!isLLMUpdated && wasUpdated) {
+      setShowGotIt(false);
+    }
     setWasUpdated(isLLMUpdated);
   }, [isLLMUpdated, wasUpdated]);
 
@@ -65,7 +69,7 @@ function InlineEditPillInner({
   return (
     <div
       className={cn(
-        'flex flex-col gap-1.5 rounded-2xl px-3 py-2.5 relative',
+        'flex flex-col gap-1.5 rounded-2xl px-3 py-2.5 relative overflow-visible',
         'bg-gradient-to-b from-card to-muted/20 border border-border/50',
         'shadow-pill h-full transition-all duration-300',
         isLLMUpdated && 'border-accent/40 shadow-pill-accent ring-1 ring-accent/20',
@@ -77,7 +81,7 @@ function InlineEditPillInner({
       {/* "Got it!" badge - shows briefly when field is extracted */}
       {showGotIt && (
         <div
-          className="absolute -top-2 -right-2 flex items-center gap-0.5 bg-accent text-accent-foreground text-[10px] font-semibold px-1.5 py-0.5 rounded-full animate-in fade-in zoom-in-95 duration-200 shadow-sm"
+          className="absolute -top-2 -right-2 z-50 flex items-center gap-0.5 bg-accent text-accent-foreground text-[10px] font-semibold px-1.5 py-0.5 rounded-full animate-in fade-in zoom-in-95 duration-200 shadow-sm"
         >
           <Check className="h-2.5 w-2.5" />
           <span>Got it!</span>

@@ -2,7 +2,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Square, Trash2 } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -15,7 +15,9 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { apiFetch, type SSENodeStatusEvent,streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
+import { useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
 import type {
   DocumentBranch,
@@ -27,9 +29,6 @@ import type { Tile } from '@/types/tile';
 import { ChatSkeleton } from './ChatSkeleton';
 import { determineStage,FlowStageIndicator } from './FlowStageIndicator';
 import { NodeProgress } from './NodeProgress';
-
-// Special message that triggers plan generation (must match backend _GENERATE_PLAN_TRIGGER)
-const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 // Message to show after plan is generated with specific examples
 const POST_GENERATE_MESSAGE =
   "Your trip options are ready! You can say things like 'increase budget to $3000', 'remove Paris', or 'add a beach day' to refine your plan.";
@@ -42,15 +41,6 @@ const PROMPT_SUGGESTIONS = [
   { label: '🏔️ Adventure trip', prompt: "Plan an adventure trip with hiking and outdoor activities" },
   { label: '✈️ Quick flight', prompt: "I need to book a one-way flight" },
   { label: '👨‍👩‍👧 Family trip', prompt: "Plan a family-friendly vacation with activities for kids" },
-];
-
-const DEFAULT_MESSAGES: ChatMessage[] = [
-  {
-    id: 'm0',
-    role: 'assistant',
-    content:
-      "Hey there! ✈️ I'm excited to help you plan an amazing trip! Where are you dreaming of going?",
-  },
 ];
 
 // Helper to generate specific error messages based on error type
@@ -232,10 +222,26 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onFreshStart,
     } = props;
 
-    const [messages, setMessages] = useState<ChatMessage[]>(DEFAULT_MESSAGES);
+    // Use chat store for messages, history loading, and session state
+    const messages = useChatStore((state) => state.messages);
+    const setMessages = useChatStore((state) => state.setMessages);
+    const addMessage = useChatStore((state) => state.addMessage);
+    const updateMessage = useChatStore((state) => state.updateMessage);
+    const appendToMessage = useChatStore((state) => state.appendToMessage);
+    const updateMessageId = useChatStore((state) => state.updateMessageId);
+    const filterMessages = useChatStore((state) => state.filterMessages);
+    const isLoadingHistory = useChatStore((state) => state.isLoadingHistory);
+    const loadHistory = useChatStore((state) => state.loadHistory);
+    const sessionState = useChatStore((state) => state.sessionState);
+    const setSessionState = useChatStore((state) => state.setSessionState);
+    const deleteLastMessageFromStore = useChatStore((state) => state.deleteLastMessage);
+
+    // Document store for restoring trip inputs on delete
+    const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
+
     const [input, setInput] = useState('');
+    const [isDeleting, setIsDeleting] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
-    const [isLoadingHistory, setIsLoadingHistory] = useState(true);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
     // Mobile detection for responsive collapsed defaults
@@ -249,7 +255,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     });
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
-    const [sessionState, setSessionState] = useState<Record<string, unknown> | null>(null);
     // Tier 11.12: Track last user message for retry on transient errors
     const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
     // Node progress tracking for showing progress bar instead of typing dots
@@ -364,18 +369,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
       // Mark message as interrupted with a user-friendly message
       if (streamingMessageId) {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === streamingMessageId
-              ? {
-                  ...msg,
-                  content:
-                    (msg.content || '').trim() +
-                    '\n\n*[Response stopped. You can continue the conversation or ask me to elaborate.]*',
-                }
-              : msg
-          )
-        );
+        const currentMsg = messages.find((m) => m.id === streamingMessageId);
+        const currentContent = (currentMsg?.content || '').trim();
+        updateMessage(streamingMessageId, {
+          content: currentContent + '\n\n*[Response stopped. You can continue the conversation or ask me to elaborate.]*',
+        });
       }
 
       // Reset states
@@ -383,7 +381,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setNodeStatus(null);
       setHasReceivedFirstToken(false);
       setIsLoading(false);
-    }, [streamingMessageId]);
+    }, [streamingMessageId, messages, updateMessage]);
 
     // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
     useEffect(() => {
@@ -423,34 +421,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       }
     }, [isLoading]);
 
-    // Load chat history from backend API on mount
+    // Load chat history from store (only loads once, persists across remounts)
     useEffect(() => {
-      const loadChatHistory = async () => {
-        try {
-          const res = await apiFetch('/v1/chat');
-          if (res.ok) {
-            const data = await res.json();
-            if (data.messages && data.messages.length > 0) {
-              const loadedMessages: ChatMessage[] = data.messages.map(
-                (m: { id: string; role: string; content: string }) => ({
-                  id: m.id,
-                  role: m.role as 'user' | 'assistant',
-                  // Transform any stored trigger to friendly text (handles legacy data)
-                  content: m.content === GENERATE_PLAN_TRIGGER ? 'Generate my trip options' : m.content,
-                })
-              );
-              setMessages(loadedMessages);
-            }
-          }
-        } catch (error) {
-          console.error('Failed to load chat history', error);
-          // Keep default messages on error
-        } finally {
-          setIsLoadingHistory(false);
-        }
-      };
-      loadChatHistory();
-    }, []);
+      loadHistory();
+    }, [loadHistory]);
 
     useEffect(() => {
       inputRef.current?.focus();
@@ -494,9 +468,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setReadyMessageShown(false);
         setGenerateTriggered(false);
         // Remove any "ready to generate" messages from the chat
-        setMessages((prev) => prev.filter((msg) => !msg.id.startsWith(READY_MESSAGE_ID_PREFIX)));
+        filterMessages((msg) => !msg.id.startsWith(READY_MESSAGE_ID_PREFIX));
       }
-    }, [readyToGenerate]);
+    }, [readyToGenerate, filterMessages]);
 
     // Note: Ready-to-generate message is now handled by the backend in summarize()
     // The backend sends: "Great news! I have everything I need to plan your trip..."
@@ -526,17 +500,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           role: 'user',
           content: isGenerateTrigger ? 'Generate my trip options' : trimmed,
         };
-        setMessages((prev) => [...prev, userMessage]);
+        addMessage(userMessage);
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
 
         // Create a message bubble for streaming tokens into
         const streamingMsgId = `a_stream_${Date.now()}`;
-        setMessages((prev) => [
-          ...prev,
-          { id: streamingMsgId, role: 'assistant', content: '' },
-        ]);
+        addMessage({ id: streamingMsgId, role: 'assistant', content: '' });
         setStreamingMessageId(streamingMsgId);
         setHasReceivedFirstToken(false); // Reset for new streaming message
 
@@ -553,13 +524,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Mark that we've received the first token (hides typing/progress indicator)
               setHasReceivedFirstToken(true);
               // Append token to the streaming message
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === streamingMsgId
-                    ? { ...msg, content: (msg.content || '') + token }
-                    : msg
-                )
-              );
+              appendToMessage(streamingMsgId, token);
             },
             onNodeStatus: (status: SSENodeStatusEvent['data']) => {
               if (status.status === 'started') {
@@ -608,31 +573,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setSuggestedResponses(doc.suggested_responses || []);
 
               if (hasBranchesNow) {
-                // Branches generated: remove streaming message, keep "ready" message,
-                // add post-generate message
-                setMessages((prev) => {
-                  const filtered = prev.filter(
-                    (msg) => msg.id !== streamingMsgId
-                  );
-                  return [
-                    ...filtered,
-                    {
-                      id: `post_${Date.now()}`,
-                      role: 'assistant' as const,
-                      content: POST_GENERATE_MESSAGE,
-                    },
-                  ];
+                // Branches generated: remove streaming message, add post-generate message
+                filterMessages((msg) => msg.id !== streamingMsgId);
+                addMessage({
+                  id: `post_${Date.now()}`,
+                  role: 'assistant',
+                  content: POST_GENERATE_MESSAGE,
                 });
               } else if (isReadyToGenerate) {
                 // Update the streaming message ID to use the ready prefix
                 // so it can be removed when generation starts
-                setMessages((prev) =>
-                  prev.map((msg) =>
-                    msg.id === streamingMsgId
-                      ? { ...msg, id: `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}` }
-                      : msg
-                  )
-                );
+                updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
               }
 
               setIsLoading(false);
@@ -646,17 +597,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               // Replace streaming message with specific error message
               const errorMessage = getErrorMessage(error);
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === streamingMsgId
-                    ? {
-                        ...msg,
-                        id: `a_err_${Date.now()}`,
-                        content: errorMessage,
-                      }
-                    : msg
-                )
-              );
+              const errorMsgId = `a_err_${Date.now()}`;
+              updateMessageId(streamingMsgId, errorMsgId);
+              updateMessage(errorMsgId, { content: errorMessage });
 
               setIsLoading(false);
               resolve(); // Resolve instead of reject to prevent unhandled promise rejection
@@ -664,7 +607,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -673,18 +616,41 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         role: 'assistant',
         content: message,
       };
-      setMessages((prev) => [...prev, assistantMessage]);
+      addMessage(assistantMessage);
       // Scroll panel into view and focus input after message is added (matches LLM response behavior)
       scrollPanelIntoView();
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
-    }, [scrollPanelIntoView]);
+    }, [scrollPanelIntoView, addMessage]);
 
     // Handle clicking a prompt suggestion - automatically send the message
     const handleSuggestionClick = useCallback((prompt: string) => {
       sendMessageCore(prompt);
     }, [sendMessageCore]);
+
+    // Handle deleting the last user message (undo)
+    const handleDeleteLastMessage = useCallback(async () => {
+      if (isDeleting || isLoading) return;
+
+      setIsDeleting(true);
+      try {
+        const result = await deleteLastMessageFromStore();
+        if (result.success && result.restoredTripInputs) {
+          // Restore trip inputs in document store
+          restoreTripInputs(result.restoredTripInputs as DocumentTripInputs);
+        }
+      } catch (error) {
+        console.error('Failed to delete message:', error);
+      } finally {
+        setIsDeleting(false);
+      }
+    }, [isDeleting, isLoading, deleteLastMessageFromStore, restoreTripInputs]);
+
+    // Find the last user message ID for showing delete button
+    const lastUserMessageId = messages
+      .filter((m) => m.role === 'user')
+      .at(-1)?.id ?? null;
 
     useImperativeHandle(
       ref,
@@ -824,7 +790,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     <div
                       className={
                         m.role === 'user'
-                          ? 'border border-primary/40 dark:border-accent/40 bg-gradient-to-br from-primary via-primary to-primary/70 text-primary-foreground dark:from-amber-500 dark:via-accent dark:to-amber-600/70 dark:text-white inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.2)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.15)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.25)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:border-primary/60 dark:hover:border-accent/60'
+                          ? 'group/msg border border-primary/40 dark:border-accent/40 bg-gradient-to-br from-primary via-primary to-primary/70 text-primary-foreground dark:from-amber-500 dark:via-accent dark:to-amber-600/70 dark:text-white inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.2)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.15)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.25)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:border-primary/60 dark:hover:border-accent/60'
                           : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${isStreaming ? 'typing-pulse' : ''}`
                       }
                     >
@@ -850,7 +816,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                             )}
                         </>
                       ) : (
-                        m.content
+                        <>
+                          {m.content}
+                          {/* Delete button for last user message - only visible on hover */}
+                          {originalId === lastUserMessageId && !isLoading && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleDeleteLastMessage();
+                              }}
+                              disabled={isDeleting}
+                              className="ml-2 p-1 rounded-full bg-white/20 hover:bg-red-500 text-white/50 hover:text-white invisible group-hover/msg:visible transition-colors"
+                              title="Undo this message"
+                              aria-label="Delete this message"
+                            >
+                              {isDeleting ? (
+                                <span className="h-3 w-3 block animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
+                              ) : (
+                                <Trash2 className="h-3 w-3" />
+                              )}
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>

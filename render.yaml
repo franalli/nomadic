@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: nomadic-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nomadic-db
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: COOKIE_DOMAIN
+        sync: false
+      - key: ENV
+        value: production
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        sync: false
+    healthCheckPath: /health
+
+databases:
+  - name: nomadic-db
+    plan: free
+    databaseName: nomadic
+    user: nomadic_user

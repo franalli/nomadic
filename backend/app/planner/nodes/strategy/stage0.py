@@ -355,7 +355,6 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
         _gate_stats,
         _get_node_llm_config,
         _record_node_tokens,
-        call_llm_with_timeout,
         can_call_llm,
         canonicalize_question_target,
         jloads_safe,
@@ -370,6 +369,11 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
         generate_date_suggestions,
         get_question_guidance,
         track_strategy_pre_core_question,
+    )
+    from app.planner.streaming import (
+        StreamingContext,
+        call_llm_streaming_with_json_field,
+        get_streaming_context,
     )
 
     _, start_ns = _debug_node_entry("strategy_node:stage0", state)
@@ -470,14 +474,23 @@ async def strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
 
     for attempt in range(attempts):
         try:
-            out = await call_llm_with_timeout(
+            # Get streaming context for real-time token streaming
+            # Look up from registry using thread_id (avoids serialization issues)
+            _streaming_thread_id = state.metadata.get("_streaming_thread_id")
+            streaming_ctx: StreamingContext | None = get_streaming_context(_streaming_thread_id)
+
+            # Use streaming call to emit assistant_message tokens in real-time
+            out = await call_llm_streaming_with_json_field(
                 model=llm_config["model_hint"],
                 prompt=prompt,
-                timeout_seconds=timeout,
+                stream_field="assistant_message",
+                streaming_ctx=streaming_ctx,
                 max_tokens=llm_config["max_output_tokens"],
                 user_message=state.user_text or "",
+                timeout_seconds=timeout,
             )
 
+            # AFTER streaming completes - parse JSON and apply deltas
             j = jloads_safe(out)
             if not j:
                 # Try to extract message from truncated/malformed JSON

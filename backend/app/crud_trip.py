@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -142,6 +142,7 @@ async def record_chat_message(
     role: str,
     content: str,
     metadata: Optional[dict] = None,
+    trip_inputs_snapshot: Optional[dict] = None,
 ) -> models.ChatMessage:
     message = models.ChatMessage(
         session_id=session.id,
@@ -149,10 +150,49 @@ async def record_chat_message(
         role=role,
         content=content,
         meta=metadata,
+        trip_inputs_snapshot=trip_inputs_snapshot,
     )
     db.add(message)
     await db.flush()
     return message
+
+
+async def get_last_user_message(
+    db: AsyncSession,
+    *,
+    session: models.Session,
+) -> Optional[models.ChatMessage]:
+    """Get the most recent user message for a session."""
+    stmt = (
+        select(models.ChatMessage)
+        .filter(
+            models.ChatMessage.session_id == session.id,
+            models.ChatMessage.role == "user",
+        )
+        .order_by(models.ChatMessage.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def delete_messages_from_id(
+    db: AsyncSession,
+    *,
+    session: models.Session,
+    message_id: int,
+) -> int:
+    """
+    Delete a message and all messages after it (by ID) for a session.
+    Returns the number of messages deleted.
+    """
+    stmt = delete(models.ChatMessage).where(
+        models.ChatMessage.session_id == session.id,
+        models.ChatMessage.id >= message_id,
+    )
+    result = await db.execute(stmt)
+    await db.flush()
+    return result.rowcount
 
 
 async def fetch_chat_history(

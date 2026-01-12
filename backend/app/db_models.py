@@ -156,6 +156,8 @@ class ChatMessage(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(16))  # "user" | "assistant"
     content: Mapped[str] = mapped_column(String)
     meta: Mapped[Optional[Dict]] = mapped_column(JSON)
+    # Snapshot of trip_inputs at the time this message was sent (for rollback on delete)
+    trip_inputs_snapshot: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
 
     session: Mapped[Session] = relationship("Session")
     trip_context: Mapped[Optional[TripContext]] = relationship("TripContext")

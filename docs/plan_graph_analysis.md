@@ -263,43 +263,52 @@ backend/app/planner/
 
 ### LLM-Powered Nodes
 
-| Node | Prompt File | Purpose | Wired | Max Tokens | LLM Model | Temperature | Inputs Enabled | Inputs Blocked |
-|------|-------------|---------|-------|------------|-----------|-------------|----------------|----------------|
-| `extractor` | `extractor.txt` | Extract trip data from user input | Yes | 400 | gpt-4o-mini | 0.1 | user_text, trip_inputs | — |
-| `extractor` (light) | `extractor_light.txt` | Light extraction for simple inputs | Yes | 200 | gpt-4o-mini | 0.1 | user_text, trip_inputs | — |
-| `router` | `router.txt` | Intent classification | Yes | 256 | gpt-4o-mini | 0.1 | user_text, chat_history | — |
-| `required_fields_node` | `required_fields.txt` | Collect missing core fields | Yes | 180 | gpt-4o-mini | 0.3 | trip_inputs, question_target | — |
-| `flights_node` | `flights.txt` | Flight preferences | Yes | 512 | gpt-4o-mini | 0.3 | trip_inputs, flight_settings | Core fields missing |
-| `hotels_node` | `hotels.txt` | Hotel preferences | Yes | 512 | gpt-4o-mini | 0.3 | trip_inputs, hotel_settings | Core fields missing |
-| `transport_node` | `transport.txt` | Ground transport preferences | Yes | 512 | gpt-4o-mini | 0.3 | trip_inputs, transport_settings | Core fields missing |
-| `activities_node` | `activities.txt` | Activity preferences | Yes | 512 | gpt-4o-mini | 0.3 | trip_inputs, activity_settings | Core fields missing |
-| `correction_node` | `correction.txt` | Handle user corrections | Yes | 512 | gpt-4o-mini | 0.3 | trip_inputs, correction_context | — |
-| `general_node` | `general.txt` | Multi-domain queries | Yes | 512 | gpt-4o-mini | 0.3 | trip_inputs, chat_history | — |
-| `response_polish` | `response_polish.txt` | Polish message tone | Yes | 512 | gpt-4o-mini | 0.4 | last_summary | Template responses |
+| Node | Prompt File | Purpose | Max Tokens | Streaming | LLM Call |
+|------|-------------|---------|------------|-----------|----------|
+| `extractor` | `extractor.txt` | Extract trip data from user input | 400 | 🔒 None | Buffered |
+| `extractor` (light) | `extractor_light.txt` | Light extraction for simple inputs | 200 | 🔒 None | Buffered |
+| `router` | `router.txt` | Intent classification | 256 | 🔒 None | Buffered |
+| `required_fields_node` | `required_fields.txt` | Collect missing core fields | 180 | ⚡ Fast UX | Buffered |
+| `flights_node` | `flights.txt` | Flight preferences | 512 | ⚡ Fast UX | Buffered |
+| `hotels_node` | `hotels.txt` | Hotel preferences | 512 | ⚡ Fast UX | Buffered |
+| `transport_node` | `transport.txt` | Ground transport preferences | 512 | ⚡ Fast UX | Buffered |
+| `activities_node` | `activities.txt` | Activity preferences | 512 | ⚡ Fast UX | Buffered |
+| `correction_node` | `correction.txt` | Handle user corrections | 512 | ⚡ Fast UX | Buffered |
+| `general_node` | `general.txt` | Multi-domain queries | 512 | ⚡ Fast UX | Buffered |
+| `response_polish` | `response_polish.txt` | Polish message tone | 512 | 🔒 None | Buffered |
 
 ### Strategy Nodes
 
-| Node | Prompt File | Purpose | Wired | Max Tokens | LLM Model | Temperature | Stage |
-|------|-------------|---------|-------|------------|-----------|-------------|-------|
-| `strategy_node` (stage0) | `strategy_pre_core.txt` | Pre-core value-first response | Yes | 300 | gpt-4o-mini | 0.3 | 0 |
-| `strategy_node` (stage0-known) | `strategy_pre_core_known_dest.txt` | Pre-core with known destination | Yes | 150 | gpt-4o-mini | 0.3 | 0 |
-| `strategy_node` (stage0-discovery) | `strategy_pre_core_discovery.txt` | Pre-core destination exploration | Yes | 150 | gpt-4o-mini | 0.3 | 0 |
-| `strategy_node` (stage1) | `strategy_{topic}.txt` | Initial strategy outline | Yes | 512 | gpt-4o-mini | 0.3 | 1 |
-| `strategy_node` (stage2) | `strategy_{topic}.txt` | Expansion details | Yes | 1536 | gpt-4o-mini | 0.3 | 2 |
-| `missing_fields_guard` | `missing_fields_guard.txt` | Guard for missing fields | Yes | 100 | gpt-4o-mini | 0.3 | — |
+| Node | Prompt File | Purpose | Max Tokens | Stage | Streaming | LLM Call |
+|------|-------------|---------|------------|-------|-----------|----------|
+| `strategy_node` (stage0) | `strategy_pre_core.txt` | Pre-core value-first response | 300 | 0 | ✨ Simulated | Buffered |
+| `strategy_node` (stage0-known) | `strategy_pre_core_known_dest.txt` | Pre-core with known destination | 150 | 0 | ✨ Simulated | Buffered |
+| `strategy_node` (stage0-discovery) | `strategy_pre_core_discovery.txt` | Pre-core destination exploration | 150 | 0 | ✨ Simulated | Buffered |
+| `strategy_node` (stage1) | `strategy_{topic}.txt` | Initial strategy outline | 512 | 1 | ✨ Simulated | Buffered |
+| `strategy_node` (stage2) | `strategy_{topic}.txt` | Expansion details | 1536 | 2 | ✨ Simulated | Buffered |
+| `missing_fields_guard` | `missing_fields_guard.txt` | Guard for missing fields | 100 | — | 🔒 None | Buffered |
 
 ### Deterministic Nodes (No LLM)
 
-| Node | Purpose | Wired | Cache |
-|------|---------|-------|-------|
-| `lqa_prepass` | Zero-LLM answer extraction from simple inputs | Yes | None |
-| `normalize_inputs` | Normalize extracted inputs (dates, cities) | Yes | None |
-| `validate_and_merge` | Compute trip readiness, set question_target | Yes | None |
-| `branch_postprocess` | Split multi-city branches, generate IDs | Yes | None |
-| `tile_search` | Search for tiles (hotels/flights/activities) | Yes | TileCache |
-| `summarize` | Generate follow-ups, format responses | Yes | None |
-| `short_circuit_responder` | Handle greetings/confirmations | Yes | None |
-| `generate_responder` | Handle explicit generation requests | Yes | None |
+| Node | Purpose | Streaming | Cache |
+|------|---------|-----------|-------|
+| `lqa_prepass` | Zero-LLM answer extraction from simple inputs | 🔒 None | None |
+| `normalize_inputs` | Normalize extracted inputs (dates, cities) | 🔒 None | None |
+| `validate_and_merge` | Compute trip readiness, set question_target | 🔒 None | None |
+| `branch_postprocess` | Split multi-city branches, generate IDs | 🔒 None | None |
+| `tile_search` | Search for tiles (hotels/flights/activities) | 🔒 None | TileCache |
+| `summarize` | Generate follow-ups, format responses | ✨ Simulated | None |
+| `short_circuit_responder` | Handle greetings/confirmations | ✨ Simulated | None |
+| `generate_responder` | Handle explicit generation requests | ✨ Simulated | None |
+
+### Streaming Legend
+
+| Symbol | Mode | Description |
+|--------|------|-------------|
+| 🔒 None | `buffered:internal` | Internal node, no user-facing output |
+| ✨ Simulated | `simulate_streaming` | Token-by-token delivery with 15-35ms delays for visual effect |
+| ⚡ Fast UX | `fast_stream_buffered` | Chunked delivery of pre-buffered response (no artificial delays) |
+| 🌊 Real | `true_stream` | Real-time tokens from LLM API (**not currently used**) |
 
 ---
 
@@ -575,40 +584,136 @@ CachePayload:
 
 ## Streaming Architecture
 
+### Current Implementation: Real-Time + UX Simulated Streaming
+
+The streaming architecture uses **real-time token streaming** for LLM responses and **simulated streaming** for non-LLM responses. This ensures users see tokens as the LLM generates them while maintaining consistent UX for all response types.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  STREAMING FLOW                                                             │
+│  ──────────────────────────────────────────────────────────────────────────│
+│                                                                              │
+│  LLM RESPONSES (Real-Time):                                                  │
+│  1. User sends message                                                       │
+│  2. run_turn_streaming() creates StreamingContext                            │
+│  3. Graph runs in background task                                            │
+│  4. LLM nodes stream assistant_message tokens via StreamingContext           │
+│  5. Tokens yielded to SSE as they arrive                                     │
+│  6. After streaming completes: parse JSON, apply deltas, set question_target │
+│                                                                              │
+│  User sees: Tokens appear immediately as LLM generates them 🌊               │
+│                                                                              │
+│  NON-LLM RESPONSES (UX Simulated):                                           │
+│  1. Graph completes (no tokens emitted during execution)                     │
+│  2. Final message streamed via simulate_streaming() with 15-35ms delays      │
+│                                                                              │
+│  User sees: Token-by-token appearance with natural timing ✨                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### StreamingContext Pattern
+
+Real-time streaming is achieved via `StreamingContext` stored in a module-level registry.
+The context is NOT stored in `state.metadata` because `asyncio.Queue` is not serializable by LangGraph's checkpointer.
+
+```python
+# In run_turn_streaming()
+from app.planner.streaming import (
+    StreamingContext, register_streaming_context, unregister_streaming_context
+)
+
+streaming_ctx = StreamingContext()
+register_streaming_context(turn_thread_id, streaming_ctx)
+state.metadata["_streaming_thread_id"] = turn_thread_id  # Only store the lookup key
+
+# In specialist/strategy nodes
+from app.planner.streaming import get_streaming_context
+
+thread_id = state.metadata.get("_streaming_thread_id")
+streaming_ctx = get_streaming_context(thread_id)
+out = await call_llm_streaming_with_json_field(
+    model=model,
+    prompt=prompt,
+    stream_field="assistant_message",  # Only stream this field
+    streaming_ctx=streaming_ctx,
+    ...
+)
+# AFTER streaming completes - parse JSON and apply deltas
+
+# Cleanup (in run_turn_streaming after graph completes)
+unregister_streaming_context(turn_thread_id)
+```
+
 ### Streaming Modes
 
-| Mode | Symbol | Function | Behavior | When Used |
-|------|--------|----------|----------|-----------|
-| `true_stream` | 🌊 | `call_llm_streaming_with_accumulator()` | Real-time tokens from OpenAI | User-facing LLM nodes |
-| `simulated:template` | ✨ | `simulate_streaming()` | Token-by-token 15-35ms delays | Template responses |
-| `simulated:cached` | ✨ | `simulate_streaming()` | Token-by-token 15-35ms delays | Cached responses |
-| `simulated:deterministic` | ✨ | `simulate_streaming()` | Token-by-token 15-35ms delays | Deterministic/codegen |
-| `buffered:internal` | 🔒 | N/A | No streaming | Internal processing nodes |
-| `buffered:postproc` | 🔒 | N/A | Runs after stream completes | Post-processing |
-| `fast:llm` | ⚡ | `fast_stream_buffered()` | 1500-byte chunks, zero delay | Default for buffered LLM |
+| Mode | Symbol | Function | Behavior |
+|------|--------|----------|----------|
+| `real:llm` | 🌊 | `call_llm_streaming_with_json_field()` | Real-time tokens from OpenAI |
+| `simulated:template` | ✨ | `simulate_streaming()` | Token-by-token 15-35ms delays |
+| `simulated:cached` | ✨ | `simulate_streaming()` | Token-by-token 15-35ms delays |
+| `simulated:deterministic` | ✨ | `simulate_streaming()` | Token-by-token 15-35ms delays |
+| `simulated:llm_fallback` | ✨ | `simulate_streaming()` | Fallback when LLM didn't stream |
+| `buffered:internal` | 🔒 | N/A | No streaming (internal nodes) |
 
 ### Streaming by Node Type
 
-| Category | Nodes | Streaming Mode |
-|----------|-------|----------------|
-| Internal | extractor, router, lqa_prepass, normalize_inputs, validate_and_merge | `buffered:internal` 🔒 |
-| Strategy LLM | stage0, stage1, stage2 | `true_stream` 🌊 |
-| Specialist LLM | flights, hotels, transport, activities, correction, general | `true_stream` 🌊 |
-| Template | required_fields:template, pre_core templates | `simulated:template` ✨ |
-| Cached | any:cache | `simulated:cached` ✨ |
-| Deterministic | short_circuit_responder, summarize | `simulated:deterministic` ✨ |
+| Category | Nodes | LLM Call | Response Delivery | Symbol |
+|----------|-------|----------|-------------------|--------|
+| Internal | extractor, router, lqa_prepass, normalize_inputs, validate_and_merge | Buffered | None (internal state) | 🔒 |
+| Strategy LLM | stage0, stage1, stage2 | `call_llm_streaming_with_json_field` | Real-time | 🌊 |
+| Specialist LLM | flights, hotels, transport, activities, correction, general | `call_llm_streaming_with_json_field` | Real-time | 🌊 |
+| Template | required_fields:template, pre_core templates | N/A | `simulate_streaming` | ✨ |
+| Cached | any:cache | N/A | `simulate_streaming` | ✨ |
+| Deterministic | short_circuit_responder, summarize | N/A | `simulate_streaming` | ✨ |
 
-### Provenance Types
+**Legend:**
+- 🔒 **None** - Internal nodes, no user-facing output
+- 🌊 **Real** - Tokens streamed in real-time from OpenAI during graph execution
+- ✨ **UX Simulated** - Token-by-token with delays after graph completes
 
-| Provenance | Description | Streaming Mode |
-|------------|-------------|----------------|
-| `llm` | Direct LLM response | 🌊 `true_stream` |
-| `template` | Template-generated response | ✨ Simulated |
-| `deterministic` | Pure Python logic response | ✨ Simulated |
-| `codegen` | Code-generated response | ✨ Simulated |
-| `cached` | Retrieved from cache | ✨ Simulated |
-| `llm_fallback` | LLM recovery after parse failure | ✨ Simulated |
-| `llm_retry` | Buffered retry after stream failure | ✨ Simulated |
+### Streaming Parameters (Consistent Across All Modes)
+
+All simulated streaming uses consistent timing parameters defined in `streaming.py`:
+
+```python
+STREAMING_PARAMS = {
+    "base_delay_ms": 15,   # Minimum delay between tokens
+    "max_delay_ms": 35,    # Maximum delay between tokens
+    "jitter_ms": 8,        # Random jitter range
+    "chunk_size": 1,       # Single tokens
+}
+```
+
+### Provenance to Streaming Mode Mapping
+
+| Provenance | Description | Delivery Mode |
+|------------|-------------|---------------|
+| `llm` | Real-time LLM response | 🌊 Real-time during execution |
+| `template` | Template-generated response | ✨ `simulate_streaming` |
+| `deterministic` | Pure Python logic response | ✨ `simulate_streaming` |
+| `codegen` | Code-generated response | ✨ `simulate_streaming` |
+| `cached` | Retrieved from cache | ✨ `simulate_streaming` |
+| `llm_fallback` | LLM didn't stream (unexpected) | ✨ `simulate_streaming` |
+
+### Critical Sequencing for Real-Time Streaming
+
+**IMPORTANT**: For LLM responses, deltas and state mutations are applied **ONLY AFTER** streaming completes:
+
+```
+1. Start streaming LLM call
+2. Emit assistant_message tokens to frontend as they arrive
+3. Accumulate full JSON response in background
+4. Stream completes (all tokens received)
+5. Parse complete JSON
+6. Apply deltas to trip_inputs
+7. Set question_target, suggested_responses
+8. Return updated state
+```
+
+This ensures:
+- User sees tokens immediately (good UX)
+- Deltas extracted from complete, validated JSON (data integrity)
+- No partial state visible during streaming
 
 ---
 

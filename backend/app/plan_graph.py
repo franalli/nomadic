@@ -182,6 +182,7 @@ from app.planner.parsing import (
     set_parse_provenance,
     set_parse_provenance_once,
 )
+from app.planner.streaming import STREAMING_PARAMS
 from app.planner.telemetry import (
     # PR-T: Telemetry instrumentation
     TraceEnvelope,
@@ -11419,10 +11420,13 @@ async def call_llm_with_timeout(
 # Simulated streaming parameters (hybrid timing for natural LLM-like flow)
 # Fast start, gradual deceleration mimics real LLM token generation patterns
 # Note: We stream word-by-word (like real LLM tokens) not char-by-char
-_STREAM_BASE_DELAY_MS = 15  # Starting delay per token (fast burst)
-_STREAM_MAX_DELAY_MS = 35  # Maximum delay per token (deceleration cap)
-_STREAM_ACCEL_FACTOR = 0.015  # How quickly delay increases per token
-_STREAM_JITTER_MS = 8  # Random variance for organic feel
+# Uses centralized streaming params from streaming.py for consistency
+_STREAM_BASE_DELAY_MS = STREAMING_PARAMS["base_delay_ms"]  # Starting delay per token (fast burst)
+_STREAM_MAX_DELAY_MS = STREAMING_PARAMS[
+    "max_delay_ms"
+]  # Maximum delay per token (deceleration cap)
+_STREAM_ACCEL_FACTOR = 0.015  # How quickly delay increases per token (not in STREAMING_PARAMS)
+_STREAM_JITTER_MS = STREAMING_PARAMS["jitter_ms"]  # Random variance for organic feel
 
 
 async def call_llm_streaming(
@@ -16298,6 +16302,24 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     elif "today_iso" not in metadata:
         metadata["today_iso"] = date.today().isoformat()
 
+    # =========================================================================
+    # REAL-TIME STREAMING: Create streaming context for LLM nodes
+    # =========================================================================
+    # This context allows specialist/strategy nodes to emit tokens in real-time
+    # while the graph continues executing. Tokens are consumed below via
+    # the background task pattern.
+    # NOTE: StreamingContext is stored in a module-level registry (NOT state.metadata)
+    # because asyncio.Queue is not serializable by LangGraph's checkpointer.
+    from app.planner.streaming import (
+        StreamingContext,
+        register_streaming_context,
+        unregister_streaming_context,
+    )
+
+    streaming_ctx = StreamingContext()
+    # Store thread_id in metadata so nodes can look up the streaming context
+    # The actual StreamingContext is in the registry, not metadata (to avoid serialization issues)
+
     # Reset turn-specific metadata counters
     metadata.pop("validator_failures", None)
     metadata.pop("no_progress_turns", None)
@@ -16404,6 +16426,11 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     # Use a unique thread_id per turn
     turn_thread_id = f"{thread_id}_{uuid4().hex[:8]}"
 
+    # Register streaming context with turn_thread_id (for lookup by nodes)
+    # Store turn_thread_id in metadata so nodes can look up the streaming context
+    register_streaming_context(turn_thread_id, streaming_ctx)
+    state.metadata["_streaming_thread_id"] = turn_thread_id
+
     # ==========================================================================
     # PREDICT NODE EXECUTION FOR SSE PROGRESS TRACKING
     # ==========================================================================
@@ -16442,21 +16469,54 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
                 },
             }
 
-    # Run the full graph (non-streaming) to get final state
-    # Note: We run the full graph first, then stream the final message
-    # This ensures all extractions complete before we start streaming
-    result: GraphState | dict
+    # =========================================================================
+    # RUN GRAPH WITH REAL-TIME TOKEN STREAMING
+    # =========================================================================
+    # Run graph in background task while consuming tokens from streaming context.
+    # LLM nodes emit tokens via streaming_ctx during execution.
+    # After graph completes, fall back to simulated streaming if no tokens were emitted.
+    result: GraphState | dict = state  # Initialize with current state; updated by run_graph
+    tokens_streamed_during_execution = 0
+
+    async def run_graph():
+        """Execute the graph and finalize streaming context when done."""
+        nonlocal result
+        try:
+            result = await app.ainvoke(
+                state, config={"configurable": {"thread_id": turn_thread_id}}
+            )
+        except StateRegressionError as e:
+            _debug_error(
+                "StateRegressionError caught in run_turn_streaming",
+                node=e.node_name,
+                diff_summary=e.diff_summary,
+            )
+            result = handle_state_regression_error(state, e)
+        finally:
+            # Signal end of streaming
+            await streaming_ctx.finalize()
+
+    # Start graph execution in background
+    graph_task = asyncio.create_task(run_graph())
+
+    # Consume tokens as they arrive from LLM nodes during graph execution
     try:
-        result = await app.ainvoke(state, config={"configurable": {"thread_id": turn_thread_id}})
-    except StateRegressionError as e:
-        # State integrity violation detected - recover using snapshot
-        _debug_error(
-            "StateRegressionError caught in run_turn_streaming",
-            node=e.node_name,
-            diff_summary=e.diff_summary,
-        )
-        state = handle_state_regression_error(state, e)
-        result = state
+        async for token in streaming_ctx.tokens(timeout=0.1):
+            tokens_streamed_during_execution += 1
+            yield {"type": "token", "data": token}
+    except Exception as e:
+        _debug_error("Error consuming streaming tokens", error=str(e))
+
+    # Wait for graph to complete if not already done
+    await graph_task
+
+    # Cleanup: unregister streaming context from registry
+    unregister_streaming_context(turn_thread_id)
+
+    _debug(
+        "REAL_TIME_STREAMING_COMPLETE",
+        tokens_streamed=tokens_streamed_during_execution,
+    )
 
     # Normalize to GraphState
     if isinstance(result, dict):
@@ -16550,29 +16610,23 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
         response_writer = result_meta.get("response_writer_node", "")
         stream_mode = get_streaming_mode(result, response_writer, response_gen_provenance)
 
-        # Strategy responses should use simulate_streaming for nice UX with progress bar
-        # Check both: (1) prediction before graph ran, OR (2) actual response source
-        is_strategy_response = (
-            strategy_prediction is not None and strategy_prediction.will_execute
-        ) or response_writer.startswith("strategy_node")
-
-        if is_strategy_response:
-            # =====================================================================
-            # STRATEGY NODE STREAMING: Token-by-token for progress tracking
-            # =====================================================================
-            # Strategy responses should stream token-by-token so the progress bar
-            # updates smoothly and the user sees the response appearing gradually.
-            # =====================================================================
-            stream_mode = StreamingMode.SIMULATED_STRATEGY
+        # =====================================================================
+        # REAL-TIME vs POST-HOC STREAMING DECISION
+        # =====================================================================
+        # If tokens were already streamed during graph execution (real-time from LLM),
+        # skip post-hoc streaming entirely. Otherwise, use simulated streaming for
+        # non-LLM responses (deterministic, template, cached, short_circuit).
+        # =====================================================================
+        if tokens_streamed_during_execution > 0:
+            # Tokens were already streamed in real-time during graph execution
+            stream_mode = StreamingMode.REAL_LLM
+            tokens_streamed = tokens_streamed_during_execution
             _debug(
-                "Simulating streaming for strategy response",
-                stage=strategy_prediction.stage if strategy_prediction else "detected",
-                topic=strategy_prediction.topic if strategy_prediction else response_writer,
+                "Real-time LLM streaming completed",
+                tokens_streamed=tokens_streamed_during_execution,
                 response_length=len(final_message),
             )
-            async for token in simulate_streaming(final_message):
-                tokens_streamed += 1
-                yield {"type": "token", "data": token}
+            # No additional streaming needed - tokens already sent
         elif is_short_circuit or is_deterministic_response:
             # Simulated streaming for code-generated/template messages
             stream_mode = {
@@ -16592,21 +16646,20 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
                 yield {"type": "token", "data": token}
         else:
             # =====================================================================
-            # FAST STREAMING FOR LLM RESPONSES (P1 fix for 15s timeout)
+            # FALLBACK: SIMULATED STREAMING FOR UNEXPECTED NON-STREAMED LLM RESPONSES
             # =====================================================================
-            # For LLM responses where we have buffered text (e.g., strategy_stage0),
-            # use fast_stream_buffered instead of simulate_streaming to avoid
-            # artificial delays that can cause 15s timeout with longer responses.
+            # If an LLM response somehow didn't stream tokens (e.g., cache hit path),
+            # use simulated streaming to maintain consistent UX.
             # =====================================================================
-            stream_mode = StreamingMode.FAST_LLM
+            stream_mode = StreamingMode.SIMULATED_LLM_FALLBACK
             _debug(
-                "Fast streaming LLM response",
+                "Fallback simulated streaming for LLM response (no real-time tokens)",
                 provenance=response_gen_provenance,
                 response_length=len(final_message),
             )
-            async for chunk in fast_stream_buffered(final_message):
+            async for token in simulate_streaming(final_message):
                 tokens_streamed += 1
-                yield {"type": "token", "data": chunk}
+                yield {"type": "token", "data": token}
 
         # P0: Log streaming duration for timeout analysis
         stream_duration_ms = (time.perf_counter() - stream_start_time) * 1000
@@ -16871,10 +16924,35 @@ async def plan_trip_graph(
             req_message=req.message,
         )
 
-        # 2. Record user message
+        # 2. Record user message with trip_inputs snapshot for rollback
         user_message_content = (
             "Generate my trip options" if _is_generate_plan_trigger(req.message) else req.message
         )
+        # Capture current trip_inputs as snapshot for undo functionality
+        trip_inputs_snapshot = None
+        if existing_doc_data and existing_doc_data.trip_inputs:
+            ti = existing_doc_data.trip_inputs
+            trip_inputs_snapshot = {
+                "destinations": ti.destinations or [],
+                "origin": ti.origin,
+                "start_date": ti.start_date,
+                "end_date": ti.end_date,
+                "adults": ti.adults,
+                "children": ti.children,
+                "requires_assistance": ti.requires_assistance,
+                "budget": ti.budget,
+                "currency": ti.currency,
+                "multi_city_intent": ti.multi_city_intent,
+                "booking_types": ti.booking_types.model_dump() if ti.booking_types else {},
+                "flight_settings": ti.flight_settings.model_dump() if ti.flight_settings else {},
+                "hotel_settings": ti.hotel_settings.model_dump() if ti.hotel_settings else {},
+                "activity_settings": (
+                    ti.activity_settings.model_dump() if ti.activity_settings else {}
+                ),
+                "transport_settings": (
+                    ti.transport_settings.model_dump() if ti.transport_settings else {}
+                ),
+            }
         await record_chat_message(
             db,
             session=db_session,
@@ -16882,6 +16960,7 @@ async def plan_trip_graph(
             role="user",
             content=user_message_content,
             metadata=None,
+            trip_inputs_snapshot=trip_inputs_snapshot,
         )
 
         # 3. Prepare placeholder for assistant message

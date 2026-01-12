@@ -164,6 +164,9 @@ type DocumentState = {
   // Set document from graph plan response (when /v1/graph_plan returns new document)
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
+  // Restore trip inputs from a snapshot (used when undoing a message)
+  restoreTripInputs: (tripInputs: DocumentTripInputs) => void;
+
   // Clear sparkle for a field when user interacts with it
   acknowledgeLLMUpdate: (field: LLMUpdatableField) => void;
 
@@ -651,6 +654,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         response.document.branches[0]?.id ||
         null,
       llmUpdatedFields: newLLMUpdatedFields,
+    });
+  },
+
+  restoreTripInputs: (tripInputs: DocumentTripInputs) => {
+    const { document: currentDoc } = get();
+    if (!currentDoc) return;
+
+    set({
+      document: {
+        ...currentDoc,
+        trip_inputs: tripInputs,
+      },
+      // Clear LLM updated fields since we're reverting
+      llmUpdatedFields: new Set(),
     });
   },
 

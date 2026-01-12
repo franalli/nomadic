@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
+import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
@@ -197,6 +198,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   } = options;
 
   const documentStore = useDocumentStore();
+  const resetChat = useChatStore((state) => state.resetChat);
 
   // ─────────────────────────────────────────────────────────────────────────
   // Compose Sub-Hooks
@@ -350,6 +352,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
       handleClearContext();
 
+      // Reset chat store to clear messages and session state
+      resetChat();
+
       // Scroll to chat panel and focus input after reset
       setTimeout(() => {
         if (chatPanelContainerRef.current) {
@@ -374,7 +379,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         : 'Cleared your local planner, but the previous session may reappear if you refresh.',
       'success'
     );
-  }, [branchState, handleClearContext, chatPanelContainerRef, onToast]);
+  }, [branchState, handleClearContext, chatPanelContainerRef, onToast, resetChat]);
 
   /**
    * Finalizes the generating state and displays results.

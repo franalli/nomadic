@@ -23,7 +23,9 @@ from app.crud_document import (
     get_or_create_document,
 )
 from app.crud_trip import (
+    delete_messages_from_id,
     fetch_chat_history,
+    get_last_user_message,
     get_latest_trip_context_for_session,
     get_or_create_session,
     get_session_by_token,
@@ -79,6 +81,7 @@ from app.planner import (
 from app.schemas import (
     ChatHistoryResponse,
     ChatMessageResponse,
+    DeleteLastMessageResponse,
     EntityConfidenceInfo,
     ExtractionConfidenceInfo,
     GraphPlanErrorCode,
@@ -966,6 +969,47 @@ async def graph_plan_stream_endpoint(
                 document_data = get_document_data(document)
                 document_version = document.version
 
+                # Record user message with trip_inputs snapshot for undo functionality
+                user_message_content = req.message
+                trip_inputs_snapshot = None
+                if document_data and document_data.trip_inputs:
+                    ti = document_data.trip_inputs
+                    trip_inputs_snapshot = {
+                        "destinations": ti.destinations or [],
+                        "origin": ti.origin,
+                        "start_date": ti.start_date,
+                        "end_date": ti.end_date,
+                        "adults": ti.adults,
+                        "children": ti.children,
+                        "requires_assistance": ti.requires_assistance,
+                        "budget": ti.budget,
+                        "currency": ti.currency,
+                        "multi_city_intent": ti.multi_city_intent,
+                        "booking_types": ti.booking_types.model_dump() if ti.booking_types else {},
+                        "flight_settings": (
+                            ti.flight_settings.model_dump() if ti.flight_settings else {}
+                        ),
+                        "hotel_settings": (
+                            ti.hotel_settings.model_dump() if ti.hotel_settings else {}
+                        ),
+                        "activity_settings": (
+                            ti.activity_settings.model_dump() if ti.activity_settings else {}
+                        ),
+                        "transport_settings": (
+                            ti.transport_settings.model_dump() if ti.transport_settings else {}
+                        ),
+                    }
+
+                await record_chat_message(
+                    db,
+                    session=db_session,
+                    trip_context=None,
+                    role="user",
+                    content=user_message_content,
+                    metadata=None,
+                    trip_inputs_snapshot=trip_inputs_snapshot,
+                )
+
                 # Hydrate session state from document
                 if document_data:
                     if document_data.branches:
@@ -1073,7 +1117,18 @@ async def graph_plan_stream_endpoint(
                     if updated_doc:
                         new_document_version = updated_doc.version
                         document_data = get_document_data(updated_doc)
-                        await db.commit()
+
+                    # Record assistant message
+                    await record_chat_message(
+                        db,
+                        session=db_session,
+                        trip_context=None,
+                        role="assistant",
+                        content=assistant_message,
+                        metadata=None,
+                    )
+
+                    await db.commit()
                 except Exception as e:
                     logger.error(f"[{request_id}] Failed to persist document: {e}")
                     await db.rollback()
@@ -1240,6 +1295,71 @@ async def get_chat_history(
     ]
 
     return ChatHistoryResponse(messages=response_messages)
+
+
+@app.delete("/v1/chat/last", response_model=DeleteLastMessageResponse)
+async def delete_last_message(
+    request: Request,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Delete the last user message and its associated assistant response.
+
+    This operation:
+    1. Finds the most recent user message
+    2. Retrieves the trip_inputs snapshot from that message (if available)
+    3. Deletes the user message and all subsequent messages
+    4. Restores trip_inputs from the snapshot (if available)
+    5. Returns the deleted count, restored trip_inputs, and remaining messages
+
+    Used for "undo" functionality to revert the last chat turn.
+    """
+    session_id = get_session_from_request(request)
+    session = await get_session_by_token(db, session_id)
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Find the last user message
+    last_user_msg = await get_last_user_message(db, session=session)
+    if not last_user_msg:
+        raise HTTPException(status_code=404, detail="No user message to delete")
+
+    # Get the snapshot for rollback
+    restored_trip_inputs = last_user_msg.trip_inputs_snapshot
+
+    # Delete the message and all subsequent messages
+    deleted_count = await delete_messages_from_id(db, session=session, message_id=last_user_msg.id)
+
+    # Restore trip_inputs if we have a snapshot
+    if restored_trip_inputs:
+        doc = await get_document(db, session=session)
+        if doc:
+            doc_data = doc.document or {}
+            doc_data["trip_inputs"] = restored_trip_inputs
+            doc.document = doc_data
+            await db.flush()
+
+    # Fetch remaining messages
+    remaining_messages = await fetch_chat_history(db, session=session, limit=50)
+    response_messages = [
+        ChatMessageResponse(
+            id=str(msg.id),
+            role=msg.role,
+            content=msg.content,
+            created_at=msg.created_at.isoformat(),
+        )
+        for msg in remaining_messages
+        if msg.content and msg.content.strip() and msg.role in ("user", "assistant")
+    ]
+
+    await db.commit()
+
+    return DeleteLastMessageResponse(
+        deleted_count=deleted_count,
+        restored_trip_inputs=restored_trip_inputs,
+        messages=response_messages,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

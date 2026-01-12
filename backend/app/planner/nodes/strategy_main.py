@@ -41,6 +41,11 @@ from app.planner.nodes.strategy.base import (
 from app.planner.nodes.strategy.base import (
     is_strategy_enabled as _is_strategy_enabled,
 )
+from app.planner.streaming import (
+    StreamingContext,
+    call_llm_streaming_with_json_field,
+    get_streaming_context,
+)
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
@@ -105,7 +110,6 @@ async def strategy_node(state: "GraphState") -> "GraphState":
         _strategy_stats,
         _strip_stage1_includes,
         _write_trip_inputs,
-        call_llm_with_timeout,
         can_call_llm,
         llm_blocked_fallback,
         load_prompt,
@@ -697,18 +701,28 @@ async def strategy_node(state: "GraphState") -> "GraphState":
 
     for attempt in range(attempts):
         try:
+            # Get streaming context for real-time token streaming
+            # Look up from registry using thread_id (avoids serialization issues)
+            _streaming_thread_id = state.metadata.get("_streaming_thread_id")
+            streaming_ctx: StreamingContext | None = get_streaming_context(_streaming_thread_id)
+
             # Pass history as separate messages for better context
+            # Use streaming call to emit assistant_message tokens in real-time
             async with measure_llm_call(state):
-                out = await call_llm_with_timeout(
+                out = await call_llm_streaming_with_json_field(
                     model=llm_config["model_hint"],
                     prompt=system_prompt,
-                    timeout_seconds=timeout,
+                    stream_field="assistant_message",
+                    streaming_ctx=streaming_ctx,
                     max_tokens=llm_config["max_tokens"],
                     temperature=llm_config["temperature"],
                     history=state.chat_history,
                     user_message=state.user_text,
                     top_p=llm_config["top_p"],
+                    timeout_seconds=timeout,
                 )
+
+            # AFTER streaming completes - parse JSON and apply deltas
             j = jloads_safe(out)
 
             # Handle strategy_settings specially (keyed by topic)

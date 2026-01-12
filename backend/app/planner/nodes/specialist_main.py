@@ -30,6 +30,11 @@ from app.planner.nodes.specialist.response_processor import (
     cache_required_fields_response,
     process_llm_response,
 )
+from app.planner.streaming import (
+    StreamingContext,
+    call_llm_streaming_with_json_field,
+    get_streaming_context,
+)
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
@@ -105,7 +110,6 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
         _get_node_llm_config,
         _record_node_tokens,
         _record_structured_error,
-        call_llm_with_timeout,
         can_call_llm,
         llm_blocked_fallback,
         load_prompt,
@@ -307,18 +311,26 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
     has_blocking_errors = bool(state.metadata.get("date_blocking_errors"))
 
     try:
+        # Get streaming context for real-time token streaming
+        # Look up from registry using thread_id (not state.metadata to avoid serialization issues)
+        _streaming_thread_id = state.metadata.get("_streaming_thread_id")
+        streaming_ctx: StreamingContext | None = get_streaming_context(_streaming_thread_id)
+
         async with measure_llm_call(state):
-            out = await call_llm_with_timeout(
+            out = await call_llm_streaming_with_json_field(
                 model=llm_config["model_hint"],
                 prompt=system_prompt,
-                timeout_seconds=settings.llm_timeout_specialist,
+                stream_field="assistant_message",
+                streaming_ctx=streaming_ctx,
                 max_tokens=llm_config["max_tokens"],
                 temperature=llm_config["temperature"],
                 history=[],
                 user_message="",
                 top_p=llm_config["top_p"],
+                timeout_seconds=settings.llm_timeout_specialist,
             )
 
+        # AFTER streaming completes - parse JSON and extract fields
         j = jloads_safe(out)
 
         state.last_summary = j.get("assistant_message", "Where would you like to go?")
@@ -434,7 +446,6 @@ async def _specialist(
         _record_llm_failure,
         _record_node_tokens,
         _today_iso,
-        call_llm_with_timeout,
         can_call_llm,
         get_available_options_context,
         llm_blocked_fallback,
@@ -806,18 +817,28 @@ async def _specialist(
             current_prompt = original_system_prompt + context_hint
 
         try:
+            # Get streaming context if available for real-time token streaming
+            # Look up from registry using thread_id (avoids serialization issues)
+            _streaming_thread_id = state.metadata.get("_streaming_thread_id")
+            streaming_ctx: StreamingContext | None = get_streaming_context(_streaming_thread_id)
+
             # Pass history as separate messages for better context
+            # Use streaming call to emit assistant_message tokens in real-time
             async with measure_llm_call(state):
-                out = await call_llm_with_timeout(
+                out = await call_llm_streaming_with_json_field(
                     model=llm_config["model_hint"],
                     prompt=current_prompt,
-                    timeout_seconds=timeout,
+                    stream_field="assistant_message",
+                    streaming_ctx=streaming_ctx,
                     max_tokens=llm_config["max_tokens"],
                     temperature=llm_config["temperature"],
                     history=state.chat_history,
                     user_message=state.user_text,
                     top_p=llm_config["top_p"],
+                    timeout_seconds=timeout,
                 )
+
+            # AFTER streaming completes - parse JSON and apply deltas
             j = jloads_safe(out)
 
             # Debug: log raw LLM response

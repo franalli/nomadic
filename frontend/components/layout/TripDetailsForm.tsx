@@ -419,9 +419,9 @@ function TripDetailsFormInner({
   }, []);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 overflow-visible">
       {/* Row 1: Always-visible inline editing pills */}
-      <div className="grid grid-cols-3 gap-3 items-stretch">
+      <div className="grid grid-cols-3 gap-3 items-stretch overflow-visible">
         {/* From field - inline */}
         <div className="flex flex-col gap-1">
           <InlineEditPill
