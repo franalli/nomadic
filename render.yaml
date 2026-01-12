@@ -34,15 +34,13 @@ services:
     name: nomadic-app
     runtime: node
     rootDir: frontend
-    buildCommand: npm install && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://api.nomadic-planner.com
       - key: NEXT_PUBLIC_APP_NAME
         value: Nomadic
-      - key: NODE_ENV
-        value: production
     # Custom domains: nomadic-planner.com + www.nomadic-planner.com (redirect)
 
 databases:
