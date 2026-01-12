@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # LangGraph Planning Route Configuration
     # =============================================================================
     # Feature flags
-    enable_graph_plan_route: bool = False  # Enable /v1/graph_plan route
+    enable_graph_plan_route: bool = True  # Enable /v1/graph_plan route
 
     # Route configuration
     graph_plan_route_timeout_ms: int = 300000  # Overall route timeout in milliseconds (5 min)
