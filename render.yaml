@@ -1,4 +1,7 @@
 services:
+  # ==========================================================================
+  # Backend API (FastAPI + Docker)
+  # ==========================================================================
   - type: web
     name: nomadic-api
     runtime: docker
@@ -12,9 +15,9 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: FRONTEND_ORIGIN
-        sync: false
+        value: https://nomadic-planner.com
       - key: COOKIE_DOMAIN
-        sync: false
+        value: .nomadic-planner.com
       - key: ENV
         value: production
       - key: LANGSMITH_API_KEY
@@ -22,6 +25,25 @@ services:
       - key: LANGSMITH_PROJECT
         sync: false
     healthCheckPath: /health
+    # Custom domain: api.nomadic-planner.com (set in Render dashboard)
+
+  # ==========================================================================
+  # Frontend (Next.js)
+  # ==========================================================================
+  - type: web
+    name: nomadic-app
+    runtime: node
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://api.nomadic-planner.com
+      - key: NEXT_PUBLIC_APP_NAME
+        value: Nomadic
+      - key: NODE_ENV
+        value: production
+    # Custom domains: nomadic-planner.com + www.nomadic-planner.com (redirect)
 
 databases:
   - name: nomadic-db
