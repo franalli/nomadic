@@ -141,6 +141,10 @@ export const BranchPanel = memo(function BranchPanel({
     canCompare,
   } = useComparisonMode();
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
+  // Use backend hero images if available, fallback to mock presets
+  const selectedHeroImages = selected?.hero_images?.length
+    ? selected.hero_images
+    : detailPreset.heroImages;
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
   const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
@@ -323,6 +327,8 @@ export const BranchPanel = memo(function BranchPanel({
             const isActive = selected !== null && b.id === selected.id;
             const isInComparison = isBranchInComparison(b.id);
             const preset = DETAIL_PRESETS[idx % DETAIL_PRESETS.length];
+            // Use backend images if available, fallback to mock presets
+            const cardImage = b.image_url ?? b.hero_images?.[0] ?? preset.heroImages[0];
             const selection = branchSelections?.[b.id] ?? { activities: [] };
             const statusReady =
               Boolean(selection.stay) ||
@@ -400,7 +406,7 @@ export const BranchPanel = memo(function BranchPanel({
                 <div
                   className="h-full w-full"
                   style={{
-                    backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.55) 100%), url(${preset.heroImages[0]})`,
+                    backgroundImage: `linear-gradient(180deg, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.55) 100%), url(${cardImage})`,
                     backgroundSize: 'cover',
                     backgroundPosition: 'center',
                   }}
@@ -556,7 +562,7 @@ export const BranchPanel = memo(function BranchPanel({
                 <div className="relative aspect-video">
                   {/* Tier 11.13: Lazy load hero images for bandwidth savings */}
                   <img
-                    src={detailPreset.heroImages[0]}
+                    src={selectedHeroImages[0]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} overview`}
                     loading="lazy"
                     className="h-full w-full object-cover"
@@ -570,7 +576,7 @@ export const BranchPanel = memo(function BranchPanel({
               <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
                 <div className="relative aspect-[16/9]">
                   <img
-                    src={detailPreset.heroImages[1]}
+                    src={selectedHeroImages[1]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} detail`}
                     loading="lazy"
                     className="h-full w-full object-cover"
@@ -583,7 +589,7 @@ export const BranchPanel = memo(function BranchPanel({
               <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
                 <div className="relative aspect-[16/9]">
                   <img
-                    src={detailPreset.heroImages[2]}
+                    src={selectedHeroImages[2]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} night detail`}
                     loading="lazy"
                     className="h-full w-full object-cover"

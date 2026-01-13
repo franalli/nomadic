@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -36,6 +36,7 @@ class SearchContext(BaseModel):
     budget_per_category: Optional[float] = None  # Suggested allocation per category
 
     # User preference settings for filtering tiles
-    flight_settings: Optional[FlightSettings] = None
-    hotel_settings: Optional[HotelSettings] = None
-    activity_settings: Optional[ActivitySettings] = None
+    # Accept both dict and model since TripInputs stores these as dicts
+    flight_settings: Optional[Union[FlightSettings, Dict[str, Any]]] = None
+    hotel_settings: Optional[Union[HotelSettings, Dict[str, Any]]] = None
+    activity_settings: Optional[Union[ActivitySettings, Dict[str, Any]]] = None

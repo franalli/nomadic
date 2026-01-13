@@ -43,7 +43,7 @@ export function Footer() {
               className="hover:text-foreground transition-colors"
               aria-label="Manage cookie preferences"
             >
-              Manage cookies
+              Preferences
             </button>
             <Link
               href="/contact"
@@ -59,11 +59,21 @@ export function Footer() {
             >
               Sitemap
             </Link>
+            <span className="text-muted-foreground/50">·</span>
+            <a
+              href="https://unsplash.com?utm_source=nomadic&utm_medium=referral"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-foreground transition-colors"
+              aria-label="Images provided by Unsplash"
+            >
+              Unsplash
+            </a>
           </div>
         </div>
 
         <p className="text-muted-foreground text-center md:text-right">
-          © {new Date().getFullYear()} Nomadic Inc. All rights reserved.
+          © {new Date().getFullYear()} Nomadic Inc.
         </p>
       </div>
     </footer>

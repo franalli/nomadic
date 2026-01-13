@@ -106,6 +106,7 @@ class Settings(BaseSettings):
 
     # external APIs
     openai_api_key: str | None = None
+    unsplash_access_key: str | None = os.getenv("UNSPLASH_ACCESS_KEY")
 
     # =============================================================================
     # Cache Configuration

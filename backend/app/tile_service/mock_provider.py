@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from app.schemas import Geo, Tile
+from app.services.unsplash import get_image_url_sync
 
 from .models import SearchContext
 from .provider_base import Provider
@@ -110,11 +111,16 @@ class MockHotelProvider(Provider):
                 budget_limit = parsed_budget * 0.4
 
         # Extract hotel settings for filtering
+        # Handle both dict and HotelSettings model
         min_stars = 0
         required_amenities: List[str] = []
         if ctx.hotel_settings:
-            min_stars = ctx.hotel_settings.min_stars or 0
-            required_amenities = ctx.hotel_settings.amenities or []
+            if isinstance(ctx.hotel_settings, dict):
+                min_stars = ctx.hotel_settings.get("min_stars") or 0
+                required_amenities = ctx.hotel_settings.get("amenities") or []
+            else:
+                min_stars = ctx.hotel_settings.min_stars or 0
+                required_amenities = ctx.hotel_settings.amenities or []
 
         base_count = ctx.max_results_per_vertical
         for i in range(1, base_count + 1):
@@ -146,7 +152,7 @@ class MockHotelProvider(Provider):
                     partner_product_id=f"mock_prop_{i}",
                     title=f"Mock Hotel {i} in {dest}",
                     subtitle=self._subtitle(ctx, nights, total_travelers),
-                    image_url="https://picsum.photos/400/250",
+                    image_url=get_image_url_sync(dest, variant=i % 6, width=400, height=250),
                     price_estimate=round(price, 2),
                     live_price=None if source_mode == "cache" else round(price * 1.05, 2),
                     currency=ctx.currency,
@@ -214,17 +220,23 @@ class MockFlightProvider(Provider):
                 budget_limit = parsed_budget * 0.3
 
         # Extract flight settings for filtering
+        # Handle both dict and FlightSettings model
         cabin_class = "economy"
         direct_only = False
         round_trip = True
         if ctx.flight_settings:
-            cabin_class = ctx.flight_settings.cabin_class or "economy"
-            direct_only = ctx.flight_settings.direct_only or False
-            round_trip = (
-                ctx.flight_settings.round_trip
-                if ctx.flight_settings.round_trip is not None
-                else True
-            )
+            if isinstance(ctx.flight_settings, dict):
+                cabin_class = ctx.flight_settings.get("cabin_class") or "economy"
+                direct_only = ctx.flight_settings.get("direct_only") or False
+                round_trip = ctx.flight_settings.get("round_trip", True)
+            else:
+                cabin_class = ctx.flight_settings.cabin_class or "economy"
+                direct_only = ctx.flight_settings.direct_only or False
+                round_trip = (
+                    ctx.flight_settings.round_trip
+                    if ctx.flight_settings.round_trip is not None
+                    else True
+                )
 
         cabin_multiplier = self.CABIN_MULTIPLIERS.get(cabin_class, 1.0)
 
@@ -288,7 +300,7 @@ class MockFlightProvider(Provider):
                         f"{option['depart']} departure · {option['duration']} · "
                         f"{option['stops']} · {cabin_display}"
                     ),
-                    image_url=option["image_url"],
+                    image_url=get_image_url_sync(dest, variant=(idx + 3) % 6),
                     price_estimate=price,
                     live_price=None if source_mode == "cache" else round(price * 1.03, 2),
                     currency=ctx.currency,
@@ -343,11 +355,18 @@ class MockActivityProvider(Provider):
                 budget_limit = parsed_budget * 0.3
 
         # Extract activity settings for filtering
+        # Handle both dict and ActivitySettings model
         requested_categories: List[str] = []
         skill_level: Optional[str] = None
         if ctx.activity_settings:
-            requested_categories = [c.lower() for c in (ctx.activity_settings.categories or [])]
-            skill_level = ctx.activity_settings.skill_level
+            if isinstance(ctx.activity_settings, dict):
+                requested_categories = [
+                    c.lower() for c in (ctx.activity_settings.get("categories") or [])
+                ]
+                skill_level = ctx.activity_settings.get("skill_level")
+            else:
+                requested_categories = [c.lower() for c in (ctx.activity_settings.categories or [])]
+                skill_level = ctx.activity_settings.skill_level
 
         activities = [
             {
@@ -446,7 +465,7 @@ class MockActivityProvider(Provider):
                     partner_product_id=f"mock_activity_{idx + 1}",
                     title=activity["title"],
                     subtitle=f"{activity['subtitle']} · {activity['duration']}",
-                    image_url=activity["image_url"],
+                    image_url=get_image_url_sync(dest, variant=(idx + 4) % 6),
                     price_estimate=total,
                     live_price=None if source_mode == "cache" else round(total * 1.02, 2),
                     currency=ctx.currency,

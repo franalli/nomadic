@@ -181,3 +181,32 @@ class PlanDocument(Base, TimestampMixin):
     document: Mapped[Dict] = mapped_column(JSON, default=dict)
 
     session: Mapped[Session] = relationship("Session")
+
+
+class UnsplashImageCache(Base):
+    """
+    Cache for Unsplash image IDs by destination and variant.
+    Stores image_id (not full URLs) for flexibility in URL construction.
+    Includes photographer info and URLs for required attribution.
+    Supports multiple image variants per destination for unique tile/branch imagery.
+    """
+
+    __tablename__ = "unsplash_image_cache"
+
+    destination: Mapped[str] = mapped_column(String(256), primary_key=True)  # Normalized lowercase
+    variant: Mapped[int] = mapped_column(
+        Integer, primary_key=True, default=0
+    )  # 0-5 for different image variants
+    image_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    photographer: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    photographer_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    # Required for production attribution
+    unsplash_url: Mapped[Optional[str]] = mapped_column(
+        String(512), nullable=True
+    )  # Image page on Unsplash
+    download_location: Mapped[Optional[str]] = mapped_column(
+        String(512), nullable=True
+    )  # API endpoint to call when image is displayed
+    cached_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )

@@ -39,6 +39,9 @@ export type DocumentBranch = {
   is_primary: boolean;
   tiles: BranchTileIds;
   selections: BranchSelections;
+  // Dynamic images from backend (Unsplash)
+  image_url?: string | null;
+  hero_images?: string[];
 };
 
 // Booking type toggles - which categories to search for

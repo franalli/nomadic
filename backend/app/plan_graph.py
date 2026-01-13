@@ -14162,21 +14162,30 @@ def _compute_settings_hash(intent: str, trip_inputs: "TripInputs") -> str:
     """
     settings_str = ""
 
+    # Helper to get attribute from dict or model
+    def _get(obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
     if intent == "hotel" and trip_inputs.hotel_settings:
         hs = trip_inputs.hotel_settings
         # Sort amenities for consistent hashing
-        amenities = ",".join(sorted(hs.amenities or []))
-        settings_str = f"stars:{hs.min_stars}|amenities:{amenities}"
+        amenities = ",".join(sorted(_get(hs, "amenities") or []))
+        settings_str = f"stars:{_get(hs, 'min_stars', 0)}|amenities:{amenities}"
 
     elif intent == "flight" and trip_inputs.flight_settings:
         fs = trip_inputs.flight_settings
-        settings_str = f"cabin:{fs.cabin_class}|direct:{fs.direct_only}|rt:{fs.round_trip}"
+        cabin = _get(fs, "cabin_class", "economy")
+        direct = _get(fs, "direct_only", False)
+        rt = _get(fs, "round_trip", True)
+        settings_str = f"cabin:{cabin}|direct:{direct}|rt:{rt}"
 
     elif intent == "activity" and trip_inputs.activity_settings:
         acts = trip_inputs.activity_settings
         # Sort categories for consistent hashing
-        categories = ",".join(sorted(acts.categories or []))
-        settings_str = f"cats:{categories}|skill:{acts.skill_level or 'any'}"
+        categories = ",".join(sorted(_get(acts, "categories") or []))
+        settings_str = f"cats:{categories}|skill:{_get(acts, 'skill_level') or 'any'}"
 
     if not settings_str:
         return "default"
@@ -14344,10 +14353,11 @@ def get_tile_cache_stats() -> Dict[str, Any]:
 # -----------------------
 # Tile search node (integrated with tile_service)
 # -----------------------
-def tile_search(state: GraphState) -> GraphState:
+async def tile_search(state: GraphState) -> GraphState:
     """
     Search for tiles based on branches and booking_types.
     Calls tile_service.search_tiles for each branch.
+    Pre-fetches Unsplash images for destinations to populate cache.
 
     MVP Hardening: Now includes strict gating on core field readiness.
     """
@@ -14411,6 +14421,16 @@ def tile_search(state: GraphState) -> GraphState:
         if not primary_dest:
             _debug(f"Branch {branch_id} has no destination, skipping tile search")
             continue
+
+        # Pre-fetch ALL Unsplash image variants for destination to populate cache
+        # This ensures tiles and branches use cached Unsplash images with unique variants
+        try:
+            from app.services.unsplash import prefetch_destination_images
+
+            num_cached = await prefetch_destination_images(primary_dest)
+            _debug(f"Pre-fetched {num_cached} image variants for destination: {primary_dest}")
+        except Exception as e:
+            _debug(f"Image prefetch failed for {primary_dest}: {e}")
 
         try:
             # =================================================================
@@ -16212,12 +16232,47 @@ async def run_turn(
     # ==========================================================================
     result = _enforce_exit_contract(result)
 
+    # ==========================================================================
+    # ENRICH BRANCHES WITH IMAGES: Add Unsplash/Picsum images to branches
+    # Uses different variants for each hero image slot:
+    # - variant 0: Main branch image (image_url) + first hero (signature view)
+    # - variant 1: Second hero image (daylight wander)
+    # - variant 2: Third hero image (evening vibe)
+    # ==========================================================================
+    enriched_branches = []
+    if result.branches:
+        from app.services.unsplash import get_image_url_sync
+
+        for branch in result.branches:
+            branch_copy = dict(branch)  # Don't mutate original
+            dests = branch_copy.get("destinations", [])
+            primary_dest = dests[0] if dests else "travel"
+            # Add image fields if not already present (using different variants)
+            if "image_url" not in branch_copy:
+                branch_copy["image_url"] = get_image_url_sync(
+                    primary_dest, variant=0, width=1600, height=900
+                )
+            if "hero_images" not in branch_copy:
+                branch_copy["hero_images"] = [
+                    get_image_url_sync(
+                        primary_dest, variant=0, width=1600, height=900
+                    ),  # Signature view
+                    get_image_url_sync(
+                        primary_dest, variant=1, width=900, height=600
+                    ),  # Daylight wander
+                    get_image_url_sync(
+                        primary_dest, variant=2, width=900, height=600
+                    ),  # Evening vibe
+                ]
+            enriched_branches.append(branch_copy)
+        _debug(f"Enriched {len(enriched_branches)} branches with images")
+
     # Assemble response
     resp = {
         "assistant_message": result.last_summary or "",
         "trip_inputs": result.trip_inputs.model_dump(exclude_none=True),
         "ready_to_generate": result.ready_to_generate,
-        "branches": result.branches,
+        "branches": enriched_branches if enriched_branches else result.branches,
         "suggested_responses": result.suggested_responses,
         "errors": result.errors,
         "run_id": langsmith_run_id,  # LangSmith trace ID for E2E evaluation
@@ -16226,7 +16281,7 @@ async def run_turn(
             "metadata": result_meta,
             "flags": result_flags,
             "last_summary": result.last_summary,
-            "branches": result.branches,
+            "branches": enriched_branches if enriched_branches else result.branches,
             "suggested_responses": result.suggested_responses,
             "errors": result.errors,
             "thread_id": thread_id,
@@ -16679,12 +16734,46 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
             ),
         )
 
+    # Enrich branches with Unsplash images before returning
+    # (prefetch already happened in tile_search, this uses cached images)
+    # Uses different variants for each hero image slot:
+    # - variant 0: Main branch image (image_url) + first hero (signature view)
+    # - variant 1: Second hero image (daylight wander)
+    # - variant 2: Third hero image (evening vibe)
+    enriched_branches = []
+    if result.branches:
+        from app.services.unsplash import get_image_url_sync
+
+        for branch in result.branches:
+            branch_copy = dict(branch)  # Don't mutate original
+            dests = branch_copy.get("destinations", [])
+            primary_dest = dests[0] if dests else "travel"
+            # Add image fields if not already present (using different variants)
+            if "image_url" not in branch_copy:
+                branch_copy["image_url"] = get_image_url_sync(
+                    primary_dest, variant=0, width=1600, height=900
+                )
+            if "hero_images" not in branch_copy:
+                branch_copy["hero_images"] = [
+                    get_image_url_sync(
+                        primary_dest, variant=0, width=1600, height=900
+                    ),  # Signature view
+                    get_image_url_sync(
+                        primary_dest, variant=1, width=900, height=600
+                    ),  # Daylight wander
+                    get_image_url_sync(
+                        primary_dest, variant=2, width=900, height=600
+                    ),  # Evening vibe
+                ]
+            enriched_branches.append(branch_copy)
+        _debug(f"Enriched {len(enriched_branches)} branches with images")
+
     # Build final response (same as run_turn)
     resp = {
         "assistant_message": final_message,
         "trip_inputs": result.trip_inputs.model_dump(exclude_none=True),
         "ready_to_generate": result.ready_to_generate,
-        "branches": result.branches,
+        "branches": enriched_branches if enriched_branches else result.branches,
         "suggested_responses": result.suggested_responses,
         "errors": result.errors,
         "session_state": {
@@ -16692,7 +16781,7 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
             "metadata": result_meta,
             "flags": result_flags,
             "last_summary": result.last_summary,
-            "branches": result.branches,
+            "branches": enriched_branches if enriched_branches else result.branches,
             "suggested_responses": result.suggested_responses,
             "errors": result.errors,
             "thread_id": thread_id,
@@ -16833,11 +16922,31 @@ def _branches_to_document(
 ) -> List[DocumentBranch]:
     """Convert graph branches to DocumentBranch list for persistence."""
     doc_branches: List[DocumentBranch] = []
+    _debug(f"_branches_to_document called with {len(branches)} branches")
+
+    # Import here to avoid circular imports
+    from app.services.unsplash import get_image_url_sync
 
     for idx, spec in enumerate(branches):
         branch_destinations = spec.get("destinations", []) or []
         if not isinstance(branch_destinations, list):
             branch_destinations = [branch_destinations] if branch_destinations else []
+
+        # Generate images based on first destination (using different variants)
+        # variant 0: Main branch image + signature view
+        # variant 1: Daylight wander
+        # variant 2: Evening vibe
+        primary_dest = branch_destinations[0] if branch_destinations else "travel"
+        _debug(f"Branch {idx}: generating images for destination: {primary_dest}")
+        branch_image_url = get_image_url_sync(primary_dest, variant=0, width=1600, height=900)
+        _debug(f"Branch {idx}: image_url={branch_image_url[:80]}...")
+        # Generate hero images with different variants for unique imagery
+        branch_hero_images = [
+            get_image_url_sync(primary_dest, variant=0, width=1600, height=900),  # Signature view
+            get_image_url_sync(primary_dest, variant=1, width=900, height=600),  # Daylight wander
+            get_image_url_sync(primary_dest, variant=2, width=900, height=600),  # Evening vibe
+        ]
+        _debug(f"Branch {idx}: hero_images generated, first={branch_hero_images[0][:80]}...")
 
         doc_branch = DocumentBranch(
             id=spec.get("id") or f"branch_{trip_context_id}_{idx}",
@@ -16861,6 +16970,8 @@ def _branches_to_document(
                 flights=spec.get("tiles", {}).get("flights", []),
                 activities=spec.get("tiles", {}).get("activities", []),
             ),
+            image_url=branch_image_url,
+            hero_images=branch_hero_images,
         )
         doc_branches.append(doc_branch)
 
@@ -17046,7 +17157,26 @@ async def plan_trip_graph(
         tiles_dict: Dict[str, TileSchema] = {}
 
         result_branches = result.get("branches", [])
+        _debug(f"PLAN_TRIP_GRAPH: result_branches count={len(result_branches)}")
         if result_branches:
+            _debug(f"PLAN_TRIP_GRAPH: Processing {len(result_branches)} branches for images")
+            # Pre-fetch ALL Unsplash image variants for all branch destinations
+            # before building documents. This populates the in-memory cache so
+            # branches get unique Unsplash images.
+            from app.services.unsplash import prefetch_destination_images
+
+            for branch_spec in result_branches:
+                branch_dests = branch_spec.get("destinations", [])
+                if branch_dests and isinstance(branch_dests, list) and branch_dests[0]:
+                    try:
+                        num_cached = await prefetch_destination_images(branch_dests[0], db)
+                        _debug(
+                            f"Pre-fetched {num_cached} image variants for "
+                            f"branch destination: {branch_dests[0]}"
+                        )
+                    except Exception as e:
+                        _debug(f"Image prefetch failed for {branch_dests[0]}: {e}")
+
             doc_branches = _branches_to_document(result_branches, trip_ctx.id)
 
             # Get tiles from metadata

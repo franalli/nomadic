@@ -31,3 +31,7 @@ backend/.venv/
 backend/tests/e2e/generated_results/
 backend/tests/e2e/nightly_results/
 e2e_results/
+
+# Claude Code temp files
+tmpclaude-*-cwd
+**/tmpclaude-*-cwd

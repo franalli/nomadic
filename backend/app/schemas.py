@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -121,9 +121,10 @@ class TilesSearchRequest(BaseModel):
     budget_per_category: Optional[float] = None  # Suggested allocation per category
 
     # User preference settings for filtering tiles
-    flight_settings: Optional["FlightSettings"] = None
-    hotel_settings: Optional["HotelSettings"] = None
-    activity_settings: Optional["ActivitySettings"] = None
+    # Accept both dict and model since TripInputs stores these as dicts
+    flight_settings: Optional[Union["FlightSettings", Dict[str, Any]]] = None
+    hotel_settings: Optional[Union["HotelSettings", Dict[str, Any]]] = None
+    activity_settings: Optional[Union["ActivitySettings", Dict[str, Any]]] = None
 
 
 class TilesSearchResponse(BaseModel):
@@ -242,6 +243,9 @@ class DocumentBranch(BaseModel):
     is_primary: bool = False
     tiles: BranchTileIds = Field(default_factory=BranchTileIds)
     selections: BranchSelections = Field(default_factory=BranchSelections)
+    # Dynamic images based on destination (from Unsplash)
+    image_url: Optional[str] = None  # Primary branch card image
+    hero_images: List[str] = Field(default_factory=list)  # Mood images for detail view
 
 
 class DocumentTripInputsPatch(BaseModel):
