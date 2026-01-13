@@ -838,13 +838,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                           <>{m.content}</>
                         )}
                       </div>
-                      {/* Delete button - positioned at bottom-right corner */}
+                      {/* Delete button - positioned at bottom-right corner, visible only on hover */}
                       {showDeleteButton && (
-                        <HoldToDeleteButton
-                          onDelete={handleDeleteLastMessage}
-                          disabled={isDeleting}
-                          className="absolute -bottom-2 -right-2 opacity-60 hover:opacity-100 group-hover/msg:opacity-100 transition-opacity z-10"
-                        />
+                        <div className="absolute -bottom-4 right-1 opacity-0 group-hover/msg:opacity-100 transition-opacity z-[999]">
+                          <HoldToDeleteButton
+                            onDelete={handleDeleteLastMessage}
+                            disabled={isDeleting}
+                          />
+                        </div>
                       )}
                     </div>
                   </div>
