@@ -79,7 +79,8 @@ export function FlowStageIndicator({
   const totalSteps = 4;
 
   // Don't show on greeting stage (before first user message)
-  if (stage === 'greeting') return null;
+  // Don't show on viewing stage (branches are already visible, indicator is redundant)
+  if (stage === 'greeting' || stage === 'viewing') return null;
 
   return (
     <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground bg-muted/30 rounded-full border border-border/30">

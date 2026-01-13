@@ -121,18 +121,25 @@ export const HeroSection = memo(function HeroSection({
 
   return (
     <div className="relative min-h-screen overflow-hidden">
+      {/* Hero background */}
       <div className="absolute inset-x-0 top-0 h-[400px] sm:h-[500px]">
         <HeroBackground />
       </div>
       <div className="absolute inset-0 top-[400px] sm:top-[500px] bg-background" />
-      <div className="relative z-10 flex min-h-screen flex-col">
-        <div
-          ref={chatPanelContainerRef}
-          className="mx-auto flex max-w-6xl flex-1 flex-col items-center justify-start gap-4 px-0 sm:px-4 pb-4 pt-8 sm:pt-10"
-        >
+
+      {/* Hero title - positioned independently */}
+      <div className="relative z-10 pointer-events-none">
+        <div className="mx-auto max-w-6xl px-4 pt-8 sm:pt-10">
           <HeroTitle typedTagline={typedTagline} variant="full" />
-          {children}
         </div>
+      </div>
+
+      {/* Chat panel container - independent positioning */}
+      <div
+        ref={chatPanelContainerRef}
+        className="relative z-20 flex min-h-screen flex-col items-center justify-start px-0 sm:px-4 pb-4 pt-24 sm:pt-28"
+      >
+        {children}
       </div>
     </div>
   );

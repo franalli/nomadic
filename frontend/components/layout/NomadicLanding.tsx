@@ -570,7 +570,7 @@ export function NomadicLanding() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.1 }}
-                className="mt-2 w-full sm:max-w-[605px]"
+                className="mt-2 w-full sm:w-[calc(100%-2rem)] sm:max-w-[605px] md:max-w-[680px] lg:max-w-[605px]"
               >
                 <Card className="bg-card/75 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
                   <CardContent className="p-0 sm:p-3 sm:pb-0">

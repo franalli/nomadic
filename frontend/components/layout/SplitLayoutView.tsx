@@ -1,13 +1,12 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Compass, MessageCircle, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, Compass } from 'lucide-react';
 import React, { memo, useState } from 'react';
 
 import { GeneratingLoader } from '@/components/layout/GeneratingLoader';
 import { HeroSection } from '@/components/layout/HeroSection';
 import { Footer } from '@/components/nomadic/footer';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 
 interface SidebarHeaderProps {
@@ -46,9 +45,9 @@ export interface SplitLayoutViewProps {
 }
 
 /**
- * Split layout view with fixed sidebar on left and scrollable main content on right.
- * Used when generating or when branches are ready.
- * On mobile, sidebar becomes a drawer that can be toggled.
+ * Split layout view with:
+ * - Desktop (lg+): Fixed sidebar on left, scrollable main content on right
+ * - Mobile (<lg): Stack layout with content on top, expandable chat bar at bottom
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
   sidebarContent,
@@ -58,55 +57,22 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   hasBranchesReady,
   tripDetailsContent,
 }: SplitLayoutViewProps) {
-  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  // Mobile chat bar expanded state
+  const [mobileChatExpanded, setMobileChatExpanded] = useState(false);
 
   return (
-    <div className="flex min-h-screen">
-      {/* Mobile chat toggle button - fixed at bottom right on mobile */}
-      <Button
-        variant="primary"
-        size="icon"
-        type="button"
-        onClick={() => setMobileDrawerOpen(true)}
-        className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg lg:hidden"
-        aria-label="Open chat"
-      >
-        <MessageCircle className="h-6 w-6" />
-      </Button>
-
-      {/* Mobile drawer overlay */}
-      {mobileDrawerOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50 lg:hidden"
-          onClick={() => setMobileDrawerOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-
-      {/* Left sidebar - Chat Panel */}
-      {/* Desktop: fixed 25% width, Mobile: slide-in drawer */}
+    <div className="flex flex-col lg:flex-row min-h-screen">
+      {/* Desktop sidebar - Chat Panel */}
+      {/* Only visible on lg+ screens */}
       <aside
-        className={`no-scrollbar fixed left-0 top-0 h-screen overflow-y-auto border-r border-white/10 bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl transition-transform duration-300 ease-out
-          w-[85vw] max-w-[400px] lg:w-1/4 lg:min-w-[320px]
-          z-50 lg:z-40
-          ${mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className="no-scrollbar fixed left-0 top-0 h-screen overflow-y-auto border-r border-white/10 bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl
+          w-1/4 min-w-[320px]
+          z-40
+          hidden lg:block"
         aria-label="Trip planning chat"
       >
         <div className="flex h-full flex-col p-4 pb-2">
-          {/* Header with mobile close button */}
-          <div className="flex items-center justify-between mb-4">
-            <SidebarHeader className="!mb-0" />
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              onClick={() => setMobileDrawerOpen(false)}
-              className="h-8 w-8 text-white hover:bg-white/10 lg:hidden"
-              aria-label="Close chat"
-            >
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
+          <SidebarHeader />
           {/* Chat Panel */}
           <div className="flex-1 overflow-hidden">
             <Card className="bg-card/75 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
@@ -118,10 +84,10 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         </div>
       </aside>
 
-      {/* Right content - Loader or Branches */}
-      {/* Desktop: offset by sidebar width, Mobile: full width */}
+      {/* Main content area */}
+      {/* Desktop: offset by sidebar width, Mobile: full width with bottom padding for chat bar */}
       <section
-        className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)]"
+        className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)] pb-[140px] lg:pb-0"
         aria-label="Trip options and results"
       >
         <div className="min-h-screen">
@@ -147,7 +113,8 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.5 }}
               >
-                <GeneratingLoader />
+                <GeneratingLoader compact className="lg:hidden" />
+                <GeneratingLoader className="hidden lg:flex" />
               </motion.div>
             ) : (
               <motion.div
@@ -164,6 +131,50 @@ export const SplitLayoutView = memo(function SplitLayoutView({
           <Footer />
         </div>
       </section>
+
+      {/* Mobile chat bar - fixed at bottom */}
+      {/* Only visible on screens < lg */}
+      <aside
+        className={`fixed bottom-0 left-0 right-0 z-50 lg:hidden
+          bg-gradient-to-t from-black/95 via-black/90 to-black/85 backdrop-blur-lg
+          border-t border-white/10 shadow-2xl
+          transition-all duration-300 ease-out
+          ${mobileChatExpanded ? 'h-[60vh]' : 'h-[140px]'}`}
+        aria-label="Trip planning chat"
+      >
+        {/* Expand/collapse handle */}
+        <button
+          type="button"
+          onClick={() => setMobileChatExpanded(!mobileChatExpanded)}
+          className="absolute -top-3 left-1/2 -translate-x-1/2 z-10
+            bg-primary hover:bg-primary/90 text-primary-foreground
+            rounded-full px-4 py-1 shadow-lg
+            flex items-center gap-1 text-xs font-medium
+            transition-colors"
+          aria-label={mobileChatExpanded ? 'Collapse chat' : 'Expand chat'}
+        >
+          {mobileChatExpanded ? (
+            <>
+              <ChevronDown className="h-4 w-4" />
+              <span>Collapse</span>
+            </>
+          ) : (
+            <>
+              <ChevronUp className="h-4 w-4" />
+              <span>Chat</span>
+            </>
+          )}
+        </button>
+
+        {/* Chat content */}
+        <div className="h-full overflow-hidden p-3 pt-4">
+          <Card className="bg-card/75 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
+            <CardContent className="flex h-full min-h-0 flex-col p-3">
+              {sidebarContent}
+            </CardContent>
+          </Card>
+        </div>
+      </aside>
     </div>
   );
 });

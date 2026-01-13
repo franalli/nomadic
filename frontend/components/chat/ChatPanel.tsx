@@ -2,7 +2,7 @@
 'use client';
 
 import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Square, Trash2 } from 'lucide-react';
+import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
   type ReactNode,
@@ -28,10 +28,19 @@ import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
 import { determineStage,FlowStageIndicator } from './FlowStageIndicator';
+import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
 // Message to show after plan is generated with specific examples
 const POST_GENERATE_MESSAGE =
   "Your trip options are ready! You can say things like 'increase budget to $3000', 'remove Paris', or 'add a beach day' to refine your plan.";
+
+// Helper to fix escaped newlines from backend
+// Converts literal \n strings to actual newline characters
+const sanitizeContent = (content: string): string => {
+  return content
+    .replace(/\\n/g, '\n')  // Replace literal \n with actual newlines
+    .replace(/\\t/g, '\t'); // Replace literal \t with actual tabs
+};
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
 
@@ -689,6 +698,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
         return m;
       })
+      // Sanitize content: convert literal \n to actual newlines
+      .map((m) => ({
+        ...m,
+        content: sanitizeContent(m.content),
+      }))
       .flatMap((m) => {
         // Only split assistant messages by paragraph breaks
         if (m.role === 'assistant') {
@@ -780,65 +794,57 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 // Tighter spacing for consecutive parts of split messages
                 const spacingClass = isSplitMessage && !isFirstPart ? '-mt-1.5' : '';
 
+                // For user messages, wrap in a relative container for delete button positioning
+                const isUserMessage = m.role === 'user';
+                const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
+
                 return (
                   <div
                     key={m.id}
-                    className={`${m.role === 'user' ? 'text-right' : 'text-left'} message-enter ${spacingClass}`}
+                    className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass}`}
                     style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
                   >
-                    <div
-                      className={
-                        m.role === 'user'
-                          ? 'group/msg border border-primary/40 dark:border-accent/40 bg-gradient-to-br from-primary via-primary to-primary/70 text-primary-foreground dark:from-amber-500 dark:via-accent dark:to-amber-600/70 dark:text-white inline-block max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.2)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.15)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.25)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:border-primary/60 dark:hover:border-accent/60'
-                          : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-block max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${isStreaming ? 'typing-pulse' : ''}`
-                      }
-                    >
-                      {m.role === 'assistant' ? (
-                        <>
-                          <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                            {m.content}
-                          </Markdown>
-                          {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
-                          {originalId.startsWith('a_err_') &&
-                            lastUserMessage &&
-                            isRetryableError(m.content) &&
-                            !isLoading &&
-                            (!isSplitMessage || isLastPart) && (
-                              <button
-                                type="button"
-                                onClick={() => sendMessageCore(lastUserMessage)}
-                                className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
-                              >
-                                <RotateCcw className="h-3 w-3" />
-                                Retry
-                              </button>
-                            )}
-                        </>
-                      ) : (
-                        <>
-                          {m.content}
-                          {/* Delete button for last user message - only visible on hover */}
-                          {originalId === lastUserMessageId && !isLoading && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleDeleteLastMessage();
-                              }}
-                              disabled={isDeleting}
-                              className="ml-2 p-1 rounded-full bg-white/20 hover:bg-red-500 text-white/50 hover:text-white invisible group-hover/msg:visible transition-colors"
-                              title="Undo this message"
-                              aria-label="Delete this message"
-                            >
-                              {isDeleting ? (
-                                <span className="h-3 w-3 block animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
-                              ) : (
-                                <Trash2 className="h-3 w-3" />
+                    {/* Relative container for absolute delete button positioning */}
+                    <div className={`inline-block relative max-w-[85%] ${showDeleteButton ? 'group/msg' : ''}`}>
+                      <div
+                        className={
+                          isUserMessage
+                            ? 'border border-primary/40 dark:border-accent/40 bg-gradient-to-br from-primary via-primary to-primary/70 text-primary-foreground dark:from-amber-500 dark:via-accent dark:to-amber-600/70 dark:text-white rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.2)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.15)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.25)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.2)] hover:-translate-y-0.5 hover:border-primary/60 dark:hover:border-accent/60'
+                            : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${isStreaming ? 'typing-pulse' : ''}`
+                        }
+                      >
+                        {m.role === 'assistant' ? (
+                          <>
+                            <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                              {m.content}
+                            </Markdown>
+                            {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
+                            {originalId.startsWith('a_err_') &&
+                              lastUserMessage &&
+                              isRetryableError(m.content) &&
+                              !isLoading &&
+                              (!isSplitMessage || isLastPart) && (
+                                <button
+                                  type="button"
+                                  onClick={() => sendMessageCore(lastUserMessage)}
+                                  className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  Retry
+                                </button>
                               )}
-                            </button>
-                          )}
-                        </>
+                          </>
+                        ) : (
+                          <>{m.content}</>
+                        )}
+                      </div>
+                      {/* Delete button - positioned at bottom-right corner */}
+                      {showDeleteButton && (
+                        <HoldToDeleteButton
+                          onDelete={handleDeleteLastMessage}
+                          disabled={isDeleting}
+                          className="absolute -bottom-2 -right-2 opacity-60 hover:opacity-100 group-hover/msg:opacity-100 transition-opacity z-10"
+                        />
                       )}
                     </div>
                   </div>

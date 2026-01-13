@@ -19,7 +19,17 @@ const PARTICLE_INDICES = [0, 1, 2, 3, 4, 5] as const;
 // Shared transform for centering positioned elements
 const CENTER_TRANSFORM = { transform: 'translate(-50%, -50%)' } as const;
 
-export const GeneratingLoader = memo(function GeneratingLoader() {
+interface GeneratingLoaderProps {
+  /** Show compact version for mobile */
+  compact?: boolean;
+  /** Additional CSS classes */
+  className?: string;
+}
+
+export const GeneratingLoader = memo(function GeneratingLoader({
+  compact = false,
+  className = '',
+}: GeneratingLoaderProps) {
   const [currentStage, setCurrentStage] = useState(0);
 
   // Cycle through stages automatically
@@ -33,9 +43,73 @@ export const GeneratingLoader = memo(function GeneratingLoader() {
     return () => clearTimeout(timer);
   }, [currentStage]);
 
+  // Compact version for mobile
+  if (compact) {
+    return (
+      <div
+        className={`flex w-full items-center justify-center py-8 ${className}`}
+        role="status"
+        aria-busy="true"
+        aria-live="polite"
+        aria-label="Generating your trip options, please wait"
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ duration: 0.5, ease: 'easeOut' }}
+          className="flex flex-col items-center gap-4"
+        >
+          {/* Compact compass animation */}
+          <div className="relative flex h-20 w-20 items-center justify-center">
+            {/* Pulsing ring */}
+            <div className="loader-pulse-ring absolute h-20 w-20 rounded-full border-2 border-primary/30" />
+
+            {/* Center compass */}
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 8, repeat: Infinity, ease: 'linear' }}
+              className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary/80 shadow-xl"
+            >
+              <Compass className="h-7 w-7 text-primary-foreground" />
+            </motion.div>
+          </div>
+
+          {/* Current stage text only */}
+          <div className="flex flex-col items-center gap-2 text-center">
+            <motion.p
+              key={currentStage}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-sm font-medium text-primary"
+            >
+              {STAGES[currentStage].label}...
+            </motion.p>
+
+            {/* Compact progress bar */}
+            <div className="h-1 w-32 overflow-hidden rounded-full bg-muted">
+              <motion.div
+                className="h-full w-1/3 bg-gradient-to-r from-primary to-accent"
+                animate={{
+                  x: ['-100%', '300%'],
+                }}
+                transition={{
+                  duration: 1.5,
+                  repeat: Infinity,
+                  ease: 'easeInOut',
+                }}
+              />
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Full version for desktop
   return (
     <div
-      className="flex h-full min-h-[60vh] w-full items-center justify-center"
+      className={`flex h-full min-h-[60vh] w-full items-center justify-center ${className}`}
       role="status"
       aria-busy="true"
       aria-live="polite"
