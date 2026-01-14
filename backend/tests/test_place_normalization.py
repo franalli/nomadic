@@ -154,9 +154,8 @@ class TestNormalizePlaceWithFuzzy:
         assert "Zealand" not in result
         assert "New Zealand" not in result
         assert "Australia" not in result
-        # Should be geocoded to proper US location with both city and state
+        # Should resolve to South Bend (now in KNOWN_CITIES)
         assert "South Bend" in result
-        assert "Indiana" in result
 
     def test_us_state_abbreviation_not_matched_to_other_country(self):
         """US state abbreviation should not match to non-US places."""

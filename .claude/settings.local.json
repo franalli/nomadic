@@ -51,7 +51,8 @@
       "Bash(curl:*)",
       "Bash(echo \"No database files found in backend root\" ls -la c:/Users/Filippo/Desktop/nomadic/backend/data/*.db c:/Users/Filippo/Desktop/nomadic/backend/data/*.sqlite)",
       "Bash(npx depcheck:*)",
-      "Bash(alembic revision:*)"
+      "Bash(alembic revision:*)",
+      "Bash(powershell -Command:*)"
     ],
     "deny": [],
     "ask": []

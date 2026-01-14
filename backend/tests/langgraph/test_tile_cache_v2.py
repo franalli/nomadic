@@ -11,11 +11,14 @@ Verifies:
 import hashlib
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 class TestTileCacheWiring:
     """Tests for tile cache integration with tile_search node."""
 
-    def test_tile_search_calls_api_and_caches_results(self):
+    @pytest.mark.asyncio
+    async def test_tile_search_calls_api_and_caches_results(self):
         """tile_search calls search_tiles API and caches the results."""
         from app.plan_graph import (
             GraphState,
@@ -59,13 +62,14 @@ class TestTileCacheWiring:
         with patch("app.plan_graph.search_tiles") as mock_search:
             mock_search.return_value = MagicMock(tiles=[mock_tile])
 
-            tile_search(state)
+            await tile_search(state)
 
             # API should be called and results cached
             assert mock_search.called, "search_tiles should be called"
             assert len(tile_cache._cache) > initial_size, "Results should be cached"
 
-    def test_tile_search_caches_api_results(self):
+    @pytest.mark.asyncio
+    async def test_tile_search_caches_api_results(self):
         """tile_search caches results after API call via set_tile_cached."""
         from app.plan_graph import (
             GraphState,
@@ -110,7 +114,7 @@ class TestTileCacheWiring:
         with patch("app.plan_graph.search_tiles") as mock_search:
             mock_search.return_value = MagicMock(tiles=[mock_tile])
 
-            tile_search(state)
+            await tile_search(state)
 
             # Cache should now have entries
             stats = get_tile_cache_stats()

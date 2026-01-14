@@ -17,10 +17,15 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, TypeVar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pydantic import BaseModel, ValidationError
+
 from app.config import settings
+
+# TypeVar for generic Pydantic model parsing
+T = TypeVar("T", bound=BaseModel)
 
 # =============================================================================
 # Constants
@@ -833,6 +838,42 @@ def jloads_safe(s: str) -> Dict[str, Any]:
     # Return empty dict on failure
     logger.warning("JSON parse failed: %s", s[:100] if len(s) > 100 else s)
     return {}
+
+
+def parse_llm_output(
+    raw: str,
+    model: type[T],
+    fallback: T | None = None,
+) -> T:
+    """
+    Parse LLM output with Pydantic validation and optional fallback.
+
+    Uses jloads_safe() for resilient JSON extraction, then validates
+    against the provided Pydantic model.
+
+    Args:
+        raw: Raw LLM output string (potentially malformed JSON)
+        model: Pydantic model class to validate against
+        fallback: Optional fallback instance if validation fails.
+                  If None and validation fails, raises ValidationError.
+
+    Returns:
+        Validated Pydantic model instance
+
+    Raises:
+        ValidationError: If validation fails and no fallback provided
+    """
+    data = jloads_safe(raw)
+    try:
+        return model.model_validate(data)
+    except ValidationError:
+        if fallback is not None:
+            logger.warning(
+                "Pydantic validation failed for %s, using fallback",
+                model.__name__,
+            )
+            return fallback
+        raise
 
 
 def extract_message_from_malformed_json(raw: str) -> Optional[str]:

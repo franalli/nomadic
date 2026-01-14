@@ -110,6 +110,7 @@ backend/app/planner/
     ├── lqa_prepass.py       # LQA pre-pass node
     ├── router.py            # Router node
     ├── extractor.py         # Extractor node
+    ├── schemas.py           # Pydantic schemas (ExtractorOutput, RouterOutput)
     ├── specialist_main.py   # Shared specialist handler
     ├── strategy_main.py     # Strategy nodes
     ├── specialist/          # Specialist subpackage
@@ -263,30 +264,41 @@ backend/app/planner/
 
 ### LLM-Powered Nodes
 
-| Node | Prompt File | Purpose | Max Tokens | Streaming | LLM Call |
-|------|-------------|---------|------------|-----------|----------|
-| `extractor` | `extractor.txt` | Extract trip data from user input | 400 | 🔒 None | Buffered |
-| `extractor` (light) | `extractor_light.txt` | Light extraction for simple inputs | 200 | 🔒 None | Buffered |
-| `router` | `router.txt` | Intent classification | 256 | 🔒 None | Buffered |
-| `required_fields_node` | `required_fields.txt` | Collect missing core fields | 180 | ⚡ Fast UX | Buffered |
-| `flights_node` | `flights.txt` | Flight preferences | 512 | ⚡ Fast UX | Buffered |
-| `hotels_node` | `hotels.txt` | Hotel preferences | 512 | ⚡ Fast UX | Buffered |
-| `transport_node` | `transport.txt` | Ground transport preferences | 512 | ⚡ Fast UX | Buffered |
-| `activities_node` | `activities.txt` | Activity preferences | 512 | ⚡ Fast UX | Buffered |
-| `correction_node` | `correction.txt` | Handle user corrections | 512 | ⚡ Fast UX | Buffered |
-| `general_node` | `general.txt` | Multi-domain queries | 512 | ⚡ Fast UX | Buffered |
-| `response_polish` | `response_polish.txt` | Polish message tone | 512 | 🔒 None | Buffered |
+| Node | Prompt File | Purpose | Max Tokens | Streaming | Validation |
+|------|-------------|---------|------------|-----------|------------|
+| `extractor` | `extractor.txt` | Extract trip data from user input | 400 | 🔒 None | ✅ Pydantic |
+| `extractor` (light) | `extractor_light.txt` | Light extraction for simple inputs | 200 | 🔒 None | ✅ Pydantic |
+| `router` | `router.txt` | Intent classification | 256 | 🔒 None | ✅ Pydantic |
+| `required_fields_node` | `required_fields.txt` | Collect missing core fields | 180 | ⚡ Fast UX | `jloads_safe` |
+| `flights_node` | `flights.txt` | Flight preferences | 512 | ⚡ Fast UX | `jloads_safe` |
+| `hotels_node` | `hotels.txt` | Hotel preferences | 512 | ⚡ Fast UX | `jloads_safe` |
+| `transport_node` | `transport.txt` | Ground transport preferences | 512 | ⚡ Fast UX | `jloads_safe` |
+| `activities_node` | `activities.txt` | Activity preferences | 512 | ⚡ Fast UX | `jloads_safe` |
+| `correction_node` | `correction.txt` | Handle user corrections | 512 | ⚡ Fast UX | `jloads_safe` |
+| `general_node` | `general.txt` | Multi-domain queries | 512 | ⚡ Fast UX | `jloads_safe` |
+| `response_polish` | `response_polish.txt` | Polish message tone | 512 | 🔒 None | `jloads_safe` |
+
+### Validation Legend
+
+| Symbol | Method | Description |
+|--------|--------|-------------|
+| ✅ Pydantic | `parse_llm_output()` | Type-safe parsing with Pydantic schema validation |
+| `jloads_safe` | `jloads_safe()` | Resilient JSON parsing with fallback (no schema validation) |
+
+> **Note:** Specialist and strategy nodes use `jloads_safe` because they require real-time streaming
+> and graceful degradation for partial JSON. Extractor and router are buffered internal nodes where
+> strict validation provides better type safety without impacting streaming UX.
 
 ### Strategy Nodes
 
-| Node | Prompt File | Purpose | Max Tokens | Stage | Streaming | LLM Call |
-|------|-------------|---------|------------|-------|-----------|----------|
-| `strategy_node` (stage0) | `strategy_pre_core.txt` | Pre-core value-first response | 300 | 0 | ✨ Simulated | Buffered |
-| `strategy_node` (stage0-known) | `strategy_pre_core_known_dest.txt` | Pre-core with known destination | 150 | 0 | ✨ Simulated | Buffered |
-| `strategy_node` (stage0-discovery) | `strategy_pre_core_discovery.txt` | Pre-core destination exploration | 150 | 0 | ✨ Simulated | Buffered |
-| `strategy_node` (stage1) | `strategy_{topic}.txt` | Initial strategy outline | 512 | 1 | ✨ Simulated | Buffered |
-| `strategy_node` (stage2) | `strategy_{topic}.txt` | Expansion details | 1536 | 2 | ✨ Simulated | Buffered |
-| `missing_fields_guard` | `missing_fields_guard.txt` | Guard for missing fields | 100 | — | 🔒 None | Buffered |
+| Node | Prompt File | Purpose | Max Tokens | Stage | Streaming | Validation |
+|------|-------------|---------|------------|-------|-----------|------------|
+| `strategy_node` (stage0) | `strategy_pre_core.txt` | Pre-core value-first response | 300 | 0 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage0-known) | `strategy_pre_core_known_dest.txt` | Pre-core with known destination | 150 | 0 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage0-discovery) | `strategy_pre_core_discovery.txt` | Pre-core destination exploration | 150 | 0 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage1) | `strategy_{topic}.txt` | Initial strategy outline | 512 | 1 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage2) | `strategy_{topic}.txt` | Expansion details | 1536 | 2 | ✨ Simulated | `jloads_safe` |
+| `missing_fields_guard` | `missing_fields_guard.txt` | Guard for missing fields | 100 | — | 🔒 None | `jloads_safe` |
 
 ### Deterministic Nodes (No LLM)
 
@@ -532,6 +544,36 @@ CachePayload:
     - data: Any
 ```
 
+### Validation Cache (Origin/Destination Verification)
+
+Located in `backend/app/validation.py`, this cache stores LLM-verified place names.
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `validation_cache_size` | 5000 | Max entries before LRU eviction |
+| `validation_cache_ttl` | 604800 (7 days) | Time before entries expire |
+
+**Cache Layers:**
+
+| Cache | Purpose | TTL |
+|-------|---------|-----|
+| `_validation_cache` | Positive validation results | 7 days |
+| `_negative_cache` | Invalid locations | Short (prevents retry spam) |
+| `_split_cache` | Multi-destination splits ("Paris and Rome") | 7 days |
+| `_prompt_cache` | Formatted prompts | 7 days |
+| `_fallback_cache` | Last known good answer | 7 days |
+
+**When Validation is Called:**
+- Origin extracted from "from X to Y" pattern
+- Origin NOT in `KNOWN_CITIES`
+- Cache miss (not verified in last 7 days)
+
+**Token Cost:** ~100-120 tokens per LLM verification call
+
+**Progressive Learning:**
+- Verified places logged as `LEARNED_PLACE: '{place}' verified`
+- Review logs periodically to add popular places to `KNOWN_CITIES`
+
 ---
 
 ## Prompt File Mapping
@@ -744,6 +786,7 @@ This ensures:
 | `planner.gates.topic_detection` | `detect_strategy_topic_from_text`, `detect_strategy_topic_from_settings`, `detect_strategy_topic` |
 | `planner.state` | `StateWriter` |
 | `planner.nodes` | `extractor`, `lqa_prepass`, `router`, `_specialist`, `strategy_node` |
+| `planner.nodes.schemas` | `ExtractorOutput`, `RouterOutput`, `BudgetDelta`, `IntentType`, `TopicType` |
 
 ---
 

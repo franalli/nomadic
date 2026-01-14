@@ -19,8 +19,9 @@ from typing import TYPE_CHECKING
 # P2: Module-level imports for non-circular dependencies
 from app.config import settings
 from app.debug_utils import _debug, _debug_error
-from app.graph_plan_utils import jloads_safe
+from app.graph_plan_utils import parse_llm_output
 from app.planner.nodes.llm_utils import measure_llm_call
+from app.planner.nodes.schemas import RouterOutput
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
@@ -111,12 +112,16 @@ async def router(state: "GraphState") -> "GraphState":
                 max_tokens=llm_config["max_tokens"],
                 temperature=llm_config["temperature"],
             )
-        j = jloads_safe(out)
-        state.intent = j.get("intent") or "required_fields"
-        topic = j.get("topic") or state.parsed_inputs.get("strategy_hint")
+
+        # Parse with Pydantic validation (fallback to default RouterOutput on error)
+        router_output = parse_llm_output(out, RouterOutput, fallback=RouterOutput())
+
+        # Apply validated router output to state
+        state.intent = router_output.intent
+        topic = router_output.topic or state.parsed_inputs.get("strategy_hint")
         state.strategy_topic = topic if state.intent == "strategy" else None
-        state.metadata["router_notes"] = j.get("notes", "")
-        state.metadata["router_confidence"] = j.get("confidence", 1.0)
+        state.metadata["router_notes"] = router_output.notes or ""
+        state.metadata["router_confidence"] = router_output.confidence
 
         # Cache the router result for future identical requests
         _set_cached_response(
@@ -127,7 +132,7 @@ async def router(state: "GraphState") -> "GraphState":
                 "strategy_topic": state.strategy_topic,
                 "notes": state.metadata.get("router_notes", ""),
                 "confidence": state.metadata.get("router_confidence", 1.0),
-                "user_intent": j.get("user_intent"),
+                "user_intent": router_output.user_intent,
             },
         )
 
@@ -139,8 +144,8 @@ async def router(state: "GraphState") -> "GraphState":
             _debug_node_exit("router", state, start_ns)
             return state
 
-        # Capture refined user intent from router (if provided)
-        router_user_intent = j.get("user_intent")
+        # Capture refined user intent from router (if provided and valid)
+        router_user_intent = router_output.user_intent
         if router_user_intent and router_user_intent in USER_INTENT_ARCHETYPES:
             # Router refined the intent - update if different from extractor hint
             current_intent = state.metadata.get("user_intent")

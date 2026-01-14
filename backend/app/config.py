@@ -129,8 +129,8 @@ class Settings(BaseSettings):
     confidence_threshold_skip_router: float = 0.92  # Confidence to skip LLM router
 
     # Validation cache settings
-    validation_cache_size: int = 1000
-    validation_cache_ttl: int = 86400  # 24 hours
+    validation_cache_size: int = 5000  # Increased for progressive learning of unknown places
+    validation_cache_ttl: int = 604800  # 7 days - keeps verified places longer
     validation_max_tokens: int = 50  # Enough for JSON response
     validation_negative_cache_enabled: bool = True
     validation_negative_cache_size: int = 500

@@ -6881,10 +6881,37 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
                 fields_extracted.append("destinations")
                 _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: destinations={dest_norm}")
 
-            if is_known_place(origin_norm) and origin_norm != dest_norm:
-                parsed["origin_delta"] = origin_norm
-                fields_extracted.append("origin")
-                _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: origin={origin_norm}")
+            if origin_norm != dest_norm:
+                origin_is_known = is_known_place(origin_norm)
+
+                if origin_is_known:
+                    # Known place - use with proper casing via fuzzy normalization
+                    origin_final = normalize_place_with_fuzzy(origin_text)
+                    parsed["origin_delta"] = origin_final
+                    fields_extracted.append("origin")
+                    _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: origin={origin_final}")
+                else:
+                    # Unknown place from explicit "from X" - validate via LLM
+                    from app.planner.nodes.extractor import _validate_origin_extraction
+
+                    validated_origin, metadata_updates = _validate_origin_extraction(
+                        text_clean,
+                        origin_norm.title(),
+                        is_known=False,
+                    )
+
+                    parsed["origin_delta"] = validated_origin
+                    fields_extracted.append("origin")
+
+                    # Propagate any clarification metadata
+                    if metadata_updates:
+                        parsed["_origin_metadata"] = metadata_updates
+
+                    _debug(
+                        "[INITIAL_EXTRACT] Pattern 2 matched (verified): "
+                        f"origin={validated_origin}",
+                        metadata=metadata_updates if metadata_updates else None,
+                    )
 
     # Try "based in" origin pattern (Pattern 2b)
     # Note: For explicit "based in X" patterns, we're lenient about is_known_place
@@ -12294,6 +12321,30 @@ def normalize_inputs(state: GraphState) -> GraphState:
         _debug("Set budget_answered=True from LQA", tier=parsed.get("budget_tier"))
 
     # =========================================================================
+    # HANDLE ORIGIN VERIFICATION METADATA
+    # =========================================================================
+    # When an unknown origin is extracted and verified via LLM, the extractor
+    # or initial extraction may set _origin_metadata with clarification info.
+    origin_metadata = parsed.pop("_origin_metadata", None)
+    if origin_metadata:
+        if origin_metadata.get("origin_correction_pending"):
+            correction = origin_metadata["origin_correction_pending"]
+            # Use existing typo confirmation flow
+            state.metadata["typo_suggestions"] = {correction["original"]: correction["suggested"]}
+            state.metadata["pending_action"] = "confirm_typo"
+            state.metadata["pending_typo_corrections"] = {
+                correction["original"]: correction["suggested"]
+            }
+            _debug(f"[ORIGIN_VERIFY] Setup correction confirmation: {correction}")
+
+        elif origin_metadata.get("origin_clarification_needed"):
+            clarification = origin_metadata["origin_clarification_needed"]
+            # Force required_fields to ask about origin
+            state.metadata["force_required_fields_reason"] = "origin_unverified"
+            state.metadata["origin_clarification"] = clarification
+            _debug(f"[ORIGIN_VERIFY] Setup clarification: {clarification}")
+
+    # =========================================================================
     # USE TripInputNormalizer FOR UNIFIED NORMALIZATION
     # =========================================================================
     # This is the SINGLE normalization pass. All field normalization, validation,
@@ -16867,11 +16918,15 @@ def _trip_inputs_to_document(ti: TripInputs) -> DocumentTripInputs:
     )
 
     # Convert flight_settings dict to FlightSettings model
+    # Note: Use explicit None checks because .get() returns None if key exists with None value
     flight_settings_data = ti.flight_settings or {}
+    round_trip_val = flight_settings_data.get("round_trip")
+    cabin_class_val = flight_settings_data.get("cabin_class")
+    direct_only_val = flight_settings_data.get("direct_only")
     flight_settings = FlightSettings(
-        round_trip=flight_settings_data.get("round_trip", True),
-        cabin_class=flight_settings_data.get("cabin_class", "economy"),
-        direct_only=flight_settings_data.get("direct_only", False),
+        round_trip=round_trip_val if round_trip_val is not None else True,
+        cabin_class=cabin_class_val if cabin_class_val is not None else "economy",
+        direct_only=direct_only_val if direct_only_val is not None else False,
     )
 
     # Convert hotel_settings dict to HotelSettings model

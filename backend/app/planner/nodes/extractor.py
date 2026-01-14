@@ -18,15 +18,17 @@ Extracted from plan_graph.py as part of the P2 module extraction initiative.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Dict
+import logging
+from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 # P2: Module-level imports for non-circular dependencies
 from app.config import settings
 from app.debug_utils import _debug, _debug_error
-from app.graph_plan_utils import jloads_safe
+from app.graph_plan_utils import parse_llm_output
 from app.known_places import (
     _fuzzy_match_is_non_us,
     _input_mentions_us_location,
+    is_known_place,
 )
 from app.pattern_matching import text_is_compatible_with_target
 from app.planner.node_utils import ti_short, today_iso
@@ -35,28 +37,41 @@ from app.planner.nodes.confidence import (
     high_confidence,
     low_confidence_error,
 )
+from app.planner.nodes.schemas import ExtractorOutput
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
 
+logger = logging.getLogger(__name__)
 
-def _validate_origin_extraction(user_text: str, extracted_origin: str) -> str:
+
+def _validate_origin_extraction(
+    user_text: str,
+    extracted_origin: str,
+    is_known: bool = True,
+) -> Tuple[str, Dict[str, Any]]:
     """
-    Validate LLM-extracted origin against geographic context in user text.
+    Validate LLM-extracted origin against geographic context and verify unknown places.
 
     This catches cases where the LLM mishears US locations as non-US places.
     Example: "south bend indiana" extracted as "South Island" (New Zealand).
 
+    For unknown origins (not in KNOWN_CITIES), calls LLM validation service to
+    verify/correct the place name.
+
     Args:
         user_text: Original user input text
-        extracted_origin: Origin extracted by LLM
+        extracted_origin: Origin extracted by LLM or pattern matching
+        is_known: Whether the origin is in KNOWN_CITIES
 
     Returns:
-        Validated origin - either the LLM extraction if valid, or raw text
-        that mentioned the origin if there's a geographic mismatch.
+        Tuple of (validated_origin, metadata_updates)
+        metadata_updates may contain clarification info if verification fails
     """
+    metadata_updates: Dict[str, Any] = {}
+
     if not extracted_origin:
-        return extracted_origin
+        return extracted_origin, metadata_updates
 
     # Check for geographic mismatch:
     # User mentions US location but LLM extracted something non-US
@@ -82,16 +97,75 @@ def _validate_origin_extraction(user_text: str, extracted_origin: str) -> str:
                         marker=marker,
                         raw_origin=raw_origin[:30],
                     )
-                    return raw_origin
+                    return raw_origin, metadata_updates
 
         # No marker found - use the full text (normalization will handle it)
         _debug(
             "ORIGIN_VALIDATION: No origin marker found, using full text",
             fallback=user_text[:30],
         )
-        return user_text
+        return user_text, metadata_updates
 
-    return extracted_origin
+    # Verify unknown origins via LLM validation service
+    if not is_known:
+        from app.validation import validate_input
+
+        _debug(
+            "ORIGIN_VALIDATION: Unknown origin, calling LLM verification",
+            origin=extracted_origin,
+        )
+
+        try:
+            result = validate_input(extracted_origin, "origin")
+
+            if result.is_valid and result.corrected_values:
+                corrected = result.corrected_values[0]
+
+                # Log for progressive curation of KNOWN_CITIES
+                logger.info(
+                    f"LEARNED_PLACE: '{extracted_origin}' verified as '{corrected}' "
+                    f"- consider adding to KNOWN_CITIES"
+                )
+
+                if corrected.lower() != extracted_origin.lower():
+                    # LLM suggests correction → set up confirmation
+                    _debug(
+                        "ORIGIN_VALIDATION: LLM suggests correction",
+                        original=extracted_origin,
+                        suggested=corrected,
+                    )
+                    metadata_updates["origin_correction_pending"] = {
+                        "original": extracted_origin,
+                        "suggested": corrected,
+                    }
+                    return corrected, metadata_updates
+                else:
+                    # LLM confirms origin is valid
+                    _debug(
+                        "ORIGIN_VALIDATION: LLM confirmed origin",
+                        origin=corrected,
+                    )
+                    return corrected, metadata_updates
+            else:
+                # LLM couldn't verify → need user clarification
+                _debug(
+                    "ORIGIN_VALIDATION: LLM could not verify",
+                    origin=extracted_origin,
+                    reason=result.reason,
+                )
+                metadata_updates["origin_clarification_needed"] = {
+                    "original": extracted_origin,
+                    "reason": result.reason or "Unknown location",
+                }
+                # Still return the origin, but flag for clarification
+                return extracted_origin.title(), metadata_updates
+
+        except Exception as e:
+            _debug(f"ORIGIN_VALIDATION: LLM verification error: {e}")
+            # On error, accept with title case (fail open)
+            return extracted_origin.title(), metadata_updates
+
+    return extracted_origin, metadata_updates
 
 
 async def extractor(state: "GraphState") -> "GraphState":
@@ -452,49 +526,59 @@ async def extractor(state: "GraphState") -> "GraphState":
         )
         _record_llm_time(state, (_time.perf_counter() - _llm_start) * 1000)
         _increment_llm_calls(state)
-        extracted = jloads_safe(out)
 
-        # Map LLM output to parsed_inputs format
-        if extracted.get("destinations_delta"):
-            parsed["destinations_delta"] = extracted["destinations_delta"]
-        if extracted.get("origin_delta"):
+        # Parse with Pydantic validation (fallback to empty model on validation error)
+        extracted = parse_llm_output(out, ExtractorOutput, fallback=ExtractorOutput())
+
+        # Map validated LLM output to parsed_inputs format
+        if extracted.destinations_delta:
+            parsed["destinations_delta"] = extracted.destinations_delta
+        if extracted.origin_delta:
             # Validate origin extraction against user text to catch geographic mismatches
             # (e.g., LLM extracting "South Island" from "south bend indiana")
-            validated_origin = _validate_origin_extraction(text, extracted["origin_delta"])
+            # Also verify unknown origins via LLM validation service
+            origin_is_known = is_known_place(extracted.origin_delta)
+            validated_origin, origin_metadata = _validate_origin_extraction(
+                text, extracted.origin_delta, is_known=origin_is_known
+            )
             parsed["origin_delta"] = validated_origin
-        if extracted.get("start_date_hint"):
-            parsed["start_date_hint"] = extracted["start_date_hint"]
-        if extracted.get("end_date_hint"):
-            parsed["end_date_hint"] = extracted["end_date_hint"]
-        if extracted.get("duration_days"):
-            parsed["duration_days"] = extracted["duration_days"]
-        if extracted.get("adults_delta") is not None:
-            parsed["adults_delta"] = extracted["adults_delta"]
-        if extracted.get("children_delta") is not None:
-            parsed["children_delta"] = extracted["children_delta"]
-        if extracted.get("requires_assistance_delta") is not None:
-            parsed["requires_assistance_delta"] = extracted["requires_assistance_delta"]
-        if extracted.get("budget_delta"):
-            parsed["budget_delta"] = extracted["budget_delta"]
-        if extracted.get("multi_city_intent_delta"):
-            parsed["multi_city_intent_delta"] = extracted["multi_city_intent_delta"]
-        if extracted.get("category_activation"):
-            parsed["category_activation"] = extracted["category_activation"]
-        if extracted.get("flight_settings_delta"):
-            parsed["flight_settings_delta"] = extracted["flight_settings_delta"]
-        if extracted.get("hotel_settings_delta"):
-            parsed["hotel_settings_delta"] = extracted["hotel_settings_delta"]
-        if extracted.get("transport_settings_delta"):
-            parsed["transport_settings_delta"] = extracted["transport_settings_delta"]
-        if extracted.get("activity_categories_delta"):
+            # Propagate clarification metadata if verification produced any
+            if origin_metadata:
+                parsed["_origin_metadata"] = origin_metadata
+        if extracted.start_date_hint:
+            parsed["start_date_hint"] = extracted.start_date_hint
+        if extracted.end_date_hint:
+            parsed["end_date_hint"] = extracted.end_date_hint
+        if extracted.duration_days:
+            parsed["duration_days"] = extracted.duration_days
+        if extracted.adults_delta is not None:
+            parsed["adults_delta"] = extracted.adults_delta
+        if extracted.children_delta is not None:
+            parsed["children_delta"] = extracted.children_delta
+        if extracted.requires_assistance_delta is not None:
+            parsed["requires_assistance_delta"] = extracted.requires_assistance_delta
+        if extracted.budget_delta:
+            # Convert Pydantic model to dict for downstream compatibility
+            parsed["budget_delta"] = extracted.budget_delta.model_dump()
+        if extracted.multi_city_intent_delta:
+            parsed["multi_city_intent_delta"] = extracted.multi_city_intent_delta
+        if extracted.category_activation:
+            parsed["category_activation"] = extracted.category_activation
+        if extracted.flight_settings_delta:
+            parsed["flight_settings_delta"] = extracted.flight_settings_delta
+        if extracted.hotel_settings_delta:
+            parsed["hotel_settings_delta"] = extracted.hotel_settings_delta
+        if extracted.transport_settings_delta:
+            parsed["transport_settings_delta"] = extracted.transport_settings_delta
+        if extracted.activity_categories_delta:
             # Map to inferred_activity_categories for normalize_inputs
-            parsed["inferred_activity_categories"] = extracted["activity_categories_delta"]
-        if extracted.get("strategy_hint"):
-            parsed["strategy_hint"] = extracted["strategy_hint"]
+            parsed["inferred_activity_categories"] = extracted.activity_categories_delta
+        if extracted.strategy_hint:
+            parsed["strategy_hint"] = extracted.strategy_hint
 
-        # Store LLM-reported confidence in metadata
-        confidence_score = extracted.get("confidence", 0.8)
-        confidence_reasons = extracted.get("confidence_reasons") or []
+        # Store LLM-reported confidence in metadata (validated 0.0-1.0 by Pydantic)
+        confidence_score = extracted.confidence
+        confidence_reasons = extracted.confidence_reasons or []
 
         state.metadata["extraction_confidence"] = build_extraction_confidence(
             overall=confidence_score,
