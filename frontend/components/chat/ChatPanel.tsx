@@ -148,7 +148,8 @@ const MARKDOWN_COMPONENTS = {
       if (typeof node === 'string') return node;
       if (Array.isArray(node)) return node.map(getTextContent).join('');
       if (node && typeof node === 'object' && 'props' in node) {
-        return getTextContent((node as React.ReactElement).props.children);
+        const element = node as { props?: { children?: React.ReactNode } };
+        return getTextContent(element.props?.children);
       }
       return '';
     };
