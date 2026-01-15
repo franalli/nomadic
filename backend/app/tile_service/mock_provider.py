@@ -144,6 +144,12 @@ class MockHotelProvider(Provider):
             if budget_limit and price > budget_limit:
                 continue
 
+            # Expedia compliance: calculate taxes and fees
+            tax_and_service = round(price * 0.12, 2)  # ~12% taxes/service fees
+            property_fee = round(nights * 15, 2)  # ~$15/night property fee
+            total_inclusive = round(price + tax_and_service + property_fee, 2)
+            is_refundable = i <= 3  # First 3 hotels are refundable
+
             tiles.append(
                 Tile(
                     id=f"tile_mock_hotel_{i}",
@@ -170,7 +176,7 @@ class MockHotelProvider(Provider):
                     ),
                     availability_status="available" if source_mode == "live" else "unknown",
                     meta={
-                        "refundable": True,
+                        "refundable": is_refundable,
                         "destination": dest,
                         "origin": ctx.origin,
                         "start_date": ctx.start_date,
@@ -184,6 +190,17 @@ class MockHotelProvider(Provider):
                     },
                     score=0.7 + 0.05 * i,
                     source=source_mode,
+                    # Expedia Rapid API compliance fields
+                    total_inclusive=total_inclusive,
+                    tax_and_service_fee=tax_and_service,
+                    property_fee=property_fee,
+                    is_refundable=is_refundable,
+                    cancel_policy_summary=(
+                        "Free cancellation until 24h before check-in"
+                        if is_refundable
+                        else "Non-refundable rate"
+                    ),
+                    provider="expedia",
                 )
             )
 
@@ -289,6 +306,12 @@ class MockFlightProvider(Provider):
             cabin_display = cabin_class.replace("_", " ").title()
             trip_type = "Round trip" if round_trip else "One way"
 
+            # Expedia compliance: calculate taxes and fees for flights
+            tax_and_service = round(price * 0.15, 2)  # ~15% taxes/service fees
+            total_inclusive = round(price + tax_and_service, 2)
+            # Flights are typically non-refundable except premium cabins
+            is_refundable = cabin_class in ["business", "first"]
+
             tiles.append(
                 Tile(
                     id=f"tile_mock_flight_{idx + 1}",
@@ -328,6 +351,17 @@ class MockFlightProvider(Provider):
                     },
                     score=0.65 + 0.05 * idx,
                     source=source_mode,
+                    # Expedia Rapid API compliance fields
+                    total_inclusive=total_inclusive,
+                    tax_and_service_fee=tax_and_service,
+                    property_fee=None,  # No property fee for flights
+                    is_refundable=is_refundable,
+                    cancel_policy_summary=(
+                        "Flexible - changes permitted with fee"
+                        if is_refundable
+                        else "Non-refundable fare"
+                    ),
+                    provider="expedia",
                 )
             )
 
@@ -457,6 +491,12 @@ class MockActivityProvider(Provider):
             if budget_limit and total > budget_limit:
                 continue
 
+            # Expedia compliance: calculate taxes and fees for activities
+            tax_and_service = round(total * 0.08, 2)  # ~8% taxes/service fees
+            total_inclusive = round(total + tax_and_service, 2)
+            # Most activities are refundable with 24h notice
+            is_refundable = True
+
             tiles.append(
                 Tile(
                     id=f"tile_mock_activity_{idx + 1}",
@@ -489,6 +529,13 @@ class MockActivityProvider(Provider):
                     },
                     score=0.6 + 0.05 * idx,
                     source=source_mode,
+                    # Expedia Rapid API compliance fields
+                    total_inclusive=total_inclusive,
+                    tax_and_service_fee=tax_and_service,
+                    property_fee=None,  # No property fee for activities
+                    is_refundable=is_refundable,
+                    cancel_policy_summary="Free cancellation up to 24h before start time",
+                    provider="expedia",
                 )
             )
 

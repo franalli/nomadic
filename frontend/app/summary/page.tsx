@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, Plane, Sparkles } from 'lucide-react';
+import { ArrowLeft, Info, Plane, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -80,6 +80,45 @@ export default function SummaryPage() {
   })();
 
   // selectedTiles already contains only the selected items
+
+  // Calculate price breakdown for Expedia compliance
+  const priceBreakdown = useMemo(() => {
+    if (!summary) return null;
+
+    const { stay, flight, activities } = summary.selection;
+    const currency = stay?.currency || flight?.currency || activities[0]?.currency || 'USD';
+
+    // Subtotals by category
+    const staySubtotal = stay?.price_estimate ?? 0;
+    const flightSubtotal = flight?.price_estimate ?? 0;
+    const activitiesSubtotal = activities.reduce(
+      (sum, a) => sum + (a.price_estimate ?? 0),
+      0
+    );
+
+    // Taxes and fees
+    const stayTaxes = (stay?.tax_and_service_fee ?? 0) + (stay?.property_fee ?? 0);
+    const flightTaxes = flight?.tax_and_service_fee ?? 0;
+    const activityTaxes = activities.reduce(
+      (sum, a) => sum + (a.tax_and_service_fee ?? 0),
+      0
+    );
+    const totalTaxes = stayTaxes + flightTaxes + activityTaxes;
+
+    // Totals
+    const subtotal = staySubtotal + flightSubtotal + activitiesSubtotal;
+    const estimatedTotal = subtotal + totalTaxes;
+
+    return {
+      currency,
+      stay: { subtotal: staySubtotal, taxes: stayTaxes },
+      flight: { subtotal: flightSubtotal, taxes: flightTaxes },
+      activities: { subtotal: activitiesSubtotal, taxes: activityTaxes },
+      subtotal,
+      totalTaxes,
+      estimatedTotal,
+    };
+  }, [summary]);
 
   return (
     <div className="bg-background text-foreground min-h-screen">
@@ -188,6 +227,107 @@ export default function SummaryPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Price breakdown - Expedia compliance */}
+        {priceBreakdown && priceBreakdown.estimatedTotal > 0 && (
+          <div className="bg-card/90 rounded-2xl border border-white/10 p-5 shadow-lg">
+            <div className="flex items-center gap-2 mb-4">
+              <Info className="text-primary h-4 w-4" />
+              <p className="text-primary text-xs font-semibold uppercase tracking-wide">
+                Estimated price breakdown
+              </p>
+            </div>
+
+            <div className="space-y-3 text-sm">
+              {/* Stay */}
+              {priceBreakdown.stay.subtotal > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Stay</span>
+                  <span className="text-foreground font-medium">
+                    {Math.round(priceBreakdown.stay.subtotal).toLocaleString()} {priceBreakdown.currency}
+                  </span>
+                </div>
+              )}
+
+              {/* Flight */}
+              {priceBreakdown.flight.subtotal > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Flight</span>
+                  <span className="text-foreground font-medium">
+                    {Math.round(priceBreakdown.flight.subtotal).toLocaleString()} {priceBreakdown.currency}
+                  </span>
+                </div>
+              )}
+
+              {/* Activities */}
+              {priceBreakdown.activities.subtotal > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Activities</span>
+                  <span className="text-foreground font-medium">
+                    {Math.round(priceBreakdown.activities.subtotal).toLocaleString()} {priceBreakdown.currency}
+                  </span>
+                </div>
+              )}
+
+              {/* Divider */}
+              <div className="border-t border-border/50 my-2" />
+
+              {/* Subtotal */}
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Subtotal</span>
+                <span className="text-foreground font-medium">
+                  {Math.round(priceBreakdown.subtotal).toLocaleString()} {priceBreakdown.currency}
+                </span>
+              </div>
+
+              {/* Taxes and fees */}
+              {priceBreakdown.totalTaxes > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Taxes and fees</span>
+                  <span className="text-foreground font-medium">
+                    {Math.round(priceBreakdown.totalTaxes).toLocaleString()} {priceBreakdown.currency}
+                  </span>
+                </div>
+              )}
+
+              {/* Divider */}
+              <div className="border-t border-border/50 my-2" />
+
+              {/* Estimated Total */}
+              <div className="flex justify-between">
+                <span className="text-foreground font-semibold">Estimated total</span>
+                <span className="text-foreground text-lg font-bold">
+                  {Math.round(priceBreakdown.estimatedTotal).toLocaleString()} {priceBreakdown.currency}
+                </span>
+              </div>
+
+              {/* Disclaimer */}
+              <p className="text-xs text-muted-foreground mt-3">
+                Final price, taxes, and fees are confirmed by Expedia at checkout.
+                Prices may change based on availability.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Expedia booking disclosure */}
+        <div className="rounded-lg border border-border/50 bg-muted/30 p-4 text-sm text-muted-foreground space-y-2">
+          <p>
+            <strong className="text-foreground">Important:</strong> Bookings are processed by Expedia Group.
+            Payment, cancellation, and support are handled directly by Expedia.
+          </p>
+          <p>
+            By proceeding to book, you agree to the{' '}
+            <a
+              href="https://www.expedia.com/lp/lg-legal"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline hover:text-primary/80"
+            >
+              Expedia Group Terms and Conditions
+            </a>.
+          </p>
         </div>
 
         <div className="bg-card/90 rounded-2xl border border-white/10 p-5 shadow-lg">

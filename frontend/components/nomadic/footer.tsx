@@ -60,20 +60,18 @@ export function Footer() {
               Sitemap
             </Link>
             <span className="text-muted-foreground/50">·</span>
-            <a
-              href="https://unsplash.com?utm_source=nomadic&utm_medium=referral"
-              target="_blank"
-              rel="noopener noreferrer"
+            <Link
+              href="/credits"
               className="hover:text-foreground transition-colors"
-              aria-label="Images provided by Unsplash"
+              aria-label="Image Credits"
             >
-              Unsplash
-            </a>
+              Image Credits
+            </Link>
           </div>
         </div>
 
         <p className="text-muted-foreground text-center md:text-right">
-          © {new Date().getFullYear()} Nomadic Inc.
+          © {new Date().getFullYear()} Nomadic
         </p>
       </div>
     </footer>

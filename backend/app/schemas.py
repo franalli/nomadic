@@ -64,6 +64,9 @@ class DeleteLastMessageResponse(BaseModel):
     messages: List[ChatMessageResponse]  # Remaining messages after deletion
 
 
+TileProvider = Literal["expedia", "booking", "unknown"]
+
+
 class Tile(BaseModel):
     id: str
     type: TileType
@@ -94,6 +97,14 @@ class Tile(BaseModel):
     meta: dict = Field(default_factory=dict)
     score: Optional[float] = None
     source: Optional[str] = None  # "cache" | "live"
+
+    # Expedia Rapid API pricing fields for compliance
+    total_inclusive: Optional[float] = None  # Total price including all taxes/fees
+    tax_and_service_fee: Optional[float] = None  # Combined taxes and service fees
+    property_fee: Optional[float] = None  # Property-collected fees
+    is_refundable: Optional[bool] = None  # Whether booking is refundable
+    cancel_policy_summary: Optional[str] = None  # Brief cancellation policy text
+    provider: Optional[TileProvider] = "expedia"  # Default to Expedia for now
 
 
 class TilesSearchRequest(BaseModel):

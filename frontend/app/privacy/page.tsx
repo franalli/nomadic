@@ -19,7 +19,7 @@ export default function PrivacyPage() {
           title: 'Who we are and how to contact us',
           body: (
             <>
-              <p>Nomadic Inc. is the controller for personal data processed through this site.</p>
+              <p>Nomadic is the controller for personal data processed through this site.</p>
               <p>
                 Contact: <a href="mailto:privacy@nomadic.travel" className="text-primary underline">privacy@nomadic.travel</a>. You
                 can also use the{' '}
@@ -60,6 +60,33 @@ export default function PrivacyPage() {
           ),
         },
         {
+          title: 'How we source travel content (no scraping)',
+          body: (
+            <>
+              <p>
+                <strong>Nomadic does not scrape websites or use unauthorized data collection methods.</strong>{' '}
+                All travel content displayed on our platform is retrieved exclusively through authorized APIs:
+              </p>
+              <ul className="list-disc space-y-2 pl-5">
+                <li>
+                  The Expedia Group Rapid API provides hotel, flight, and activity listings under an
+                  authorized affiliate agreement.
+                </li>
+                <li>
+                  The Booking.com Demand API provides additional accommodation options under authorized
+                  partnership terms.
+                </li>
+                <li>
+                  Destination images are sourced from Unsplash under their API license.
+                </li>
+              </ul>
+              <p>
+                This ensures all information is accurate, compliant with partner terms, and lawfully obtained.
+              </p>
+            </>
+          ),
+        },
+        {
           title: 'How we use your information and legal bases (GDPR/UK GDPR)',
           body: (
             <>
@@ -81,6 +108,10 @@ export default function PrivacyPage() {
                 <li>
                   Expedia Group Rapid API to retrieve live rates and booking details you ask for. Expedia
                   processes payments and confirmations under its own terms.
+                </li>
+                <li>
+                  Booking.com Demand API to retrieve additional accommodation options and booking details.
+                  Booking.com processes payments under its own terms.
                 </li>
                 <li>Infrastructure providers (hosting, databases, monitoring) under confidentiality and data processing terms.</li>
                 <li>Service providers for support or compliance (only as needed and under contract).</li>

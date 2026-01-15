@@ -53,6 +53,58 @@ export default function TermsPage() {
           ),
         },
         {
+          title: 'Data sourcing and no scraping policy',
+          body: (
+            <>
+              <p>
+                <strong>Nomadic does not scrape any websites.</strong> All content displayed on our
+                platform—including travel listings, pricing, availability, images, and descriptions—is
+                retrieved exclusively through authorized APIs provided by our partners.
+              </p>
+              <ul className="list-disc space-y-2 pl-5">
+                <li>
+                  Hotel, flight, and activity data is sourced from the Expedia Group Rapid API under
+                  an authorized affiliate agreement.
+                </li>
+                <li>
+                  Additional accommodation content may be sourced from the Booking.com Demand API
+                  under authorized partnership terms.
+                </li>
+                <li>
+                  Images used for destination inspiration are sourced from Unsplash under their API
+                  license terms.
+                </li>
+                <li>
+                  We do not use web crawlers, scrapers, or any automated data extraction tools that
+                  violate third-party terms of service.
+                </li>
+              </ul>
+              <p>
+                This approach ensures that all information we display is accurate, up-to-date, and
+                compliant with our partners' data usage policies.
+              </p>
+            </>
+          ),
+        },
+        {
+          title: 'Multi-supplier aggregation and merchant of record',
+          body: (
+            <>
+              <p>
+                Nomadic aggregates travel content from multiple third-party suppliers including
+                Expedia Group and Booking.com. We are <strong>not the merchant of record</strong>{' '}
+                for any booking.
+              </p>
+              <ul className="list-disc space-y-2 pl-5">
+                <li>Prices, availability, taxes, and fees are determined by each supplier.</li>
+                <li>Payment is collected by the supplier (Expedia or Booking.com), not Nomadic.</li>
+                <li>Supplier-specific terms and conditions apply at booking time.</li>
+                <li>We do not guarantee pricing or availability shown.</li>
+              </ul>
+            </>
+          ),
+        },
+        {
           title: 'Bookings, payments, and confirmations',
           body: (
             <ul className="list-disc space-y-2 pl-5">
@@ -126,6 +178,17 @@ export default function TermsPage() {
                 jurisdictions do not allow these exclusions; where prohibited, they do not apply.
               </p>
             </>
+          ),
+        },
+        {
+          title: 'Governing law and disputes',
+          body: (
+            <p>
+              These terms are governed by the laws of Switzerland. Any disputes arising from your
+              use of Nomadic shall be subject to the exclusive jurisdiction of the courts of
+              Switzerland. For booking-related disputes, you must contact the supplier (Expedia or
+              Booking.com) directly as they are the merchant of record.
+            </p>
           ),
         },
       ]}

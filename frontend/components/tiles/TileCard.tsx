@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 
+import { TaxesFeesTooltip } from '@/components/tiles/TaxesFeesTooltip';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -203,6 +204,18 @@ export const TileCard = memo(function TileCard({
         >
           <Heart className={`h-5 w-5 ${isLiked ? 'fill-red-500 text-red-500' : ''}`} />
         </button>
+
+        {/* Refundable/Non-refundable badge - Expedia compliance */}
+        {tile.is_refundable === false && (
+          <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
+            Non-refundable
+          </div>
+        )}
+        {tile.is_refundable === true && (
+          <div className="absolute left-2 top-2 rounded bg-emerald-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
+            Free cancellation
+          </div>
+        )}
       </div>
 
       <CardBody className="flex flex-1 flex-col gap-3 p-4">
@@ -237,29 +250,44 @@ export const TileCard = memo(function TileCard({
         </div>
 
         <div className="mt-auto flex items-end justify-between pt-2">
-          <div className="flex flex-col">
-            <span className="text-muted-foreground text-xs">From</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-muted-foreground text-xs">
+              {tile.total_inclusive != null ? 'Total from' : 'From'}
+            </span>
             <div className="flex items-baseline gap-1">
               <span className="text-foreground text-lg font-bold">
-                {tile.price_estimate != null ? `${tile.price_estimate}` : ''}
+                {(tile.total_inclusive ?? tile.price_estimate) != null
+                  ? Math.round(tile.total_inclusive ?? tile.price_estimate!).toLocaleString()
+                  : ''}
               </span>
               <span className="text-foreground text-sm font-medium">{tile.currency}</span>
-              {tile.type?.toLowerCase().includes('stay') && (
+              {tile.type?.toLowerCase().includes('stay') && !tile.total_inclusive && (
                 <span className="text-muted-foreground text-xs">/night</span>
               )}
             </div>
-            {tile.price_estimate == null && (
+            {(tile.total_inclusive ?? tile.price_estimate) == null && (
               <span className="text-foreground text-sm font-bold">Check price</span>
             )}
+            {/* Expedia taxes & fees disclosure with legal tooltip */}
+            <TaxesFeesTooltip
+              taxAndServiceFee={tile.tax_and_service_fee}
+              propertyFee={tile.property_fee}
+              currency={tile.currency}
+            />
           </div>
-          <Button
-            variant="primary"
-            size="sm"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-sm"
-            onClick={handleViewDetailsClick}
-          >
-            View Details
-          </Button>
+          <div className="flex flex-col items-end">
+            <Button
+              variant="primary"
+              size="sm"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-sm"
+              onClick={handleViewDetailsClick}
+            >
+              View Details
+            </Button>
+            <span className="text-[10px] text-muted-foreground mt-1">
+              Opens partner site
+            </span>
+          </div>
         </div>
       </CardBody>
     </Card>

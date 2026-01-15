@@ -34,12 +34,13 @@ import { NodeProgress } from './NodeProgress';
 const POST_GENERATE_MESSAGE =
   "Your trip options are ready! You can say things like 'increase budget to $3000', 'remove Paris', or 'add a beach day' to refine your plan.";
 
-// Helper to fix escaped newlines from backend
-// Converts literal \n strings to actual newline characters
+// Helper to fix escaped characters from backend
+// Converts literal escape sequences to actual characters for proper markdown rendering
 const sanitizeContent = (content: string): string => {
   return content
     .replace(/\\n/g, '\n')  // Replace literal \n with actual newlines
-    .replace(/\\t/g, '\t'); // Replace literal \t with actual tabs
+    .replace(/\\t/g, '\t')  // Replace literal \t with actual tabs
+    .replace(/\\\*/g, '*'); // Unescape asterisks for markdown bold/italic
 };
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
@@ -134,18 +135,32 @@ const MARKDOWN_COMPONENTS = {
   ),
   // Unordered lists with proper bullet styling
   ul: ({ children }: { children?: React.ReactNode }) => (
-    <ul className="my-2 ml-1 space-y-1.5 first:mt-0 last:mb-0">{children}</ul>
+    <ul className="my-2 ml-1 list-none space-y-1.5 first:mt-0 last:mb-0">{children}</ul>
   ),
   // Ordered lists with proper number styling
   ol: ({ children }: { children?: React.ReactNode }) => (
     <ol className="my-2 ml-1 list-decimal space-y-1.5 pl-4 first:mt-0 last:mb-0">{children}</ol>
   ),
-  // List items with custom bullet point styling
-  li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="relative pl-4 before:absolute before:left-0 before:top-[0.6em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-primary/60 before:content-['']">
-      {children}
-    </li>
-  ),
+  // List items with custom bullet point styling (hidden when emoji acts as bullet)
+  li: ({ children }: { children?: React.ReactNode }) => {
+    // Extract text content to check if it starts with an emoji
+    const getTextContent = (node: React.ReactNode): string => {
+      if (typeof node === 'string') return node;
+      if (Array.isArray(node)) return node.map(getTextContent).join('');
+      if (node && typeof node === 'object' && 'props' in node) {
+        return getTextContent((node as React.ReactElement).props.children);
+      }
+      return '';
+    };
+    const text = getTextContent(children);
+    const startsWithEmoji = /^[\p{Emoji_Presentation}\p{Extended_Pictographic}]/u.test(text);
+
+    return (
+      <li className={`relative pl-4 ${!startsWithEmoji ? "before:absolute before:left-0 before:top-[0.6em] before:h-1.5 before:w-1.5 before:rounded-full before:bg-primary/60 before:content-['']" : ''}`}>
+        {children}
+      </li>
+    );
+  },
   // Inline code for technical terms
   code: ({ children }: { children?: React.ReactNode }) => (
     <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-sm">{children}</code>
