@@ -162,8 +162,13 @@ def _validate_origin_extraction(
 
         except Exception as e:
             _debug(f"ORIGIN_VALIDATION: LLM verification error: {e}")
-            # On error, accept with title case (fail open)
-            return extracted_origin.title(), metadata_updates
+            # Fail closed - return None to indicate extraction failed
+            # This prevents invalid extractions like "I Need" from being accepted
+            metadata_updates["origin_extraction_failed"] = {
+                "attempted": extracted_origin,
+                "error": str(e),
+            }
+            return None, metadata_updates
 
     return extracted_origin, metadata_updates
 

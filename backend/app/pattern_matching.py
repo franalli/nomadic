@@ -709,6 +709,94 @@ INITIAL_DESTINATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Common words that should never be extracted as locations.
+# Used to filter out false positives from pattern matching (e.g., "I need to book"
+# matching "I need" as origin and "book" as destination).
+NON_LOCATION_WORDS: frozenset[str] = frozenset(
+    {
+        # Pronouns
+        "i",
+        "we",
+        "you",
+        "they",
+        "he",
+        "she",
+        "it",
+        "me",
+        "us",
+        "them",
+        # Modal/auxiliary verbs
+        "need",
+        "want",
+        "would",
+        "could",
+        "should",
+        "must",
+        "can",
+        "will",
+        "may",
+        # Common action verbs
+        "book",
+        "booking",
+        "get",
+        "find",
+        "search",
+        "look",
+        "looking",
+        "try",
+        "trying",
+        "go",
+        "going",
+        "travel",
+        "traveling",
+        "fly",
+        "flying",
+        "plan",
+        "planning",
+        # Articles and possessives
+        "a",
+        "an",
+        "the",
+        "my",
+        "our",
+        "your",
+        "their",
+        "his",
+        "her",
+        "its",
+        # Common request/filler words
+        "please",
+        "help",
+        "just",
+        "also",
+        "some",
+        "any",
+        "like",
+    }
+)
+
+
+def is_likely_location(text: str) -> bool:
+    """
+    Check if extracted text could plausibly be a location.
+
+    Rejects text where ALL words are common non-location words (pronouns,
+    verbs, articles). This prevents false positives like "I need" being
+    extracted as an origin from "I need to book a flight".
+
+    Args:
+        text: Extracted text to validate
+
+    Returns:
+        True if text might be a location, False if definitely not
+    """
+    if not text:
+        return False
+    words = text.lower().split()
+    # Reject if ALL words are non-location words
+    return not all(word in NON_LOCATION_WORDS for word in words)
+
+
 # Origin-destination pattern (e.g., "from London to Paris")
 # The destination capture excludes trailing date/time words like "tomorrow",
 # "today", etc. and numbers (e.g., "2 days") to avoid capturing

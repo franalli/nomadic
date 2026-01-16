@@ -113,6 +113,7 @@ from app.pattern_matching import (
     WORD_TO_NUMBER,
     YES_PATTERN,
     # Date compatibility (consolidated)
+    is_likely_location,
     is_traveler_detail_answer,
 )
 from app.planner.gates.checks import (
@@ -6873,45 +6874,77 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
             origin_text = origin_dest_match.group(1).strip()
             dest_text = origin_dest_match.group(2).strip()
 
-            origin_norm = normalize_place_synonym(origin_text)
-            dest_norm = normalize_place_synonym(dest_text)
+            # Pre-validate: reject if extracted text is clearly not a location
+            # (e.g., "I need" from "I need to book" or "book" as destination)
+            if not is_likely_location(origin_text) or not is_likely_location(dest_text):
+                _debug(
+                    "[INITIAL_EXTRACT] Pattern 2 rejected: non-location words",
+                    origin_text=origin_text,
+                    dest_text=dest_text,
+                )
+            else:
+                origin_norm = normalize_place_synonym(origin_text)
+                dest_norm = normalize_place_synonym(dest_text)
 
-            if is_known_place(dest_norm):
-                parsed["destinations_delta"] = [dest_norm]
-                fields_extracted.append("destinations")
-                _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: destinations={dest_norm}")
+                if is_known_place(dest_norm):
+                    parsed["destinations_delta"] = [dest_norm]
+                    fields_extracted.append("destinations")
+                    _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: destinations={dest_norm}")
 
-            if origin_norm != dest_norm:
-                origin_is_known = is_known_place(origin_norm)
+                if origin_norm != dest_norm:
+                    origin_is_known = is_known_place(origin_norm)
 
-                if origin_is_known:
-                    # Known place - use with proper casing via fuzzy normalization
-                    origin_final = normalize_place_with_fuzzy(origin_text)
-                    parsed["origin_delta"] = origin_final
-                    fields_extracted.append("origin")
-                    _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: origin={origin_final}")
-                else:
-                    # Unknown place from explicit "from X" - validate via LLM
-                    from app.planner.nodes.extractor import _validate_origin_extraction
+                    if origin_is_known:
+                        # Known place - use with proper casing via fuzzy normalization
+                        origin_final = normalize_place_with_fuzzy(origin_text)
+                        parsed["origin_delta"] = origin_final
+                        fields_extracted.append("origin")
+                        _debug(f"[INITIAL_EXTRACT] Pattern 2 matched: origin={origin_final}")
+                    else:
+                        # For unknown origins, require explicit "from X" pattern
+                        # This prevents false positives from generic "X to Y" matches
+                        has_explicit_from = bool(
+                            re.search(
+                                rf"\bfrom\s+{re.escape(origin_text)}\b",
+                                text_clean,
+                                re.IGNORECASE,
+                            )
+                        )
+                        if not has_explicit_from:
+                            _debug(
+                                "[INITIAL_EXTRACT] Pattern 2 skipped unknown origin "
+                                f"without 'from': {origin_text}"
+                            )
+                        else:
+                            # Unknown place with explicit "from X" - validate via LLM
+                            from app.planner.nodes.extractor import _validate_origin_extraction
 
-                    validated_origin, metadata_updates = _validate_origin_extraction(
-                        text_clean,
-                        origin_norm.title(),
-                        is_known=False,
-                    )
+                            validated_origin, metadata_updates = _validate_origin_extraction(
+                                text_clean,
+                                origin_norm.title(),
+                                is_known=False,
+                            )
 
-                    parsed["origin_delta"] = validated_origin
-                    fields_extracted.append("origin")
+                            # Only accept if validation returned a value
+                            if validated_origin:
+                                parsed["origin_delta"] = validated_origin
+                                fields_extracted.append("origin")
 
-                    # Propagate any clarification metadata
-                    if metadata_updates:
-                        parsed["_origin_metadata"] = metadata_updates
+                                # Propagate any clarification metadata
+                                if metadata_updates:
+                                    parsed["_origin_metadata"] = metadata_updates
 
-                    _debug(
-                        "[INITIAL_EXTRACT] Pattern 2 matched (verified): "
-                        f"origin={validated_origin}",
-                        metadata=metadata_updates if metadata_updates else None,
-                    )
+                                _debug(
+                                    "[INITIAL_EXTRACT] Pattern 2 matched (verified): "
+                                    f"origin={validated_origin}",
+                                    metadata=metadata_updates if metadata_updates else None,
+                                )
+                            else:
+                                _debug(
+                                    "[INITIAL_EXTRACT] Pattern 2 origin validation failed",
+                                    attempted=origin_norm,
+                                    metadata=metadata_updates,
+                                )
 
     # Try "based in" origin pattern (Pattern 2b)
     # Note: For explicit "based in X" patterns, we're lenient about is_known_place
