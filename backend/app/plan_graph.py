@@ -14530,7 +14530,19 @@ async def tile_search(state: GraphState) -> GraphState:
                     # Cache hit - use cached tiles
                     cache_hits += 1
                     cached_tiles = cached_result if isinstance(cached_result, dict) else {}
+                    # Regenerate image URLs using current cache (may have fresh Unsplash images)
+                    from app.services.unsplash import get_image_url_sync
+
                     for tile_id, tile_data in cached_tiles.items():
+                        # Update image_url if we have a better one from Unsplash cache
+                        if "image_url" in tile_data and primary_dest:
+                            # Use tile index for variant selection
+                            tile_idx = list(cached_tiles.keys()).index(tile_id)
+                            new_url = get_image_url_sync(
+                                primary_dest, variant=tile_idx % 6, width=400, height=250
+                            )
+                            if "unsplash" in new_url:
+                                tile_data["image_url"] = new_url
                         tiles_dict[tile_id] = tile_data
                     _debug(f"Tile cache HIT for {vertical}", count=len(cached_tiles))
                 else:
@@ -16325,7 +16337,16 @@ async def run_turn(
     # ==========================================================================
     enriched_branches = []
     if result.branches:
-        from app.services.unsplash import get_image_url_sync
+        from app.services.unsplash import get_image_url_sync, prefetch_destination_images
+
+        # Pre-fetch Unsplash images for all branch destinations to populate cache
+        for branch in result.branches:
+            dests = branch.get("destinations", [])
+            if dests and dests[0]:
+                try:
+                    await prefetch_destination_images(dests[0])
+                except Exception as e:
+                    _debug(f"Image prefetch failed for {dests[0]}: {e}")
 
         for branch in result.branches:
             branch_copy = dict(branch)  # Don't mutate original
@@ -16819,14 +16840,23 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
         )
 
     # Enrich branches with Unsplash images before returning
-    # (prefetch already happened in tile_search, this uses cached images)
+    # Pre-fetch Unsplash images first to populate cache
     # Uses different variants for each hero image slot:
     # - variant 0: Main branch image (image_url) + first hero (signature view)
     # - variant 1: Second hero image (daylight wander)
     # - variant 2: Third hero image (evening vibe)
     enriched_branches = []
     if result.branches:
-        from app.services.unsplash import get_image_url_sync
+        from app.services.unsplash import get_image_url_sync, prefetch_destination_images
+
+        # Pre-fetch Unsplash images for all branch destinations to populate cache
+        for branch in result.branches:
+            dests = branch.get("destinations", [])
+            if dests and dests[0]:
+                try:
+                    await prefetch_destination_images(dests[0])
+                except Exception as e:
+                    _debug(f"Image prefetch failed for {dests[0]}: {e}")
 
         for branch in result.branches:
             branch_copy = dict(branch)  # Don't mutate original

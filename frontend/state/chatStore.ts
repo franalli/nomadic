@@ -25,7 +25,7 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
     id: 'm0',
     role: 'assistant',
     content:
-      "Hey there! ✈️ I'm excited to help you plan an amazing trip! Where are you dreaming of going?",
+      "The plan updates automatically as constraints change.",
   },
 ];
 
@@ -91,7 +91,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
               // Transform any stored trigger to friendly text (handles legacy data)
               content:
                 m.content === GENERATE_PLAN_TRIGGER
-                  ? 'Generate my trip options'
+                  ? 'Generate plan'
                   : m.content,
             })
           );

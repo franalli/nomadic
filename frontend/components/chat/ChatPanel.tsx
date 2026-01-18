@@ -9,6 +9,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -32,7 +33,7 @@ import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
 // Message to show after plan is generated with specific examples
 const POST_GENERATE_MESSAGE =
-  "Your trip options are ready! You can say things like 'increase budget to $3000', 'remove Paris', or 'add a beach day' to refine your plan.";
+  "Plan updated. Adjust constraints to modify.";
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -45,13 +46,22 @@ const sanitizeContent = (content: string): string => {
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
 
-// Prompt suggestions for new users - quick start options
+// Prompt suggestions - constraint actions, not conversation starters
 const PROMPT_SUGGESTIONS = [
-  { label: '🏖️ Beach getaway', prompt: "I want a relaxing beach vacation" },
-  { label: '🏔️ Adventure trip', prompt: "Plan an adventure trip with hiking and outdoor activities" },
-  { label: '✈️ Quick flight', prompt: "I need to book a one-way flight" },
-  { label: '👨‍👩‍👧 Family trip', prompt: "Plan a family-friendly vacation with activities for kids" },
+  { label: 'Set destination', prompt: "Tokyo" },
+  { label: 'Set origin', prompt: "New York" },
+  { label: 'Set dates', prompt: "March 15-22" },
+  { label: 'Set budget', prompt: "$2000 total budget" },
 ];
+
+// Fallback suggestions when backend returns none but fields are missing
+const FALLBACK_SUGGESTIONS: Record<string, string[]> = {
+  start_date: ['Next weekend', 'March 15-22', '2 weeks from now', 'Flexible dates'],
+  end_date: ['1 week trip', '10 days', '2 weeks'],
+  budget: ['$1500 budget', '$3000 budget', '$5000 budget', 'Flexible budget'],
+  origin: ['New York', 'London', 'San Francisco'],
+  destinations: ['Tokyo', 'Paris', 'Barcelona', 'Bali'],
+};
 
 // Helper to generate specific error messages based on error type
 function getErrorMessage(error: Error): string {
@@ -84,11 +94,11 @@ function getErrorMessage(error: Error): string {
 
   // Validation errors (from backend)
   if (message.includes('invalid') || message.includes('validation')) {
-    return "There was an issue with your request. Try rephrasing or adjusting your trip details.";
+    return "Invalid request. Try rephrasing or adjusting trip details.";
   }
 
   // Default fallback
-  return "I ran into an issue planning your trip. Try again or adjust your message.";
+  return "An issue occurred. Try again or adjust the message.";
 }
 
 // Tier 11.12: Check if an error message is retryable (transient network/server issues)
@@ -315,6 +325,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       hasBranches,
       missingFields: tripDetails?.missingFields,
     });
+
+    // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
+    const effectiveSuggestions = useMemo(() => {
+      if (suggestedResponses.length > 0) return suggestedResponses;
+      if (!hasUserMessage || isLoading || hasBranches) return [];
+      const missingFields = tripDetails?.missingFields ?? [];
+      if (missingFields.length === 0) return [];
+      // Get fallback for first missing field
+      const firstMissing = missingFields[0];
+      return FALLBACK_SUGGESTIONS[firstMissing] ?? [];
+    }, [suggestedResponses, hasUserMessage, isLoading, hasBranches, tripDetails?.missingFields]);
+
     // Dynamic height - grows with content naturally
     const panelHeightClass = fullHeight
       ? 'h-full'
@@ -522,7 +544,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         const userMessage: ChatMessage = {
           id: `u_${Date.now()}`,
           role: 'user',
-          content: isGenerateTrigger ? 'Generate my trip options' : trimmed,
+          content: isGenerateTrigger ? 'Generate plan' : trimmed,
         };
         addMessage(userMessage);
         setSuggestedResponses([]); // Clear suggestions when user sends a message
@@ -710,7 +732,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       })
       .map((m) => {
         if (hasBranches && m.id === 'm0') {
-          return { ...m, content: '💬 Keep chatting to refine and book your trip!' };
+          return { ...m, content: 'Adjust constraints to modify the plan.' };
         }
         return m;
       })
@@ -755,20 +777,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             Travel Planner
           </div>
           <div className="flex items-center gap-3">
-            {/* Fresh Start button - always visible when onFreshStart is provided */}
+            {/* Reset button - always visible when onFreshStart is provided */}
             {onFreshStart && (
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm('Start fresh? This will clear all your trip details and chat history.')) {
+                  if (window.confirm('Reset session? This will clear all trip details and history.')) {
                     onFreshStart?.();
                   }
                 }}
                 className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
-                title="Start fresh"
+                title="Reset session"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Fresh Start</span>
+                <span className="hidden sm:inline">Reset</span>
               </button>
             )}
           </div>
@@ -905,13 +927,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
-          {/* Dynamic LLM-generated suggestions */}
-          {suggestedResponses.length > 0 && !isLoading && !showSuggestions && (
+          {/* Dynamic suggestions - from backend or fallback based on missing fields */}
+          {effectiveSuggestions.length > 0 && !isLoading && !showSuggestions && (
             <div
-              key={`suggestions-container-${suggestedResponses.length}`}
+              key={`suggestions-container-${effectiveSuggestions.length}`}
               className="flex flex-wrap justify-center gap-1.5 pt-3 pb-1 px-2"
             >
-              {suggestedResponses.map((suggestion, idx) => (
+              {effectiveSuggestions.map((suggestion, idx) => (
                 <button
                   key={`sugg-${suggestion.slice(0, 20)}-${idx}`}
                   type="button"
@@ -932,7 +954,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             {/* Custom shimmer placeholder - only when input is empty and no user message */}
             {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
               <div className="placeholder-shimmer" aria-hidden="true">
-                {hasBranches ? 'Refine your trip...' : 'Where would you like to go?'}
+                {hasBranches ? 'Adjust constraints...' : 'Enter destination'}
               </div>
             )}
             <textarea
@@ -940,8 +962,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
               hasBranches
-                ? 'Refine your trip...'
-                : 'Where would you like to go?'
+                ? 'Adjust constraints...'
+                : 'Enter destination'
             }
             value={input}
             onChange={(e) => {
@@ -1005,7 +1027,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 generate-shimmer dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60 dark:shadow-[0_0_20px_hsl(25_85%_55%/0.25)] dark:hover:shadow-[0_0_30px_hsl(25_85%_55%/0.4)]"
               >
                 <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
-                <span>Generate Trip Options</span>
+                <span>Generate Plan</span>
               </button>
             </div>
           </div>

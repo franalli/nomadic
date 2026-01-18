@@ -37,17 +37,17 @@ export const TAB_CONFIG: Record<
   stays: {
     label: 'Stays',
     icon: TentTree,
-    emptyMessage: 'No stays yet for this suggestion — try refining dates or destination.',
+    emptyMessage: 'No stays found. Adjust constraints.',
   },
   flights: {
     label: 'Flights',
     icon: Plane,
-    emptyMessage: 'No flights surfaced yet. Adjust the plan or try again in a moment.',
+    emptyMessage: 'No flights found. Adjust constraints.',
   },
   activities: {
     label: 'Activities',
     icon: Sparkles,
-    emptyMessage: 'Activities will appear once we find matches for this plan.',
+    emptyMessage: 'Activities load when matches are found.',
   },
 };
 

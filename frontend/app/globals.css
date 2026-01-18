@@ -56,27 +56,27 @@
     --bg: 160 30% 8%;
     --bg-soft: 160 20% 12%;
     --bg-strong: 160 35% 6%;
-    --surface: 160 25% 12%;
-    --border: 160 20% 22%;
+    --surface: 155 22% 7%;
+    --border: 160 20% 24%;
 
     --text: 35 25% 92%;
-    --text-soft: 35 20% 78%;
-    --text-muted: 160 15% 55%;
+    --text-soft: 35 18% 82%;
+    --text-muted: 160 12% 59%;
     --text-onDark: 160 40% 15%;
 
     --charcoal: 35 20% 88%;
     --sand: 25 30% 20%;
-    --bronze: 25 85% 58%;
+    --bronze: 22 82% 52%;
     --sky: 160 40% 45%;
 
     /* Core theme tokens */
     --background: 160 30% 8%;
     --foreground: 35 25% 92%;
 
-    --card: 160 25% 12%;
+    --card: 155 22% 7%;
     --card-foreground: 35 25% 90%;
 
-    --popover: 160 25% 14%;
+    --popover: 155 20% 9%;
     --popover-foreground: 35 25% 90%;
 
     --primary: 160 40% 42%;
@@ -86,9 +86,9 @@
     --secondary-foreground: 25 50% 80%;
 
     --muted: 160 20% 14%;
-    --muted-foreground: 160 15% 68%;
+    --muted-foreground: 160 12% 70%;
 
-    --accent: 25 85% 58%;
+    --accent: 22 82% 52%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 70% 50%;
@@ -426,6 +426,39 @@ input[type="number"]::-webkit-outer-spin-button {
     0 2px 6px hsl(var(--accent) / 0.06);
 }
 
+/* ===== Chip Hierarchy System ===== */
+
+/* Primary chip - selected destination, key actions */
+.chip-primary {
+  background-color: rgba(232, 106, 31, 0.18);
+  color: #E86A1F;
+  border: 1px solid rgba(232, 106, 31, 0.35);
+}
+
+/* Secondary chip - category pills (Flights, Transport, etc.) */
+.chip-secondary {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: #C7CED8;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.chip-secondary:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* Inactive chip - unselected, dormant state */
+.chip-inactive {
+  background-color: rgba(255, 255, 255, 0.03);
+  color: #9AA3AE;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.chip-inactive:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #AEB6C2;
+}
+
 /* ===== Accessibility Utilities ===== */
 
 /* Respect user's reduced motion preference */
@@ -645,5 +678,86 @@ input[type="number"]::-webkit-outer-spin-button {
 
   .send-arrow-shimmer {
     animation: none !important;
+  }
+}
+
+/* ===== Hero Background Layers ===== */
+
+/* Layer 1: Contours overlay - fills full page with edge fade */
+.hero-contours::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  pointer-events: none;
+  opacity: 0.09;
+  background-image: url("/assets/contours.svg");
+  background-repeat: repeat;
+  background-size: 900px 900px;
+  transform: rotate(-5deg);
+}
+
+/* Fade mask for contours - fades at bottom */
+.hero-contours::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    transparent 60%,
+    rgba(4, 15, 10, 0.5) 80%,
+    rgba(4, 15, 10, 1) 100%
+  );
+}
+
+/* Layer 2: Grain/noise texture for depth */
+.hero-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.02;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 200px 200px;
+  mix-blend-mode: overlay;
+}
+
+/* Layer 3: Vignette - darkens edges, focuses center */
+.hero-vignette::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 80% 60% at 50% 40%,
+    transparent 30%,
+    rgba(0, 0, 0, 0.35) 100%
+  );
+}
+
+/* Hero fade-in animation (replaces typing) */
+.hero-fade-in {
+  animation: heroFadeIn 200ms ease-out forwards;
+}
+
+@keyframes heroFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Respect user's reduced motion preference for hero */
+@media (prefers-reduced-motion: reduce) {
+  .hero-fade-in {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
   }
 }

@@ -6,11 +6,11 @@ import { memo, useEffect, useState } from 'react';
 
 // Generation stages with estimated timing
 const STAGES = [
-  { label: 'Analyzing your preferences', duration: 1000 },
-  { label: 'Finding destination matches', duration: 1000 },
-  { label: 'Comparing accommodation options', duration: 1000 },
-  { label: 'Curating activities', duration: 1000 },
-  { label: 'Finalizing your itinerary', duration: 1000 },
+  { label: 'Processing constraints', duration: 1000 },
+  { label: 'Matching destinations', duration: 1000 },
+  { label: 'Comparing options', duration: 1000 },
+  { label: 'Loading activities', duration: 1000 },
+  { label: 'Updating itinerary', duration: 1000 },
 ] as const;
 
 // Particle indices for floating animation (extracted to avoid array recreation)
@@ -51,7 +51,7 @@ export const GeneratingLoader = memo(function GeneratingLoader({
         role="status"
         aria-busy="true"
         aria-live="polite"
-        aria-label="Generating your trip options, please wait"
+        aria-label="Updating plan, please wait"
       >
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
@@ -113,7 +113,7 @@ export const GeneratingLoader = memo(function GeneratingLoader({
       role="status"
       aria-busy="true"
       aria-live="polite"
-      aria-label="Generating your trip options, please wait"
+      aria-label="Updating plan, please wait"
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
@@ -185,7 +185,7 @@ export const GeneratingLoader = memo(function GeneratingLoader({
             transition={{ delay: 0.3 }}
             className="font-display text-2xl font-bold text-foreground"
           >
-            Creating Your Trip Options
+            Updating Plan
           </motion.h2>
 
           {/* Stage indicators */}
@@ -249,7 +249,7 @@ export const GeneratingLoader = memo(function GeneratingLoader({
           className="flex items-center gap-3 text-muted-foreground/50"
         >
           <Sparkles className="h-3 w-3" />
-          <span className="text-xs font-medium uppercase tracking-wider">AI-Powered Planning</span>
+          <span className="text-xs font-medium uppercase tracking-wider">Updating plan</span>
           <Sparkles className="h-3 w-3" />
         </motion.div>
       </motion.div>

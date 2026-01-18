@@ -34,7 +34,7 @@ const STAGE_CONFIG: Record<
   collecting: { label: 'Tell me about your trip', shortLabel: 'Details', step: 2 },
   ready: { label: 'Ready to plan', shortLabel: 'Ready', step: 3 },
   generating: { label: 'Creating your itinerary', shortLabel: 'Planning', step: 4 },
-  viewing: { label: 'Browse your options', shortLabel: 'View', step: 4 },
+  viewing: { label: 'View your plan', shortLabel: 'View', step: 4 },
 };
 
 /**

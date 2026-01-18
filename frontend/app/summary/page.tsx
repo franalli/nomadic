@@ -41,47 +41,8 @@ export default function SummaryPage() {
     return picks;
   }, [summary]);
 
-  if (!summary) {
-    return (
-      <div className="bg-background text-foreground min-h-screen">
-        <div className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-4 py-16 text-center">
-          <div className="space-y-2">
-            <p className="text-muted-foreground text-sm uppercase tracking-wide">
-              Trip summary
-            </p>
-            <h1 className="font-display text-4xl font-bold">No trip summary yet</h1>
-            <p className="text-muted-foreground text-base">
-              Pick a suggestion in the planner and tap “Book Your Trip” to generate a
-              summary.
-            </p>
-          </div>
-          <Link
-            href="/"
-            className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-full px-5 py-2 text-sm font-semibold transition"
-          >
-            Return to planner
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
-  const { branch, selection } = summary;
-  const mapSrc = (() => {
-    const { origin, destinations } = branch;
-    const destination = destinations?.[0] ?? null;
-    if (origin && destination) {
-      return `https://maps.google.com/maps?output=embed&f=d&source=embed&saddr=${encodeURIComponent(
-        origin
-      )}&daddr=${encodeURIComponent(destination)}&z=2`;
-    }
-    const query = destination || origin || 'World map';
-    return `https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=&ie=UTF8&iwloc=&output=embed`;
-  })();
-
-  // selectedTiles already contains only the selected items
-
   // Calculate price breakdown for Expedia compliance
+  // Must be before early return to maintain consistent hook order
   const priceBreakdown = useMemo(() => {
     if (!summary) return null;
 
@@ -119,6 +80,44 @@ export default function SummaryPage() {
       estimatedTotal,
     };
   }, [summary]);
+
+  if (!summary) {
+    return (
+      <div className="bg-background text-foreground min-h-screen">
+        <div className="mx-auto flex max-w-3xl flex-col items-center gap-6 px-4 py-16 text-center">
+          <div className="space-y-2">
+            <p className="text-muted-foreground text-sm uppercase tracking-wide">
+              Trip summary
+            </p>
+            <h1 className="font-display text-4xl font-bold">No trip summary yet</h1>
+            <p className="text-muted-foreground text-base">
+              Pick a suggestion in the planner and tap “Book Your Trip” to generate a
+              summary.
+            </p>
+          </div>
+          <Link
+            href="/"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground rounded-full px-5 py-2 text-sm font-semibold transition"
+          >
+            Return to planner
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const { branch, selection } = summary;
+  const mapSrc = (() => {
+    const { origin, destinations } = branch;
+    const destination = destinations?.[0] ?? null;
+    if (origin && destination) {
+      return `https://maps.google.com/maps?output=embed&f=d&source=embed&saddr=${encodeURIComponent(
+        origin
+      )}&daddr=${encodeURIComponent(destination)}&z=2`;
+    }
+    const query = destination || origin || 'World map';
+    return `https://maps.google.com/maps?q=${encodeURIComponent(query)}&t=&ie=UTF8&iwloc=&output=embed`;
+  })();
 
   return (
     <div className="bg-background text-foreground min-h-screen">

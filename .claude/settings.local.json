@@ -54,7 +54,10 @@
       "Bash(alembic revision:*)",
       "Bash(powershell -Command:*)",
       "Bash(npm test:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npm run test:*)",
+      "Bash(timeout 15 npm run dev:*)"
     ],
     "deny": [],
     "ask": []

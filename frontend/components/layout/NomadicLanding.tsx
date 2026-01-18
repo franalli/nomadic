@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
-import { HERO_TAGLINE,HeroSection } from '@/components/layout/HeroSection';
+import { HeroSection } from '@/components/layout/HeroSection';
 import { useBranchManager } from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
@@ -19,9 +19,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
-
-const HERO_TYPING_INTERVAL_MS = 200;
-const HERO_TYPING_PAUSE_MS = 8000;
 
 // Toast notification system
 const MAX_TOASTS = 3;
@@ -113,7 +110,6 @@ export function NomadicLanding() {
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
-  const [typedTagline, setTypedTagline] = useState('');
 
   // Use hook for local booking settings state management
   const {
@@ -272,27 +268,6 @@ export function NomadicLanding() {
     };
   }, [toasts, removeToast]);
 
-  // Typing animation effect
-  useEffect(() => {
-    let timeoutId: number | null = null;
-
-    const typeNext = (index: number) => {
-      setTypedTagline(HERO_TAGLINE.slice(0, index));
-      const isComplete = index === HERO_TAGLINE.length;
-      const nextIndex = isComplete ? 0 : index + 1;
-      const delay = isComplete ? HERO_TYPING_PAUSE_MS : HERO_TYPING_INTERVAL_MS;
-      timeoutId = window.setTimeout(() => typeNext(nextIndex), delay);
-    };
-
-    typeNext(0);
-
-    return () => {
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-    };
-  }, []);
-
   const missingFields = tripInputs.missing_fields ?? [];
 
   // Check if we have origin or destination to show route
@@ -405,24 +380,24 @@ export function NomadicLanding() {
       <div className="relative flex flex-wrap items-start justify-between gap-4 px-5 py-4">
         <div className="space-y-1">
           <h3 className="text-foreground font-display text-xl font-bold">
-            Explore each suggestion and its booking options in one sweep
+            Trip plan
           </h3>
           <p className="text-muted-foreground text-sm">
-            Branch cards now stretch across the page and carry tiles with them.
+            Plan reflects current constraints.
           </p>
         </div>
         {branches.length > 0 ? (
           <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-            {branches.length} suggestion{branches.length === 1 ? '' : 's'} ready
+            Plan updated
           </div>
         ) : null}
       </div>
       <CardContent className="relative overflow-hidden">
         {isHydratingSnapshot && branches.length === 0 ? (
-          <p className="text-muted-foreground text-sm">Restoring your last session…</p>
+          <p className="text-muted-foreground text-sm">Restoring session…</p>
         ) : branches.length === 0 ? (
           <p className="text-muted-foreground text-sm">
-            Start chatting to generate suggestions for you.
+            The plan updates automatically as constraints change.
           </p>
         ) : (
           <BranchPanel
@@ -546,7 +521,6 @@ export function NomadicLanding() {
             <SplitLayoutView
               sidebarContent={chatPanelContent(true)}
               mainContent={branchPanelContent}
-              typedTagline={typedTagline}
               isGenerating={isGenerating}
               hasBranchesReady={hasBranchesReady}
               tripDetailsContent={tripDetailsSection.content}
@@ -562,7 +536,6 @@ export function NomadicLanding() {
             transition={{ duration: 0.3, ease: 'easeInOut' }}
           >
             <HeroSection
-              typedTagline={typedTagline}
               variant="full"
               chatPanelContainerRef={chatPanelContainerRef}
             >
@@ -570,9 +543,11 @@ export function NomadicLanding() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.1 }}
-                className="mt-2 w-full sm:w-[calc(100%-2rem)] sm:max-w-[605px] md:max-w-[680px] lg:max-w-[605px]"
+                className="relative mt-2 w-full sm:w-[calc(100%-2rem)] sm:max-w-[605px] md:max-w-[680px] lg:max-w-[605px]"
               >
-                <Card className="bg-card/75 border-white/20 p-0 shadow-2xl backdrop-blur rounded-none sm:rounded-xl border-x-0 sm:border-x">
+                {/* Background plate for grounded look */}
+                <div className="absolute -inset-3 sm:-inset-4 bg-black/15 rounded-2xl blur-xl hidden sm:block" />
+                <Card className="relative bg-card/60 border-white/10 p-0 shadow-lg backdrop-blur-md rounded-none sm:rounded-xl border-x-0 sm:border-x">
                   <CardContent className="p-0 sm:p-3 sm:pb-0">
                     {chatPanelContent(false)}
                   </CardContent>
@@ -612,8 +587,11 @@ export function NomadicLanding() {
               </motion.section>
             ) : null}
 
-            <FeaturesSection />
-            <Footer />
+            {/* Features & Footer - only in initial planner view */}
+            <div className="relative z-10 mt-16 sm:mt-24">
+              <FeaturesSection />
+              <Footer />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

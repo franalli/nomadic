@@ -211,27 +211,6 @@ export const BranchPanel = memo(function BranchPanel({
   }, [branchTiles]);
 
   const bookingSummary = useMemo(() => {
-    const destination = selected?.destinations[0] ?? tripInputs?.destinations[0] ?? 'your trip';
-    const origin = selected?.origin ?? tripInputs?.origin ?? null;
-    const adults = selected?.adults ?? tripInputs?.adults ?? null;
-    const children = selected?.children ?? tripInputs?.children ?? null;
-    const travelerParts: string[] = [];
-    if (adults != null && adults > 0) travelerParts.push(`${adults} adult${adults === 1 ? '' : 's'}`);
-    if (children != null && children > 0) travelerParts.push(`${children} child${children === 1 ? '' : 'ren'}`);
-    const travelerLabel = travelerParts.length > 0 ? travelerParts.join(', ') : null;
-    const dateLabel = selectedDuration?.rangeLabel ?? null;
-    const budgetLabel = formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency);
-
-    const framingParts = [
-      origin && destination ? `${origin} → ${destination}` : destination,
-      dateLabel,
-      travelerLabel,
-      budgetLabel ? `budget ${budgetLabel}` : null,
-    ].filter(Boolean);
-    const intro = framingParts.length
-      ? `Based on your latest notes (${framingParts.join(' · ')}), here's where bookings sit.`
-      : "Here's where the booking picks sit.";
-
     const labelForTab = (tab: TileTabKey) => {
       if (tab === 'stays') return 'Hotels';
       if (tab === 'flights') return 'Flights';
@@ -246,21 +225,16 @@ export const BranchPanel = memo(function BranchPanel({
       if (selections.length > 0) {
         const [first] = selections;
         const extras = selections.length - 1;
-        const extraText = extras > 0 ? ` +${extras} more` : '';
-        return `${label}: locked ${first.title}${extraText} to match what you asked for.`;
+        const extraText = extras > 0 ? ` +${extras}` : '';
+        return `${label}: ${first.title}${extraText}`;
       }
 
       if (optionCount > 0) {
         const highlight = options[0]?.title;
-        const routeHint =
-          tab === 'flights' && (origin || destination)
-            ? ` for ${origin ? `${origin} → ` : ''}${destination}`
-            : '';
-        const highlightText = highlight ? `; leading pick ${highlight}` : '';
-        return `${label}: ${optionCount} option${optionCount === 1 ? '' : 's'} ready${routeHint}${highlightText}.`;
+        return `${label}: ${optionCount} option${optionCount === 1 ? '' : 's'}${highlight ? ` (top: ${highlight})` : ''}`;
       }
 
-      return `${label}: still searching—no matches yet, but I'll refresh this branch as results land.`;
+      return `${label}: searching...`;
     };
 
     const stayLine = describeCategory(
@@ -273,15 +247,11 @@ export const BranchPanel = memo(function BranchPanel({
     );
     const activityLine = describeCategory('activities', selectedTiles?.activities ?? []);
 
-    return [intro, stayLine, flightLine, activityLine].join(' ');
+    return [stayLine, flightLine, activityLine].join(' · ');
   }, [
     countsForSelected,
-    selected,
-    selectedBudget,
-    selectedDuration,
     selectedTiles,
     tilesByTab,
-    tripInputs,
   ]);
 
   // Show skeleton loaders while loading
@@ -313,7 +283,7 @@ export const BranchPanel = memo(function BranchPanel({
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-            Trip options
+            Trip plan
           </p>
           <ComparisonToggle />
         </div>
@@ -425,9 +395,7 @@ export const BranchPanel = memo(function BranchPanel({
                           {badgeLabel}
                         </span>
                       </div>
-                      <span className="shrink-0 rounded-full bg-black/30 px-2 py-1 text-[11px] font-semibold text-white">
-                        Suggestion {idx + 1}
-                      </span>
+                      {/* Removed "Suggestion X" numbering per coherence guidelines */}
                     </div>
                     <div className="space-y-2 text-white">
                       <p className="text-lg font-bold leading-tight">{b.destinations.join(', ') || 'TBD'}</p>
@@ -455,15 +423,15 @@ export const BranchPanel = memo(function BranchPanel({
         <div className="via-card/80 to-background relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 shadow-lg backdrop-blur">
           <div className="bg-primary/20 pointer-events-none absolute -right-24 -top-12 h-48 w-48 rounded-full blur-3xl" />
           <div className="bg-accent/15 pointer-events-none absolute bottom-0 left-0 h-36 w-36 rounded-full blur-2xl" />
-          <div className="relative space-y-5 p-4 sm:p-5">
+          <div className="relative space-y-6 p-4 sm:p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="space-y-1">
-                <p className="text-primary text-xs font-semibold uppercase tracking-wide">
-                  Selected suggestion
+                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                  Current plan
                 </p>
                 <div className="flex items-center gap-2">
-                  <MapPin className="text-primary h-5 w-5" aria-hidden="true" />
-                  <h4 className="text-foreground font-display text-2xl font-bold">
+                  <MapPin className="text-primary h-6 w-6" aria-hidden="true" />
+                  <h4 className="text-foreground font-display text-3xl font-bold tracking-tight">
                     {selected?.destinations.join(', ') || 'Unknown Destination'}
                   </h4>
                 </div>
@@ -475,39 +443,46 @@ export const BranchPanel = memo(function BranchPanel({
               </div>
             </div>
 
-          <div className="flex flex-wrap items-center gap-4 pb-1">
+            {/* Constraint satisfaction header */}
+            <div className="flex items-center gap-2 rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
+              <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+              <p className="text-sm font-medium text-green-600 dark:text-green-400">
+                This plan satisfies constraints.
+              </p>
+            </div>
+
+          <div className="flex flex-wrap items-center gap-3 pb-1">
             {(Object.keys(TAB_CONFIG) as TileTabKey[]).map((tabKey) => {
               const isOpen = openTab === tabKey;
               const count = tilesByTab[tabKey]?.length ?? 0;
               const Icon = TAB_CONFIG[tabKey].icon;
-              // Tier 9: Increased touch target to 44px minimum
               return (
                 <button
                   key={tabKey}
                   type="button"
                   onClick={() => setOpenTab((prev) => (prev === tabKey ? null : tabKey))}
-                  className={`focus-visible:outline-primary group relative flex items-center gap-2 border-b-2 pb-2 text-sm font-semibold transition touch-manipulation min-h-[44px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-95 ${
+                  className={`focus-visible:outline-primary group relative flex items-center gap-1.5 border-b pb-1.5 text-xs font-medium transition touch-manipulation min-h-[36px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 active:scale-95 ${
                     isOpen
-                      ? 'border-primary text-primary'
-                      : 'text-muted-foreground hover:text-foreground border-transparent'
+                      ? 'border-primary/50 text-primary'
+                      : 'text-muted-foreground/70 hover:text-muted-foreground border-transparent'
                   }`}
                   aria-pressed={isOpen}
                 >
                   <span
-                    className={`flex h-10 w-10 sm:h-8 sm:w-8 items-center justify-center rounded-full border transition ${
+                    className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
                       isOpen
-                        ? 'border-primary/30 bg-primary/10 text-primary'
-                        : 'border-border/70 text-muted-foreground bg-white'
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-muted-foreground/60'
                     }`}
                   >
-                    <Icon className="h-5 w-5 sm:h-4 sm:w-4" aria-hidden="true" />
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                   </span>
                   <span>{TAB_CONFIG[tabKey].label}</span>
                   <span
-                    className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
                       isOpen
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-muted text-muted-foreground'
+                        ? 'bg-primary/10 text-primary'
+                        : 'bg-muted/50 text-muted-foreground/60'
                     }`}
                   >
                     {count}
@@ -543,123 +518,99 @@ export const BranchPanel = memo(function BranchPanel({
               />
             ) : (
               <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
-                No {TAB_CONFIG[openTab].label.toLowerCase()} yet for this suggestion.
+                No {TAB_CONFIG[openTab].label.toLowerCase()} yet for this plan.
                 Check back after options refresh.
               </div>
             )}
           </div>
 
           <div className="space-y-5">
-            <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
-              <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                Booking summary
+            <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
+              <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                Booking status
               </p>
-              <p className="text-foreground mt-2 text-sm">{bookingSummary}</p>
+              <p className="text-foreground mt-1 text-xs">{bookingSummary}</p>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
-              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
-                <div className="relative aspect-video">
-                  {/* Tier 11.13: Lazy load hero images for bandwidth savings */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="overflow-hidden rounded-lg border border-white/10 bg-black/20 shadow-inner">
+                <div className="relative aspect-[3/2]">
                   <img
                     src={selectedHeroImages[0]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} overview`}
                     loading="lazy"
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-cover opacity-90"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-tr from-black/30 via-transparent to-black/10" />
-                  <div className="absolute left-3 top-3 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white backdrop-blur">
-                    Signature view
-                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                 </div>
               </div>
-              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
-                <div className="relative aspect-[16/9]">
+              <div className="overflow-hidden rounded-lg border border-white/10 bg-black/20 shadow-inner">
+                <div className="relative aspect-[3/2]">
                   <img
                     src={selectedHeroImages[1]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} detail`}
                     loading="lazy"
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-cover opacity-90"
                   />
-                  <div className="absolute bottom-2 left-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
-                    Daylight wander
-                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                 </div>
               </div>
-              <div className="overflow-hidden rounded-xl border border-white/10 bg-black/20 shadow-inner">
-                <div className="relative aspect-[16/9]">
+              <div className="overflow-hidden rounded-lg border border-white/10 bg-black/20 shadow-inner">
+                <div className="relative aspect-[3/2]">
                   <img
                     src={selectedHeroImages[2]}
                     alt={`${selected?.destinations[0] ?? 'Destination'} night detail`}
                     loading="lazy"
-                    className="h-full w-full object-cover"
+                    className="h-full w-full object-cover opacity-90"
                   />
-                  <div className="absolute bottom-2 right-2 rounded-full bg-black/40 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white">
-                    Evening vibe
-                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
                 </div>
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm shadow-sm">
-                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  Ideal duration
+            {/* Core constraints - horizontal row */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
+                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                  Duration
                 </p>
-                <p className="text-foreground font-semibold">
-                  {selectedDuration
-                    ? `${selectedDuration.summary} · ${selectedDuration.rangeLabel}`
-                    : detailPreset.duration}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  Enough time to see the best corners without rushing.
+                <p className="text-foreground text-base font-bold">
+                  {selectedDuration?.rangeLabel ?? detailPreset.duration}
                 </p>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm shadow-sm">
-                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  Budget feel
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
+                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                  Budget
                 </p>
-                <p className="text-foreground font-semibold">
+                <p className="text-foreground text-base font-bold">
                   {formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency) ?? detailPreset.budget}
                 </p>
-                <p className="text-muted-foreground text-xs">
-                  Mix of local eats and a couple splurge moments.
-                </p>
               </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm shadow-sm">
-                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  Focus
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
+                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                  Tempo
                 </p>
-                <p className="text-foreground font-semibold">{detailPreset.focus}</p>
-                <p className="text-muted-foreground text-xs">
-                  What this itinerary leans into most.
-                </p>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm shadow-sm">
-                <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  Trip tempo
-                </p>
-                <p className="text-foreground font-semibold">{detailPreset.vibe}</p>
-                <p className="text-muted-foreground text-xs">
-                  Balance of adventure and recovery time.
-                </p>
+                <p className="text-foreground text-base font-bold">{detailPreset.vibe}</p>
               </div>
             </div>
 
-            <div className="space-y-3">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                    Highlights
-                  </p>
-                  <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
-                    Curated
-                  </span>
-                </div>
-                <ul className="text-foreground mt-2 space-y-2 text-sm">
+            {/* Focus - plan thesis */}
+            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 shadow-sm">
+              <p className="text-primary text-[10px] font-medium uppercase tracking-wide">
+                Focus
+              </p>
+              <p className="text-foreground text-sm font-semibold mt-1">{detailPreset.focus}</p>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                <p className="text-muted-foreground/70 text-[10px] font-medium uppercase tracking-wide">
+                  Highlights
+                </p>
+                <ul className="text-muted-foreground mt-2 space-y-1.5 text-xs">
                   {detailPreset.highlights.map((item) => (
                     <li key={item} className="flex gap-2">
-                      <span className="bg-accent mt-1 h-1.5 w-1.5 rounded-full" />
+                      <span className="bg-muted-foreground/30 mt-1.5 h-1 w-1 rounded-full flex-shrink-0" />
                       <span>
                         {item.replace(
                           '{destination}',
@@ -749,10 +700,10 @@ export const BranchPanel = memo(function BranchPanel({
           }
           aria-label={
             !selected
-              ? 'Book Your Trip - Select a trip option first'
+              ? 'Book Trip - Select a trip option first'
               : !canBookTrip
-                ? 'Book Your Trip - Complete trip details first'
-                : 'Book Your Trip'
+                ? 'Book Trip - Complete trip details first'
+                : 'Book Trip'
           }
           className={`focus-visible:outline-primary rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             !canBookTrip || !selected
@@ -762,7 +713,7 @@ export const BranchPanel = memo(function BranchPanel({
                 : 'bg-primary text-primary-foreground shadow-primary/40 hover:bg-primary/90 shadow-lg'
           }`}
         >
-          Book Your Trip
+          Book Trip
         </button>
       </div>
     </div>

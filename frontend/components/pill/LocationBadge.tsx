@@ -95,7 +95,7 @@ export const LocationBadge = memo(function LocationBadge({
         onClose={() => setShowConfirm(false)}
         onConfirm={handleConfirmRemove}
         title={`Remove ${value}?`}
-        description={`Are you sure you want to remove "${value}" as your ${typeLabel}? This may affect your trip options.`}
+        description={`Are you sure you want to remove "${value}" as your ${typeLabel}? This may affect your plan.`}
         confirmLabel="Remove"
         cancelLabel="Keep it"
         variant="destructive"

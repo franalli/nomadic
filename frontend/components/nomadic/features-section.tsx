@@ -6,29 +6,29 @@ import { Globe, ShieldCheck, Sparkles, Zap } from 'lucide-react';
 const features = [
   {
     icon: Sparkles,
-    title: 'AI-Powered Curation',
+    title: 'Unified Plan',
     description:
-      'Stop scrolling through endless reviews. Our AI analyzes millions of data points to find trips that match your specific vibe.',
+      'Enter constraints once. Flights, stays, and activities update together.',
   },
   {
     icon: Globe,
-    title: 'Global Connectivity',
+    title: 'Connected Logistics',
     description:
-      'Seamlessly connect flights, trains, and local transport. We handle the complex logistics so you can just go.',
+      'Flights, trains, and local transport are coordinated automatically.',
     delay: 0.2,
   },
   {
     icon: ShieldCheck,
     title: 'Verified Stays',
     description:
-      'Every accommodation is vetted for digital nomad essentials: fast WiFi, ergonomic workspaces, and safe neighborhoods.',
+      'Accommodations vetted for fast WiFi, workspaces, and safe locations.',
     delay: 0.4,
   },
   {
     icon: Zap,
-    title: 'Instant Booking',
+    title: 'Direct Booking',
     description:
-      'From discovery to confirmed reservation in seconds. No redirects, no hidden fees, just pure travel freedom.',
+      'Plan to confirmed reservation. No redirects, no hidden fees.',
     delay: 0.6,
   },
 ];
@@ -51,11 +51,10 @@ export function FeaturesSection() {
           className="mx-auto mb-16 max-w-2xl text-center"
         >
           <h2 className="text-foreground font-display mb-4 text-3xl font-bold md:text-4xl">
-            Travel smarter, not harder.
+            Constraints update the plan.
           </h2>
           <p className="text-muted-foreground text-lg">
-            The world is big. We make it accessible. Experience the future of travel
-            planning.
+            Enter constraints. Flights, stays, and activities adjust.
           </p>
         </motion.div>
 

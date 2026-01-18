@@ -113,7 +113,7 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
     id: 'm0',
     role: 'assistant',
     content:
-      "Hey there! ✈️ I'm excited to help you plan an amazing trip! Where are you dreaming of going?",
+      "Add or adjust constraints. The plan updates instantly.",
   },
 ];
 

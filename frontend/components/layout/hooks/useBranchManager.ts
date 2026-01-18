@@ -22,18 +22,10 @@ import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } fro
 /**
  * Minimum time to show the generating loader (in milliseconds).
  *
- * This creates a consistent, polished loading experience by ensuring the
- * loader animations complete before showing results. Even if the AI responds
- * quickly, users see the full loading sequence.
- *
- * Should be >= the total animation duration in GeneratingLoader.tsx
- * Current GeneratingLoader stages: 2000+3000+3000+2500+2000 = 12500ms
- * We use a shorter time to avoid frustrating users while still showing progress.
- *
- * TODO: Consider making this adaptive based on actual response time patterns.
- * TODO: Consider A/B testing different minimum durations for user satisfaction.
+ * Kept short to emphasize responsiveness - the plan updates quickly
+ * when constraints change, reinforcing the deterministic system model.
  */
-const GENERATING_MIN_DURATION_MS = 6000;
+const GENERATING_MIN_DURATION_MS = 2000;
 
 /**
  * Options for the useBranchManager hook.
@@ -474,9 +466,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const handleBookTrip = useCallback(
     (branchId: string) => {
+      console.log('[handleBookTrip] Called with branchId:', branchId);
+      console.log('[handleBookTrip] Available branches:', branchState.branches.map(b => ({ id: b.id, dest: b.destinations })));
+
       const branch = branchState.branches.find((b) => b.id === branchId);
       if (!branch) {
-        console.error('handleBookTrip: branch not found', branchId);
+        console.error('[handleBookTrip] Branch not found! branchId:', branchId, 'available IDs:', branchState.branches.map(b => b.id));
         return;
       }
 
@@ -495,8 +490,15 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
         generatedAt: new Date().toISOString(),
       };
 
+      console.log('[handleBookTrip] Saving payload:', payload);
+
       // Save to local storage and redirect
       saveTripSummary(payload);
+
+      // Verify the save worked
+      const saved = localStorage.getItem('nomadic_trip_summary');
+      console.log('[handleBookTrip] Verified localStorage:', saved ? 'saved successfully' : 'SAVE FAILED');
+
       window.location.href = '/summary';
     },
     [branchState.branches, branchState.branchSelections, branchState.tiles, branchState.tilesBranchId]

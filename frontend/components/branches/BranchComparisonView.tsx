@@ -113,7 +113,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
       {/* Header */}
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-lg font-semibold text-gray-900">
-          Comparing Trip Options
+          Comparing Plans
         </h2>
         {/* Tier 9: Larger touch target for exit button */}
         <button

@@ -6,7 +6,6 @@ import React, { memo, useState } from 'react';
 
 import { GeneratingLoader } from '@/components/layout/GeneratingLoader';
 import { HeroSection } from '@/components/layout/HeroSection';
-import { Footer } from '@/components/nomadic/footer';
 import { Card, CardContent } from '@/components/ui/card';
 
 interface SidebarHeaderProps {
@@ -34,8 +33,6 @@ export interface SplitLayoutViewProps {
   sidebarContent: React.ReactNode;
   /** Content for the main area (typically branch panel) */
   mainContent: React.ReactNode;
-  /** Current typed tagline for hero animation */
-  typedTagline: string;
   /** Whether we're in generating state (show loader instead of branches) */
   isGenerating: boolean;
   /** Whether branches are ready to display */
@@ -52,7 +49,6 @@ export interface SplitLayoutViewProps {
 export const SplitLayoutView = memo(function SplitLayoutView({
   sidebarContent,
   mainContent,
-  typedTagline,
   isGenerating,
   hasBranchesReady,
   tripDetailsContent,
@@ -88,11 +84,11 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       {/* Desktop: offset by sidebar width, Mobile: full width with bottom padding for chat bar */}
       <section
         className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)] pb-[140px] lg:pb-0"
-        aria-label="Trip options and results"
+        aria-label="Your trip plan"
       >
         <div className="min-h-screen">
           {/* Hero section (condensed) */}
-          <HeroSection typedTagline={typedTagline} variant="compact" />
+          <HeroSection variant="compact" />
 
           {/* Trip details form - editable trip inputs below hero */}
           {tripDetailsContent && (
@@ -127,8 +123,6 @@ export const SplitLayoutView = memo(function SplitLayoutView({
               </motion.div>
             )}
           </section>
-
-          <Footer />
         </div>
       </section>
 

@@ -33,9 +33,9 @@ async def test_unsplash():
     api_key = settings.unsplash_access_key
     print("\n1. API Key Check:")
     if api_key:
-        print(f"   ✓ API key configured (length={len(api_key)}, starts with: {api_key[:8]}...)")
+        print(f"   [OK] API key configured (length={len(api_key)}, starts with: {api_key[:8]}...)")
     else:
-        print("   ✗ UNSPLASH_ACCESS_KEY not set!")
+        print("   [FAIL] UNSPLASH_ACCESS_KEY not set!")
         return
 
     # Clear any existing cache
@@ -52,13 +52,13 @@ async def test_unsplash():
             url = await get_image_for_destination(dest)
             print(f"   Result: {url[:80]}...")
             if "unsplash" in url:
-                print("   ✓ Got Unsplash URL")
+                print("   [OK] Got Unsplash URL")
             elif "picsum" in url:
-                print("   ⚠ Got Picsum fallback (Unsplash may have failed)")
+                print("   [WARN] Got Picsum fallback (Unsplash may have failed)")
             else:
                 print("   ? Unknown URL pattern")
         except Exception as e:
-            print(f"   ✗ Error: {e}")
+            print(f"   [FAIL] Error: {e}")
 
     print("\n4. Testing sync get_image_url_sync() (should use cache):")
     for dest in test_destinations:
@@ -67,11 +67,11 @@ async def test_unsplash():
             url = get_image_url_sync(dest)
             print(f"   Result: {url[:80]}...")
             if "unsplash" in url:
-                print("   ✓ Got Unsplash URL from cache")
+                print("   [OK] Got Unsplash URL from cache")
             elif "picsum" in url:
-                print("   ⚠ Got Picsum fallback (cache miss)")
+                print("   [WARN] Got Picsum fallback (cache miss)")
         except Exception as e:
-            print(f"   ✗ Error: {e}")
+            print(f"   [FAIL] Error: {e}")
 
     print("\n" + "=" * 60)
     print("TEST COMPLETE")

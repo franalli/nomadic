@@ -424,7 +424,7 @@ export function useTripInputsEditor(
 
     const message = newIntent === 'multi_city'
       ? 'Switched to one combined itinerary visiting all destinations! 🗺️'
-      : 'Switched to separate trip options for each destination! 📍';
+      : 'Switched to separate plans for each destination! 📍';
     onToast(message, 'confirmation');
   }, [tripInputs.multi_city_intent, documentStore, onToast]);
 
@@ -536,7 +536,7 @@ export function useTripInputsEditor(
           if (prunedBranches.length === 0) {
             onSelectedBranchIdChange(null);
             onToast(
-              `Removed ${removedDestination} — your trip options were reset. Click "Generate Plan" to create new options.`,
+              `Removed ${removedDestination} — your plan was reset. Click "Generate Plan" to create a new plan.`,
               'info'
             );
           } else {
@@ -546,7 +546,7 @@ export function useTripInputsEditor(
               onSelectedBranchIdChange(newSelectedId);
             }
             onToast(
-              `Removed ${removedDestination} — ${removedCount} trip option${removedCount > 1 ? 's were' : ' was'} updated.`,
+              `Removed ${removedDestination} — ${removedCount} plan${removedCount > 1 ? 's were' : ' was'} updated.`,
               'info'
             );
           }
