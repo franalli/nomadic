@@ -382,13 +382,13 @@ export function NomadicLanding() {
           <h3 className="text-foreground font-display text-xl font-bold">
             Trip plan
           </h3>
-          <p className="text-muted-foreground text-sm">
-            Plan reflects current constraints.
+          <p className="text-muted-foreground text-xs uppercase tracking-wide">
+            Reflects current constraints
           </p>
         </div>
         {branches.length > 0 ? (
-          <div className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-            Plan updated
+          <div className="text-primary/80 text-[10px] font-semibold uppercase tracking-wider">
+            PLAN UPDATED
           </div>
         ) : null}
       </div>
@@ -397,7 +397,7 @@ export function NomadicLanding() {
           <p className="text-muted-foreground text-sm">Restoring session…</p>
         ) : branches.length === 0 ? (
           <p className="text-muted-foreground text-sm">
-            The plan updates automatically as constraints change.
+            Enter trip details to generate plan.
           </p>
         ) : (
           <BranchPanel

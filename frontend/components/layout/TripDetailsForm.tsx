@@ -2,18 +2,35 @@
 
 import {
   AlertCircle,
+  Bike,
   Bus,
   CalendarRange,
   Car,
+  Compass,
+  Fish,
+  Flame,
+  Footprints,
   Hotel,
   Loader2,
   MapPin,
+  Mountain,
+  Palmtree,
   Plane,
+  Sailboat,
+  ShoppingBag,
+  Snowflake,
+  Sparkles,
+  Tent,
   Ticket,
   Train,
+  TreePine,
   Users,
+  UtensilsCrossed,
   Wallet,
+  Waves,
+  Wine,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import { Fragment, memo, useEffect, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
@@ -51,82 +68,88 @@ const HOTEL_AMENITIES = [
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Activity emoji mapping
+// Activity icon mapping (YC: icons instead of emojis for professional look)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ACTIVITY_EMOJIS: Record<string, string> = {
-  // Strategy activities (5 main types)
-  hiking: '🥾',
-  trekking: '🥾',
-  diving: '🤿',
-  scuba: '🤿',
-  snorkeling: '🤿',
-  skiing: '⛷️',
-  snowboarding: '🏂',
-  cycling: '🚴',
-  biking: '🚴',
-  boating: '⛵',
-  sailing: '⛵',
-  kayaking: '🚣',
-  // Adventure activities
-  adventure: '🏔️',
-  climbing: '🧗',
-  surfing: '🏄',
-  rafting: '🚣',
-  paragliding: '🪂',
-  zipline: '🎢',
-  bungee: '🎢',
-  // Nature & outdoors
-  camping: '🏕️',
-  wildlife: '🦁',
-  safari: '🦁',
-  birdwatching: '🦅',
-  fishing: '🎣',
-  // Cultural & city
-  sightseeing: '🏛️',
-  museums: '🏛️',
-  culture: '🎭',
-  food: '🍽️',
-  wine: '🍷',
-  nightlife: '🎉',
-  shopping: '🛍️',
-  // Relaxation
-  spa: '💆',
-  beach: '🏖️',
-  relaxation: '🧘',
-  yoga: '🧘',
-  // Sports
-  golf: '⛳',
-  tennis: '🎾',
+const ACTIVITY_ICONS: Record<string, LucideIcon> = {
+  // Hiking & Outdoor
+  hiking: Footprints,
+  trekking: Footprints,
+  walking: Footprints,
   // Water activities
-  swimming: '🏊',
-  waterpark: '🌊',
-  // Winter activities
-  ice_skating: '⛸️',
-  // Default fallback (empty string means no emoji)
+  diving: Waves,
+  scuba: Waves,
+  snorkeling: Waves,
+  swimming: Waves,
+  waterpark: Waves,
+  kayaking: Waves,
+  rafting: Waves,
+  surfing: Waves,
+  // Winter sports
+  skiing: Snowflake,
+  snowboarding: Snowflake,
+  ice_skating: Snowflake,
+  // Cycling
+  cycling: Bike,
+  biking: Bike,
+  // Sailing/Boating
+  boating: Sailboat,
+  sailing: Sailboat,
+  // Adventure
+  adventure: Mountain,
+  climbing: Mountain,
+  paragliding: Mountain,
+  zipline: Mountain,
+  bungee: Mountain,
+  // Nature
+  camping: Tent,
+  wildlife: TreePine,
+  safari: TreePine,
+  birdwatching: TreePine,
+  // Fishing
+  fishing: Fish,
+  // Cultural & City
+  sightseeing: Compass,
+  museums: Compass,
+  culture: Compass,
+  // Food & Drink
+  food: UtensilsCrossed,
+  wine: Wine,
+  // Nightlife
+  nightlife: Flame,
+  // Shopping
+  shopping: ShoppingBag,
+  // Relaxation
+  spa: Sparkles,
+  beach: Palmtree,
+  relaxation: Sparkles,
+  yoga: Sparkles,
+  // Sports
+  golf: Compass,
+  tennis: Sparkles,
 };
 
 /**
- * Get emoji for an activity category.
+ * Get icon component for an activity category.
  * Matches against the activity name (case-insensitive, handles underscores).
  */
-function getActivityEmoji(category: string): string {
+function getActivityIcon(category: string): LucideIcon {
   const normalized = category.toLowerCase().replace(/[_-]/g, '').trim();
 
   // Direct match
-  if (ACTIVITY_EMOJIS[category.toLowerCase()]) {
-    return ACTIVITY_EMOJIS[category.toLowerCase()];
+  if (ACTIVITY_ICONS[category.toLowerCase()]) {
+    return ACTIVITY_ICONS[category.toLowerCase()];
   }
 
   // Check for partial matches (e.g., "mountain hiking" should match "hiking")
-  for (const [key, emoji] of Object.entries(ACTIVITY_EMOJIS)) {
+  for (const [key, icon] of Object.entries(ACTIVITY_ICONS)) {
     if (normalized.includes(key) || key.includes(normalized)) {
-      return emoji;
+      return icon;
     }
   }
 
-  // Default: adventure/activity emoji
-  return '✨';
+  // Default fallback
+  return Sparkles;
 }
 
 const CURRENCY_OPTIONS = [
@@ -853,26 +876,29 @@ function TripDetailsFormInner({
                 {/* Activity badges */}
                 {activitySettings.categories.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
-                    {activitySettings.categories.map((category, index) => (
-                      <span
-                        key={`${category}-${index}`}
-                        className={`inline-flex items-center gap-1 rounded-full border border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-pill-active ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}
-                      >
-                        <span className="flex-shrink-0">{getActivityEmoji(category)}</span>
-                        <span className="truncate">{category}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onRemoveActivity(index);
-                            acknowledgeField('activity_settings.categories' as LLMUpdatableField);
-                          }}
-                          className="flex-shrink-0 rounded-full p-0.5 hover:bg-primary/20 transition-colors"
-                          aria-label={`Remove ${category}`}
+                    {activitySettings.categories.map((category, index) => {
+                      const ActivityIcon = getActivityIcon(category);
+                      return (
+                        <span
+                          key={`${category}-${index}`}
+                          className={`inline-flex items-center gap-1 rounded-full border border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-pill-active ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}
                         >
-                          <X className="h-2.5 w-2.5" />
-                        </button>
-                      </span>
-                    ))}
+                          <ActivityIcon className="h-3 w-3 flex-shrink-0" />
+                          <span className="truncate">{category}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onRemoveActivity(index);
+                              acknowledgeField('activity_settings.categories' as LLMUpdatableField);
+                            }}
+                            className="flex-shrink-0 rounded-full p-0.5 hover:bg-primary/20 transition-colors"
+                            aria-label={`Remove ${category}`}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
                 {/* Add activity input */}

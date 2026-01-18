@@ -31,9 +31,8 @@ import { ChatSkeleton } from './ChatSkeleton';
 import { determineStage,FlowStageIndicator } from './FlowStageIndicator';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
-// Message to show after plan is generated with specific examples
-const POST_GENERATE_MESSAGE =
-  "Plan updated. Adjust constraints to modify.";
+// Micro-signal shown after plan generation (YC: implicit proof, not explanation)
+const POST_GENERATE_MESSAGE = "PLAN UPDATED";
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -732,7 +731,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       })
       .map((m) => {
         if (hasBranches && m.id === 'm0') {
-          return { ...m, content: 'Adjust constraints to modify the plan.' };
+          return { ...m, content: 'Modify constraints above.' };
         }
         return m;
       })
@@ -954,7 +953,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             {/* Custom shimmer placeholder - only when input is empty and no user message */}
             {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
               <div className="placeholder-shimmer" aria-hidden="true">
-                {hasBranches ? 'Adjust constraints...' : 'Enter destination'}
+                {hasBranches ? 'Modify trip...' : 'Enter destination'}
               </div>
             )}
             <textarea
@@ -962,7 +961,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
               hasBranches
-                ? 'Adjust constraints...'
+                ? 'Modify trip...'
                 : 'Enter destination'
             }
             value={input}

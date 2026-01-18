@@ -52,32 +52,32 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Earthy Nomadic palette - Dark mode */
-    --bg: 160 30% 8%;
-    --bg-soft: 160 20% 12%;
-    --bg-strong: 160 35% 6%;
-    --surface: 155 22% 7%;
-    --border: 160 20% 24%;
+    /* YC-ready dark palette - locked hex values */
+    --bg: 150 25% 5%;              /* #0B1210 */
+    --bg-soft: 152 25% 10%;
+    --bg-strong: 150 30% 4%;
+    --surface: 152 28% 8%;         /* #0F1A16 */
+    --border: 152 30% 17%;         /* #1F3A30 */
 
-    --text: 35 25% 92%;
-    --text-soft: 35 18% 82%;
-    --text-muted: 160 12% 59%;
+    --text: 150 18% 91%;           /* #E6ECE9 */
+    --text-soft: 148 12% 66%;      /* #9FB2A9 */
+    --text-muted: 150 10% 47%;     /* #6E847A */
     --text-onDark: 160 40% 15%;
 
     --charcoal: 35 20% 88%;
     --sand: 25 30% 20%;
-    --bronze: 22 82% 52%;
+    --bronze: 31 89% 55%;          /* #F28C28 */
     --sky: 160 40% 45%;
 
     /* Core theme tokens */
-    --background: 160 30% 8%;
-    --foreground: 35 25% 92%;
+    --background: 150 25% 5%;      /* #0B1210 */
+    --foreground: 150 18% 91%;     /* #E6ECE9 */
 
-    --card: 155 22% 7%;
-    --card-foreground: 35 25% 90%;
+    --card: 152 28% 8%;            /* #0F1A16 */
+    --card-foreground: 150 18% 91%;
 
-    --popover: 155 20% 9%;
-    --popover-foreground: 35 25% 90%;
+    --popover: 152 28% 9%;
+    --popover-foreground: 150 18% 91%;
 
     --primary: 160 40% 42%;
     --primary-foreground: 0 0% 100%;
@@ -85,16 +85,16 @@
     --secondary: 25 30% 22%;
     --secondary-foreground: 25 50% 80%;
 
-    --muted: 160 20% 14%;
-    --muted-foreground: 160 12% 70%;
+    --muted: 152 25% 12%;
+    --muted-foreground: 150 10% 47%;  /* #6E847A */
 
-    --accent: 22 82% 52%;
+    --accent: 31 89% 55%;          /* #F28C28 */
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 70% 50%;
     --destructive-foreground: 0 0% 98%;
 
-    --input: 160 20% 22%;
+    --input: 152 25% 18%;
     --ring: 160 40% 45%;
   }
 }
@@ -689,7 +689,7 @@ input[type="number"]::-webkit-outer-spin-button {
   position: absolute;
   inset: -50%;
   pointer-events: none;
-  opacity: 0.09;
+  opacity: 0.22;
   background-image: url("/assets/contours.svg");
   background-repeat: repeat;
   background-size: 900px 900px;

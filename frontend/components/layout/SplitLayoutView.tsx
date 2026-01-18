@@ -1,32 +1,11 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { ChevronDown, ChevronUp, Compass } from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import React, { memo, useState } from 'react';
 
 import { GeneratingLoader } from '@/components/layout/GeneratingLoader';
-import { HeroSection } from '@/components/layout/HeroSection';
 import { Card, CardContent } from '@/components/ui/card';
-
-interface SidebarHeaderProps {
-  className?: string;
-}
-
-/**
- * Compact header for the sidebar with logo
- */
-const SidebarHeader = memo(function SidebarHeader({ className = '' }: SidebarHeaderProps) {
-  return (
-    <header className={`mb-4 flex items-center text-white ${className}`}>
-      <div className="flex items-center gap-2">
-        <Compass className="h-5 w-5" />
-        <span className="font-display text-lg font-bold tracking-tight">
-          Nomadic
-        </span>
-      </div>
-    </header>
-  );
-});
 
 export interface SplitLayoutViewProps {
   /** Content for the sidebar (typically chat panel) */
@@ -61,14 +40,13 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       {/* Desktop sidebar - Chat Panel */}
       {/* Only visible on lg+ screens */}
       <aside
-        className="no-scrollbar fixed left-0 top-0 h-screen overflow-y-auto border-r border-white/10 bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl
+        className="no-scrollbar fixed left-0 top-0 h-screen overflow-y-auto bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl
           w-1/4 min-w-[320px]
           z-40
           hidden lg:block"
         aria-label="Trip planning chat"
       >
         <div className="flex h-full flex-col p-4 pb-2">
-          <SidebarHeader />
           {/* Chat Panel */}
           <div className="flex-1 overflow-hidden">
             <Card className="bg-card/75 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
@@ -81,50 +59,49 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       </aside>
 
       {/* Main content area */}
-      {/* Desktop: offset by sidebar width, Mobile: full width with bottom padding for chat bar */}
-      <section
+      {/* Desktop: matches sidebar structure with padding and inner scrollable container */}
+      <main
         className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)] pb-[140px] lg:pb-0"
         aria-label="Your trip plan"
       >
-        <div className="min-h-screen">
-          {/* Hero section (condensed) */}
-          <HeroSection variant="compact" />
-
-          {/* Trip details form - editable trip inputs below hero */}
-          {tripDetailsContent && (
-            <div className="bg-muted/30 border-b border-border/30 px-4 py-4 lg:px-6 w-full">
-              <div className="w-full">
+        {/* Desktop: padded wrapper matching sidebar (p-4 pb-2, no left padding) */}
+        <div className="lg:pt-4 lg:pr-4 lg:pb-2 lg:h-screen lg:bg-black">
+          {/* Scrollable content container with rounded corners on desktop */}
+          <div className="no-scrollbar min-h-screen lg:min-h-0 lg:h-full lg:overflow-y-auto lg:rounded-xl bg-muted/30 lg:border lg:border-white/20">
+            {/* Trip details form */}
+            {tripDetailsContent && (
+              <div className="border-b border-border/30 px-4 py-4 lg:px-6">
                 {tripDetailsContent}
               </div>
-            </div>
-          )}
-
-          {/* Show loader when generating, branches when ready */}
-          <section className="bg-background px-4 pb-14 pt-6 lg:px-6">
-            {isGenerating && !hasBranchesReady ? (
-              <motion.div
-                key="generating-loader"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.5 }}
-              >
-                <GeneratingLoader compact className="lg:hidden" />
-                <GeneratingLoader className="hidden lg:flex" />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="branch-panel"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, ease: 'easeOut' }}
-              >
-                {mainContent}
-              </motion.div>
             )}
-          </section>
+
+            {/* Main content - loader or branches */}
+            <div className="px-4 pb-14 pt-6 lg:px-6">
+              {isGenerating && !hasBranchesReady ? (
+                <motion.div
+                  key="generating-loader"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.5 }}
+                >
+                  <GeneratingLoader compact className="lg:hidden" />
+                  <GeneratingLoader className="hidden lg:flex" />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="branch-panel"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5, ease: 'easeOut' }}
+                >
+                  {mainContent}
+                </motion.div>
+              )}
+            </div>
+          </div>
         </div>
-      </section>
+      </main>
 
       {/* Mobile chat bar - fixed at bottom */}
       {/* Only visible on screens < lg */}
