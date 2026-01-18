@@ -13,7 +13,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { DETAIL_PRESETS } from '@/lib/mocks';
 import { cn , formatBudgetDisplay } from '@/lib/utils';
-import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
+import type { DocumentBranch, DocumentTripInputs, PlanStatus } from '@/types/document';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { BranchComparisonView } from './BranchComparisonView';
@@ -103,6 +103,8 @@ type BranchPanelProps = {
   isLoading?: boolean;
   /** Callback to show toast notification when tile is selected (Tier 10.19) */
   onSelectionToast?: (message: string) => void;
+  /** Plan regeneration status for reactive updates */
+  planStatus?: PlanStatus;
 };
 
 export const BranchPanel = memo(function BranchPanel({
@@ -120,6 +122,7 @@ export const BranchPanel = memo(function BranchPanel({
   tripInputs,
   isLoading = false,
   onSelectionToast,
+  planStatus = 'ready',
 }: BranchPanelProps) {
   const hasBranches = branches.length > 0;
   const selected = hasBranches
@@ -141,10 +144,21 @@ export const BranchPanel = memo(function BranchPanel({
     canCompare,
   } = useComparisonMode();
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
-  // Use backend hero images if available, fallback to mock presets
+  // Use backend data first, fallback to mock presets
   const selectedHeroImages = selected?.hero_images?.length
     ? selected.hero_images
     : detailPreset.heroImages;
+  const selectedVibe = selected?.vibe ?? detailPreset.vibe;
+  const selectedFocus = selected?.focus ?? detailPreset.focus;
+  const selectedHighlights = selected?.highlights?.length
+    ? selected.highlights
+    : detailPreset.highlights;
+  const selectedFlow = selected?.flow?.length
+    ? selected.flow
+    : detailPreset.flow;
+  const selectedNotes = selected?.notes?.length
+    ? selected.notes
+    : detailPreset.notes;
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
   const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
@@ -389,11 +403,24 @@ export const BranchPanel = memo(function BranchPanel({
                             <CheckCircle2 className="h-4 w-4 text-white" />
                           </span>
                         )}
-                        <span
-                          className={`${badgeColor} ${badgeTextColor} inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
-                        >
-                          {badgeLabel}
-                        </span>
+                        {/* Plan status badge - shown when plan is stale or updating */}
+                        {planStatus === 'updating' && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-md animate-pulse">
+                            Updating
+                          </span>
+                        )}
+                        {planStatus === 'stale' && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-gray-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-md">
+                            Out of date
+                          </span>
+                        )}
+                        {planStatus === 'ready' && (
+                          <span
+                            className={`${badgeColor} ${badgeTextColor} inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
+                          >
+                            {badgeLabel}
+                          </span>
+                        )}
                       </div>
                       {/* Removed "Suggestion X" numbering per coherence guidelines */}
                     </div>
@@ -590,7 +617,7 @@ export const BranchPanel = memo(function BranchPanel({
                 <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
                   Tempo
                 </p>
-                <p className="text-foreground text-base font-bold">{detailPreset.vibe}</p>
+                <p className="text-foreground text-base font-bold">{selectedVibe}</p>
               </div>
             </div>
 
@@ -599,7 +626,7 @@ export const BranchPanel = memo(function BranchPanel({
               <p className="text-primary text-[10px] font-medium uppercase tracking-wide">
                 Focus
               </p>
-              <p className="text-foreground text-sm font-semibold mt-1">{detailPreset.focus}</p>
+              <p className="text-foreground text-sm font-semibold mt-1">{selectedFocus}</p>
             </div>
 
             <div className="mt-4 space-y-3">
@@ -608,7 +635,7 @@ export const BranchPanel = memo(function BranchPanel({
                   Highlights
                 </p>
                 <ul className="text-muted-foreground mt-2 space-y-1.5 text-xs">
-                  {detailPreset.highlights.map((item) => (
+                  {selectedHighlights.map((item) => (
                     <li key={item} className="flex gap-2">
                       <span className="bg-muted-foreground/30 mt-1.5 h-1 w-1 rounded-full flex-shrink-0" />
                       <span>
@@ -631,7 +658,7 @@ export const BranchPanel = memo(function BranchPanel({
                   </span>
                 </div>
                 <ul className="text-foreground mt-2 space-y-2 text-sm">
-                  {detailPreset.flow.map((item, idx) => (
+                  {selectedFlow.map((item, idx) => (
                     <li
                       key={item}
                       className="rounded-lg border border-white/10 bg-black/10 px-3 py-2"
@@ -656,7 +683,7 @@ export const BranchPanel = memo(function BranchPanel({
                 </span>
               </div>
               <div className="text-foreground mt-2 space-y-2 text-sm">
-                {detailPreset.notes.map((note) => (
+                {selectedNotes.map((note) => (
                   <div
                     key={note}
                     className="rounded-lg border border-white/10 bg-black/10 px-3 py-2"

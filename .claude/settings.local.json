@@ -57,7 +57,9 @@
       "Bash(echo:*)",
       "Bash(npx tsx:*)",
       "Bash(npm run test:*)",
-      "Bash(timeout 15 npm run dev:*)"
+      "Bash(timeout 15 npm run dev:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(npm run:*)"
     ],
     "deny": [],
     "ask": []

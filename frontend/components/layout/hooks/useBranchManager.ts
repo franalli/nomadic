@@ -6,12 +6,13 @@ import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api'
 import { saveTripSummary } from '@/lib/summary';
 import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
-import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse } from '@/types/document';
+import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { useBranchState } from './useBranchState';
+import { usePlanRegeneration } from './usePlanRegeneration';
 import { useSessionHydration } from './useSessionHydration';
 import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } from './useTileSelection';
 
@@ -93,6 +94,8 @@ export interface BranchManagerState {
   branchSelections: Record<string, TileSelection>;
   isGenerating: boolean;
   isHydratingSnapshot: boolean;
+  /** Plan regeneration status: ready, stale, or updating */
+  planStatus: PlanStatus;
 }
 
 /**
@@ -183,6 +186,7 @@ export type UseBranchManagerReturn = BranchManagerState &
  */
 export function useBranchManager(options: BranchManagerOptions): UseBranchManagerReturn {
   const {
+    tripInputs,
     chatPanelContainerRef,
     onToast,
     onChatKeyIncrement,
@@ -239,6 +243,24 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * True from when user submits until results are displayed.
    */
   const [isGenerating, setIsGenerating] = useState(false);
+
+  /**
+   * Plan regeneration state.
+   * Tracks whether plan is ready, stale, or updating after constraint changes.
+   *
+   * The onRegenerate callback is currently a no-op - regeneration is triggered
+   * by the chat panel sending GENERATE_PLAN_TRIGGER. This hook provides the
+   * visual status feedback for reactive updates.
+   */
+  const { planStatus } = usePlanRegeneration({
+    tripInputs,
+    hasBranches: branchState.branches.length > 0,
+    onRegenerate: async () => {
+      // TODO: Wire up to chat's sendMessageCore(GENERATE_PLAN_TRIGGER)
+      // For now, this is a placeholder - regeneration is handled by the chat panel
+      // when it detects constraint changes via usePlanRegeneration
+    },
+  });
 
   // ─────────────────────────────────────────────────────────────────────────
   // Refs
@@ -661,6 +683,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     // State (local)
     isGenerating,
     isHydratingSnapshot,
+    planStatus,
 
     // Computed (from branchState)
     selectedBranch: branchState.selectedBranch,

@@ -257,6 +257,12 @@ class DocumentBranch(BaseModel):
     # Dynamic images based on destination (from Unsplash)
     image_url: Optional[str] = None  # Primary branch card image
     hero_images: List[str] = Field(default_factory=list)  # Mood images for detail view
+    # Strategy-enriched fields (populated by strategy nodes)
+    vibe: Optional[str] = None  # Trip mood/theme e.g. "Coastal hikes + harbor nights"
+    focus: Optional[str] = None  # Trip focus e.g. "Sea cliffs, seafood, slower mornings"
+    highlights: List[str] = Field(default_factory=list)  # Key experiences (3-5 items)
+    flow: List[str] = Field(default_factory=list)  # Day-by-day outline (3-5 items)
+    notes: List[str] = Field(default_factory=list)  # Practical tips (3-4 items)
 
 
 class DocumentTripInputsPatch(BaseModel):

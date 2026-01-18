@@ -14661,7 +14661,7 @@ async def tile_search(state: GraphState) -> GraphState:
 # -----------------------
 # Generate responder (handles GENERATE_PLAN_NOW trigger)
 # -----------------------
-def generate_responder(state: GraphState) -> GraphState:
+async def generate_responder(state: GraphState) -> GraphState:
     """
     Handle explicit plan generation requests.
 
@@ -14670,7 +14670,14 @@ def generate_responder(state: GraphState) -> GraphState:
 
     It creates default branches from trip_inputs and sets ready_to_generate=True.
     When the user explicitly requests generation, we proceed even with partial data.
+
+    Also calls relevant strategy nodes to enrich branches with vibe, highlights, flow, notes.
     """
+    from app.planner.nodes.strategy.orchestrator import (
+        merge_strategy_results,
+        orchestrate_strategies,
+    )
+
     _, start_ns = _debug_node_entry("generate_responder", state)
 
     ti = state.trip_inputs
@@ -14692,11 +14699,23 @@ def generate_responder(state: GraphState) -> GraphState:
     state.ready_to_generate = True
     state.last_summary = "Great! Generating your travel plan now..."
 
-    # Create a default branch from trip_inputs
+    # Call strategy orchestrator to get enriched content
+    strategy_results = await orchestrate_strategies(state)
+    merged_content = merge_strategy_results(strategy_results)
+
+    _debug(
+        "Strategy orchestration complete",
+        topics=list(strategy_results.keys()),
+        has_vibe=bool(merged_content.vibe),
+        highlights_count=len(merged_content.highlights),
+    )
+
+    # Create a default branch from trip_inputs with strategy enrichment
     fallback_inputs = ti.model_dump(exclude_none=True)
     default_branch = {
         "id": uuid4().hex[:8],
         "label": f"{ti.destinations[0]} Trip" if ti.destinations else "Your Trip",
+        "description": merged_content.vibe or f"Your adventure in {ti.destinations[0]}",
         "destinations": ti.destinations or [],
         "origin": ti.origin,
         "start_date": ti.start_date,
@@ -14708,6 +14727,12 @@ def generate_responder(state: GraphState) -> GraphState:
         "hotel_settings": ti.hotel_settings,
         "transport_settings": ti.transport_settings,
         "activity_settings": ti.activity_settings,
+        # Strategy-enriched fields
+        "vibe": merged_content.vibe or None,
+        "focus": merged_content.focus or None,
+        "highlights": merged_content.highlights if merged_content.highlights else [],
+        "flow": merged_content.flow if merged_content.flow else [],
+        "notes": merged_content.notes if merged_content.notes else [],
     }
 
     normalized = _normalize_branch_spec(default_branch, fallback_inputs)
@@ -14721,6 +14746,7 @@ def generate_responder(state: GraphState) -> GraphState:
         "Generate responder complete",
         ready=state.ready_to_generate,
         branches=len(state.branches),
+        strategies_called=list(strategy_results.keys()),
     )
     _debug_node_exit("generate_responder", state, start_ns)
     return state

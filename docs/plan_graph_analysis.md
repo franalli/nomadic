@@ -85,6 +85,11 @@ backend/app/planner/
 │   ├── keyword_utils.py     # keyword_match() utility
 │   ├── intent_detection.py  # Intent detection utilities
 │   ├── topic_detection.py   # Strategy topic detection (SINGLE SOURCE OF TRUTH)
+│   ├── suppression.py       # SuppressionPredicates (bridge, lifecycle, ownership)
+│   ├── checks/              # Gate check functions (P4 module extraction)
+│   │   ├── __init__.py      # Exports for check utilities
+│   │   ├── strategy.py      # Strategy expansion detection
+│   │   └── short_circuit.py # Vague affirmation detection
 │   └── implementations/     # Individual gate classes
 │       ├── __init__.py      # Gate class exports + GATE_REGISTRY
 │       ├── short_circuit.py # ShortCircuitGate, InfeasibilityGate
@@ -125,7 +130,8 @@ backend/app/planner/
         ├── __init__.py
         ├── base.py          # Strategy keywords and helpers
         ├── stage0.py        # Stage0Coordinator
-        └── stages.py        # Stage coordinators and trackers
+        ├── stages.py        # Stage coordinators and trackers
+        └── orchestrator.py  # Strategy orchestration for plan generation
 ```
 
 ---
@@ -311,7 +317,7 @@ backend/app/planner/
 | `tile_search` | Search for tiles (hotels/flights/activities) | 🔒 None | TileCache |
 | `summarize` | Generate follow-ups, format responses | ✨ Simulated | None |
 | `short_circuit_responder` | Handle greetings/confirmations | ✨ Simulated | None |
-| `generate_responder` | Handle explicit generation requests | ✨ Simulated | None |
+| `generate_responder` | Handle explicit generation requests, call strategy orchestrator | ✨ Simulated | None |
 
 ### Streaming Legend
 
@@ -399,6 +405,40 @@ When user switches from strategy (e.g., hiking) to a domain (e.g., hotels):
 | `activities` | `activities_node` | "What activities are there?" |
 
 This ensures domain-specific requests get proper specialist handling even when initiated from a strategy context.
+
+### Strategy Orchestrator (Plan Generation)
+
+When `generate_responder` is triggered, it calls the strategy orchestrator to enrich branches with LLM-generated content.
+
+**Location:** `planner/nodes/strategy/orchestrator.py`
+
+| Function | Purpose |
+|----------|---------|
+| `detect_relevant_strategies(state)` | Maps `activity_settings.categories` to strategy topics |
+| `orchestrate_strategies(state)` | Calls strategy nodes in parallel via `asyncio.gather` |
+| `call_strategy_for_plan(state, topic)` | LLM call for single topic (768 tokens max) |
+| `parse_strategy_response(response, topic)` | Extracts vibe, highlights, flow, notes from markdown |
+| `merge_strategy_results(results)` | Combines multiple strategy results into one |
+
+**Category to Strategy Mapping:**
+
+| Activity Category | Strategy Topic |
+|-------------------|----------------|
+| hiking, trekking, mountains, trails | `hiking` |
+| diving, scuba, snorkeling, underwater | `diving` |
+| skiing, snowboarding, winter sports | `skiing` |
+| cycling, biking, bicycle | `cycling` |
+| boating, sailing, yachting, kayaking | `boating` |
+
+**Branch Enrichment Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `vibe` | `string` | Trip mood/theme (1 sentence) |
+| `focus` | `string` | Trip focus description |
+| `highlights` | `string[]` | Key experiences (3-5 items) |
+| `flow` | `string[]` | Day-by-day outline (3-5 items) |
+| `notes` | `string[]` | Practical tips (3-4 items) |
 
 ---
 
@@ -784,9 +824,12 @@ This ensures:
 | `planner.normalization` | `DateNormalizer`, `DateProvenance`, `TripInputNormalizer`, `NormalizationError` |
 | `planner.parsing` | `PARSE_PROVENANCE_PRECEDENCE`, `LQA_FIELD_PARSERS` |
 | `planner.gates.topic_detection` | `detect_strategy_topic_from_text`, `detect_strategy_topic_from_settings`, `detect_strategy_topic` |
+| `planner.gates.suppression` | `SuppressionPredicates` |
+| `planner.gates.checks` | `is_strategy_expansion_request`, `is_vague_affirmation`, `StrategyExpansionResult` |
 | `planner.state` | `StateWriter` |
 | `planner.nodes` | `extractor`, `lqa_prepass`, `router`, `_specialist`, `strategy_node` |
 | `planner.nodes.schemas` | `ExtractorOutput`, `RouterOutput`, `BudgetDelta`, `IntentType`, `TopicType` |
+| `planner.nodes.strategy` | `orchestrate_strategies`, `merge_strategy_results`, `detect_relevant_strategies`, `StrategyContent`, `StrategyResult` |
 
 ---
 

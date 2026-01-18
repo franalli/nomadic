@@ -28,6 +28,15 @@ from app.planner.nodes.strategy.base import (
     should_escalate_from_stage0,
     track_strategy_pre_core_question,
 )
+from app.planner.nodes.strategy.orchestrator import (
+    CATEGORY_TO_STRATEGY,
+    StrategyContent,
+    StrategyResult,
+    detect_relevant_strategies,
+    merge_strategy_results,
+    orchestrate_strategies,
+    parse_strategy_response,
+)
 from app.planner.nodes.strategy.stage0 import (
     STAGE0_FALLBACK_TEMPLATES,
     Stage0Coordinator,
@@ -43,6 +52,14 @@ __all__ = [
     # Main functions (re-exported from strategy_main.py)
     "_strategy_stage0",
     "strategy_node",
+    # Orchestrator functions (for plan generation)
+    "CATEGORY_TO_STRATEGY",
+    "StrategyContent",
+    "StrategyResult",
+    "detect_relevant_strategies",
+    "merge_strategy_results",
+    "orchestrate_strategies",
+    "parse_strategy_response",
     # Base constants
     "STRATEGY_KEYWORDS",
     "STRATEGY_PRE_CORE_QUESTION_GUIDANCE",

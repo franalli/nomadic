@@ -42,7 +42,16 @@ export type DocumentBranch = {
   // Dynamic images from backend (Unsplash)
   image_url?: string | null;
   hero_images?: string[];
+  // Strategy-enriched fields (populated by strategy nodes)
+  vibe?: string | null;
+  focus?: string | null;
+  highlights?: string[];
+  flow?: string[];
+  notes?: string[];
 };
+
+// Plan regeneration status for reactive updates
+export type PlanStatus = 'ready' | 'stale' | 'updating';
 
 // Booking type toggles - which categories to search for
 export type BookingTypes = {
