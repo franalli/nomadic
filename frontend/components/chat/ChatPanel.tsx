@@ -271,8 +271,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Document store for restoring trip inputs on delete
     const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
-    // Get tripInputs for constraint state tracking
-    const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
 
     const [input, setInput] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
