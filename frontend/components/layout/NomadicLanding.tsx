@@ -16,12 +16,14 @@ import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
-import { PlanHeaderStatus } from '@/components/plan/PlanHeaderStatus';
+import { PlanStateBanner } from '@/components/plan/PlanStateBanner';
+import { ResolutionCompleteness } from '@/components/plan/ResolutionCompleteness';
+import { ResolverStack } from '@/components/plan/ResolverStack';
 import { Card, CardContent } from '@/components/ui/card';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
-import { INITIAL_PLAN_STATUS, type PlanStatus as UnifiedPlanStatus } from '@/types/plan-status';
+import type { PlanState, ReadinessItem, ResolverStep } from '@/types/plan-envelope';
 
 // Toast notification system
 const MAX_TOASTS = 3;
@@ -368,29 +370,64 @@ export function NomadicLanding() {
 
   const missingFields = tripInputs.missing_fields ?? [];
 
-  // Derive unified plan status for PlanHeaderStatus
-  // TODO: Move this to a central hook once specialist tracking is implemented
-  const unifiedPlanStatus: UnifiedPlanStatus = useMemo(() => ({
-    ...INITIAL_PLAN_STATUS,
-    phase: isGenerating ? 'updating' : (missingFields.length > 0 ? 'needs_input' : 'ready'),
-    missing: missingFields,
-    dirty: branchManager.planStatus === 'stale',
-    activeSpecialists: [], // TODO: Track from SSE events
-  }), [isGenerating, missingFields, branchManager.planStatus]);
-
   // Check if we have origin or destination to show route
   const hasOrigin = Boolean(tripInputs.origin);
   const hasDestination = (tripInputs.destinations ?? []).length > 0;
-
-  // Check if we have dates to show
   const hasStartDate = Boolean(tripInputs.start_date);
   const hasEndDate = Boolean(tripInputs.end_date);
+  const hasBudget = tripInputs.budget != null;
+  const hasTravelers = tripInputs.adults != null;
+
+  // NEW: Derive plan state envelope fields
+  // Use backend-provided plan_state if available, otherwise derive from local state
+  const storeDocument = documentStore.document;
+  const documentPlanState = storeDocument?.plan_state;
+  const planState: PlanState = useMemo(() => {
+    if (documentPlanState) return documentPlanState;
+    // Fallback: derive from local state
+    if (isGenerating) return 'RESOLVING';
+    if (missingFields.length > 0 || !hasOrigin || !hasDestination || !hasStartDate) {
+      return 'INCOMPLETE';
+    }
+    return 'STABLE';
+  }, [documentPlanState, isGenerating, missingFields.length, hasOrigin, hasDestination, hasStartDate]);
+
+  // Derive readiness array (use backend if available, otherwise compute locally)
+  const readinessItems: ReadinessItem[] = useMemo(() => {
+    if (storeDocument?.readiness && storeDocument.readiness.length > 0) {
+      return storeDocument.readiness;
+    }
+    // Fallback: compute from local state
+    return [
+      { key: 'origin', ok: hasOrigin },
+      { key: 'destination', ok: hasDestination },
+      { key: 'start_date', ok: hasStartDate },
+      { key: 'end_date', ok: hasEndDate },
+      { key: 'travelers', ok: hasTravelers },
+      { key: 'budget', ok: hasBudget },
+    ];
+  }, [storeDocument?.readiness, hasOrigin, hasDestination, hasStartDate, hasEndDate, hasTravelers, hasBudget]);
+
+  // Resolver state (only during RESOLVING, from backend or default)
+  const resolverActiveStep: ResolverStep = storeDocument?.resolver?.active_step ?? 'processing_constraints';
+  const resolverCompletedSteps = new Set<ResolverStep>(storeDocument?.resolver?.completed_steps ?? []);
+
+  // Destination card (from backend or derive locally)
+  const destinationCard = storeDocument?.destination_card ?? (
+    hasDestination ? {
+      title: tripInputs.destinations?.[0] ?? '',
+      subtitle: `Your adventure in ${tripInputs.destinations?.[0] ?? ''}`,
+      image_url: null,
+    } : null
+  );
+
+  // Booking status (from backend, for per-tab display)
+  const bookingStatus = storeDocument?.booking_status ?? null;
+
+  // Derive hasDates for legacy code
   const hasDates = hasStartDate || hasEndDate;
 
-  // Check if we have budget
-  const hasBudget = tripInputs.budget != null;
-
-  // Count resolved constraints for plan header copy
+  // Count resolved constraints for plan header copy (legacy)
   const constraintCount = [hasDestination, hasOrigin, hasDates, hasBudget].filter(Boolean).length;
 
   // Get plan header title and body based on constraint count
@@ -526,6 +563,7 @@ export function NomadicLanding() {
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}
           isGenerating={isGenerating}
+          planState={planState}
         />
       </div>
     </div>
@@ -537,20 +575,43 @@ export function NomadicLanding() {
       <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
       <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
       <div className="relative px-5 py-4">
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        {/* Visual Hierarchy:
+         * 1. Plan State Banner (single source of truth)
+         * 2. Destination Card (content anchor)
+         * 3. Resolution Completeness (diagnostic, INCOMPLETE/RESOLVING only)
+         * 4. Resolver Stack (RESOLVING only)
+         */}
+
+        {/* 1. Plan State Banner - Single line, dominant */}
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
           <div className="space-y-1">
             <h3 className="text-foreground font-display text-xl font-bold">
-              {planHeaderCopy.title}
+              {destinationCard?.title || planHeaderCopy.title}
             </h3>
-            {planHeaderCopy.subtitle && (
+            {(destinationCard?.subtitle || planHeaderCopy.subtitle) && (
               <p className="text-muted-foreground text-sm">
-                {planHeaderCopy.subtitle}
+                {destinationCard?.subtitle || planHeaderCopy.subtitle}
               </p>
             )}
           </div>
-          <PlanHeaderStatus status={unifiedPlanStatus} />
+          <PlanStateBanner planState={planState} />
         </div>
-        {/* Change receipt - shows "Updated: X, Y · Undo" after freeform extraction */}
+
+        {/* 3. Resolution Completeness - INCOMPLETE or RESOLVING only */}
+        {(planState === 'INCOMPLETE' || planState === 'RESOLVING') && (
+          <ResolutionCompleteness readiness={readinessItems} className="mb-3" />
+        )}
+
+        {/* 4. Resolver Stack - RESOLVING only */}
+        {planState === 'RESOLVING' && (
+          <ResolverStack
+            activeStep={resolverActiveStep}
+            completedSteps={resolverCompletedSteps}
+            className="mb-3"
+          />
+        )}
+
+        {/* Legacy: Change receipt - shows "Updated: X, Y · Undo" after freeform extraction */}
         {receiptData && (
           <div className="flex justify-end mt-2">
             <ChangeReceipt
@@ -560,6 +621,7 @@ export function NomadicLanding() {
             />
           </div>
         )}
+
       </div>
       <CardContent className="relative overflow-hidden">
         {isHydratingSnapshot && branches.length === 0 ? (
@@ -582,6 +644,7 @@ export function NomadicLanding() {
             canBookTrip={missingFields.length === 0}
             tripInputs={tripInputs}
             planStatus={branchManager.planStatus}
+            bookingStatus={bookingStatus}
             onSelectionToast={(message) => addToast(message, 'confirmation')}
           />
         )}

@@ -87,7 +87,7 @@ class TestLlmBlockedFallback:
 
         assert state.last_summary is not None
         assert len(state.last_summary) > 0
-        assert "?" in state.last_summary  # Should have a question
+        assert ":" in state.last_summary  # System-style labels end with colons
 
     def test_fallback_sets_question_target(self, state):
         """Fallback should set question_target."""

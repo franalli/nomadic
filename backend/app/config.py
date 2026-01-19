@@ -46,12 +46,7 @@ class Settings(BaseSettings):
     enable_strategy_cycling: bool = True
 
     # Response polish node configuration
-    enable_response_polish: bool = True  # Enable response polishing for natural tone
-    enable_response_polish_mvp: bool = (
-        False  # MVP mode: disable LLM polish, keep deterministic only
-    )
-    response_polish_timeout_ms: int = 60000  # Hard timeout cap for polish node (60s)
-    response_polish_warn_threshold_ms: int = 30000  # Log warning if polish exceeds this (30s)
+    enable_response_polish: bool = True  # Enable deterministic response polishing
 
     # LQA (Last Question Answer) pre-pass configuration
     lqa_max_length: int = 150  # Max input length for LQA pre-pass (chars)

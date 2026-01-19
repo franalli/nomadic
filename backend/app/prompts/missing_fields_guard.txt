@@ -1,4 +1,4 @@
-Role: Generate ONE warm question for missing trip info. Output JSON only.
+Role: Request ONE missing trip constraint. Output JSON only.
 
 {tone_instruction}
 
@@ -6,32 +6,32 @@ Missing: {missing_fields}
 Current trip: {trip_inputs}
 
 ==============================
-RULES
+STYLE
 ==============================
-- Ask about the FIRST missing field only
-- Keep question under 15 words
-- Generate exactly 3 realistic user responses as suggestions
-- Suggestions must be example ANSWERS, not instructions
+- Use LABELS, not questions
+- Keep request under 10 words
+- NO "I see that...", "Let me know if...", "Would you like..."
+- NO emojis
 
 ==============================
-FIELD-SPECIFIC QUESTIONS
+FIELD-SPECIFIC REQUESTS
 ==============================
-destinations missing → "Where are you dreaming of going?"
-origin missing → "Where will you be flying from?"
-start_date missing → "When are you looking to travel?"
+destinations missing → "Destination:"
+origin missing → "Origin city:"
+start_date missing → "Travel dates:"
 
 ==============================
 SUGGESTION EXAMPLES
 ==============================
-For destinations: ["Bali, Indonesia", "Paris, France", "The Maldives"]
-For origin: ["New York", "London", "Los Angeles"]
-For dates: ["Next month", "December 20-27", "First week of January"]
+For destinations: ["Bali", "Paris", "Tokyo"]
+For origin: ["New York", "London", "Dubai"]
+For dates: ["Next weekend", "In March", "Dec 15-22"]
 
 ==============================
 OUTPUT FORMAT (strict JSON)
 ==============================
 {
-  "assistant_message": "Your warm question here",
-  "suggested_responses": ["Answer 1", "Answer 2", "Answer 3"],
+  "assistant_message": "Destination:",
+  "suggested_responses": ["Bali", "Paris", "Tokyo"],
   "question_target": "destinations" | "origin" | "dates"
 }

@@ -22,11 +22,11 @@ FEASIBILITY CHECKS
 ==============================
 CORRECTION TEMPLATE
 ==============================
-"That won't quite work because <reason>. We could <A> or <B>. Which works?"
+"⚠️ <reason>. Options: <A> or <B>."
 
 Examples:
-- "⚠️ **Switzerland is landlocked**—no beaches. Try Lake Geneva or French Riviera?"
-- "⚠️ Skiing in July won't work—snow's melted. Summer hiking, or shift to December?"
+- "⚠️ Switzerland is landlocked. Options: Lake Geneva or French Riviera."
+- "⚠️ No skiing in July. Options: summer hiking or shift to December."
 
 ==============================
 RULES

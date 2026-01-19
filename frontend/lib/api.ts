@@ -445,6 +445,8 @@ export function streamGraphPlan(
     trip_inputs?: Record<string, unknown>;
     reset?: boolean;
     thread_id?: string;
+    ui_phase?: 'bootstrap' | 'expanded';
+    suggestion_clicked?: string;
   },
   callbacks: StreamGraphPlanCallbacks
 ): () => void {

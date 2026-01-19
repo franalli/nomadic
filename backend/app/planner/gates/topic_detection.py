@@ -117,6 +117,8 @@ def detect_strategy_topic(
     """Detect strategy topic from text or activity settings.
 
     Tries text first, then falls back to activity_settings if no match.
+    Returns None if user text contains explicit specialist keywords (flights,
+    hotels, etc.) to prevent stale activity_settings from overriding user intent.
 
     Args:
         text: User input text
@@ -125,12 +127,24 @@ def detect_strategy_topic(
     Returns:
         Topic name (hiking, diving, skiing, cycling, boating) or None
     """
-    # First try text keywords
+    # First try text keywords (explicit strategy intent in current message)
     topic = detect_strategy_topic_from_text(text)
     if topic:
         return topic
 
-    # Fall back to activity settings
+    # Before falling back to activity_settings, check if user text contains
+    # explicit specialist keywords. If so, don't return a stale strategy topic.
+    # This prevents "Add flights" from being routed to hiking just because
+    # activity_settings.categories=['hiking'] from a previous turn.
+    from app.pattern_matching import SPECIALIST_KEYWORDS
+    from app.planner.gates.keyword_utils import keyword_match
+
+    text_lower = text.lower()
+    for _specialist, keywords in SPECIALIST_KEYWORDS.items():
+        if keyword_match(text_lower, keywords):
+            return None  # Let specialist routing handle this
+
+    # Fall back to activity settings only if no specialist keywords
     if activity_settings:
         return detect_strategy_topic_from_settings(activity_settings)
 

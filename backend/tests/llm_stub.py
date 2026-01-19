@@ -265,51 +265,49 @@ def llm_json_for_prompt(
         # Determine what to ask for based on what's missing
         if has_destinations and has_origin and has_start_date:
             return {
-                "assistant_message": "You're all set! Ready to see options?",
+                "assistant_message": "Constraints complete. Ready to generate.",
                 "trip_inputs": trip_inputs,
                 "ready_to_generate": False,
                 "branches": [],
-                "suggested_responses": ["Show me options", "Add more details"],
+                "suggested_responses": ["Generate", "Add details"],
             }
 
         if has_destinations and has_origin and not has_start_date:
             dest_name = state.get("destinations", ["your destination"])[0]
             return {
-                "assistant_message": f"Great - when are you planning to visit {dest_name}?",
+                "assistant_message": f"Destination: {dest_name}. Travel dates:",
                 "trip_inputs": trip_inputs,
                 "ready_to_generate": False,
                 "branches": [],
-                "suggested_responses": ["Next month", "December 15-22", "Flexible dates"],
+                "suggested_responses": ["Next weekend", "In March", "Dec 15-22"],
                 "question_target": "dates",
             }
 
         if has_destinations and not has_origin:
             return {
-                "assistant_message": "Where will you be flying from?",
+                "assistant_message": "Origin city:",
                 "trip_inputs": trip_inputs,
                 "ready_to_generate": False,
                 "branches": [],
-                "suggested_responses": ["From London", "From New York", "From Sydney"],
+                "suggested_responses": ["London", "New York", "Dubai"],
                 "question_target": "origin",
             }
 
         if trip_inputs:
             return {
-                "assistant_message": (
-                    "Got it - I've noted your dates. " "Anything else you want to optimize for?"
-                ),
+                "assistant_message": "Dates set. Additional constraints:",
                 "trip_inputs": trip_inputs,
                 "ready_to_generate": False,
                 "branches": [],
-                "suggested_responses": ["Budget", "Relaxed pace", "Best value"],
+                "suggested_responses": ["$5,000 budget", "Relaxed pace", "Best value"],
             }
 
         return {
-            "assistant_message": "Where are you looking to travel, and when?",
+            "assistant_message": "Destination:",
             "trip_inputs": {},
             "ready_to_generate": False,
             "branches": [],
-            "suggested_responses": ["I have dates", "I have a destination"],
+            "suggested_responses": ["Paris", "Tokyo", "Bali"],
         }
 
     if "SCOPE: HIKING STRATEGY ONLY" in prompt:
@@ -835,6 +833,17 @@ def llm_json_for_prompt(
             flight_settings["direct_only"] = True
         if flight_settings:
             result["flight_settings_delta"] = flight_settings
+
+        # Extract transport settings (car, train, bus)
+        transport_settings: Dict[str, Any] = {}
+        if any(k in msg for k in ["rent a car", "car rental", "drive", "driving", "rent car"]):
+            transport_settings["car"] = True
+        if "train" in msg:
+            transport_settings["train"] = True
+        if "bus" in msg:
+            transport_settings["bus"] = True
+        if transport_settings:
+            result["transport_settings_delta"] = transport_settings
 
         return result
 

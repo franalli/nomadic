@@ -107,6 +107,7 @@ from app.pattern_matching import (
     STRATEGY_INTENT_KEYWORDS,
     STRATEGY_TOPIC_PATTERNS,
     TOPIC_KEYWORDS,
+    TRAILING_ORIGIN_PATTERN,
     TRAVELERS_MICRO_PATTERNS,
     TRAVELERS_PATTERN,
     UNDECIDED_PATTERNS,
@@ -1760,6 +1761,7 @@ def _try_deterministic_router(
 # context for validity checking on read.
 
 # Cache versioning for invalidation on schema/logic changes
+# Bump on: gate precedence changes, readiness logic changes, cache view changes
 CACHE_SCHEMA_VERSION = 1  # Bump on payload format changes
 NODE_LOGIC_VERSION = {
     "required_fields": 1,  # Bump when required_fields logic changes
@@ -1768,6 +1770,94 @@ NODE_LOGIC_VERSION = {
     "strategy": 1,  # Bump when strategy logic changes
     "tile": 2,  # v2: Cache key includes end_date, adults, children; budget filtered client-side
 }
+
+# ---------------------------------------------------------------------------
+# GATE EVALUATION CACHE - Metadata/trip_inputs view for deterministic keys
+# ---------------------------------------------------------------------------
+# Metadata keys that affect routing (whitelist - everything else excluded)
+METADATA_CACHE_KEYS: frozenset = frozenset(
+    {
+        "locale",
+        "currency_override",
+        "partner_config_version",
+        "feature_flags",  # Only if flags affect routing
+    }
+)
+
+# Trip input fields that affect routing (whitelist)
+ROUTING_RELEVANT_FIELDS: frozenset = frozenset(
+    {
+        "origin",
+        "destinations",
+        "start_date",
+        "end_date",
+        "adults",
+        "children",
+        "budget",
+        "currency",
+    }
+)
+
+
+def _normalize_for_cache(obj: Any) -> Any:
+    """
+    Recursively normalize values for deterministic JSON serialization.
+
+    Handles: dicts (sorted keys), sets (sorted lists), datetimes (isoformat), floats (rounded).
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, bool)):
+        return obj
+    if isinstance(obj, float):
+        return round(obj, 6)  # Avoid float precision drift
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, set):
+        return sorted(_normalize_for_cache(v) for v in obj)
+    if isinstance(obj, (list, tuple)):
+        return [_normalize_for_cache(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _normalize_for_cache(v) for k, v in sorted(obj.items())}
+    # Fallback: convert to string (but log warning in debug)
+    return str(obj)
+
+
+def metadata_cache_view(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract only routing-relevant metadata for cache key."""
+    return {k: metadata[k] for k in METADATA_CACHE_KEYS if k in metadata}
+
+
+def trip_inputs_cache_view(trip_inputs: Any) -> Dict[str, Any]:
+    """Extract only routing-relevant trip_inputs for cache key."""
+    if hasattr(trip_inputs, "model_dump"):
+        full = trip_inputs.model_dump()
+    else:
+        full = dict(trip_inputs)
+    return {k: full[k] for k in ROUTING_RELEVANT_FIELDS if k in full}
+
+
+def compute_gate_cache_key(trip_inputs: Any, metadata: Dict[str, Any]) -> str:
+    """
+    Compute deterministic cache key from whitelisted fields only.
+
+    NOTE: This is for GATE EVALUATION caching only, not plan content caching.
+    Excludes per-turn fields (trace_id, request_id, timestamps) that would
+    cause cache misses on every request.
+    """
+    import hashlib
+
+    # Normalize all values for deterministic serialization
+    normalized = _normalize_for_cache(
+        {
+            "v": CACHE_SCHEMA_VERSION,
+            "inputs": trip_inputs_cache_view(trip_inputs),
+            "metadata": metadata_cache_view(metadata),
+        }
+    )
+
+    key_data = json.dumps(normalized, sort_keys=True)
+    return hashlib.md5(key_data.encode()).hexdigest()
 
 
 # Compute prompt bundle hash at module load for cache invalidation
@@ -4366,7 +4456,7 @@ def validate_suggestion_contract(
                     "suggestions_preview": suggested_responses[:3],
                 }
             # Rewrite with date suggestions
-            return ["Next month", "This summer", "Flexible"]
+            return ["Next weekend", "In March", "Dec 15-22"]
 
     elif target_lower in ("destinations", "origin"):
         # Suggestions should be place-like
@@ -5018,21 +5108,21 @@ class ToneAdapter:
         - curious: User is asking questions, exploring options
     """
 
-    # Intent-specific tone instructions (condensed from former _adapt_tone.txt)
+    # Intent-specific tone instructions - system-style, not conversational
     _INTENT_INSTRUCTIONS = {
-        "quick_booking": "Be brief but friendly. Keep responses short and efficient.",
-        "detailed_planner": "Be helpful with details. Provide context when useful.",
-        "adventurous": "Match their energy! Use emojis sparingly. Be enthusiastic.",
-        "undecided": "Be a helpful guide. Suggest options gently.",
-        "short_trip": "Acknowledge time constraints. Focus on efficiency.",
+        "quick_booking": "Be concise. System-style confirmations only. No chat.",
+        "detailed_planner": "Be direct. Acknowledge constraints systematically.",
+        "adventurous": "Be concise. Acknowledge preferences directly.",
+        "undecided": "Be direct. Present options as labels.",
+        "short_trip": "Be concise. Focus on constraints.",
     }
 
     # Tone modifiers (appended to intent instruction)
     _TONE_MODIFIERS = {
-        "frustrated": " Be calm, direct, and helpful. No fluff.",
-        "enthusiastic": " Mirror their excitement!",
+        "frustrated": " Extra concise. Direct answers only.",
+        "enthusiastic": "",  # No modifier - stay system-like
         "neutral": "",  # No modifier needed
-        "curious": " Be informative and engaging.",
+        "curious": " Direct answers. No fluff.",
     }
 
     @classmethod
@@ -5051,7 +5141,7 @@ class ToneAdapter:
         """
         # Get base instruction from intent
         base = cls._INTENT_INSTRUCTIONS.get(
-            user_intent, "Be warm and professional. Keep it conversational."
+            user_intent, "Be concise and direct. System-style confirmations."
         )
 
         # Add tone modifier
@@ -5093,7 +5183,7 @@ class SuggestionBuilder:
 
     # Default suggestions by specialist type
     _SPECIALIST_DEFAULTS = {
-        "flights": ["Direct flights only", "Flexible dates", "Budget airlines OK"],
+        "flights": ["Direct flights only", "Morning departure", "Budget airlines OK"],
         "hotels": ["Central location", "Quiet area", "Near attractions"],
         "activities": ["Outdoor activities", "Cultural experiences", "Food tours"],
         "transport": ["Rental car", "Public transport", "Private transfers"],
@@ -5121,7 +5211,7 @@ class SuggestionBuilder:
             "transport": ["Boat transfers", "Island taxi", "Resort pickup"],
         },
         "boating": {
-            "flights": ["Arrive day before", "Flexible dates", "Marina proximity"],
+            "flights": ["Arrive day before", "Morning arrival", "Marina proximity"],
             "hotels": ["Marina-side", "Yacht club", "Waterfront hotel"],
             "activities": ["Skippered charter", "Sailing lessons", "Island hopping"],
             "transport": ["Airport to marina", "Water taxi", "Car not needed"],
@@ -5137,17 +5227,17 @@ class SuggestionBuilder:
     # Missing field suggestions (used when state.question_target is set)
     _MISSING_FIELD_SUGGESTIONS = {
         "destinations": {
-            "default": ["Paris, France", "Tokyo, Japan", "Barcelona, Spain"],
+            "default": ["Paris", "Tokyo", "Barcelona"],
             "hiking": ["Swiss Alps", "Patagonia", "Nepal"],
             "skiing": ["Chamonix", "Whistler", "Niseko"],
             "diving": ["Maldives", "Red Sea", "Great Barrier Reef"],
             "boating": ["Greek Islands", "Croatia", "Caribbean"],
             "cycling": ["Tuscany", "Netherlands", "Loire Valley"],
         },
-        "origin": ["London", "New York", "Los Angeles"],
-        "dates": ["Next month", "March 15-22", "First week of summer"],
-        "travelers": ["Just me", "2 adults", "Family of 4"],
-        "budget": ["Around $2000", "Flexible budget", "Budget-friendly"],
+        "origin": ["London", "New York", "Dubai"],
+        "dates": ["Next weekend", "In March", "Dec 15-22"],
+        "travelers": ["Solo", "2 adults", "Family of 4"],
+        "budget": ["$2,000", "$5,000", "$10,000"],
     }
 
     @classmethod
@@ -5672,7 +5762,32 @@ def _try_suggestion_echo(
     First tries raw exact match, then normalized match.
 
     v5 Lifecycle: Only matches if question_id matches, preventing stale echo.
+
+    v6 Guards:
+    - Skip in expanded mode (full planner UI doesn't use suggestion chips)
+    - Require explicit click signal (prevents false positives from typed text)
     """
+    # Guard 1: Skip in expanded mode (full planner UI)
+    ui_phase = state.metadata.get("ui_phase")
+    if ui_phase == "expanded":
+        _debug("Suggestion echo skipped: ui_phase=expanded")
+        return None
+
+    # Guard 2: Require explicit click signal from frontend
+    suggestion_clicked = state.metadata.get("suggestion_clicked")
+    if not suggestion_clicked:
+        _debug("Suggestion echo skipped: no suggestion_clicked signal")
+        return None
+
+    # Guard 3: Only process if clicked text matches user input
+    if suggestion_clicked.strip().lower() != text.strip().lower():
+        _debug(
+            "Suggestion echo skipped: clicked text mismatch",
+            clicked=suggestion_clicked[:50],
+            text=text[:50],
+        )
+        return None
+
     last_suggestions = state.metadata.get("last_suggestions", [])
     if not last_suggestions:
         return None
@@ -6441,6 +6556,7 @@ def llm_blocked_fallback(
         fallback_questions = {
             "destinations": "Destination?",
             "dates": "Dates?",
+            "duration": "How long is your trip?",
             "travelers": "Travelers?",
             "origin": "Origin?",
             "budget": "Budget?",
@@ -6866,6 +6982,19 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
             parsed["destinations_delta"] = [normalized]
             fields_extracted.append("destinations")
             _debug(f"[INITIAL_EXTRACT] Pattern 1 matched: destinations={normalized}")
+
+    # Try pattern 1b: Extract trailing "from X" when destination already found
+    # Handles cases like "going to dubai from rome tomorrow"
+    if parsed.get("destinations_delta") and not parsed.get("origin_delta"):
+        trailing_from_match = TRAILING_ORIGIN_PATTERN.search(text_clean)
+        if trailing_from_match:
+            origin_text = trailing_from_match.group(1).strip()
+            origin_norm = normalize_place_synonym(origin_text)
+            if is_known_place(origin_norm):
+                origin_final = normalize_place_with_fuzzy(origin_text)
+                parsed["origin_delta"] = origin_final
+                fields_extracted.append("origin")
+                _debug(f"[INITIAL_EXTRACT] Pattern 1b matched: origin={origin_final}")
 
     # Try pattern 2: "from X to Y" or "X to Y"
     if not parsed.get("destinations_delta"):
@@ -7523,7 +7652,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             )
             return {
                 "type": "confirmation_no",
-                "response": "No problem. What would you like to do instead?",
+                "response": "Cancelled. Next action:",
                 "action": "clear_pending",
                 "parsed": None,
             }
@@ -7566,7 +7695,7 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             # Clear the pending action
             return {
                 "type": "confirmation_no",
-                "response": "No problem. What would you like to do instead?",
+                "response": "Cancelled. Next action:",
                 "action": "clear_pending",
                 "parsed": None,
             }
@@ -8783,6 +8912,7 @@ def _default_follow_up_with_field(
         "destinations": "Destination?",
         "origin": "Origin?",
         "start_date": "Dates?",
+        "duration": "How long is your trip?",
         "end_date": "Return date?",
         "adults": "Travelers?",
         "budget": "Budget?",
@@ -9368,6 +9498,11 @@ class TripInputs(BaseModel):
     transport_settings: Dict[str, Any] = Field(default_factory=dict)
     # Strategy-specific persisted preferences (per topic)
     strategy_settings: Dict[str, Any] = Field(default_factory=dict)
+    # Flexible dates support (user chose "flexible dates" instead of specific dates)
+    date_flex: bool = False  # User chose "flexible dates"
+    trip_duration: Optional[int] = None  # Trip length in days (e.g., 7)
+    date_window_start: Optional[str] = None  # Earliest possible start (e.g., "2025-02-01")
+    date_window_end: Optional[str] = None  # Latest possible start (e.g., "2025-04-30")
 
     @field_validator("budget", mode="before")
     @classmethod
@@ -9392,7 +9527,17 @@ class TripInputs(BaseModel):
 
 # Valid values for question_target field
 QUESTION_TARGET_VALUES = frozenset(
-    {"destinations", "origin", "dates", "travelers", "budget", "activities", "general", None}
+    {
+        "destinations",
+        "origin",
+        "dates",
+        "duration",
+        "travelers",
+        "budget",
+        "activities",
+        "general",
+        None,
+    }
 )
 
 
@@ -9792,11 +9937,41 @@ def apply_turn_update(
     return state
 
 
-def capture_pre_turn_snapshot(state: "GraphState") -> Dict[str, Any]:
+# Whitelist for undo snapshot - keeps responses small, avoids nested blob leakage
+UNDO_SNAPSHOT_FIELDS = frozenset(
+    {
+        "origin",
+        "destinations",
+        "start_date",
+        "end_date",
+        "adults",
+        "children",
+        "budget",
+        "currency",
+    }
+)
+
+
+def _extract_undo_snapshot(trip_inputs: Any) -> Dict[str, Any]:
+    """Extract only whitelisted fields for undo snapshot."""
+    if hasattr(trip_inputs, "model_dump"):
+        full = trip_inputs.model_dump()
+    else:
+        full = dict(trip_inputs)
+    return {k: full[k] for k in UNDO_SNAPSHOT_FIELDS if k in full and full[k] is not None}
+
+
+def capture_pre_turn_snapshot(
+    state: "GraphState", ui_phase: Optional[str] = None
+) -> Dict[str, Any]:
     """Capture a snapshot of trip_inputs at the start of a turn.
 
     This snapshot is used to detect state regression and enable recovery.
     Should be called once at the beginning of each turn.
+
+    Args:
+        state: The current graph state
+        ui_phase: UI phase from request ("bootstrap" or "expanded")
     """
     from copy import deepcopy
 
@@ -9811,6 +9986,17 @@ def capture_pre_turn_snapshot(state: "GraphState") -> Dict[str, Any]:
 
     # Store in metadata
     state.metadata["pre_turn_snapshot"] = snapshot
+
+    # Store whitelisted undo snapshot for UI receipts
+    state.metadata["prev_trip_inputs_snapshot"] = _extract_undo_snapshot(state.trip_inputs)
+
+    # Initialize per-turn change tracking
+    state.metadata["turn_applied_fields"] = []  # Will be populated by StateWriter
+    state.metadata["update_provenance"] = None
+
+    # Store ui_phase for summarize node
+    if ui_phase is not None:
+        state.metadata["ui_phase"] = ui_phase
 
     # Increment turn number
     state.turn_number += 1
@@ -9853,12 +10039,10 @@ def handle_state_regression_error(
         state.metadata["error_flags"] = {}
     state.metadata["error_flags"]["STATE_REGRESSION"] = True
 
-    # Generate recovery response
+    # Generate recovery response (system-style)
     known_info = _summarize_trip_inputs_for_recovery(error.pre_turn_snapshot)
     state.last_summary = (
-        f"I may have lost track of some details. Here's what I have:\n\n"
-        f"{known_info}\n\n"
-        f"Is this correct, or would you like to update anything?"
+        f"State recovered. Current constraints:\n\n" f"{known_info}\n\n" f"Confirm or update:"
     )
 
     # Force routing next turn to avoid loops
@@ -13056,14 +13240,74 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
 # =============================================================================
 # DETERMINISTIC POLISH (Token-saving warmth injection)
 # =============================================================================
-# Apply simple deterministic rules to add warmth before falling back to LLM.
-# This saves ~200-400 tokens per message that can be polished rule-based.
+# Apply simple deterministic rules to add warmth.
+# Empty lists = no warmth injection (professional, system-like tone).
 
-# YC style: No warm openers - messages should be declarative
 _WARM_OPENERS: list[str] = []
-
-# YC style: No warm closers - avoid conversational filler
 _WARM_CLOSERS: list[str] = []
+
+
+# =============================================================================
+# DETERMINISTIC STRIPPING (Professional tone enforcement)
+# =============================================================================
+# Strip emojis and filler phrases for professional, system-like tone.
+# Unlike _try_deterministic_polish which ADDS warmth, this REMOVES excess enthusiasm.
+
+# Emoji pattern for stripping (broad coverage)
+_STRIP_EMOJI_PATTERN = re.compile(
+    r"[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF"
+    r"\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF"
+    r"\U00002702-\U000027B0\U000024C2-\U0001F251]+"
+)
+
+# Filler phrases to strip (at sentence start only)
+_STRIP_PHRASES = frozenset(
+    {
+        "Got it!",
+        "Great!",
+        "Perfect!",
+        "Awesome!",
+        "Wonderful!",
+        "I'd be happy to",
+        "I'd love to",
+        "Absolutely!",
+    }
+)
+
+
+def apply_deterministic_strip(msg: str) -> str:
+    """
+    Strip emojis and filler phrases for professional tone.
+
+    Unlike _try_deterministic_polish which ADDS warmth,
+    this REMOVES excess enthusiasm.
+
+    Safety: Only strips at START of message, never globally (protects hotel names, URLs, etc.)
+    """
+    if not msg:
+        return msg or ""
+
+    result = msg
+
+    # Strip emojis
+    result = _STRIP_EMOJI_PATTERN.sub("", result)
+
+    # Strip emoji artifacts (variation selector, ZWJ, keycap combining mark)
+    result = result.replace("\ufe0f", "").replace("\u200d", "").replace("\u20e3", "")
+
+    # Strip filler phrases at sentence start ONLY
+    for phrase in _STRIP_PHRASES:
+        if result.startswith(phrase):
+            result = result[len(phrase) :].lstrip()
+            # Only capitalize if next char is lowercase letter (not URL, code, proper noun)
+            if result and result[0].islower():
+                result = result[0].upper() + result[1:]
+            break  # Only strip one phrase
+
+    # Clean whitespace (but preserve single spaces)
+    result = " ".join(result.split())
+
+    return result
 
 
 def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
@@ -13081,8 +13325,7 @@ def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
     if not msg:
         return None
 
-    # YC style: No warm openers/closers - messages should be declarative and system-like
-    # If warmth lists are empty (YC compliance), skip polishing entirely
+    # No warmth injection when lists are empty (professional tone)
     if not _WARM_OPENERS or not _WARM_CLOSERS:
         return None
 
@@ -13138,15 +13381,9 @@ def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
 
 async def response_polish(state: GraphState) -> GraphState:
     """
-    Polish the assistant message for a more natural, travel-agent-like tone.
-    Uses a lightweight LLM call with hard timeout cap.
-
-    MVP Mode (enable_response_polish_mvp=False):
-    When MVP mode is active, only deterministic polish is applied.
-    LLM polish is skipped entirely to avoid timeout/reliability issues.
+    Polish the assistant message for professional tone.
+    Applies deterministic stripping only (no LLM).
     """
-    import time
-
     _, start_ns = _debug_node_entry("response_polish", state)
 
     # Check if we should skip polishing
@@ -13159,14 +13396,18 @@ async def response_polish(state: GraphState) -> GraphState:
         return state
 
     # =========================================================================
-    # DETERMINISTIC POLISH (Always applied - MVP safe transforms only)
+    # DETERMINISTIC STRIPPING (removes emojis/filler phrases)
     # =========================================================================
-    # Apply simple rule-based polish:
-    # - Trim whitespace
-    # - Normalize double newlines
-    # - Ensure message ends with ? when question_target is set
-    # - Warm openers/closers for short dry messages
-    # NEVER changes question_target or suggested_responses
+    if state.last_summary:
+        stripped = apply_deterministic_strip(state.last_summary)
+        if stripped != state.last_summary:
+            state.last_summary = stripped
+            state.metadata["polish_stripped"] = True
+            _debug("📝 DETERMINISTIC_STRIP: Applied emoji/filler removal")
+
+    # =========================================================================
+    # DETERMINISTIC POLISH (warmth injection if lists are non-empty)
+    # =========================================================================
     deterministic_result = _try_deterministic_polish(state.last_summary, state)
     if deterministic_result is not None:
         state.last_summary = deterministic_result
@@ -13174,102 +13415,7 @@ async def response_polish(state: GraphState) -> GraphState:
         _debug(
             "📝 DETERMINISTIC_POLISH: Applied",
             method=state.metadata.get("polish_method", "deterministic"),
-            tokens_saved="~200-400",
         )
-        # In MVP mode, stop here - no LLM polish
-        if not settings.enable_response_polish_mvp:
-            _debug("MVP mode: LLM polish disabled, using deterministic only")
-            state.metadata["polish_mvp_mode"] = True
-            _debug_node_exit("response_polish", state, start_ns)
-            return state
-
-    # =========================================================================
-    # MVP MODE CHECK: Skip LLM polish entirely in MVP mode
-    # =========================================================================
-    if not settings.enable_response_polish_mvp:
-        _debug("MVP mode: LLM polish disabled")
-        state.metadata["polish_mvp_mode"] = True
-        state.metadata["polish_skipped_reason"] = "mvp_mode"
-        _debug_node_exit("response_polish", state, start_ns)
-        return state
-
-    # =========================================================================
-    # LLM-BASED POLISH (fallback for complex messages - non-MVP only)
-    # =========================================================================
-    _polish_stats["llm_polish"] += 1
-    # Get per-node LLM configuration
-    llm_config = _get_node_llm_config("response_polish")
-
-    # Build the polish prompt
-    try:
-        prompt = load_prompt("response_polish")
-        trip_dests = state.trip_inputs.destinations
-        destinations = ", ".join(trip_dests) if trip_dests else ""
-        tpl = (
-            prompt.replace("{assistant_message}", state.last_summary or "")
-            .replace("{user_tone}", state.metadata.get("user_tone", "neutral"))
-            .replace("{user_intent}", state.metadata.get("user_intent", "detailed_planner"))
-            .replace("{destinations}", destinations or "not specified yet")
-        )
-
-        # LLM Budget Gate: Skip polish if budget exhausted (polish is optional enhancement)
-        if not can_call_llm(state, "response_polish"):
-            _debug("⚠️ response_polish: LLM budget exhausted, skipping polish")
-            state.metadata["polish_skipped_reason"] = "llm_budget_exhausted"
-            _debug_node_exit("response_polish", state, start_ns)
-            return state
-
-        # Use hard timeout cap from settings (convert ms to seconds)
-        timeout_seconds = settings.response_polish_timeout_ms / 1000.0
-
-        start_time = time.perf_counter()
-
-        out = await call_llm_with_timeout(
-            model=llm_config["model_hint"],
-            prompt=tpl,
-            timeout_seconds=timeout_seconds,
-            max_tokens=llm_config["max_tokens"],
-            temperature=llm_config["temperature"],
-        )
-        _increment_llm_calls(state)
-
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        _record_llm_time(state, elapsed_ms)
-        state.metadata["polish_duration_ms"] = round(elapsed_ms, 2)
-        state.metadata["polish_method"] = "llm"
-
-        # Log warning if approaching timeout
-        if elapsed_ms > settings.response_polish_warn_threshold_ms:
-            _debug(
-                f"Response polish took {elapsed_ms:.0f}ms (warn threshold: "
-                f"{settings.response_polish_warn_threshold_ms}ms)"
-            )
-
-        # Parse and apply polished message
-        j = jloads_safe(out)
-        polished = j.get("polished_message", "").strip()
-
-        if polished and len(polished) > 10:
-            _debug(
-                "Response polished",
-                original_len=len(state.last_summary or ""),
-                polished_len=len(polished),
-            )
-            state.last_summary = polished
-        else:
-            _debug("Polish returned empty/short response, keeping original")
-            state.metadata["polish_skipped_reason"] = "empty_response"
-
-    except TimeoutError:
-        # Hard timeout - use original message
-        state.metadata["polish_skipped_reason"] = "timeout"
-        state.metadata["polish_duration_ms"] = settings.response_polish_timeout_ms
-        _debug(f"Response polish timed out after {settings.response_polish_timeout_ms}ms")
-
-    except Exception as exc:
-        # Any other error - use original message, don't fail the request
-        state.metadata["polish_skipped_reason"] = f"error: {str(exc)[:50]}"
-        _debug_error("Response polish failed", error=str(exc))
 
     _debug_node_exit("response_polish", state, start_ns)
     return state
@@ -13761,6 +13907,18 @@ def _build_booking_suggestions(
     return suggestions[:max_suggestions]
 
 
+def _should_generate_suggestions(state: GraphState) -> bool:
+    """
+    Check if suggestions should be generated based on ui_phase.
+
+    Returns False when ui_phase == "expanded" (full planner UI) since
+    suggestions are redundant when all input controls are visible.
+    Default (None or "bootstrap") returns True.
+    """
+    ui_phase = state.metadata.get("ui_phase") or "bootstrap"
+    return ui_phase != "expanded"
+
+
 def summarize(state: GraphState) -> GraphState:
     """Optional micro-summarizer node."""
     _, start_ns = _debug_node_entry("summarize", state)
@@ -13957,6 +14115,18 @@ def summarize(state: GraphState) -> GraphState:
             "Summarize: generated emergency fallback",
             response_writer_node=state.metadata.get("response_writer_node"),
         )
+
+    # =========================================================================
+    # UI PHASE BASED SUGGESTION SUPPRESSION
+    # =========================================================================
+    # In expanded mode, clear suggestions since all input controls are visible
+    if not _should_generate_suggestions(state):
+        if state.suggested_responses:
+            _debug(
+                "Summarize: suppressing suggestions for ui_phase=expanded",
+                suppressed_count=len(state.suggested_responses),
+            )
+        state.suggested_responses = []
 
     _debug_node_exit("summarize", state, start_ns)
     return state
@@ -16089,21 +16259,25 @@ async def run_turn(
             result.trip_inputs.model_dump() if hasattr(result.trip_inputs, "model_dump") else {}
         )
         readiness = compute_trip_readiness(trip_inputs)
-        if readiness.missing_core:
-            next_field = readiness.missing_core[0]
-            result.question_target = canonicalize_question_target(next_field)
+        # Use question_target from readiness (handles duration, dates, etc.)
+        target = readiness.question_target
+        if target:
+            result.question_target = canonicalize_question_target(target)
             result_meta["question_target"] = result.question_target
-            if next_field == "destinations":
-                result.last_summary = "Destination?"
+            if target == "destinations":
+                result.last_summary = "Destination:"
                 result.suggested_responses = ["Paris", "Tokyo", "Bali"]
-            elif next_field == "origin":
-                result.last_summary = "Origin?"
-                result.suggested_responses = ["New York", "London", "Los Angeles"]
-            elif next_field in ("start_date", "dates"):
-                result.last_summary = "Dates?"
-                result.suggested_responses = ["Next month", "This summer", "Flexible"]
+            elif target == "origin":
+                result.last_summary = "Origin city:"
+                result.suggested_responses = ["New York", "London", "Dubai"]
+            elif target in ("start_date", "dates"):
+                result.last_summary = "Travel dates:"
+                result.suggested_responses = ["Next weekend", "In March", "Dec 15-22"]
+            elif target == "duration":
+                result.last_summary = "Trip duration:"
+                result.suggested_responses = ["3 days", "5 days", "1 week", "10 days", "2 weeks"]
             else:
-                result.last_summary = "Missing constraints."
+                result.last_summary = "Constraints needed."
                 result.suggested_responses = [
                     "Add flights",
                     "Add hotels",
@@ -17161,17 +17335,24 @@ async def plan_trip_graph(
         # 5. Run the graph
         today_iso = _today_iso(req.timezone)
 
+        # Build metadata with ui_phase and suggestion_clicked from request
+        metadata = {
+            "today_iso": today_iso,
+            "tiles": (
+                {t_id: t.model_dump() for t_id, t in (existing_doc_data.tiles or {}).items()}
+                if existing_doc_data
+                else {}
+            ),
+        }
+        if req.ui_phase is not None:
+            metadata["ui_phase"] = req.ui_phase
+        if req.suggestion_clicked is not None:
+            metadata["suggestion_clicked"] = req.suggestion_clicked
+
         session_state = {
             "trip_inputs": initial_trip_inputs,
             "branches": initial_branches,
-            "metadata": {
-                "today_iso": today_iso,
-                "tiles": (
-                    {t_id: t.model_dump() for t_id, t in (existing_doc_data.tiles or {}).items()}
-                    if existing_doc_data
-                    else {}
-                ),
-            },
+            "metadata": metadata,
             "flags": {},
             "last_summary": None,
             "suggested_responses": [],

@@ -337,6 +337,26 @@ def _parse_date_answer(
         date_normalizer = _date_normalizer
 
     text_stripped = text.strip()
+    text_lower = text_stripped.lower()
+
+    # -------------------------------------------------------------------------
+    # Handle "Flexible dates" / "Flexible" / "No fixed dates"
+    # Sets date_flex=True with default 90-day window, bypasses specific date requirement
+    # -------------------------------------------------------------------------
+    if text_lower in ("flexible", "flexible dates", "no fixed dates"):
+        today = datetime.now(UTC).date()
+        window_end = today + timedelta(days=90)
+        _debug(
+            "LQA_DATE_PARSE: Flexible dates selected",
+            date_flex=True,
+            window_start=today.isoformat(),
+            window_end=window_end.isoformat(),
+        )
+        return {
+            "date_flex": True,
+            "date_window_start": today.strftime("%Y-%m-%d"),
+            "date_window_end": window_end.strftime("%Y-%m-%d"),
+        }
 
     # -------------------------------------------------------------------------
     # V37: Handle relative durations when asked for end_date with start_date set
@@ -346,7 +366,6 @@ def _parse_date_answer(
     question_target = state.question_target or state.metadata.get("question_target")
     ti = state.trip_inputs
     if question_target == "end_date" and ti.start_date and not ti.end_date:
-        text_lower = text_stripped.lower()
         # Match patterns like "a week", "one week", "10 days", "2 weeks", "3-4 days"
         duration_patterns = [
             (r"^a\s+week$", 7),
@@ -400,8 +419,6 @@ def _parse_date_answer(
                     reference_date = datetime.now(UTC).date()
             else:
                 reference_date = datetime.now(UTC).date()
-
-            text_lower = text_stripped.lower()
 
             # Handle "this year" / "next year"
             if "this year" in text_lower:
@@ -709,7 +726,31 @@ def _parse_budget_answer(text: str, state: "GraphState") -> Optional[Dict[str, A
 
 
 def _parse_duration_answer(text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
-    """Parse a duration answer. Returns parsed dict or None."""
+    """Parse a duration answer. Returns parsed dict or None.
+
+    Returns trip_duration (int) for flexible dates flow.
+    """
+    text_lower = text.strip().lower()
+
+    # Special cases for "a week" / "a few days" patterns
+    special_patterns = [
+        (r"^a\s+week$", 7),
+        (r"^about\s+a\s+week$", 7),
+        (r"^around\s+a\s+week$", 7),
+        (r"^a\s+few\s+days?$", 3),
+        (r"^a\s+long\s+weekend$", 4),
+        (r"^a\s+weekend$", 2),
+    ]
+    for pattern, days in special_patterns:
+        if re.match(pattern, text_lower):
+            _debug(
+                "LQA_DURATION_PARSE: Duration parsed (special pattern)",
+                trip_duration=days,
+                input_text=text,
+            )
+            return {"trip_duration": days}
+
+    # Standard pattern matching
     duration_match = DURATION_PATTERN.match(text)
     if duration_match:
         # Parse the number (could be word or digit)
@@ -726,7 +767,12 @@ def _parse_duration_answer(text: str, state: "GraphState") -> Optional[Dict[str,
         else:
             days = num  # days or nights treated the same
 
-        return {"duration_days": days}
+        _debug(
+            "LQA_DURATION_PARSE: Duration parsed",
+            trip_duration=days,
+            input_text=text,
+        )
+        return {"trip_duration": days}
     return None
 
 

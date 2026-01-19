@@ -15,12 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiFetch } from '@/lib/api';
-import {
-  ACTIVITY_FEATURE_SETS,
-  FLIGHT_FEATURE_SETS,
-  HOTEL_FEATURE_SETS,
-} from '@/lib/mocks';
-import { cn, isActivityType, isFlightType } from '@/lib/utils';
+import { cn, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
@@ -32,34 +27,29 @@ type TileCardProps = {
   onSelectionToast?: (message: string) => void;
 };
 
+/**
+ * Extract features from tile metadata.
+ * Returns empty array if no features - no mock data.
+ */
 const getFeaturesForTile = (tile: Tile): string[] => {
-  const type = tile.type || '';
-  let sets = HOTEL_FEATURE_SETS;
+  const meta = tile.meta as Record<string, unknown> | undefined;
 
-  if (isFlightType(type)) {
-    sets = FLIGHT_FEATURE_SETS;
-    // Try to use real meta if available
-    const meta = tile.meta as Record<string, unknown> | undefined;
-    if (meta) {
-      const realFeatures: string[] = [];
-      if (typeof meta.stops === 'string') realFeatures.push(meta.stops);
-      if (typeof meta.fare_class === 'string') realFeatures.push(meta.fare_class);
-      if (realFeatures.length > 0) {
-        // Fill the rest with random features from the first set to make it look full
-        while (realFeatures.length < 3) {
-          const next = FLIGHT_FEATURE_SETS[0][realFeatures.length];
-          if (!realFeatures.includes(next)) realFeatures.push(next);
-        }
-        return realFeatures;
-      }
-    }
-  } else if (isActivityType(type)) {
-    sets = ACTIVITY_FEATURE_SETS;
+  // Use features from backend if available
+  if (meta?.features && Array.isArray(meta.features)) {
+    return meta.features as string[];
   }
 
-  // Deterministic selection based on tile ID
-  const hash = tile.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  return sets[hash % sets.length];
+  // For flights, extract real metadata as features
+  if (isFlightType(tile.type || '')) {
+    const features: string[] = [];
+    if (typeof meta?.stops === 'string') features.push(meta.stops);
+    if (typeof meta?.fare_class === 'string') features.push(meta.fare_class);
+    if (typeof meta?.duration === 'string') features.push(meta.duration);
+    return features;
+  }
+
+  // No mock fallback - return empty array
+  return [];
 };
 
 export const TileCard = memo(function TileCard({

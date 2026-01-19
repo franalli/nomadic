@@ -709,6 +709,19 @@ INITIAL_DESTINATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Trailing origin pattern - extracts "from X" after destination already found
+# Matches: "...from rome tomorrow", "...from london", "...from new york next week"
+# Used by Pattern 1b in plan_graph.py to handle cases like "going to dubai from rome tomorrow"
+# NOTE: Uses negative lookahead to prevent capturing temporal words (tomorrow, today, etc.)
+# as part of the place name. Without this, "from rome tomorrow" would capture "rome tomorrow"
+# instead of just "rome".
+_TRAILING_ORIGIN_DATE_STOP = r"tomorrow|today|tonight|next|this|on|in|for"
+TRAILING_ORIGIN_PATTERN = re.compile(
+    rf"\bfrom\s+([A-Za-z]+(?:\s+(?!(?:{_TRAILING_ORIGIN_DATE_STOP}))[A-Za-z]+)?)"
+    rf"(?:\s+(?:{_TRAILING_ORIGIN_DATE_STOP}|\d)|\s*[.!?,]|\s*$)",
+    re.IGNORECASE,
+)
+
 # Common words that should never be extracted as locations.
 # Used to filter out false positives from pattern matching (e.g., "I need to book"
 # matching "I need" as origin and "book" as destination).

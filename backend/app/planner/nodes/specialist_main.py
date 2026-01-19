@@ -141,61 +141,64 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
         else:
             question_target = missing_fields[0] if missing_fields else "dates"
 
-        # Template questions and suggestions (same as LLM would generate)
+        # Template responses - system-style labels, not conversational questions
         template_responses = {
             "destinations": {
-                "question": "Where are you dreaming of going?",
-                "suggestions": ["Bali, Indonesia", "Paris, France", "Tokyo, Japan"],
+                "question": "Destination:",
+                "suggestions": ["Bali", "Paris", "Tokyo"],
             },
             "origin": {
-                "question": "Where will you be flying from?",
-                "suggestions": ["New York", "London", "Los Angeles"],
+                "question": "Origin city:",
+                "suggestions": ["New York", "London", "Dubai"],
             },
             "dates": {
-                "question": "When are you looking to travel?",
-                "suggestions": ["Next month", "December 20-27", "First week of January"],
+                "question": "Travel dates:",
+                "suggestions": ["Next weekend", "In March", "Dec 15-22"],
             },
             "adults": {
-                "question": "How many travelers will be joining?",
-                "suggestions": ["Just me", "2 adults", "Family of 4"],
+                "question": "Travelers:",
+                "suggestions": ["Solo", "2 adults", "Family of 4"],
             },
             "budget": {
-                "question": "What's your approximate budget for this trip?",
-                "suggestions": ["$2,000", "$5,000", "Flexible budget"],
+                "question": "Budget:",
+                "suggestions": ["$2,000", "$5,000", "$10,000"],
             },
         }
 
         response = template_responses.get(
             question_target,
-            {"question": "Could you tell me more about your trip?", "suggestions": []},
+            {"question": "Additional details:", "suggestions": []},
         )
 
         # Check for season clarification with specific month suggestions (Issue 4)
         clarify_suggestions = state.metadata.get("date_clarify_suggestions")
         pending_text = state.metadata.get("pending_date_text", "")
 
-        # Build acknowledgment for any newly extracted fields
+        # Build acknowledgment for any newly extracted fields (system-style)
         ti = state.trip_inputs
         ack_parts = []
         if ti.destinations and "destinations" not in missing_fields:
-            ack_parts.append(f"{', '.join(ti.destinations[:2])}")
-        if ti.origin and "origin" not in missing_fields:
-            ack_parts.append(f"from {ti.origin}")
+            dest_str = ", ".join(ti.destinations[:2])
+            if ti.origin and "origin" not in missing_fields:
+                ack_parts.append(f"Route set: {ti.origin} → {dest_str}.")
+            else:
+                ack_parts.append(f"Destination: {dest_str}.")
+        elif ti.origin and "origin" not in missing_fields:
+            ack_parts.append(f"Origin: {ti.origin}.")
 
-        ack_prefix = f"{' '.join(ack_parts)} - got it! " if ack_parts else ""
+        ack_prefix = f"{' '.join(ack_parts)} " if ack_parts else ""
 
         if in_date_clarify_mode and clarify_suggestions:
-            # Use specific month suggestions for season clarification
+            # Use specific month suggestions for season clarification (system-style)
             state.last_summary = (
-                f'{ack_prefix}You mentioned "{pending_text}" - could you be more specific? '
-                f"For example, {clarify_suggestions[0]} or {clarify_suggestions[-1]}?"
+                f'{ack_prefix}"{pending_text}" is ambiguous. '
+                f"Specify: {clarify_suggestions[0]} or {clarify_suggestions[-1]}?"
             )
             state.suggested_responses = clarify_suggestions[:3]
         elif in_date_clarify_mode and pending_text:
-            # Generic clarification with context
+            # Generic clarification with context (system-style)
             state.last_summary = (
-                f'{ack_prefix}Could you be more specific about "{pending_text}"? '
-                "When exactly are you thinking?"
+                f'{ack_prefix}"{pending_text}" needs clarification. Specific dates:'
             )
             state.suggested_responses = response["suggestions"][:3]
         else:
@@ -210,28 +213,13 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
             is_repeated = times_asked >= 1
 
             if is_low_confidence and is_repeated:
-                # Graceful failure message for repeated low-confidence extraction
+                # Graceful failure message for repeated low-confidence extraction (system-style)
                 failure_hints = {
-                    "destinations": (
-                        "I'm having trouble finding that destination. "
-                        "Could you try a city name or nearby region?"
-                    ),
-                    "origin": (
-                        "I couldn't recognize that location. "
-                        "Could you try a different city name or airport?"
-                    ),
-                    "dates": (
-                        "I'm having trouble parsing those dates. "
-                        "Could you try a specific format like 'March 15-22'?"
-                    ),
-                    "travelers": (
-                        "I couldn't understand the traveler count. "
-                        "Could you say something like '2 adults' or 'solo'?"
-                    ),
-                    "budget": (
-                        "I couldn't parse that budget. "
-                        "Could you provide a number like '$2,000' or '2000 dollars'?"
-                    ),
+                    "destinations": ("Destination not recognized. " "Try: city name or region."),
+                    "origin": ("Origin not recognized. " "Try: city name or airport code."),
+                    "dates": ("Dates not parsed. " "Try: 'March 15-22' or 'next weekend'."),
+                    "travelers": ("Traveler count unclear. " "Try: '2 adults' or 'solo'."),
+                    "budget": ("Budget not parsed. " "Try: '$2,000' or '2000'."),
                 }
                 graceful_msg = failure_hints.get(question_target, response["question"])
                 state.last_summary = f"{ack_prefix}{graceful_msg}"
@@ -333,7 +321,7 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
         # AFTER streaming completes - parse JSON and extract fields
         j = jloads_safe(out)
 
-        state.last_summary = j.get("assistant_message", "Where would you like to go?")
+        state.last_summary = j.get("assistant_message", "Destination:")
         state.suggested_responses = j.get("suggested_responses", [])[:3]
         llm_question_target = j.get(
             "question_target", missing_fields[0] if missing_fields else None
@@ -359,9 +347,9 @@ async def _invoke_missing_fields_guard(state: "GraphState", missing_fields: List
                 if ti.origin and "origin" not in missing_fields:
                     ack_parts.append(f"from {ti.origin}")
                 if ack_parts:
-                    ack_prefix = f"{' '.join(ack_parts)} - got it! "
+                    ack_prefix = f"{' '.join(ack_parts)}. "
                     # Prepend acknowledgment to the LLM response
-                    state.last_summary = f"{ack_prefix}Now, when are you looking to travel?"
+                    state.last_summary = f"{ack_prefix}Travel dates:"
                 set_question_target(state, "dates", source="missing_fields_guard:date_clarify")
             else:
                 set_question_target(state, llm_question_target, source="missing_fields_guard:llm")
@@ -454,6 +442,7 @@ async def _specialist(
         ti_short,
     )
     from app.planner.nodes.specialist.templates import (
+        apply_central_planner_template,
         apply_confirmation_template,
         apply_pre_core_template_response,
         apply_template_response,
@@ -525,6 +514,27 @@ async def _specialist(
     # Uses extracted guard functions from specialist.guards module.
     if check_noop_gate(name, state):
         apply_noop_gate_response(state, name)
+        _debug_node_exit(f"specialist:{name}", state, start_ns)
+        return state
+
+    # =========================================================================
+    # CENTRAL PLANNER GUARD: Block detailed content before split view
+    # =========================================================================
+    # RENDER CONTRACT:
+    # - Central planner accepts ONLY: status, constraints summary, primary CTA
+    # - NEVER render: names, prices, bullet lists, counts, photos
+    #
+    # If a hotel/flight has a name, price, or list → it CANNOT render here.
+    # Saves ~1000-2000 tokens per specialist call.
+    domain_specialists = {"flights", "hotels", "activities", "transport"}
+    if name in domain_specialists and not state.ready_to_generate:
+        _debug(
+            f"🚫 SPECIALIST BLOCKED: {name} in central planner view",
+            specialist=name,
+            ready_to_generate=state.ready_to_generate,
+            tokens_saved="~1000-2000 (specialist LLM call avoided)",
+        )
+        apply_central_planner_template(state, name)
         _debug_node_exit(f"specialist:{name}", state, start_ns)
         return state
 

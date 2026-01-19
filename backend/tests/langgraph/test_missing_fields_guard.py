@@ -48,7 +48,7 @@ class TestGuardTemplateQuestionTarget:
 
         assert result is True
         assert state.question_target == "dates"
-        assert "travel" in state.last_summary.lower()  # "When are you looking to travel?"
+        assert "date" in state.last_summary.lower()  # "Travel dates:"
 
     @pytest.mark.asyncio
     async def test_asks_destinations_when_destinations_missing(self):
@@ -64,7 +64,7 @@ class TestGuardTemplateQuestionTarget:
 
         assert result is True
         assert state.question_target == "destinations"
-        assert "dreaming" in state.last_summary.lower() or "going" in state.last_summary.lower()
+        assert "destination" in state.last_summary.lower()  # "Destination:"
 
     @pytest.mark.asyncio
     async def test_asks_origin_when_origin_missing(self):
@@ -80,7 +80,7 @@ class TestGuardTemplateQuestionTarget:
 
         assert result is True
         assert state.question_target == "origin"
-        assert "flying from" in state.last_summary.lower()
+        assert "origin" in state.last_summary.lower()  # "Origin city:"
 
     @pytest.mark.asyncio
     async def test_priority_dates_over_destinations(self):
@@ -168,8 +168,7 @@ class TestGuardTemplateSuggestions:
         assert len(state.suggested_responses) == 3
         # Should be city suggestions
         assert any(
-            "New York" in s or "London" in s or "Los Angeles" in s
-            for s in state.suggested_responses
+            "New York" in s or "London" in s or "Dubai" in s for s in state.suggested_responses
         )
 
     @pytest.mark.asyncio
@@ -187,7 +186,7 @@ class TestGuardTemplateSuggestions:
         assert len(state.suggested_responses) == 3
         # Should be date-like suggestions
         assert any(
-            "month" in s.lower() or "december" in s.lower() or "january" in s.lower()
+            "weekend" in s.lower() or "march" in s.lower() or "dec" in s.lower()
             for s in state.suggested_responses
         )
 
@@ -260,10 +259,10 @@ class TestGuardTemplateAllFields:
     @pytest.mark.parametrize(
         "field,expected_phrase",
         [
-            ("destinations", "dreaming"),
-            ("origin", "flying"),
-            ("dates", "travel"),
-            ("adults", "travelers"),
+            ("destinations", "destination"),
+            ("origin", "origin"),
+            ("dates", "date"),
+            ("adults", "traveler"),
             ("budget", "budget"),
         ],
     )

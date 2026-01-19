@@ -120,6 +120,14 @@ def compute_trip_readiness(
         adults = trip_inputs.get("adults")
         budget = trip_inputs.get("budget")
 
+    # Extract flexible dates fields
+    if hasattr(trip_inputs, "date_flex"):
+        date_flex = trip_inputs.date_flex
+        trip_duration = trip_inputs.trip_duration
+    else:
+        date_flex = trip_inputs.get("date_flex", False)
+        trip_duration = trip_inputs.get("trip_duration")
+
     # Compute missing core fields using CORE_FIELD_PRIORITY as single source of truth
     # This ensures priority order is consistent: destinations -> start_date -> end_date
     # -> origin -> adults -> budget
@@ -137,6 +145,10 @@ def compute_trip_readiness(
     core_fields = {"destinations", "start_date", "origin"}  # end_date handled separately below
     missing_core = [f for f in CORE_FIELD_PRIORITY if f in missing_candidates and f in core_fields]
 
+    # If date_flex is True, dates are "answered" - remove start_date from missing_core
+    if date_flex and "start_date" in missing_core:
+        missing_core.remove("start_date")
+
     # Compute all missing fields (core + optional but useful)
     missing_all = list(missing_core)
     if not end_date:
@@ -147,6 +159,9 @@ def compute_trip_readiness(
     budget_answered = metadata.get("budget_answered", False) if metadata else False
     if budget is None and not budget_answered:
         missing_all.append("budget")
+    # If date_flex is set but trip_duration is missing, add duration to missing_all
+    if date_flex and not trip_duration:
+        missing_all.append("duration")
 
     # Compute blocking errors from errors list
     # Supports: ErrorRecord (new), NormalizationError, dict (legacy), str (legacy)
@@ -182,6 +197,9 @@ def compute_trip_readiness(
     question_target = None
     if blocking_errors:
         question_target = "dates"
+    elif date_flex and not trip_duration:
+        # Flexible dates set but no duration - ask for duration immediately
+        question_target = "duration"
     elif missing_core:
         if prefer_date_first and "destinations" in missing_core and "start_date" in missing_core:
             # Prefer start_date over destinations for open-ended queries
@@ -226,4 +244,28 @@ def compute_trip_readiness(
     )
 
 
-__all__ = ["TripReadiness", "compute_trip_readiness"]
+def is_dates_structurable(trip_inputs: Any) -> bool:
+    """
+    Check if date info exists (partial OK for receipts).
+    Returns True if start_date OR end_date is set.
+
+    Used by: Receipt system to show "dates" pill even with partial info.
+    """
+    if hasattr(trip_inputs, "start_date"):
+        return bool(trip_inputs.start_date or trip_inputs.end_date)
+    return bool(trip_inputs.get("start_date") or trip_inputs.get("end_date"))
+
+
+def is_dates_placeable(trip_inputs: Any) -> bool:
+    """
+    Check if dates can anchor a plan (both start AND end).
+    Returns True if start_date AND end_date are set.
+
+    Used by: Readiness checks, plan generation guards.
+    """
+    if hasattr(trip_inputs, "start_date"):
+        return bool(trip_inputs.start_date and trip_inputs.end_date)
+    return bool(trip_inputs.get("start_date") and trip_inputs.get("end_date"))
+
+
+__all__ = ["TripReadiness", "compute_trip_readiness", "is_dates_structurable", "is_dates_placeable"]

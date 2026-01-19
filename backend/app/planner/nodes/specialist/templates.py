@@ -78,37 +78,190 @@ def _build_context_acknowledgment(
 
 
 # Domain-specific acknowledgments for pre-core mode (saves ~200-400 tokens)
-# Maps (specialist_name, question_target) -> intro
+# Maps (specialist_name, question_target) -> intro (system-style)
 DOMAIN_PRE_CORE_TEMPLATES: Dict[str, Dict[str, str]] = {
     "hotels": {
-        "destinations": "Hotels noted. Where would you like to go?",
-        "dates": "Hotels noted. When are you planning your trip?",
-        "origin": "Hotels noted. Where will you be traveling from?",
-        "travelers": "Hotels noted. How many guests?",
-        "budget": "Hotels noted. What's your budget for lodging?",
+        "destinations": "Hotels enabled. Destination:",
+        "dates": "Hotels enabled. Travel dates:",
+        "origin": "Hotels enabled. Origin city:",
+        "travelers": "Hotels enabled. Travelers:",
+        "budget": "Hotels enabled. Budget:",
     },
     "flights": {
-        "destinations": "Flights noted. Where would you like to fly to?",
-        "dates": "Flights noted. When are you looking to fly?",
-        "origin": "Flights noted. Where will you be flying from?",
-        "travelers": "Flights noted. How many passengers?",
-        "budget": "Flights noted. What's your flight budget?",
+        "destinations": "Flights enabled. Destination:",
+        "dates": "Flights enabled. Travel dates:",
+        "origin": "Flights enabled. Origin city:",
+        "travelers": "Flights enabled. Travelers:",
+        "budget": "Flights enabled. Budget:",
     },
     "activities": {
-        "destinations": "Activities noted. Where are you headed?",
-        "dates": "Activities noted. When will you be there?",
-        "origin": "Activities noted. Where are you traveling from?",
-        "travelers": "Activities noted. How many in your group?",
-        "budget": "Activities noted. What's your activity budget?",
+        "destinations": "Activities enabled. Destination:",
+        "dates": "Activities enabled. Travel dates:",
+        "origin": "Activities enabled. Origin city:",
+        "travelers": "Activities enabled. Travelers:",
+        "budget": "Activities enabled. Budget:",
     },
     "transport": {
-        "destinations": "Transport noted. Where are you going?",
-        "dates": "Transport noted. When are you traveling?",
-        "origin": "Transport noted. Where will you be starting from?",
-        "travelers": "Transport noted. How many travelers?",
-        "budget": "Transport noted. What's your transport budget?",
+        "destinations": "Transport enabled. Destination:",
+        "dates": "Transport enabled. Travel dates:",
+        "origin": "Transport enabled. Origin city:",
+        "travelers": "Transport enabled. Travelers:",
+        "budget": "Transport enabled. Budget:",
     },
 }
+
+
+# =============================================================================
+# CENTRAL PLANNER TEMPLATES - Strict render contract for pre-split-view state
+# =============================================================================
+# Design principle: Central planner = plan state. Split view = option evaluation.
+#
+# RENDER CONTRACT:
+# - Central planner accepts ONLY: status, constraints summary, primary CTA
+# - NEVER render: names, prices, bullet lists, counts, photos
+#
+# If a hotel/flight has a name, price, or list → it CANNOT render in central planner.
+
+
+def _render_constraint_summary(constraints: Dict[str, Any]) -> str:
+    """
+    Render constraint summary with HARD LIMIT of 3 tokens.
+
+    Format: "4–5★ · central area · budget defined"
+    """
+    tokens: List[str] = []
+
+    if constraints.get("stars"):
+        stars = constraints["stars"]
+        if isinstance(stars, list) and len(stars) > 1:
+            tokens.append(f"{min(stars)}–{max(stars)}★")
+        elif isinstance(stars, (int, list)):
+            star_val = stars[0] if isinstance(stars, list) else stars
+            tokens.append(f"{star_val}★")
+
+    if constraints.get("area"):
+        tokens.append(constraints["area"])
+
+    if constraints.get("budget"):
+        tokens.append("budget defined")
+
+    if constraints.get("amenities"):
+        tokens.append(constraints["amenities"][0])
+
+    if constraints.get("cabin"):
+        tokens.append(constraints["cabin"])
+
+    if constraints.get("direct"):
+        tokens.append("direct only")
+
+    # HARD LIMIT: max 3 tokens
+    return " · ".join(tokens[:3])
+
+
+def apply_central_planner_template(
+    state: "GraphState",
+    specialist_name: str,
+) -> None:
+    """
+    Apply strict render contract for central planner view.
+
+    RENDER CONTRACT:
+    - Central planner accepts ONLY: status, constraints summary, primary CTA
+    - NEVER render: names, prices, bullet lists, counts, photos
+
+    If a hotel/flight has a name, price, or list → it CANNOT render here.
+
+    Copy patterns:
+    - Idle: "Hotel preferences set for Dubai." + constraint subline + CTAs
+    - "Set budget" CTA only if budget not defined
+    """
+    from app.debug_utils import _debug
+
+    ti = state.trip_inputs
+    destinations = ti.destinations
+    dest_str = destinations[0] if destinations else ""
+
+    # Build constraints dict from trip_inputs
+    constraints: Dict[str, Any] = {}
+    suggestions: List[str] = []
+
+    if specialist_name == "hotels":
+        hs = ti.hotel_settings
+        if hs:
+            # Handle both dict and object access patterns
+            min_stars = (
+                hs.get("min_stars", 0) if isinstance(hs, dict) else getattr(hs, "min_stars", 0)
+            )
+            amenities = (
+                hs.get("amenities", []) if isinstance(hs, dict) else getattr(hs, "amenities", [])
+            )
+            if min_stars and min_stars > 0:
+                constraints["stars"] = [min_stars]
+            if amenities:
+                constraints["amenities"] = amenities[:2]
+        if ti.budget:
+            constraints["budget"] = True
+
+        title = f"Hotel preferences set{f' for {dest_str}' if dest_str else ''}."
+        suggestions = ["View options"]
+        if not constraints.get("budget"):
+            suggestions.insert(0, "Set budget")
+
+    elif specialist_name == "flights":
+        fs = ti.flight_settings
+        if fs:
+            # Handle both dict and object access patterns
+            cabin_class = (
+                fs.get("cabin_class", "economy")
+                if isinstance(fs, dict)
+                else getattr(fs, "cabin_class", "economy")
+            )
+            direct_only = (
+                fs.get("direct_only", False)
+                if isinstance(fs, dict)
+                else getattr(fs, "direct_only", False)
+            )
+            if cabin_class and cabin_class != "economy":
+                constraints["cabin"] = cabin_class
+            if direct_only:
+                constraints["direct"] = True
+
+        title = f"Flight preferences set{f' for {dest_str}' if dest_str else ''}."
+        suggestions = ["View options"]
+
+    elif specialist_name == "activities":
+        title = f"Activity preferences set{f' for {dest_str}' if dest_str else ''}."
+        suggestions = ["View options"]
+        if not ti.budget:
+            suggestions.insert(0, "Set budget")
+
+    elif specialist_name == "transport":
+        title = f"Transport preferences set{f' for {dest_str}' if dest_str else ''}."
+        suggestions = ["View options"]
+
+    else:
+        title = f"{specialist_name.capitalize()} preferences set."
+        suggestions = ["View options"]
+
+    # Build message with optional constraint subline
+    constraint_summary = _render_constraint_summary(constraints)
+    if constraint_summary:
+        message = f"{title}\n{constraint_summary}"
+    else:
+        message = title
+
+    state.last_summary = message
+    state.suggested_responses = suggestions
+    state.metadata["response_writer_node"] = f"specialist:{specialist_name}:central_blocked"
+    state.metadata["response_generation_provenance"] = "template"
+    state.metadata["central_planner_blocked"] = specialist_name
+
+    _debug(
+        f"CENTRAL_PLANNER_TEMPLATE: {specialist_name}",
+        title=title,
+        constraints=constraint_summary,
+        suggestions=suggestions,
+    )
 
 
 def apply_pre_core_template_response(
@@ -162,20 +315,20 @@ def apply_pre_core_template_response(
     # Build context-aware acknowledgment based on already-extracted fields
     context_ack = _build_context_acknowledgment(state, specialist_name)
 
-    # Get the question for the missing field
+    # Get the question for the missing field (system-style)
     if template_response:
         question = template_response["question"]
     else:
         question = (
-            "Where would you like to go?"
+            "Destination:"
             if question_target == "destinations"
-            else f"Could you tell me your {question_target}?"
+            else f"{question_target.replace('_', ' ').title()}:"
         )
 
     # Compose final response
     if context_ack:
         # We have context to acknowledge - use context-aware pattern
-        # E.g., "Paris - got it! When are you looking to travel?"
+        # E.g., "Destination: Paris. Travel dates:"
         state.last_summary = f"{context_ack}{question}"
     else:
         # No context yet - use domain-specific warm intro or fallback
@@ -185,10 +338,8 @@ def apply_pre_core_template_response(
         if domain_question:
             state.last_summary = domain_question
         else:
-            topic_name = TOPIC_ACKNOWLEDGMENTS.get(
-                specialist_name, state.strategy_topic or "trip planning"
-            )
-            state.last_summary = f"I'd love to help you find great {topic_name}! {question}"
+            topic_name = TOPIC_ACKNOWLEDGMENTS.get(specialist_name, state.strategy_topic or "trip")
+            state.last_summary = f"{topic_name.title()} planning. {question}"
     state.suggested_responses = suggestions
     set_question_target(state, question_target, source=f"specialist:{specialist_name}:pre_core")
     state.metadata["last_question_field"] = question_target

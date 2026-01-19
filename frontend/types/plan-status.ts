@@ -1,9 +1,8 @@
 /**
- * Unified Plan Status Model
+ * Legacy Plan Status Model
  *
- * Single source of truth for plan status, rendered differently in:
- * - Plan header (right panel): PlanHeaderStatus
- * - Chat (left panel): SpecialistProgress
+ * @deprecated Use PlanState from plan-envelope.ts instead.
+ * This type is kept for backwards compatibility during migration.
  */
 
 export type SpecialistKey = 'flights' | 'hotels' | 'activities' | 'transport';

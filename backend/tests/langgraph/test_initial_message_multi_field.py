@@ -453,3 +453,66 @@ class TestCityCountryExtraction:
             assert (
                 result["parsed"]["origin_delta"] == expected_city
             ), f"Expected {expected_city}, got {result['parsed']['origin_delta']} for: {text}"
+
+
+class TestTrailingOriginPattern:
+    """Test the TRAILING_ORIGIN_PATTERN for 'going to X from Y [date]' extraction.
+
+    This pattern handles cases where destination is matched first by Pattern 1,
+    then origin is extracted from trailing "from X" with date words like
+    "tomorrow", "today", "next week", etc.
+    """
+
+    def _make_state(self, user_text: str) -> GraphState:
+        return GraphState(
+            user_text=user_text,
+            trip_inputs=TripInputs(),
+            question_target=None,
+            metadata={},
+        )
+
+    @pytest.mark.parametrize(
+        "input_text,expected_origin",
+        [
+            # Core bug case: "from rome tomorrow" should extract "Rome", not "rome tomorrow"
+            ("going to dubai from rome tomorrow", "Rome"),
+            ("going to paris from london today", "London"),
+            ("going to tokyo from berlin tonight", "Berlin"),
+            # Multi-word origins with dates
+            ("going to paris from new york tomorrow", "New York"),
+            ("going to tokyo from los angeles next week", "Los Angeles"),
+            ("going to rome from san francisco this monday", "San Francisco"),
+            # Origins without trailing date (should also work)
+            ("going to dubai from rome", "Rome"),
+            ("going to paris from london.", "London"),
+            ("going to tokyo from berlin!", "Berlin"),
+            # With activities/context after
+            ("going to dubai from rome tomorrow, I wanna hike", "Rome"),
+            ("going to paris from london next week for sightseeing", "London"),
+        ],
+    )
+    def test_trailing_origin_with_date_words(self, input_text: str, expected_origin: str):
+        """Test that trailing origin extracts correctly even with date words following."""
+        state = self._make_state(input_text)
+        result = _try_initial_message_extraction(input_text, state)
+
+        assert result is not None, f"No extraction for: {input_text}"
+        assert "destinations" in result["fields"], f"Destination not extracted: {input_text}"
+        assert "origin" in result["fields"], f"Origin not extracted: {input_text}"
+        assert (
+            result["parsed"]["origin_delta"] == expected_origin
+        ), f"Expected origin '{expected_origin}', got '{result['parsed'].get('origin_delta')}'"
+
+    def test_exact_bug_reproduction(self):
+        """Reproduce exact bug: 'going to dubai from rome tomorrow...'."""
+        text = "going to dubai from rome tomorrow, I wanna hike in the desert"
+        state = self._make_state(text)
+        result = _try_initial_message_extraction(text, state)
+
+        assert result is not None
+        assert "destinations" in result["fields"]
+        assert "origin" in result["fields"]
+        # Note: destination comes out lowercase from pattern matching, gets title-cased later
+        assert result["parsed"]["destinations_delta"] == ["dubai"]
+        # Origin gets title-cased via normalize_place_with_fuzzy
+        assert result["parsed"]["origin_delta"] == "Rome"

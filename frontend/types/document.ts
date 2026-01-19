@@ -8,6 +8,18 @@
  */
 
 import type { Tile } from './tile';
+import type {
+  PlanState,
+  UIPhase,
+  ResolverState,
+  ReadinessItem,
+  DestinationCard,
+  BookingStatus,
+  AppliedUpdateKey,
+  Conflict,
+  UndoSnapshot,
+  UpdateProvenance,
+} from './plan-envelope';
 
 export type UpdatedBy = 'user' | 'planner';
 
@@ -117,6 +129,28 @@ export type PlanDocumentData = {
   assistant_message_id?: string | null;
   ready_to_generate?: boolean;
   suggested_responses?: string[];
+
+  // Change tracking for UI receipts (existing)
+  applied_updates?: AppliedUpdateKey[];
+  conflicts?: Conflict[];
+  undo_snapshot?: UndoSnapshot | null;
+  update_provenance?: UpdateProvenance | null;
+
+  // ==========================================================================
+  // Plan State Envelope - unified frontend state (populated at response time)
+  // ==========================================================================
+  /** Backend-authoritative state - frontend must NOT infer from other fields */
+  plan_state?: PlanState;
+  /** UI phase - chips-only bootstrap vs full planner */
+  ui_phase?: UIPhase;
+  /** Resolver progress (present ONLY when plan_state = "RESOLVING") */
+  resolver?: ResolverState | null;
+  /** Constraint completeness for diagnostic panel */
+  readiness?: ReadinessItem[];
+  /** Destination content anchor */
+  destination_card?: DestinationCard | null;
+  /** Per-tab booking status (factual, no tone, no emoji) */
+  booking_status?: BookingStatus | null;
 };
 
 export type PlanDocumentResponse = {

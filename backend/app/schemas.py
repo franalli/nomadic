@@ -186,6 +186,8 @@ class PlanRequest(BaseModel):
 
     message: str  # The user's chat message
     timezone: Optional[str] = None  # IANA timezone (e.g., "Europe/Rome") for "today" calculation
+    ui_phase: Optional[Literal["bootstrap", "expanded"]] = None  # "chips-only" vs "full planner"
+    suggestion_clicked: Optional[str] = None  # Text of clicked suggestion chip (enables LQA echo)
 
 
 class GraphPlanRequest(BaseModel):
@@ -213,6 +215,8 @@ class GraphPlanRequest(BaseModel):
             "generate new thread_id and optionally init from trip_inputs"
         ),
     )
+    ui_phase: Optional[Literal["bootstrap", "expanded"]] = None  # "chips-only" vs "full planner"
+    suggestion_clicked: Optional[str] = None  # Text of clicked suggestion chip (enables LQA echo)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -349,6 +353,89 @@ class DocumentTripInputs(BaseModel):
     transport_settings: TransportSettings = Field(default_factory=TransportSettings)
 
 
+# =============================================================================
+# Plan State Envelope Types (for unified frontend state)
+# =============================================================================
+
+# Backend-authoritative plan state - frontend must NOT infer from other fields
+PlanState = Literal["INCOMPLETE", "RESOLVING", "STABLE", "LOCKED"]
+
+# UI phase - chips-only bootstrap vs full planner
+UIPhase = Literal["bootstrap", "expanded"]
+
+# Resolver steps - fixed order, exactly one active at a time
+ResolverStep = Literal["processing_constraints", "matching_inventory", "updating_itinerary"]
+
+# Readiness keys - fixed set for constraint completeness
+ReadinessKey = Literal["origin", "destination", "start_date", "end_date", "travelers", "budget"]
+
+# Booking status states per tab
+BookingState = Literal["idle", "loading", "ready", "error"]
+
+
+class ReadinessItem(BaseModel):
+    """Single readiness constraint status."""
+
+    key: ReadinessKey
+    ok: bool
+
+
+class ResolverState(BaseModel):
+    """Resolver progress for RESOLVING state."""
+
+    active_step: ResolverStep
+    completed_steps: List[ResolverStep] = Field(default_factory=list)
+
+
+class DestinationCard(BaseModel):
+    """Destination content anchor for the plan."""
+
+    title: str  # e.g. "Rome"
+    subtitle: Optional[str] = None  # e.g. "Your adventure in Rome"
+    image_url: Optional[str] = None  # Placeholder OK
+
+
+class BookingStatusItem(BaseModel):
+    """Status for a single booking category."""
+
+    state: BookingState
+    summary: str  # Short factual string, no tone, no emoji
+
+
+class BookingStatus(BaseModel):
+    """Per-tab booking status."""
+
+    flights: Optional[BookingStatusItem] = None
+    stays: Optional[BookingStatusItem] = None
+    activities: Optional[BookingStatusItem] = None
+
+
+# =============================================================================
+# Change Tracking Types (for UI receipts)
+# =============================================================================
+
+# Canonical UI keys - locked set for type safety
+CanonicalUIKey = Literal["origin", "destination", "dates", "travelers", "budget"]
+
+# Conflict codes - locked enum, frontend renders deterministic copy
+ConflictCode = Literal[
+    "date_range_invalid",
+    "date_past",
+    "budget_exceeded",
+    "traveler_mismatch",
+    "destination_unreachable",
+    "duration_mismatch",
+]
+
+
+class Conflict(BaseModel):
+    """Structured conflict for UI rendering (no freeform text)."""
+
+    scope: CanonicalUIKey  # Typed, not str
+    related_constraints: List[CanonicalUIKey]  # Typed, not List[str]
+    code: ConflictCode
+
+
 class PlanDocumentData(BaseModel):
     """
     The JSON structure stored in plan_documents.document column.
@@ -366,6 +453,29 @@ class PlanDocumentData(BaseModel):
     ready_to_generate: bool = False
     # Suggested user responses for quick replies (1-3 contextual suggestions)
     suggested_responses: List[str] = Field(default_factory=list)
+    # Change tracking for UI receipts
+    applied_updates: List[CanonicalUIKey] = Field(default_factory=list)  # Typed keys only
+    conflicts: List[Conflict] = Field(default_factory=list)
+    undo_snapshot: Optional[Dict[str, Any]] = (
+        None  # Previous trip_inputs for rollback (whitelisted fields)
+    )
+    update_provenance: Optional[Literal["lqa", "extractor", "user_edit"]] = None  # Debugging aid
+
+    # ==========================================================================
+    # Plan State Envelope - unified frontend state (populated at response time)
+    # ==========================================================================
+    # Backend-authoritative state - frontend must NOT infer from other fields
+    plan_state: PlanState = "INCOMPLETE"
+    # UI phase - chips-only bootstrap vs full planner
+    ui_phase: UIPhase = "bootstrap"
+    # Resolver progress (present ONLY when plan_state = "RESOLVING")
+    resolver: Optional[ResolverState] = None
+    # Constraint completeness for diagnostic panel
+    readiness: List[ReadinessItem] = Field(default_factory=list)
+    # Destination content anchor
+    destination_card: Optional[DestinationCard] = None
+    # Per-tab booking status (factual, no tone, no emoji)
+    booking_status: Optional[BookingStatus] = None
 
 
 class PlanDocumentResponse(BaseModel):

@@ -218,14 +218,14 @@ class TestLqaFieldParsers:
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_duration_answer("7 days", state)
         assert result is not None
-        assert result["duration_days"] == 7
+        assert result["trip_duration"] == 7
 
     def test_parse_duration_weeks(self):
         """Should convert weeks to days."""
         state = GraphState(user_text="", trip_inputs=TripInputs())
         result = _parse_duration_answer("2 weeks", state)
         assert result is not None
-        assert result["duration_days"] == 14
+        assert result["trip_duration"] == 14
 
 
 class TestLqaPrepass:

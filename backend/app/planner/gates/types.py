@@ -171,7 +171,6 @@ class GraphMetadata(TypedDict, total=False):
     template_used: str  # Name of template used
     polish_method: str  # Method used for polishing
     polish_skipped_reason: str  # Reason polish was skipped
-    polish_mvp_mode: bool  # Whether MVP polish mode is active
 
     # ==========================================================================
     # Suggestions & UI

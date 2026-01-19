@@ -4,18 +4,14 @@ Unit tests for STRATEGY_PRE_CORE_VALUE gate functionality in plan_graph.py.
 Tests cover:
 - STRATEGY_PRE_CORE_VALUE gate at precedence 80 (between STRATEGY_TOPIC_SWITCH and CORE_COLLECTION)
 - Strategy topic detection for open-ended queries
-- Duration-aware strategy responses (requires ALL core fields OR explicit request)
+- Duration-aware strategy responses (requires ALL core fields)
 - Value-first response with single clarifying question
 - Context-aware question ordering (prefer dates over destinations)
 - Loop guard for repeated questions
 - Fallback to required_fields on errors
 - "Questions only" bypass
-- Explicit itinerary request detection
 
-Note: After the January 2026 routing improvements, STRATEGY_PRE_CORE_VALUE requires:
-1. ALL core fields (origin, destinations, dates, AND travelers), OR
-2. Explicit itinerary request (e.g., "plan my trip", "create an itinerary")
-
+Note: STRATEGY_PRE_CORE_VALUE requires ALL core fields (origin, destinations, dates, AND travelers).
 This prevents premature itinerary generation while core fields are still missing.
 """
 
@@ -54,8 +50,8 @@ class TestStrategyPreCoreGatePrecedence:
 class TestStrategyPreCoreValueDetection:
     """Test strategy topic detection for pre-core value routing.
 
-    Note: Gate now requires ALL core fields (origin, destinations, dates, travelers)
-    OR explicit itinerary request. Tests provide all core fields.
+    Note: Gate requires ALL core fields (origin, destinations, dates, travelers).
+    Tests provide all core fields to enable gate firing.
     """
 
     @pytest.mark.parametrize(
@@ -84,7 +80,7 @@ class TestStrategyPreCoreValueDetection:
 
         Gate requires ALL core fields to fire, so we provide all of them.
         """
-        # Provide ALL core fields (required for gate to fire without explicit request)
+        # Provide ALL core fields (required for gate to fire)
         ti = TripInputs(
             destinations=["Swiss Alps"],
             start_date="2026-06-01",
@@ -110,12 +106,11 @@ class TestStrategyPreCoreValueDetection:
 class TestStrategyPreCoreValueGating:
     """Test gate firing conditions.
 
-    Note: Gate now requires ALL core fields (origin, destinations, dates, travelers)
-    OR explicit itinerary request before firing.
+    Note: Gate requires ALL core fields (origin, destinations, dates, travelers).
     """
 
     def test_does_not_fire_without_dates(self):
-        """Gate should NOT fire when dates are missing (no explicit request)."""
+        """Gate should NOT fire when dates are missing."""
         state = GraphState(
             user_text="Plan an adventure trip with hiking",
             trip_inputs=TripInputs(
@@ -129,11 +124,11 @@ class TestStrategyPreCoreValueGating:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no dates, no explicit request)
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (missing dates)
         assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
     def test_does_not_fire_without_destinations(self):
-        """Gate should NOT fire when destinations are missing (no explicit request)."""
+        """Gate should NOT fire when destinations are missing."""
         state = GraphState(
             user_text="Plan an adventure trip with hiking",
             trip_inputs=TripInputs(
@@ -147,11 +142,11 @@ class TestStrategyPreCoreValueGating:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no destinations, no explicit request)
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (missing destinations)
         assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
     def test_does_not_fire_without_origin(self):
-        """Gate should NOT fire when origin is missing (no explicit request)."""
+        """Gate should NOT fire when origin is missing."""
         state = GraphState(
             user_text="Plan a hiking trip",
             trip_inputs=TripInputs(
@@ -165,11 +160,11 @@ class TestStrategyPreCoreValueGating:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no origin, no explicit request)
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (missing origin)
         assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
     def test_does_not_fire_without_travelers(self):
-        """Gate should NOT fire when travelers are missing (no explicit request)."""
+        """Gate should NOT fire when travelers are missing."""
         state = GraphState(
             user_text="Plan a hiking trip",
             trip_inputs=TripInputs(
@@ -183,7 +178,7 @@ class TestStrategyPreCoreValueGating:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should NOT route via STRATEGY_PRE_CORE_VALUE (no travelers, no explicit request)
+        # Should NOT route via STRATEGY_PRE_CORE_VALUE (missing travelers)
         assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
     def test_fires_with_all_core_fields(self):
@@ -211,8 +206,8 @@ class TestStrategyPreCoreValueGating:
         assert gate_result.destination == "strategy_node"
         assert gate_result.strategy_topic == "hiking"
 
-    def test_fires_with_explicit_itinerary_request(self):
-        """Gate should fire with explicit itinerary request even without all fields."""
+    def test_does_not_fire_with_explicit_request_but_missing_fields(self):
+        """Gate should NOT fire when core fields are missing, regardless of explicit request."""
         state = GraphState(
             user_text="Help me plan my hiking trip",  # Explicit request phrase
             trip_inputs=TripInputs(
@@ -225,10 +220,8 @@ class TestStrategyPreCoreValueGating:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Should fire STRATEGY_PRE_CORE_VALUE (has explicit request)
-        assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
-        assert gate_result.destination == "strategy_node"
-        assert "explicit_request" in gate_result.reason
+        # Should NOT fire STRATEGY_PRE_CORE_VALUE (missing core fields)
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
     def test_does_not_fire_when_questions_only_requested(self):
         """Gate should NOT fire when user asks for 'questions only'."""
@@ -262,11 +255,11 @@ class TestStrategyPreCoreValueGating:
 class TestQuestionTargetPriority:
     """Test context-aware question ordering.
 
-    Note: Gate now requires ALL core fields OR explicit request.
+    Note: Gate requires ALL core fields to fire.
     """
 
     def test_does_not_fire_when_only_origin_missing(self):
-        """Gate should NOT fire when origin is missing (without explicit request)."""
+        """Gate should NOT fire when origin is missing."""
         ti = TripInputs(
             destinations=["Swiss Alps"],
             start_date="2026-06-01",
@@ -284,7 +277,7 @@ class TestQuestionTargetPriority:
         gate = StrategyPreCoreValueGate()
         result = gate.evaluate(ctx)
 
-        # Should NOT fire - missing origin and no explicit request
+        # Should NOT fire - missing origin
         assert result is None, "Gate should not fire when origin is missing"
 
     def test_fires_when_all_core_complete(self):
@@ -312,8 +305,8 @@ class TestQuestionTargetPriority:
         assert result.destination == "strategy_node"
         assert "all_fields_complete" in result.reason
 
-    def test_fires_with_explicit_request_and_missing_fields(self):
-        """Gate should fire with explicit request even when fields missing."""
+    def test_does_not_fire_when_fields_missing_despite_explicit_request(self):
+        """Gate should NOT fire when fields missing, regardless of explicit request."""
         ti = TripInputs(
             destinations=["Swiss Alps"],
             start_date="2026-06-01",
@@ -330,12 +323,8 @@ class TestQuestionTargetPriority:
         gate = StrategyPreCoreValueGate()
         result = gate.evaluate(ctx)
 
-        # Should fire with explicit request
-        assert result is not None, "Gate should fire with explicit itinerary request"
-        assert result.destination == "strategy_node"
-        assert "explicit_request" in result.reason
-        # Should still track missing fields for question_target
-        assert result.question_target == "origin", "Should ask about origin"
+        # Should NOT fire - missing core fields
+        assert result is None, "Gate should NOT fire when core fields are missing"
 
 
 class TestTripShapeInference:
@@ -486,7 +475,7 @@ class TestSpecificPromptBehavior:
 class TestGateShadowingPrevention:
     """Test that STRATEGY_PRE_CORE_VALUE is not shadowed by SPECIALIST_PRE_CORE.
 
-    Note: Gate now requires ALL core fields OR explicit request.
+    Note: Gate requires ALL core fields to fire.
     """
 
     def test_strategy_topic_with_activities_keyword_routes_to_strategy(self):
@@ -545,7 +534,7 @@ class TestGateShadowingPrevention:
 
     def test_specialist_pre_core_wins_when_strategy_missing_fields(self):
         """
-        When strategy_pre_core is not eligible (missing fields, no explicit request),
+        When strategy_pre_core is not eligible (missing fields),
         SPECIALIST_PRE_CORE should win if specialist keywords match.
         """
         # Test phrases that have strategy keywords but missing core fields
@@ -561,14 +550,14 @@ class TestGateShadowingPrevention:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # Without all fields and no explicit request, should NOT fire strategy
+        # Without all fields, should NOT fire strategy
         assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE, (
             f"STRATEGY_PRE_CORE_VALUE should not win without all fields. "
             f"Got gate={gate_result.gate_fired}, dest={gate_result.destination}"
         )
 
-    def test_strategy_fires_with_explicit_request_missing_fields(self):
-        """Strategy should fire with explicit request even if fields missing."""
+    def test_strategy_does_not_fire_with_missing_fields(self):
+        """Strategy should NOT fire when fields missing, regardless of explicit request."""
         state = GraphState(
             user_text="Help me plan a hiking trip with activities",  # Explicit request
             trip_inputs=TripInputs(
@@ -581,9 +570,8 @@ class TestGateShadowingPrevention:
 
         gate_result = GateEvaluator.evaluate(state)
 
-        # With explicit request, should fire strategy
-        assert gate_result.gate_fired == GatePrecedence.STRATEGY_PRE_CORE_VALUE
-        assert gate_result.destination == "strategy_node"
+        # Should NOT fire strategy - missing core fields
+        assert gate_result.gate_fired != GatePrecedence.STRATEGY_PRE_CORE_VALUE
 
     def test_pure_activities_query_routes_appropriately(self):
         """
@@ -660,7 +648,7 @@ class TestGatePrecedenceGuard:
     def test_is_strategy_pre_core_eligible_helper(self):
         """Test gate eligibility by checking if evaluate() returns a result.
 
-        Gate now requires ALL core fields OR explicit itinerary request.
+        Gate requires ALL core fields (origin, destinations, dates, travelers).
         """
         gate = StrategyPreCoreValueGate()
 
@@ -682,7 +670,7 @@ class TestGatePrecedenceGuard:
         result = gate.evaluate(ctx)
         assert result is not None, "Should be eligible for strategy pre-core (has all core fields)"
 
-        # Not eligible: missing origin (no explicit request)
+        # Not eligible: missing origin
         ti_no_origin = TripInputs(
             destinations=["Alps"],
             start_date="2026-06-01",
@@ -697,11 +685,9 @@ class TestGatePrecedenceGuard:
         readiness_no_origin = compute_trip_readiness(ti_no_origin)
         ctx_no_origin = GateContext.from_state(state_no_origin, readiness_no_origin)
         result_no_origin = gate.evaluate(ctx_no_origin)
-        assert (
-            result_no_origin is None
-        ), "Should NOT be eligible without origin (no explicit request)"
+        assert result_no_origin is None, "Should NOT be eligible without origin"
 
-        # Eligible: missing fields but has explicit request
+        # Not eligible: missing fields (explicit request no longer bypasses)
         ti_partial = TripInputs(
             destinations=["Alps"],
             start_date="2026-06-01",
@@ -715,7 +701,7 @@ class TestGatePrecedenceGuard:
         readiness_partial = compute_trip_readiness(ti_partial)
         ctx_explicit = GateContext.from_state(state_explicit, readiness_partial)
         result_explicit = gate.evaluate(ctx_explicit)
-        assert result_explicit is not None, "Should be eligible with explicit itinerary request"
+        assert result_explicit is None, "Should NOT be eligible with missing fields"
 
         # Not eligible: questions only phrase (even with all fields)
         state_questions = GraphState(
@@ -834,4 +820,4 @@ class TestDestinationSpecificTemplates:
         assert "Summer months" in result
         assert "Book ahead" in result
         assert "5-7 days ideal" in result
-        assert "🥾" in result  # Hiking emoji
+        assert "hiking" in result  # Topic included in output

@@ -70,6 +70,7 @@ class TestSuggestionEcho:
     def test_exact_match_returns_delta(self):
         """Suggestion echo returns delta on exact match."""
         state = _make_state(last_suggestions=[{"text": "Paris", "field": "destinations"}])
+        state.metadata["suggestion_clicked"] = "Paris"  # Required signal
         result = _try_suggestion_echo("Paris", state)
         assert result is not None
         assert result["destinations_delta"] == ["Paris"]
@@ -78,6 +79,7 @@ class TestSuggestionEcho:
     def test_normalized_match_returns_delta(self):
         """Suggestion echo matches with normalized text (trim, collapse spaces, casefold)."""
         state = _make_state(last_suggestions=[{"text": "New York City", "field": "destinations"}])
+        state.metadata["suggestion_clicked"] = "  new  york  city  "  # Must match text being passed
         # Different casing and extra spaces
         result = _try_suggestion_echo("  new  york  city  ", state)
         assert result is not None
@@ -98,6 +100,7 @@ class TestSuggestionEcho:
     def test_origin_field_suggestion(self):
         """Suggestion echo sets origin_delta for origin field."""
         state = _make_state(last_suggestions=[{"text": "London", "field": "origin"}])
+        state.metadata["suggestion_clicked"] = "London"  # Required signal
         result = _try_suggestion_echo("London", state)
         assert result is not None
         assert result["origin_delta"] == "London"
@@ -109,6 +112,7 @@ class TestSuggestionEcho:
             last_suggestions=[{"text": "2025-03-15", "field": "dates"}],
             today_iso="2025-01-15",
         )
+        state.metadata["suggestion_clicked"] = "2025-03-15"  # Required signal
         result = _try_suggestion_echo("2025-03-15", state)
         assert result is not None
         assert result.get("start_date_delta") == "2025-03-15"
@@ -296,6 +300,7 @@ class TestDeterministicPipeline:
             question_target="dates",
             last_suggestions=[{"text": "Tokyo", "field": "destinations"}],
         )
+        state.metadata["suggestion_clicked"] = "Tokyo"  # Required signal
         # Even though question_target is dates, suggestion echo should match
         result = _run_deterministic_pipeline("Tokyo", state)
         assert result is not None

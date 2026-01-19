@@ -312,6 +312,25 @@ async def strategy_node(state: "GraphState") -> "GraphState":
 
         _gate_stats["strategy_pre_core_value_fired"] += 1
 
+        # =====================================================================
+        # CENTRAL PLANNER GUARD: Minimal Stage 0 before split view
+        # =====================================================================
+        # In central planner view, show only minimal destination lists (no descriptions).
+        # This keeps the central view clean for coherence checking.
+        if not state.ready_to_generate:
+            from app.planner.nodes.strategy.stage0 import apply_minimal_strategy_template
+
+            _debug(
+                "🚫 STRATEGY MINIMAL: Stage 0 in central planner view",
+                topic=topic,
+                all_topics=all_topics,
+                ready_to_generate=state.ready_to_generate,
+                tokens_saved="~400-800 (strategy LLM call avoided)",
+            )
+            apply_minimal_strategy_template(state, topic, is_stage0=True)
+            _debug_node_exit("strategy_node", state, start_ns)
+            return state
+
         # If multiple topics, run in parallel and merge
         if len(all_topics) > 1:
             return await _strategy_stage0_parallel(state, all_topics)
@@ -505,20 +524,20 @@ async def strategy_node(state: "GraphState") -> "GraphState":
 
             # Generate field-specific question and suggestions
             field_questions = {
-                "budget": "What's your budget for this trip?",
-                "travelers": "How many people will be traveling?",
-                "dates": "When are you planning to travel?",
-                "origin": "Where will you be traveling from?",
+                "budget": "Budget:",
+                "travelers": "Travelers:",
+                "dates": "Travel dates:",
+                "origin": "Origin city:",
             }
             field_suggestions = {
-                "budget": ["$2,000", "$5,000", "Flexible budget"],
-                "travelers": ["Just me", "2 adults", "Family of 4"],
-                "dates": ["Next month", "In 3 months", "I'm flexible"],
+                "budget": ["$2,000", "$5,000", "$10,000"],
+                "travelers": ["Solo", "2 adults", "Family of 4"],
+                "dates": ["Next weekend", "In March", "Dec 15-22"],
                 "origin": [],  # Location-specific, leave empty
             }
 
             state.last_summary = field_questions.get(
-                detected_field, f"What {detected_field} would you like to set?"
+                detected_field, f"{detected_field.replace('_', ' ').title()}:"
             )
             state.suggested_responses = field_suggestions.get(detected_field, [])
             state.metadata["last_question_field"] = detected_field
@@ -545,15 +564,12 @@ async def strategy_node(state: "GraphState") -> "GraphState":
         )
         state.metadata["strategy_gate_fallback"] = True
         state.metadata["strategy_gate_reason"] = f"no_{topic}_keywords"
-        # Instead of wasting strategy LLM, give a helpful response
-        state.last_summary = (
-            f"I'd be happy to help with {topic} planning! "
-            f"Can you tell me more about what kind of {topic} experience you're looking for?"
-        )
+        # System-style response for strategy topic
+        state.last_summary = f"{topic.title()} planning. Specify preferences:"
         state.suggested_responses = [
-            f"Beginner-friendly {topic}",
-            f"Advanced {topic} spots",
-            "Equipment rental info",
+            f"Beginner {topic}",
+            f"Advanced {topic}",
+            "Equipment info",
         ]
         # Set provenance for streaming mode decision
         state.metadata["response_writer_node"] = "strategy_node:relevance_gate"
@@ -681,6 +697,25 @@ async def strategy_node(state: "GraphState") -> "GraphState":
         )
     else:
         # Stage 1: Initial strategy response (shortlist + skeleton)
+
+        # =====================================================================
+        # CENTRAL PLANNER GUARD: Minimal Stage 1 before split view
+        # =====================================================================
+        # In central planner view, show only minimal destination lists (no descriptions).
+        # This keeps the central view clean for coherence checking.
+        if not state.ready_to_generate:
+            from app.planner.nodes.strategy.stage0 import apply_minimal_strategy_template
+
+            _debug(
+                "🚫 STRATEGY MINIMAL: Stage 1 in central planner view",
+                topic=topic,
+                ready_to_generate=state.ready_to_generate,
+                tokens_saved="~400-800 (strategy LLM call avoided)",
+            )
+            apply_minimal_strategy_template(state, topic, is_stage0=False)
+            _debug_node_exit("strategy_node", state, start_ns)
+            return state
+
         llm_config = _get_node_llm_config("strategy_stage1")
         stage_name = "stage1"
         expansion_tier = StrategyTier.OUTLINE
@@ -973,8 +1008,10 @@ async def strategy_node(state: "GraphState") -> "GraphState":
                 "generate_requested", False
             )
 
-            # Only emit branches if generate was explicitly requested
-            if state.flags.get("generate_requested", False):
+            # Emit branches when either:
+            # 1. User is in split view (ready_to_generate=True)
+            # 2. User explicitly requested plan generation
+            if state.ready_to_generate or state.flags.get("generate_requested", False):
                 raw_branches = j.get("branches", []) or []
                 fallback = state.trip_inputs.model_dump(exclude_none=True)
                 normalized_branches: List[Dict[str, Any]] = []

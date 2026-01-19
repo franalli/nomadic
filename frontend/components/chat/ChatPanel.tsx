@@ -25,13 +25,11 @@ import type {
   DocumentTripInputs,
   GraphPlanResponse,
 } from '@/types/document';
-import { INITIAL_PLAN_STATUS, type PlanStatus } from '@/types/plan-status';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
-import { SpecialistProgress } from './SpecialistProgress';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -55,11 +53,11 @@ const PROMPT_SUGGESTIONS = [
 
 // Fallback suggestions when backend returns none but fields are missing
 const FALLBACK_SUGGESTIONS: Record<string, string[]> = {
-  start_date: ['Next weekend', 'March 15-22', '2 weeks from now', 'Flexible dates'],
+  start_date: ['Next weekend', 'In March', '2 weeks from now'],
   end_date: ['1 week trip', '10 days', '2 weeks'],
-  budget: ['$1500 budget', '$3000 budget', '$5000 budget', 'Flexible budget'],
-  origin: ['New York', 'London', 'San Francisco'],
-  destinations: ['Tokyo', 'Paris', 'Barcelona', 'Bali'],
+  budget: ['$2,000', '$5,000', '$10,000'],
+  origin: ['New York', 'London', 'Dubai'],
+  destinations: ['Tokyo', 'Paris', 'Bali'],
 };
 
 // Helper to generate specific error messages based on error type
@@ -234,6 +232,8 @@ interface ChatPanelProps {
   readyToGenerate?: boolean;
   /** When true, plan generation is in progress */
   isGenerating?: boolean;
+  /** Backend-authoritative plan state for left pane sync */
+  planState?: 'INCOMPLETE' | 'RESOLVING' | 'STABLE' | 'LOCKED';
 }
 
 export interface ChatPanelHandle {
@@ -254,7 +254,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       isGenerating,
       readyToGenerate,
       onFreshStart,
+      planState,
     } = props;
+
+    // Derive input disabled state from planState (RESOLVING = disabled)
+    const isInputDisabledByPlanState = planState === 'RESOLVING';
 
     // Use chat store for messages, history loading, and session state
     const messages = useChatStore((state) => state.messages);
@@ -313,29 +317,26 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const abortStreamRef = useRef<(() => void) | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
     const showTripDetails = Boolean(tripDetails) && hasUserMessage;
-    // Show suggestions only when no user messages yet, not generating, not ready to generate, and not in planning mode (hasBranches)
-    const showSuggestions = !hasUserMessage && !isLoadingHistory && !hasBranches && !isGenerating && !readyToGenerate;
-
-    // Derive PlanStatus for SpecialistProgress
-    // TODO: This should come from a central store/hook once specialist tracking is implemented
-    const planStatus: PlanStatus = useMemo(() => ({
-      ...INITIAL_PLAN_STATUS,
-      phase: isGenerating ? 'updating' : (tripDetails?.missingFields?.length ? 'needs_input' : 'ready'),
-      missing: tripDetails?.missingFields ?? [],
-      dirty: false,
-      activeSpecialists: [], // TODO: Track from SSE events
-    }), [isGenerating, tripDetails?.missingFields]);
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
+    const missingFields = tripDetails?.missingFields ?? [];
     const effectiveSuggestions = useMemo(() => {
       if (suggestedResponses.length > 0) return suggestedResponses;
-      if (!hasUserMessage || isLoading || hasBranches) return [];
-      const missingFields = tripDetails?.missingFields ?? [];
+      if (isLoading || hasBranches) return [];
       if (missingFields.length === 0) return [];
       // Get fallback for first missing field
       const firstMissing = missingFields[0];
       return FALLBACK_SUGGESTIONS[firstMissing] ?? [];
-    }, [suggestedResponses, hasUserMessage, isLoading, hasBranches, tripDetails?.missingFields]);
+    }, [suggestedResponses, isLoading, hasBranches, missingFields]);
+
+    // Show suggestions when: plan is incomplete, has missing fields, not generating, and has suggestions to show
+    // This gates on state + missing fields, not ui_phase
+    const showSuggestions =
+      planState === 'INCOMPLETE' &&
+      missingFields.length > 0 &&
+      effectiveSuggestions.length > 0 &&
+      !isLoadingHistory &&
+      !isGenerating;
 
     // Dynamic height - grows with content naturally
     const panelHeightClass = fullHeight
@@ -529,7 +530,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     }, [readyToGenerate, readyMessageShown, hasBranches, generateTriggered]);
 
     const sendMessageCore = useCallback(
-      async (messageText: string) => {
+      async (messageText: string, options?: { suggestionClicked?: string }) => {
         const trimmed = messageText.trim();
         if (!trimmed || isLoading) return;
 
@@ -558,9 +559,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setHasReceivedFirstToken(false); // Reset for new streaming message
 
         // Use SSE streaming for real-time token display
-        const body = {
+        const body: Parameters<typeof streamGraphPlan>[0] = {
           message: trimmed,
           session_state: sessionState ?? undefined,
+          // Pass suggestion_clicked when user clicked a suggestion chip
+          // This enables LQA suggestion echo in the backend
+          suggestion_clicked: options?.suggestionClicked,
         };
 
         // Create a promise that resolves when streaming completes
@@ -620,7 +624,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               if (hasBranchesNow) {
                 // Branches generated: remove streaming message
-                // Status is now shown via PlanHeaderStatus, not as a chat message
+                // Status is now shown via PlanStateBanner, not as a chat message
                 filterMessages((msg) => msg.id !== streamingMsgId);
               } else if (isReadyToGenerate) {
                 // Update the streaming message ID to use the ready prefix
@@ -924,7 +928,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   onClick={() => {
                     // Track suggestion click for analytics (fire-and-forget)
                     trackSuggestionClick(suggestion, idx);
-                    sendMessageCore(suggestion);
+                    // Pass suggestion_clicked to enable LQA echo in backend
+                    sendMessageCore(suggestion, { suggestionClicked: suggestion });
                   }}
                   className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"
                 >
@@ -934,23 +939,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
-          {/* Specialist progress - system strip above input (subordinate to header status) */}
-          <SpecialistProgress status={planStatus} />
-
           <form onSubmit={handleSubmit} className="relative">
             {/* Static placeholder - only when input is empty and no user message */}
             {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
               <div className="absolute top-0 left-0 right-0 px-4 py-3 text-sm text-muted-foreground/70 pointer-events-none" aria-hidden="true">
-                {hasBranches ? 'Edit constraints' : 'Enter destination'}
+                {isInputDisabledByPlanState ? 'Updating...' : (hasBranches ? 'Edit constraints' : 'Enter destination')}
               </div>
             )}
             <textarea
             ref={inputRef}
-            className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
+            disabled={isInputDisabledByPlanState}
+            className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 disabled:opacity-50 disabled:cursor-not-allowed ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
-              hasBranches
-                ? 'Edit constraints…'
-                : 'Enter destination'
+              isInputDisabledByPlanState
+                ? 'Updating...'
+                : hasBranches
+                  ? 'Edit constraints…'
+                  : 'Enter destination'
             }
             value={input}
             onChange={(e) => {
@@ -1014,7 +1019,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60"
               >
                 <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
-                <span>Generate Plan</span>
+                <span>Lock & Generate</span>
               </button>
             </div>
           </div>

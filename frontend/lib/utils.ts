@@ -119,17 +119,6 @@ export const formatBudgetDisplay = (
   return normalized;
 };
 
-/**
- * Format a budget value for form display. Returns empty string if null/undefined.
- * Always returns a string (never null).
- */
-export const formatBudgetValue = (value?: string | number | null): string => {
-  if (value === null || value === undefined) return '';
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return '';
-  return `$${Math.round(parsed).toLocaleString()}`;
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Activity Emoji Normalization Utilities
 // ─────────────────────────────────────────────────────────────────────────────

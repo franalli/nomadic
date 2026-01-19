@@ -32,10 +32,32 @@ Design Notes:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, FrozenSet, List, Optional, Set
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
+
+
+# Canonical UI keys - ONLY these are allowed in receipts
+# NOTE: "destination" (singular) even though field is "destinations" - frontend expects singular
+CANONICAL_UI_KEYS: FrozenSet[str] = frozenset(
+    {"origin", "destination", "dates", "travelers", "budget"}
+)
+
+# Map raw fields to canonical UI keys
+FIELD_TO_UI_KEY: Dict[str, str] = {
+    "destinations": "destination",  # plural field -> singular key
+    "origin": "origin",
+    "start_date": "dates",
+    "end_date": "dates",
+    "adults": "travelers",
+    "children": "travelers",
+    "budget": "budget",
+    "currency": "budget",
+}
+
+# Stable ordering for deterministic receipts
+KEY_ORDER: List[str] = ["origin", "destination", "dates", "travelers", "budget"]
 
 
 @dataclass
@@ -233,6 +255,26 @@ class StateWriter:
                 summary[m.mutation_type] = []
             summary[m.mutation_type].append(m.field)
         return summary
+
+    def get_applied_updates(self) -> List[str]:
+        """
+        Get canonical UI keys that were mutated this turn.
+
+        Returns:
+            List of UI keys in KEY_ORDER (e.g., ["destination", "dates"]).
+            Only returns keys in CANONICAL_UI_KEYS - unmapped fields are ignored.
+            Includes clears (field set to None).
+        """
+        ui_keys: Set[str] = set()
+        for m in self._mutations:
+            if m.mutation_type == "trip_input":
+                ui_key = FIELD_TO_UI_KEY.get(m.field)
+                # ENFORCE: Only emit canonical keys, ignore unmapped fields
+                if ui_key and ui_key in CANONICAL_UI_KEYS:
+                    ui_keys.add(ui_key)
+
+        # Deterministic order: KEY_ORDER only (no "rest" - all keys are canonical)
+        return [k for k in KEY_ORDER if k in ui_keys]
 
     def set_active_category(self, category: Optional[str]) -> "StateWriter":
         """

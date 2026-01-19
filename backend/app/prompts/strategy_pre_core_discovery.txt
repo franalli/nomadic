@@ -45,7 +45,7 @@ EXAMPLE OUTPUT (Hiking, question_target=destinations)
 - **Day 2:** Signature summit or trail day
 - **Day 3:** Recovery hike + scenic return
 
-**Where would you like to go?** Any of these regions call to you?
+**Destination:** Select a region.
 
 ==============================
 POLICIES

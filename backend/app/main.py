@@ -78,10 +78,14 @@ from app.planner import (
     run_turn_streaming,
     validate_template_coverage,
 )
+from app.planner.gates import compute_trip_readiness
 from app.schemas import (
+    BookingStatus,
+    BookingStatusItem,
     ChatHistoryResponse,
     ChatMessageResponse,
     DeleteLastMessageResponse,
+    DestinationCard,
     EntityConfidenceInfo,
     ExtractionConfidenceInfo,
     GraphPlanErrorCode,
@@ -92,6 +96,7 @@ from app.schemas import (
     PlanDocumentData,
     PlanDocumentPatch,
     PlanDocumentResponse,
+    ReadinessItem,
     TileRefreshRequest,
     TileRefreshResponse,
     TilesSearchRequest,
@@ -606,6 +611,12 @@ async def graph_plan_endpoint(
     # Store envelope in session_state metadata for downstream access
     session_state.setdefault("metadata", {})[TRACE_ENVELOPE] = trace_envelope.to_dict()
 
+    # --- Inject ui_phase and suggestion_clicked into metadata ---
+    if req.ui_phase is not None:
+        session_state["metadata"]["ui_phase"] = req.ui_phase
+    if req.suggestion_clicked is not None:
+        session_state["metadata"]["suggestion_clicked"] = req.suggestion_clicked
+
     # --- Track previous ready_to_generate for observability ---
     ready_to_generate_prev = session_state.get("metadata", {}).get("ready_to_generate", False)
 
@@ -871,6 +882,85 @@ async def graph_plan_endpoint(
     response_document.suggested_responses = suggested_responses
     response_document.ready_to_generate = ready_to_generate_now
 
+    # --- Set change tracking fields for UI receipts ---
+    session_metadata = result.get("session_state", {}).get("metadata", {})
+    response_document.applied_updates = session_metadata.get("turn_applied_fields", [])
+    response_document.update_provenance = session_metadata.get("update_provenance")
+    # Only include undo_snapshot if there were applied updates
+    if response_document.applied_updates:
+        response_document.undo_snapshot = session_metadata.get("prev_trip_inputs_snapshot")
+
+    # --- Compute Plan State Envelope fields ---
+    # Get ui_phase from request (defaults to "bootstrap")
+    response_document.ui_phase = req.ui_phase or "bootstrap"
+
+    # Compute readiness from trip_inputs
+    readiness = compute_trip_readiness(trip_inputs, errors=result.get("errors", []))
+
+    # Build readiness array for frontend
+    response_document.readiness = [
+        ReadinessItem(key="origin", ok=readiness.has_origin),
+        ReadinessItem(key="destination", ok=readiness.has_destinations),
+        ReadinessItem(key="start_date", ok=readiness.has_dates),
+        ReadinessItem(key="end_date", ok=bool(trip_inputs.get("end_date"))),
+        ReadinessItem(key="travelers", ok=trip_inputs.get("adults") is not None),
+        ReadinessItem(key="budget", ok=trip_inputs.get("budget") is not None),
+    ]
+
+    # Compute plan_state from readiness and generation state
+    # INCOMPLETE: missing required fields
+    # RESOLVING: will be set during SSE streaming (not applicable for sync endpoint)
+    # STABLE: all fields present
+    # LOCKED: not implemented yet
+    if not readiness.core_complete:
+        response_document.plan_state = "INCOMPLETE"
+    else:
+        response_document.plan_state = "STABLE"
+
+    # Build destination_card if destination exists
+    destinations = trip_inputs.get("destinations", [])
+    if destinations and len(destinations) > 0:
+        dest_name = destinations[0]
+        response_document.destination_card = DestinationCard(
+            title=dest_name,
+            subtitle=f"Your adventure in {dest_name}" if dest_name else None,
+            image_url=None,  # Will be populated by frontend from branch or Unsplash
+        )
+
+    # resolver is None for sync endpoint (only used during SSE streaming)
+    response_document.resolver = None
+
+    # booking_status will be populated based on tiles/branches if available
+    # For now, set based on whether we have tiles
+    if response_document.tiles:
+        flights_count = sum(1 for t in response_document.tiles.values() if t.type == "flight")
+        hotels_count = sum(1 for t in response_document.tiles.values() if t.type == "hotel")
+        activities_count = sum(1 for t in response_document.tiles.values() if t.type == "activity")
+        response_document.booking_status = BookingStatus(
+            flights=BookingStatusItem(
+                state="ready" if flights_count > 0 else "idle",
+                summary=(
+                    f"Flights · {flights_count} options"
+                    if flights_count
+                    else "Flights · not started"
+                ),
+            ),
+            stays=BookingStatusItem(
+                state="ready" if hotels_count > 0 else "idle",
+                summary=(
+                    f"Stays · {hotels_count} options" if hotels_count else "Stays · not started"
+                ),
+            ),
+            activities=BookingStatusItem(
+                state="ready" if activities_count > 0 else "idle",
+                summary=(
+                    f"Activities · {activities_count} options"
+                    if activities_count
+                    else "Activities · not started"
+                ),
+            ),
+        )
+
     # --- Build and return response ---
     return GraphPlanResponse(
         document=response_document,
@@ -951,6 +1041,14 @@ async def graph_plan_stream_endpoint(
 
     # --- Inject today_iso into session state ---
     session_state["today_iso"] = today_iso
+
+    # --- Inject ui_phase and suggestion_clicked into metadata ---
+    if "metadata" not in session_state:
+        session_state["metadata"] = {}
+    if req.ui_phase is not None:
+        session_state["metadata"]["ui_phase"] = req.ui_phase
+    if req.suggestion_clicked is not None:
+        session_state["metadata"]["suggestion_clicked"] = req.suggestion_clicked
 
     # --- Get session from request for document persistence ---
     session_id = get_session_from_request(request)
@@ -1147,6 +1245,85 @@ async def graph_plan_stream_endpoint(
             response_document.assistant_message = assistant_message
             response_document.suggested_responses = suggested_responses
             response_document.ready_to_generate = ready_to_generate_now
+
+            # --- Set change tracking fields for UI receipts ---
+            session_metadata = updated_session_state.get("metadata", {})
+            response_document.applied_updates = session_metadata.get("turn_applied_fields", [])
+            response_document.update_provenance = session_metadata.get("update_provenance")
+            if response_document.applied_updates:
+                response_document.undo_snapshot = session_metadata.get("prev_trip_inputs_snapshot")
+
+            # --- Compute Plan State Envelope fields ---
+            # Get ui_phase from request (defaults to "bootstrap")
+            response_document.ui_phase = req.ui_phase or "bootstrap"
+
+            # Compute readiness from trip_inputs
+            readiness = compute_trip_readiness(trip_inputs, errors=final_result.get("errors", []))
+
+            # Build readiness array for frontend
+            response_document.readiness = [
+                ReadinessItem(key="origin", ok=readiness.has_origin),
+                ReadinessItem(key="destination", ok=readiness.has_destinations),
+                ReadinessItem(key="start_date", ok=readiness.has_dates),
+                ReadinessItem(key="end_date", ok=bool(trip_inputs.get("end_date"))),
+                ReadinessItem(key="travelers", ok=trip_inputs.get("adults") is not None),
+                ReadinessItem(key="budget", ok=trip_inputs.get("budget") is not None),
+            ]
+
+            # Compute plan_state from readiness
+            if not readiness.core_complete:
+                response_document.plan_state = "INCOMPLETE"
+            else:
+                response_document.plan_state = "STABLE"
+
+            # Build destination_card if destination exists
+            destinations = trip_inputs.get("destinations", [])
+            if destinations and len(destinations) > 0:
+                dest_name = destinations[0]
+                response_document.destination_card = DestinationCard(
+                    title=dest_name,
+                    subtitle=f"Your adventure in {dest_name}" if dest_name else None,
+                    image_url=None,
+                )
+
+            # resolver is None at completion (was used during streaming)
+            response_document.resolver = None
+
+            # Build booking_status from tiles
+            if response_document.tiles:
+                flights_count = sum(
+                    1 for t in response_document.tiles.values() if t.type == "flight"
+                )
+                hotels_count = sum(1 for t in response_document.tiles.values() if t.type == "hotel")
+                activities_count = sum(
+                    1 for t in response_document.tiles.values() if t.type == "activity"
+                )
+                response_document.booking_status = BookingStatus(
+                    flights=BookingStatusItem(
+                        state="ready" if flights_count > 0 else "idle",
+                        summary=(
+                            f"Flights · {flights_count} options"
+                            if flights_count
+                            else "Flights · not started"
+                        ),
+                    ),
+                    stays=BookingStatusItem(
+                        state="ready" if hotels_count > 0 else "idle",
+                        summary=(
+                            f"Stays · {hotels_count} options"
+                            if hotels_count
+                            else "Stays · not started"
+                        ),
+                    ),
+                    activities=BookingStatusItem(
+                        state="ready" if activities_count > 0 else "idle",
+                        summary=(
+                            f"Activities · {activities_count} options"
+                            if activities_count
+                            else "Activities · not started"
+                        ),
+                    ),
+                )
 
             # Build full response matching GraphPlanResponse
             full_response = {

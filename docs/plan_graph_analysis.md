@@ -30,7 +30,7 @@ LangGraph-based conversational trip planning system with **19 nodes**.
 | ------------------- | ----- | --------------------------------- |
 | LLM-Powered Nodes   | 11    | Use OpenAI API for generation     |
 | Deterministic Nodes | 8     | Pure Python logic, no LLM         |
-| Short Circuit Types | 7     | Bypass patterns for fast response |
+| Short Circuit Types | 9     | Bypass patterns for fast response |
 | Caching Strategies  | 5     | Token-saving cache mechanisms     |
 
 ### Design Principles
@@ -150,7 +150,7 @@ backend/app/planner/
 │  Zero-LLM pre-pass for simple answers to last question                      │
 │  • Parses: dates, numbers, city names, suggestion echoes                    │
 │  • Success → skip extractor, route to normalize_inputs                      │
-│  • Max input: 80 chars                                                       │
+│  • Max input: 150 chars                                                      │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
                  ┌─────────────────┴─────────────────┐
@@ -192,7 +192,7 @@ backend/app/planner/
 │thanks/  │ │           │ │correction   │ │        │ │1: outline│ │handling  │
 │yes/no   │ │Collects:  │ │general      │ │256 tok │ │2: expand │ │          │
 │         │ │dest/dates │ │             │ │        │ │          │ │          │
-│No LLM   │ │origin/etc │ │512 tok each │ │Cache:  │ │300-1536  │ │No LLM    │
+│No LLM   │ │origin/etc │ │512 tok each │ │Cache:  │ │450-1536  │ │No LLM    │
 │         │ │           │ │             │ │follow- │ │tokens    │ │          │
 │         │ │180 tok    │ │Cache:       │ │up cache│ │          │ │          │
 │         │ │           │ │follow-up    │ │        │ │Cache:    │ │          │
@@ -275,13 +275,13 @@ backend/app/planner/
 | `extractor` | `extractor.txt` | Extract trip data from user input | 400 | 🔒 None | ✅ Pydantic |
 | `extractor` (light) | `extractor_light.txt` | Light extraction for simple inputs | 200 | 🔒 None | ✅ Pydantic |
 | `router` | `router.txt` | Intent classification | 256 | 🔒 None | ✅ Pydantic |
-| `required_fields_node` | `required_fields.txt` | Collect missing core fields | 180 | ⚡ Fast UX | `jloads_safe` |
-| `flights_node` | `flights.txt` | Flight preferences | 512 | ⚡ Fast UX | `jloads_safe` |
-| `hotels_node` | `hotels.txt` | Hotel preferences | 512 | ⚡ Fast UX | `jloads_safe` |
-| `transport_node` | `transport.txt` | Ground transport preferences | 512 | ⚡ Fast UX | `jloads_safe` |
-| `activities_node` | `activities.txt` | Activity preferences | 512 | ⚡ Fast UX | `jloads_safe` |
-| `correction_node` | `correction.txt` | Handle user corrections | 512 | ⚡ Fast UX | `jloads_safe` |
-| `general_node` | `general.txt` | Multi-domain queries | 512 | ⚡ Fast UX | `jloads_safe` |
+| `required_fields_node` | `required_fields.txt` | Collect missing core fields | 180 | 🌊 Real | `jloads_safe` |
+| `flights_node` | `flights.txt` | Flight preferences | 512 | 🌊 Real | `jloads_safe` |
+| `hotels_node` | `hotels.txt` | Hotel preferences | 512 | 🌊 Real | `jloads_safe` |
+| `transport_node` | `transport.txt` | Ground transport preferences | 512 | 🌊 Real | `jloads_safe` |
+| `activities_node` | `activities.txt` | Activity preferences | 512 | 🌊 Real | `jloads_safe` |
+| `correction_node` | `correction.txt` | Handle user corrections | 512 | 🌊 Real | `jloads_safe` |
+| `general_node` | `general.txt` | Multi-domain queries | 512 | 🌊 Real | `jloads_safe` |
 | `response_polish` | `response_polish.txt` | Polish message tone | 512 | 🔒 None | `jloads_safe` |
 
 ### Validation Legend
@@ -291,17 +291,17 @@ backend/app/planner/
 | ✅ Pydantic | `parse_llm_output()` | Type-safe parsing with Pydantic schema validation |
 | `jloads_safe` | `jloads_safe()` | Resilient JSON parsing with fallback (no schema validation) |
 
-> **Note:** Specialist and strategy nodes use `jloads_safe` because they require real-time streaming
-> and graceful degradation for partial JSON. Extractor and router are buffered internal nodes where
-> strict validation provides better type safety without impacting streaming UX.
+> **Note:** Specialist nodes use `jloads_safe` with real-time streaming (`call_llm_streaming_with_json_field`)
+> for graceful degradation with partial JSON. Strategy nodes use simulated streaming for deterministic pacing.
+> Extractor and router are buffered internal nodes where strict Pydantic validation provides better type safety.
 
 ### Strategy Nodes
 
 | Node | Prompt File | Purpose | Max Tokens | Stage | Streaming | Validation |
 |------|-------------|---------|------------|-------|-----------|------------|
-| `strategy_node` (stage0) | `strategy_pre_core.txt` | Pre-core value-first response | 300 | 0 | ✨ Simulated | `jloads_safe` |
-| `strategy_node` (stage0-known) | `strategy_pre_core_known_dest.txt` | Pre-core with known destination | 150 | 0 | ✨ Simulated | `jloads_safe` |
-| `strategy_node` (stage0-discovery) | `strategy_pre_core_discovery.txt` | Pre-core destination exploration | 150 | 0 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage0) | `strategy_pre_core.txt` | Pre-core value-first response | 450 | 0 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage0-known) | `strategy_pre_core_known_dest.txt` | Pre-core with known destination | 450 | 0 | ✨ Simulated | `jloads_safe` |
+| `strategy_node` (stage0-discovery) | `strategy_pre_core_discovery.txt` | Pre-core destination exploration | 450 | 0 | ✨ Simulated | `jloads_safe` |
 | `strategy_node` (stage1) | `strategy_{topic}.txt` | Initial strategy outline | 512 | 1 | ✨ Simulated | `jloads_safe` |
 | `strategy_node` (stage2) | `strategy_{topic}.txt` | Expansion details | 1536 | 2 | ✨ Simulated | `jloads_safe` |
 | `missing_fields_guard` | `missing_fields_guard.txt` | Guard for missing fields | 100 | — | 🔒 None | `jloads_safe` |
@@ -326,7 +326,7 @@ backend/app/planner/
 | 🔒 None | `buffered:internal` | Internal node, no user-facing output |
 | ✨ Simulated | `simulate_streaming` | Token-by-token delivery with 15-35ms delays for visual effect |
 | ⚡ Fast UX | `fast_stream_buffered` | Chunked delivery of pre-buffered response (no artificial delays) |
-| 🌊 Real | `true_stream` | Real-time tokens from LLM API (**not currently used**) |
+| 🌊 Real | `true_stream` | Real-time tokens from LLM API (used by specialists via `call_llm_streaming_with_json_field`) |
 
 ---
 
@@ -338,13 +338,34 @@ Zero-LLM pre-pass that attempts to parse simple answers to the last question ask
 
 | Condition | Action |
 |-----------|--------|
-| Input ≤ 80 chars | Attempt LQA parsing |
+| Input ≤ 150 chars | Attempt LQA parsing |
 | Matches `question_target` | Skip extractor, route to `normalize_inputs` |
 | Suggestion echo | Direct match to suggested response |
 | Date-like input | Parse via `is_text_date_compatible()` |
 | Number input | Parse as travelers/budget |
 | City name | Parse as destination/origin |
 | Negation with alternative | Parse "not Paris, maybe Barcelona" → "Barcelona" |
+
+#### Suggestion Echo Guards (v6)
+
+The suggestion echo feature has safeguards to prevent false positives:
+
+| Guard | Condition | Purpose |
+|-------|-----------|---------|
+| `ui_phase` | Skip if `ui_phase == "expanded"` | Full planner UI doesn't use suggestion chips |
+| `suggestion_clicked` | Skip if not present | Requires explicit click signal from frontend |
+| Text match | Skip if `suggestion_clicked != user_text` | Prevents misrouting on text mismatch |
+| `question_id` | Skip if stale | Prevents matching suggestions from previous turns |
+
+**Data Flow (verified):**
+1. **Frontend** → `streamGraphPlan()` includes `ui_phase` and `suggestion_clicked` in body
+2. **Backend endpoints** (`/v1/graph_plan`, `/v1/graph_plan/stream`) → inject into `session_state["metadata"]`
+3. **run_turn / run_turn_streaming** → `metadata = deepcopy(session_state.get("metadata", {}))`
+4. **_try_suggestion_echo** → reads `state.metadata.get("ui_phase")` and `state.metadata.get("suggestion_clicked")`
+
+**Frontend Integration:**
+- Pass `suggestion_clicked` in `GraphPlanRequest` when user clicks a suggestion chip
+- In expanded mode (`ui_phase="expanded"`), suggestion echo is disabled entirely
 
 ### Extractor
 
@@ -446,7 +467,7 @@ When `generate_responder` is triggered, it calls the strategy orchestrator to en
 
 | Stage | Name | Trigger | Max Tokens | Gate | Output |
 |-------|------|---------|------------|------|--------|
-| 0 | Pre-Core | Strategy topic + dates + destination | 300 | `STRATEGY_PRE_CORE_VALUE` (80) | Duration-aware itinerary + 1 question |
+| 0 | Pre-Core | Strategy topic + dates + destination | 450 | `STRATEGY_PRE_CORE_VALUE` (80) | Duration-aware itinerary + 1 question |
 | 1 | Outline | Core fields complete + `last_strategy_topic` | 512 | `STRATEGY_POST_CORE` (35) | Activity outline with sections |
 | 2 | Expansion | User requests "show more" | 600-1536 | `STRATEGY_EXPANSION` (10) | Expanded section or full plan |
 
@@ -497,9 +518,10 @@ Gates are checked in strict precedence order. First match wins.
 | Type | Pattern | Handler | Tokens Saved | Example |
 |------|---------|---------|--------------|---------|
 | `greeting` | `GREETING_PATTERN` | `short_circuit_responder` | ~800-1500 | "hi", "hello", "hey" |
-| `acknowledgment` | `ACKNOWLEDGMENT_PATTERN` | `short_circuit_responder` | ~800-1500 | "ok", "thanks", "got it" |
 | `confirmation_yes` | `YES_PATTERN` | `short_circuit_responder` | ~800-1500 | "yes", "yeah", "yep" |
 | `confirmation_no` | `NO_PATTERN` | `short_circuit_responder` | ~800-1500 | "no", "nope", "cancel" |
+| `confirm_typo` | Typo confirmation flow | `required_fields_node` | ~500 | "yes that's right" (after typo check) |
+| `field_answer` | Field-specific safety net | `required_fields_node` | ~500 | Direct answer to last question |
 | `generate_request` | `GENERATE_REQUEST_PATTERN` | `generate_responder` | ~500 | "generate my itinerary" |
 | `off_topic` | Router detection | `summarize` | ~500 | Non-travel queries |
 | `strategy_bootstrap` | Simple strategy prompts | Skip extractor | ~500-1000 | "I want to go hiking" |
@@ -514,8 +536,9 @@ def _detect_short_circuit(text, state):
     # 3. Check GENERATE_REQUEST_PATTERN (if core complete)
     # 4. Check YES_PATTERN with pending_action
     # 5. Check NO_PATTERN
-    # 6. Check ACKNOWLEDGMENT_PATTERN
-    # 7. Return None → normal pipeline
+    # 6. Check typo confirmation flow (confirm_typo)
+    # 7. Check field-specific answer (field_answer)
+    # 8. Return None → normal pipeline
 ```
 
 ### Extractor Bypass Conditions
@@ -534,9 +557,9 @@ def _detect_short_circuit(text, state):
 
 | Cache | Class | Max Size | TTL | Key Components | Purpose |
 |-------|-------|----------|-----|----------------|---------|
-| `ExtractorCache` | `CacheNode` | 500 | 300s | session_id, user_text_hash, core_fields_hash, extractor_mode, model_id | Avoid re-extracting same input |
-| `ResponseCache` | `CacheNode` | 500 | 1800s | node_name, core_fields_hash, follow_up_hash, user_text_hash, model_id | Reuse specialist responses |
-| `StrategyCache` | `CacheNode` | 200 | 300s | session_id, topic, core_fields_hash, user_text_hash, section_id, stage0_lifecycle_hash, model_id | Reuse strategy content |
+| `ExtractorCache` | `CacheNode` | 100 | 300s | session_id, user_text_hash, core_fields_hash, extractor_mode, model_id | Avoid re-extracting same input |
+| `ResponseCache` | `CacheNode` | 200 | 3600s | node_name, core_fields_hash, follow_up_hash, user_text_hash, model_id, settings_hash | Reuse specialist responses |
+| `StrategyCache` | `CacheNode` | 100 | 300s | session_id, topic, core_fields_hash, user_text_hash, section_id, stage0_lifecycle_hash, model_id | Reuse strategy content |
 | `TileCache` | `CacheNode` | 100 | 300s | session_id, tile_type, query_hash, settings_hash | Cache tile API results |
 | `GateEvaluationCache` | `CacheNode` | 200 | 300s | session_id, user_text_hash, trip_inputs_hash, metadata_hash | Cache routing decisions |
 
@@ -636,14 +659,16 @@ Located in `backend/app/validation.py`, this cache stores LLM-verified place nam
 | `response_polish.txt` | `response_polish` | 512 | Yes | Polish message tone |
 | `missing_fields_guard.txt` | `_invoke_guard` | 100 | No | Missing fields guard |
 | `condense.txt` | `condense_long_message` | 256 | No | Condense long messages |
+| `required_fields_templates.json` | `required_fields_node` | N/A | Yes | Template cache for field collection |
 
 ### Strategy Prompts
 
 | File | Topic | Max Tokens | In Hash |
 |------|-------|------------|---------|
-| `strategy_pre_core.txt` | All (unified) | 300 | Yes |
-| `strategy_pre_core_known_dest.txt` | All (with dest) | 150 | Yes |
-| `strategy_pre_core_discovery.txt` | All (discovery) | 150 | Yes |
+| `strategy_pre_core.txt` | All (unified) | 450 | Yes |
+| `strategy_pre_core_known_dest.txt` | All (with dest) | 450 | Yes |
+| `strategy_pre_core_discovery.txt` | All (discovery) | 450 | Yes |
+| `strategy_general.txt` | general | 512-1536 | No |
 | `strategy_hiking.txt` | hiking | 512-1536 | Yes |
 | `strategy_diving.txt` | diving | 512-1536 | Yes |
 | `strategy_skiing.txt` | skiing | 512-1536 | Yes |
@@ -826,7 +851,7 @@ This ensures:
 | `planner.gates.topic_detection` | `detect_strategy_topic_from_text`, `detect_strategy_topic_from_settings`, `detect_strategy_topic` |
 | `planner.gates.suppression` | `SuppressionPredicates` |
 | `planner.gates.checks` | `is_strategy_expansion_request`, `is_vague_affirmation`, `StrategyExpansionResult` |
-| `planner.state` | `StateWriter` |
+| `planner.state` | `StateWriter` (methods: `set_trip_input`, `append_branch`, `get_applied_updates`, `set_active_category`, `set_last_summary`, `set_suggested_responses`, `set_pending_strategy_expansion`, `set_flag`, `set_parsed_inputs`) |
 | `planner.nodes` | `extractor`, `lqa_prepass`, `router`, `_specialist`, `strategy_node` |
 | `planner.nodes.schemas` | `ExtractorOutput`, `RouterOutput`, `BudgetDelta`, `IntentType`, `TopicType` |
 | `planner.nodes.strategy` | `orchestrate_strategies`, `merge_strategy_results`, `detect_relevant_strategies`, `StrategyContent`, `StrategyResult` |
@@ -947,12 +972,3 @@ INITIATED → PENDING_PAYMENT → HOLD → CONFIRMED
 | `BookingConfirmation` | `provider_base.py` | Completed booking details |
 | `TravelerInfo` | `provider_base.py` | Traveler data for booking |
 | `BookingError` | `provider_base.py` | Structured error handling |
-
-### Future REST Endpoints (Not Yet Implemented)
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/v1/booking/initiate` | POST | Start booking for a tile |
-| `/v1/booking/confirm` | POST | Complete booking after payment |
-| `/v1/booking/{id}/status` | GET | Check booking status |
-| `/v1/booking/{id}/cancel` | POST | Cancel a booking |

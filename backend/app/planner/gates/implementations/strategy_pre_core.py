@@ -2,10 +2,9 @@
 
 Routes to strategy_node for duration-aware strategy responses when:
 - Strategy topic detected (hiking, skiing, diving, etc.)
-- User explicitly requests an itinerary/plan, OR
 - ALL core fields are complete (origin, destination, dates, travelers)
 
-Note: Strategy only fires with EXPLICIT user request OR complete core fields.
+Constraint-first: Strategy only fires when ALL core fields are present.
 This prevents premature itinerary generation before we have enough info.
 """
 
@@ -21,48 +20,6 @@ from app.planner.gates.result import GateResult
 
 if TYPE_CHECKING:
     pass
-
-
-# Explicit itinerary request phrases - user is asking for a plan
-EXPLICIT_ITINERARY_PHRASES = frozenset(
-    {
-        "plan my trip",
-        "plan the trip",
-        "create an itinerary",
-        "create itinerary",
-        "make an itinerary",
-        "make itinerary",
-        "give me an itinerary",
-        "give me itinerary",
-        "build an itinerary",
-        "build itinerary",
-        "detailed itinerary",
-        "full itinerary",
-        "complete itinerary",
-        "help me plan",
-        "plan this out",
-        "put together a plan",
-        "put together an itinerary",
-        "show me the itinerary",
-        "what's the itinerary",
-        "what would the itinerary look like",
-        "what does the trip look like",
-        "what would the trip look like",
-        "show me the plan",
-        "ready to plan",
-        "let's plan",
-        "start planning",
-        "begin planning",
-    }
-)
-
-
-def _is_explicit_itinerary_request(text_lower: str) -> bool:
-    """Check if user is explicitly requesting an itinerary/plan."""
-    for phrase in EXPLICIT_ITINERARY_PHRASES:
-        if phrase in text_lower:
-            return True
-    return False
 
 
 class StrategyPreCoreValueGate(Gate):
@@ -107,20 +64,16 @@ class StrategyPreCoreValueGate(Gate):
             self.record(ctx, fired=False, reason="no_strategy_topic")
             return None
 
-        # Check if user explicitly requested an itinerary
-        explicit_request = _is_explicit_itinerary_request(ctx.user_text_lower)
-
         # Check if all required fields are complete (origin, destination, dates, travelers)
+        # Constraint-first: Strategy ONLY fires when ALL core fields are present
         has_destinations = bool(ctx.ti.destinations)
         has_origin = bool(ctx.ti.origin)
         has_dates = bool(ctx.ti.start_date)
         has_travelers = ctx.ti.adults is not None and ctx.ti.adults > 0
         all_core_complete = has_destinations and has_origin and has_dates and has_travelers
 
-        # Strategy ONLY fires when:
-        # 1. User explicitly requests itinerary, OR
-        # 2. ALL core fields are complete (origin, destination, dates, travelers)
-        if not explicit_request and not all_core_complete:
+        # Strategy requires ALL core fields - no bypass for explicit requests
+        if not all_core_complete:
             missing = []
             if not has_destinations:
                 missing.append("destinations")
@@ -161,8 +114,7 @@ class StrategyPreCoreValueGate(Gate):
             question_target = None  # All fields complete
 
         # Build result
-        trigger_reason = "explicit_request" if explicit_request else "all_fields_complete"
-        record_reason = f"strategy:{detected_topic}:{trigger_reason}"
+        record_reason = f"strategy:{detected_topic}:all_fields_complete"
 
         _debug(
             "strategy_pre_core_value triggered",
@@ -171,9 +123,6 @@ class StrategyPreCoreValueGate(Gate):
             has_origin=has_origin,
             has_dates=has_dates,
             has_travelers=has_travelers,
-            explicit_request=explicit_request,
-            all_core_complete=all_core_complete,
-            trigger_reason=trigger_reason,
         )
 
         self.record(ctx, fired=True, reason=record_reason)
@@ -181,17 +130,15 @@ class StrategyPreCoreValueGate(Gate):
         return self.build_result(
             ctx,
             destination="strategy_node",
-            reason=f"strategy_pre_core_value:{detected_topic}:{trigger_reason}",
+            reason=f"strategy_pre_core_value:{detected_topic}:all_fields_complete",
             intent="strategy",
             question_target=question_target,
             strategy_topic=detected_topic,
             metadata_updates={
-                "router_path": f"strategy_pre_core_value:{detected_topic}:{trigger_reason}",
+                "router_path": f"strategy_pre_core_value:{detected_topic}:all_fields_complete",
                 "router_bypassed": True,
-                "router_bypass_reason": f"strategy:{detected_topic}:{trigger_reason}",
+                "router_bypass_reason": f"strategy:{detected_topic}:all_fields_complete",
                 "strategy_stage": 0,
-                "pre_core_mode": not all_core_complete,
                 "strategy_dest_known": has_destinations,
-                "explicit_itinerary_request": explicit_request,
             },
         )

@@ -15,6 +15,7 @@ from app.planner.gates.constants import SPECIALIST_NODE_MAP
 from app.planner.gates.keyword_utils import keyword_match
 from app.planner.gates.precedence import GatePrecedence
 from app.planner.gates.result import GateResult
+from app.planner.gates.topic_detection import detect_strategy_topic_from_text
 
 # Additional keywords that trigger strategy when core is complete
 # "adventure" maps to hiking as the most common adventure activity
@@ -73,9 +74,36 @@ class ReadyNoFieldsGate(Gate):
             )
             return None
 
-        # STRATEGY_REQUEST: Use pre-computed strategy topic from GateContext
-        # This allows users to trigger strategy stage0 even after core fields are complete
         user_text_lower = ctx.user_text_lower
+
+        # Check if user text contains an explicit strategy keyword (hiking, diving, etc.)
+        # This is checked FIRST because strategy keywords in user text take precedence
+        strategy_keyword_in_text = detect_strategy_topic_from_text(user_text_lower)
+
+        # SPECIALIST_REQUEST: Check for explicit specialist keywords when ready
+        # BUT only if no explicit strategy keyword is present in the current user text.
+        # This ensures "hiking and outdoor activities" routes to strategy, while
+        # "Add flights" (no strategy keyword) routes to flights specialist.
+        if not strategy_keyword_in_text:
+            for specialist, keywords in SPECIALIST_KEYWORDS.items():
+                if keyword_match(user_text_lower, keywords):
+                    destination = SPECIALIST_NODE_MAP.get(specialist, "hotels_node")
+                    self.record(ctx, fired=True, reason=f"specialist_request:{specialist}")
+                    return self.build_result(
+                        ctx,
+                        destination=destination,
+                        reason=f"specialist_request:{specialist}",
+                        intent=specialist,
+                        metadata_updates={
+                            "router_path": f"specialist_request:{specialist}",
+                            "router_bypassed": True,
+                            "explicit_specialist_request": specialist,
+                        },
+                    )
+
+        # STRATEGY_REQUEST: Use pre-computed strategy topic from GateContext
+        # This fires when user text has a strategy keyword, OR when activity_settings
+        # has a strategy topic (from previous turns)
         strategy_topic = ctx.detected_strategy_topic
 
         # Also check for generic "adventure" keywords that map to hiking
@@ -99,25 +127,6 @@ class ReadyNoFieldsGate(Gate):
                     "post_ready_strategy": True,  # Flag to indicate strategy after ready
                 },
             )
-
-        # SPECIALIST_REQUEST: Check for explicit specialist keywords when ready
-        # This takes precedence over settings_changed because explicit keywords
-        # in user text are a stronger signal than implicit settings inference
-        for specialist, keywords in SPECIALIST_KEYWORDS.items():
-            if keyword_match(user_text_lower, keywords):
-                destination = SPECIALIST_NODE_MAP.get(specialist, "hotels_node")
-                self.record(ctx, fired=True, reason=f"specialist_request:{specialist}")
-                return self.build_result(
-                    ctx,
-                    destination=destination,
-                    reason=f"specialist_request:{specialist}",
-                    intent=specialist,
-                    metadata_updates={
-                        "router_path": f"specialist_request:{specialist}",
-                        "router_bypassed": True,
-                        "explicit_specialist_request": specialist,
-                    },
-                )
 
         # SETTINGS_CHANGE: Route to specialist when user answered a preference question
         # This triggers when user says "open to layovers" and flight_settings changes

@@ -232,13 +232,13 @@ def test_graph_plan_does_not_reask_destination_when_set(client):
 
         # Since dates may be auto-set, the response should either:
         # 1. Ask for dates (if dates are missing), or
-        # 2. Confirm ready to proceed (if all fields are set)
+        # 2. Confirm origin was set, or
+        # 3. Confirm ready to proceed (if all fields are set)
         # Either way, it should NOT re-ask for destination
         assert (
-            "when" in assistant_msg
-            or "date" in assistant_msg
+            "date" in assistant_msg
+            or "origin" in assistant_msg  # System-style: "Origin: Sydney."
             or "ready" in assistant_msg
-            or "set" in assistant_msg
             or turn2["document"].get("question_target") == "dates"
             or turn2["document"].get("ready_to_generate") is True
         )

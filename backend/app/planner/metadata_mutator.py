@@ -721,18 +721,13 @@ class MetadataMutator:
 
     def set_polish_result(
         self,
-        method: Literal["deterministic:opener", "deterministic:closer", "llm", "mvp_mode"],
-        duration_ms: Optional[float] = None,
+        method: Literal["deterministic:opener", "deterministic:closer"],
         skipped_reason: Optional[str] = None,
     ) -> None:
         """Set response polish metadata."""
         self._set("polish_method", method)
-        if duration_ms is not None:
-            self._set("polish_duration_ms", round(duration_ms, 2))
         if skipped_reason:
             self._set("polish_skipped_reason", skipped_reason)
-        if method == "mvp_mode":
-            self._set("polish_mvp_mode", True)
 
     # -------------------------------------------------------------------------
     # Tile Search

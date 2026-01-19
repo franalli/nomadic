@@ -161,6 +161,83 @@ STAGE0_FALLBACK_TEMPLATES = {
 }
 
 
+# =============================================================================
+# MINIMAL CENTRAL PLANNER TEMPLATES - just destination names, no descriptions
+# =============================================================================
+# Design principle: Central planner = plan state. Split view = option evaluation.
+# Shows only minimal destination lists to keep central view clean for coherence checking.
+STAGE0_MINIMAL_TEMPLATES: Dict[str, Tuple[str, List[str]]] = {
+    "hiking": (
+        "Hiking destinations: Swiss Alps · Patagonia · New Zealand · Nepal",
+        ["Swiss Alps", "Patagonia", "Show more options"],
+    ),
+    "skiing": (
+        "Ski destinations: French Alps · Swiss Alps · Japan · Colorado",
+        ["French Alps", "Japan", "Show more options"],
+    ),
+    "diving": (
+        "Dive destinations: Maldives · Great Barrier Reef · Red Sea · Indonesia",
+        ["Maldives", "Indonesia", "Show more options"],
+    ),
+    "cycling": (
+        "Cycling destinations: Netherlands · France · Italian Dolomites · Vietnam",
+        ["Netherlands", "France", "Show more options"],
+    ),
+    "boating": (
+        "Sailing destinations: Greek Islands · Croatia · Caribbean · Thailand",
+        ["Greek Islands", "Caribbean", "Show more options"],
+    ),
+    "surfing": (
+        "Surf destinations: Bali · Hawaii · Portugal · Costa Rica",
+        ["Bali", "Hawaii", "Show more options"],
+    ),
+    "climbing": (
+        "Climbing destinations: Yosemite · Dolomites · Chamonix · Kalymnos",
+        ["Yosemite", "Chamonix", "Show more options"],
+    ),
+    "safari": (
+        "Safari destinations: Tanzania · Kenya · Botswana · South Africa",
+        ["Tanzania", "Kenya", "Show more options"],
+    ),
+}
+
+
+def apply_minimal_strategy_template(
+    state: "GraphState",
+    topic: str,
+    is_stage0: bool = True,
+) -> None:
+    """
+    Apply minimal template for central planner view.
+
+    Shows just destination names without detailed descriptions.
+    Used when ready_to_generate=False to keep central view clean.
+    """
+    from app.debug_utils import _debug
+
+    template = STAGE0_MINIMAL_TEMPLATES.get(topic)
+    if not template:
+        # Fallback for unknown topic
+        state.last_summary = f"{topic.capitalize()} trip options available."
+        state.suggested_responses = ["Show options", "Set dates"]
+    else:
+        message, suggestions = template
+        state.last_summary = message
+        state.suggested_responses = suggestions
+
+    state.metadata["response_writer_node"] = (
+        f"strategy_node:stage{'0' if is_stage0 else '1'}:minimal"
+    )
+    state.metadata["response_generation_provenance"] = "template"
+    state.metadata["strategy_minimal_central"] = True
+
+    _debug(
+        f"STRATEGY_MINIMAL_TEMPLATE: {topic}",
+        stage="0" if is_stage0 else "1",
+        response_preview=state.last_summary[:50] if state.last_summary else "",
+    )
+
+
 # Destination+topic specific templates for enhanced guidance (Tier 10.22)
 # These provide expert knowledge for popular destination+activity combinations
 DESTINATION_TOPIC_TEMPLATES: Dict[Tuple[str, str], Dict[str, Any]] = {

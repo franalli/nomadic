@@ -4,6 +4,7 @@ import { ArrowRightLeft, CheckCircle2 } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 
 import { PlanDocument } from '@/components/plan';
+import { TabBookingStatus } from '@/components/tiles/TabBookingStatus';
 import {
   resolveTabForTile,
   TAB_CONFIG,
@@ -13,9 +14,10 @@ import {
 } from '@/components/tiles/TilesGrid';
 import { Loader } from '@/components/ui/loader';
 import { Skeleton } from '@/components/ui/skeleton';
-import { DETAIL_PRESETS } from '@/lib/mocks';
+import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { cn , formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs, PlanStatus } from '@/types/document';
+import type { BookingStatus } from '@/types/plan-envelope';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { BranchComparisonView } from './BranchComparisonView';
@@ -44,8 +46,6 @@ const BranchCardSkeleton = memo(function BranchCardSkeleton() {
     </div>
   );
 });
-
-type TileCounts = Record<'stays' | 'flights' | 'activities', number>;
 
 const DAY_IN_MS = 1000 * 60 * 60 * 24;
 const DATE_RANGE_FORMATTER = new Intl.DateTimeFormat('en-US', {
@@ -92,7 +92,6 @@ type BranchPanelProps = {
   branches: DocumentBranch[];
   selectedBranchId: string | null;
   onBranchSelect: (branchId: string) => void;
-  branchTileCounts?: Record<string, TileCounts>;
   tiles?: Tile[];
   tilesBranchId?: string | null;
   selectedTiles?: TileSelection;
@@ -107,13 +106,14 @@ type BranchPanelProps = {
   onSelectionToast?: (message: string) => void;
   /** Plan regeneration status for reactive updates */
   planStatus?: PlanStatus;
+  /** Per-tab booking status from backend */
+  bookingStatus?: BookingStatus | null;
 };
 
 export const BranchPanel = memo(function BranchPanel({
   branches,
   selectedBranchId,
   onBranchSelect,
-  branchTileCounts,
   tiles,
   tilesBranchId,
   selectedTiles,
@@ -125,6 +125,7 @@ export const BranchPanel = memo(function BranchPanel({
   isLoading = false,
   onSelectionToast,
   planStatus = 'ready',
+  bookingStatus,
 }: BranchPanelProps) {
   const hasBranches = branches.length > 0;
   const selected = hasBranches
@@ -145,11 +146,10 @@ export const BranchPanel = memo(function BranchPanel({
     toggleBranchForComparison,
     canCompare,
   } = useComparisonMode();
-  const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
-  // Use backend data - only use detailPreset for hero images as fallback
+  // Use backend data - placeholder images only as fallback
   const selectedHeroImages = selected?.hero_images?.length
     ? selected.hero_images
-    : detailPreset.heroImages;
+    : placeholderImagesForBranch({ id: selected?.id, destinations: selected?.destinations, index: selectedIndex });
   // Strategy content from backend (no mock fallback - show loading state instead)
   const selectedVibe = selected?.vibe ?? null;
   const selectedFocus = selected?.focus ?? null;
@@ -163,7 +163,6 @@ export const BranchPanel = memo(function BranchPanel({
   );
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
-  const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
   const branchTiles = useMemo(() => {
     if (!selected) return [];
     if (tilesBranchId == null || tilesBranchId === selected.id) {
@@ -238,58 +237,6 @@ export const BranchPanel = memo(function BranchPanel({
     );
   }, [branchTiles]);
 
-  const bookingSummary = useMemo(() => {
-    const labelForTab = (tab: TileTabKey) => {
-      if (tab === 'stays') return 'Hotels';
-      if (tab === 'flights') return 'Flights';
-      return 'Activities';
-    };
-
-    const describeCategory = (tab: TileTabKey, selections: Tile[]): string | null => {
-      const label = labelForTab(tab);
-      const options = tilesByTab[tab];
-      const optionCount = options.length || countsForSelected?.[tab] || 0;
-
-      if (selections.length > 0) {
-        const [first] = selections;
-        const extras = selections.length - 1;
-        const extraText = extras > 0 ? ` +${extras}` : '';
-        return `${label}: ${first.title}${extraText}`;
-      }
-
-      if (optionCount > 0) {
-        const highlight = options[0]?.title;
-        return `${label}: ${optionCount} option${optionCount === 1 ? '' : 's'}${highlight ? ` (top: ${highlight})` : ''}`;
-      }
-
-      // Don't show "searching..." when regenerating - the banner handles that
-      if (isRegenerating) {
-        return null;
-      }
-
-      return `${label}: searching...`;
-    };
-
-    const stayLine = describeCategory(
-      'stays',
-      selectedTiles?.stay ? [selectedTiles.stay] : []
-    );
-    const flightLine = describeCategory(
-      'flights',
-      selectedTiles?.flight ? [selectedTiles.flight] : []
-    );
-    const activityLine = describeCategory('activities', selectedTiles?.activities ?? []);
-
-    // Filter out null values (when regenerating) and join
-    const lines = [stayLine, flightLine, activityLine].filter((line): line is string => line !== null);
-    return lines.length > 0 ? lines.join(' · ') : null;
-  }, [
-    countsForSelected,
-    selectedTiles,
-    tilesByTab,
-    isRegenerating,
-  ]);
-
   // Show skeleton loaders while loading
   if (isLoading) {
     return (
@@ -329,14 +276,12 @@ export const BranchPanel = memo(function BranchPanel({
           {branches.map((b, idx) => {
             const isActive = selected !== null && b.id === selected.id;
             const isInComparison = isBranchInComparison(b.id);
-            const preset = DETAIL_PRESETS[idx % DETAIL_PRESETS.length];
-            // Use backend images if available, fallback to mock presets
-            const cardImage = b.image_url ?? b.hero_images?.[0] ?? preset.heroImages[0];
+            // Use backend images if available, fallback to deterministic placeholders
+            const placeholderImages = placeholderImagesForBranch({ id: b.id, destinations: b.destinations, index: idx });
+            const cardImage = b.image_url ?? b.hero_images?.[0] ?? placeholderImages[0];
             const branchBudget = resolveBudgetForBranch(b, tripInputs);
-            const budgetLabel =
-              formatBudgetDisplay(branchBudget.amount, branchBudget.currency) ?? preset.budget;
-            const duration =
-              resolveDurationForBranch(b, tripInputs)?.summary ?? preset.duration;
+            const budgetLabel = formatBudgetDisplay(branchBudget.amount, branchBudget.currency);
+            const duration = resolveDurationForBranch(b, tripInputs)?.summary;
 
             const handleCardClick = () => {
               if (isComparisonMode) {
@@ -423,10 +368,12 @@ export const BranchPanel = memo(function BranchPanel({
                       {b.description && (
                         <p className="line-clamp-2 text-sm opacity-90">{b.description}</p>
                       )}
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
-                        <span>{duration}</span>
-                        <span>{budgetLabel}</span>
-                      </div>
+                      {(duration || budgetLabel) && (
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
+                          {duration && <span>{duration}</span>}
+                          {budgetLabel && <span>{budgetLabel}</span>}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -494,27 +441,38 @@ export const BranchPanel = memo(function BranchPanel({
                 : 'to-background border border-white/10 bg-gradient-to-br from-black/30 via-white/5 p-4 shadow-inner'
             }`}
           >
-            {openTab === null ? null : isStaleTiles && !hasTilesForSelected ? (
-              // Tier 10.6: Show animated skeleton loaders during branch switch instead of static message
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                <TileCardSkeleton />
-                <TileCardSkeleton />
-                <TileCardSkeleton />
-              </div>
-            ) : tilesByTab[openTab]?.length ? (
-              <TilesGrid
-                tiles={branchTiles}
-                activeBranch={selected}
-                selectedTiles={selectedTiles}
-                onTileToggle={(tile) => onTileToggle?.(tile, openTab)}
-                forcedTab={openTab}
-                hideTabSwitcher
-                onSelectionToast={onSelectionToast}
-              />
-            ) : (
-              <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
-                No {TAB_CONFIG[openTab].label.toLowerCase()} available.
-              </div>
+            {openTab === null ? null : (
+              <>
+                {/* Per-tab booking status from backend */}
+                {bookingStatus?.[openTab] && (
+                  <TabBookingStatus
+                    status={bookingStatus[openTab]}
+                    className="mb-3"
+                  />
+                )}
+                {isStaleTiles && !hasTilesForSelected ? (
+                  // Tier 10.6: Show animated skeleton loaders during branch switch instead of static message
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    <TileCardSkeleton />
+                    <TileCardSkeleton />
+                    <TileCardSkeleton />
+                  </div>
+                ) : tilesByTab[openTab]?.length ? (
+                  <TilesGrid
+                    tiles={branchTiles}
+                    activeBranch={selected}
+                    selectedTiles={selectedTiles}
+                    onTileToggle={(tile) => onTileToggle?.(tile, openTab)}
+                    forcedTab={openTab}
+                    hideTabSwitcher
+                    onSelectionToast={onSelectionToast}
+                  />
+                ) : (
+                  <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
+                    No {TAB_CONFIG[openTab].label.toLowerCase()} available.
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -524,16 +482,6 @@ export const BranchPanel = memo(function BranchPanel({
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader size="sm" />
                 <span>Updating...</span>
-              </div>
-            )}
-
-            {/* Only show booking status if any booking types are enabled AND not regenerating */}
-            {hasAnyBookingEnabled && bookingSummary && !isRegenerating && (
-              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
-                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                  Booking status
-                </p>
-                <p className="text-foreground mt-1 text-xs">{bookingSummary}</p>
               </div>
             )}
 

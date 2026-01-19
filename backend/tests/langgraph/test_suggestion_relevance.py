@@ -404,6 +404,7 @@ class TestEdgeCases:
             "budget",
             "activities",
             "general",
+            "duration",
             None,
         }
         assert QUESTION_TARGET_VALUES == expected

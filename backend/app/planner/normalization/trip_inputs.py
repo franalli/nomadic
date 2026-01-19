@@ -868,10 +868,7 @@ class TripInputNormalizer:
                         "field": "multi_city_intent",
                         "raw_value": deltas["multi_city_intent_delta"],
                         "reason": "Could not understand trip type",
-                        "user_message": (
-                            "I couldn't understand if you want to visit multiple cities. "
-                            "Would you like to visit several destinations on this trip?"
-                        ),
+                        "user_message": ("Trip type unclear. " "Multi-city trip?"),
                     }
                 )
                 _debug(
@@ -985,6 +982,21 @@ class TripInputNormalizer:
             updates["_date_provenance"] = {
                 k: v.to_dict() for k, v in date_provenance_updates.items()
             }
+
+        # --- Flexible Dates Support ---
+        # Pass through date_flex, trip_duration, date_window_* fields directly
+        if "date_flex" in deltas:
+            updates["date_flex"] = bool(deltas["date_flex"])
+            _debug("Set date_flex", value=updates["date_flex"])
+        if "trip_duration" in deltas:
+            duration = self._normalize_int(deltas["trip_duration"])
+            if duration and duration > 0:
+                updates["trip_duration"] = duration
+                _debug("Set trip_duration", value=duration)
+        if "date_window_start" in deltas:
+            updates["date_window_start"] = deltas["date_window_start"]
+        if "date_window_end" in deltas:
+            updates["date_window_end"] = deltas["date_window_end"]
 
         # --- Store failed inputs for user feedback ---
         if failed_inputs:

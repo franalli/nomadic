@@ -1,14 +1,12 @@
 """
 Unit tests for deterministic polish behavior.
 
-MVP Hardening tests covering:
+Tests covering:
 - Deterministic polish does not change question_target
 - Deterministic polish does not change suggested_responses
-- MVP mode skips LLM polish entirely
-- YC compliance: No warm openers/closers (system-style messages)
+- Professional tone: No warm openers/closers (system-style messages)
 """
 
-from app.config import settings
 from app.plan_graph import (
     _WARM_CLOSERS,
     _WARM_OPENERS,
@@ -121,20 +119,6 @@ class TestDeterministicPolishDoesNotChangeState:
         _try_deterministic_polish(msg, state)
 
         assert state.suggested_responses == original_suggestions
-
-
-class TestPolishMVPMode:
-    """Test MVP mode polish behavior."""
-
-    def test_mvp_config_exists(self):
-        """enable_response_polish_mvp config should exist."""
-        # Just verify the config exists
-        assert hasattr(settings, "enable_response_polish_mvp")
-
-    def test_mvp_mode_is_disabled_by_default(self):
-        """MVP mode should be False by default (LLM polish disabled)."""
-        # MVP mode = False means we skip LLM polish
-        assert settings.enable_response_polish_mvp is False
 
 
 class TestDeterministicPolishPatterns:
