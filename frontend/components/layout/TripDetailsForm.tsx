@@ -419,7 +419,6 @@ function TripDetailsFormInner({
   const [hotelsSettingsOpen, setHotelsSettingsOpen] = useState(false);
   const [transportSettingsOpen, setTransportSettingsOpen] = useState(false);
   const [activitiesSettingsOpen, setActivitiesSettingsOpen] = useState(false);
-  const amenitiesUpdatedByLLM = isSubFieldUpdated('hotel_settings.amenities');
   const flightsBookingUpdated = isSubFieldUpdated('booking_types.flights');
   const transportBookingUpdated = isSubFieldUpdated('booking_types.ground_transport');
   const hotelsBookingUpdated = isSubFieldUpdated('booking_types.hotels');
