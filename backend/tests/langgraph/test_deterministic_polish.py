@@ -5,11 +5,13 @@ MVP Hardening tests covering:
 - Deterministic polish does not change question_target
 - Deterministic polish does not change suggested_responses
 - MVP mode skips LLM polish entirely
-- Safe transforms only (whitespace, warmth)
+- YC compliance: No warm openers/closers (system-style messages)
 """
 
 from app.config import settings
 from app.plan_graph import (
+    _WARM_CLOSERS,
+    _WARM_OPENERS,
     GraphState,
     TripInputs,
     _try_deterministic_polish,
@@ -19,8 +21,8 @@ from app.plan_graph import (
 class TestDeterministicPolishSafeTransforms:
     """Test that deterministic polish only applies safe transforms."""
 
-    def test_short_dry_message_gets_opener(self):
-        """Short dry messages should get a warm opener."""
+    def test_short_dry_message_with_yc_compliance(self):
+        """YC compliance: With empty warmth lists, no polishing occurs."""
         state = GraphState(
             user_text="test",
             trip_inputs=TripInputs(),
@@ -31,12 +33,16 @@ class TestDeterministicPolishSafeTransforms:
         msg = "I can help with that."
         result = _try_deterministic_polish(msg, state)
 
-        # Should either add opener or return None (for LLM polish)
-        if result:
-            # Should have added something warm
-            assert len(result) > len(msg)
-            # Original content should be preserved
-            assert "help" in result.lower()
+        # YC mode: warmth lists are empty, so no polishing
+        if not _WARM_OPENERS or not _WARM_CLOSERS:
+            assert result is None
+        else:
+            # Should either add opener or return None (for LLM polish)
+            if result:
+                # Should have added something warm
+                assert len(result) > len(msg)
+                # Original content should be preserved
+                assert "help" in result.lower()
 
     def test_message_with_exclamation_not_modified(self):
         """Messages already with warmth indicators may not need modification."""
@@ -50,9 +56,10 @@ class TestDeterministicPolishSafeTransforms:
         msg = "Great choice! I can help you find the perfect hotel."
         result = _try_deterministic_polish(msg, state)
 
-        # Already warm, may return None or minimal change
-        # The key is it shouldn't remove warmth
-        if result:
+        # YC mode: no polishing, or if polishing enabled, already warm
+        if not _WARM_OPENERS or not _WARM_CLOSERS:
+            assert result is None
+        elif result:
             assert "!" in result or "?" in result
 
     def test_empty_message_returns_none(self):
@@ -133,8 +140,8 @@ class TestPolishMVPMode:
 class TestDeterministicPolishPatterns:
     """Test specific deterministic polish patterns."""
 
-    def test_period_ending_gets_closer(self):
-        """Messages ending with period may get warm closer."""
+    def test_period_ending_with_yc_compliance(self):
+        """YC compliance: With empty warmth lists, no closer added."""
         state = GraphState(
             user_text="test",
             trip_inputs=TripInputs(),
@@ -145,8 +152,10 @@ class TestDeterministicPolishPatterns:
         msg = "I found some options."
         result = _try_deterministic_polish(msg, state)
 
-        # Should add warmth or return None for LLM
-        if result:
+        # YC mode: warmth lists are empty, so no polishing
+        if not _WARM_OPENERS or not _WARM_CLOSERS:
+            assert result is None
+        elif result:
             # Should have added something
             assert len(result) >= len(msg)
 
@@ -162,17 +171,18 @@ class TestDeterministicPolishPatterns:
         msg = "Where would you like to go?"
         result = _try_deterministic_polish(msg, state)
 
-        # Already ends with ?, may not need modification
-        # If modified, should still be a valid question
-        if result:
+        # YC mode: no polishing, or if polishing enabled, preserve question
+        if not _WARM_OPENERS or not _WARM_CLOSERS:
+            assert result is None
+        elif result:
             assert "?" in result
 
 
 class TestPolishMetadataTracking:
     """Test that polish tracks method in metadata."""
 
-    def test_tracks_polish_method(self):
-        """Should track which polish method was used."""
+    def test_tracks_polish_method_when_enabled(self):
+        """Should track which polish method was used (when warmth lists non-empty)."""
         state = GraphState(
             user_text="test",
             trip_inputs=TripInputs(),
@@ -183,7 +193,11 @@ class TestPolishMetadataTracking:
         msg = "I can help."
         result = _try_deterministic_polish(msg, state)
 
-        if result:
+        # YC mode: warmth lists are empty, so no polishing and no metadata
+        if not _WARM_OPENERS or not _WARM_CLOSERS:
+            assert result is None
+            # No metadata set when skipping
+        elif result:
             # Should have set polish_method in metadata
             assert "polish_method" in state.metadata
             assert state.metadata["polish_method"].startswith("deterministic")

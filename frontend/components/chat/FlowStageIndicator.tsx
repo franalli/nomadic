@@ -1,7 +1,7 @@
 // frontend/components/chat/FlowStageIndicator.tsx
 'use client';
 
-import { Check, Eye,Loader2, MapPin, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { useMemo } from 'react';
 
 /**
@@ -24,20 +24,6 @@ interface FlowStageIndicatorProps {
 }
 
 /**
- * Stage configuration with labels and icons
- */
-const STAGE_CONFIG: Record<
-  TripPlanningStage,
-  { label: string; shortLabel: string; step: number }
-> = {
-  greeting: { label: 'Welcome', shortLabel: 'Start', step: 1 },
-  collecting: { label: 'Tell me about your trip', shortLabel: 'Details', step: 2 },
-  ready: { label: 'Ready to plan', shortLabel: 'Ready', step: 3 },
-  generating: { label: 'Creating your itinerary', shortLabel: 'Planning', step: 4 },
-  viewing: { label: 'View your plan', shortLabel: 'View', step: 4 },
-};
-
-/**
  * Human-readable field names
  */
 const FIELD_LABELS: Record<string, string> = {
@@ -52,10 +38,10 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 /**
- * FlowStageIndicator - Shows user progress through the trip planning flow.
+ * FlowStageIndicator - Shows current plan state as a simple status indicator.
  *
- * A minimal progress indicator that helps first-time users understand
- * where they are in the planning process.
+ * YC-aligned: reads as status, not journey. No wizard dots, no sequence.
+ * Format: "Plan state · Awaiting dates" or "Plan state · Ready to plan"
  */
 export function FlowStageIndicator({
   stage,
@@ -75,78 +61,29 @@ export function FlowStageIndicator({
 
   if (!visible) return null;
 
-  const config = STAGE_CONFIG[stage];
-  const totalSteps = 4;
-
   // Don't show on greeting stage (before first user message)
   // Don't show on viewing stage (branches are already visible, indicator is redundant)
   if (stage === 'greeting' || stage === 'viewing') return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground bg-muted/30 rounded-full border border-border/30">
-      {/* Stage icon */}
-      <StageIcon stage={stage} />
+    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground bg-muted/20 rounded-lg border border-border/20">
+      <span className="font-medium text-foreground/60 tracking-wide">Plan state</span>
+      <span className="text-border">·</span>
 
-      {/* Stage label */}
-      <span className="font-medium text-foreground/80">{config.shortLabel}</span>
-
-      {/* Progress dots */}
-      <div className="flex items-center gap-1 ml-1">
-        {Array.from({ length: totalSteps }).map((_, i) => {
-          const stepNum = i + 1;
-          const isCompleted = stepNum < config.step;
-          const isCurrent = stepNum === config.step;
-
-          return (
-            <div
-              key={stepNum}
-              className={`h-1.5 w-1.5 rounded-full transition-colors ${
-                isCompleted
-                  ? 'bg-primary'
-                  : isCurrent
-                    ? 'bg-primary/60 animate-pulse'
-                    : 'bg-border'
-              }`}
-            />
-          );
-        })}
-      </div>
-
-      {/* Missing field hint (for collecting stage) */}
-      {stage === 'collecting' && displayMissingFields.length > 0 && (
-        <span className="text-muted-foreground/70 ml-1">
-          • need {displayMissingFields.join(', ')}
+      {stage === 'collecting' && displayMissingFields.length > 0 ? (
+        <span className="text-muted-foreground">Awaiting {displayMissingFields.join(', ')}</span>
+      ) : stage === 'ready' ? (
+        <span className="text-primary/80">Ready to plan</span>
+      ) : stage === 'generating' ? (
+        <span className="text-primary/80 flex items-center gap-1.5">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Planning
         </span>
-      )}
-
-      {/* Ready indicator */}
-      {stage === 'ready' && (
-        <span className="text-primary ml-1">• ready to generate!</span>
+      ) : (
+        <span className="text-muted-foreground">Collecting details</span>
       )}
     </div>
   );
-}
-
-/**
- * StageIcon - Renders the appropriate icon for each stage
- */
-function StageIcon({ stage }: { stage: TripPlanningStage }) {
-  const iconClass = 'h-3.5 w-3.5';
-
-  switch (stage) {
-    case 'greeting':
-      return <MapPin className={iconClass} />;
-    case 'collecting':
-      return <MapPin className={iconClass} />;
-    case 'ready':
-      return <Check className={`${iconClass} text-primary`} />;
-    case 'generating':
-      return <Loader2 className={`${iconClass} animate-spin text-primary`} />;
-    case 'viewing':
-      return <Eye className={iconClass} />;
-    default:
-      return <Sparkles className={iconClass} />;
-  }
 }
 
 /**

@@ -31,6 +31,7 @@ from app.planner.nodes.llm_utils import measure_llm_call
 
 # Import shared strategy utilities from base module (avoid duplication)
 from app.planner.nodes.strategy.base import (
+    detect_all_strategy_topics,
     detect_field_modification_request,
     detect_strategy_switch,
     detect_topic_switch,
@@ -71,6 +72,120 @@ async def _strategy_stage0(state: "GraphState", topic: str) -> "GraphState":
     from app.planner.nodes.strategy.stage0 import Stage0Coordinator
 
     return await Stage0Coordinator.execute(state, topic)
+
+
+async def _strategy_stage0_parallel(state: "GraphState", topics: list[str]) -> "GraphState":
+    """
+    Stage 0 for multiple topics in parallel.
+
+    When user mentions multiple activities (e.g., "hiking and diving"),
+    run Stage 0 for each topic in parallel and merge the responses.
+
+    The merged response combines destination archetypes from each topic,
+    with a single clarifying question at the end.
+    """
+    import asyncio
+    import copy
+
+    from app.planner.nodes.strategy.stage0 import Stage0Coordinator
+
+    _debug(
+        "🔄 PARALLEL STAGE 0: Running for multiple topics",
+        topics=topics,
+        count=len(topics),
+    )
+
+    # Create tasks for each topic
+    # We need to create separate state copies to avoid concurrent modifications
+    async def run_stage0_for_topic(topic: str) -> tuple[str, str, list[str]]:
+        """Run Stage 0 for a single topic and return (topic, response, suggestions)."""
+        # Create a shallow copy of state for this topic
+        topic_state = copy.copy(state)
+        topic_state.metadata = dict(state.metadata)
+        topic_state.strategy_topic = topic
+
+        result_state = await Stage0Coordinator.execute(topic_state, topic)
+
+        return (
+            topic,
+            result_state.last_summary or "",
+            result_state.suggested_responses or [],
+        )
+
+    # Run all Stage 0 calls in parallel
+    tasks = [run_stage0_for_topic(topic) for topic in topics]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Collect successful responses
+    topic_responses: list[tuple[str, str, list[str]]] = []
+    for result in results:
+        if isinstance(result, Exception):
+            _debug("Stage 0 parallel task failed", error=str(result))
+            continue
+        topic_responses.append(result)
+
+    if not topic_responses:
+        # All failed, fall back to single topic
+        _debug("All parallel Stage 0 tasks failed, falling back to primary topic")
+        return await _strategy_stage0(state, topics[0])
+
+    # Merge responses into a combined message
+    combined_parts = []
+    all_suggestions: list[str] = []
+
+    for topic, response, suggestions in topic_responses:
+        if response:
+            # Add topic header if multiple topics
+            if len(topic_responses) > 1:
+                topic_emoji = {
+                    "hiking": "🥾",
+                    "diving": "🤿",
+                    "skiing": "⛷️",
+                    "cycling": "🚴",
+                    "boating": "⛵",
+                }.get(topic, "✨")
+                combined_parts.append(f"{topic_emoji} **{topic.title()}**\n{response}")
+            else:
+                combined_parts.append(response)
+
+        # Collect unique suggestions
+        for suggestion in suggestions:
+            if suggestion not in all_suggestions:
+                all_suggestions.append(suggestion)
+
+    # Build merged response
+    if len(combined_parts) > 1:
+        merged_response = "\n\n---\n\n".join(combined_parts)
+        # Add a combined intro if we have multiple topics
+        topics_str = " and ".join(t for t, _, _ in topic_responses)
+        intro = f"Here are some options for your **{topics_str}** adventure:\n\n"
+        merged_response = intro + merged_response
+    else:
+        merged_response = combined_parts[0] if combined_parts else ""
+
+    # Update state with merged response
+    state.last_summary = merged_response
+    state.suggested_responses = all_suggestions[:4]  # Limit suggestions
+
+    # Track all topics in metadata
+    state.metadata["stage0_parallel_topics"] = topics
+    state.metadata["stage0_parallel_count"] = len(topic_responses)
+
+    # Set the lifecycle signature for the primary topic
+    ti = state.trip_inputs
+    destinations = ti.destinations or []
+    origin = ti.origin
+    primary_sig = SuppressionPredicates.compute_stage0_signature(topics[0], destinations, origin)
+    state.metadata["stage0_completed_sig"] = primary_sig
+
+    _debug(
+        "✅ PARALLEL STAGE 0 COMPLETE",
+        topics_completed=[t for t, _, _ in topic_responses],
+        response_length=len(merged_response),
+        suggestions_count=len(state.suggested_responses),
+    )
+
+    return state
 
 
 async def strategy_node(state: "GraphState") -> "GraphState":
@@ -143,6 +258,8 @@ async def strategy_node(state: "GraphState") -> "GraphState":
     # (destination archetypes + mini itinerary) with a single clarifying question.
     # This bypasses the core fields guard since we're intentionally providing
     # inspiration before collecting details.
+    #
+    # Supports parallel execution for multiple topics (e.g., "hiking and diving").
     is_stage0 = state.metadata.get("strategy_stage") == 0
     if is_stage0:
         # =====================================================================
@@ -168,16 +285,38 @@ async def strategy_node(state: "GraphState") -> "GraphState":
             state.metadata["strategy_stage0_skipped_lifecycle"] = True
             return await required_fields_node(state)
 
+        # =====================================================================
+        # PARALLEL STAGE 0: Detect all topics and run in parallel
+        # =====================================================================
+        # If user mentions multiple activities (e.g., "hiking and diving"),
+        # fire Stage 0 for each topic in parallel and merge responses.
+        # =====================================================================
+        user_text = state.user_text or ""
+        all_topics = detect_all_strategy_topics(user_text)
+
+        # Ensure the primary topic is included
+        if topic not in all_topics:
+            all_topics = [topic] + all_topics
+
+        # Remove duplicates while preserving order
+        all_topics = list(dict.fromkeys(all_topics))
+
         _debug(
             "📋 STRATEGY STAGE 0: Pre-core value-first mode",
             topic=topic,
+            all_topics=all_topics,
             question_target=state.question_target,
         )
         _strategy_stats["stage0_calls"] = _strategy_stats.get("stage0_calls", 0) + 1
         from app.plan_graph import _gate_stats
 
         _gate_stats["strategy_pre_core_value_fired"] += 1
-        return await _strategy_stage0(state, topic)
+
+        # If multiple topics, run in parallel and merge
+        if len(all_topics) > 1:
+            return await _strategy_stage0_parallel(state, all_topics)
+        else:
+            return await _strategy_stage0(state, topic)
 
     # =========================================================================
     # NODE GUARD 1: Block strategy if core fields are missing
@@ -465,6 +604,33 @@ async def strategy_node(state: "GraphState") -> "GraphState":
     # Stage 2 triggers only on explicit phrases - NOT on implicit confirmations.
     # NOTE: expansion_result and is_expansion_request already computed above in guard 2
     is_stage2 = is_expansion_request  # Alias for clarity
+
+    # =========================================================================
+    # STAGE 2 BLOCK IN CENTRAL PLANNER VIEW
+    # =========================================================================
+    # When user is in central planner view (ready_to_generate=False), we do NOT
+    # fire Stage 2 expansion. Instead, we suggest they generate the plan to see
+    # more details. This keeps detailed content reserved for the split view.
+    # =========================================================================
+    if is_stage2 and not state.ready_to_generate:
+        _debug(
+            "🚫 STAGE 2 BLOCKED: User in central planner view",
+            topic=topic,
+            expansion_target=expansion_result.target.value if expansion_result.target else None,
+            matched_phrase=expansion_result.matched_phrase,
+            ready_to_generate=state.ready_to_generate,
+        )
+        state.metadata["stage2_blocked_central_planner"] = True
+        state.last_summary = (
+            "I can provide more detail in your full itinerary. "
+            "Click **Generate Trip** to see the complete day-by-day breakdown, "
+            "routes, budget tips, and more!"
+        )
+        state.suggested_responses = ["Generate trip", "What else should I know?"]
+        state.metadata["response_writer_node"] = "strategy_node:stage2_blocked"
+        state.metadata["response_generation_provenance"] = "template"
+        _debug_node_exit("strategy_node", state, start_ns)
+        return state
 
     if is_stage2:
         # Stage 2: User explicitly asked for expansion

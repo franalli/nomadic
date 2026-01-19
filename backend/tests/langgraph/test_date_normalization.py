@@ -389,7 +389,8 @@ class TestNormalizeInputsIntegration:
         notifications = result.metadata["partial_date_notifications"]
         assert len(notifications) == 1
         assert "December 01, 2025" in notifications[0]
-        assert "different day" in notifications[0]
+        # YC style: terse notification format "Start: {date}."
+        assert notifications[0].startswith("Start:")
 
     def test_end_date_partial_notification(self):
         """Test that partial end dates also get notifications."""
@@ -408,7 +409,8 @@ class TestNormalizeInputsIntegration:
         assert result.trip_inputs.end_date == "2026-05-01"
         notifications = result.metadata.get("partial_date_notifications", [])
         assert len(notifications) == 1
-        assert "end date" in notifications[0]
+        # YC style: terse notification format "End: {date}."
+        assert notifications[0].startswith("End:")
 
     def test_complete_date_no_notification(self):
         """Test that complete dates don't trigger notifications."""

@@ -5,9 +5,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BranchPanel } from '@/components/branches/BranchPanel';
+import { ChangeReceipt, type ChangeReceiptData } from '@/components/chat/ChangeReceipt';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { HeroSection } from '@/components/layout/HeroSection';
-import { useBranchManager } from '@/components/layout/hooks/useBranchManager';
+import { useBranchManager, type PlanResultPayload } from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
@@ -15,10 +16,12 @@ import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
 import { FeaturesSection } from '@/components/nomadic/features-section';
 import { Footer } from '@/components/nomadic/footer';
+import { PlanHeaderStatus } from '@/components/plan/PlanHeaderStatus';
 import { Card, CardContent } from '@/components/ui/card';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
+import { INITIAL_PLAN_STATUS, type PlanStatus as UnifiedPlanStatus } from '@/types/plan-status';
 
 // Toast notification system
 const MAX_TOASTS = 3;
@@ -66,12 +69,55 @@ const DATE_PRESETS = [
   },
 ];
 
+// Helper to detect which trip input fields changed between two states
+function detectChangedFieldNames(
+  oldInputs: DocumentTripInputs | null,
+  newInputs: DocumentTripInputs | null
+): string[] {
+  if (!newInputs) return [];
+
+  const changed: string[] = [];
+
+  // Compare core fields
+  if (oldInputs?.origin !== newInputs.origin && newInputs.origin) {
+    changed.push('origin');
+  }
+  if (
+    JSON.stringify(oldInputs?.destinations) !== JSON.stringify(newInputs.destinations) &&
+    (newInputs.destinations?.length ?? 0) > 0
+  ) {
+    changed.push('destinations');
+  }
+  if (oldInputs?.start_date !== newInputs.start_date && newInputs.start_date) {
+    changed.push('start_date');
+  }
+  if (oldInputs?.end_date !== newInputs.end_date && newInputs.end_date) {
+    changed.push('end_date');
+  }
+  if (oldInputs?.budget !== newInputs.budget && newInputs.budget != null) {
+    changed.push('budget');
+  }
+  if (oldInputs?.adults !== newInputs.adults && newInputs.adults != null) {
+    changed.push('adults');
+  }
+  if (oldInputs?.children !== newInputs.children && newInputs.children != null) {
+    changed.push('children');
+  }
+
+  return changed;
+}
+
 export function NomadicLanding() {
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
   const storeTripInputs = documentStore.document?.trip_inputs;
   const llmUpdatedFields = documentStore.llmUpdatedFields;
   const acknowledgeLLMUpdate = documentStore.acknowledgeLLMUpdate;
+  const restoreTripInputs = documentStore.restoreTripInputs;
+
+  // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
+  const [receiptData, setReceiptData] = useState<ChangeReceiptData | null>(null);
+  const previousTripInputsRef = useRef<DocumentTripInputs | null>(null);
 
   // Derive tripInputs from store (with defaults)
   const tripInputs: DocumentTripInputs = useMemo(() => {
@@ -131,6 +177,7 @@ export function NomadicLanding() {
   const branchManager = useBranchManager({
     tripInputs,
     chatPanelContainerRef,
+    chatPanelRef,
     onToast: addToast,
     onChatKeyIncrement: useCallback(() => setChatKey((prev) => prev + 1), []),
     resetDraft: () => tripInputsEditorRef.current?.resetDraft(),
@@ -160,6 +207,57 @@ export function NomadicLanding() {
     handleBookTrip,
     handleGeneratePlanStart,
   } = branchManager;
+
+  // Wrapped handlers for receipt functionality
+  // Snapshot trip inputs before generation starts
+  const handleGeneratePlanStartWithSnapshot = useCallback(() => {
+    previousTripInputsRef.current = storeTripInputs ? { ...storeTripInputs } : null;
+    handleGeneratePlanStart();
+  }, [storeTripInputs, handleGeneratePlanStart]);
+
+  // Compare inputs after plan result and show receipt
+  const handlePlanResultWithReceipt = useCallback(
+    (result: PlanResultPayload) => {
+      handlePlanResult(result);
+
+      // Compute what changed for receipt
+      const newInputs = result.response?.document?.trip_inputs ?? null;
+      const changedFields = detectChangedFieldNames(previousTripInputsRef.current, newInputs);
+
+      if (changedFields.length > 0) {
+        setReceiptData({
+          type: changedFields.length === 1 ? 'partial' : 'updated',
+          fields: changedFields,
+          canUndo: true,
+        });
+      }
+    },
+    [handlePlanResult]
+  );
+
+  // Undo handler - restore previous inputs and show reverted receipt
+  const handleReceiptUndo = useCallback(() => {
+    if (!previousTripInputsRef.current) return;
+
+    const revertedFields = detectChangedFieldNames(
+      storeTripInputs ?? null,
+      previousTripInputsRef.current
+    );
+
+    restoreTripInputs(previousTripInputsRef.current);
+
+    // Show reverted receipt (no undo button)
+    setReceiptData({
+      type: 'reverted',
+      fields: revertedFields,
+      canUndo: false,
+    });
+  }, [storeTripInputs, restoreTripInputs]);
+
+  // Dismiss receipt
+  const handleReceiptDismiss = useCallback(() => {
+    setReceiptData(null);
+  }, []);
 
   // Trip inputs editor hook - manages all trip input editing state and handlers
   const tripInputsEditor = useTripInputsEditor({
@@ -270,6 +368,16 @@ export function NomadicLanding() {
 
   const missingFields = tripInputs.missing_fields ?? [];
 
+  // Derive unified plan status for PlanHeaderStatus
+  // TODO: Move this to a central hook once specialist tracking is implemented
+  const unifiedPlanStatus: UnifiedPlanStatus = useMemo(() => ({
+    ...INITIAL_PLAN_STATUS,
+    phase: isGenerating ? 'updating' : (missingFields.length > 0 ? 'needs_input' : 'ready'),
+    missing: missingFields,
+    dirty: branchManager.planStatus === 'stale',
+    activeSpecialists: [], // TODO: Track from SSE events
+  }), [isGenerating, missingFields, branchManager.planStatus]);
+
   // Check if we have origin or destination to show route
   const hasOrigin = Boolean(tripInputs.origin);
   const hasDestination = (tripInputs.destinations ?? []).length > 0;
@@ -278,6 +386,57 @@ export function NomadicLanding() {
   const hasStartDate = Boolean(tripInputs.start_date);
   const hasEndDate = Boolean(tripInputs.end_date);
   const hasDates = hasStartDate || hasEndDate;
+
+  // Check if we have budget
+  const hasBudget = tripInputs.budget != null;
+
+  // Count resolved constraints for plan header copy
+  const constraintCount = [hasDestination, hasOrigin, hasDates, hasBudget].filter(Boolean).length;
+
+  // Get plan header title and body based on constraint count
+  const getPlanHeaderCopy = () => {
+    if (isGenerating) {
+      return { title: 'Trip plan', subtitle: 'Updating plan...' };
+    }
+    switch (constraintCount) {
+      case 0:
+        return {
+          title: 'Your trip plan',
+          subtitle: 'This plan updates automatically as you set constraints.',
+        };
+      case 1:
+        return {
+          title: 'Trip plan in progress',
+          subtitle: 'The plan will resolve as remaining constraints are added.',
+        };
+      case 2:
+      case 3:
+        return {
+          title: 'Resolving trip plan',
+          subtitle: 'The plan is partially defined and will update as constraints change.',
+        };
+      default: {
+        // All 4 constraints set - show summary line
+        const origin = tripInputs.origin || '';
+        const destination = tripInputs.destinations?.[0] || '';
+        const dateRange = hasStartDate && hasEndDate
+          ? `${tripInputs.start_date} – ${tripInputs.end_date}`
+          : hasStartDate ? tripInputs.start_date : '';
+        const budget = hasBudget ? `€${tripInputs.budget}` : '';
+        const parts = [
+          origin && destination ? `${origin} → ${destination}` : destination || origin,
+          dateRange,
+          budget,
+        ].filter(Boolean);
+        return {
+          title: 'Trip plan',
+          subtitle: parts.join(' · ') || null,
+        };
+      }
+    }
+  };
+
+  const planHeaderCopy = getPlanHeaderCopy();
 
   // Trip details section content - passed to ChatPanel
   const tripDetailsSection = {
@@ -359,8 +518,8 @@ export function NomadicLanding() {
           ref={chatPanelRef}
           key={chatKey}
           selectedBranchId={selectedBranchId}
-          onPlanResult={handlePlanResult}
-          onGeneratePlanStart={handleGeneratePlanStart}
+          onPlanResult={handlePlanResultWithReceipt}
+          onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
           onFreshStart={handleStartNewSession}
           tripDetails={fullHeight ? undefined : tripDetailsSection}
           fullHeight={fullHeight}
@@ -377,20 +536,30 @@ export function NomadicLanding() {
     <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
       <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
       <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
-      <div className="relative flex flex-wrap items-start justify-between gap-4 px-5 py-4">
-        <div className="space-y-1">
-          <h3 className="text-foreground font-display text-xl font-bold">
-            Trip plan
-          </h3>
-          <p className="text-muted-foreground text-xs uppercase tracking-wide">
-            Reflects current constraints
-          </p>
-        </div>
-        {branches.length > 0 ? (
-          <div className="text-primary/80 text-[10px] font-semibold uppercase tracking-wider">
-            PLAN UPDATED
+      <div className="relative px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h3 className="text-foreground font-display text-xl font-bold">
+              {planHeaderCopy.title}
+            </h3>
+            {planHeaderCopy.subtitle && (
+              <p className="text-muted-foreground text-sm">
+                {planHeaderCopy.subtitle}
+              </p>
+            )}
           </div>
-        ) : null}
+          <PlanHeaderStatus status={unifiedPlanStatus} />
+        </div>
+        {/* Change receipt - shows "Updated: X, Y · Undo" after freeform extraction */}
+        {receiptData && (
+          <div className="flex justify-end mt-2">
+            <ChangeReceipt
+              receipt={receiptData}
+              onUndo={handleReceiptUndo}
+              onDismiss={handleReceiptDismiss}
+            />
+          </div>
+        )}
       </div>
       <CardContent className="relative overflow-hidden">
         {isHydratingSnapshot && branches.length === 0 ? (
@@ -412,6 +581,7 @@ export function NomadicLanding() {
             onBookTrip={handleBookTrip}
             canBookTrip={missingFields.length === 0}
             tripInputs={tripInputs}
+            planStatus={branchManager.planStatus}
             onSelectionToast={(message) => addToast(message, 'confirmation')}
           />
         )}

@@ -122,7 +122,7 @@ export const TilesGrid = memo(function TilesGrid({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-xs text-muted-foreground">
-        Prices and availability are provided by third-party travel suppliers.
+        Prices and availability from partners.
       </p>
       {!hideTabSwitcher && (
         <div className="space-y-2">

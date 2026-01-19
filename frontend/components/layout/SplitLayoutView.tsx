@@ -1,10 +1,10 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { ChevronDown, ChevronUp } from 'lucide-react';
-import React, { memo, useState } from 'react';
+import React, { memo } from 'react';
 
 import { GeneratingLoader } from '@/components/layout/GeneratingLoader';
+import { MobileConstraintsBar } from '@/components/layout/MobileConstraintsBar';
 import { Card, CardContent } from '@/components/ui/card';
 
 export interface SplitLayoutViewProps {
@@ -23,7 +23,7 @@ export interface SplitLayoutViewProps {
 /**
  * Split layout view with:
  * - Desktop (lg+): Fixed sidebar on left, scrollable main content on right
- * - Mobile (<lg): Stack layout with content on top, expandable chat bar at bottom
+ * - Mobile (<lg): Collapsible constraints bar at top, plan content scrolls below
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
   sidebarContent,
@@ -32,9 +32,6 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   hasBranchesReady,
   tripDetailsContent,
 }: SplitLayoutViewProps) {
-  // Mobile chat bar expanded state
-  const [mobileChatExpanded, setMobileChatExpanded] = useState(false);
-
   return (
     <div className="flex flex-col lg:flex-row min-h-screen">
       {/* Desktop sidebar - Chat Panel */}
@@ -58,10 +55,13 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         </div>
       </aside>
 
+      {/* Mobile constraints bar - fixed at top */}
+      <MobileConstraintsBar />
+
       {/* Main content area */}
       {/* Desktop: matches sidebar structure with padding and inner scrollable container */}
       <main
-        className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)] pb-[140px] lg:pb-0"
+        className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)]"
         aria-label="Your trip plan"
       >
         {/* Desktop: padded wrapper matching sidebar (p-4 pb-2, no left padding) */}
@@ -102,50 +102,6 @@ export const SplitLayoutView = memo(function SplitLayoutView({
           </div>
         </div>
       </main>
-
-      {/* Mobile chat bar - fixed at bottom */}
-      {/* Only visible on screens < lg */}
-      <aside
-        className={`fixed bottom-0 left-0 right-0 z-50 lg:hidden
-          bg-gradient-to-t from-black/95 via-black/90 to-black/85 backdrop-blur-lg
-          border-t border-white/10 shadow-2xl
-          transition-all duration-300 ease-out
-          ${mobileChatExpanded ? 'h-[60vh]' : 'h-[140px]'}`}
-        aria-label="Trip planning chat"
-      >
-        {/* Expand/collapse handle */}
-        <button
-          type="button"
-          onClick={() => setMobileChatExpanded(!mobileChatExpanded)}
-          className="absolute -top-3 left-1/2 -translate-x-1/2 z-10
-            bg-primary hover:bg-primary/90 text-primary-foreground
-            rounded-full px-4 py-1 shadow-lg
-            flex items-center gap-1 text-xs font-medium
-            transition-colors"
-          aria-label={mobileChatExpanded ? 'Collapse chat' : 'Expand chat'}
-        >
-          {mobileChatExpanded ? (
-            <>
-              <ChevronDown className="h-4 w-4" />
-              <span>Collapse</span>
-            </>
-          ) : (
-            <>
-              <ChevronUp className="h-4 w-4" />
-              <span>Chat</span>
-            </>
-          )}
-        </button>
-
-        {/* Chat content */}
-        <div className="h-full overflow-hidden p-3 pt-4">
-          <Card className="bg-card/75 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
-            <CardContent className="flex h-full min-h-0 flex-col p-3">
-              {sidebarContent}
-            </CardContent>
-          </Card>
-        </div>
-      </aside>
     </div>
   );
 });

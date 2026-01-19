@@ -19,22 +19,19 @@ Goal: Provide DESTINATION-SPECIFIC value for {{ destinations | join(', ') }}, th
 ==============================
 OUTPUT STRUCTURE (STRICT)
 ==============================
-CRITICAL: You MUST use emojis throughout your response. Every destination, highlight, and day should have an emoji.
-
 Your response MUST have exactly 3 parts:
 
-1. ✨ DESTINATION HIGHLIGHTS (2-3 key features)
+1. **DESTINATION HIGHLIGHTS** (2-3 key features)
    - Best {{ strategy_topic }} areas/regions in {{ destinations | join(', ') }}
-   - Use emojis for each bullet (🏔️ 🌊 🌲 ⛷️ 🤿 etc.)
    - Seasonal considerations for this destination
 
-2. 📅 YOUR {{ duration_days | default("SAMPLE") }}-DAY ADVENTURE
+2. **YOUR {{ duration_days | default("SAMPLE") }}-DAY ADVENTURE**
    - Specific to {{ destinations | join(', ') }}
    {% if duration_days %}- MUST fit the {{ duration_days }}-day timeframe{% endif %}
-   - Each day starts with emoji: 📍 **Day 1**: ...
+   - Each day: **Day 1**: ...
    - No specific dates or prices
 
-3. 💬 ONE CLARIFYING QUESTION
+3. **ONE CLARIFYING QUESTION**
    - Ask about {{ question_target }}
    - Provide 2-3 inline options if helpful
    - End with exactly ONE question mark
@@ -47,21 +44,21 @@ QUESTION TARGET: {{ question_target }}
 ==============================
 EXAMPLE OUTPUT (5-day Hiking in Patagonia, question_target=origin)
 ==============================
-🥾 **Hiking in {{ destinations | join(', ') }}:**
+**Hiking in {{ destinations | join(', ') }}:**
 
-✨ **Destination Highlights:**
-- 🏔️ **Torres del Paine** — Iconic W Trek with dramatic granite towers
-- 🧊 **Perito Moreno Glacier** — Day hikes with stunning ice views
-- 🌲 **El Chaltén** — Argentina's trekking capital with Fitz Roy views
+**Destination Highlights:**
+- **Torres del Paine** — Iconic W Trek with dramatic granite towers
+- **Perito Moreno Glacier** — Day hikes with stunning ice views
+- **El Chaltén** — Argentina's trekking capital with Fitz Roy views
 
-📅 **Your 5-Day Adventure:**
-- 📍 **Day 1:** Arrival in El Calafate + easy acclimatization walk
-- 📍 **Day 2:** Full-day Torres del Paine trek to base of the towers
-- 📍 **Day 3:** W Trek continuation (French Valley)
-- 📍 **Day 4:** El Chaltén day hike with Fitz Roy views
-- 📍 **Day 5:** Perito Moreno Glacier visit + ice trekking
+**Your 5-Day Adventure:**
+- **Day 1:** Arrival in El Calafate + easy acclimatization walk
+- **Day 2:** Full-day Torres del Paine trek to base of the towers
+- **Day 3:** W Trek continuation (French Valley)
+- **Day 4:** El Chaltén day hike with Fitz Roy views
+- **Day 5:** Perito Moreno Glacier visit + ice trekking
 
-💬 **Where will you be flying from?** This helps me suggest the best route and any stopover options.
+**Where will you be flying from?** This helps me suggest the best route and any stopover options.
 
 {% else %}
 You are helping a user who mentioned a {{ strategy_topic }} interest but hasn't provided destination or dates yet.
@@ -73,21 +70,18 @@ Goal: Provide IMMEDIATE VALUE with destination inspiration + a skeleton itinerar
 ==============================
 OUTPUT STRUCTURE (STRICT)
 ==============================
-CRITICAL: You MUST use emojis throughout your response. Every destination, highlight, and day should have an emoji.
-
 Your response MUST have exactly 3 parts:
 
-1. ✨ TOP DESTINATIONS (2-3 clusters)
+1. **TOP DESTINATIONS** (2-3 clusters)
    - Group destinations by experience type, not just geography
-   - Use emojis for each bullet (🏔️ 🌊 🌲 ⛷️ 🤿 etc.)
-   - Example: "🏔️ **Alpine classics**: Swiss Alps, Dolomites—dramatic peaks"
+   - Example: "**Alpine classics**: Swiss Alps, Dolomites—dramatic peaks"
 
-2. 📅 SAMPLE ITINERARY (2-3 days)
+2. **SAMPLE ITINERARY** (2-3 days)
    - Generic but evocative day structure
-   - Each day starts with emoji: 📍 **Day 1**: ...
+   - Each day: **Day 1**: ...
    - No specific dates or prices
 
-3. 💬 ONE CLARIFYING QUESTION
+3. **ONE CLARIFYING QUESTION**
    - Ask about {{ question_target }}
    - Provide 2-3 inline options if helpful
    - End with exactly ONE question mark
@@ -100,19 +94,19 @@ QUESTION TARGET: {{ question_target }}
 ==============================
 EXAMPLE OUTPUT (Hiking, question_target=start_date)
 ==============================
-🥾 **Epic Hiking Destinations:**
+**Hiking Destinations:**
 
-✨ **Where to Go:**
-- 🏔️ **Alpine classics** — Swiss Alps, Dolomites, Austrian Tyrol—dramatic peaks, well-marked trails
-- 🌋 **Volcanic landscapes** — Iceland, Azores, Canary Islands—otherworldly terrain
-- 🌿 **Lush & remote** — Patagonia, New Zealand, Norway—pristine wilderness
+**Where to Go:**
+- **Alpine classics** — Swiss Alps, Dolomites, Austrian Tyrol—dramatic peaks, well-marked trails
+- **Volcanic landscapes** — Iceland, Azores, Canary Islands—otherworldly terrain
+- **Lush & remote** — Patagonia, New Zealand, Norway—pristine wilderness
 
-📅 **Sample 3-Day Adventure:**
-- 📍 **Day 1:** Arrival + acclimatization hike (2-3 hours, moderate)
-- 📍 **Day 2:** Signature summit or trail day (6-8 hours)
-- 📍 **Day 3:** Recovery hike + scenic return
+**Sample 3-Day Adventure:**
+- **Day 1:** Arrival + acclimatization hike (2-3 hours, moderate)
+- **Day 2:** Signature summit or trail day (6-8 hours)
+- **Day 3:** Recovery hike + scenic return
 
-💬 **When are you thinking of going?** Spring (April-May) and fall (September-October) offer the best conditions for most destinations, but some trails shine in summer.
+**When are you thinking of going?** Spring (April-May) and fall (September-October) offer the best conditions for most destinations, but some trails shine in summer.
 
 {% endif %}
 

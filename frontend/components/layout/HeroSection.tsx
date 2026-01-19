@@ -54,8 +54,7 @@ const HeroTitle = memo(function HeroTitle({ variant }: HeroTitleProps) {
               <Compass className="h-5 w-5 sm:h-6 sm:w-6" />
               <span>Nomadic</span>
             </span>
-            <span className="mx-2 text-white/40">|</span>
-            <span>{HERO_HEADLINE}</span>
+            <span className="mx-3">{HERO_HEADLINE}</span>
             <span className="text-accent ml-2 tracking-tight">{HERO_TAGLINE}</span>
           </h1>
         </div>

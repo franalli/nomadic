@@ -49,7 +49,7 @@ export const LocationBadge = memo(function LocationBadge({
     onRemove();
   };
 
-  const typeLabel = type === 'origin' ? 'departure city' : 'destination';
+  const typeLabel = type === 'origin' ? 'origin' : 'destination';
 
   return (
     <>
@@ -57,8 +57,8 @@ export const LocationBadge = memo(function LocationBadge({
         ref={badgeRef}
         className={`group relative inline-flex cursor-pointer items-center gap-1 text-xs font-semibold transition-all duration-150 outline-none ${
           isSelected
-            ? 'bg-gradient-to-b from-primary/25 to-primary/15 rounded-full px-2 py-0.5 ring-primary ring-2 ring-offset-2 ring-offset-background shadow-pill-active'
-            : 'hover:bg-gradient-to-b hover:from-muted/70 hover:to-muted/40 rounded-full px-1.5 py-0.5'
+            ? 'bg-gradient-to-b from-primary/20 to-primary/10 rounded-full px-2 py-0.5 ring-primary/85 ring-2 ring-offset-2 ring-offset-background shadow-pill-active'
+            : 'hover:bg-gradient-to-b hover:from-muted/60 hover:to-muted/30 rounded-full px-1.5 py-0.5'
         }`}
         role="button"
         tabIndex={0}

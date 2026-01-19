@@ -25,14 +25,13 @@ import type {
   DocumentTripInputs,
   GraphPlanResponse,
 } from '@/types/document';
+import { INITIAL_PLAN_STATUS, type PlanStatus } from '@/types/plan-status';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
-import { determineStage,FlowStageIndicator } from './FlowStageIndicator';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
-// Micro-signal shown after plan generation (YC: implicit proof, not explanation)
-const POST_GENERATE_MESSAGE = "PLAN UPDATED";
+import { SpecialistProgress } from './SpecialistProgress';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -45,13 +44,14 @@ const sanitizeContent = (content: string): string => {
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
 
-// Prompt suggestions - constraint actions, not conversation starters
+// Prompt suggestions - insert starter text into input, not send messages
+// These are conversation primers that disappear after first submit
 const PROMPT_SUGGESTIONS = [
-  { label: 'Set destination', prompt: "Tokyo" },
-  { label: 'Set origin', prompt: "New York" },
-  { label: 'Set dates', prompt: "March 15-22" },
-  { label: 'Set budget', prompt: "$2000 total budget" },
-];
+  { label: 'Destination', starterText: 'going to ' },
+  { label: 'Origin', starterText: 'from ' },
+  { label: 'Dates', starterText: 'dates are ' },
+  { label: 'Budget', starterText: 'budget around ' },
+] as const;
 
 // Fallback suggestions when backend returns none but fields are missing
 const FALLBACK_SUGGESTIONS: Record<string, string[]> = {
@@ -271,6 +271,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Document store for restoring trip inputs on delete
     const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
+    // Get tripInputs for constraint state tracking
+    const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
 
     const [input, setInput] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
@@ -316,14 +318,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Show suggestions only when no user messages yet, not generating, not ready to generate, and not in planning mode (hasBranches)
     const showSuggestions = !hasUserMessage && !isLoadingHistory && !hasBranches && !isGenerating && !readyToGenerate;
 
-    // Compute current planning stage for flow indicator
-    const planningStage = determineStage({
-      hasUserMessage,
-      readyToGenerate,
-      isGenerating,
-      hasBranches,
-      missingFields: tripDetails?.missingFields,
-    });
+    // Derive PlanStatus for SpecialistProgress
+    // TODO: This should come from a central store/hook once specialist tracking is implemented
+    const planStatus: PlanStatus = useMemo(() => ({
+      ...INITIAL_PLAN_STATUS,
+      phase: isGenerating ? 'updating' : (tripDetails?.missingFields?.length ? 'needs_input' : 'ready'),
+      missing: tripDetails?.missingFields ?? [],
+      dirty: false,
+      activeSpecialists: [], // TODO: Track from SSE events
+    }), [isGenerating, tripDetails?.missingFields]);
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     const effectiveSuggestions = useMemo(() => {
@@ -618,13 +621,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setSuggestedResponses(doc.suggested_responses || []);
 
               if (hasBranchesNow) {
-                // Branches generated: remove streaming message, add post-generate message
+                // Branches generated: remove streaming message
+                // Status is now shown via PlanHeaderStatus, not as a chat message
                 filterMessages((msg) => msg.id !== streamingMsgId);
-                addMessage({
-                  id: `post_${Date.now()}`,
-                  role: 'assistant',
-                  content: POST_GENERATE_MESSAGE,
-                });
               } else if (isReadyToGenerate) {
                 // Update the streaming message ID to use the ready prefix
                 // so it can be removed when generation starts
@@ -668,11 +667,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         inputRef.current?.focus();
       });
     }, [scrollPanelIntoView, addMessage]);
-
-    // Handle clicking a prompt suggestion - automatically send the message
-    const handleSuggestionClick = useCallback((prompt: string) => {
-      sendMessageCore(prompt);
-    }, [sendMessageCore]);
 
     // Handle deleting the last user message (undo)
     const handleDeleteLastMessage = useCallback(async () => {
@@ -731,7 +725,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       })
       .map((m) => {
         if (hasBranches && m.id === 'm0') {
-          return { ...m, content: 'Modify constraints above.' };
+          return { ...m, content: 'Edit constraints.' };
         }
         return m;
       })
@@ -768,7 +762,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     return (
       <div
         ref={panelRef}
-        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-white dark:bg-bg-strong/60 border border-gray-200/80 dark:border-transparent rounded-xl p-4`}
+        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-white dark:bg-[hsl(154,28%,8%)] dark:bg-[linear-gradient(to_bottom,hsl(154,28%,10%),hsl(154,28%,6%))] border border-gray-200/80 dark:border-transparent rounded-xl p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]`}
       >
         <div className="flex items-center justify-between border-b border-border/40 pb-3">
           <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
@@ -795,16 +789,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           </div>
         </div>
 
-        {/* Flow stage indicator - helps users understand their progress */}
-        {hasUserMessage && !isLoadingHistory && (
-          <div className="flex justify-center -mt-1 mb-1">
-            <FlowStageIndicator
-              stage={planningStage}
-              missingFields={tripDetails?.missingFields}
-              visible={hasUserMessage}
-            />
-          </div>
-        )}
 
         <div
           ref={scrollContainerRef}
@@ -908,19 +892,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         {/* Input area with suggestions - grouped together at bottom */}
         <div className="mt-auto space-y-2 pb-0">
-          {/* Prompt suggestions for new users - quick start options */}
+          {/* Constraint chips - conversation primers that insert starter text */}
           {showSuggestions && (
             <div className="flex flex-wrap justify-center gap-2 py-1">
-              {PROMPT_SUGGESTIONS.map((suggestion, idx) => (
+              {PROMPT_SUGGESTIONS.map((suggestion) => (
                 <button
                   key={suggestion.label}
                   type="button"
-                  onClick={() => handleSuggestionClick(suggestion.prompt)}
-                  className="group text-xs px-3.5 py-2 rounded-lg bg-muted/30 hover:bg-primary/10 border border-transparent hover:border-primary/20 text-foreground/70 hover:text-primary transition-all duration-200 hover:shadow-sm hover:-translate-y-0.5"
-                  style={{ animationDelay: `${idx * 75}ms` }}
+                  onClick={() => {
+                    // Append starter text - chips accumulate, separated by comma
+                    const separator = input.trim() ? ', ' : '';
+                    setInput(prev => prev + separator + suggestion.starterText);
+                    inputRef.current?.focus();
+                  }}
+                  className="text-xs px-3.5 py-2 rounded-lg border border-dashed border-muted-foreground/25 text-muted-foreground/70 hover:border-muted-foreground/40 hover:text-muted-foreground transition-colors"
                 >
-                  <span className="inline-block transition-transform duration-200 group-hover:scale-110 mr-1.5">{suggestion.label.split(' ')[0]}</span>
-                  <span className="font-medium">{suggestion.label.split(' ').slice(1).join(' ')}</span>
+                  <span className="font-medium">{suggestion.label}</span>
                 </button>
               ))}
             </div>
@@ -949,11 +936,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
+          {/* Specialist progress - system strip above input (subordinate to header status) */}
+          <SpecialistProgress status={planStatus} />
+
           <form onSubmit={handleSubmit} className="relative">
-            {/* Custom shimmer placeholder - only when input is empty and no user message */}
+            {/* Static placeholder - only when input is empty and no user message */}
             {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
-              <div className="placeholder-shimmer" aria-hidden="true">
-                {hasBranches ? 'Modify trip...' : 'Enter destination'}
+              <div className="absolute top-0 left-0 right-0 px-4 py-3 text-sm text-muted-foreground/70 pointer-events-none" aria-hidden="true">
+                {hasBranches ? 'Edit constraints' : 'Enter destination'}
               </div>
             )}
             <textarea
@@ -961,7 +951,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
               hasBranches
-                ? 'Modify trip...'
+                ? 'Edit constraints…'
                 : 'Enter destination'
             }
             value={input}
@@ -1002,7 +992,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               disabled={isLoading || !input.trim()}
               title="Send message (Enter)"
             >
-              <ArrowUp className={`h-5 w-5 ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'send-arrow-shimmer' : ''}`} />
+              <ArrowUp className="h-5 w-5" />
             </button>
           )}
           </form>
@@ -1023,7 +1013,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   sendMessageCore(GENERATE_PLAN_TRIGGER);
                 }}
                 disabled={isLoading || !readyToGenerate}
-                className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 generate-shimmer dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60 dark:shadow-[0_0_20px_hsl(25_85%_55%/0.25)] dark:hover:shadow-[0_0_30px_hsl(25_85%_55%/0.4)]"
+                className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60"
               >
                 <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
                 <span>Generate Plan</span>
@@ -1045,9 +1035,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             }}>
               <div>
                 <Collapsible.Trigger asChild>
-                  <button className={`w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group ${!hasShownHint ? 'animate-pulse' : ''}`}>
+                  <button className="w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group">
                     <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
-                    Trip Details
+                    Constraints
                     {/* Show hint text on collapsed state for mobile users who haven't seen it yet */}
                     {!tripDetailsOpen && !hasShownHint && (
                       <span className="ml-auto text-[10px] text-muted-foreground font-normal normal-case tracking-normal">

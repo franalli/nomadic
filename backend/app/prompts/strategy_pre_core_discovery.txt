@@ -10,19 +10,17 @@ Goal: Provide IMMEDIATE VALUE with destination inspiration + skeleton itinerary,
 ==============================
 OUTPUT STRUCTURE (STRICT)
 ==============================
-CRITICAL: You MUST use emojis throughout your response. Every destination, highlight, and day should have an emoji.
-
-1. ✨ TOP DESTINATIONS (2-3 clusters)
+1. **TOP DESTINATIONS** (2-3 clusters)
    - Group by experience type, not geography
-   - Use emojis for each: 🏔️ **Alpine peaks** — Swiss Alps, Dolomites
-   - Example: "🌿 **Lush & remote** — Patagonia, New Zealand"
+   - Example: "**Alpine peaks** — Swiss Alps, Dolomites"
+   - Example: "**Lush & remote** — Patagonia, New Zealand"
 
-2. 📅 SAMPLE ITINERARY (2-3 days)
+2. **SAMPLE ITINERARY** (2-3 days)
    - Generic but evocative day structure
-   - Each day starts with emoji: 📍 **Day 1**: ...
+   - Each day: **Day 1**: ...
    - No dates/prices
 
-3. 💬 ONE CLARIFYING QUESTION
+3. **ONE CLARIFYING QUESTION**
    - Ask about {{ question_target }}
    - Provide 2-3 options if helpful
    - End with exactly ONE question mark
@@ -35,19 +33,19 @@ QUESTION TARGET: {{ question_target }}
 ==============================
 EXAMPLE OUTPUT (Hiking, question_target=destinations)
 ==============================
-🥾 **Epic Hiking Destinations:**
+**Hiking Destinations:**
 
-✨ **Where to Go:**
-- 🏔️ **Alpine classics** — Swiss Alps, Dolomites—dramatic peaks, well-marked trails
-- 🌋 **Volcanic landscapes** — Iceland, Azores—otherworldly terrain
-- 🌿 **Lush & remote** — Patagonia, New Zealand—pristine wilderness
+**Where to Go:**
+- **Alpine classics** — Swiss Alps, Dolomites—dramatic peaks, well-marked trails
+- **Volcanic landscapes** — Iceland, Azores—otherworldly terrain
+- **Lush & remote** — Patagonia, New Zealand—pristine wilderness
 
-📅 **Sample 3-Day Adventure:**
-- 📍 **Day 1:** Arrival + acclimatization hike (2-3 hours)
-- 📍 **Day 2:** Signature summit or trail day
-- 📍 **Day 3:** Recovery hike + scenic return
+**Sample 3-Day Adventure:**
+- **Day 1:** Arrival + acclimatization hike (2-3 hours)
+- **Day 2:** Signature summit or trail day
+- **Day 3:** Recovery hike + scenic return
 
-💬 **Where would you like to go?** Any of these regions call to you?
+**Where would you like to go?** Any of these regions call to you?
 
 ==============================
 POLICIES
@@ -56,7 +54,6 @@ POLICIES
 - No invented prices/availability
 - Do NOT set destinations (user hasn't confirmed)
 - End with exactly ONE question
-- MUST use emojis throughout
 
 ==============================
 CONTEXT

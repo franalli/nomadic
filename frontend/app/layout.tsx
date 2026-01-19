@@ -6,7 +6,7 @@ import { ConsentManager } from '@/components/nomadic/consent-manager';
 
 export const metadata = {
   title: 'Nomadic – Interactive Travel Planner',
-  description: 'Explore trips visually and book seamlessly with Nomadic',
+  description: 'Constraint-based travel planning',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -48,14 +48,20 @@
 
   --input: 160 20% 90%;
   --ring: 160 45% 25%;
+
+  /* Constraint state colors (locked) */
+  --color-cta-orange: 32 100% 50%;       /* #FF8A00 - buttons, primary actions, focused inputs */
+  --color-state-amber: 41 73% 55%;       /* #E2A23A - constraint icons (set) */
+  --color-conflict-amber: 38 75% 45%;    /* #C88A1E - conflicted icons + dashed borders */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     /* YC-ready dark palette - locked hex values */
-    --bg: 150 25% 5%;              /* #0B1210 */
+    /* Background shifted cooler (-3° hue) for depth contrast with chat panel */
+    --bg: 147 25% 5%;              /* was 150, now 147 - cooler */
     --bg-soft: 152 25% 10%;
-    --bg-strong: 150 30% 4%;
+    --bg-strong: 147 30% 4%;       /* was 150, now 147 - cooler */
     --surface: 152 28% 8%;         /* #0F1A16 */
     --border: 152 30% 17%;         /* #1F3A30 */
 
@@ -70,7 +76,7 @@
     --sky: 160 40% 45%;
 
     /* Core theme tokens */
-    --background: 150 25% 5%;      /* #0B1210 */
+    --background: 147 25% 5%;      /* was 150, now 147 - cooler */
     --foreground: 150 18% 91%;     /* #E6ECE9 */
 
     --card: 152 28% 8%;            /* #0F1A16 */
@@ -96,6 +102,11 @@
 
     --input: 152 25% 18%;
     --ring: 160 40% 45%;
+
+    /* Constraint state colors (locked) */
+    --color-cta-orange: 32 100% 50%;       /* #FF8A00 - buttons, primary actions, focused inputs */
+    --color-state-amber: 41 73% 55%;       /* #E2A23A - constraint icons (set) */
+    --color-conflict-amber: 38 75% 45%;    /* #C88A1E - conflicted icons + dashed borders */
   }
 }
 
@@ -198,29 +209,6 @@ input[type="number"]::-webkit-outer-spin-button {
 
 .generate-pulse {
   animation: generate-glow 3s ease-in-out infinite;
-}
-
-/* Generate button shimmer animation */
-@keyframes generate-shimmer {
-  0% {
-    background-position: -200% center;
-  }
-  100% {
-    background-position: 200% center;
-  }
-}
-
-.generate-shimmer {
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    hsl(var(--primary) / 0.08) 25%,
-    hsl(var(--primary) / 0.15) 50%,
-    hsl(var(--primary) / 0.08) 75%,
-    transparent 100%
-  );
-  background-size: 200% 100%;
-  animation: generate-shimmer 3s ease-in-out infinite;
 }
 
 /* Message entrance animation */
@@ -459,6 +447,31 @@ input[type="number"]::-webkit-outer-spin-button {
   color: #AEB6C2;
 }
 
+/* ===== Constraint Button States ===== */
+/* Control-surface-first UX: Constraints are state selectors, not actions */
+
+/* Unset - signals undefined constraint, not wrong */
+.constraint-unset {
+  @apply bg-muted/20 border border-dashed border-muted-foreground/30;
+  @apply text-muted-foreground;
+  @apply hover:bg-muted/30 hover:border-muted-foreground/40;
+}
+
+/* Resolved - constraint has value, still editable */
+.constraint-resolved {
+  @apply bg-card border border-solid border-border/50;
+  @apply text-foreground;
+  @apply relative;
+  @apply hover:bg-muted/30 hover:border-border/70;
+}
+
+/* Resolved indicator - subtle filled dot */
+.constraint-resolved::after {
+  content: '';
+  @apply absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full;
+  @apply bg-primary/50;
+}
+
 /* ===== Accessibility Utilities ===== */
 
 /* Respect user's reduced motion preference */
@@ -512,173 +525,6 @@ input[type="number"]::-webkit-outer-spin-button {
 .focus-visible-ring:focus-visible {
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
-}
-
-/* ===== LLM Update Sparkle Animation ===== */
-
-@keyframes sparkle {
-  0%, 100% {
-    filter: drop-shadow(0 0 0 transparent);
-    transform: scale(1);
-  }
-  25% {
-    filter: drop-shadow(0 0 4px hsl(var(--accent) / 0.8));
-    transform: scale(1.1);
-  }
-  50% {
-    filter: drop-shadow(0 0 2px hsl(var(--accent) / 0.4));
-    transform: scale(1);
-  }
-  75% {
-    filter: drop-shadow(0 0 6px hsl(var(--accent) / 0.9));
-    transform: scale(1.15);
-  }
-}
-
-.sparkle-icon {
-  animation: sparkle 1.5s ease-in-out infinite;
-  color: hsl(var(--accent));
-}
-
-/* Subtle sparkle for sub-field controls (buttons, selects) */
-@keyframes sparkle-subtle {
-  0%, 100% {
-    box-shadow: 0 0 4px hsl(var(--accent) / 0.3);
-  }
-  50% {
-    box-shadow: 0 0 12px hsl(var(--accent) / 0.5);
-  }
-}
-
-.sparkle-control {
-  animation: sparkle-subtle 2s ease-in-out infinite;
-  border-color: hsl(var(--accent) / 0.6) !important;
-}
-
-/* ===== Chat Input Placeholder Shimmer Animation ===== */
-
-@keyframes placeholder-shimmer {
-  0% {
-    background-position: 150% center;
-  }
-  28% {
-    background-position: -50% center;
-  }
-  100% {
-    background-position: -50% center;
-  }
-}
-
-@keyframes arrow-shimmer {
-  0%, 24% {
-    color: hsl(var(--muted-foreground));
-  }
-  28% {
-    color: hsl(var(--primary) / 0.7);
-    filter: drop-shadow(0 0 6px hsl(var(--primary) / 0.4));
-  }
-  34% {
-    color: hsl(var(--muted-foreground));
-    filter: none;
-  }
-  100% {
-    color: hsl(var(--muted-foreground));
-  }
-}
-
-.placeholder-shimmer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  padding: 0.75rem 1rem;
-  font-size: 0.875rem;
-  line-height: 1.5;
-  pointer-events: none;
-  z-index: 10;
-  /* Text shimmer effect - subtle */
-  background: linear-gradient(
-    90deg,
-    hsl(var(--muted-foreground) / 0.7) 0%,
-    hsl(var(--muted-foreground) / 0.7) 35%,
-    hsl(var(--primary) / 0.7) 45%,
-    hsl(var(--primary) / 0.7) 55%,
-    hsl(var(--muted-foreground) / 0.7) 65%,
-    hsl(var(--muted-foreground) / 0.7) 100%
-  );
-  background-size: 300% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  color: transparent;
-  animation: placeholder-shimmer 30s ease-in-out infinite;
-}
-
-.send-arrow-shimmer {
-  animation: arrow-shimmer 30s ease-in-out infinite;
-}
-
-/* Dark mode shimmer variant */
-@media (prefers-color-scheme: dark) {
-  .placeholder-shimmer {
-    background: linear-gradient(
-      90deg,
-      hsl(var(--muted-foreground) / 0.7) 0%,
-      hsl(var(--muted-foreground) / 0.7) 35%,
-      hsl(var(--accent) / 0.75) 45%,
-      hsl(var(--accent) / 0.75) 55%,
-      hsl(var(--muted-foreground) / 0.7) 65%,
-      hsl(var(--muted-foreground) / 0.7) 100%
-    );
-    background-size: 300% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-  }
-
-  @keyframes arrow-shimmer-dark {
-    0%, 24% {
-      color: hsl(var(--muted-foreground));
-    }
-    28% {
-      color: hsl(var(--accent) / 0.75);
-      filter: drop-shadow(0 0 6px hsl(var(--accent) / 0.4));
-    }
-    34% {
-      color: hsl(var(--muted-foreground));
-      filter: none;
-    }
-    100% {
-      color: hsl(var(--muted-foreground));
-    }
-  }
-
-  .send-arrow-shimmer {
-    animation: arrow-shimmer-dark 30s ease-in-out infinite;
-  }
-}
-
-/* Respect user's reduced motion preference */
-@media (prefers-reduced-motion: reduce) {
-  .sparkle-icon {
-    animation: none !important;
-    /* Keep the color highlight but no animation */
-    filter: drop-shadow(0 0 3px hsl(var(--accent) / 0.6));
-  }
-
-  .sparkle-control {
-    animation: none !important;
-    box-shadow: 0 0 6px hsl(var(--accent) / 0.4);
-  }
-
-  .placeholder-shimmer {
-    animation: none !important;
-    background: none;
-    color: hsl(var(--muted-foreground) / 0.7);
-  }
-
-  .send-arrow-shimmer {
-    animation: none !important;
-  }
 }
 
 /* ===== Hero Background Layers ===== */

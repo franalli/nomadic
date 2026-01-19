@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Briefcase, Bus, Car, CheckCircle2, Compass, Hotel, Mountain, Plane, Sparkles } from 'lucide-react';
 import { memo, useEffect, useState } from 'react';
 
-// Generation stages with estimated timing
+// Generation stages with estimated timing (1s per stage = 5s total)
 const STAGES = [
   { label: 'Processing constraints', duration: 1000 },
   { label: 'Matching destinations', duration: 1000 },

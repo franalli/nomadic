@@ -261,9 +261,9 @@ ROUTING_DECISION_SCHEMA_VERSION: int = 1
 
 # Fallback suggestions when template is missing for a field
 FALLBACK_SUGGESTIONS: List[str] = [
-    "I want to book flights",
-    "I want to book hotels",
-    "I'm flexible",
+    "Book flights",
+    "Book hotels",
+    "Flexible",
 ]
 
 # =============================================================================
@@ -416,7 +416,7 @@ def safe_node(node_name: str):
                     safe_debug_error(
                         f"Node {node_name} returned None, using fallback",
                     )
-                    state.last_summary = state.last_summary or "How can I help with your trip?"
+                    state.last_summary = state.last_summary or "Destination?"
                     return state
 
                 return result
@@ -478,7 +478,7 @@ def safe_node(node_name: str):
                     )
                 except Exception:
                     # Ultimate fallback - just set a message
-                    state.last_summary = "I'm having trouble processing that. Could you try again?"
+                    state.last_summary = "Unable to process."
 
                 return state
 
@@ -4366,7 +4366,7 @@ def validate_suggestion_contract(
                     "suggestions_preview": suggested_responses[:3],
                 }
             # Rewrite with date suggestions
-            return ["Next month", "This summer", "I'm flexible on dates"]
+            return ["Next month", "This summer", "Flexible"]
 
     elif target_lower in ("destinations", "origin"):
         # Suggestions should be place-like
@@ -5354,21 +5354,21 @@ def _is_generate_plan_trigger(message: str) -> bool:
 # NOTE: Patterns (GREETING_PATTERN, YES_PATTERN, NO_PATTERN, etc.) are now
 # imported from the pattern_matching module.
 
-# Friendly greeting responses (randomized for variety)
+# Greeting responses (terse, system-style)
 _GREETING_RESPONSES = [
-    "Hi! 👋 Where are you looking to travel?",
-    "Hello! What destination is calling your name?",
-    "Hey! Ready to plan a trip. Where to?",
-    "Hi there! Where would you like to go?",
+    "Destination?",
+    "Where to?",
+    "Enter destination.",
+    "Set destination.",
 ]
 
 # Off-topic deflection responses (used when router detects non-travel queries)
 _OFF_TOPIC_DEFLECTIONS = [
-    "I'm here to help with travel planning! Where would you like to go?",
-    "That's outside my expertise—but I'd love to help plan your next trip! 🌍",
-    "I specialize in travel! Got a destination in mind?",
-    "I'm your travel assistant! Tell me where you'd like to explore.",
-    "That's not quite my area, but I'm great at planning adventures! Where to?",
+    "Travel planning only. Destination?",
+    "Outside scope. Destination?",
+    "Travel queries only. Where to?",
+    "Set a destination to continue.",
+    "Enter destination.",
 ]
 
 
@@ -6439,13 +6439,13 @@ def llm_blocked_fallback(
     else:
         # Hardcoded fallback if no template
         fallback_questions = {
-            "destinations": "Where would you like to go?",
-            "dates": "When would you like to travel?",
-            "travelers": "How many people are traveling?",
-            "origin": "Where will you be traveling from?",
-            "budget": "What's your budget for this trip?",
+            "destinations": "Destination?",
+            "dates": "Dates?",
+            "travelers": "Travelers?",
+            "origin": "Origin?",
+            "budget": "Budget?",
         }
-        question = fallback_questions.get(target, "What else can I help you with?")
+        question = fallback_questions.get(target, "Missing constraint.")
         suggestions = []
 
     # Mutate state with fallback response
@@ -8702,6 +8702,19 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
     if branch_currency is None:
         branch_currency = DEFAULT_CURRENCY
 
+    # Strategy-enriched fields (preserve if present)
+    branch_vibe = spec.get("vibe") if isinstance(spec.get("vibe"), str) else None
+    branch_focus = spec.get("focus") if isinstance(spec.get("focus"), str) else None
+    branch_highlights = spec.get("highlights", [])
+    if not isinstance(branch_highlights, list):
+        branch_highlights = []
+    branch_flow = spec.get("flow", [])
+    if not isinstance(branch_flow, list):
+        branch_flow = []
+    branch_notes = spec.get("notes", [])
+    if not isinstance(branch_notes, list):
+        branch_notes = []
+
     return {
         "id": spec.get("id") or uuid4().hex[:8],
         "label": str(spec["label"]),
@@ -8715,6 +8728,12 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
         "requires_assistance": branch_requires_assistance,
         "budget": branch_budget,
         "currency": branch_currency,
+        # Strategy-enriched fields
+        "vibe": branch_vibe,
+        "focus": branch_focus,
+        "highlights": branch_highlights,
+        "flow": branch_flow,
+        "notes": branch_notes,
     }
 
 
@@ -8745,14 +8764,13 @@ def _normalize_branch_spec(spec: dict, fallback_inputs: dict) -> Optional[dict]:
 
 def _default_follow_up_with_field(
     missing_fields: List[str],
-    user_intent: str = "detailed_planner",
-    user_tone: str = "neutral",
-    trip_inputs: Optional[dict] = None,
+    _user_intent: str = "detailed_planner",  # Unused - kept for backward compat
+    _user_tone: str = "neutral",  # Unused - kept for backward compat
+    _trip_inputs: Optional[dict] = None,  # Unused - kept for backward compat
 ) -> tuple[Optional[str], Optional[str]]:
     """
     Get the default question and the field being asked about.
-    Adapts phrasing based on user intent, tone, and existing trip context.
-    Professional and natural—matches user energy without overdoing it.
+    YC style: All prompts are terse, system-like, under 8 words.
 
     Returns a tuple of (question, field_name) for tracking which field
     was last asked, enabling context-aware clarification responses.
@@ -8760,94 +8778,21 @@ def _default_follow_up_with_field(
     if not missing_fields:
         return None, None
 
-    trip_inputs = trip_inputs or {}
-    destinations = trip_inputs.get("destinations", [])
-
-    # When we know the destination, can reference it
-    dest_name = destinations[0] if destinations else None
-
-    # Helper to build destination-aware messages
-    def _dest_prefix(template_with: str, template_without: str) -> str:
-        if dest_name:
-            return template_with.replace("{dest}", dest_name)
-        return template_without
-
-    # Base prompts - professional and warm (only required fields)
-    base_prompts = {
-        "destinations": "Where are you looking to go?",
-        "origin": "Where are you flying from?",
-        "start_date": _dest_prefix(
-            "When are you heading to {dest}?", "When are you looking to travel?"
-        ),
+    # YC style: System-like prompts - terse, declarative
+    prompts = {
+        "destinations": "Destination?",
+        "origin": "Origin?",
+        "start_date": "Dates?",
+        "end_date": "Return date?",
+        "adults": "Travelers?",
+        "budget": "Budget?",
     }
-
-    # Quick booking - minimal, efficient
-    quick_prompts = {
-        "destinations": "Where to?",
-        "origin": "Flying from?",
-        "start_date": "When?",
-    }
-
-    # Adventurous - match energy but don't overdo
-    adventurous_prompts = {
-        "destinations": "Where is the adventure taking you?",
-        "origin": "Where are you coming from?",
-        "start_date": _dest_prefix("When are you heading to {dest}?", "When does the trip start?"),
-        "end_date": "When do you need to be back?",
-        "adults": "How many in your group?",
-        "budget": "What is your budget?",
-    }
-
-    # Undecided - helpful guide
-    undecided_prompts = {
-        "destinations": (
-            "Any destinations you have been thinking about? "
-            "Or I can suggest some based on what you are in the mood for."
-        ),
-        "origin": _dest_prefix(
-            "{dest} is a good choice. Where will you be traveling from?",
-            "Where will you be traveling from?",
-        ),
-        "start_date": "Do you have any dates in mind?",
-        "end_date": "Any idea when you would like to return?",
-        "adults": "How many people are traveling?",
-        "budget": "Do you have a rough budget in mind?",
-    }
-
-    # Short trip - acknowledge time constraints
-    short_trip_prompts = {
-        "destinations": "Where are you thinking for a quick trip?",
-        "origin": _dest_prefix(
-            "{dest} is great for a short trip. Where are you flying from?",
-            "Where are you flying from?",
-        ),
-        "start_date": "When are you going?",
-        "end_date": "When do you need to be back?",
-        "adults": "How many travelers?",
-        "budget": "Budget for this trip?",
-    }
-
-    # Select prompt set based on intent
-    if user_intent == "quick_booking":
-        prompts = quick_prompts
-    elif user_intent == "adventurous":
-        prompts = adventurous_prompts
-    elif user_intent == "undecided":
-        prompts = undecided_prompts
-    elif user_intent == "short_trip":
-        prompts = short_trip_prompts
-    else:
-        prompts = base_prompts
 
     # Find first missing required field
     for required_field in _REQUIRED_TRIP_INPUT_FIELDS:
         if required_field in missing_fields:
-            question = prompts.get(required_field, base_prompts.get(required_field))
+            question = prompts.get(required_field, "Missing constraint.")
             if question:
-                # Adjust for frustrated tone - be more direct, skip embellishments
-                if user_tone == "frustrated":
-                    # Use simpler, direct phrasing
-                    question = quick_prompts.get(required_field, question)
                 return question, required_field
     return None, None
 
@@ -10411,11 +10356,7 @@ def apply_loop_guard_mitigation(
             else dict(state.trip_inputs)
         )
         known_info = _summarize_trip_inputs_for_recovery(trip_inputs)
-        state.last_summary = (
-            f"I want to make sure I have your trip details right. Here's what I have:\n\n"
-            f"{known_info}\n\n"
-            f"Does this look correct? Feel free to update or add anything."
-        )
+        state.last_summary = f"Current constraints:\n\n{known_info}"
         state.metadata["loop_guard_recovery_emitted"] = True
         # Skip further processing for this turn
         state.flags["short_circuit"] = True
@@ -10872,6 +10813,7 @@ register_strategy("hiking", "strategy_hiking")
 register_strategy("diving", "strategy_diving")
 register_strategy("skiing", "strategy_skiing")
 register_strategy("cycling", "strategy_cycling")
+register_strategy("general", "strategy_general")  # Fallback for trips without specific activities
 
 
 # -----------------------
@@ -12446,20 +12388,14 @@ def normalize_inputs(state: GraphState) -> GraphState:
                     dt = _parse_iso_date(start_iso)
                     if dt:
                         readable = dt.strftime("%B %d, %Y")
-                        notifications.append(
-                            f"I'll assume {readable} for the start date—"
-                            "let me know if you meant a different day."
-                        )
+                        notifications.append(f"Start: {readable}.")
             elif "end_date" in notif:
                 end_iso = updates.get("end_date") or ti.end_date
                 if end_iso:
                     dt = _parse_iso_date(end_iso)
                     if dt:
                         readable = dt.strftime("%B %d, %Y")
-                        notifications.append(
-                            f"I'll assume {readable} for the end date—"
-                            "let me know if you meant a different day."
-                        )
+                        notifications.append(f"End: {readable}.")
         if notifications:
             state.metadata["partial_date_notifications"] = notifications
             _debug("Partial date defaults applied", notifications=notifications)
@@ -12625,18 +12561,15 @@ def normalize_inputs(state: GraphState) -> GraphState:
             # Create a helpful clarification message
             if "past" in " ".join(reasons).lower():
                 state.metadata["failed_input_message"] = (
-                    f"The dates you mentioned ({parsed_start} to {parsed_end}) include dates that "
-                    "have already passed. Could you please provide future travel dates?"
+                    f"Invalid: {parsed_start} to {parsed_end} has passed. Future dates required."
                 )
             elif "ambiguous" in " ".join(reasons).lower():
                 state.metadata["failed_input_message"] = (
-                    f"I'm not sure if you meant {parsed_start} to {parsed_end} this year or next "
-                    "year. Could you please confirm the year?"
+                    f"Ambiguous: {parsed_start} to {parsed_end}. Specify year."
                 )
             else:
                 state.metadata["failed_input_message"] = (
-                    f"I had trouble with the dates '{parsed_start}' to '{parsed_end}'. "
-                    "Could you please provide your travel dates again?"
+                    f"Invalid dates: {parsed_start} to {parsed_end}. Re-enter dates."
                 )
         _debug(
             "📋 Stored rejected date answer for clarification reference",
@@ -13126,23 +13059,11 @@ def _should_skip_polish(s: GraphState) -> tuple[bool, str]:
 # Apply simple deterministic rules to add warmth before falling back to LLM.
 # This saves ~200-400 tokens per message that can be polished rule-based.
 
-# Warm openers to prepend to dry messages
-_WARM_OPENERS = [
-    "Great choice! ",
-    "Sounds wonderful! ",
-    "Perfect! ",
-    "Excellent! ",
-    "Love it! ",
-    "That's exciting! ",
-]
+# YC style: No warm openers - messages should be declarative
+_WARM_OPENERS: list[str] = []
 
-# Warm closers to append to messages ending abruptly
-_WARM_CLOSERS = [
-    " Let me know if you'd like more details!",
-    " Happy to help with more specifics!",
-    " Just say the word if you need anything else!",
-    " Feel free to ask if you have questions!",
-]
+# YC style: No warm closers - avoid conversational filler
+_WARM_CLOSERS: list[str] = []
 
 
 def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
@@ -13158,6 +13079,11 @@ def _try_deterministic_polish(msg: str, state: GraphState) -> str | None:
     3. Messages with common patterns that can be rule-enhanced
     """
     if not msg:
+        return None
+
+    # YC style: No warm openers/closers - messages should be declarative and system-like
+    # If warmth lists are empty (YC compliance), skip polishing entirely
+    if not _WARM_OPENERS or not _WARM_CLOSERS:
         return None
 
     # Check warmth indicators
@@ -13818,19 +13744,19 @@ def _build_booking_suggestions(
     # Suggest booking types that aren't enabled yet
     booking_types = ti.booking_types or {}
     if not booking_types.get("flights") and len(suggestions) < max_suggestions:
-        suggestions.append("I want to book flights")
+        suggestions.append("Add flights")
     if not booking_types.get("hotels") and len(suggestions) < max_suggestions:
-        suggestions.append("I want to book hotels")
+        suggestions.append("Add hotels")
     if not booking_types.get("activities") and len(suggestions) < max_suggestions:
-        suggestions.append("I want to book activities")
+        suggestions.append("Add activities")
 
     # Fallback: suggest budget if still missing and we have room
     if len(suggestions) < max_suggestions and ti.budget is None:
-        suggestions.append("I'd like to set a budget")
+        suggestions.append("Set budget")
 
     # If still need more suggestions, add a generic one
     if len(suggestions) < max_suggestions:
-        suggestions.append("Tell me more about my options")
+        suggestions.append("View options")
 
     return suggestions[:max_suggestions]
 
@@ -13879,20 +13805,11 @@ def summarize(state: GraphState) -> GraphState:
 
         # Generate fresh ready-to-generate message with preview
         if preview:
-            state.last_summary = (
-                f"Perfect! Here's what I have:\n\n{preview}\n\n"
-                "Ready to generate your plan, or want to add/change anything?"
-            )
+            state.last_summary = f"Constraints:\n\n{preview}"
         else:
-            state.last_summary = (
-                f"Great news! I have everything I need to plan your trip to {dest_str}. "
-                "Keep chatting to refine your trip and get additional inspiration, "
-                "or click on the generate button below."
-            )
+            state.last_summary = f"Ready to generate. {dest_str}."
         # Build context-aware suggestions focused on advancing the booking
-        state.suggested_responses = _build_booking_suggestions(
-            ti, primary_action="Yes, generate my itinerary!"
-        )
+        state.suggested_responses = _build_booking_suggestions(ti, primary_action="Generate plan")
         state.question_target = None  # Clear stale question target
         state.metadata["question_target"] = None  # SSoT sync
         state.metadata["response_writer_node"] = "summarize:ready"
@@ -14005,14 +13922,11 @@ def summarize(state: GraphState) -> GraphState:
         # Check context to provide relevant fallback
         if state.pending_strategy_expansion:
             # User was in strategy flow
-            topic = state.metadata.get("last_strategy_topic", "adventure")
-            dest_str = destinations[0] if destinations else "your destination"
-            state.last_summary = (
-                f"I'd love to help you plan your {topic} trip to {dest_str}! "
-                "Would you like me to show you more details about the itinerary?"
-            )
+            topic = state.metadata.get("last_strategy_topic", "trip")
+            dest_str = destinations[0] if destinations else "destination"
+            state.last_summary = f"{topic.capitalize()} to {dest_str}."
             state.suggested_responses = _build_booking_suggestions(
-                ti, primary_action="Yes, generate my plan"
+                ti, primary_action="Generate plan"
             )
             state.metadata["response_writer_node"] = "summarize:strategy_fallback"
         elif len(destinations) > 0:
@@ -14021,29 +13935,21 @@ def summarize(state: GraphState) -> GraphState:
             trip_inputs_dict = ti.model_dump(exclude_none=True) if hasattr(ti, "model_dump") else ti
             readiness = compute_trip_readiness(trip_inputs_dict)
             if readiness.core_complete:
-                state.last_summary = (
-                    f"Your trip to {dest_str} is ready! "
-                    "Would you like me to generate your detailed itinerary now?"
-                )
+                state.last_summary = f"Ready to generate. {dest_str}."
                 state.suggested_responses = _build_booking_suggestions(
-                    ti, primary_action="Yes, generate my itinerary!"
+                    ti, primary_action="Generate plan"
                 )
                 state.metadata["pending_action"] = "generate_plan"
             else:
-                # Still missing core fields - still offer booking options
+                # Still missing core fields - state what's needed
                 missing_str = ", ".join(readiness.missing_core[:2])
-                state.last_summary = (
-                    f"I'm excited to help plan your trip to {dest_str}! "
-                    f"I just need a few more details: {missing_str}."
-                )
+                state.last_summary = f"{dest_str}. Missing: {missing_str}."
                 state.suggested_responses = _build_booking_suggestions(ti)
             state.metadata["response_writer_node"] = "summarize:dest_fallback"
         else:
-            # No context - generic greeting with travel styles
-            state.last_summary = (
-                "I'm here to help plan your perfect trip! " "Where would you like to go?"
-            )
-            state.suggested_responses = ["Beach vacation", "City adventure", "Mountain retreat"]
+            # No context - ask for destination
+            state.last_summary = "Destination?"
+            state.suggested_responses = ["Beach", "City", "Mountains"]
             state.metadata["response_writer_node"] = "summarize:generic_fallback"
 
         state.metadata["response_generation_provenance"] = "template"
@@ -14686,9 +14592,7 @@ async def generate_responder(state: GraphState) -> GraphState:
     # When user explicitly requests generation, we're more lenient
     if not ti.destinations or len(ti.destinations) == 0:
         # Absolutely cannot generate without destinations
-        state.last_summary = (
-            "I need at least a destination to generate your plan. Where would you like to go?"
-        )
+        state.last_summary = "Missing: destination."
         state.question_target = "destinations"
         state.ready_to_generate = False
         _debug("Generate blocked - no destinations")
@@ -14697,7 +14601,7 @@ async def generate_responder(state: GraphState) -> GraphState:
 
     # All core fields complete - create branches and set ready
     state.ready_to_generate = True
-    state.last_summary = "Great! Generating your travel plan now..."
+    state.last_summary = "Generating plan."
 
     # Call strategy orchestrator to get enriched content
     strategy_results = await orchestrate_strategies(state)
@@ -14800,16 +14704,14 @@ def short_circuit_responder(state: GraphState) -> GraphState:
             if sc_type in ("confirmation_yes", "confirmation_no"):
                 if sc_action == "generate_plan":
                     # Plan generation was triggered - this will be handled by the graph
-                    state.last_summary = "Generating your travel plan..."
+                    state.last_summary = "Generating plan."
                 else:
                     state.last_summary = follow_up
             else:
                 state.last_summary = follow_up
         else:
             # No follow-up needed, we might be ready to generate
-            state.last_summary = (
-                "Looks like I have everything I need! Ready to generate your travel plan?"
-            )
+            state.last_summary = "Constraints complete."
             state.metadata["pending_action"] = "generate_plan"
             state.metadata["last_question_field"] = None  # Clear - we're asking for confirmation
             state.question_target = None
@@ -16154,12 +16056,9 @@ async def run_turn(
         )
         destinations = trip_inputs.get("destinations", [])
         if destinations:
-            fallback_msg = (
-                f"I'm still working on your trip to {', '.join(destinations)}. "
-                "What would you like to focus on next?"
-            )
+            fallback_msg = f"{', '.join(destinations)}. Continue?"
         else:
-            fallback_msg = "I'd love to help plan your trip! Where would you like to go?"
+            fallback_msg = "Destination?"
         result.last_summary = fallback_msg
 
     # ==========================================================================
@@ -16195,20 +16094,20 @@ async def run_turn(
             result.question_target = canonicalize_question_target(next_field)
             result_meta["question_target"] = result.question_target
             if next_field == "destinations":
-                result.last_summary = "Where would you like to go?"
-                result.suggested_responses = ["Paris, France", "Tokyo, Japan", "Bali, Indonesia"]
+                result.last_summary = "Destination?"
+                result.suggested_responses = ["Paris", "Tokyo", "Bali"]
             elif next_field == "origin":
-                result.last_summary = "Where will you be traveling from?"
+                result.last_summary = "Origin?"
                 result.suggested_responses = ["New York", "London", "Los Angeles"]
             elif next_field in ("start_date", "dates"):
-                result.last_summary = "When are you planning to travel?"
-                result.suggested_responses = ["Next month", "This summer", "I'm flexible"]
+                result.last_summary = "Dates?"
+                result.suggested_responses = ["Next month", "This summer", "Flexible"]
             else:
-                result.last_summary = "What else would you like to tell me about your trip?"
+                result.last_summary = "Missing constraints."
                 result.suggested_responses = [
-                    "I want to book flights",
-                    "I want to book hotels",
-                    "Generate my plan!",
+                    "Add flights",
+                    "Add hotels",
+                    "Generate plan",
                 ]
         # Update last_response_turn to current
         result_meta["last_response_turn"] = current_turn

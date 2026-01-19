@@ -80,9 +80,10 @@ class TestReadyToGenerateTransition:
 
         result = summarize(state)
 
-        # Should generate fresh ready message (compare lowercase to lowercase)
+        # Should generate fresh ready message (YC style: system-like, declarative)
         lower_summary = result.last_summary.lower()
-        assert "everything i need" in lower_summary or "ready" in lower_summary
+        # YC-aligned: messages are terse, system-like ("Constraints:" or "Ready to generate.")
+        assert "constraints" in lower_summary or "ready" in lower_summary
         assert "paris" in lower_summary or "rome" in lower_summary
 
     def test_clears_question_target_when_plan_ready(self):

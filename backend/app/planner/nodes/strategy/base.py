@@ -140,6 +140,25 @@ def has_strategy_keyword(user_text: str, topic: str) -> bool:
     return any(kw in user_text_lower for kw in topic_keywords)
 
 
+def detect_all_strategy_topics(user_text: str) -> List[str]:
+    """
+    Detect ALL strategy topics mentioned in user text.
+
+    Returns list of topic names (e.g., ["hiking", "diving"]).
+    Used for parallel Stage 0 when user mentions multiple activities.
+    """
+    user_text_lower = user_text.lower()
+    detected: List[str] = []
+
+    for topic, keywords in STRATEGY_KEYWORDS.items():
+        if any(kw in user_text_lower for kw in keywords):
+            # Check if feature flag is enabled for this topic
+            if _is_strategy_enabled(topic):
+                detected.append(topic)
+
+    return detected
+
+
 def detect_topic_switch(user_text: str) -> Optional[str]:
     """
     Detect if user wants to switch to a different category.

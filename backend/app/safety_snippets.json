@@ -48,7 +48,7 @@
 
     "US": {
       "default": {
-        "entry": "Most visitors need ESTA (Visa Waiver) or visa. Apply at least 72 hours before travel.",
+        "entry": "US entry: ESTA or visa may be required. Apply 72+ hours before departure.",
         "health": "No public healthcare—travel/health insurance essential. Check CDC recommendations.",
         "safety": "Emergency: 911. Check travel.state.gov for current advisories.",
         "logistics": "US Dollar ($). Type A/B plugs (120V)."

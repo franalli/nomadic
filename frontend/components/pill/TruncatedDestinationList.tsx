@@ -145,7 +145,7 @@ function TruncatedDestinationListInner({
           type="text"
           value={destinationInput}
           onChange={(e) => setDestinationInput(e.target.value)}
-          placeholder={hasDestination ? '+ add' : 'Enter city...'}
+          placeholder={hasDestination ? 'Add' : 'Enter city or region'}
           className="w-full bg-transparent border-none text-sm placeholder:text-muted-foreground/50 focus:outline-none"
           onKeyDown={(e) => {
             if (e.key === 'Enter') {

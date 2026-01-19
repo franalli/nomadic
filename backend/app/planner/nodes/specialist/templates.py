@@ -26,16 +26,6 @@ TOPIC_ACKNOWLEDGMENTS: Dict[str, str] = {
 }
 
 
-# Strategy topic emoji mapping for context-aware acknowledgments (Tier 6)
-STRATEGY_TOPIC_EMOJIS = {
-    "hiking": "🥾",
-    "skiing": "⛷️",
-    "diving": "🤿",
-    "cycling": "🚴",
-    "boating": "⛵",
-}
-
-
 def _build_context_acknowledgment(
     state: "GraphState",
     specialist_name: str,
@@ -43,9 +33,9 @@ def _build_context_acknowledgment(
     """
     Build a context-aware acknowledgment based on fields already extracted.
 
-    E.g., if user said "I want flights to Paris", returns "Paris for flights - got it!"
-    If user said "Hotels in Tokyo from New York", returns "Tokyo from New York - got it!"
-    If user said "I want to go hiking", returns "🥾 Hiking sounds amazing! "
+    E.g., if user said "I want flights to Paris", returns "Paris for flights - set. "
+    If user said "Hotels in Tokyo from New York", returns "Tokyo from New York - set. "
+    If user said "I want to go hiking", returns "Hiking trip. "
 
     Returns empty string if no context to acknowledge.
     """
@@ -56,8 +46,7 @@ def _build_context_acknowledgment(
     pending_topic = state.metadata.get("pending_strategy_topic")
     if pending_topic and not ti.destinations and not ti.start_date:
         # User mentioned a strategy topic but we need destinations/dates
-        emoji = STRATEGY_TOPIC_EMOJIS.get(pending_topic, "✨")
-        return f"{emoji} {pending_topic.capitalize()} sounds amazing! "
+        return f"{pending_topic.capitalize()} trip. "
 
     # Collect known context
     if ti.destinations:
@@ -85,39 +74,39 @@ def _build_context_acknowledgment(
         return ""
 
     context = " ".join(parts)
-    return f"{context} - got it! "
+    return f"{context} - set. "
 
 
-# Domain-specific warm acknowledgments for pre-core mode (saves ~200-400 tokens)
-# Maps (specialist_name, question_target) -> personalized intro
+# Domain-specific acknowledgments for pre-core mode (saves ~200-400 tokens)
+# Maps (specialist_name, question_target) -> intro
 DOMAIN_PRE_CORE_TEMPLATES: Dict[str, Dict[str, str]] = {
     "hotels": {
-        "destinations": "I'd love to help find the perfect stay! Where are you dreaming of?",
-        "dates": "I'd love to help find the perfect stay! When are you planning your trip?",
-        "origin": "I'd love to help find the perfect stay! Where will you be traveling from?",
-        "travelers": "I'd love to help find the perfect stay! How many guests will be staying?",
-        "budget": "I'd love to help find the perfect stay! What's your budget for lodging?",
+        "destinations": "Hotels noted. Where would you like to go?",
+        "dates": "Hotels noted. When are you planning your trip?",
+        "origin": "Hotels noted. Where will you be traveling from?",
+        "travelers": "Hotels noted. How many guests?",
+        "budget": "Hotels noted. What's your budget for lodging?",
     },
     "flights": {
-        "destinations": "I can help with your flight search! Where would you like to fly to?",
-        "dates": "I can help with your flight search! When are you looking to fly?",
-        "origin": "I can help with your flight search! Where will you be flying from?",
-        "travelers": "I can help with your flight search! How many passengers?",
-        "budget": "I can help with your flight search! What's your flight budget?",
+        "destinations": "Flights noted. Where would you like to fly to?",
+        "dates": "Flights noted. When are you looking to fly?",
+        "origin": "Flights noted. Where will you be flying from?",
+        "travelers": "Flights noted. How many passengers?",
+        "budget": "Flights noted. What's your flight budget?",
     },
     "activities": {
-        "destinations": "Great - I'd love to help plan amazing experiences! Where are you headed?",
-        "dates": "Great - I'd love to help plan amazing experiences! When will you be there?",
-        "origin": "Great - I'd love to plan amazing experiences! Where are you traveling from?",
-        "travelers": "Great - I'd love to plan amazing experiences! How many in your group?",
-        "budget": "Great - I'd love to plan amazing experiences! What's your activity budget?",
+        "destinations": "Activities noted. Where are you headed?",
+        "dates": "Activities noted. When will you be there?",
+        "origin": "Activities noted. Where are you traveling from?",
+        "travelers": "Activities noted. How many in your group?",
+        "budget": "Activities noted. What's your activity budget?",
     },
     "transport": {
-        "destinations": "I can help with your ground transportation! Where are you going?",
-        "dates": "I can help with your ground transportation! When are you traveling?",
-        "origin": "I can help with your ground transportation! Where will you be starting from?",
-        "travelers": "I can help with your ground transportation! How many travelers?",
-        "budget": "I can help with your ground transportation! What's your transport budget?",
+        "destinations": "Transport noted. Where are you going?",
+        "dates": "Transport noted. When are you traveling?",
+        "origin": "Transport noted. Where will you be starting from?",
+        "travelers": "Transport noted. How many travelers?",
+        "budget": "Transport noted. What's your transport budget?",
     },
 }
 

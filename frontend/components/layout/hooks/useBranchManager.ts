@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
-import { useChatStore } from '@/state/chatStore';
+import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
@@ -23,10 +23,10 @@ import { EMPTY_TILE_SELECTION, selectionsToTileSelection, useTileSelection } fro
 /**
  * Minimum time to show the generating loader (in milliseconds).
  *
- * Kept short to emphasize responsiveness - the plan updates quickly
- * when constraints change, reinforcing the deterministic system model.
+ * Set to 5s to match the GeneratingLoader animation duration (5 stages × 1s each).
+ * This ensures the plan is fully generated with strategy content when branches appear.
  */
-const GENERATING_MIN_DURATION_MS = 2000;
+const GENERATING_MIN_DURATION_MS = 5000;
 
 /**
  * Options for the useBranchManager hook.
@@ -43,6 +43,12 @@ export interface BranchManagerOptions {
    * Used to scroll and focus after starting a new session.
    */
   chatPanelContainerRef: React.RefObject<HTMLDivElement | null>;
+
+  /**
+   * Ref to the chat panel for triggering regeneration.
+   * Used to send GENERATE_PLAN_TRIGGER when constraints change.
+   */
+  chatPanelRef?: React.RefObject<{ sendMessage: (text: string) => void } | null>;
 
   /**
    * Toast notification callback.
@@ -188,6 +194,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const {
     tripInputs,
     chatPanelContainerRef,
+    chatPanelRef,
     onToast,
     onChatKeyIncrement,
     resetDraft,
@@ -248,17 +255,20 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * Plan regeneration state.
    * Tracks whether plan is ready, stale, or updating after constraint changes.
    *
-   * The onRegenerate callback is currently a no-op - regeneration is triggered
-   * by the chat panel sending GENERATE_PLAN_TRIGGER. This hook provides the
-   * visual status feedback for reactive updates.
+   * When constraints change after plan generation, the hook automatically
+   * triggers regeneration via the chat panel's sendMessage.
+   *
+   * markRegenerationComplete is called in handlePlanResult when branches actually
+   * arrive, ensuring the UI stays in 'updating' state until data is ready.
    */
-  const { planStatus } = usePlanRegeneration({
+  const { planStatus, markRegenerationComplete } = usePlanRegeneration({
     tripInputs,
     hasBranches: branchState.branches.length > 0,
     onRegenerate: async () => {
-      // TODO: Wire up to chat's sendMessageCore(GENERATE_PLAN_TRIGGER)
-      // For now, this is a placeholder - regeneration is handled by the chat panel
-      // when it detects constraint changes via usePlanRegeneration
+      // Clear existing branches to show loading state
+      branchState.setBranches([]);
+      // Trigger regeneration via chat panel
+      chatPanelRef?.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
     },
   });
 
@@ -441,6 +451,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    * - If minimum time has elapsed, displays immediately
    * - If error (no branches), clears generating state
    *
+   * Also signals regeneration complete to update planStatus.
+   *
    * @param result - The plan result from the AI
    */
   const handlePlanResult = useCallback(
@@ -457,6 +469,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
           // Schedule delayed display
           generatingTimerRef.current = setTimeout(() => {
             finalizeGenerating(result);
+            // Signal that regeneration is complete (data has arrived)
+            markRegenerationComplete();
           }, remaining);
           return;
         }
@@ -470,12 +484,20 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
           clearTimeout(generatingTimerRef.current);
           generatingTimerRef.current = null;
         }
+        // Signal regeneration complete even on error
+        markRegenerationComplete();
       }
 
       // Apply result immediately
       finalizeGenerating(result);
+
+      // Signal that regeneration is complete (data has arrived)
+      // This ensures planStatus transitions from 'updating' to 'ready'
+      if (hasBranchesInResult) {
+        markRegenerationComplete();
+      }
     },
-    [finalizeGenerating]
+    [finalizeGenerating, markRegenerationComplete]
   );
 
   /**

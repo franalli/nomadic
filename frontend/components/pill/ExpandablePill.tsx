@@ -24,7 +24,11 @@ export interface ExpandablePillProps {
   expandedContent: ReactNode;
   /** Use compact styling for simple single-input content */
   compact?: boolean;
-  /** Whether this field was recently updated by the LLM (shows sparkle animation) */
+  /** Whether this field has a value set (shows State Amber icon) */
+  hasValue?: boolean;
+  /** Whether this field is in conflict state (shows Conflict Amber icon) */
+  hasConflict?: boolean;
+  /** Whether this field was recently updated by the LLM (shows one-shot echo overlay) */
   isLLMUpdated?: boolean;
   /** Called when user clicks on the pill to acknowledge the LLM update */
   onAcknowledge?: () => void;
@@ -32,6 +36,12 @@ export interface ExpandablePillProps {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ExpandablePill Component
+//
+// Icon color meanings (authoritative):
+// - Neutral/muted: Constraint unset
+// - State Amber (#E2A23A): Constraint set (steady)
+// - CTA Orange (#FF8A00): Actively being edited (isOpen)
+// - Conflict Amber (#C88A1E): Constraint conflicted
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ExpandablePillInner({
@@ -41,6 +51,8 @@ function ExpandablePillInner({
   onOpenChange,
   expandedContent,
   compact = false,
+  hasValue = false,
+  hasConflict = false,
   isLLMUpdated = false,
   onAcknowledge,
 }: ExpandablePillProps) {
@@ -52,6 +64,31 @@ function ExpandablePillInner({
     onOpenChange(open);
   };
 
+  // Icon color based on constraint state
+  // Priority: open (editing) > conflict > set > unset
+  const getIconColor = () => {
+    if (isOpen) return 'text-[#FF8A00]';           // CTA Orange (editing)
+    if (hasConflict) return 'text-[#C88A1E]';      // Conflict Amber
+    if (hasValue) return 'text-[#E2A23A]';         // State Amber (set)
+    return 'text-muted-foreground';                // Neutral (unset)
+  };
+
+  // Label color matches icon color for coherence
+  const getLabelColor = () => {
+    if (isOpen) return 'text-[#FF8A00]';
+    if (hasConflict) return 'text-[#C88A1E]';
+    if (hasValue) return 'text-[#E2A23A]';
+    return 'text-muted-foreground';
+  };
+
+  // Echo overlay style for one-shot feedback
+  const getEchoStyle = (): React.CSSProperties => {
+    if (!isLLMUpdated || isOpen) return {};
+    return {
+      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    };
+  };
+
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
@@ -60,22 +97,30 @@ function ExpandablePillInner({
           className={cn(
             'group inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all duration-200 ease-out active:scale-[0.98]',
             isOpen
-              ? 'bg-primary/10 border border-primary/30 text-primary shadow-pill-active'
-              : 'bg-gradient-to-b from-card to-muted/30 border border-border/50 text-muted-foreground shadow-pill hover:from-card hover:to-muted/50 hover:border-border/70 hover:shadow-pill-hover hover:text-foreground',
-            isLLMUpdated && !isOpen && 'border-accent/40 shadow-pill-accent'
+              ? 'bg-primary/10 border border-[#FF8A00]/30 shadow-pill-active'
+              : 'bg-gradient-to-b from-card to-muted/30 border border-border/50 shadow-pill hover:from-card hover:to-muted/50 hover:border-border/70 hover:shadow-pill-hover',
+            // Conflict state: dashed border
+            hasConflict && !isOpen && 'border-dashed border-[rgba(255,176,0,0.35)]'
           )}
+          style={{
+            ...getEchoStyle(),
+            transition: isLLMUpdated
+              ? 'all 100ms ease-out'
+              : 'all 200ms ease-in',
+          }}
         >
           <Icon
-            className={cn(
-              'h-3.5 w-3.5',
-              isLLMUpdated && !isOpen && 'sparkle-icon'
-            )}
+            className={cn('h-3.5 w-3.5 transition-colors duration-150', getIconColor())}
           />
-          <span className="text-xs font-semibold">{label}</span>
+          <span className={cn('text-xs font-semibold transition-colors duration-150', getLabelColor())}>
+            {label}
+          </span>
           <ChevronDown
-            className={`h-3.5 w-3.5 transition-transform duration-200 ${
-              isOpen ? 'rotate-180' : ''
-            }`}
+            className={cn(
+              'h-3.5 w-3.5 transition-transform duration-200',
+              isOpen ? 'rotate-180' : '',
+              getIconColor()
+            )}
           />
         </button>
       </PopoverTrigger>

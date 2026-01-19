@@ -114,49 +114,49 @@ class Stage0Coordinator:
 # Deterministic fallback templates with value + single question
 STAGE0_FALLBACK_TEMPLATES = {
     "hiking": (
-        "🥾 Great choice! Hiking adventures are incredibly rewarding.\n\n"
-        "**✨ Top Destinations to Explore:**\n"
-        "🏔️ **Swiss Alps** — Iconic trails like the Haute Route\n"
-        "🌲 **Patagonia, Chile** — Torres del Paine circuit\n"
-        "🌿 **New Zealand** — Milford Track and Routeburn\n"
-        "⛰️ **Nepal** — Classic Annapurna or Everest base camp\n\n"
-        "📅 When are you thinking of going?"
+        "**Hiking Destinations:**\n\n"
+        "**Top Options:**\n"
+        "- **Swiss Alps** — Iconic trails like the Haute Route\n"
+        "- **Patagonia, Chile** — Torres del Paine circuit\n"
+        "- **New Zealand** — Milford Track and Routeburn\n"
+        "- **Nepal** — Classic Annapurna or Everest base camp\n\n"
+        "When are you thinking of going?"
     ),
     "skiing": (
-        "⛷️ Exciting! Let's plan an amazing ski trip.\n\n"
-        "**✨ Top Destinations to Explore:**\n"
-        "🎿 **French Alps** — Chamonix, Val d'Isère, Les 3 Vallées\n"
-        "❄️ **Swiss Alps** — Zermatt, Verbier, St. Moritz\n"
-        "🏔️ **Japan** — Niseko, Hakuba for legendary powder\n"
-        "🗻 **Colorado** — Vail, Aspen, Breckenridge\n\n"
-        "📅 When are you thinking of hitting the slopes?"
+        "**Ski Destinations:**\n\n"
+        "**Top Options:**\n"
+        "- **French Alps** — Chamonix, Val d'Isère, Les 3 Vallées\n"
+        "- **Swiss Alps** — Zermatt, Verbier, St. Moritz\n"
+        "- **Japan** — Niseko, Hakuba for legendary powder\n"
+        "- **Colorado** — Vail, Aspen, Breckenridge\n\n"
+        "When are you thinking of going?"
     ),
     "diving": (
-        "🤿 Fantastic! Diving opens up a whole underwater world.\n\n"
-        "**✨ World-Class Dive Destinations:**\n"
-        "🐠 **Maldives** — Pristine reefs and manta rays\n"
-        "🌊 **Great Barrier Reef, Australia** — Bucket-list diving\n"
-        "🐢 **Red Sea, Egypt** — Wrecks and colorful reefs\n"
-        "🦈 **Indonesia** — Raja Ampat biodiversity hotspot\n\n"
-        "📅 When are you thinking of diving?"
+        "**Dive Destinations:**\n\n"
+        "**Top Options:**\n"
+        "- **Maldives** — Pristine reefs and manta rays\n"
+        "- **Great Barrier Reef, Australia** — World-class diving\n"
+        "- **Red Sea, Egypt** — Wrecks and colorful reefs\n"
+        "- **Indonesia** — Raja Ampat biodiversity hotspot\n\n"
+        "When are you thinking of going?"
     ),
     "cycling": (
-        "🚴 Love it! Cycling trips offer amazing ways to explore.\n\n"
-        "**✨ Epic Cycling Destinations:**\n"
-        "🛤️ **Netherlands** — Classic flat cycling with canals\n"
-        "🍇 **French countryside** — Loire Valley vineyards\n"
-        "🏔️ **Italian Dolomites** — Stunning mountain passes\n"
-        "🌾 **Vietnam** — Ha Long Bay to Hoi An adventure\n\n"
-        "📅 When are you thinking of cycling?"
+        "**Cycling Destinations:**\n\n"
+        "**Top Options:**\n"
+        "- **Netherlands** — Classic flat cycling with canals\n"
+        "- **French countryside** — Loire Valley vineyards\n"
+        "- **Italian Dolomites** — Stunning mountain passes\n"
+        "- **Vietnam** — Ha Long Bay to Hoi An adventure\n\n"
+        "When are you thinking of going?"
     ),
     "boating": (
-        "⛵ Wonderful! Sailing adventures are unforgettable.\n\n"
-        "**✨ Amazing Sailing Destinations:**\n"
-        "🏝️ **Greek Islands** — Island-hop through the Cyclades\n"
-        "🌅 **Croatia** — Dalmatian coast beauty\n"
-        "🚤 **Caribbean** — BVI, Grenadines, or Bahamas\n"
-        "🐬 **Thailand** — Phuket and the Andaman Sea\n\n"
-        "📅 When are you thinking of setting sail?"
+        "**Sailing Destinations:**\n\n"
+        "**Top Options:**\n"
+        "- **Greek Islands** — Island-hop through the Cyclades\n"
+        "- **Croatia** — Dalmatian coast beauty\n"
+        "- **Caribbean** — BVI, Grenadines, or Bahamas\n"
+        "- **Thailand** — Phuket and the Andaman Sea\n\n"
+        "When are you thinking of going?"
     ),
 }
 
@@ -229,22 +229,14 @@ DESTINATION_TOPIC_TEMPLATES: Dict[Tuple[str, str], Dict[str, Any]] = {
 
 def _format_destination_template(content: Dict[str, str], dest_name: str, topic: str) -> str:
     """Format destination-specific template into a response string."""
-    emoji_map = {
-        "hiking": "🥾",
-        "diving": "🤿",
-        "skiing": "⛷️",
-        "cycling": "🚴",
-        "boating": "⛵",
-    }
-    emoji = emoji_map.get(topic, "✨")
     return (
-        f"{emoji} Excellent choice! **{dest_name}** is incredible for {topic}.\n\n"
-        f"**✨ Why It's Special:**\n"
-        f"🏆 **Highlights:** {content['highlights']}\n"
-        f"📅 **Best Season:** {content['best_season']}\n"
-        f"💡 **Pro Tips:** {content['key_tips']}\n"
-        f"⏱️ **Ideal Duration:** {content['duration_note']}\n\n"
-        "📅 When are you thinking of going? I can tailor recommendations to your dates."
+        f"**{dest_name}** for {topic}:\n\n"
+        f"**Details:**\n"
+        f"- **Highlights:** {content['highlights']}\n"
+        f"- **Best Season:** {content['best_season']}\n"
+        f"- **Tips:** {content['key_tips']}\n"
+        f"- **Ideal Duration:** {content['duration_note']}\n\n"
+        "When are you thinking of going?"
     )
 
 
@@ -274,58 +266,54 @@ def get_dest_known_fallback(topic: str, dest_name: str) -> str:
     """Get destination-specific fallback template."""
     templates = {
         "diving": (
-            f"🤿 Excellent choice! **{dest_name}** offers incredible diving opportunities.\n\n"
-            "**✨ What Makes It Special:**\n"
-            "🐠 **Pristine reefs** — World-class visibility and marine life\n"
-            "🌊 **Best conditions** — Varies by season, so timing matters\n"
-            "🐢 **Options** — Liveaboard vs resort-based diving\n"
-            "🦈 **Experience levels** — Sites for beginners to advanced\n\n"
-            "📅 When are you thinking of going? The season really impacts conditions."
+            f"**{dest_name}** for diving:\n\n"
+            "**Key Details:**\n"
+            "- **Reefs** — World-class visibility and marine life\n"
+            "- **Conditions** — Varies by season\n"
+            "- **Options** — Liveaboard vs resort-based diving\n"
+            "- **Experience levels** — Sites for beginners to advanced\n\n"
+            "When are you thinking of going?"
         ),
         "hiking": (
-            f"🥾 Great pick! **{dest_name}** has amazing hiking trails.\n\n"
-            "**✨ Key Things to Know:**\n"
-            "🏔️ **Trail variety** — Routes for all fitness levels\n"
-            "🌲 **Seasonal access** — Weather affects trail conditions\n"
-            "📋 **Permits** — Some routes require advance booking\n"
-            "⛰️ **Altitude** — May need acclimatization time\n\n"
-            "📅 When are you planning to hike? Season affects trail access."
+            f"**{dest_name}** for hiking:\n\n"
+            "**Key Details:**\n"
+            "- **Trail variety** — Routes for all fitness levels\n"
+            "- **Seasonal access** — Weather affects trail conditions\n"
+            "- **Permits** — Some routes require advance booking\n"
+            "- **Altitude** — May need acclimatization time\n\n"
+            "When are you planning to go?"
         ),
         "skiing": (
-            f"⛷️ Awesome! **{dest_name}** is a fantastic ski destination.\n\n"
-            "**✨ What to Expect:**\n"
-            "🎿 **Terrain** — Varied runs for all skill levels\n"
-            "❄️ **Snow season** — Peak conditions vary by month\n"
-            "🚡 **Lift access** — Multiple areas to explore\n"
-            "🏔️ **Off-piste** — Options for advanced skiers\n\n"
-            "📅 When are you thinking of skiing? Season matters for snow quality."
+            f"**{dest_name}** for skiing:\n\n"
+            "**Key Details:**\n"
+            "- **Terrain** — Varied runs for all skill levels\n"
+            "- **Snow season** — Peak conditions vary by month\n"
+            "- **Lift access** — Multiple areas to explore\n"
+            "- **Off-piste** — Options for advanced skiers\n\n"
+            "When are you thinking of going?"
         ),
         "cycling": (
-            f"🚴 Perfect! **{dest_name}** offers fantastic cycling.\n\n"
-            "**✨ Here's the Overview:**\n"
-            "🛤️ **Routes** — Scenic roads and dedicated paths\n"
-            "🏔️ **Terrain** — Mix of flat and challenging climbs\n"
-            "🌡️ **Weather** — Best conditions vary by season\n"
-            "🚲 **Bike rentals** — Quality bikes available locally\n\n"
-            "📅 When are you thinking of cycling? Weather is key."
+            f"**{dest_name}** for cycling:\n\n"
+            "**Key Details:**\n"
+            "- **Routes** — Scenic roads and dedicated paths\n"
+            "- **Terrain** — Mix of flat and challenging climbs\n"
+            "- **Weather** — Best conditions vary by season\n"
+            "- **Bike rentals** — Quality bikes available locally\n\n"
+            "When are you thinking of going?"
         ),
         "boating": (
-            f"⛵ Wonderful! **{dest_name}** is beautiful for sailing.\n\n"
-            "**✨ Key Considerations:**\n"
-            "🌊 **Waters** — Calm harbors and open passages\n"
-            "🌅 **Season** — Wind and weather patterns vary\n"
-            "🚤 **Charter options** — Bareboat or crewed\n"
-            "🏝️ **Island-hopping** — Multiple stops possible\n\n"
-            "📅 When are you thinking of sailing? Season affects conditions."
+            f"**{dest_name}** for sailing:\n\n"
+            "**Key Details:**\n"
+            "- **Waters** — Calm harbors and open passages\n"
+            "- **Season** — Wind and weather patterns vary\n"
+            "- **Charter options** — Bareboat or crewed\n"
+            "- **Island-hopping** — Multiple stops possible\n\n"
+            "When are you thinking of going?"
         ),
     }
     return templates.get(
         topic,
-        (
-            f"✨ Exciting! **{dest_name}** is a great choice for your trip.\n\n"
-            "I'll help you plan an amazing adventure there.\n\n"
-            "📅 When are you thinking of traveling?"
-        ),
+        (f"**{dest_name}** selected.\n\n" "When are you thinking of traveling?"),
     )
 
 

@@ -10,6 +10,7 @@ Used by generate_responder to enrich branches with strategy content:
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional
@@ -45,6 +46,17 @@ CATEGORY_TO_STRATEGY: Dict[str, str] = {
     "sailing": "boating",
     "yachting": "boating",
     "kayaking": "boating",
+    # General categories (fallback to general strategy)
+    "sightseeing": "general",
+    "culture": "general",
+    "food": "general",
+    "relaxation": "general",
+    "beach": "general",
+    "city": "general",
+    "shopping": "general",
+    "nightlife": "general",
+    "tours": "general",
+    "experiences": "general",
 }
 
 
@@ -74,24 +86,29 @@ def detect_relevant_strategies(state: "GraphState") -> List[str]:
     """
     Detect which strategy topics are relevant based on activity_settings.categories.
 
-    Returns list of topic names (hiking, diving, skiing, cycling, boating).
+    Returns list of topic names (hiking, diving, skiing, cycling, boating, general).
+    Falls back to 'general' if no specific strategies are detected, ensuring
+    all trips get vibe/highlights/flow content.
     """
     topics: set[str] = set()
 
     activity_settings = state.trip_inputs.activity_settings
-    if not activity_settings:
-        return []
+    if activity_settings:
+        # Handle both dict and object access (activity_settings can be either)
+        if isinstance(activity_settings, dict):
+            categories = activity_settings.get("categories", []) or []
+        else:
+            categories = activity_settings.categories or []
 
-    # Handle both dict and object access (activity_settings can be either)
-    if isinstance(activity_settings, dict):
-        categories = activity_settings.get("categories", []) or []
-    else:
-        categories = activity_settings.categories or []
+        for category in categories:
+            category_lower = category.lower().strip()
+            if category_lower in CATEGORY_TO_STRATEGY:
+                topics.add(CATEGORY_TO_STRATEGY[category_lower])
 
-    for category in categories:
-        category_lower = category.lower().strip()
-        if category_lower in CATEGORY_TO_STRATEGY:
-            topics.add(CATEGORY_TO_STRATEGY[category_lower])
+    # Always include 'general' as fallback if no specific strategies found
+    # This ensures all trips get vibe/highlights/flow content
+    if not topics:
+        topics.add("general")
 
     return list(topics)
 
@@ -169,9 +186,10 @@ async def call_strategy_for_plan(
     topic: str,
 ) -> StrategyResult:
     """
-    Call a strategy node to generate content for plan generation.
+    Call a strategy node to generate content for plan generation (Stage 2 tier).
 
-    Uses a simplified LLM call to get strategy content without full stage logic.
+    Uses FULL tier (1536 tokens) to get rich strategy content for branch population.
+    Parses JSON response from LLM, with markdown fallback.
     """
     from app.config import settings
     from app.plan_graph import STRATEGY_REGISTRY, load_prompt
@@ -185,49 +203,187 @@ async def call_strategy_for_plan(
 
         prompt = load_prompt(prompt_name)
 
-        # Build minimal context
-        destinations = state.trip_inputs.destinations or []
+        # Build rich context for Stage 2 tier
+        ti = state.trip_inputs
+        destinations = ti.destinations or []
         dest_str = ", ".join(destinations) if destinations else "their chosen destination"
-        dates_str = ""
-        if state.trip_inputs.start_date and state.trip_inputs.end_date:
-            dates_str = f" from {state.trip_inputs.start_date} to {state.trip_inputs.end_date}"
 
-        # Add destination context to prompt
-        context = (
-            f"\n\nCONTEXT FOR PLAN GENERATION:\n"
-            f"Destination: {dest_str}{dates_str}\n"
-            f"Generate a {topic} plan with:\n"
-            f"1. A short vibe/theme (1 sentence)\n"
-            f"2. 3-5 key highlights\n"
-            f"3. Day-by-day flow (3-5 days)\n"
-            f"4. 3-4 practical tips/notes\n"
+        # Date and duration context
+        dates_str = ""
+        duration_str = ""
+        if ti.start_date and ti.end_date:
+            dates_str = f"Travel dates: {ti.start_date} to {ti.end_date}"
+            # Calculate duration
+            try:
+                from datetime import datetime
+
+                start = datetime.strptime(ti.start_date, "%Y-%m-%d")
+                end = datetime.strptime(ti.end_date, "%Y-%m-%d")
+                days = (end - start).days + 1
+                duration_str = f"Duration: {days} days"
+            except (ValueError, TypeError):
+                pass
+
+        # Budget context
+        budget_str = ""
+        if ti.budget:
+            currency = ti.currency or "USD"
+            budget_str = f"Budget: {ti.budget} {currency}"
+
+        # Travelers context
+        travelers_str = ""
+        adults = ti.adults or 1
+        children = ti.children or 0
+        if children > 0:
+            travelers_str = f"Travelers: {adults} adult(s), {children} child(ren)"
+        else:
+            travelers_str = f"Travelers: {adults} adult(s)"
+
+        # Activity preferences context
+        activity_prefs = ""
+        if ti.activity_settings:
+            as_dict = (
+                ti.activity_settings
+                if isinstance(ti.activity_settings, dict)
+                else ti.activity_settings.model_dump()
+            )
+            categories = as_dict.get("categories", [])
+            if categories:
+                activity_prefs = f"Activity interests: {', '.join(categories)}"
+
+        # Build comprehensive context for FULL tier (Stage 2)
+        context_parts = [
+            f"\n\n{'='*40}",
+            "CONTEXT FOR PLAN GENERATION (STAGE 2 - FULL DETAIL)",
+            f"{'='*40}",
+            f"Destination: {dest_str}",
+        ]
+        if dates_str:
+            context_parts.append(dates_str)
+        if duration_str:
+            context_parts.append(duration_str)
+        if budget_str:
+            context_parts.append(budget_str)
+        if travelers_str:
+            context_parts.append(travelers_str)
+        if activity_prefs:
+            context_parts.append(activity_prefs)
+
+        context_parts.extend(
+            [
+                "",
+                "Generate a DETAILED plan with:",
+                "1. A compelling vibe/theme (1 evocative sentence)",
+                "2. Focus: What makes this trip special (1-2 sentences)",
+                "3. 3-5 specific highlights (actual experiences, not generic activities)",
+                "4. Day-by-day flow matching trip duration (be specific about each day)",
+                "5. 3-4 practical on-the-ground tips",
+                "",
+                "IMPORTANT: Output valid JSON with vibe, focus, highlights, flow, notes fields.",
+            ]
         )
+
+        context = "\n".join(context_parts)
 
         messages = [
             {"role": "system", "content": prompt + context},
-            {"role": "user", "content": f"Generate a {topic} plan for {dest_str}"},
+            {"role": "user", "content": f"Generate a detailed {topic} plan for {dest_str}"},
         ]
 
-        # Call LLM
+        # Call LLM with FULL tier token budget (1536)
         response_text = ""
         async for chunk in call_llm_streaming_with_json_field(
             messages=messages,
             model=settings.llm_specialist_model,
-            max_tokens=768,
-            json_field=None,  # Plain text response
+            max_tokens=1536,  # FULL tier for Stage 2
+            json_field=None,
             timeout=settings.llm_timeout_specialist,
         ):
             if isinstance(chunk, str):
                 response_text += chunk
 
-        # Parse response
-        content = parse_strategy_response(response_text, topic)
+        # Parse JSON response (primary path)
+        content = _parse_json_strategy_response(response_text, topic)
+
+        _debug(
+            "Strategy plan generated",
+            topic=topic,
+            has_vibe=bool(content.vibe),
+            has_focus=bool(content.focus),
+            highlights_count=len(content.highlights),
+            flow_count=len(content.flow),
+            notes_count=len(content.notes),
+        )
 
         return StrategyResult(topic=topic, success=True, content=content)
 
     except Exception as e:
         _debug(f"Strategy {topic} call failed", error=str(e))
         return StrategyResult(topic=topic, success=False, error=str(e))
+
+
+def _parse_json_strategy_response(response_text: str, topic: str) -> StrategyContent:
+    """
+    Parse strategy LLM response, trying JSON first then markdown fallback.
+
+    The strategy prompts output JSON with vibe, focus, highlights, flow, notes fields.
+    """
+    # Try to extract JSON from response (may be wrapped in markdown code blocks)
+    json_text = response_text.strip()
+
+    # Remove markdown code block wrapper if present
+    if json_text.startswith("```"):
+        # Find the end of the code block
+        lines = json_text.split("\n")
+        # Skip first line (```json or ```) and find closing ```
+        json_lines = []
+        in_block = False
+        for line in lines:
+            if line.startswith("```") and not in_block:
+                in_block = True
+                continue
+            if line.startswith("```") and in_block:
+                break
+            if in_block:
+                json_lines.append(line)
+        json_text = "\n".join(json_lines)
+
+    # Try JSON parsing
+    try:
+        parsed = json.loads(json_text)
+
+        # Extract fields from JSON response
+        content = StrategyContent(
+            topic=topic,
+            vibe=parsed.get("vibe", "") or "",
+            focus=parsed.get("focus", "") or "",
+            highlights=parsed.get("highlights", []) or [],
+            flow=parsed.get("flow", []) or [],
+            notes=parsed.get("notes", []) or [],
+        )
+
+        # Ensure lists contain strings
+        content.highlights = [str(h) for h in content.highlights if h][:5]
+        content.flow = [str(f) for f in content.flow if f][:7]  # Allow up to 7 for longer trips
+        content.notes = [str(n) for n in content.notes if n][:4]
+
+        _debug(
+            "Strategy JSON parsed successfully",
+            topic=topic,
+            vibe_preview=content.vibe[:50] if content.vibe else None,
+        )
+
+        return content
+
+    except json.JSONDecodeError as e:
+        _debug(
+            "Strategy JSON parse failed, falling back to markdown parsing",
+            topic=topic,
+            error=str(e),
+            response_preview=response_text[:200],
+        )
+        # Fallback to markdown parsing
+        return parse_strategy_response(response_text, topic)
 
 
 async def orchestrate_strategies(state: "GraphState") -> Dict[str, StrategyResult]:

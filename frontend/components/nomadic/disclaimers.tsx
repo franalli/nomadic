@@ -8,7 +8,7 @@ import Link from 'next/link';
 export function SupplierDisclaimer() {
   return (
     <p className="text-xs text-muted-foreground">
-      Prices and availability are provided by third-party travel suppliers.
+      Prices and availability from partners.
     </p>
   );
 }

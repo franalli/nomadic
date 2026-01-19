@@ -12,6 +12,7 @@ import {
   Footprints,
   Hotel,
   Loader2,
+  type LucideIcon,
   MapPin,
   Mountain,
   Palmtree,
@@ -30,7 +31,6 @@ import {
   Waves,
   Wine,
   X,
-  type LucideIcon,
 } from 'lucide-react';
 import { Fragment, memo, useEffect, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
@@ -183,7 +183,7 @@ export type TripInputsDraft = {
 
 const FIELD_LABELS: Record<string, string> = {
   origin: 'From',
-  destinations: 'Where to',
+  destinations: 'To',
   dates: 'Dates',
   travelers: 'Travelers',
   budget: 'Budget',
@@ -450,6 +450,7 @@ function TripDetailsFormInner({
           <InlineEditPill
             label="From"
             icon={MapPin}
+            hasValue={hasOrigin}
             isLLMUpdated={isFieldLLMUpdated('origin')}
             onAcknowledge={() => acknowledgeField('origin')}
             hasError={validationError?.field === 'origin'}
@@ -486,7 +487,7 @@ function TripDetailsFormInner({
                     setOriginInput(e.target.value);
                     if (validationError?.field === 'origin') onClearValidationError();
                   }}
-                  placeholder="Enter city..."
+                  placeholder="Enter city or airport"
                   aria-invalid={validationError?.field === 'origin'}
                   aria-describedby={validationError?.field === 'origin' ? 'origin-error' : undefined}
                   className={`w-full bg-transparent border-none text-sm placeholder:text-muted-foreground/50 focus:outline-none ${
@@ -518,6 +519,7 @@ function TripDetailsFormInner({
           <InlineEditPill
             label="Where to"
             icon={MapPin}
+            hasValue={hasDestination}
             isLLMUpdated={isFieldLLMUpdated('destinations')}
             onAcknowledge={() => acknowledgeField('destinations')}
             hasError={validationError?.field === 'destination'}
@@ -552,6 +554,7 @@ function TripDetailsFormInner({
         <InlineEditPill
           label="Dates"
           icon={hasDateValidationWarning ? AlertCircle : CalendarRange}
+          hasValue={hasDates}
           isLLMUpdated={areDatesLLMUpdated}
           onAcknowledge={acknowledgeDates}
         >
@@ -570,7 +573,7 @@ function TripDetailsFormInner({
                     {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
                   </>
                 ) : (
-                  'Select dates...'
+                  'Select dates or duration'
                 )}
               </button>
             </PopoverTrigger>
@@ -630,6 +633,7 @@ function TripDetailsFormInner({
           icon={Plane}
           isOpen={flightsSettingsOpen}
           onOpenChange={setFlightsSettingsOpen}
+          hasValue={bookingTypes.flights}
           isLLMUpdated={isFieldLLMUpdated('flight_settings') || flightsBookingUpdated}
           onAcknowledge={() => {
             acknowledgeField('flight_settings');
@@ -638,7 +642,7 @@ function TripDetailsFormInner({
           }}
           expandedContent={
               <div className="flex flex-col gap-2">
-                <label className={`flex items-center gap-2 ${flightsBookingUpdated ? 'sparkle-control' : ''}`}>
+                <label className="flex items-center gap-2">
                   <Switch
                     checked={bookingTypes.flights}
                     onCheckedChange={(checked) => {
@@ -659,7 +663,7 @@ function TripDetailsFormInner({
                       flightSettings.round_trip
                         ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                         : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                    } ${isSubFieldUpdated('flight_settings.round_trip') ? 'sparkle-control' : ''}`}
+                    }`}
                   >
                     {flightSettings.round_trip ? 'Round trip' : 'One way'}
                   </button>
@@ -673,7 +677,7 @@ function TripDetailsFormInner({
                       flightSettings.direct_only
                         ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                         : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                    } ${isSubFieldUpdated('flight_settings.direct_only') ? 'sparkle-control' : ''}`}
+                    }`}
                   >
                     {flightSettings.direct_only ? 'Direct only' : 'Any stops'}
                   </button>
@@ -683,7 +687,7 @@ function TripDetailsFormInner({
                       onUpdateFlightSettings({ cabin_class: e.target.value as FlightSettings['cabin_class'] });
                       acknowledgeField('flight_settings.cabin_class' as LLMUpdatableField);
                     }}
-                    className={`rounded-full border border-border/40 bg-muted/20 px-2 py-1 text-[11px] text-foreground focus:border-primary/40 focus:outline-none ${isSubFieldUpdated('flight_settings.cabin_class') ? 'sparkle-control' : ''}`}
+                    className={`rounded-full border border-border/40 bg-muted/20 px-2 py-1 text-[11px] text-foreground focus:border-primary/40 focus:outline-none `}
                   >
                     <option value="economy">Economy</option>
                     <option value="premium_economy">Premium</option>
@@ -701,6 +705,7 @@ function TripDetailsFormInner({
             icon={Car}
             isOpen={transportSettingsOpen}
             onOpenChange={setTransportSettingsOpen}
+            hasValue={bookingTypes.ground_transport}
             isLLMUpdated={isFieldLLMUpdated('transport_settings') || transportBookingUpdated}
             onAcknowledge={() => {
               acknowledgeField('transport_settings');
@@ -709,7 +714,7 @@ function TripDetailsFormInner({
             }}
             expandedContent={
               <div className="flex flex-col gap-2">
-                <label className={`flex items-center gap-2 ${transportBookingUpdated ? 'sparkle-control' : ''}`}>
+                <label className="flex items-center gap-2">
                   <Switch
                     checked={bookingTypes.ground_transport}
                     onCheckedChange={(checked) => {
@@ -730,7 +735,7 @@ function TripDetailsFormInner({
                       transportSettings.car
                         ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                         : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                    } ${isSubFieldUpdated('transport_settings.car') ? 'sparkle-control' : ''}`}
+                    }`}
                   >
                     <Car className="h-3 w-3" />
                     Car
@@ -745,7 +750,7 @@ function TripDetailsFormInner({
                       transportSettings.train
                         ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                         : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                    } ${isSubFieldUpdated('transport_settings.train') ? 'sparkle-control' : ''}`}
+                    }`}
                   >
                     <Train className="h-3 w-3" />
                     Train
@@ -760,7 +765,7 @@ function TripDetailsFormInner({
                       transportSettings.bus
                         ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                         : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                    } ${isSubFieldUpdated('transport_settings.bus') ? 'sparkle-control' : ''}`}
+                    }`}
                   >
                     <Bus className="h-3 w-3" />
                     Bus
@@ -776,6 +781,7 @@ function TripDetailsFormInner({
             icon={Hotel}
             isOpen={hotelsSettingsOpen}
             onOpenChange={setHotelsSettingsOpen}
+            hasValue={bookingTypes.hotels}
             isLLMUpdated={isFieldLLMUpdated('hotel_settings') || hotelsBookingUpdated}
             onAcknowledge={() => {
               acknowledgeField('hotel_settings');
@@ -784,7 +790,7 @@ function TripDetailsFormInner({
             }}
             expandedContent={
               <div className="flex flex-col gap-3">
-                <label className={`flex items-center gap-2 ${hotelsBookingUpdated ? 'sparkle-control' : ''}`}>
+                <label className="flex items-center gap-2">
                   <Switch
                     checked={bookingTypes.hotels}
                     onCheckedChange={(checked) => {
@@ -796,7 +802,7 @@ function TripDetailsFormInner({
                 </label>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-muted-foreground">Min stars:</span>
-                  <div className={`flex gap-1 rounded-lg p-0.5 ${isSubFieldUpdated('hotel_settings.min_stars') ? 'sparkle-control' : ''}`}>
+                  <div className="flex gap-1 rounded-lg p-0.5">
                     {[1, 2, 3, 4, 5].map((star) => (
                       <button
                         key={star}
@@ -836,7 +842,7 @@ function TripDetailsFormInner({
                             isSelected
                               ? 'border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 text-primary shadow-pill-active'
                               : 'border-border/40 bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
-                          } ${amenitiesUpdatedByLLM && isSelected ? 'sparkle-control' : ''}`}
+                          }`}
                         >
                           {amenity.label}
                         </button>
@@ -855,6 +861,7 @@ function TripDetailsFormInner({
             icon={Ticket}
             isOpen={activitiesSettingsOpen}
             onOpenChange={setActivitiesSettingsOpen}
+            hasValue={bookingTypes.activities || activitySettings.categories.length > 0}
             isLLMUpdated={isFieldLLMUpdated('activity_settings') || activitiesBookingUpdated}
             onAcknowledge={() => {
               acknowledgeField('activity_settings');
@@ -863,7 +870,7 @@ function TripDetailsFormInner({
             }}
             expandedContent={
               <div className="flex flex-col gap-3">
-                <label className={`flex items-center gap-2 ${activitiesBookingUpdated ? 'sparkle-control' : ''}`}>
+                <label className="flex items-center gap-2">
                   <Switch
                     checked={bookingTypes.activities}
                     onCheckedChange={(checked) => {
@@ -881,7 +888,7 @@ function TripDetailsFormInner({
                       return (
                         <span
                           key={`${category}-${index}`}
-                          className={`inline-flex items-center gap-1 rounded-full border border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-pill-active ${isSubFieldUpdated('activity_settings.categories') ? 'sparkle-control' : ''}`}
+                          className={`inline-flex items-center gap-1 rounded-full border border-primary/50 bg-gradient-to-b from-primary/15 to-primary/10 px-2 py-0.5 text-[10px] text-primary shadow-pill-active `}
                         >
                           <ActivityIcon className="h-3 w-3 flex-shrink-0" />
                           <span className="truncate">{category}</span>
@@ -917,7 +924,7 @@ function TripDetailsFormInner({
                     type="text"
                     value={activityInput}
                     onChange={(e) => setActivityInput(e.target.value)}
-                    placeholder={activitySettings.categories.length > 0 ? '+ add activity' : 'Enter activity...'}
+                    placeholder={activitySettings.categories.length > 0 ? 'Add activity' : 'Enter activity...'}
                     className="w-full rounded-full border border-border/40 bg-muted/20 px-3 py-1 text-xs placeholder:text-muted-foreground/50 focus:border-primary/40 focus:outline-none"
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') {
@@ -942,6 +949,7 @@ function TripDetailsFormInner({
           compact
           isOpen={travelersPillOpen}
           onOpenChange={setTravelersPillOpen}
+          hasValue={tripInputs.adults != null || tripInputs.children != null}
           isLLMUpdated={travelersUpdated}
           onAcknowledge={() => {
             acknowledgeField('adults');
@@ -970,7 +978,7 @@ function TripDetailsFormInner({
                   }}
                   placeholder="0"
                   min={0}
-                  className={`w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${adultsUpdated ? 'sparkle-control' : ''}`}
+                  className={`w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active `}
                 />
               </div>
               {/* Children input */}
@@ -993,11 +1001,11 @@ function TripDetailsFormInner({
                   }}
                   placeholder="0"
                   min={0}
-                  className={`w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${childrenUpdated ? 'sparkle-control' : ''}`}
+                  className={`w-16 rounded-full border border-primary/30 bg-card text-foreground px-2 py-1 text-xs text-center placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active `}
                 />
               </div>
               {/* Requires assistance toggle */}
-              <label className={`flex items-center gap-2 ${requiresAssistanceUpdated ? 'sparkle-control' : ''}`}>
+              <label className="flex items-center gap-2">
                 <Switch
                   checked={tripInputs.requires_assistance ?? false}
                   onCheckedChange={() => {
@@ -1018,6 +1026,7 @@ function TripDetailsFormInner({
           compact
           isOpen={budgetPillOpen}
           onOpenChange={setBudgetPillOpen}
+          hasValue={tripInputs.budget != null}
           isLLMUpdated={isBudgetLLMUpdated}
           onAcknowledge={acknowledgeBudget}
           expandedContent={
@@ -1028,7 +1037,7 @@ function TripDetailsFormInner({
                   onFieldChange('currency', e.target.value);
                   onUpdateCurrency(e.target.value);
                 }}
-                className={`h-8 w-24 rounded-full border border-primary/30 bg-card px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${isBudgetLLMUpdated ? 'sparkle-control' : ''}`}
+                className={`h-8 w-24 rounded-full border border-primary/30 bg-card px-3 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active `}
               >
                 {CURRENCY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -1043,7 +1052,7 @@ function TripDetailsFormInner({
                 placeholder="Budget"
                 min={0}
                 step={100}
-                className={`w-24 rounded-full border border-primary/30 bg-card text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active ${isBudgetLLMUpdated ? 'sparkle-control' : ''}`}
+                className={`w-24 rounded-full border border-primary/30 bg-card text-foreground px-3 py-1.5 text-xs placeholder:text-muted-foreground/50 shadow-sm transition-all duration-200 hover:border-primary/40 hover:shadow-pill focus:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-1 focus:shadow-pill-active `}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();

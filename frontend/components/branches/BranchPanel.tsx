@@ -1,8 +1,9 @@
 'use client';
 
-import { ArrowRightLeft, CheckCircle2, MapPin } from 'lucide-react';
+import { ArrowRightLeft, CheckCircle2 } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 
+import { PlanDocument } from '@/components/plan';
 import {
   resolveTabForTile,
   TAB_CONFIG,
@@ -10,6 +11,7 @@ import {
   TilesGrid,
   type TileTabKey,
 } from '@/components/tiles/TilesGrid';
+import { Loader } from '@/components/ui/loader';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DETAIL_PRESETS } from '@/lib/mocks';
 import { cn , formatBudgetDisplay } from '@/lib/utils';
@@ -144,21 +146,21 @@ export const BranchPanel = memo(function BranchPanel({
     canCompare,
   } = useComparisonMode();
   const detailPreset = DETAIL_PRESETS[selectedIndex % DETAIL_PRESETS.length];
-  // Use backend data first, fallback to mock presets
+  // Use backend data - only use detailPreset for hero images as fallback
   const selectedHeroImages = selected?.hero_images?.length
     ? selected.hero_images
     : detailPreset.heroImages;
-  const selectedVibe = selected?.vibe ?? detailPreset.vibe;
-  const selectedFocus = selected?.focus ?? detailPreset.focus;
-  const selectedHighlights = selected?.highlights?.length
-    ? selected.highlights
-    : detailPreset.highlights;
-  const selectedFlow = selected?.flow?.length
-    ? selected.flow
-    : detailPreset.flow;
-  const selectedNotes = selected?.notes?.length
-    ? selected.notes
-    : detailPreset.notes;
+  // Strategy content from backend (no mock fallback - show loading state instead)
+  const selectedVibe = selected?.vibe ?? null;
+  const selectedFocus = selected?.focus ?? null;
+  const selectedHighlights = selected?.highlights?.length ? selected.highlights : [];
+  const selectedNotes = selected?.notes?.length ? selected.notes : [];
+  // Check if any booking types are enabled (don't show "searching..." if none enabled)
+  const hasAnyBookingEnabled = tripInputs?.booking_types && (
+    tripInputs.booking_types.hotels ||
+    tripInputs.booking_types.flights ||
+    tripInputs.booking_types.activities
+  );
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);
   const countsForSelected = selected ? branchTileCounts?.[selected.id] : undefined;
@@ -172,6 +174,18 @@ export const BranchPanel = memo(function BranchPanel({
   const isStaleTiles =
     selected != null && tilesBranchId != null && tilesBranchId !== selected.id;
   const hasTilesForSelected = branchTiles.length > 0;
+
+  // Derive loading state for strategy content and plan regeneration
+  // isRegenerating is true when:
+  // 1. Plan is being regenerated (planStatus === 'updating'), OR
+  // 2. Tiles are expected but haven't loaded yet (initial generation scenario)
+  const isStrategyLoading = planStatus === 'updating';
+  const isRegenerating = planStatus === 'updating' || (
+    hasAnyBookingEnabled &&
+    !hasTilesForSelected &&
+    selected != null &&
+    planStatus !== 'stale'  // Don't show during debounce period
+  );
   const [openTab, setOpenTab] = useState<TileTabKey | null>('stays');
   const selectedBranchSelection = selected
     ? (branchSelections?.[selected.id] ?? { activities: [] })
@@ -231,7 +245,7 @@ export const BranchPanel = memo(function BranchPanel({
       return 'Activities';
     };
 
-    const describeCategory = (tab: TileTabKey, selections: Tile[]): string => {
+    const describeCategory = (tab: TileTabKey, selections: Tile[]): string | null => {
       const label = labelForTab(tab);
       const options = tilesByTab[tab];
       const optionCount = options.length || countsForSelected?.[tab] || 0;
@@ -248,6 +262,11 @@ export const BranchPanel = memo(function BranchPanel({
         return `${label}: ${optionCount} option${optionCount === 1 ? '' : 's'}${highlight ? ` (top: ${highlight})` : ''}`;
       }
 
+      // Don't show "searching..." when regenerating - the banner handles that
+      if (isRegenerating) {
+        return null;
+      }
+
       return `${label}: searching...`;
     };
 
@@ -261,11 +280,14 @@ export const BranchPanel = memo(function BranchPanel({
     );
     const activityLine = describeCategory('activities', selectedTiles?.activities ?? []);
 
-    return [stayLine, flightLine, activityLine].join(' · ');
+    // Filter out null values (when regenerating) and join
+    const lines = [stayLine, flightLine, activityLine].filter((line): line is string => line !== null);
+    return lines.length > 0 ? lines.join(' · ') : null;
   }, [
     countsForSelected,
     selectedTiles,
     tilesByTab,
+    isRegenerating,
   ]);
 
   // Show skeleton loaders while loading
@@ -295,10 +317,7 @@ export const BranchPanel = memo(function BranchPanel({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-            Trip plan
-          </p>
+        <div className="flex items-center justify-end">
           <ComparisonToggle />
         </div>
         {isComparisonMode && !isComparisonReady && (
@@ -313,14 +332,6 @@ export const BranchPanel = memo(function BranchPanel({
             const preset = DETAIL_PRESETS[idx % DETAIL_PRESETS.length];
             // Use backend images if available, fallback to mock presets
             const cardImage = b.image_url ?? b.hero_images?.[0] ?? preset.heroImages[0];
-            const selection = branchSelections?.[b.id] ?? { activities: [] };
-            const statusReady =
-              Boolean(selection.stay) ||
-              Boolean(selection.flight) ||
-              (selection.activities?.length ?? 0) > 0;
-            const badgeLabel = statusReady ? 'Ready' : 'Customizing';
-            const badgeColor = statusReady ? 'bg-green-500' : 'bg-orange-500';
-            const badgeTextColor = 'text-white';
             const branchBudget = resolveBudgetForBranch(b, tripInputs);
             const budgetLabel =
               formatBudgetDisplay(branchBudget.amount, branchBudget.currency) ?? preset.budget;
@@ -403,33 +414,15 @@ export const BranchPanel = memo(function BranchPanel({
                             <CheckCircle2 className="h-4 w-4 text-white" />
                           </span>
                         )}
-                        {/* Plan status badge - shown when plan is stale or updating */}
-                        {planStatus === 'updating' && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-md animate-pulse">
-                            Updating
-                          </span>
-                        )}
-                        {planStatus === 'stale' && (
-                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-gray-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-white shadow-md">
-                            Out of date
-                          </span>
-                        )}
-                        {planStatus === 'ready' && (
-                          <span
-                            className={`${badgeColor} ${badgeTextColor} inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-wide shadow-md`}
-                          >
-                            {badgeLabel}
-                          </span>
-                        )}
+                        {/* Plan status badge moved to detail panel only */}
                       </div>
                       {/* Removed "Suggestion X" numbering per coherence guidelines */}
                     </div>
                     <div className="space-y-2 text-white">
                       <p className="text-lg font-bold leading-tight">{b.destinations.join(', ') || 'TBD'}</p>
-                      <p className="line-clamp-2 text-sm opacity-90">
-                        {b.description ||
-                          preset.highlights[0].replace('{destination}', b.destinations[0] || 'your destination')}
-                      </p>
+                      {b.description && (
+                        <p className="line-clamp-2 text-sm opacity-90">{b.description}</p>
+                      )}
                       <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold">
                         <span>{duration}</span>
                         <span>{budgetLabel}</span>
@@ -451,33 +444,6 @@ export const BranchPanel = memo(function BranchPanel({
           <div className="bg-primary/20 pointer-events-none absolute -right-24 -top-12 h-48 w-48 rounded-full blur-3xl" />
           <div className="bg-accent/15 pointer-events-none absolute bottom-0 left-0 h-36 w-36 rounded-full blur-2xl" />
           <div className="relative space-y-6 p-4 sm:p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-1">
-                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                  Current plan
-                </p>
-                <div className="flex items-center gap-2">
-                  <MapPin className="text-primary h-6 w-6" aria-hidden="true" />
-                  <h4 className="text-foreground font-display text-3xl font-bold tracking-tight">
-                    {selected?.destinations.join(', ') || 'Unknown Destination'}
-                  </h4>
-                </div>
-                {selected?.description && (
-                  <p className="text-muted-foreground text-sm leading-relaxed">
-                    {selected.description}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Constraint satisfaction header */}
-            <div className="flex items-center gap-2 rounded-lg border border-green-500/20 bg-green-500/5 px-3 py-2">
-              <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
-              <p className="text-sm font-medium text-green-600 dark:text-green-400">
-                This plan satisfies constraints.
-              </p>
-            </div>
-
           <div className="flex flex-wrap items-center gap-3 pb-1">
             {(Object.keys(TAB_CONFIG) as TileTabKey[]).map((tabKey) => {
               const isOpen = openTab === tabKey;
@@ -505,15 +471,17 @@ export const BranchPanel = memo(function BranchPanel({
                     <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                   </span>
                   <span>{TAB_CONFIG[tabKey].label}</span>
-                  <span
-                    className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                      isOpen
-                        ? 'bg-primary/10 text-primary'
-                        : 'bg-muted/50 text-muted-foreground/60'
-                    }`}
-                  >
-                    {count}
-                  </span>
+                  {count > 0 && (
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                        isOpen
+                          ? 'bg-primary/10 text-primary'
+                          : 'bg-muted/50 text-muted-foreground/60'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -545,19 +513,29 @@ export const BranchPanel = memo(function BranchPanel({
               />
             ) : (
               <div className="border-border/60 text-muted-foreground rounded-xl border border-dashed bg-black/10 p-4 text-sm shadow-inner">
-                No {TAB_CONFIG[openTab].label.toLowerCase()} yet for this plan.
-                Check back after options refresh.
+                No {TAB_CONFIG[openTab].label.toLowerCase()} available.
               </div>
             )}
           </div>
 
           <div className="space-y-5">
-            <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
-              <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                Booking status
-              </p>
-              <p className="text-foreground mt-1 text-xs">{bookingSummary}</p>
-            </div>
+            {/* Updating indicator - minimal when plan is being regenerated */}
+            {isRegenerating && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader size="sm" />
+                <span>Updating...</span>
+              </div>
+            )}
+
+            {/* Only show booking status if any booking types are enabled AND not regenerating */}
+            {hasAnyBookingEnabled && bookingSummary && !isRegenerating && (
+              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
+                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                  Booking status
+                </p>
+                <p className="text-foreground mt-1 text-xs">{bookingSummary}</p>
+              </div>
+            )}
 
             <div className="grid grid-cols-3 gap-2">
               <div className="overflow-hidden rounded-lg border border-white/10 bg-black/20 shadow-inner">
@@ -595,104 +573,74 @@ export const BranchPanel = memo(function BranchPanel({
               </div>
             </div>
 
-            {/* Core constraints - horizontal row */}
-            <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
-                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                  Duration
-                </p>
-                <p className="text-foreground text-base font-bold">
-                  {selectedDuration?.rangeLabel ?? detailPreset.duration}
-                </p>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
-                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                  Budget
-                </p>
-                <p className="text-foreground text-base font-bold">
-                  {formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency) ?? detailPreset.budget}
-                </p>
-              </div>
-              <div className="rounded-lg border border-white/10 bg-white/5 p-3 shadow-sm">
-                <p className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
-                  Tempo
-                </p>
-                <p className="text-foreground text-base font-bold">{selectedVibe}</p>
-              </div>
+            {/* Summary row - only render fields that have values */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              {selectedDuration?.rangeLabel && <span>{selectedDuration.rangeLabel}</span>}
+              {formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency) && (
+                <span>{formatBudgetDisplay(selectedBudget.amount, selectedBudget.currency)}</span>
+              )}
+              {selectedVibe && <span>{selectedVibe}</span>}
+              {selectedFocus && <span className="text-foreground/80">{selectedFocus}</span>}
             </div>
 
-            {/* Focus - plan thesis */}
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 shadow-sm">
-              <p className="text-primary text-[10px] font-medium uppercase tracking-wide">
-                Focus
-              </p>
-              <p className="text-foreground text-sm font-semibold mt-1">{selectedFocus}</p>
-            </div>
+            {/* Loading indicator for strategy content */}
+            {isStrategyLoading && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader size="sm" />
+              </div>
+            )}
 
             <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                <p className="text-muted-foreground/70 text-[10px] font-medium uppercase tracking-wide">
-                  Highlights
-                </p>
-                <ul className="text-muted-foreground mt-2 space-y-1.5 text-xs">
-                  {selectedHighlights.map((item) => (
-                    <li key={item} className="flex gap-2">
-                      <span className="bg-muted-foreground/30 mt-1.5 h-1 w-1 rounded-full flex-shrink-0" />
-                      <span>
-                        {item.replace(
-                          '{destination}',
-                          selected?.destinations[0] ?? 'your destination'
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                    Suggested flow
+              {/* Highlights - only render when populated */}
+              {selectedHighlights.length > 0 && (
+                <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                  <p className="text-muted-foreground/70 text-[10px] font-medium uppercase tracking-wide">
+                    Highlights
                   </p>
-                  <span className="text-muted-foreground text-[11px] font-semibold uppercase tracking-wide">
-                    Day-by-day
-                  </span>
+                  <ul className="text-muted-foreground mt-2 space-y-1.5 text-xs">
+                    {selectedHighlights.map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span className="bg-muted-foreground/30 mt-1.5 h-1 w-1 rounded-full flex-shrink-0" />
+                        <span>
+                          {item.replace(
+                            '{destination}',
+                            selected?.destinations[0] ?? 'your destination'
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <ul className="text-foreground mt-2 space-y-2 text-sm">
-                  {selectedFlow.map((item, idx) => (
-                    <li
-                      key={item}
-                      className="rounded-lg border border-white/10 bg-black/10 px-3 py-2"
-                    >
-                      <span className="text-primary text-xs font-semibold uppercase tracking-wide">
-                        Day {idx + 1}
-                      </span>
-                      <p className="text-foreground text-sm">{item}</p>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              )}
+              {/* Plan document - day-by-day itinerary */}
+              {selected && tripInputs && (
+                <PlanDocument
+                  branch={selected}
+                  tiles={branchTiles}
+                  tripInputs={tripInputs}
+                  planStatus={planStatus}
+                />
+              )}
             </div>
 
-            <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
+            {/* Practical notes - only render when populated */}
+            {selectedNotes.length > 0 && (
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3 shadow-sm">
                 <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wide">
-                  On-the-ground notes
+                  Practical notes
                 </p>
-                <span className="text-foreground/80 rounded-full bg-black/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
-                  Arrival tips
-                </span>
+                <div className="text-foreground mt-2 space-y-2 text-sm">
+                  {selectedNotes.map((note) => (
+                    <div
+                      key={note}
+                      className="rounded-lg border border-white/10 bg-black/10 px-3 py-2"
+                    >
+                      {note}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="text-foreground mt-2 space-y-2 text-sm">
-                {selectedNotes.map((note) => (
-                  <div
-                    key={note}
-                    className="rounded-lg border border-white/10 bg-black/10 px-3 py-2"
-                  >
-                    {note}
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
           </div>
         </div>
       </div>
@@ -727,10 +675,10 @@ export const BranchPanel = memo(function BranchPanel({
           }
           aria-label={
             !selected
-              ? 'Book Trip - Select a trip option first'
+              ? 'Book - Select a trip option first'
               : !canBookTrip
-                ? 'Book Trip - Complete trip details first'
-                : 'Book Trip'
+                ? 'Book - Complete trip details first'
+                : 'Book'
           }
           className={`focus-visible:outline-primary rounded-full px-5 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
             !canBookTrip || !selected
@@ -740,7 +688,7 @@ export const BranchPanel = memo(function BranchPanel({
                 : 'bg-primary text-primary-foreground shadow-primary/40 hover:bg-primary/90 shadow-lg'
           }`}
         >
-          Book Trip
+          Book
         </button>
       </div>
     </div>

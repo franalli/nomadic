@@ -640,6 +640,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (changedFields.length > 0) {
         // Add newly changed fields to the existing set
         newLLMUpdatedFields = new Set([...llmUpdatedFields, ...changedFields]);
+
+        // Auto-clear after 300ms for one-shot echo effect
+        // Echo = visual feedback showing "where" change happened, not persistent state
+        setTimeout(() => {
+          set({ llmUpdatedFields: new Set() });
+        }, 300);
       }
     }
 

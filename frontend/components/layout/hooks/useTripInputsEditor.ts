@@ -306,7 +306,7 @@ export function useTripInputsEditor(
         setPendingOrigin(null);
         setValidationLoading(null);
 
-        onToast(`Set "${valueToCommit}" as your departure city! ✈️`, 'confirmation');
+        onToast(`Origin set: ${valueToCommit}`, 'confirmation');
       } catch {
         setPendingOrigin(null);
         onToast('Validation failed. Please try again.', 'error');
@@ -332,7 +332,7 @@ export function useTripInputsEditor(
     }
 
     // Add confirmation toast to acknowledge the removal
-    onToast(`Removed "${removedOrigin}" as your departure city. 📍`, 'confirmation');
+    onToast(`Origin removed: ${removedOrigin}`, 'confirmation');
 
     setSelectedLocationBadge(null);
   }, [tripInputs.origin, documentStore, onToast]);

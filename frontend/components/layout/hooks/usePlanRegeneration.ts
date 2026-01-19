@@ -24,6 +24,11 @@ export interface UsePlanRegenerationReturn {
   planStatus: PlanStatus;
   /** Force reset the status to ready (e.g., after manual refresh) */
   resetStatus: () => void;
+  /**
+   * Signal that plan data has arrived and status should be set to 'ready'.
+   * Call this from handlePlanResult when branches actually arrive.
+   */
+  markRegenerationComplete: () => void;
 }
 
 /**
@@ -72,6 +77,8 @@ export function usePlanRegeneration(
   const currentHash = useMemo(() => computeConstraintHash(tripInputs), [tripInputs]);
 
   // Stable regenerate callback
+  // NOTE: Does NOT auto-reset to 'ready' - caller must call markRegenerationComplete()
+  // when plan data actually arrives. This ensures status stays 'updating' until UI updates.
   const triggerRegenerate = useCallback(async () => {
     if (isRegeneratingRef.current) return;
 
@@ -80,11 +87,22 @@ export function usePlanRegeneration(
 
     try {
       await onRegenerate();
-    } finally {
+      // NOTE: We intentionally do NOT set planStatus to 'ready' here.
+      // The caller (useBranchManager.handlePlanResult) will call markRegenerationComplete()
+      // when the actual branch data arrives, ensuring UI stays in loading state until data is ready.
+    } catch (error) {
+      // On error, reset status to ready since regeneration failed
       isRegeneratingRef.current = false;
       setPlanStatus('ready');
+      throw error;
     }
   }, [onRegenerate]);
+
+  // Signal that regeneration is complete (data has arrived)
+  const markRegenerationComplete = useCallback(() => {
+    isRegeneratingRef.current = false;
+    setPlanStatus('ready');
+  }, []);
 
   // Watch for constraint changes
   useEffect(() => {
@@ -137,5 +155,6 @@ export function usePlanRegeneration(
   return {
     planStatus,
     resetStatus,
+    markRegenerationComplete,
   };
 }
