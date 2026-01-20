@@ -39,6 +39,8 @@ export interface SplitLayoutViewProps {
   headerContent?: React.ReactNode;
   /** Whether a destination has been set (controls topography background opacity) */
   hasDestination?: boolean;
+  /** Callback to reset/clear the session */
+  onReset?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,12 +65,13 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   planState = 'INCOMPLETE',
   headerContent,
   hasDestination: _hasDestination = false, // Reserved for future topo background control
+  onReset,
 }: SplitLayoutViewProps) {
   void _hasDestination; // Silence unused variable warning - reserved for future topo background control
   const { mode, isDesktop } = useMobileMode();
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--theme-bg)]">
+    <div className="flex flex-col min-h-screen bg-[var(--theme-bg)] pt-[calc(48px+env(safe-area-inset-top))] lg:pt-0">
       {/* Compact Header (branding) - always visible on desktop, mode-aware on mobile */}
       {headerContent && (
         <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-border)] bg-[var(--theme-panel)]">
@@ -77,7 +80,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       )}
 
       {/* Mobile Mode Header - replaces header on mobile */}
-      <MobileModeHeader planState={planState} />
+      <MobileModeHeader planState={planState} onReset={onReset} />
 
       {/* Main Layout Container */}
       {/* Desktop: Grid 40/60 split | Mobile: Single column with mode switching */}

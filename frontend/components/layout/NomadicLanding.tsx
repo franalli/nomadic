@@ -546,7 +546,7 @@ export function NomadicLanding() {
   );
 
   return (
-    <div className="bg-background text-foreground min-h-screen">
+    <div className="appTopo bg-background text-foreground">
       {/* Error Toasts - Top Right (demands attention) */}
       <div className="fixed right-4 top-4 z-50 flex flex-col items-end gap-2">
         <AnimatePresence mode="popLayout">
@@ -639,6 +639,7 @@ export function NomadicLanding() {
         planViewContent={planViewContent}
         planState={planState}
         hasDestination={hasDestination}
+        onReset={handleStartNewSession}
         headerContent={
           <div className="flex items-center justify-between w-full">
             <div className="flex items-center gap-3">

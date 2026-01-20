@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Check, Compass, Loader2, RotateCcw } from 'lucide-react';
 import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -14,6 +14,8 @@ import type { PlanState } from '@/types/plan-envelope';
 interface MobileModeHeaderProps {
   /** Current plan state for status display in Plan Mode */
   planState?: PlanState;
+  /** Callback to reset/clear the session */
+  onReset?: () => void;
   className?: string;
 }
 
@@ -53,14 +55,14 @@ const STATUS_CONFIG: Record<
  * MobileModeHeader - Mobile-only header with mode-aware content.
  *
  * Planner Mode:
- * - Left: "Travel planner" (minimal branding)
- * - Right: (empty or subtle status placeholder)
+ * - Left: Nomadic logo + wordmark
+ * - Right: Reset button
  *
  * Plan Mode:
  * - Left: "← Edit" back button
  * - Right: Status text ("Planning…" or "Up to date")
  */
-function MobileModeHeaderInner({ planState = 'INCOMPLETE', className }: MobileModeHeaderProps) {
+function MobileModeHeaderInner({ planState = 'INCOMPLETE', onReset, className }: MobileModeHeaderProps) {
   const { mode, isDesktop, switchToPlanner } = useMobileMode();
 
   // Don't render on desktop - split view shows both panels
@@ -74,11 +76,14 @@ function MobileModeHeaderInner({ planState = 'INCOMPLETE', className }: MobileMo
   return (
     <header
       className={cn(
-        'sticky top-0 z-40',
-        'h-12 px-4',
+        'fixed top-0 left-0 right-0 z-[1100]',
+        'h-12 px-3',
+        'pt-[env(safe-area-inset-top)]',
         'flex items-center justify-between',
-        'bg-background/95 backdrop-blur',
-        'border-b border-border/50',
+        'backdrop-blur',
+        'border-b',
+        'bg-background/80 border-border/50',
+        'dark:bg-background/60 dark:border-border/30',
         'lg:hidden', // Only show on mobile
         className
       )}
@@ -101,14 +106,16 @@ function MobileModeHeaderInner({ planState = 'INCOMPLETE', className }: MobileMo
           <span>Edit</span>
         </button>
       ) : (
-        // Planner Mode: Minimal branding
-        <span className="text-sm font-medium text-muted-foreground">
-          Travel planner
-        </span>
+        // Planner Mode: Nomadic branding
+        <div className="flex items-center gap-2">
+          <Compass className="h-5 w-5 text-primary shrink-0" />
+          <span className="font-semibold text-sm text-foreground">Nomadic</span>
+        </div>
       )}
 
       {/* Right side */}
-      {isPlanMode && status.text && (
+      {isPlanMode && status.text ? (
+        // Plan Mode: Status indicator
         <div
           className={cn(
             'flex items-center gap-1.5 text-xs font-medium',
@@ -118,6 +125,22 @@ function MobileModeHeaderInner({ planState = 'INCOMPLETE', className }: MobileMo
           {status.icon}
           <span>{status.text}</span>
         </div>
+      ) : (
+        // Planner Mode: Reset button
+        <button
+          type="button"
+          onClick={onReset}
+          className={cn(
+            'flex items-center gap-1.5',
+            'text-sm font-medium text-muted-foreground',
+            'hover:text-foreground transition-colors',
+            'px-1 py-1' // Expand tap target
+          )}
+          aria-label="Reset"
+        >
+          <RotateCcw className="h-4 w-4" />
+          <span>Reset</span>
+        </button>
       )}
     </header>
   );

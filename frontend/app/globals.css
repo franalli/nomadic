@@ -636,68 +636,88 @@ input[type="number"]::-webkit-outer-spin-button {
   }
 }
 
+/* ===== Generate Plan Button Pulse Animation ===== */
+@keyframes cta-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.cta-pulse-once {
+  animation: cta-pulse 240ms ease-out;
+}
+
 /* ===== Topography Variables (Single Source of Truth) ===== */
 :root {
   --topo-opacity: 0.14;
+  --topo-contrast: 1.04;
   --topo-blend: multiply;
   --topo-scale: 1400px;
-  --topo-filter: none;
-  --topo-vignette: radial-gradient(1200px 700px at 50% 10%, rgba(255,255,255,0.9), rgba(255,255,255,0) 60%),
-    linear-gradient(to bottom, rgba(0,0,0,0.00), rgba(0,0,0,0.05));
 }
 
 .dark {
-  --topo-opacity: 0.10;
+  --topo-opacity: 0.20;
+  --topo-contrast: 1.06;
   --topo-blend: screen;
-  --topo-filter: brightness(1.05);
-  --topo-vignette: radial-gradient(900px 600px at 50% 20%, rgba(0,0,0,0.0), rgba(0,0,0,0.55));
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --topo-opacity: 0.10;
+    --topo-opacity: 0.20;
+    --topo-contrast: 1.06;
     --topo-blend: screen;
-    --topo-filter: brightness(1.05);
-    --topo-vignette: radial-gradient(900px 600px at 50% 20%, rgba(0,0,0,0.0), rgba(0,0,0,0.55));
   }
 }
 
-/* ===== Right Canvas Topo Background ===== */
-.rightCanvas {
-  position: relative;
-  overflow: hidden;
-  background: var(--theme-bg);
+/* Mobile: boost visibility */
+@media (max-width: 768px) {
+  :root {
+    --topo-opacity: 0.16;
+    --topo-contrast: 1.08;
+  }
+  .dark, :root:not(.light) {
+    --topo-opacity: 0.22;
+    --topo-contrast: 1.10;
+  }
 }
 
-/* Topo layer (::before) - opacity applied here only, never on parent */
-.rightCanvas::before {
+/* ===== Global Topo Background (Fixed, Isolated) ===== */
+.appTopo {
+  position: relative;
+  min-height: 100dvh;
+}
+
+.appTopo::before {
   content: "";
-  position: absolute;
+  position: fixed;
   inset: 0;
-  pointer-events: none;
   z-index: 0;
+  pointer-events: none;
   background-image: url("/assets/contours.svg");
   background-repeat: repeat;
   background-size: var(--topo-scale);
+  background-position: center;
   opacity: var(--topo-opacity);
   mix-blend-mode: var(--topo-blend);
-  filter: var(--topo-filter);
+  filter: contrast(var(--topo-contrast));
 }
 
-/* Vignette layer (::after) */
-.rightCanvas::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
+/* All content above topo */
+.appTopo > * {
+  position: relative;
   z-index: 1;
-  background: var(--topo-vignette);
 }
 
-/* Content sits above layers */
+/* ===== Right Canvas (Surface only, no topo) ===== */
+.rightCanvas {
+  position: relative;
+  overflow: hidden;
+  background: transparent; /* Let global topo show through */
+}
+
+/* Content layering */
 .rightCanvas > * {
   position: relative;
-  z-index: 2;
+  z-index: 1;
 }
 
 /* ===== Chip Fill Animation ===== */

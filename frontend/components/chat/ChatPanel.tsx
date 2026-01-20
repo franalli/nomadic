@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, Loader2, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -16,6 +16,7 @@ import remarkGfm from 'remark-gfm';
 
 import { OnboardingChips } from '@/components/planner/OnboardingChips';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
@@ -309,6 +310,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
     const [generateTriggered, setGenerateTriggered] = useState(false);
+    const [hasAnimatedPulse, setHasAnimatedPulse] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     // Tier 11.12: Track last user message for retry on transient errors
@@ -334,6 +336,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
+
+    // Generate plan button state machine
+    type GenerateState = 'DISABLED_INCOMPLETE' | 'ENABLED_READY' | 'GENERATING' | 'GENERATED';
+    const generateState: GenerateState = useMemo(() => {
+      if (!canGeneratePlan) return 'DISABLED_INCOMPLETE';
+      if (isLoading || generateTriggered) return 'GENERATING';
+      if (hasPlan) return 'GENERATED';
+      return 'ENABLED_READY';
+    }, [canGeneratePlan, isLoading, generateTriggered, hasPlan]);
+
+    // Track first transition to ENABLED_READY for pulse animation
+    useEffect(() => {
+      if (generateState === 'ENABLED_READY' && !hasAnimatedPulse) {
+        setHasAnimatedPulse(true);
+      }
+    }, [generateState, hasAnimatedPulse]);
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     // Note: missingFields now derived from planState instead of tripDetails
@@ -1002,38 +1020,79 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
           </form>
 
-          {/* Primary CTA - Generate plan (always visible, disabled when !canGeneratePlan) */}
-          <button
-            type="button"
-            onClick={() => {
-              setGenerateTriggered(true);
-              sendMessageCore(GENERATE_PLAN_TRIGGER);
-            }}
-            disabled={isLoading || !canGeneratePlan || hasPlan || generateTriggered}
-            title={!canGeneratePlan ? 'Set destination and dates' : undefined}
-            className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60"
-          >
-            <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
-            <span>Generate plan</span>
-          </button>
+          {/* Primary CTA - Generate plan */}
+          <div className="space-y-1">
+            <button
+              type="button"
+              onClick={() => {
+                setGenerateTriggered(true);
+                sendMessageCore(GENERATE_PLAN_TRIGGER);
+              }}
+              disabled={generateState === 'DISABLED_INCOMPLETE' || generateState === 'GENERATING'}
+              className={cn(
+                "group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold rounded-full transition-all",
+                // DISABLED_INCOMPLETE
+                generateState === 'DISABLED_INCOMPLETE' && "opacity-45 cursor-not-allowed text-muted-foreground border border-muted-foreground/20 bg-muted/5",
+                // ENABLED_READY
+                generateState === 'ENABLED_READY' && cn(
+                  "text-primary border border-primary/50 bg-primary/10 hover:bg-primary/15 hover:border-primary/70",
+                  "dark:text-accent dark:border-accent/50 dark:bg-accent/15 dark:hover:bg-accent/25",
+                  !hasAnimatedPulse && "cta-pulse-once"
+                ),
+                // GENERATING
+                generateState === 'GENERATING' && "opacity-70 cursor-wait text-muted-foreground border border-muted-foreground/30 bg-muted/10",
+                // GENERATED
+                generateState === 'GENERATED' && "text-muted-foreground border border-muted-foreground/30 bg-transparent hover:border-muted-foreground/50 hover:text-foreground"
+              )}
+            >
+              {generateState === 'GENERATING' ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Generating plan…</span>
+                </>
+              ) : generateState === 'GENERATED' ? (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  <span>Regenerate plan</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
+                  <span>Generate plan</span>
+                </>
+              )}
+            </button>
 
-          {/* Secondary CTAs - ghost buttons, disabled until plan exists */}
+            {/* Subtext per state */}
+            {generateState === 'DISABLED_INCOMPLETE' && (
+              <p className="text-center text-xs text-muted-foreground/60">
+                Set destination and dates to generate your plan
+              </p>
+            )}
+          </div>
+
+          {/* Secondary CTAs - Optional preferences (never block generation) */}
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={!hasPlan}
-              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground border border-dashed border-muted-foreground/25 rounded-full hover:border-muted-foreground/40 hover:text-foreground transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Optional. You can add this later."
+              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground/80 border border-muted-foreground/20 rounded-full hover:border-muted-foreground/35 hover:text-muted-foreground transition-all"
             >
-              Add flights
+              Flight preferences
             </button>
             <button
               type="button"
-              disabled={!hasPlan}
-              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground border border-dashed border-muted-foreground/25 rounded-full hover:border-muted-foreground/40 hover:text-foreground transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Optional. You can add this later."
+              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground/80 border border-muted-foreground/20 rounded-full hover:border-muted-foreground/35 hover:text-muted-foreground transition-all"
             >
-              Add hotels
+              Hotel preferences
             </button>
           </div>
+
+          {/* Persistent hint */}
+          <p className="text-center text-[11px] text-muted-foreground/50">
+            You can generate anytime — refinements are optional.
+          </p>
         </div>
 
       </div>
