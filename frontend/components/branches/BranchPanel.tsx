@@ -3,7 +3,7 @@
 import { ArrowRightLeft, CheckCircle2 } from 'lucide-react';
 import { memo, useEffect, useMemo, useState } from 'react';
 
-import { PlanDocument } from '@/components/plan';
+import { PlanDocument, StrategyStageRenderer } from '@/components/plan';
 import { TabBookingStatus } from '@/components/tiles/TabBookingStatus';
 import {
   resolveTabForTile,
@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { cn , formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs, PlanStatus } from '@/types/document';
-import type { BookingStatus } from '@/types/plan-envelope';
+import type { BookingStatus, PlanViewState, PlanViewModel, DestinationCard } from '@/types/plan-envelope';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { BranchComparisonView } from './BranchComparisonView';
@@ -108,6 +108,16 @@ type BranchPanelProps = {
   planStatus?: PlanStatus;
   /** Per-tab booking status from backend */
   bookingStatus?: BookingStatus | null;
+  /** Plan view state for stage-aware rendering */
+  planViewState?: PlanViewState;
+  /** View model for stage-aware rendering */
+  planViewModel?: PlanViewModel;
+  /** Destination card for stage-aware rendering */
+  destinationCard?: DestinationCard;
+  /** Callback when user clicks "Expand to itinerary" */
+  onExpandToItinerary?: () => void;
+  /** Callback when user clicks "View booking options" */
+  onViewBookingOptions?: () => void;
 };
 
 export const BranchPanel = memo(function BranchPanel({
@@ -126,6 +136,11 @@ export const BranchPanel = memo(function BranchPanel({
   onSelectionToast,
   planStatus = 'ready',
   bookingStatus,
+  planViewState,
+  planViewModel,
+  destinationCard,
+  onExpandToItinerary,
+  onViewBookingOptions,
 }: BranchPanelProps) {
   const hasBranches = branches.length > 0;
   const selected = hasBranches
@@ -249,6 +264,22 @@ export const BranchPanel = memo(function BranchPanel({
             <BranchCardSkeleton />
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Stage-aware rendering: show StrategyStageRenderer for non-bootstrap stages
+  // After "View booking options" (or when no stage state), fall through to booking view
+  if (planViewState && planViewState !== 'S0_BOOTSTRAP' && planViewModel) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-gradient-to-br from-white/5 via-card/80 to-background shadow-lg">
+        <StrategyStageRenderer
+          state={planViewState}
+          viewModel={planViewModel}
+          destinationCard={destinationCard}
+          onExpandToItinerary={onExpandToItinerary}
+          onViewBookingOptions={onViewBookingOptions}
+        />
       </div>
     );
   }

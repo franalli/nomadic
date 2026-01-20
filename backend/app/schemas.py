@@ -351,6 +351,11 @@ class DocumentTripInputs(BaseModel):
     hotel_settings: HotelSettings = Field(default_factory=HotelSettings)
     activity_settings: ActivitySettings = Field(default_factory=ActivitySettings)
     transport_settings: TransportSettings = Field(default_factory=TransportSettings)
+    # Flexible dates support - exposed for CTA gating in frontend
+    date_flex: bool = False  # User explicitly chose "flexible dates"
+    trip_duration: Optional[int] = None  # Trip length in days (e.g., 7)
+    date_window_start: Optional[str] = None  # Earliest possible start date
+    date_window_end: Optional[str] = None  # Latest possible start date
 
 
 # =============================================================================
@@ -371,6 +376,70 @@ ReadinessKey = Literal["origin", "destination", "start_date", "end_date", "trave
 
 # Booking status states per tab
 BookingState = Literal["idle", "loading", "ready", "error"]
+
+# =============================================================================
+# Plan View State Machine Types (Stage-Aware Right-Side View)
+# =============================================================================
+
+# State machine states for right-side plan view
+PlanViewState = Literal[
+    "S0_BOOTSTRAP",  # No plan yet (or reset). Placeholders only.
+    "S1_FRAMING",  # Stage 1 output available (shortlist/skeleton)
+    "S2_STRATEGY_READY",  # All relevant Stage 2 strategy nodes complete
+    "S2_BLOCKED",  # Stage 2 incomplete due to missing critical fields
+    "S3_ITINERARY_READY",  # Itinerary generated (day cards)
+    "S3_EDITING",  # User editing itinerary assumptions/constraints
+    "S3_BLOCKED",  # Stage 3 requested but blocked (missing locks)
+]
+
+
+class StrategySection(BaseModel):
+    """A strategy section for Stage 2 view (e.g., 'Hiking strategy (draft)')."""
+
+    id: str
+    title: str  # "X strategy (draft)" - max 30 chars
+    bullets: List[str] = Field(default_factory=list)  # Max 6 bullets, ≤12 words each
+
+
+class OpenDecision(BaseModel):
+    """An open decision that needs user input (shown in Stage 2)."""
+
+    id: str
+    statement: str  # Statement form, not question (e.g., "Trip duration not confirmed")
+    related_field: Optional[str] = None  # Which trip input field this relates to
+    is_blocking: bool = False  # If true, blocks Stage 3
+
+
+class DayBlock(BaseModel):
+    """A single activity block within a day (Stage 3)."""
+
+    period: Literal["morning", "afternoon", "evening"]
+    activity_type: str  # e.g., "moderate hike", "city stroll"
+    intensity: Optional[Literal["light", "moderate", "challenging"]] = None
+    summary: str  # ≤15 words, no times/prices
+
+
+class DayCard(BaseModel):
+    """A single day in the itinerary (Stage 3)."""
+
+    day_number: int
+    label: str  # e.g., "Arrival + light activity", "Main hike day"
+    blocks: List[DayBlock] = Field(default_factory=list)  # Max 3 blocks
+
+
+class ItineraryOverview(BaseModel):
+    """Overview stats for Stage 3 itinerary."""
+
+    duration_label: str  # e.g., "3 days"
+    base_structure: str  # e.g., "Single base + day excursions"
+    activity_density: str  # e.g., "1 major activity/day"
+
+
+class ItineraryAssumptions(BaseModel):
+    """Assumptions and flexible elements for Stage 3."""
+
+    assumptions: List[str] = Field(default_factory=list)  # Max 4 items
+    flexible_elements: List[str] = Field(default_factory=list)  # Max 3 items
 
 
 class ReadinessItem(BaseModel):
@@ -476,6 +545,25 @@ class PlanDocumentData(BaseModel):
     destination_card: Optional[DestinationCard] = None
     # Per-tab booking status (factual, no tone, no emoji)
     booking_status: Optional[BookingStatus] = None
+
+    # ==========================================================================
+    # Plan View State Machine (Stage-Aware Right-Side View)
+    # ==========================================================================
+    # State machine state - determines what content to show in right panel
+    plan_view_state: PlanViewState = "S0_BOOTSTRAP"
+
+    # Stage 2 content (populated when plan_view_state in S2_*)
+    strategy_sections: List[StrategySection] = Field(default_factory=list)
+    open_decisions: List[OpenDecision] = Field(default_factory=list)
+
+    # Stage 3 content (populated when plan_view_state in S3_*)
+    itinerary_overview: Optional[ItineraryOverview] = None
+    day_cards: List[DayCard] = Field(default_factory=list)
+    itinerary_assumptions: Optional[ItineraryAssumptions] = None
+
+    # State flags
+    needs_refresh: bool = False  # Marks S3 content as stale after constraint change
+    can_expand_to_itinerary: bool = False  # True when Stage3EntryGuard passes
 
 
 class PlanDocumentResponse(BaseModel):

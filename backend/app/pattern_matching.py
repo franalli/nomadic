@@ -1874,6 +1874,47 @@ DATE_RANGE_WITH_YEAR_PATTERNS: List[Pattern] = [
     ),
 ]
 
+# Flexible date range patterns for extraction from surrounding text (no anchors)
+# These use search() instead of fullmatch() to find dates within sentences
+DATE_RANGE_FLEXIBLE_PATTERNS: List[Pattern] = [
+    # "December 20-27" or "Dec 20-27" within text
+    re.compile(
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+"
+        r"(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(\d{4}))?",
+        re.IGNORECASE,
+    ),
+    # "20-27 December" or "6-15 feb" within text (handles mixed ordinals like "6-15th feb")
+    re.compile(
+        r"(\d{1,2})(?:st|nd|rd|th)?[-–—to\s]+(\d{1,2})(?:st|nd|rd|th)?\s+"
+        r"(january|february|march|april|may|june|july|august|september|october|november|december"
+        r"|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)(?:,?\s*(\d{4}))?",
+        re.IGNORECASE,
+    ),
+]
+
+# European date range patterns: DD-DD.MM or DD.MM-DD.MM format
+# Examples: "6-15.02" (Feb 6-15), "6.02-15.02" (Feb 6 to Feb 15)
+# IMPORTANT: Order matters - more specific patterns first
+DATE_RANGE_EUROPEAN_PATTERNS: List[Pattern] = [
+    # DD.MM-DD.MM format: "6.02-15.02" or "6.02-15.02.2025" (MOST SPECIFIC - must be first)
+    re.compile(
+        r"(\d{1,2})\.(\d{1,2})[-–—](\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?",
+        re.IGNORECASE,
+    ),
+    # DD-DD.MM format: "6-15.02" or "6-15.02.2025"
+    # (requires dot before month, no dot after first day)
+    re.compile(
+        r"(\d{1,2})(?<!\.)[-–—](\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?",
+        re.IGNORECASE,
+    ),
+    # DD.MM format (single date): "15.02" or "15.02.2025"
+    re.compile(
+        r"^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$",
+        re.IGNORECASE,
+    ),
+]
+
 # Week of month pattern: "first week of January", "last week of December"
 WEEK_OF_MONTH_PATTERN = re.compile(
     r"^(first|second|third|fourth|last|1st|2nd|3rd|4th)\s+week\s+(?:of\s+)?"

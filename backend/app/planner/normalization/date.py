@@ -29,6 +29,8 @@ from typing import Any, Dict, Optional, Tuple
 
 from app.pattern_matching import (
     ANSI_ESCAPE_PATTERN,
+    DATE_RANGE_EUROPEAN_PATTERNS,
+    DATE_RANGE_FLEXIBLE_PATTERNS,
     DATE_RANGE_WITH_YEAR_PATTERNS,
     EXPLICIT_YEAR_PATTERN,
     ISO_DATE_PATTERN,
@@ -442,6 +444,9 @@ class DateNormalizer:
         - "Dec 20-27" → ("2025-12-20", "2025-12-27")
         - "December 20-27, 2025" → ("2025-12-20", "2025-12-27")
         - "20-27 December" → ("2025-12-20", "2025-12-27")
+        - "6-15th feb" → ("2025-02-06", "2025-02-15") (mixed ordinals)
+        - "6-15.02" → ("2025-02-06", "2025-02-15") (European decimal)
+        - "dates are 6-15 feb, budget..." → extracts from context
 
         If no year is specified, uses current year (or next year if month is past).
 
@@ -454,6 +459,20 @@ class DateNormalizer:
 
         text_clean = text.strip()
 
+        # Step 1: Pre-normalize ALL ordinal suffixes (handles "6-15th feb" -> "6-15 feb")
+        text_normalized = ORDINAL_SUFFIX_PATTERN.sub(r"\1", text_clean)
+
+        # Step 2: Try European decimal patterns first (6-15.02, 6.02-15.02)
+        european_result = self._try_european_date_patterns(text_normalized)
+        if european_result[0] is not None:
+            return european_result
+
+        # Step 3: Try flexible patterns that search within text (for dates in sentences)
+        flexible_result = self._try_flexible_date_patterns(text_normalized)
+        if flexible_result[0] is not None:
+            return flexible_result
+
+        # Step 4: Try anchored patterns (original behavior)
         for pattern in DATE_RANGE_WITH_YEAR_PATTERNS:
             match = pattern.match(text_clean)
             if match:
@@ -563,6 +582,157 @@ class DateNormalizer:
             return start_iso, end_iso
 
         return None, None
+
+    def _try_european_date_patterns(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Try to parse European date formats like 6-15.02 or 6.02-15.02.
+
+        Handles:
+        - "6.02-15.02" → Feb 6 to Feb 15 (DD.MM-DD.MM) [pattern 0]
+        - "6-15.02" → Feb 6-15 (DD-DD.MM) [pattern 1]
+        - "15.02" → Feb 15 (single date, returns same for start and end) [pattern 2]
+
+        Returns:
+            Tuple of (start_date_iso, end_date_iso), or (None, None) if no match.
+        """
+        for i, pattern in enumerate(DATE_RANGE_EUROPEAN_PATTERNS):
+            match = pattern.search(text)
+            if not match:
+                continue
+
+            groups = match.groups()
+
+            try:
+                if i == 0:  # DD.MM-DD.MM format: "6.02-15.02" (most specific)
+                    start_day = int(groups[0])
+                    start_month = int(groups[1])
+                    end_day = int(groups[2])
+                    end_month = int(groups[3])
+                    year_str = groups[4] if len(groups) > 4 and groups[4] else None
+
+                    # For cross-month ranges, build two separate dates
+                    if start_month != end_month:
+                        year = self._infer_year(start_month, start_day, year_str)
+                        start_iso = f"{year:04d}-{start_month:02d}-{start_day:02d}"
+                        end_iso = f"{year:04d}-{end_month:02d}-{end_day:02d}"
+                        datetime.strptime(start_iso, "%Y-%m-%d")
+                        datetime.strptime(end_iso, "%Y-%m-%d")
+                        return start_iso, end_iso
+
+                    month_num = start_month
+                elif i == 1:  # DD-DD.MM format: "6-15.02"
+                    start_day = int(groups[0])
+                    end_day = int(groups[1])
+                    month_num = int(groups[2])
+                    year_str = groups[3] if len(groups) > 3 and groups[3] else None
+                else:  # DD.MM format: "15.02" (single date)
+                    start_day = int(groups[0])
+                    end_day = start_day
+                    month_num = int(groups[1])
+                    year_str = groups[2] if len(groups) > 2 and groups[2] else None
+
+                # Validate month
+                if month_num < 1 or month_num > 12:
+                    continue
+
+                # Determine year
+                year = self._infer_year(month_num, end_day, year_str)
+
+                # Build ISO dates
+                start_iso = f"{year:04d}-{month_num:02d}-{start_day:02d}"
+                end_iso = f"{year:04d}-{month_num:02d}-{end_day:02d}"
+
+                # Validate dates are real
+                datetime.strptime(start_iso, "%Y-%m-%d")
+                datetime.strptime(end_iso, "%Y-%m-%d")
+
+                return start_iso, end_iso
+
+            except (ValueError, TypeError):
+                continue
+
+        return None, None
+
+    def _try_flexible_date_patterns(self, text: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Try to find date ranges within surrounding text using search() patterns.
+
+        Handles dates embedded in sentences like:
+        - "dates are 6-15 feb, budget around 2000" → Feb 6-15
+        - "going from dec 20-27" → Dec 20-27
+
+        Returns:
+            Tuple of (start_date_iso, end_date_iso), or (None, None) if no match.
+        """
+        for pattern in DATE_RANGE_FLEXIBLE_PATTERNS:
+            match = pattern.search(text)
+            if not match:
+                continue
+
+            groups = match.groups()
+
+            try:
+                # Determine if pattern matched month first or day first
+                if groups[0].isdigit():
+                    # Pattern 2: start_day, end_day, month, year
+                    start_day = int(groups[0])
+                    end_day = int(groups[1])
+                    month_str = groups[2]
+                    year_str = groups[3] if len(groups) > 3 and groups[3] else None
+                else:
+                    # Pattern 1: month, start_day, end_day, year
+                    month_str = groups[0]
+                    start_day = int(groups[1])
+                    end_day = int(groups[2])
+                    year_str = groups[3] if len(groups) > 3 and groups[3] else None
+
+                # Parse month name to number
+                month_dt = datetime.strptime(month_str[:3], "%b")
+                month_num = month_dt.month
+
+                # Determine year
+                year = self._infer_year(month_num, end_day, year_str)
+
+                # Build ISO dates
+                start_iso = f"{year:04d}-{month_num:02d}-{start_day:02d}"
+                end_iso = f"{year:04d}-{month_num:02d}-{end_day:02d}"
+
+                # Validate dates are real
+                datetime.strptime(start_iso, "%Y-%m-%d")
+                datetime.strptime(end_iso, "%Y-%m-%d")
+
+                return start_iso, end_iso
+
+            except (ValueError, TypeError):
+                continue
+
+        return None, None
+
+    def _infer_year(self, month_num: int, day: int, year_str: Optional[str]) -> int:
+        """
+        Infer year for a date, using current year or next year if past.
+
+        Args:
+            month_num: Month number (1-12)
+            day: Day of month
+            year_str: Optional explicit year string
+
+        Returns:
+            4-digit year
+        """
+        if year_str:
+            year = int(year_str)
+            # Handle 2-digit years
+            if year < 100:
+                year += 2000
+            return year
+
+        # Use current year, or next year if date is in the past
+        today = self._reference
+        year = today.year
+        if month_num < today.month or (month_num == today.month and day < today.day):
+            year += 1
+        return year
 
     def parse_date_range_with_ambiguity(
         self, text: str

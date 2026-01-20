@@ -414,6 +414,58 @@ input[type="number"]::-webkit-outer-spin-button {
     0 2px 6px hsl(var(--accent) / 0.06);
 }
 
+/* ===== Theme-Aware Semantic Tokens ===== */
+/* These tokens automatically adapt to light/dark mode */
+
+:root {
+  /* Light mode semantic tokens - "ink on paper" approach */
+  --theme-bg: #F3F5F7;        /* paper tint, not pure white */
+  --theme-panel: #FFFFFF;      /* cards/surfaces are white */
+  --theme-surface-2: rgba(0, 0, 0, 0.045);
+  --theme-overlay: rgba(0, 0, 0, 0.06);
+  --theme-border: rgba(0, 0, 0, 0.16);  /* stronger borders */
+  --theme-text: rgba(0, 0, 0, 0.90);
+  --theme-text-muted: rgba(0, 0, 0, 0.66);
+  --theme-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Dark mode semantic tokens */
+    --theme-bg: #080A0B;
+    --theme-panel: #0B0F10;
+    --theme-surface-2: rgba(255, 255, 255, 0.04);
+    --theme-overlay: rgba(255, 255, 255, 0.06);
+    --theme-border: rgba(255, 255, 255, 0.12);
+    --theme-text: rgba(255, 255, 255, 0.92);
+    --theme-text-muted: rgba(255, 255, 255, 0.70);
+    --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* Support explicit theme classes (for manual theme switching) */
+.light {
+  --theme-bg: #F3F5F7;
+  --theme-panel: #FFFFFF;
+  --theme-surface-2: rgba(0, 0, 0, 0.045);
+  --theme-overlay: rgba(0, 0, 0, 0.06);
+  --theme-border: rgba(0, 0, 0, 0.16);
+  --theme-text: rgba(0, 0, 0, 0.90);
+  --theme-text-muted: rgba(0, 0, 0, 0.66);
+  --theme-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+}
+
+.dark {
+  --theme-bg: #080A0B;
+  --theme-panel: #0B0F10;
+  --theme-surface-2: rgba(255, 255, 255, 0.04);
+  --theme-overlay: rgba(255, 255, 255, 0.06);
+  --theme-border: rgba(255, 255, 255, 0.12);
+  --theme-text: rgba(255, 255, 255, 0.92);
+  --theme-text-muted: rgba(255, 255, 255, 0.70);
+  --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
 /* ===== Chip Hierarchy System ===== */
 
 /* Primary chip - selected destination, key actions */
@@ -424,27 +476,31 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 /* Secondary chip - category pills (Flights, Transport, etc.) */
+/* Now theme-aware using semantic tokens */
 .chip-secondary {
-  background-color: rgba(255, 255, 255, 0.06);
-  color: #C7CED8;
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background-color: var(--theme-overlay);
+  color: var(--theme-text-muted);
+  border: 1px solid var(--theme-border);
 }
 
 .chip-secondary:hover {
-  background-color: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.14);
+  background-color: var(--theme-surface-2);
+  border-color: var(--theme-border);
+  opacity: 0.9;
 }
 
 /* Inactive chip - unselected, dormant state */
+/* Now theme-aware using semantic tokens */
 .chip-inactive {
-  background-color: rgba(255, 255, 255, 0.03);
-  color: #9AA3AE;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background-color: var(--theme-surface-2);
+  color: var(--theme-text-muted);
+  border: 1px solid var(--theme-border);
+  opacity: 0.7;
 }
 
 .chip-inactive:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: #AEB6C2;
+  background-color: var(--theme-overlay);
+  opacity: 0.85;
 }
 
 /* ===== Constraint Button States ===== */
@@ -529,35 +585,7 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ===== Hero Background Layers ===== */
 
-/* Layer 1: Contours overlay - fills full page with edge fade */
-.hero-contours::before {
-  content: "";
-  position: absolute;
-  inset: -50%;
-  pointer-events: none;
-  opacity: 0.22;
-  background-image: url("/assets/contours.svg");
-  background-repeat: repeat;
-  background-size: 900px 900px;
-  transform: rotate(-5deg);
-}
-
-/* Fade mask for contours - fades at bottom */
-.hero-contours::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(
-    to bottom,
-    transparent 0%,
-    transparent 60%,
-    rgba(4, 15, 10, 0.5) 80%,
-    rgba(4, 15, 10, 1) 100%
-  );
-}
-
-/* Layer 2: Grain/noise texture for depth */
+/* Grain/noise texture for depth */
 .hero-grain::after {
   content: "";
   position: absolute;
@@ -606,4 +634,107 @@ input[type="number"]::-webkit-outer-spin-button {
     opacity: 1;
     transform: none;
   }
+}
+
+/* ===== Topography Variables (Single Source of Truth) ===== */
+:root {
+  --topo-opacity: 0.14;
+  --topo-blend: multiply;
+  --topo-scale: 1400px;
+  --topo-filter: none;
+  --topo-vignette: radial-gradient(1200px 700px at 50% 10%, rgba(255,255,255,0.9), rgba(255,255,255,0) 60%),
+    linear-gradient(to bottom, rgba(0,0,0,0.00), rgba(0,0,0,0.05));
+}
+
+.dark {
+  --topo-opacity: 0.10;
+  --topo-blend: screen;
+  --topo-filter: brightness(1.05);
+  --topo-vignette: radial-gradient(900px 600px at 50% 20%, rgba(0,0,0,0.0), rgba(0,0,0,0.55));
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --topo-opacity: 0.10;
+    --topo-blend: screen;
+    --topo-filter: brightness(1.05);
+    --topo-vignette: radial-gradient(900px 600px at 50% 20%, rgba(0,0,0,0.0), rgba(0,0,0,0.55));
+  }
+}
+
+/* ===== Right Canvas Topo Background ===== */
+.rightCanvas {
+  position: relative;
+  overflow: hidden;
+  background: var(--theme-bg);
+}
+
+/* Topo layer (::before) - opacity applied here only, never on parent */
+.rightCanvas::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: url("/assets/contours.svg");
+  background-repeat: repeat;
+  background-size: var(--topo-scale);
+  opacity: var(--topo-opacity);
+  mix-blend-mode: var(--topo-blend);
+  filter: var(--topo-filter);
+}
+
+/* Vignette layer (::after) */
+.rightCanvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: var(--topo-vignette);
+}
+
+/* Content sits above layers */
+.rightCanvas > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ===== Chip Fill Animation ===== */
+/* Per YC Demo Spec: 160ms ease-out, stagger 30ms per chip */
+
+@keyframes chipFill {
+  from {
+    transform: translateY(2px);
+    opacity: 0.72;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 0.92;
+  }
+}
+
+/* Data attribute styling for chip states */
+[data-filled="true"] {
+  font-weight: 600;
+}
+
+[data-just-filled="true"] {
+  animation: chipFill 160ms ease-out;
+}
+
+/* Respect user's reduced motion preference for chip animations */
+@media (prefers-reduced-motion: reduce) {
+  [data-just-filled="true"] {
+    animation: none !important;
+  }
+}
+
+/* ===== Muted Filters Row (Bootstrap State) ===== */
+.filtersRow[data-variant="muted"] {
+  opacity: 0.72;
+}
+
+.filtersRow[data-variant="muted"] button:hover {
+  opacity: 1;
 }

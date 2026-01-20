@@ -112,8 +112,7 @@ const DEFAULT_MESSAGES: ChatMessage[] = [
   {
     id: 'm0',
     role: 'assistant',
-    content:
-      "Add or adjust constraints. The plan updates instantly.",
+    content: "What are you planning?",
   },
 ];
 

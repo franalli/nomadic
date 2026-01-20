@@ -1,19 +1,15 @@
 'use client';
 
 import {
-  AlertCircle,
   Bike,
   Bus,
-  CalendarRange,
   Car,
   Compass,
   Fish,
   Flame,
   Footprints,
   Hotel,
-  Loader2,
   type LucideIcon,
-  MapPin,
   Mountain,
   Palmtree,
   Plane,
@@ -32,17 +28,11 @@ import {
   Wine,
   X,
 } from 'lucide-react';
-import { Fragment, memo, useEffect, useState } from 'react';
+import { Fragment, memo, useState } from 'react';
 import type { DateRange } from 'react-day-picker';
 
 import { ExpandablePill } from '@/components/pill/ExpandablePill';
-import { InlineEditPill } from '@/components/pill/InlineEditPill';
-import { LocationBadge } from '@/components/pill/LocationBadge';
-import { TruncatedDestinationList } from '@/components/pill/TruncatedDestinationList';
-import { Calendar } from '@/components/ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
-import { formatDateForDisplay } from '@/lib/utils';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import type {
   ActivitySettings,
@@ -309,6 +299,10 @@ export interface TripDetailsFormProps {
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields?: Set<LLMUpdatableField>;
   onAcknowledgeLLMUpdate?: (field: LLMUpdatableField) => void;
+
+  // Plan state for muted bootstrap variant
+  /** Whether a plan has been generated */
+  hasPlan?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -318,53 +312,44 @@ export interface TripDetailsFormProps {
 function TripDetailsFormInner({
   tripInputs,
   tripInputsDraft,
-  // editingField - intentionally unused, kept for interface compatibility
-  hasOrigin,
-  hasDestination,
-  hasDates,
-  hasStartDate,
-  hasEndDate,
-  calendarOpen,
-  selectedDateRange,
-  previewDays,
-  hasDateValidationWarning,
-  selectedLocationBadge,
-  datePresets,
-  originInput,
-  // originInputExpanded - intentionally unused, kept for interface compatibility
-  destinationInput,
-  // destinationInputExpanded - intentionally unused, kept for interface compatibility
-  pendingOrigin,
-  pendingDestination,
-  validationError,
-  onClearValidationError,
-  // onStartEditingField - intentionally unused, kept for interface compatibility
+  // Row 1 fields - unused after Row 1 removal, kept for interface compatibility
+  hasOrigin: _hasOrigin,
+  hasDestination: _hasDestination,
+  hasDates: _hasDates,
+  hasStartDate: _hasStartDate,
+  hasEndDate: _hasEndDate,
+  calendarOpen: _calendarOpen,
+  selectedDateRange: _selectedDateRange,
+  previewDays: _previewDays,
+  hasDateValidationWarning: _hasDateValidationWarning,
+  selectedLocationBadge: _selectedLocationBadge,
+  datePresets: _datePresets,
+  originInput: _originInput,
+  destinationInput: _destinationInput,
+  pendingOrigin: _pendingOrigin,
+  pendingDestination: _pendingDestination,
+  validationError: _validationError,
+  onClearValidationError: _onClearValidationError,
   onFieldChange,
   onCommitField,
-  // setTripInputsDraft - intentionally unused, kept for interface compatibility
-  // setEditingField - intentionally unused, kept for interface compatibility
-  onSetOrigin,
-  onRemoveOrigin,
-  setOriginInput,
-  // setOriginInputExpanded - intentionally unused, kept for interface compatibility
-  onAddDestination,
-  onRemoveDestination,
-  setDestinationInput,
-  // setDestinationInputExpanded - intentionally unused, kept for interface compatibility
-  onToggleMultiCity,
-  onCalendarOpenChange,
-  onCalendarDayClick,
-  onCalendarDayMouseEnter,
-  onCalendarMouseLeave,
-  onDatePresetClick,
-  onResetDates,
-  // onRemoveTravelers - intentionally unused, kept for interface compatibility
+  onSetOrigin: _onSetOrigin,
+  onRemoveOrigin: _onRemoveOrigin,
+  setOriginInput: _setOriginInput,
+  onAddDestination: _onAddDestination,
+  onRemoveDestination: _onRemoveDestination,
+  setDestinationInput: _setDestinationInput,
+  onToggleMultiCity: _onToggleMultiCity,
+  onCalendarOpenChange: _onCalendarOpenChange,
+  onCalendarDayClick: _onCalendarDayClick,
+  onCalendarDayMouseEnter: _onCalendarDayMouseEnter,
+  onCalendarMouseLeave: _onCalendarMouseLeave,
+  onDatePresetClick: _onDatePresetClick,
+  onResetDates: _onResetDates,
   onUpdateAdults,
   onUpdateChildren,
   onToggleRequiresAssistance,
-  // onRemoveBudget - intentionally unused, kept for interface compatibility
   onUpdateCurrency,
-  onSelectLocationBadge,
+  onSelectLocationBadge: _onSelectLocationBadge,
   bookingTypes,
   flightSettings,
   hotelSettings,
@@ -379,6 +364,7 @@ function TripDetailsFormInner({
   onRemoveActivity,
   llmUpdatedFields,
   onAcknowledgeLLMUpdate,
+  hasPlan = false,
 }: TripDetailsFormProps) {
   const draftBase = tripInputsDraft ?? toTripInputsDraft(tripInputs);
 
@@ -396,19 +382,12 @@ function TripDetailsFormInner({
   };
 
   // Check if dates were updated (either start or end)
-  const areDatesLLMUpdated = isFieldLLMUpdated('start_date') || isFieldLLMUpdated('end_date');
-  const acknowledgeDates = () => {
-    acknowledgeField('start_date');
-    acknowledgeField('end_date');
-  };
+  // Budget LLM update tracking
   const isBudgetLLMUpdated = isFieldLLMUpdated('budget') || isFieldLLMUpdated('currency');
   const acknowledgeBudget = () => {
     acknowledgeField('budget');
     acknowledgeField('currency');
   };
-
-  // Parse calendar dates for defaultMonth
-  const calendarStartDate = selectedDateRange?.from;
 
   // Collapsible open states for trip input pills (kept for remaining collapsible pills)
   const [travelersPillOpen, setTravelersPillOpen] = useState(false);
@@ -431,201 +410,15 @@ function TripDetailsFormInner({
   // Activity input state
   const [activityInput, setActivityInput] = useState('');
 
-  // Tier 11.9: Responsive calendar - detect mobile for single month view
-  const [isMobile, setIsMobile] = useState(false);
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 640);
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
-
   return (
     <div className="flex flex-col gap-3 overflow-visible">
-      {/* Row 1: Always-visible inline editing pills */}
-      <div className="grid grid-cols-3 gap-3 items-stretch overflow-visible">
-        {/* From field - inline */}
-        <div className="flex flex-col gap-1">
-          <InlineEditPill
-            label="From"
-            icon={MapPin}
-            hasValue={hasOrigin}
-            isLLMUpdated={isFieldLLMUpdated('origin')}
-            onAcknowledge={() => acknowledgeField('origin')}
-            hasError={validationError?.field === 'origin'}
-          >
-            {hasOrigin && !pendingOrigin ? (
-              <LocationBadge
-                type="origin"
-                value={tripInputs.origin!}
-                isSelected={selectedLocationBadge === 'origin'}
-                onSelect={onSelectLocationBadge}
-                onRemove={onRemoveOrigin}
-              />
-            ) : pendingOrigin ? (
-              <div className="inline-flex items-center gap-1.5 animate-pulse">
-                <Loader2 className="h-3 w-3 text-primary animate-spin" />
-                <span className="text-xs font-semibold text-primary/80">{pendingOrigin}</span>
-              </div>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (originInput.trim()) {
-                    onSetOrigin(originInput);
-                    setOriginInput('');
-                  }
-                }}
-                className="flex-1"
-              >
-                {/* Tier 11.11: ARIA linking for accessibility */}
-                <input
-                  type="text"
-                  value={originInput}
-                  onChange={(e) => {
-                    setOriginInput(e.target.value);
-                    if (validationError?.field === 'origin') onClearValidationError();
-                  }}
-                  placeholder="Enter city or airport"
-                  aria-invalid={validationError?.field === 'origin'}
-                  aria-describedby={validationError?.field === 'origin' ? 'origin-error' : undefined}
-                  className={`w-full bg-transparent border-none text-sm placeholder:text-muted-foreground/50 focus:outline-none ${
-                    validationError?.field === 'origin' ? 'text-destructive' : ''
-                  }`}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      if (originInput.trim()) {
-                        onSetOrigin(originInput);
-                        setOriginInput('');
-                      }
-                    }
-                  }}
-                />
-              </form>
-            )}
-          </InlineEditPill>
-          {validationError?.field === 'origin' && (
-            <p id="origin-error" className="text-[11px] text-destructive flex items-center gap-1 px-2" role="alert">
-              <AlertCircle className="h-3 w-3 flex-shrink-0" />
-              <span>{validationError.message}</span>
-            </p>
-          )}
-        </div>
+      {/* Row 1 (InlineEditPill cards) removed per spec - constraints handled via OnboardingChips in ChatPanel */}
 
-        {/* Where to field - inline with truncation */}
-        <div className="flex flex-col gap-1">
-          <InlineEditPill
-            label="Where to"
-            icon={MapPin}
-            hasValue={hasDestination}
-            isLLMUpdated={isFieldLLMUpdated('destinations')}
-            onAcknowledge={() => acknowledgeField('destinations')}
-            hasError={validationError?.field === 'destination'}
-          >
-            <TruncatedDestinationList
-              destinations={tripInputs.destinations ?? []}
-              maxVisible={2}
-              selectedBadge={selectedLocationBadge}
-              onSelectBadge={onSelectLocationBadge}
-              onRemoveDestination={onRemoveDestination}
-              destinationInput={destinationInput}
-              setDestinationInput={(v) => {
-                setDestinationInput(v);
-                if (validationError?.field === 'destination') onClearValidationError();
-              }}
-              onAddDestination={onAddDestination}
-              hasDestination={hasDestination}
-              pendingDestination={pendingDestination}
-              multiCityIntent={tripInputs.multi_city_intent}
-              onToggleMultiCity={onToggleMultiCity}
-            />
-          </InlineEditPill>
-          {validationError?.field === 'destination' && (
-            <p id="destination-error" className="text-[11px] text-destructive flex items-center gap-1 px-2" role="alert">
-              <AlertCircle className="h-3 w-3 flex-shrink-0" />
-              <span>{validationError.message}</span>
-            </p>
-          )}
-        </div>
-
-        {/* Dates field - inline with calendar popover */}
-        <InlineEditPill
-          label="Dates"
-          icon={hasDateValidationWarning ? AlertCircle : CalendarRange}
-          hasValue={hasDates}
-          isLLMUpdated={areDatesLLMUpdated}
-          onAcknowledge={acknowledgeDates}
-        >
-          <Popover open={calendarOpen} onOpenChange={onCalendarOpenChange}>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className={`inline-flex items-center gap-1.5 text-sm font-medium cursor-pointer hover:text-primary transition-colors ${
-                  hasDates ? 'text-foreground' : 'text-muted-foreground'
-                }`}
-              >
-                {hasDates ? (
-                  <>
-                    {hasStartDate && formatDateForDisplay(tripInputs.start_date)}
-                    {hasStartDate && hasEndDate && ' - '}
-                    {hasEndDate && formatDateForDisplay(tripInputs.end_date)}
-                  </>
-                ) : (
-                  'Select dates or duration'
-                )}
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="start">
-              <div className="flex">
-                {/* Quick preset buttons */}
-                <div className="flex flex-col gap-1 border-r border-border/60 p-2">
-                  <span className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Quick picks
-                  </span>
-                  {datePresets.map((preset) => (
-                    <button
-                      key={preset.label}
-                      type="button"
-                      onClick={() => onDatePresetClick(preset.getDates())}
-                      className="whitespace-nowrap rounded-md px-3 py-1.5 text-left text-xs font-medium text-foreground hover:bg-muted transition-colors"
-                    >
-                      {preset.label}
-                    </button>
-                  ))}
-                </div>
-                <div onMouseLeave={onCalendarMouseLeave}>
-                  <Calendar
-                    mode="range"
-                    defaultMonth={calendarStartDate ?? new Date()}
-                    selected={selectedDateRange}
-                    onSelect={() => {}}
-                    onDayClick={onCalendarDayClick}
-                    onDayMouseEnter={onCalendarDayMouseEnter}
-                    numberOfMonths={isMobile ? 1 : 2}
-                    disabled={{ before: new Date() }}
-                    modifiers={{ preview: previewDays }}
-                    modifiersClassNames={{ preview: 'bg-muted/50' }}
-                  />
-                </div>
-              </div>
-            </PopoverContent>
-          </Popover>
-          {hasDates && (
-            <button
-              type="button"
-              onClick={onResetDates}
-              className="flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              aria-label="Clear dates"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          )}
-        </InlineEditPill>
-      </div>
-
-      {/* Row 2: Booking type expandable pills */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      {/* Row 2: Booking type expandable pills - muted in bootstrap (pre-plan) state */}
+      <div
+        className="filtersRow flex flex-wrap items-center gap-x-3 gap-y-2"
+        data-variant={hasPlan ? 'normal' : 'muted'}
+      >
         {/* Flights pill */}
         <ExpandablePill
           label="Flights"

@@ -238,6 +238,105 @@ class TestDateRangeParsing:
         assert end is None, f"Expected None for end with '{input_text}'"
 
 
+class TestFlexibleDateRangeParsing:
+    """Test flexible date range parsing for mixed ordinals and European formats.
+
+    These tests verify the new date parsing patterns added to handle:
+    - Mixed ordinals: "6-15th feb" (ordinal only on second number)
+    - European decimal: "6-15.02" (DD-DD.MM format)
+    - Date ranges in sentences: "dates are 6-15 feb, budget around 2000"
+    """
+
+    @pytest.fixture
+    def date_normalizer(self):
+        """DateNormalizer with fixed reference date for deterministic tests."""
+        # Use January 1, 2025 so February dates are in the future
+        return DateNormalizer(reference_date=date(2025, 1, 1))
+
+    @pytest.mark.parametrize(
+        "input_range,expected_start,expected_end",
+        [
+            # Mixed ordinals (ordinal only on second number)
+            ("6-15th feb", "2025-02-06", "2025-02-15"),
+            ("6-15th Feb", "2025-02-06", "2025-02-15"),
+            ("6-15th february", "2025-02-06", "2025-02-15"),
+            ("1-10th march", "2025-03-01", "2025-03-10"),
+            # Both ordinals
+            ("6th-15th feb", "2025-02-06", "2025-02-15"),
+            # No ordinals
+            ("6-15 feb", "2025-02-06", "2025-02-15"),
+            ("6-15 February", "2025-02-06", "2025-02-15"),
+        ],
+    )
+    def test_mixed_ordinal_date_ranges(
+        self, date_normalizer, input_range: str, expected_start: str, expected_end: str
+    ):
+        """Test parsing of date ranges with mixed ordinal suffixes."""
+        start, end = date_normalizer.parse_date_range(input_range)
+        assert start == expected_start, f"Start date mismatch for '{input_range}'"
+        assert end == expected_end, f"End date mismatch for '{input_range}'"
+
+    @pytest.mark.parametrize(
+        "input_range,expected_start,expected_end",
+        [
+            # DD-DD.MM format (European decimal)
+            ("6-15.02", "2025-02-06", "2025-02-15"),
+            ("1-10.03", "2025-03-01", "2025-03-10"),
+            ("20-27.12", "2025-12-20", "2025-12-27"),
+            # With year
+            ("6-15.02.2025", "2025-02-06", "2025-02-15"),
+            ("6-15.02.25", "2025-02-06", "2025-02-15"),  # 2-digit year
+        ],
+    )
+    def test_european_decimal_date_ranges(
+        self, date_normalizer, input_range: str, expected_start: str, expected_end: str
+    ):
+        """Test parsing of European decimal date ranges (DD-DD.MM)."""
+        start, end = date_normalizer.parse_date_range(input_range)
+        assert start == expected_start, f"Start date mismatch for '{input_range}'"
+        assert end == expected_end, f"End date mismatch for '{input_range}'"
+
+    @pytest.mark.parametrize(
+        "input_text,expected_start,expected_end",
+        [
+            # Date ranges embedded in sentences
+            ("dates are 6-15 feb, budget around 2000", "2025-02-06", "2025-02-15"),
+            ("going from dec 20-27", "2025-12-20", "2025-12-27"),
+            ("trip dates: 6-15th feb", "2025-02-06", "2025-02-15"),
+            ("planning for jan 5-12 next year", "2025-01-05", "2025-01-12"),
+            # With surrounding context
+            (
+                "going to dubai, from south bend, dates are 6-15th feb, budget around 2000",
+                "2025-02-06",
+                "2025-02-15",
+            ),
+        ],
+    )
+    def test_date_ranges_in_context(
+        self, date_normalizer, input_text: str, expected_start: str, expected_end: str
+    ):
+        """Test extracting date ranges from surrounding text context."""
+        start, end = date_normalizer.parse_date_range(input_text)
+        assert start == expected_start, f"Start date mismatch for '{input_text}'"
+        assert end == expected_end, f"End date mismatch for '{input_text}'"
+
+    @pytest.mark.parametrize(
+        "input_range,expected_start,expected_end",
+        [
+            # DD.MM-DD.MM format (full European)
+            ("6.02-15.02", "2025-02-06", "2025-02-15"),
+            ("1.03-10.03", "2025-03-01", "2025-03-10"),
+        ],
+    )
+    def test_full_european_date_ranges(
+        self, date_normalizer, input_range: str, expected_start: str, expected_end: str
+    ):
+        """Test parsing of full European date ranges (DD.MM-DD.MM)."""
+        start, end = date_normalizer.parse_date_range(input_range)
+        assert start == expected_start, f"Start date mismatch for '{input_range}'"
+        assert end == expected_end, f"End date mismatch for '{input_range}'"
+
+
 class TestWeekOfMonthParsing:
     """Test 'first/second/third/fourth/last week of [month]' parsing."""
 

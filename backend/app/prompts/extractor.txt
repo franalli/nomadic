@@ -33,6 +33,9 @@ ORIGIN (origin_delta): Departure city with state/country if mentioned.
 
 DATES:
 - start_date_hint, end_date_hint: "March 15", "Dec 25, 2025", "next week"
+- Date ranges: "6-15 Feb" → start: "6 Feb", end: "15 Feb"
+- Date ranges: "Dec 20-27" → start: "Dec 20", end: "Dec 27"
+- European format: "6-15.02" → start: "6.02", end: "15.02" (Feb 6-15)
 - duration_days: "for 5 days" → 5 (no computed dates without anchor)
 
 TRAVELERS:

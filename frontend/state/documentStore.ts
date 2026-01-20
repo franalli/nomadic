@@ -74,12 +74,18 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   budget: null,
   currency: 'USD',
   multi_city_intent: null,
-  missing_fields: ['destinations', 'origin', 'start_date', 'end_date'],
+  // Per YC demo spec: destination + dates (or flexible dates) required to generate a plan
+  missing_fields: ['destinations'],
   booking_types: DEFAULT_BOOKING_TYPES,
   flight_settings: DEFAULT_FLIGHT_SETTINGS,
   hotel_settings: DEFAULT_HOTEL_SETTINGS,
   activity_settings: DEFAULT_ACTIVITY_SETTINGS,
   transport_settings: DEFAULT_TRANSPORT_SETTINGS,
+  // Flexible dates support
+  date_flex: false,
+  trip_duration: null,
+  date_window_start: null,
+  date_window_end: null,
 };
 
 /**
@@ -370,10 +376,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
 
   // Trip input selectors
+  // Note: Per YC demo spec, only destination is required to generate a plan
+  // Other fields (origin, dates) are optional accelerators, not blockers
   hasAllRequiredFields: () => {
     const { document } = get();
-    const missingFields = document?.trip_inputs?.missing_fields ?? DEFAULT_TRIP_INPUTS.missing_fields;
-    return missingFields.length === 0;
+    const tripInputs = document?.trip_inputs;
+
+    // Require destination
+    const hasDestination = (tripInputs?.destinations?.length ?? 0) > 0;
+
+    // Dates are "set" if either:
+    // 1. Explicit start_date && end_date
+    // 2. OR date_flex with a planning window (duration or date range)
+    const hasExplicitDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
+    const hasFlexibleDates = Boolean(
+      tripInputs?.date_flex &&
+      (tripInputs?.trip_duration || tripInputs?.date_window_start)
+    );
+    const hasDates = hasExplicitDates || hasFlexibleDates;
+
+    // Per YC demo spec: destination + dates (or flexible dates) required
+    return hasDestination && hasDates;
   },
 
   // Trip input actions

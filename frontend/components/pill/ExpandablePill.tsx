@@ -32,6 +32,8 @@ export interface ExpandablePillProps {
   isLLMUpdated?: boolean;
   /** Called when user clicks on the pill to acknowledge the LLM update */
   onAcknowledge?: () => void;
+  /** Whether chip was just filled (triggers fill animation) */
+  justFilled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ function ExpandablePillInner({
   hasConflict = false,
   isLLMUpdated = false,
   onAcknowledge,
+  justFilled = false,
 }: ExpandablePillProps) {
   const handleOpenChange = (open: boolean) => {
     // Acknowledge LLM update when user opens the pill
@@ -64,55 +67,77 @@ function ExpandablePillInner({
     onOpenChange(open);
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Per YC Demo Chip Spec - Opacity-based state indication
+  // Empty (cold start): text 0.72, border 0.35, bg 0.10
+  // Hover (empty): text 0.88, border 0.55, bg 0.14
+  // Active/Pressed: border 0.65, bg 0.18
+  // Filled: text 0.92, border 0.60, bg 0.16, font-weight 600
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Icon color based on constraint state
   // Priority: open (editing) > conflict > set > unset
   const getIconColor = () => {
     if (isOpen) return 'text-[#FF8A00]';           // CTA Orange (editing)
     if (hasConflict) return 'text-[#C88A1E]';      // Conflict Amber
     if (hasValue) return 'text-[#E2A23A]';         // State Amber (set)
-    return 'text-muted-foreground';                // Neutral (unset)
-  };
-
-  // Label color matches icon color for coherence
-  const getLabelColor = () => {
-    if (isOpen) return 'text-[#FF8A00]';
-    if (hasConflict) return 'text-[#C88A1E]';
-    if (hasValue) return 'text-[#E2A23A]';
-    return 'text-muted-foreground';
+    return '';                                      // Uses parent opacity
   };
 
   // Echo overlay style for one-shot feedback
   const getEchoStyle = (): React.CSSProperties => {
     if (!isLLMUpdated || isOpen) return {};
     return {
-      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+      backgroundColor: 'var(--theme-surface-2)',
     };
   };
+
+  // Chip fill animation keyframes (applied via data attribute)
+  const fillAnimationStyle: React.CSSProperties = justFilled
+    ? { animation: 'chipFill 160ms ease-out' }
+    : {};
 
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <button
           type="button"
+          data-filled={hasValue}
+          data-just-filled={justFilled}
           className={cn(
-            'group inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 transition-all duration-200 ease-out active:scale-[0.98]',
+            // Base chip styles per spec: 28px height, 10px padding, pill shape
+            'group inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full',
+            'transition-all duration-[120ms] ease-out active:scale-[0.98]',
+            // State-based styling (using theme tokens for light/dark mode)
             isOpen
-              ? 'bg-primary/10 border border-[#FF8A00]/30 shadow-pill-active'
-              : 'bg-gradient-to-b from-card to-muted/30 border border-border/50 shadow-pill hover:from-card hover:to-muted/50 hover:border-border/70 hover:shadow-pill-hover',
+              // Active/Open: higher contrast
+              ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)]'
+              : hasValue
+                // Filled: stronger presence, weight 600
+                ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] font-semibold'
+                // Empty (subdued): lower contrast per spec
+                : 'border border-[var(--theme-border)] bg-[var(--theme-surface-2)] text-[var(--theme-text-muted)] opacity-70',
+            // Hover states
+            !isOpen && !hasValue && 'hover:opacity-90 hover:bg-[var(--theme-overlay)]',
+            !isOpen && hasValue && 'hover:opacity-100',
             // Conflict state: dashed border
-            hasConflict && !isOpen && 'border-dashed border-[rgba(255,176,0,0.35)]'
+            hasConflict && !isOpen && 'border-dashed border-[rgba(255,176,0,0.35)]',
+            // Focus visible ring
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/65'
           )}
           style={{
             ...getEchoStyle(),
-            transition: isLLMUpdated
-              ? 'all 100ms ease-out'
-              : 'all 200ms ease-in',
+            ...fillAnimationStyle,
           }}
         >
           <Icon
             className={cn('h-3.5 w-3.5 transition-colors duration-150', getIconColor())}
           />
-          <span className={cn('text-xs font-semibold transition-colors duration-150', getLabelColor())}>
+          <span className={cn(
+            'text-xs transition-colors duration-150',
+            hasValue ? 'font-semibold' : 'font-medium',
+            getIconColor()
+          )}>
             {label}
           </span>
           <ChevronDown

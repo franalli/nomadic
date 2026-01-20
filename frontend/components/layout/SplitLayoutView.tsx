@@ -1,107 +1,171 @@
 'use client';
 
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 import React, { memo } from 'react';
 
-import { GeneratingLoader } from '@/components/layout/GeneratingLoader';
-import { MobileConstraintsBar } from '@/components/layout/MobileConstraintsBar';
-import { Card, CardContent } from '@/components/ui/card';
+import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
+import { useMobileMode } from '@/contexts/MobileModeContext';
+import { cn } from '@/lib/utils';
+import type { PlanState } from '@/types/plan-envelope';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Animation Variants (per spec: 260ms slide, 240ms reverse)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const mobileSlideVariants = {
+  // Planner Mode (slide in from left)
+  plannerEnter: { x: -12, opacity: 0.96 },
+  plannerCenter: { x: 0, opacity: 1 },
+  plannerExit: { x: -12, opacity: 0.96 },
+
+  // Plan Mode (slide in from right)
+  planEnter: { x: 12, opacity: 0.96 },
+  planCenter: { x: 0, opacity: 1 },
+  planExit: { x: 12, opacity: 0.96 },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 export interface SplitLayoutViewProps {
-  /** Content for the sidebar (typically chat panel) */
-  sidebarContent: React.ReactNode;
-  /** Content for the main area (typically branch panel) */
-  mainContent: React.ReactNode;
-  /** Whether we're in generating state (show loader instead of branches) */
-  isGenerating: boolean;
-  /** Whether branches are ready to display */
-  hasBranchesReady: boolean;
-  /** Trip details form content to display below the hero */
-  tripDetailsContent?: React.ReactNode;
+  /** Content for the left panel (Planner: TripDetailsForm + ChatPanel) */
+  plannerContent: React.ReactNode;
+  /** Content for the right panel (Plan View: StrategyStageRenderer) */
+  planViewContent: React.ReactNode;
+  /** Current plan state for status display */
+  planState?: PlanState;
+  /** Optional compact header content (branding) */
+  headerContent?: React.ReactNode;
+  /** Whether a destination has been set (controls topography background opacity) */
+  hasDestination?: boolean;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Split layout view with:
- * - Desktop (lg+): Fixed sidebar on left, scrollable main content on right
- * - Mobile (<lg): Collapsible constraints bar at top, plan content scrolls below
+ * SplitLayoutView - Unified responsive layout for Nomadic.
+ *
+ * Desktop (lg+): True split view from the start
+ * - Left: Planner panel (TripDetailsForm + ChatPanel), scrollable
+ * - Right: Plan View (StrategyStageRenderer), always visible
+ *
+ * Mobile (<lg): Single surface with mode switching
+ * - Planner Mode: Shows planner content only
+ * - Plan Mode: Shows plan view only
+ * - Animated transitions between modes
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
-  sidebarContent,
-  mainContent,
-  isGenerating,
-  hasBranchesReady,
-  tripDetailsContent,
+  plannerContent,
+  planViewContent,
+  planState = 'INCOMPLETE',
+  headerContent,
+  hasDestination: _hasDestination = false, // Reserved for future topo background control
 }: SplitLayoutViewProps) {
+  void _hasDestination; // Silence unused variable warning - reserved for future topo background control
+  const { mode, isDesktop } = useMobileMode();
+
   return (
-    <div className="flex flex-col lg:flex-row min-h-screen">
-      {/* Desktop sidebar - Chat Panel */}
-      {/* Only visible on lg+ screens */}
-      <aside
-        className="no-scrollbar fixed left-0 top-0 h-screen overflow-y-auto bg-gradient-to-b from-black/90 via-black/80 to-black/90 shadow-2xl
-          w-1/4 min-w-[320px]
-          z-40
-          hidden lg:block"
-        aria-label="Trip planning chat"
+    <div className="flex flex-col min-h-screen bg-[var(--theme-bg)]">
+      {/* Compact Header (branding) - always visible on desktop, mode-aware on mobile */}
+      {headerContent && (
+        <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-border)] bg-[var(--theme-panel)]">
+          {headerContent}
+        </header>
+      )}
+
+      {/* Mobile Mode Header - replaces header on mobile */}
+      <MobileModeHeader planState={planState} />
+
+      {/* Main Layout Container */}
+      {/* Desktop: Grid 40/60 split | Mobile: Single column with mode switching */}
+      <div
+        className={cn(
+          'flex-1 overflow-hidden',
+          // Mobile: flex column for mode switching
+          'flex flex-col',
+          // Desktop: Grid with 40/60 split (min 360px, max 480px on ultrawide)
+          'lg:grid lg:grid-cols-[minmax(360px,40%)_1fr]',
+          '2xl:grid-cols-[480px_1fr]'
+        )}
       >
-        <div className="flex h-full flex-col p-4 pb-2">
-          {/* Chat Panel */}
-          <div className="flex-1 overflow-hidden">
-            <Card className="bg-card/75 flex h-full flex-col border-white/20 shadow-xl backdrop-blur">
-              <CardContent className="flex h-full min-h-0 flex-col p-4 pb-3">
-                {sidebarContent}
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      </aside>
-
-      {/* Mobile constraints bar - fixed at top */}
-      <MobileConstraintsBar />
-
-      {/* Main content area */}
-      {/* Desktop: matches sidebar structure with padding and inner scrollable container */}
-      <main
-        className="min-w-0 flex-1 w-full lg:ml-[max(25%,320px)]"
-        aria-label="Your trip plan"
-      >
-        {/* Desktop: padded wrapper matching sidebar (p-4 pb-2, no left padding) */}
-        <div className="lg:pt-4 lg:pr-4 lg:pb-2 lg:h-screen lg:bg-black">
-          {/* Scrollable content container with rounded corners on desktop */}
-          <div className="no-scrollbar min-h-screen lg:min-h-0 lg:h-full lg:overflow-y-auto lg:rounded-xl bg-muted/30 lg:border lg:border-white/20">
-            {/* Trip details form */}
-            {tripDetailsContent && (
-              <div className="border-b border-border/30 px-4 py-4 lg:px-6">
-                {tripDetailsContent}
-              </div>
-            )}
-
-            {/* Main content - loader or branches */}
-            <div className="px-4 pb-14 pt-6 lg:px-6">
-              {isGenerating && !hasBranchesReady ? (
-                <motion.div
-                  key="generating-loader"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.5 }}
-                >
-                  <GeneratingLoader compact className="lg:hidden" />
-                  <GeneratingLoader className="hidden lg:flex" />
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="branch-panel"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, ease: 'easeOut' }}
-                >
-                  {mainContent}
-                </motion.div>
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* Desktop Layout: True Split View (lg+) */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {isDesktop && (
+          <>
+            {/* Left Panel: Planner (40% or max 480px) */}
+            <aside
+              className={cn(
+                'hidden lg:flex lg:flex-col',
+                'h-[calc(100vh-48px)]', // Full height minus header
+                'border-r border-[var(--theme-border)]',
+                'bg-[var(--theme-panel)]',
+                'shadow-[8px_0_20px_rgba(0,0,0,0.04)]' // subtle separation
               )}
-            </div>
-          </div>
-        </div>
-      </main>
+              style={{ position: 'relative', zIndex: 1 }}
+              aria-label="Trip planner"
+            >
+              <div className="flex-1 overflow-y-auto no-scrollbar p-5">
+                {plannerContent}
+              </div>
+            </aside>
+
+            {/* Right Panel: Plan View (60% or remaining space) */}
+            <main
+              className={cn(
+                'hidden lg:flex lg:flex-col',
+                'h-[calc(100vh-48px)]',
+                'rightCanvas' // topo background via pseudo-elements
+              )}
+              aria-label="Your trip plan"
+              data-testid="plan-view"
+            >
+              <div className="flex-1 overflow-y-auto no-scrollbar p-6">
+                {planViewContent}
+              </div>
+            </main>
+          </>
+        )}
+
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* Mobile Layout: Mode Switching (<lg) */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {!isDesktop && (
+          <AnimatePresence mode="wait">
+            {mode === 'planner' ? (
+              <motion.main
+                key="mobile-planner"
+                className="flex-1 overflow-y-auto p-4 lg:hidden"
+                initial="plannerEnter"
+                animate="plannerCenter"
+                exit="plannerExit"
+                variants={mobileSlideVariants}
+                transition={{ duration: 0.24, ease: 'easeOut' }}
+                aria-label="Trip planner"
+              >
+                {plannerContent}
+              </motion.main>
+            ) : (
+              <motion.main
+                key="mobile-plan"
+                className="flex-1 overflow-y-auto p-4 lg:hidden rightCanvas"
+                initial="planEnter"
+                animate="planCenter"
+                exit="planExit"
+                variants={mobileSlideVariants}
+                transition={{ duration: 0.26, ease: 'easeOut' }}
+                aria-label="Your trip plan"
+                data-testid="plan-view"
+              >
+                {planViewContent}
+              </motion.main>
+            )}
+          </AnimatePresence>
+        )}
+      </div>
     </div>
   );
 });

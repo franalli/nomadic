@@ -2,28 +2,31 @@
 
 import { addDays, addWeeks, nextSaturday } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
+import { Compass, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { BranchPanel } from '@/components/branches/BranchPanel';
-import { ChangeReceipt, type ChangeReceiptData } from '@/components/chat/ChangeReceipt';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
-import { HeroSection } from '@/components/layout/HeroSection';
 import { useBranchManager, type PlanResultPayload } from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
-import { FeaturesSection } from '@/components/nomadic/features-section';
-import { Footer } from '@/components/nomadic/footer';
-import { PlanStateBanner } from '@/components/plan/PlanStateBanner';
-import { ResolutionCompleteness } from '@/components/plan/ResolutionCompleteness';
-import { ResolverStack } from '@/components/plan/ResolverStack';
-import { Card, CardContent } from '@/components/ui/card';
+import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
+import { Button } from '@/components/ui/button';
+import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
+import { formatDateForDisplay } from '@/lib/utils';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
-import type { PlanState, ReadinessItem, ResolverStep } from '@/types/plan-envelope';
+import type { PlanState, PlanViewState, PlanViewModel } from '@/types/plan-envelope';
+
+// Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
+interface ChangeReceiptData {
+  type: 'partial' | 'updated' | 'reverted';
+  fields: string[];
+  canUndo: boolean;
+}
 
 // Toast notification system
 const MAX_TOASTS = 3;
@@ -110,6 +113,9 @@ function detectChangedFieldNames(
 }
 
 export function NomadicLanding() {
+  // Mobile mode context - for switching between planner/plan views on mobile
+  const { isDesktop, switchToPlan } = useMobileMode();
+
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
   const storeTripInputs = documentStore.document?.trip_inputs;
@@ -118,7 +124,8 @@ export function NomadicLanding() {
   const restoreTripInputs = documentStore.restoreTripInputs;
 
   // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
-  const [receiptData, setReceiptData] = useState<ChangeReceiptData | null>(null);
+  // Kept for future receipt UI implementation
+  const [_receiptData, setReceiptData] = useState<ChangeReceiptData | null>(null);
   const previousTripInputsRef = useRef<DocumentTripInputs | null>(null);
 
   // Derive tripInputs from store (with defaults)
@@ -192,30 +199,26 @@ export function NomadicLanding() {
   const {
     branches,
     selectedBranchId,
-    tilesBranchId,
-    branchSelections,
     isGenerating,
-    isHydratingSnapshot,
-    activeBranchSelection,
-    tiles,
     readyToGenerate,
     hasBranchesReady,
     setBranches,
     setSelectedBranchId,
-    handleBranchSelect,
     handleStartNewSession,
     handlePlanResult,
-    handleTileSelection,
-    handleBookTrip,
     handleGeneratePlanStart,
   } = branchManager;
 
   // Wrapped handlers for receipt functionality
-  // Snapshot trip inputs before generation starts
+  // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
   const handleGeneratePlanStartWithSnapshot = useCallback(() => {
     previousTripInputsRef.current = storeTripInputs ? { ...storeTripInputs } : null;
     handleGeneratePlanStart();
-  }, [storeTripInputs, handleGeneratePlanStart]);
+    // Switch to Plan Mode on mobile when generation starts
+    if (!isDesktop) {
+      switchToPlan();
+    }
+  }, [storeTripInputs, handleGeneratePlanStart, isDesktop, switchToPlan]);
 
   // Compare inputs after plan result and show receipt
   const handlePlanResultWithReceipt = useCallback(
@@ -237,29 +240,9 @@ export function NomadicLanding() {
     [handlePlanResult]
   );
 
-  // Undo handler - restore previous inputs and show reverted receipt
-  const handleReceiptUndo = useCallback(() => {
-    if (!previousTripInputsRef.current) return;
-
-    const revertedFields = detectChangedFieldNames(
-      storeTripInputs ?? null,
-      previousTripInputsRef.current
-    );
-
-    restoreTripInputs(previousTripInputsRef.current);
-
-    // Show reverted receipt (no undo button)
-    setReceiptData({
-      type: 'reverted',
-      fields: revertedFields,
-      canUndo: false,
-    });
-  }, [storeTripInputs, restoreTripInputs]);
-
-  // Dismiss receipt
-  const handleReceiptDismiss = useCallback(() => {
-    setReceiptData(null);
-  }, []);
+  // Receipt undo/dismiss handlers removed - re-add when receipt UI is implemented
+  // Uses: previousTripInputsRef, storeTripInputs, restoreTripInputs, setReceiptData, detectChangedFieldNames
+  void restoreTripInputs; // Silence unused variable warning
 
   // Trip inputs editor hook - manages all trip input editing state and handlers
   const tripInputsEditor = useTripInputsEditor({
@@ -375,8 +358,6 @@ export function NomadicLanding() {
   const hasDestination = (tripInputs.destinations ?? []).length > 0;
   const hasStartDate = Boolean(tripInputs.start_date);
   const hasEndDate = Boolean(tripInputs.end_date);
-  const hasBudget = tripInputs.budget != null;
-  const hasTravelers = tripInputs.adults != null;
 
   // NEW: Derive plan state envelope fields
   // Use backend-provided plan_state if available, otherwise derive from local state
@@ -392,88 +373,45 @@ export function NomadicLanding() {
     return 'STABLE';
   }, [documentPlanState, isGenerating, missingFields.length, hasOrigin, hasDestination, hasStartDate]);
 
-  // Derive readiness array (use backend if available, otherwise compute locally)
-  const readinessItems: ReadinessItem[] = useMemo(() => {
-    if (storeDocument?.readiness && storeDocument.readiness.length > 0) {
-      return storeDocument.readiness;
-    }
-    // Fallback: compute from local state
-    return [
-      { key: 'origin', ok: hasOrigin },
-      { key: 'destination', ok: hasDestination },
-      { key: 'start_date', ok: hasStartDate },
-      { key: 'end_date', ok: hasEndDate },
-      { key: 'travelers', ok: hasTravelers },
-      { key: 'budget', ok: hasBudget },
-    ];
-  }, [storeDocument?.readiness, hasOrigin, hasDestination, hasStartDate, hasEndDate, hasTravelers, hasBudget]);
-
-  // Resolver state (only during RESOLVING, from backend or default)
-  const resolverActiveStep: ResolverStep = storeDocument?.resolver?.active_step ?? 'processing_constraints';
-  const resolverCompletedSteps = new Set<ResolverStep>(storeDocument?.resolver?.completed_steps ?? []);
+  // Readiness and resolver state - kept for future use when backend provides these fields
+  // These will power a visual progress indicator in the planner panel
 
   // Destination card (from backend or derive locally)
   const destinationCard = storeDocument?.destination_card ?? (
     hasDestination ? {
       title: tripInputs.destinations?.[0] ?? '',
       subtitle: `Your adventure in ${tripInputs.destinations?.[0] ?? ''}`,
-      image_url: null,
-    } : null
+    } : undefined
   );
 
-  // Booking status (from backend, for per-tab display)
-  const bookingStatus = storeDocument?.booking_status ?? null;
+  // Booking status (from backend, for per-tab display) - kept for future booking UI
 
-  // Derive hasDates for legacy code
-  const hasDates = hasStartDate || hasEndDate;
+  // Plan View State (for StrategyStageRenderer)
+  // Derive from local state - backend doesn't populate plan_view_state yet
+  // Note: Stay at S1_FRAMING until backend provides actual strategy content with open_decisions
+  // S2_STRATEGY_READY requires open_decisions per content policy guard
+  const planViewState: PlanViewState = useMemo(() => {
+    if (!hasDestination) return 'S0_BOOTSTRAP';
+    if (isGenerating || hasBranchesReady) return 'S1_FRAMING';
+    return 'S0_BOOTSTRAP';
+  }, [hasDestination, isGenerating, hasBranchesReady]);
 
-  // Count resolved constraints for plan header copy (legacy)
-  const constraintCount = [hasDestination, hasOrigin, hasDates, hasBudget].filter(Boolean).length;
-
-  // Get plan header title and body based on constraint count
-  const getPlanHeaderCopy = () => {
-    if (isGenerating) {
-      return { title: 'Trip plan', subtitle: 'Updating plan...' };
+  // Auto-switch to Plan Mode when generation is in progress (mobile only)
+  useEffect(() => {
+    if (!isDesktop && planViewState === 'S1_FRAMING') {
+      switchToPlan();
     }
-    switch (constraintCount) {
-      case 0:
-        return {
-          title: 'Your trip plan',
-          subtitle: 'This plan updates automatically as you set constraints.',
-        };
-      case 1:
-        return {
-          title: 'Trip plan in progress',
-          subtitle: 'The plan will resolve as remaining constraints are added.',
-        };
-      case 2:
-      case 3:
-        return {
-          title: 'Resolving trip plan',
-          subtitle: 'The plan is partially defined and will update as constraints change.',
-        };
-      default: {
-        // All 4 constraints set - show summary line
-        const origin = tripInputs.origin || '';
-        const destination = tripInputs.destinations?.[0] || '';
-        const dateRange = hasStartDate && hasEndDate
-          ? `${tripInputs.start_date} – ${tripInputs.end_date}`
-          : hasStartDate ? tripInputs.start_date : '';
-        const budget = hasBudget ? `€${tripInputs.budget}` : '';
-        const parts = [
-          origin && destination ? `${origin} → ${destination}` : destination || origin,
-          dateRange,
-          budget,
-        ].filter(Boolean);
-        return {
-          title: 'Trip plan',
-          subtitle: parts.join(' · ') || null,
-        };
-      }
-    }
-  };
+  }, [isDesktop, planViewState, switchToPlan]);
 
-  const planHeaderCopy = getPlanHeaderCopy();
+  // Plan View Model - empty for now, stage views will show placeholder content
+  const planViewModel: PlanViewModel = useMemo(() => ({}), []);
+
+  // CTA gating flags per strict render contract
+  // hasDates: either explicit dates OR flexible dates with duration
+  const hasDates = Boolean(tripInputs.start_date && tripInputs.end_date) ||
+    (tripInputs.date_flex === true && tripInputs.trip_duration != null);
+  const canGeneratePlan = hasDestination && hasDates;
+  const hasPlan = hasBranchesReady;
 
   // Trip details section content - passed to ChatPanel
   const tripDetailsSection = {
@@ -542,15 +480,20 @@ export function NomadicLanding() {
         onRemoveActivity={handleRemoveActivity}
         llmUpdatedFields={llmUpdatedFields}
         onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
+        hasPlan={hasPlan}
       />
     ),
     missingFields,
   };
 
-  // Chat panel content that can be reused in both layouts
-  const chatPanelContent = (fullHeight = false) => (
-    <div className={fullHeight ? 'flex h-full min-h-0 flex-col' : ''}>
-      <div className={fullHeight ? 'min-h-0 flex-1' : ''}>
+  // Planner content (left panel): TripDetailsForm + ChatPanel
+  const plannerContent = (
+    <div className="flex flex-col gap-4">
+      {/* Trip Details Form */}
+      {tripDetailsSection.content}
+
+      {/* Chat Panel */}
+      <div className="flex-1">
         <ChatPanel
           ref={chatPanelRef}
           key={chatKey}
@@ -558,98 +501,48 @@ export function NomadicLanding() {
           onPlanResult={handlePlanResultWithReceipt}
           onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
           onFreshStart={handleStartNewSession}
-          tripDetails={fullHeight ? undefined : tripDetailsSection}
-          fullHeight={fullHeight}
+          fullHeight={false}
           hasBranches={hasBranchesReady}
           readyToGenerate={readyToGenerate}
           isGenerating={isGenerating}
           planState={planState}
+          // Onboarding chips props - click handlers are internal to ChatPanel
+          destination={tripInputs.destinations?.[0]}
+          origin={tripInputs.origin ?? undefined}
+          dateRange={
+            hasStartDate || hasEndDate
+              ? `${formatDateForDisplay(tripInputs.start_date)}${hasStartDate && hasEndDate ? ' - ' : ''}${formatDateForDisplay(tripInputs.end_date)}`
+              : undefined
+          }
+          budget={tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined}
+          dateFlex={tripInputs.date_flex}
+          tripDuration={tripInputs.trip_duration ?? undefined}
+          // CTA gating flags
+          hasDestination={hasDestination}
+          canGeneratePlan={canGeneratePlan}
+          hasPlan={hasPlan}
         />
       </div>
     </div>
   );
 
-  // Branch panel content
-  const branchPanelContent = (
-    <Card className="from-primary/10 via-card/95 to-background relative overflow-hidden border-none bg-gradient-to-br shadow-xl backdrop-blur">
-      <div className="bg-primary/25 pointer-events-none absolute -left-20 -top-24 h-48 w-48 rounded-full blur-3xl" />
-      <div className="bg-accent/15 pointer-events-none absolute bottom-0 right-0 h-40 w-40 rounded-full blur-3xl" />
-      <div className="relative px-5 py-4">
-        {/* Visual Hierarchy:
-         * 1. Plan State Banner (single source of truth)
-         * 2. Destination Card (content anchor)
-         * 3. Resolution Completeness (diagnostic, INCOMPLETE/RESOLVING only)
-         * 4. Resolver Stack (RESOLVING only)
-         */}
-
-        {/* 1. Plan State Banner - Single line, dominant */}
-        <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
-          <div className="space-y-1">
-            <h3 className="text-foreground font-display text-xl font-bold">
-              {destinationCard?.title || planHeaderCopy.title}
-            </h3>
-            {(destinationCard?.subtitle || planHeaderCopy.subtitle) && (
-              <p className="text-muted-foreground text-sm">
-                {destinationCard?.subtitle || planHeaderCopy.subtitle}
-              </p>
-            )}
-          </div>
-          <PlanStateBanner planState={planState} />
-        </div>
-
-        {/* 3. Resolution Completeness - INCOMPLETE or RESOLVING only */}
-        {(planState === 'INCOMPLETE' || planState === 'RESOLVING') && (
-          <ResolutionCompleteness readiness={readinessItems} className="mb-3" />
-        )}
-
-        {/* 4. Resolver Stack - RESOLVING only */}
-        {planState === 'RESOLVING' && (
-          <ResolverStack
-            activeStep={resolverActiveStep}
-            completedSteps={resolverCompletedSteps}
-            className="mb-3"
-          />
-        )}
-
-        {/* Legacy: Change receipt - shows "Updated: X, Y · Undo" after freeform extraction */}
-        {receiptData && (
-          <div className="flex justify-end mt-2">
-            <ChangeReceipt
-              receipt={receiptData}
-              onUndo={handleReceiptUndo}
-              onDismiss={handleReceiptDismiss}
-            />
-          </div>
-        )}
-
-      </div>
-      <CardContent className="relative overflow-hidden">
-        {isHydratingSnapshot && branches.length === 0 ? (
-          <p className="text-muted-foreground text-sm">Restoring session…</p>
-        ) : branches.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
-            Enter trip details to generate plan.
-          </p>
-        ) : (
-          <BranchPanel
-            branches={branches}
-            selectedBranchId={selectedBranchId}
-            onBranchSelect={handleBranchSelect}
-            branchSelections={branchSelections}
-            tiles={tiles}
-            tilesBranchId={tilesBranchId}
-            selectedTiles={activeBranchSelection}
-            onTileToggle={handleTileSelection}
-            onBookTrip={handleBookTrip}
-            canBookTrip={missingFields.length === 0}
-            tripInputs={tripInputs}
-            planStatus={branchManager.planStatus}
-            bookingStatus={bookingStatus}
-            onSelectionToast={(message) => addToast(message, 'confirmation')}
-          />
-        )}
-      </CardContent>
-    </Card>
+  // Plan View content (right panel): Stage-aware StrategyStageRenderer
+  const planViewContent = (
+    <StrategyStageRenderer
+      state={planViewState}
+      viewModel={planViewModel}
+      destinationCard={destinationCard ?? undefined}
+      canGeneratePlan={canGeneratePlan}
+      onExpandToItinerary={() => {
+        // TODO: Trigger expand to itinerary action
+        console.log('Expand to itinerary clicked');
+      }}
+      onViewBookingOptions={() => {
+        // TODO: Trigger view booking options
+        console.log('View booking options clicked');
+      }}
+      onReset={handleStartNewSession}
+    />
   );
 
   return (
@@ -740,94 +633,44 @@ export function NomadicLanding() {
         </AnimatePresence>
       </div>
 
-      {/* Layout transition with AnimatePresence for smooth switching.
-          Uses mode="wait" to complete exit animation before entering new layout. */}
-      <AnimatePresence mode="wait">
-        {(isGenerating || hasBranchesReady) ? (
-          <motion.div
-            key="split-layout"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
-          >
-            <SplitLayoutView
-              sidebarContent={chatPanelContent(true)}
-              mainContent={branchPanelContent}
-              isGenerating={isGenerating}
-              hasBranchesReady={hasBranchesReady}
-              tripDetailsContent={tripDetailsSection.content}
-            />
-          </motion.div>
-        ) : (
-          /* Original centered layout when no branches */
-          <motion.div
-            key="centered-layout"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
-          >
-            <HeroSection
-              variant="full"
-              chatPanelContainerRef={chatPanelContainerRef}
-            >
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.1 }}
-                className="relative mt-2 w-full sm:w-[calc(100%-2rem)] sm:max-w-[605px] md:max-w-[680px] lg:max-w-[605px]"
-              >
-                {/* Background plate for grounded look */}
-                <div className="absolute -inset-3 sm:-inset-4 bg-black/15 rounded-2xl blur-xl hidden sm:block" />
-                <Card className="relative bg-card/60 border-white/10 p-0 shadow-lg backdrop-blur-md rounded-none sm:rounded-xl border-x-0 sm:border-x">
-                  <CardContent className="p-0 sm:p-3 sm:pb-0">
-                    {chatPanelContent(false)}
-                  </CardContent>
-                </Card>
-              </motion.div>
-            </HeroSection>
-
-            {hasBranchesReady ? (
-              <motion.section
-                initial={{ opacity: 0, y: 40 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, ease: 'easeOut' }}
-                className="bg-background pb-14 pt-10"
-              >
-                <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4">
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.4, delay: 0.1, ease: 'easeOut' }}
-                    className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div>
-                      <h2 className="text-foreground font-display text-2xl font-bold sm:text-3xl">
-                        Branches stretched wide with tiles nested inside
-                      </h2>
-                    </div>
-                  </motion.div>
-
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.4, delay: 0.2, ease: 'easeOut' }}
-                  >
-                    {branchPanelContent}
-                  </motion.div>
-                </div>
-              </motion.section>
-            ) : null}
-
-            {/* Features & Footer - only in initial planner view */}
-            <div className="relative z-10 mt-16 sm:mt-24">
-              <FeaturesSection />
-              <Footer />
+      {/* Unified Split Layout - always visible from the start */}
+      <SplitLayoutView
+        plannerContent={plannerContent}
+        planViewContent={planViewContent}
+        planState={planState}
+        hasDestination={hasDestination}
+        headerContent={
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Compass className="h-5 w-5 text-primary" />
+                <span className="text-lg font-semibold text-foreground">Nomadic</span>
+              </div>
+              <span className="text-sm text-muted-foreground hidden sm:inline">
+                Set trip constraints once. Everything updates together.
+              </span>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleStartNewSession}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <RotateCcw className="h-4 w-4 mr-1.5" />
+              Reset
+            </Button>
+          </div>
+        }
+      />
     </div>
+  );
+}
+
+// Wrap the component with MobileModeProvider
+export default function NomadicLandingWithProvider() {
+  return (
+    <MobileModeProvider>
+      <NomadicLanding />
+    </MobileModeProvider>
   );
 }

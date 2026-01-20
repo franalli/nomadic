@@ -84,6 +84,8 @@ from app.schemas import (
     BookingStatusItem,
     ChatHistoryResponse,
     ChatMessageResponse,
+    DayBlock,
+    DayCard,
     DeleteLastMessageResponse,
     DestinationCard,
     EntityConfidenceInfo,
@@ -93,10 +95,15 @@ from app.schemas import (
     GraphPlanRequest,
     GraphPlanResponse,
     GraphPlanTokens,
+    ItineraryAssumptions,
+    ItineraryOverview,
+    OpenDecision,
     PlanDocumentData,
     PlanDocumentPatch,
     PlanDocumentResponse,
+    PlanViewState,
     ReadinessItem,
+    StrategySection,
     TileRefreshRequest,
     TileRefreshResponse,
     TilesSearchRequest,
@@ -113,6 +120,194 @@ from app.validation import (
 
 # Configure logging for the graph plan route
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Plan View State Machine Helpers
+# =============================================================================
+
+
+def _has_missing_critical_fields(trip_inputs: dict) -> bool:
+    """Check if critical fields are missing for Stage 2."""
+    destinations = trip_inputs.get("destinations", [])
+    start_date = trip_inputs.get("start_date")
+    end_date = trip_inputs.get("end_date")
+    return not destinations or not start_date or not end_date
+
+
+def _check_stage3_gate(metadata: dict, trip_inputs: dict) -> bool:
+    """Stage 3 hard gate - all must be true for S3_ITINERARY_READY."""
+    open_decisions = metadata.get("open_decisions", [])
+    blocking_count = sum(1 for d in open_decisions if d.get("is_blocking"))
+
+    return (
+        blocking_count == 0
+        and trip_inputs.get("destinations")
+        and trip_inputs.get("start_date")
+        and trip_inputs.get("end_date")
+    )
+
+
+def _compute_plan_view_state(metadata: dict, trip_inputs: dict) -> PlanViewState:
+    """
+    Compute the plan view state from session metadata and trip inputs.
+
+    State machine states:
+    - S0_BOOTSTRAP: No plan yet (or reset). Placeholders only.
+    - S1_FRAMING: Stage 1 output available (shortlist/skeleton)
+    - S2_STRATEGY_READY: All relevant Stage 2 strategy nodes complete
+    - S2_BLOCKED: Stage 2 incomplete due to missing critical fields
+    - S3_ITINERARY_READY: Itinerary generated (day cards)
+    - S3_EDITING: User editing itinerary assumptions/constraints
+    - S3_BLOCKED: Stage 3 requested but blocked (missing locks)
+    """
+    strategy_stage = metadata.get("strategy_stage")
+
+    # S0: No strategy stage yet
+    if strategy_stage is None or strategy_stage == 0:
+        return "S0_BOOTSTRAP"
+
+    # S1: Stage 1 complete (framing/shortlist)
+    if strategy_stage == 1:
+        return "S1_FRAMING"
+
+    # S2: Strategy nodes running or complete
+    if strategy_stage == 2:
+        if _has_missing_critical_fields(trip_inputs):
+            return "S2_BLOCKED"
+        return "S2_STRATEGY_READY"
+
+    # S3: Itinerary stage
+    if strategy_stage == 3:
+        if metadata.get("needs_refresh"):
+            return "S3_EDITING"
+        if not _check_stage3_gate(metadata, trip_inputs):
+            return "S3_BLOCKED"
+        return "S3_ITINERARY_READY"
+
+    # Default fallback
+    return "S0_BOOTSTRAP"
+
+
+def _build_strategy_sections(metadata: dict) -> list:
+    """Build StrategySection objects from metadata."""
+    raw_sections = metadata.get("strategy_sections", [])
+    sections = []
+    for s in raw_sections:
+        if isinstance(s, dict):
+            sections.append(
+                StrategySection(
+                    id=s.get("id", ""),
+                    title=s.get("title", ""),
+                    bullets=s.get("bullets", [])[:6],  # Max 6 bullets
+                )
+            )
+    return sections
+
+
+def _build_open_decisions(metadata: dict) -> list:
+    """Build OpenDecision objects from metadata."""
+    raw_decisions = metadata.get("open_decisions", [])
+    decisions = []
+    for d in raw_decisions:
+        if isinstance(d, dict):
+            decisions.append(
+                OpenDecision(
+                    id=d.get("id", ""),
+                    statement=d.get("statement", ""),
+                    related_field=d.get("related_field"),
+                    is_blocking=d.get("is_blocking", False),
+                )
+            )
+    return decisions[:4]  # Max 4 open decisions
+
+
+def _build_itinerary_overview(metadata: dict) -> ItineraryOverview | None:
+    """Build ItineraryOverview from metadata."""
+    raw_overview = metadata.get("itinerary_overview")
+    if not raw_overview or not isinstance(raw_overview, dict):
+        return None
+    return ItineraryOverview(
+        duration_label=raw_overview.get("duration_label", ""),
+        base_structure=raw_overview.get("base_structure", ""),
+        activity_density=raw_overview.get("activity_density", ""),
+    )
+
+
+def _build_day_cards(metadata: dict) -> list:
+    """Build DayCard objects from metadata."""
+    raw_cards = metadata.get("day_cards", [])
+    cards = []
+    for c in raw_cards:
+        if isinstance(c, dict):
+            blocks = []
+            for b in c.get("blocks", [])[:3]:  # Max 3 blocks per day
+                if isinstance(b, dict):
+                    blocks.append(
+                        DayBlock(
+                            period=b.get("period", "morning"),
+                            activity_type=b.get("activity_type", ""),
+                            intensity=b.get("intensity"),
+                            summary=b.get("summary", ""),
+                        )
+                    )
+            cards.append(
+                DayCard(
+                    day_number=c.get("day_number", 0),
+                    label=c.get("label", ""),
+                    blocks=blocks,
+                )
+            )
+    return cards
+
+
+def _build_itinerary_assumptions(metadata: dict) -> ItineraryAssumptions | None:
+    """Build ItineraryAssumptions from metadata."""
+    raw_assumptions = metadata.get("itinerary_assumptions")
+    if not raw_assumptions or not isinstance(raw_assumptions, dict):
+        return None
+    return ItineraryAssumptions(
+        assumptions=raw_assumptions.get("assumptions", [])[:4],  # Max 4
+        flexible_elements=raw_assumptions.get("flexible_elements", [])[:3],  # Max 3
+    )
+
+
+def _populate_plan_view_state_fields(
+    response_document: PlanDocumentData,
+    metadata: dict,
+    trip_inputs: dict,
+) -> None:
+    """
+    Populate plan view state machine fields on the response document.
+
+    This is called at the end of request processing to set:
+    - plan_view_state
+    - strategy_sections (S2)
+    - open_decisions (S2)
+    - itinerary_overview (S3)
+    - day_cards (S3)
+    - itinerary_assumptions (S3)
+    - needs_refresh
+    - can_expand_to_itinerary
+    """
+    # Compute plan view state
+    plan_view_state = _compute_plan_view_state(metadata, trip_inputs)
+    response_document.plan_view_state = plan_view_state
+
+    # Populate S2 fields
+    if plan_view_state in ("S2_STRATEGY_READY", "S2_BLOCKED"):
+        response_document.strategy_sections = _build_strategy_sections(metadata)
+        response_document.open_decisions = _build_open_decisions(metadata)
+
+    # Populate S3 fields
+    if plan_view_state in ("S3_ITINERARY_READY", "S3_EDITING", "S3_BLOCKED"):
+        response_document.itinerary_overview = _build_itinerary_overview(metadata)
+        response_document.day_cards = _build_day_cards(metadata)
+        response_document.itinerary_assumptions = _build_itinerary_assumptions(metadata)
+
+    # Set flags
+    response_document.needs_refresh = metadata.get("needs_refresh", False)
+    response_document.can_expand_to_itinerary = _check_stage3_gate(metadata, trip_inputs)
 
 
 @asynccontextmanager
@@ -961,6 +1156,13 @@ async def graph_plan_endpoint(
             ),
         )
 
+    # --- Compute Plan View State Machine fields ---
+    _populate_plan_view_state_fields(
+        response_document=response_document,
+        metadata=session_metadata,
+        trip_inputs=trip_inputs,
+    )
+
     # --- Build and return response ---
     return GraphPlanResponse(
         document=response_document,
@@ -1324,6 +1526,13 @@ async def graph_plan_stream_endpoint(
                         ),
                     ),
                 )
+
+            # --- Compute Plan View State Machine fields ---
+            _populate_plan_view_state_fields(
+                response_document=response_document,
+                metadata=session_metadata,
+                trip_inputs=trip_inputs,
+            )
 
             # Build full response matching GraphPlanResponse
             full_response = {

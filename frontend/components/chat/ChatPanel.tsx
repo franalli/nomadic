@@ -1,11 +1,9 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import * as Collapsible from '@radix-ui/react-collapsible';
-import { ArrowUp, ChevronDown, Compass, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
-  type ReactNode,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -16,6 +14,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { OnboardingChips } from '@/components/planner/OnboardingChips';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
@@ -220,10 +219,6 @@ interface ChatPanelProps {
     // Full response for store update
     response?: GraphPlanResponse;
   }) => void;
-  tripDetails?: {
-    content: ReactNode;
-    missingFields?: string[];
-  };
   /** When true, the panel will try to fill available height */
   fullHeight?: boolean;
   /** When true, branches have been generated */
@@ -234,6 +229,26 @@ interface ChatPanelProps {
   isGenerating?: boolean;
   /** Backend-authoritative plan state for left pane sync */
   planState?: 'INCOMPLETE' | 'RESOLVING' | 'STABLE' | 'LOCKED';
+  // Onboarding chips props (state inspectors above input)
+  /** Current destination for chip display */
+  destination?: string;
+  /** Current origin for chip display */
+  origin?: string;
+  /** Formatted date range string for chip display */
+  dateRange?: string;
+  /** Budget description for chip display */
+  budget?: string;
+  /** Whether user has chosen flexible dates */
+  dateFlex?: boolean;
+  /** Trip duration in days (for flexible dates display) */
+  tripDuration?: number;
+  // CTA gating flags
+  /** Whether user has set a destination */
+  hasDestination?: boolean;
+  /** Whether user can generate a plan (has destination + dates) */
+  canGeneratePlan?: boolean;
+  /** Whether a plan has been generated (branches exist) */
+  hasPlan?: boolean;
 }
 
 export interface ChatPanelHandle {
@@ -248,14 +263,26 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onPlanResult,
       onGeneratePlanStart,
       selectedBranchId,
-      tripDetails,
       fullHeight,
       hasBranches,
       isGenerating,
       readyToGenerate,
-      onFreshStart,
+      onFreshStart: _onFreshStart, // Unused after Reset button moved to global header
       planState,
+      // Onboarding chips props - click handlers are internal
+      destination,
+      origin,
+      dateRange,
+      budget,
+      dateFlex,
+      tripDuration,
+      // CTA gating flags
+      hasDestination = false,
+      canGeneratePlan = false,
+      hasPlan = false,
     } = props;
+
+    void _onFreshStart; // Reserved for future use - Reset button moved to global header
 
     // Derive input disabled state from planState (RESOLVING = disabled)
     const isInputDisabledByPlanState = planState === 'RESOLVING';
@@ -281,15 +308,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [isLoading, setIsLoading] = useState(false);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
-    // Mobile detection for responsive collapsed defaults
-    const [isMobile, setIsMobile] = useState(false);
-    const [tripDetailsOpen, setTripDetailsOpen] = useState(true);
     const [generateTriggered, setGenerateTriggered] = useState(false);
-    // Initialize from localStorage to persist hint state across sessions
-    const [hasShownHint, setHasShownHint] = useState(() => {
-      if (typeof window === 'undefined') return false;
-      return localStorage.getItem('nomadic-trip-details-hint-shown') === 'true';
-    });
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     // Tier 11.12: Track last user message for retry on transient errors
@@ -308,7 +327,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     } | null>(null);
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
-    const tripInputsRef = useRef<HTMLDivElement | null>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
     const prevIsLoadingRef = useRef(false);
     const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -316,10 +334,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
-    const showTripDetails = Boolean(tripDetails) && hasUserMessage;
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
-    const missingFields = tripDetails?.missingFields ?? [];
+    // Note: missingFields now derived from planState instead of tripDetails
+    const missingFields: string[] = [];
     const effectiveSuggestions = useMemo(() => {
       if (suggestedResponses.length > 0) return suggestedResponses;
       if (isLoading || hasBranches) return [];
@@ -476,37 +494,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     useEffect(() => {
       inputRef.current?.focus();
     }, []);
-
-    // Detect mobile viewport and set responsive collapsed defaults
-    useEffect(() => {
-      const checkMobile = () => {
-        const mobile = window.innerWidth < 640; // sm breakpoint
-        setIsMobile(mobile);
-      };
-      checkMobile();
-      window.addEventListener('resize', checkMobile);
-      return () => window.removeEventListener('resize', checkMobile);
-    }, []);
-
-    // Set collapsed defaults on mobile when trip inputs first appear
-    useEffect(() => {
-      if (hasUserMessage && isMobile && !hasShownHint) {
-        setTripDetailsOpen(false);
-      }
-    }, [hasUserMessage, isMobile, hasShownHint]);
-
-    // Track when hint animation should show (first time trip details appear)
-    // Persist hint state to localStorage so users don't see it repeatedly
-    useEffect(() => {
-      if (hasUserMessage && !hasShownHint) {
-        // Mark hint as shown after animation duration and persist to localStorage
-        const timer = setTimeout(() => {
-          setHasShownHint(true);
-          localStorage.setItem('nomadic-trip-details-hint-shown', 'true');
-        }, 2000);
-        return () => clearTimeout(timer);
-      }
-    }, [hasUserMessage, hasShownHint]);
 
     // Reset generate-related state when readyToGenerate becomes false
     // This ensures a clean slate after Fresh Start or when requirements are no longer met
@@ -764,33 +751,44 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     return (
       <div
         ref={panelRef}
-        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-white dark:bg-[hsl(154,28%,8%)] dark:bg-[linear-gradient(to_bottom,hsl(154,28%,10%),hsl(154,28%,6%))] border border-gray-200/80 dark:border-transparent rounded-xl p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]`}
+        className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4`}
       >
-        <div className="flex items-center justify-between border-b border-border/40 pb-3">
-          <div className="text-foreground/80 text-xs font-semibold uppercase tracking-wider flex items-center gap-2">
-            <Compass className="h-3.5 w-3.5 text-primary" />
-            Travel Planner
-          </div>
-          <div className="flex items-center gap-3">
-            {/* Reset button - always visible when onFreshStart is provided */}
-            {onFreshStart && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm('Reset session? This will clear all trip details and history.')) {
-                    onFreshStart?.();
-                  }
-                }}
-                className="text-muted-foreground hover:text-foreground text-xs flex items-center gap-1 transition-colors"
-                title="Reset session"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Reset</span>
-              </button>
-            )}
-          </div>
+        {/* Section header - minimal, no icon (per spec: brand once in global header) */}
+        <div className="border-b border-border/40 pb-3">
+          <span className="text-muted-foreground text-sm font-medium">
+            Travel planner
+          </span>
         </div>
 
+        {/* Onboarding chips - state inspectors above input (per spec: fixed order) */}
+        <OnboardingChips
+          destination={destination}
+          origin={origin}
+          dateRange={dateRange}
+          budget={budget}
+          dateFlex={dateFlex}
+          tripDuration={tripDuration}
+          onDestinationClick={() => {
+            const separator = input.trim() ? ', ' : '';
+            setInput(prev => prev + separator + 'going to ');
+            inputRef.current?.focus();
+          }}
+          onOriginClick={() => {
+            const separator = input.trim() ? ', ' : '';
+            setInput(prev => prev + separator + 'from ');
+            inputRef.current?.focus();
+          }}
+          onDatesClick={() => {
+            const separator = input.trim() ? ', ' : '';
+            setInput(prev => prev + separator + 'dates are ');
+            inputRef.current?.focus();
+          }}
+          onBudgetClick={() => {
+            const separator = input.trim() ? ', ' : '';
+            setInput(prev => prev + separator + 'budget around ');
+            inputRef.current?.focus();
+          }}
+        />
 
         <div
           ref={scrollContainerRef}
@@ -942,20 +940,24 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           <form onSubmit={handleSubmit} className="relative">
             {/* Static placeholder - only when input is empty and no user message */}
             {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
-              <div className="absolute top-0 left-0 right-0 px-4 py-3 text-sm text-muted-foreground/70 pointer-events-none" aria-hidden="true">
-                {isInputDisabledByPlanState ? 'Updating...' : (hasBranches ? 'Edit constraints' : 'Enter destination')}
+              <div className="absolute top-0 left-0 right-0 px-4 py-3 pr-14 text-sm text-muted-foreground/70 pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis" aria-hidden="true">
+                {isInputDisabledByPlanState
+                  ? 'Updating...'
+                  : !hasDestination
+                    ? 'Enter destination'
+                    : 'Add constraint, e.g. budget, dates...'}
               </div>
             )}
             <textarea
             ref={inputRef}
             disabled={isInputDisabledByPlanState}
-            className={`border-input bg-muted/40 hover:bg-muted/60 text-foreground focus-visible:ring-primary focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[48px] max-h-[200px] scroll-mb-4 disabled:opacity-50 disabled:cursor-not-allowed ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
+            className={`border-input bg-muted/50 hover:bg-muted/60 text-foreground focus-visible:ring-primary/70 focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[52px] max-h-[200px] scroll-mb-4 disabled:opacity-50 disabled:cursor-not-allowed ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
               isInputDisabledByPlanState
                 ? 'Updating...'
-                : hasBranches
-                  ? 'Edit constraints…'
-                  : 'Enter destination'
+                : !hasDestination
+                  ? 'Enter destination'
+                  : 'Add constraint, e.g. budget, dates...'
             }
             value={input}
             onChange={(e) => {
@@ -1000,62 +1002,39 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
           </form>
 
-          {/* Generate button - directly under input */}
-          <div
-            className={`grid transition-all duration-300 ease-out ${
-              !hasBranches && !generateTriggered && !isGenerating && readyToGenerate
-                ? 'grid-rows-[1fr] opacity-100'
-                : 'grid-rows-[0fr] opacity-0 pointer-events-none'
-            }`}
+          {/* Primary CTA - Generate plan (always visible, disabled when !canGeneratePlan) */}
+          <button
+            type="button"
+            onClick={() => {
+              setGenerateTriggered(true);
+              sendMessageCore(GENERATE_PLAN_TRIGGER);
+            }}
+            disabled={isLoading || !canGeneratePlan || hasPlan || generateTriggered}
+            title={!canGeneratePlan ? 'Set destination and dates' : undefined}
+            className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60"
           >
-            <div className="overflow-hidden">
-              <button
-                type="button"
-                onClick={() => {
-                  setGenerateTriggered(true);
-                  sendMessageCore(GENERATE_PLAN_TRIGGER);
-                }}
-                disabled={isLoading || !readyToGenerate}
-                className="group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-primary border border-primary/30 rounded-full bg-primary/5 hover:bg-primary/10 hover:border-primary/50 transition-all disabled:opacity-50 dark:text-accent dark:border-accent/40 dark:bg-accent/10 dark:hover:bg-accent/20 dark:hover:border-accent/60"
-              >
-                <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
-                <span>Lock & Generate</span>
-              </button>
-            </div>
+            <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
+            <span>Generate plan</span>
+          </button>
+
+          {/* Secondary CTAs - ghost buttons, disabled until plan exists */}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={!hasPlan}
+              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground border border-dashed border-muted-foreground/25 rounded-full hover:border-muted-foreground/40 hover:text-foreground transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Add flights
+            </button>
+            <button
+              type="button"
+              disabled={!hasPlan}
+              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground border border-dashed border-muted-foreground/25 rounded-full hover:border-muted-foreground/40 hover:text-foreground transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Add hotels
+            </button>
           </div>
         </div>
-
-        {/* Trip inputs section - positioned below chat input */}
-        {showTripDetails && (
-          <div ref={tripInputsRef} className="mt-1.5 pt-1.5 pb-3 border-t border-border/50 space-y-4">
-            <Collapsible.Root open={tripDetailsOpen} onOpenChange={(open) => {
-              setTripDetailsOpen(open);
-              // Mark hint as shown when user manually opens trip details
-              if (open && !hasShownHint) {
-                setHasShownHint(true);
-                localStorage.setItem('nomadic-trip-details-hint-shown', 'true');
-              }
-            }}>
-              <div>
-                <Collapsible.Trigger asChild>
-                  <button className="w-full flex items-center gap-2 text-primary text-[11px] font-bold uppercase leading-none tracking-wider mb-0 py-1.5 px-2 -mx-2 rounded-lg transition-all duration-200 hover:bg-primary/5 group">
-                    <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${tripDetailsOpen ? '' : '-rotate-90'}`} />
-                    Constraints
-                    {/* Show hint text on collapsed state for mobile users who haven't seen it yet */}
-                    {!tripDetailsOpen && !hasShownHint && (
-                      <span className="ml-auto text-[10px] text-muted-foreground font-normal normal-case tracking-normal">
-                        Tap to customize preferences
-                      </span>
-                    )}
-                  </button>
-                </Collapsible.Trigger>
-                <Collapsible.Content className="overflow-hidden data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up">
-                  <div className="text-sm pt-3">{tripDetails?.content}</div>
-                </Collapsible.Content>
-              </div>
-            </Collapsible.Root>
-          </div>
-        )}
 
       </div>
     );

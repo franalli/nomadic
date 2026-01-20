@@ -116,6 +116,11 @@ export type DocumentTripInputs = {
   hotel_settings?: HotelSettings;
   activity_settings?: ActivitySettings;
   transport_settings?: TransportSettings;
+  // Flexible dates support - for CTA gating
+  date_flex?: boolean;
+  trip_duration?: number | null;
+  date_window_start?: string | null;
+  date_window_end?: string | null;
 };
 
 export type DocumentTripInputsPatch = Partial<DocumentTripInputs>;

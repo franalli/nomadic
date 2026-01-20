@@ -203,9 +203,9 @@ def apply_central_planner_template(
             constraints["budget"] = True
 
         title = f"Hotel preferences set{f' for {dest_str}' if dest_str else ''}."
-        suggestions = ["View options"]
+        suggestions = []
         if not constraints.get("budget"):
-            suggestions.insert(0, "Set budget")
+            suggestions.append("Set budget")
 
     elif specialist_name == "flights":
         fs = ti.flight_settings
@@ -227,21 +227,21 @@ def apply_central_planner_template(
                 constraints["direct"] = True
 
         title = f"Flight preferences set{f' for {dest_str}' if dest_str else ''}."
-        suggestions = ["View options"]
+        suggestions = []
 
     elif specialist_name == "activities":
         title = f"Activity preferences set{f' for {dest_str}' if dest_str else ''}."
-        suggestions = ["View options"]
+        suggestions = []
         if not ti.budget:
-            suggestions.insert(0, "Set budget")
+            suggestions.append("Set budget")
 
     elif specialist_name == "transport":
         title = f"Transport preferences set{f' for {dest_str}' if dest_str else ''}."
-        suggestions = ["View options"]
+        suggestions = []
 
     else:
         title = f"{specialist_name.capitalize()} preferences set."
-        suggestions = ["View options"]
+        suggestions = []
 
     # Build message with optional constraint subline
     constraint_summary = _render_constraint_summary(constraints)

@@ -12787,6 +12787,17 @@ def normalize_inputs(state: GraphState) -> GraphState:
     # 1. Clear stale last_summary (prevents asking same question twice)
     # 2. Invalidate cached responses for the affected specialist
     # 3. Route to appropriate specialist to acknowledge the change
+    #
+    # IMPORTANT: Only detect user-driven changes, not inferred metadata fields.
+    # Inferred fields (like planning_flexibility) should not trigger change detection.
+    INFERRED_SETTINGS_FIELDS = {"planning_flexibility"}
+
+    def _is_user_driven_settings_change(old: Optional[Dict], new: Optional[Dict]) -> bool:
+        """Check if settings change is user-driven (not just inferred metadata)."""
+        old_filtered = {k: v for k, v in (old or {}).items() if k not in INFERRED_SETTINGS_FIELDS}
+        new_filtered = {k: v for k, v in (new or {}).items() if k not in INFERRED_SETTINGS_FIELDS}
+        return old_filtered != new_filtered
+
     settings_changed_this_turn: Dict[str, bool] = {}
     if updates:
         settings_fields = ["flight_settings", "hotel_settings", "activity_settings"]
@@ -12794,8 +12805,8 @@ def normalize_inputs(state: GraphState) -> GraphState:
             if field in updates:
                 old_value = getattr(ti, field, None)
                 new_value = updates[field]
-                # Consider it changed if values differ (comparing dicts)
-                if old_value != new_value:
+                # Only consider it changed if user-driven fields differ (not inferred metadata)
+                if _is_user_driven_settings_change(old_value, new_value):
                     settings_changed_this_turn[field] = True
                     _debug(
                         f"SETTINGS_CHANGE_DETECTED: {field}",
@@ -13900,9 +13911,7 @@ def _build_booking_suggestions(
     if len(suggestions) < max_suggestions and ti.budget is None:
         suggestions.append("Set budget")
 
-    # If still need more suggestions, add a generic one
-    if len(suggestions) < max_suggestions:
-        suggestions.append("View options")
+    # No generic fallback - only show actionable suggestions
 
     return suggestions[:max_suggestions]
 

@@ -28,6 +28,8 @@ export interface InlineEditPillProps {
   onAcknowledge?: () => void;
   /** Whether this field has a validation error */
   hasError?: boolean;
+  /** Whether this pill was just filled (triggers fill animation) */
+  justFilled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +58,7 @@ function InlineEditPillInner({
   isLLMUpdated = false,
   onAcknowledge,
   hasError = false,
+  justFilled = false,
 }: InlineEditPillProps) {
   const handleClick = () => {
     if (isLLMUpdated && onAcknowledge) {
@@ -63,12 +66,18 @@ function InlineEditPillInner({
     }
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Per YC Demo Chip Spec - Opacity-based state indication
+  // Empty (cold start): text 0.72, border 0.35, bg 0.10
+  // Filled: text 0.92, border 0.60, bg 0.16, font-weight 600
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Icon color based on constraint state (not LLM update status)
   // Priority: conflict > set > unset
   const getIconColor = () => {
     if (hasConflict) return 'text-[#C88A1E]';    // Conflict Amber
     if (hasValue) return 'text-[#E2A23A]';       // State Amber (set)
-    return 'text-muted-foreground';              // Neutral (unset)
+    return '';                                    // Uses parent opacity
   };
 
   // Echo overlay for causal feedback (one-shot, 300ms total)
@@ -82,41 +91,54 @@ function InlineEditPillInner({
       };
     }
     return {
-      backgroundColor: 'rgba(255, 255, 255, 0.03)',
+      backgroundColor: 'var(--theme-surface-2)',
     };
   };
 
+  // Chip fill animation
+  const fillAnimationStyle: React.CSSProperties = justFilled
+    ? { animation: 'chipFill 160ms ease-out' }
+    : {};
+
   return (
     <div
+      data-filled={hasValue}
+      data-just-filled={justFilled}
       className={cn(
         'flex flex-col gap-1.5 rounded-2xl px-3 py-2.5 relative overflow-visible',
-        'bg-gradient-to-b from-card to-muted/20 border border-border/50',
-        'shadow-pill h-full',
+        'transition-all duration-[120ms] ease-out h-full',
+        // State-based styling per chip spec (using theme tokens for light/dark mode)
+        hasValue
+          // Filled: stronger presence
+          ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] font-semibold'
+          // Empty (subdued): lower contrast for cold start per spec
+          : 'border border-[var(--theme-border)] bg-[var(--theme-surface-2)] text-[var(--theme-text-muted)] opacity-70',
+        // Hover state for empty pills
+        !hasValue && 'hover:opacity-90 hover:bg-[var(--theme-overlay)]',
         // Conflict state: dashed border
         hasConflict && 'border-dashed border-[rgba(255,176,0,0.35)]',
         hasError && 'border-destructive/50 bg-destructive/5',
+        // Focus visible ring
+        'focus-within:ring-1 focus-within:ring-primary/65',
         className
       )}
       style={{
         ...getEchoStyle(),
-        transition: isLLMUpdated
-          ? 'all 100ms ease-out'
-          : 'all 200ms ease-in',
+        ...fillAnimationStyle,
       }}
       onClick={handleClick}
     >
       {/* Label row */}
       <div className="flex items-center gap-1.5 shrink-0">
         <Icon
-          className={cn('h-3.5 w-3.5', getIconColor())}
-          style={{ transition: 'color 150ms linear' }}
+          className={cn('h-3.5 w-3.5 transition-colors duration-150', getIconColor())}
         />
         <span
           className={cn(
-            'text-xs font-medium',
-            hasConflict ? 'text-[#C88A1E]' : hasValue ? 'text-[#E2A23A]' : 'text-muted-foreground'
+            'text-xs transition-colors duration-150',
+            hasValue ? 'font-semibold' : 'font-medium',
+            hasConflict ? 'text-[#C88A1E]' : hasValue ? 'text-[#E2A23A]' : ''
           )}
-          style={{ transition: 'color 150ms linear' }}
         >
           {label}
         </span>

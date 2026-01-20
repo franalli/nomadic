@@ -19,15 +19,8 @@ import type { ChatMessage } from '@/types/chat';
 // Special message that triggers plan generation (must match backend)
 export const GENERATE_PLAN_TRIGGER = 'GENERATE_PLAN_NOW';
 
-// Default welcome message
-const DEFAULT_MESSAGES: ChatMessage[] = [
-  {
-    id: 'm0',
-    role: 'assistant',
-    content:
-      "The plan updates automatically as constraints change.",
-  },
-];
+// Default welcome message - empty, header already explains the product
+const DEFAULT_MESSAGES: ChatMessage[] = [];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
