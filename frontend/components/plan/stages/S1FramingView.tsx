@@ -8,6 +8,7 @@
 'use client';
 
 import { Sparkles } from 'lucide-react';
+
 import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
 
 interface S1FramingViewProps {
@@ -19,25 +20,13 @@ interface S1FramingViewProps {
 
 export function S1FramingView({
   viewModel,
-  destinationCard,
+  destinationCard: _destinationCard,
   isGenerating = false,
   onGenerateStrategy,
 }: S1FramingViewProps) {
   return (
     <div className="flex flex-col h-full p-4 space-y-4">
-      {/* Destination card */}
-      {destinationCard && (
-        <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700/50">
-          <h2 className="text-lg font-medium text-zinc-100">
-            {destinationCard.title}
-          </h2>
-          {destinationCard.subtitle && (
-            <p className="text-sm text-zinc-400 mt-1">
-              {destinationCard.subtitle}
-            </p>
-          )}
-        </div>
-      )}
+      {/* Note: Destination card removed - PlanHeader owns destination display */}
 
       {/* Status indicator */}
       <div className="flex items-center gap-2 text-zinc-400">

@@ -4,56 +4,104 @@
  * Sticky bottom CTA bar for the right-side plan panel.
  * Only renders when there's a meaningful next action.
  * Must be placed INSIDE the right-pane container, not global.
+ *
+ * Key props:
+ * - nextAction: Pre-computed from getNextAction() in parent to avoid flicker
+ * - lastError + onRetry: Inline retry for itinerary generation errors
  */
 
 'use client';
 
-import React from 'react';
 import { ArrowRight, Loader2, ShoppingBag } from 'lucide-react';
+import { useEffect,useState } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { PlanViewState } from '@/types/plan-envelope';
 
-import { getNextAction, type GenerationState } from './planStateHelpers';
+import type { GenerationState } from './planStateHelpers';
 
 export interface NextStepBarProps {
   state: PlanViewState;
   generation?: GenerationState | null;
+  /** Pre-computed next action from getNextAction() - avoids flicker */
+  nextAction: 'expand_itinerary' | 'view_booking' | null;
   onExpandToItinerary?: () => void;
   onViewBookingOptions?: () => void;
+  /** Last error for inline retry (itinerary generation only) */
+  lastError?: string | null;
+  onRetry?: () => void;
   className?: string;
 }
 
 export function NextStepBar({
   state,
   generation,
+  nextAction,
   onExpandToItinerary,
   onViewBookingOptions,
+  lastError,
+  onRetry,
   className,
 }: NextStepBarProps) {
-  const nextAction = getNextAction(state, generation);
+  // Click lock to prevent double-clicks
+  const [isClickLocked, setIsClickLocked] = useState(false);
+
   const isGeneratingItinerary = generation?.active && generation?.stage === 'itinerary';
+
+  // Reset click lock when generation completes
+  useEffect(() => {
+    if (!generation?.active) {
+      setIsClickLocked(false);
+    }
+  }, [generation?.active]);
+
+  // Show hint when S2_STRATEGY_READY but no nextAction (missing trip context)
+  if (state === 'S2_STRATEGY_READY' && !nextAction) {
+    return (
+      <div
+        className={cn(
+          'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm',
+          className
+        )}
+      >
+        <p className="text-xs text-zinc-500 text-center">
+          Create a plan first (destination + dates).
+        </p>
+      </div>
+    );
+  }
 
   // Don't render if no action
   if (!nextAction) return null;
 
   const handleClick = () => {
+    if (isClickLocked) return;
+
+    setIsClickLocked(true);
+
     if (nextAction === 'expand_itinerary') {
       onExpandToItinerary?.();
     } else if (nextAction === 'view_booking') {
       onViewBookingOptions?.();
     }
+
+    // Backup unlock after 2s (normally cleared by generation state change)
+    setTimeout(() => setIsClickLocked(false), 2000);
   };
 
   const buttonConfig = {
     expand_itinerary: {
-      label: isGeneratingItinerary ? 'Generating itinerary...' : 'Generate itinerary',
+      leftLabel: 'Next: Itinerary',
+      buttonText: isGeneratingItinerary ? 'Creating itinerary...' : 'Create day-by-day itinerary',
+      subtext: 'Unlocks a bookable plan (stays, flights, activities).',
       icon: isGeneratingItinerary ? Loader2 : ArrowRight,
-      disabled: isGeneratingItinerary,
+      disabled: isGeneratingItinerary || isClickLocked,
       variant: 'primary' as const,
     },
     view_booking: {
-      label: 'View booking options',
+      leftLabel: null,
+      buttonText: 'View booking options',
+      subtext: null,
       icon: ShoppingBag,
       disabled: false,
       variant: 'secondary' as const,
@@ -66,10 +114,15 @@ export function NextStepBar({
   return (
     <div
       className={cn(
-        'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 backdrop-blur-sm',
+        'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm',
         className
       )}
     >
+      {/* Left label for S2 */}
+      {config.leftLabel && (
+        <div className="text-xs text-zinc-400 mb-2">{config.leftLabel}</div>
+      )}
+
       <button
         onClick={handleClick}
         disabled={config.disabled}
@@ -87,8 +140,25 @@ export function NextStepBar({
         )}
       >
         <Icon className={cn('h-4 w-4', isGeneratingItinerary && 'animate-spin')} />
-        {config.label}
+        {config.buttonText}
       </button>
+
+      {/* Subtext for S2 */}
+      {config.subtext && (
+        <p className="text-xs text-zinc-500 mt-2 text-center">{config.subtext}</p>
+      )}
+
+      {/* Inline retry for itinerary generation errors only */}
+      {nextAction === 'expand_itinerary' && lastError && (
+        <div className="mt-2 flex items-center justify-center gap-2">
+          <span className="text-xs text-red-400">{lastError}</span>
+          {onRetry && (
+            <button onClick={onRetry} className="text-xs text-amber-500 underline hover:text-amber-400">
+              Retry
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

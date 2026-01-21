@@ -34,10 +34,10 @@ import { BookingSection } from './BookingSection';
 import { NextStepBar } from './NextStepBar';
 import { PlanHeader } from './PlanHeader';
 import {
+  type GenerationState,
   getNextAction,
   getStageFromState,
   isGenerating,
-  type GenerationState,
 } from './planStateHelpers';
 import { S0BootstrapView } from './stages/S0BootstrapView';
 import { S1FramingView } from './stages/S1FramingView';
@@ -63,6 +63,10 @@ interface StrategyStageRendererProps {
   onViewBookingOptions?: () => void;
   onReset?: () => void;
   onRefineAssumptions?: () => void;
+  /** Last error from itinerary generation (for inline retry) */
+  lastError?: string | null;
+  /** Retry handler for itinerary generation */
+  onRetry?: () => void;
 }
 
 function renderStageContent(
@@ -155,6 +159,8 @@ export function StrategyStageRenderer({
   onViewBookingOptions,
   onReset: _onReset,
   onRefineAssumptions,
+  lastError,
+  onRetry,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -223,8 +229,11 @@ export function StrategyStageRenderer({
         <NextStepBar
           state={state}
           generation={generation}
+          nextAction={nextAction}
           onExpandToItinerary={onExpandToItinerary}
           onViewBookingOptions={onViewBookingOptions}
+          lastError={lastError}
+          onRetry={onRetry}
         />
       )}
     </div>

@@ -7,13 +7,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import {
-  useBranchManager,
   type PlanResultPayload,
+  useBranchManager,
 } from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
+import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
@@ -22,8 +23,7 @@ import { formatDateForDisplay } from '@/lib/utils';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
-import type { PlanState, PlanViewState, PlanViewModel } from '@/types/plan-envelope';
-import type { GenerationState } from '@/components/plan/planStateHelpers';
+import type { PlanState, PlanViewModel,PlanViewState } from '@/types/plan-envelope';
 
 // Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
 interface ChangeReceiptData {
@@ -112,6 +112,7 @@ export function NomadicLanding() {
 
   // Local UI generation state (fallback if backend doesn't emit generation in envelope)
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
+  const [lastGenerationError, setLastGenerationError] = useState<string | null>(null);
 
   // Add a toast with optional type (defaults to 'info')
   // Confirmation toasts coalesce (replace existing confirmations) to avoid stacking rapid changes
@@ -420,9 +421,9 @@ export function NomadicLanding() {
   const planViewModel: PlanViewModel = useMemo(() => ({
     strategy_sections: storeDocument?.strategy_sections,
     open_decisions: storeDocument?.open_decisions ?? [],
-    itinerary_overview: storeDocument?.itinerary_overview,
+    itinerary_overview: storeDocument?.itinerary_overview ?? undefined,
     day_cards: storeDocument?.day_cards,
-    itinerary_assumptions: storeDocument?.itinerary_assumptions,
+    itinerary_assumptions: storeDocument?.itinerary_assumptions ?? undefined,
     needs_refresh: storeDocument?.needs_refresh,
     can_expand_to_itinerary: storeDocument?.can_expand_to_itinerary,
   }), [storeDocument]);
@@ -452,6 +453,8 @@ export function NomadicLanding() {
   const hasPlan = hasBranchesReady;
 
   // Handler for expanding to itinerary (streaming endpoint)
+  // Includes runId tracking, abort signal, and timeout handling for streaming robustness
+  const STREAM_TIMEOUT_MS = 30000;
   const handleExpandToItinerary = useCallback(async () => {
     const tripContextId = storeDocument?.trip_context_id;
     if (!tripContextId) {
@@ -459,10 +462,30 @@ export function NomadicLanding() {
       return;
     }
 
-    const idempotencyKey = crypto.randomUUID();
+    // Generate runId for this generation (also serves as idempotency key)
+    const runId = crypto.randomUUID();
+
+    // Start generation in documentStore - gets AbortController and registers runId
+    const abortController = documentStore.startGeneration(runId);
 
     // Set local UI generation state immediately (button disables via gating helpers)
     setUiGeneration({ active: true, stage: 'itinerary' });
+    setLastGenerationError(null); // Clear any previous error
+
+    // Timeout handling - browser-safe typing
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const resetTimeout = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        // Only show "still working" if this run is still current
+        if (documentStore.isCurrentRun(runId)) {
+          setUiGeneration({ active: true, stage: 'itinerary', message: 'Still working...' });
+        }
+      }, STREAM_TIMEOUT_MS);
+    };
+
+    // Start timeout
+    resetTimeout();
 
     try {
       const response = await fetch('/api/v1/expand-itinerary', {
@@ -470,23 +493,37 @@ export function NomadicLanding() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           trip_context_id: tripContextId,
-          idempotency_key: idempotencyKey,
+          idempotency_key: runId,
         }),
+        signal: abortController.signal, // Pass abort signal to fetch
       });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      // Guard for response.body === null (some environments/proxies)
       if (!response.body) {
-        throw new Error('Response body is null');
+        setLastGenerationError('Streaming not supported. Please retry.');
+        setUiGeneration(null);
+        if (timeoutId) clearTimeout(timeoutId);
+        return;
       }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
-      // Robust buffered NDJSON parser
+      // Robust buffered NDJSON parser with runId guard
       const parser = createStreamParser((event: StreamEvent) => {
+        // Ignore events from stale runs
+        if (!documentStore.isCurrentRun(runId)) {
+          console.debug('Ignoring late event from stale run');
+          return;
+        }
+
+        // Re-arm timeout on each event
+        resetTimeout();
+
         if (event.type === 'envelope') {
           // Merge envelope updates into document store
           documentStore.mergeEnvelope(event.plan_envelope);
@@ -499,8 +536,9 @@ export function NomadicLanding() {
           });
         } else if (event.type === 'done') {
           setUiGeneration(null);
+          setLastGenerationError(null); // Clear error on success
         } else if (event.type === 'error') {
-          addToast(event.message || 'Failed to generate itinerary', 'error');
+          setLastGenerationError(event.message || 'Failed to generate itinerary');
         }
       });
 
@@ -512,10 +550,20 @@ export function NomadicLanding() {
       parser.flush();
 
     } catch (error) {
+      // Handle abort (user-initiated reset)
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.debug('Itinerary generation aborted');
+        return;
+      }
       console.error('Failed to expand to itinerary:', error);
-      addToast('Failed to generate itinerary', 'error');
+      setLastGenerationError('Failed to generate itinerary. Please retry.');
     } finally {
-      setUiGeneration(null);
+      // Clear timeout
+      if (timeoutId) clearTimeout(timeoutId);
+      // Only clear generation state if this run is still current
+      if (documentStore.isCurrentRun(runId)) {
+        setUiGeneration(null);
+      }
     }
   }, [storeDocument?.trip_context_id, documentStore, addToast]);
 
@@ -574,6 +622,7 @@ export function NomadicLanding() {
       onToggleRequiresAssistance={handleToggleRequiresAssistance}
       llmUpdatedFields={llmUpdatedFields}
       onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
+      planViewState={planViewState}
     />
   );
 
@@ -590,6 +639,8 @@ export function NomadicLanding() {
       onExpandToItinerary={handleExpandToItinerary}
       onViewBookingOptions={handleViewBookingOptions}
       onReset={handleStartNewSession}
+      lastError={lastGenerationError}
+      onRetry={handleExpandToItinerary}
     />
   );
 

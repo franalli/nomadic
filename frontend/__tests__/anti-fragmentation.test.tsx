@@ -8,7 +8,7 @@
  * it is fragmentation. Nomadic never fragments.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect,it } from 'vitest';
 
 describe('Anti-fragmentation invariants', () => {
   describe('Forbidden UI patterns', () => {

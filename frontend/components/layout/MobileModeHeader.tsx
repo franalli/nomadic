@@ -5,8 +5,8 @@ import Link from 'next/link';
 import { memo, useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
 import { useMobileMode } from '@/contexts/MobileModeContext';
+import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────

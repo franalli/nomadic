@@ -10,9 +10,10 @@
 
 'use client';
 
+import { AlertCircle,ChevronDown, ChevronRight } from 'lucide-react';
 import React from 'react';
-import { ChevronDown, ChevronRight, AlertCircle } from 'lucide-react';
-import type { DestinationCard, PlanViewModel, StrategySection, OpenDecision } from '@/types/plan-envelope';
+
+import type { DestinationCard, OpenDecision,PlanViewModel, StrategySection } from '@/types/plan-envelope';
 
 interface S2StrategyViewProps {
   viewModel: PlanViewModel;
@@ -112,8 +113,38 @@ export function S2StrategyView({
 
   const { strategy_sections = [], open_decisions = [] } = viewModel;
 
+  // Skeleton state - show when strategy is being prepared (empty sections)
+  if (strategy_sections.length === 0) {
+    return (
+      <div className="flex flex-col p-4 space-y-4">
+        <div className="bg-zinc-800/30 rounded-lg border border-zinc-700/30 px-4 py-3">
+          <p className="text-xs text-zinc-500">Strategy is being prepared...</p>
+        </div>
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="bg-zinc-800/30 rounded-lg border border-zinc-700/30 px-4 py-3">
+            <div className="h-4 bg-zinc-700/50 rounded w-2/3 animate-pulse" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col p-4 space-y-4">
+      {/* Strategy summary for short strategies (1-2 sections) */}
+      {strategy_sections.length > 0 && strategy_sections.length < 3 && (
+        <div className="bg-zinc-800/20 rounded-lg border border-zinc-700/20 p-4 mb-2">
+          <h4 className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-2">
+            Strategy summary
+          </h4>
+          <ul className="text-sm text-zinc-300 space-y-1">
+            {strategy_sections.map(s => (
+              <li key={s.id}>• {s.title}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Strategy sections - collapsed by default */}
       <div className="space-y-2">
         {strategy_sections.map((section) => (

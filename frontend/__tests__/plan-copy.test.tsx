@@ -4,7 +4,7 @@
  * Tests copy for various edge cases and states in the plan UI.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect,it } from 'vitest';
 
 describe('Edge-case copy', () => {
   describe('Flexible constraints', () => {

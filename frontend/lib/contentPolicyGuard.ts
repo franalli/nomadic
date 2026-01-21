@@ -10,8 +10,8 @@
  */
 
 import type {
-  PlanViewState,
   PlanViewModel,
+  PlanViewState,
 } from '@/types/plan-envelope';
 
 // =============================================================================

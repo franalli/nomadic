@@ -17,7 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { cn , formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs, PlanStatus } from '@/types/document';
-import type { BookingStatus, PlanViewState, PlanViewModel, DestinationCard } from '@/types/plan-envelope';
+import type { BookingStatus, DestinationCard,PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 import type { Tile, TileSelection } from '@/types/tile';
 
 import { BranchComparisonView } from './BranchComparisonView';

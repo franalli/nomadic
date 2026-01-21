@@ -5,7 +5,7 @@
  * Data-driven via envelope.generation, not state-inferred.
  */
 
-import type { PlanViewState, GenerationState } from '@/types/plan-envelope';
+import type { GenerationState,PlanViewState } from '@/types/plan-envelope';
 
 // Re-export for convenience
 export type { GenerationState };
@@ -21,8 +21,17 @@ export function isReady(state: PlanViewState, generation?: GenerationState | nul
   return state === 'S2_STRATEGY_READY' || state === 'S3_ITINERARY_READY';
 }
 
-/** Can user expand to itinerary? */
-export function canExpandToItinerary(state: PlanViewState, generation?: GenerationState | null): boolean {
+/**
+ * Can user expand to itinerary?
+ * Requires S2 ready + trip context exists + not generating.
+ * hasTripContext is the single source of truth for trip_context_id check.
+ */
+export function canExpandToItinerary(
+  state: PlanViewState,
+  generation?: GenerationState | null,
+  hasTripContext?: boolean
+): boolean {
+  if (!hasTripContext) return false;
   return state === 'S2_STRATEGY_READY' && !isGenerating(generation);
 }
 
@@ -44,13 +53,28 @@ export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structur
   return 'itinerary';
 }
 
-/** Get next action for NextStepBar (null = no CTA) */
+/**
+ * Get next action for NextStepBar (null = no CTA).
+ * hasTripContext gates 'expand_itinerary' action.
+ * Compute ONCE in parent and pass to NextStepBar to avoid flicker.
+ */
 export function getNextAction(
   state: PlanViewState,
-  generation?: GenerationState | null
+  generation?: GenerationState | null,
+  hasTripContext?: boolean
 ): 'expand_itinerary' | 'view_booking' | null {
   if (isGenerating(generation)) return null;
-  if (state === 'S2_STRATEGY_READY') return 'expand_itinerary';
+  // Gate expand_itinerary on hasTripContext
+  if (state === 'S2_STRATEGY_READY' && hasTripContext) return 'expand_itinerary';
   if (state === 'S3_ITINERARY_READY') return 'view_booking';
   return null;
+}
+
+/**
+ * Should left panel show generate CTA?
+ * False after plan exists (S2+) - NextStepBar takes over.
+ */
+export function shouldShowLeftPanelGenerateCTA(state?: PlanViewState): boolean {
+  if (!state) return true;
+  return state === 'S0_BOOTSTRAP' || state === 'S1_FRAMING';
 }

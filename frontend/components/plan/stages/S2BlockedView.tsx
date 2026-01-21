@@ -8,6 +8,7 @@
 'use client';
 
 import { AlertTriangle } from 'lucide-react';
+
 import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
 
 interface S2BlockedViewProps {
@@ -17,26 +18,14 @@ interface S2BlockedViewProps {
 
 export function S2BlockedView({
   viewModel,
-  destinationCard,
+  destinationCard: _destinationCard,
 }: S2BlockedViewProps) {
   const { open_decisions = [] } = viewModel;
   const blockingDecisions = open_decisions.filter(d => d.is_blocking);
 
   return (
     <div className="flex flex-col h-full p-4 space-y-4">
-      {/* Destination card */}
-      {destinationCard && (
-        <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700/50">
-          <h2 className="text-lg font-medium text-zinc-100">
-            {destinationCard.title}
-          </h2>
-          {destinationCard.subtitle && (
-            <p className="text-sm text-zinc-400 mt-1">
-              {destinationCard.subtitle}
-            </p>
-          )}
-        </div>
-      )}
+      {/* Note: Destination card removed - PlanHeader owns destination display */}
 
       {/* Blocked indicator */}
       <div className="flex-1 flex flex-col items-center justify-center">

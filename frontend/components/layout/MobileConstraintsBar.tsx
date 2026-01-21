@@ -1,10 +1,10 @@
 'use client';
 
-import { ChevronDown, Calendar, MapPin, Wallet, Plane } from 'lucide-react';
+import { Calendar, ChevronDown, MapPin, Plane,Wallet } from 'lucide-react';
 import { memo, useMemo, useState } from 'react';
 
-import { cn } from '@/lib/utils';
 import { formatBudget, formatDateRange } from '@/lib/plan-transform';
+import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -2,8 +2,8 @@
 
 import { memo, useMemo } from 'react';
 
+import { type Conflict,deriveDaysFromFlow } from '@/lib/plan-transform';
 import { cn } from '@/lib/utils';
-import { deriveDaysFromFlow, type Conflict } from '@/lib/plan-transform';
 import type { DocumentBranch, DocumentTripInputs, PlanStatus } from '@/types/document';
 import type { Tile } from '@/types/tile';
 

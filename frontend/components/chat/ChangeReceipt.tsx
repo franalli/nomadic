@@ -1,7 +1,7 @@
 'use client';
 
-import { memo, useEffect, useState } from 'react';
 import { Undo2 } from 'lucide-react';
+import { memo, useEffect, useState } from 'react';
 
 export type ReceiptType =
   | 'updated'           // Changes applied: "Updated: X, Y · Undo"

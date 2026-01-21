@@ -1,8 +1,8 @@
 import type {
+  ActivitySettings,
   FlightSettings,
   HotelSettings,
   TransportSettings,
-  ActivitySettings,
 } from '@/types/document';
 
 /**

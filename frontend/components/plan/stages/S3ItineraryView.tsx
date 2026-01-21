@@ -7,14 +7,15 @@
 
 'use client';
 
+import { ChevronDown, ChevronRight, Moon,Sun, Sunset } from 'lucide-react';
 import React from 'react';
-import { ChevronDown, ChevronRight, Sun, Sunset, Moon } from 'lucide-react';
+
 import type {
-  DestinationCard,
-  PlanViewModel,
-  DayCard,
   DayBlock,
+  DayCard,
+  DestinationCard,
   ItineraryOverview,
+  PlanViewModel,
 } from '@/types/plan-envelope';
 
 interface S3ItineraryViewProps {
@@ -131,7 +132,7 @@ export function S3ItineraryView({
   };
 
   return (
-    <div className="flex flex-col p-4 space-y-4">
+    <div id="itinerary-content" className="flex flex-col p-4 space-y-4">
       {/* Overview */}
       {itinerary_overview && (
         <OverviewCard overview={itinerary_overview} />

@@ -7,7 +7,8 @@
 
 'use client';
 
-import { RefreshCw, AlertCircle } from 'lucide-react';
+import { AlertCircle,RefreshCw } from 'lucide-react';
+
 import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
 
 interface S3EditingViewProps {
@@ -18,26 +19,14 @@ interface S3EditingViewProps {
 
 export function S3EditingView({
   viewModel,
-  destinationCard,
+  destinationCard: _destinationCard,
   onRefresh,
 }: S3EditingViewProps) {
   const { day_cards = [], itinerary_overview } = viewModel;
 
   return (
     <div className="flex flex-col h-full p-4 space-y-4">
-      {/* Destination card */}
-      {destinationCard && (
-        <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700/50">
-          <h2 className="text-lg font-medium text-zinc-100">
-            {destinationCard.title}
-          </h2>
-          {destinationCard.subtitle && (
-            <p className="text-sm text-zinc-400 mt-1">
-              {destinationCard.subtitle}
-            </p>
-          )}
-        </div>
-      )}
+      {/* Note: Destination card removed - PlanHeader owns destination display */}
 
       {/* Stale indicator */}
       <div className="bg-amber-900/20 rounded-lg border border-amber-700/30 p-3 flex items-center gap-2">

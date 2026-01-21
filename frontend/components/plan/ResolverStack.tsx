@@ -5,7 +5,7 @@ import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { ResolverStep } from '@/types/plan-envelope';
-import { RESOLVER_STEPS, getResolverStepLabel } from '@/types/plan-envelope';
+import { getResolverStepLabel,RESOLVER_STEPS } from '@/types/plan-envelope';
 
 interface ResolverStackProps {
   activeStep: ResolverStep;

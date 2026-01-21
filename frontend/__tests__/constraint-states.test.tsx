@@ -9,7 +9,7 @@
  * redesign. Chips now insert starter text instead of tracking active state.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect,it } from 'vitest';
 
 describe('Constraint button visual states', () => {
   describe('CSS class application', () => {

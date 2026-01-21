@@ -145,6 +145,10 @@ type DocumentState = {
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields: Set<LLMUpdatableField>;
 
+  // Streaming robustness - runId + abort tracking
+  currentRunId: string | null;
+  abortController: AbortController | null;
+
   // Trip input selectors (computed from document)
   hasAllRequiredFields: () => boolean;
 
@@ -179,6 +183,14 @@ type DocumentState = {
   // Clear sparkle for a field when user interacts with it
   acknowledgeLLMUpdate: (field: LLMUpdatableField) => void;
 
+  // Streaming robustness actions
+  /** Start a new generation run - returns AbortController for the caller */
+  startGeneration: (runId: string) => AbortController;
+  /** Abort the current generation (if any) */
+  abortGeneration: () => void;
+  /** Check if a runId is the current run (ignore late events from stale runs) */
+  isCurrentRun: (runId: string) => boolean;
+
   // Reset
   reset: () => void;
 };
@@ -193,6 +205,9 @@ const initialState = {
   isCommitting: false,
   error: null as string | null,
   llmUpdatedFields: new Set<LLMUpdatableField>(),
+  // Streaming robustness
+  currentRunId: null as string | null,
+  abortController: null as AbortController | null,
 };
 
 /**
@@ -742,7 +757,45 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
+  // Streaming robustness actions
+  startGeneration: (runId: string) => {
+    // Abort any existing generation first
+    const { abortController: existingController } = get();
+    if (existingController) {
+      existingController.abort();
+    }
+
+    // Create new controller for this run
+    const controller = new AbortController();
+    set({
+      currentRunId: runId,
+      abortController: controller,
+    });
+
+    return controller;
+  },
+
+  abortGeneration: () => {
+    const { abortController } = get();
+    if (abortController) {
+      abortController.abort();
+    }
+    set({
+      currentRunId: null,
+      abortController: null,
+    });
+  },
+
+  isCurrentRun: (runId: string) => {
+    return get().currentRunId === runId;
+  },
+
   reset: () => {
+    // Abort any in-flight generation on reset
+    const { abortController } = get();
+    if (abortController) {
+      abortController.abort();
+    }
     set({ ...initialState, llmUpdatedFields: new Set() });
   },
 }));

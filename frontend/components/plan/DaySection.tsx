@@ -2,8 +2,8 @@
 
 import { memo } from 'react';
 
-import { cn } from '@/lib/utils';
 import type { DayData } from '@/lib/plan-transform';
+import { cn } from '@/lib/utils';
 
 import { Segment } from './Segment';
 

@@ -7,9 +7,10 @@
 
 'use client';
 
-import { ChevronDown, Check, AlertCircle, Minus } from 'lucide-react';
-import type { AckStatus, AckUpdate } from '@/types/chat';
+import { AlertCircle, Check, ChevronDown, Minus } from 'lucide-react';
+
 import { cn } from '@/lib/utils';
+import type { AckStatus, AckUpdate } from '@/types/chat';
 
 interface CollapsedMessageRowProps {
   ackStatus: AckStatus;

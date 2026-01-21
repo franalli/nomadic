@@ -2,22 +2,22 @@
  * BookingSection
  *
  * Conditional tiles section for the plan view.
- * - S3: Full expanded tiles grid
- * - S2 with tiles: Collapsed preview (one-line summary)
+ * - S3: Full "Booking options" grid with tabs
+ * - S2 with tiles: Collapsed "Deals found" preview (compact list, max 4 items)
  * - S2 without tiles: Minimal placeholder
  * - Other states: Not rendered
  */
 
 'use client';
 
-import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useState } from 'react';
 
+import { CompactTilesList } from '@/components/tiles/CompactTilesList';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
-import { selectTilesByType, getTotalTileCount } from '@/lib/tileSelectors';
-import { cn } from '@/lib/utils';
-import type { Tile } from '@/types/tile';
+import { getTotalTileCount,selectTilesByType } from '@/lib/tileSelectors';
 import type { PlanViewState } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
 
 import { canShowBookingTiles, canShowTilesPreview } from './planStateHelpers';
 
@@ -34,25 +34,51 @@ export function BookingSection({ state, tiles }: BookingSectionProps) {
   const tilesByType = selectTilesByType(tiles);
   const totalTiles = getTotalTileCount(tilesByType);
 
-  // S2 with tiles: subtle collapsed preview (YC: don't clutter)
+  // S2 with tiles: "Deals found" collapsed preview (compact list, not full TilesGrid)
   if (canShowTilesPreview(state, totalTiles)) {
+    // For preview, show stays (hotels) first, max 4 items
+    const stayTiles = tileArray.filter(t => t.type === 'hotel' || t.type === 'stay');
+    const previewTiles = stayTiles.length > 0 ? stayTiles.slice(0, 4) : tileArray.slice(0, 4);
+    const remainingCount = totalTiles - previewTiles.length;
+
     return (
       <div id="booking-section" className="border-t border-zinc-800">
+        {/* Header */}
+        <div className="px-4 pt-3 pb-1">
+          <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
+            Deals found
+          </h3>
+        </div>
+
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="flex w-full items-center justify-between px-4 py-2 text-sm text-zinc-500 transition-colors hover:text-zinc-400"
+          className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-zinc-800/50"
         >
-          <span>{totalTiles} booking options found</span>
+          <div className="flex items-center gap-2">
+            <span className="text-zinc-300">{totalTiles} options</span>
+            <span className="text-zinc-500">- Preview</span>
+          </div>
           {isExpanded ? (
-            <ChevronDown className="h-4 w-4" />
+            <ChevronDown className="h-4 w-4 text-zinc-500" />
           ) : (
-            <ChevronRight className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4 text-zinc-500" />
           )}
         </button>
 
+        {!isExpanded && (
+          <p className="px-4 pb-3 text-xs text-zinc-500">
+            Preview only — finalize itinerary to book.
+          </p>
+        )}
+
         {isExpanded && (
           <div className="px-4 pb-4">
-            <TilesGrid tiles={tileArray} hideTabSwitcher={false} />
+            <CompactTilesList tiles={previewTiles} />
+            {remainingCount > 0 && (
+              <p className="text-xs text-zinc-500 mt-2">
+                +{remainingCount} more options available after itinerary
+              </p>
+            )}
           </div>
         )}
       </div>
@@ -70,7 +96,7 @@ export function BookingSection({ state, tiles }: BookingSectionProps) {
     );
   }
 
-  // S3: Full section
+  // S3: Full "Booking options" section with tabs
   if (canShowBookingTiles(state)) {
     if (totalTiles === 0) {
       return (
@@ -82,6 +108,13 @@ export function BookingSection({ state, tiles }: BookingSectionProps) {
 
     return (
       <div id="booking-section" className="border-t border-zinc-800 p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-zinc-200">Booking options</h3>
+            <span className="text-xs text-zinc-500">({totalTiles})</span>
+          </div>
+          <span className="text-xs text-zinc-500">Prices from partners</span>
+        </div>
         <TilesGrid tiles={tileArray} hideTabSwitcher={false} />
       </div>
     );

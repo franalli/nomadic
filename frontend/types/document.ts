@@ -7,28 +7,28 @@
  * expects (with defaults applied), while the OpenAPI schema marks them as optional.
  */
 
-import type { Tile } from './tile';
 import type {
-  PlanState,
-  UIPhase,
-  ResolverState,
-  ReadinessItem,
-  DestinationCard,
-  BookingStatus,
-  AppliedUpdateKey,
-  Conflict,
-  UndoSnapshot,
-  UpdateProvenance,
   AckStatus,
   AckUpdate,
-  PlanViewState,
-  StrategySection,
-  OpenDecision,
-  ItineraryOverview,
+  AppliedUpdateKey,
+  BookingStatus,
+  Conflict,
   DayCard,
-  ItineraryAssumptions,
+  DestinationCard,
   GenerationState,
+  ItineraryAssumptions,
+  ItineraryOverview,
+  OpenDecision,
+  PlanState,
+  PlanViewState,
+  ReadinessItem,
+  ResolverState,
+  StrategySection,
+  UIPhase,
+  UndoSnapshot,
+  UpdateProvenance,
 } from './plan-envelope';
+import type { Tile } from './tile';
 
 export type UpdatedBy = 'user' | 'planner';
 

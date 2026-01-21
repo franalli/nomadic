@@ -2,8 +2,8 @@
 
 import { memo } from 'react';
 
-import { cn } from '@/lib/utils';
 import { formatBudget, formatDateRange } from '@/lib/plan-transform';
+import { cn } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
 
 // ─────────────────────────────────────────────────────────────────────────────

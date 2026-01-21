@@ -3,8 +3,8 @@
 import { Bed, Clock, MapPin, Plane, Train, Umbrella } from 'lucide-react';
 import { memo } from 'react';
 
-import { cn } from '@/lib/utils';
 import type { Segment as SegmentData, SegmentType } from '@/lib/plan-transform';
+import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Icon Mapping

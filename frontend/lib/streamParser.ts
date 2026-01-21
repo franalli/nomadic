@@ -5,8 +5,8 @@
  * Handles partial chunks across reads safely.
  */
 
-import type { GenerationState } from '@/types/plan-envelope';
 import type { PlanDocumentData } from '@/types/document';
+import type { GenerationState } from '@/types/plan-envelope';
 
 /**
  * Stream event types from the backend.

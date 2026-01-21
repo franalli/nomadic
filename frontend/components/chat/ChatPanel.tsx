@@ -14,28 +14,26 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { shouldShowLeftPanelGenerateCTA } from '@/components/plan/planStateHelpers';
 import { OnboardingChips } from '@/components/planner/OnboardingChips';
 import { OptionalRefinementsSection } from '@/components/planner/OptionalRefinementsSection';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
-import type { LLMUpdatableField } from '@/state/documentStore';
-import type {
-  ActivitySettings,
-  BookingTypes,
-  FlightSettings,
-  HotelSettings,
-  TransportSettings,
-} from '@/types/document';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
+import type { LLMUpdatableField } from '@/state/documentStore';
 import { useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
 import type {
+  ActivitySettings,
+  BookingTypes,
   DocumentBranch,
   DocumentTripInputs,
-  GraphPlanResponse,
-} from '@/types/document';
+  FlightSettings,
+  GraphPlanResponse,  HotelSettings,
+  TransportSettings} from '@/types/document';
+import type { PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
@@ -299,6 +297,8 @@ interface ChatPanelProps {
   llmUpdatedFields?: Set<LLMUpdatableField>;
   /** Acknowledge LLM update callback */
   onAcknowledgeLLMUpdate?: (field: LLMUpdatableField) => void;
+  /** Plan view state for CTA gating (hide generate after S2) */
+  planViewState?: PlanViewState;
 }
 
 export interface ChatPanelHandle {
@@ -349,6 +349,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onToggleRequiresAssistance,
       llmUpdatedFields,
       onAcknowledgeLLMUpdate,
+      planViewState,
     } = props;
 
     void _onFreshStart; // Reserved for future use - Reset button moved to global header
@@ -1194,61 +1195,63 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
           </form>
 
-          {/* Primary CTA - Generate plan */}
-          <div className="space-y-1">
-            <button
-              type="button"
-              onClick={() => {
-                setGenerateTriggered(true);
-                sendMessageCore(GENERATE_PLAN_TRIGGER);
-              }}
-              disabled={generateState === 'DISABLED_INCOMPLETE' || generateState === 'GENERATING'}
-              className={cn(
-                "group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold rounded-full transition-all",
-                // DISABLED_INCOMPLETE - intentional locked state (opacity raised from 0.45 to 0.60 for WCAG)
-                generateState === 'DISABLED_INCOMPLETE' && "opacity-60 cursor-not-allowed text-muted-foreground/80 border border-muted-foreground/30 bg-muted/8",
-                // ENABLED_READY
-                generateState === 'ENABLED_READY' && cn(
-                  "text-primary border border-primary/50 bg-primary/10 hover:bg-primary/15 hover:border-primary/70",
-                  "dark:text-accent dark:border-accent/50 dark:bg-accent/15 dark:hover:bg-accent/25",
-                  !hasAnimatedPulse && "cta-pulse-once"
-                ),
-                // GENERATING
-                generateState === 'GENERATING' && "opacity-70 cursor-wait text-muted-foreground border border-muted-foreground/30 bg-muted/10",
-                // GENERATED
-                generateState === 'GENERATED' && "text-muted-foreground border border-muted-foreground/30 bg-transparent hover:border-muted-foreground/50 hover:text-foreground"
-              )}
-            >
-              {generateState === 'GENERATING' ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Generating plan…</span>
-                </>
-              ) : generateState === 'GENERATED' ? (
-                <>
-                  <Sparkles className="h-4 w-4" />
-                  <span>Regenerate plan</span>
-                </>
-              ) : generateState === 'DISABLED_INCOMPLETE' ? (
-                <>
-                  <Lock className="h-4 w-4 opacity-70" />
-                  <span>Generate plan</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
-                  <span>Generate plan</span>
-                </>
-              )}
-            </button>
+          {/* Primary CTA - Generate plan (hidden after S2_STRATEGY_READY) */}
+          {shouldShowLeftPanelGenerateCTA(planViewState) && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setGenerateTriggered(true);
+                  sendMessageCore(GENERATE_PLAN_TRIGGER);
+                }}
+                disabled={generateState === 'DISABLED_INCOMPLETE' || generateState === 'GENERATING'}
+                className={cn(
+                  "group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold rounded-full transition-all",
+                  // DISABLED_INCOMPLETE - intentional locked state (opacity raised from 0.45 to 0.60 for WCAG)
+                  generateState === 'DISABLED_INCOMPLETE' && "opacity-60 cursor-not-allowed text-muted-foreground/80 border border-muted-foreground/30 bg-muted/8",
+                  // ENABLED_READY
+                  generateState === 'ENABLED_READY' && cn(
+                    "text-primary border border-primary/50 bg-primary/10 hover:bg-primary/15 hover:border-primary/70",
+                    "dark:text-accent dark:border-accent/50 dark:bg-accent/15 dark:hover:bg-accent/25",
+                    !hasAnimatedPulse && "cta-pulse-once"
+                  ),
+                  // GENERATING
+                  generateState === 'GENERATING' && "opacity-70 cursor-wait text-muted-foreground border border-muted-foreground/30 bg-muted/10",
+                  // GENERATED
+                  generateState === 'GENERATED' && "text-muted-foreground border border-muted-foreground/30 bg-transparent hover:border-muted-foreground/50 hover:text-foreground"
+                )}
+              >
+                {generateState === 'GENERATING' ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Generating plan…</span>
+                  </>
+                ) : generateState === 'GENERATED' ? (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    <span>Regenerate plan</span>
+                  </>
+                ) : generateState === 'DISABLED_INCOMPLETE' ? (
+                  <>
+                    <Lock className="h-4 w-4 opacity-70" />
+                    <span>Generate plan</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
+                    <span>Generate plan</span>
+                  </>
+                )}
+              </button>
 
-            {/* Subtext per state */}
-            {generateState === 'DISABLED_INCOMPLETE' && (
-              <p className="text-center text-[11px] text-muted-foreground/50">
-                Set destination + dates to unlock.
-              </p>
-            )}
-          </div>
+              {/* Subtext per state */}
+              {generateState === 'DISABLED_INCOMPLETE' && (
+                <p className="text-center text-[11px] text-muted-foreground/50">
+                  Set destination + dates to unlock.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
       </div>

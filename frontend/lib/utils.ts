@@ -1,7 +1,9 @@
 import { format } from 'date-fns';
 
-export function cn(...inputs: Array<string | false | null | undefined>) {
-  return inputs.filter(Boolean).join(' ');
+type ClassValue = string | false | null | undefined | (string | false | null | undefined)[];
+
+export function cn(...inputs: ClassValue[]): string {
+  return inputs.flat().filter(Boolean).join(' ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
