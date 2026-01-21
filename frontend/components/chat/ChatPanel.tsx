@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, Loader2, Lock, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, Lock, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -17,9 +17,11 @@ import remarkGfm from 'remark-gfm';
 import { shouldShowLeftPanelGenerateCTA } from '@/components/plan/planStateHelpers';
 import { OnboardingChips } from '@/components/planner/OnboardingChips';
 import { OptionalRefinementsSection } from '@/components/planner/OptionalRefinementsSection';
+import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
-import { shouldShowLoaderForNode } from '@/lib/loaderConfig';
+import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
+import type { TriggerContext } from '@/types/loader';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
@@ -54,11 +56,11 @@ const READY_MESSAGE_ID_PREFIX = 'ready_';
 
 // Prompt suggestions - insert starter text into input, not send messages
 // These are conversation primers that disappear after first submit
+// Note: Budget removed - OnboardingChips already provides budget entry point
 const PROMPT_SUGGESTIONS = [
   { label: 'Destination', starterText: 'going to ' },
   { label: 'Origin', starterText: 'from ' },
   { label: 'Dates', starterText: 'dates are ' },
-  { label: 'Budget', starterText: 'budget around ' },
 ] as const;
 
 // Fallback suggestions when backend returns none but fields are missing
@@ -299,6 +301,8 @@ interface ChatPanelProps {
   onAcknowledgeLLMUpdate?: (field: LLMUpdatableField) => void;
   /** Plan view state for CTA gating (hide generate after S2) */
   planViewState?: PlanViewState;
+  /** Open budget input in TripDetailsForm */
+  onOpenBudgetInput?: () => void;
 }
 
 export interface ChatPanelHandle {
@@ -350,6 +354,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       llmUpdatedFields,
       onAcknowledgeLLMUpdate,
       planViewState,
+      onOpenBudgetInput,
     } = props;
 
     void _onFreshStart; // Reserved for future use - Reset button moved to global header
@@ -405,6 +410,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Avoids flicker for quick operations and only shows when user would wonder "is anything happening?"
     const delayedLoader = useDelayedLoader({ showDelay: 400, etaThreshold: 600 });
 
+    // Action loader: extends delayedLoader with action-specific copy and classification
+    // Only shows for 5 action types: generate_plan, update_plan, refresh_deals, create_itinerary, vertical_fetch
+    const actionLoader = useActionLoader({ showDelay: 400, minEtaThreshold: 600 });
+
+    // Track trigger context for action classification
+    const [triggerContext, setTriggerContext] = useState<TriggerContext | null>(null);
+
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
@@ -435,12 +447,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Note: missingFields now derived from planState instead of tripDetails
     const missingFields: string[] = [];
     const effectiveSuggestions = useMemo(() => {
-      if (suggestedResponses.length > 0) return suggestedResponses;
-      if (isLoading || hasBranches) return [];
-      if (missingFields.length === 0) return [];
-      // Get fallback for first missing field
-      const firstMissing = missingFields[0];
-      return FALLBACK_SUGGESTIONS[firstMissing] ?? [];
+      let suggestions: string[];
+      if (suggestedResponses.length > 0) {
+        suggestions = suggestedResponses;
+      } else if (isLoading || hasBranches) {
+        return [];
+      } else if (missingFields.length === 0) {
+        return [];
+      } else {
+        // Get fallback for first missing field
+        const firstMissing = missingFields[0];
+        suggestions = FALLBACK_SUGGESTIONS[firstMissing] ?? [];
+      }
+
+      // Dedupe: keep first occurrence of each field-type CTA (e.g., "Set budget")
+      // to avoid multiple identical buttons
+      const seen = new Set<string>();
+      return suggestions.filter((s) => {
+        const isFieldCTA = /^(set|add|change)\s/i.test(s);
+        if (!isFieldCTA) return true;
+        const lower = s.toLowerCase();
+        if (seen.has(lower)) return false;
+        seen.add(lower);
+        return true;
+      });
     }, [suggestedResponses, isLoading, hasBranches, missingFields]);
 
     // Show suggestions when: plan is incomplete, has missing fields, not generating, and has suggestions to show
@@ -620,6 +650,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER;
 
+        // Set trigger context for action classification
+        // This helps classify the node_status events that follow
+        setTriggerContext({
+          isGeneratePlanTrigger: isGenerateTrigger,
+          // If we already have branches and this isn't a generate trigger, it's a constraint change
+          isConstraintChange: hasBranches && !isGenerateTrigger,
+        });
+
         // Notify parent that generate plan has started (for loading screen)
         if (isGenerateTrigger) {
           onGeneratePlanStart?.();
@@ -664,19 +702,38 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setHasReceivedFirstToken(true);
               // Dismiss delayed loader on first tangible output
               delayedLoader.onTangibleOutput();
+              actionLoader.onTangibleOutput();
               // Append token to the streaming message
               appendToMessage(streamingMsgId, token);
             },
             onNodeStatus: (status: SSENodeStatusEvent['data']) => {
               if (status.status === 'started') {
-                // Check if this node qualifies for loader display based on type and ETA
+                // Classify the action type for action-specific loader copy
+                const classification = classifyNodeAction(status.node, triggerContext ?? undefined);
+
+                // Only show action loader for recognized action types
+                // This prevents loader from showing for pure chat, acknowledgment, validation, etc.
+                if (classification) {
+                  // Check if tiles exist for refresh_deals contextual copy
+                  const tiles = useDocumentStore.getState().document?.tiles;
+                  const hasTiles = tiles && Object.keys(tiles).length > 0;
+
+                  actionLoader.startLoading(
+                    classification.actionType,
+                    status.estimated_duration_ms,
+                    {
+                      verticalType: classification.verticalType,
+                      hasTiles,
+                    }
+                  );
+                }
+
+                // Also check legacy loader for backwards compatibility
                 const shouldShow = shouldShowLoaderForNode(
                   status.node,
                   status.estimated_duration_ms
                 );
-
                 if (shouldShow) {
-                  // Start delayed loader - will show after 400ms if no tangible output arrives
                   delayedLoader.startLoading(status.estimated_duration_ms);
                 }
 
@@ -699,6 +756,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setNodeStatus(null); // Clear strategy progress on completion
               abortStreamRef.current = null; // Clear abort ref
               delayedLoader.reset(); // Ensure loader is hidden
+              actionLoader.reset(); // Reset action loader
+              setTriggerContext(null); // Clear trigger context
 
               // Parse the response - it matches GraphPlanResponse structure
               const data = response as unknown as GraphPlanResponse;
@@ -763,6 +822,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setNodeStatus(null); // Clear strategy progress on error
               abortStreamRef.current = null; // Clear abort ref
               delayedLoader.reset(); // Ensure loader is hidden on error
+              actionLoader.reset(); // Reset action loader
+              setTriggerContext(null); // Clear trigger context
               console.error('Failed to plan trip', error);
 
               // Replace streaming message with specific error message
@@ -777,7 +838,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -881,12 +942,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Show typing indicator when loading and haven't received first streaming token yet
     // Don't show when node progress is active (we show progress bar instead)
-    // Also don't show when delayed loader is handling progress display
-    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !nodeStatus?.active && !delayedLoader.isVisible;
+    // Also don't show when loader is handling progress display
+    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !nodeStatus?.active && !delayedLoader.isVisible && !actionLoader.isVisible;
     // Show node progress only when:
-    // 1. The delayed loader says it's time to show (after 400ms delay, and ETA > threshold)
+    // 1. The action loader (policy-compliant) OR delayed loader (fallback) is visible
     // 2. We have active node status data to display
-    const showNodeProgress = delayedLoader.isVisible && nodeStatus?.active;
+    // Action loader only shows for the 5 action types: generate_plan, update_plan, refresh_deals, create_itinerary, vertical_fetch
+    const showNodeProgress = (actionLoader.isVisible || delayedLoader.isVisible) && nodeStatus?.active;
 
     return (
       <div
@@ -924,9 +986,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             inputRef.current?.focus();
           }}
           onBudgetClick={() => {
-            const separator = input.trim() ? ', ' : '';
-            setInput(prev => prev + separator + 'budget around ');
-            inputRef.current?.focus();
+            // Prefer opening budget input directly in TripDetailsForm
+            if (onOpenBudgetInput) {
+              onOpenBudgetInput();
+            } else {
+              // Fallback: insert text into chat
+              const separator = input.trim() ? ', ' : '';
+              setInput(prev => prev + separator + 'budget around ');
+              inputRef.current?.focus();
+            }
           }}
         />
 
@@ -1074,6 +1142,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   startTime={nodeStatus.startTime}
                   stage={nodeStatus.stage}
                   topic={nodeStatus.topic}
+                  // Action-specific copy from actionLoader (policy-compliant)
+                  actionTitle={actionLoader.isVisible ? actionLoader.title : undefined}
+                  actionSubtext={actionLoader.isVisible ? actionLoader.subtext : undefined}
                 />
               )}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
@@ -1195,8 +1266,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           )}
           </form>
 
-          {/* Primary CTA - Generate plan (hidden after S2_STRATEGY_READY) */}
-          {shouldShowLeftPanelGenerateCTA(planViewState) && (
+          {/* Primary CTA - Generate plan (hidden after S2_STRATEGY_READY and during generation) */}
+          {shouldShowLeftPanelGenerateCTA(planViewState) && generateState !== 'GENERATING' && (
             <div className="space-y-1">
               <button
                 type="button"
@@ -1204,7 +1275,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   setGenerateTriggered(true);
                   sendMessageCore(GENERATE_PLAN_TRIGGER);
                 }}
-                disabled={generateState === 'DISABLED_INCOMPLETE' || generateState === 'GENERATING'}
+                disabled={generateState === 'DISABLED_INCOMPLETE'}
                 className={cn(
                   "group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold rounded-full transition-all",
                   // DISABLED_INCOMPLETE - intentional locked state (opacity raised from 0.45 to 0.60 for WCAG)
@@ -1215,18 +1286,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     "dark:text-accent dark:border-accent/50 dark:bg-accent/15 dark:hover:bg-accent/25",
                     !hasAnimatedPulse && "cta-pulse-once"
                   ),
-                  // GENERATING
-                  generateState === 'GENERATING' && "opacity-70 cursor-wait text-muted-foreground border border-muted-foreground/30 bg-muted/10",
                   // GENERATED
                   generateState === 'GENERATED' && "text-muted-foreground border border-muted-foreground/30 bg-transparent hover:border-muted-foreground/50 hover:text-foreground"
                 )}
               >
-                {generateState === 'GENERATING' ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Generating plan…</span>
-                  </>
-                ) : generateState === 'GENERATED' ? (
+                {generateState === 'GENERATED' ? (
                   <>
                     <Sparkles className="h-4 w-4" />
                     <span>Regenerate plan</span>

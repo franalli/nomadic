@@ -20,7 +20,7 @@ interface ChangeReceiptProps {
   receipt: ChangeReceiptData | null;
   onUndo?: () => void;
   onDismiss?: () => void;
-  autoDismissMs?: number;   // Default: 5000ms
+  autoDismissMs?: number;   // Default: 3000ms
 }
 
 /**
@@ -38,7 +38,7 @@ export const ChangeReceipt = memo(function ChangeReceipt({
   receipt,
   onUndo,
   onDismiss,
-  autoDismissMs = 5000,
+  autoDismissMs = 3000,
 }: ChangeReceiptProps) {
   const [visible, setVisible] = useState(false);
   const [exiting, setExiting] = useState(false);
@@ -173,10 +173,18 @@ export const ChangeReceipt = memo(function ChangeReceipt({
 
   return (
     <div
-      className={`flex items-center justify-start text-xs py-2 transition-opacity ${
-        exiting ? 'opacity-0 duration-150' : visible ? 'opacity-100 duration-[120ms]' : 'opacity-0'
+      className={`fixed z-[60] right-4 flex items-center text-xs px-3 py-2 rounded-lg border border-border/30 bg-card/95 backdrop-blur-sm shadow-lg transition-all ${
+        exiting
+          ? 'opacity-0 translate-y-[-8px] duration-150'
+          : visible
+            ? 'opacity-100 translate-y-0 duration-[120ms]'
+            : 'opacity-0 translate-y-[-8px]'
       }`}
-      style={{ transitionTimingFunction: exiting ? 'ease-in' : 'ease-out' }}
+      style={{
+        top: 'calc(env(safe-area-inset-top, 0px) + 12px)',
+        transitionTimingFunction: exiting ? 'ease-in' : 'ease-out',
+        pointerEvents: 'auto',
+      }}
     >
       {renderContent()}
     </div>

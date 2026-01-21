@@ -209,6 +209,7 @@ async def extractor(state: "GraphState") -> "GraphState":
         _try_strategy_bootstrap_bypass,
         _write_trip_inputs,
         call_llm_with_timeout,
+        llm_blocked_fallback,
         load_prompt,
         set_parse_provenance,
     )
@@ -267,6 +268,16 @@ async def extractor(state: "GraphState") -> "GraphState":
             state.metadata.pop("pending_action", None)
             state.metadata.pop("pending_typo_corrections", None)
             _debug("Short-circuit cleared pending_action")
+        elif short_circuit.get("action") == "ask_field":
+            # User requested to set/change a specific field (e.g., "Set budget", "budget?")
+            field_target = short_circuit.get("field_target")
+            if field_target:
+                state.question_target = field_target
+                state.metadata["question_target"] = field_target
+                state.metadata["last_question_field"] = field_target
+                # Use existing template fallback mechanism to generate response
+                llm_blocked_fallback(state, asked_target=field_target, source="field_request")
+                _debug("Short-circuit triggered ask_field", field_target=field_target)
 
         state.parsed_inputs = parsed
         _debug_node_exit("extractor", state, start_ns)

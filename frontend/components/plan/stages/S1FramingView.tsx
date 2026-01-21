@@ -36,23 +36,6 @@ export function S1FramingView({
         </span>
       </div>
 
-      {/* Progress stepper */}
-      <div className="flex items-center justify-center gap-2 py-2">
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-emerald-500" />
-          <span className="text-xs text-zinc-400">Structure</span>
-        </div>
-        <div className="w-4 h-px bg-zinc-700" />
-        <div className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-full ${isGenerating ? 'bg-amber-500 animate-pulse' : 'bg-zinc-600'}`} />
-          <span className="text-xs text-zinc-500">Strategy</span>
-        </div>
-        <div className="w-4 h-px bg-zinc-700" />
-        <div className="flex items-center gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-zinc-600" />
-          <span className="text-xs text-zinc-500">Itinerary</span>
-        </div>
-      </div>
 
       {/* Skeleton content - max 5 lines per spec */}
       <div className="flex-1 space-y-3">

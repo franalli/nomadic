@@ -47,7 +47,7 @@
   --destructive-foreground: 0 0% 98%;
 
   --input: 160 20% 90%;
-  --ring: 160 45% 25%;
+  --ring: 38 92% 50%;  /* Amber-500 for focus rings */
 
   /* Constraint state colors (locked) */
   --color-cta-orange: 32 100% 50%;       /* #FF8A00 - buttons, primary actions, focused inputs */
@@ -101,7 +101,7 @@
     --destructive-foreground: 0 0% 98%;
 
     --input: 152 25% 18%;
-    --ring: 160 40% 45%;
+    --ring: 38 92% 50%;  /* Amber-500 for focus rings */
 
     /* Constraint state colors (locked) */
     --color-cta-orange: 32 100% 50%;       /* #FF8A00 - buttons, primary actions, focused inputs */

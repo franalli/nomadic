@@ -30,6 +30,8 @@ export interface NextStepBarProps {
   /** Last error for inline retry (itinerary generation only) */
   lastError?: string | null;
   onRetry?: () => void;
+  /** Count of saved stays (for gating CTA) */
+  savedStaysCount?: number;
   className?: string;
 }
 
@@ -41,12 +43,16 @@ export function NextStepBar({
   onViewBookingOptions,
   lastError,
   onRetry,
+  savedStaysCount = 0,
   className,
 }: NextStepBarProps) {
   // Click lock to prevent double-clicks
   const [isClickLocked, setIsClickLocked] = useState(false);
 
   const isGeneratingItinerary = generation?.active && generation?.stage === 'itinerary';
+
+  // Shortlist gating: must have at least one saved stay to proceed to itinerary
+  const needsStaySelection = nextAction === 'expand_itinerary' && savedStaysCount === 0;
 
   // Reset click lock when generation completes
   useEffect(() => {
@@ -73,6 +79,48 @@ export function NextStepBar({
 
   // Don't render if no action
   if (!nextAction) return null;
+
+  // Show flow guide when user needs to save a stay first
+  if (needsStaySelection) {
+    return (
+      <div
+        className={cn(
+          'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm',
+          className
+        )}
+      >
+        {/* Flow indicator */}
+        <div className="flex items-center justify-center gap-3 text-xs mb-3">
+          <span className="flex items-center gap-1.5 text-amber-400">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/20 text-[10px] font-medium">1</span>
+            Save a stay
+          </span>
+          <span className="text-zinc-600">→</span>
+          <span className="flex items-center gap-1.5 text-zinc-500">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium">2</span>
+            Create itinerary
+          </span>
+          <span className="text-zinc-600">→</span>
+          <span className="flex items-center gap-1.5 text-zinc-500">
+            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium">3</span>
+            Book
+          </span>
+        </div>
+
+        {/* Disabled CTA with hint */}
+        <button
+          disabled
+          className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-zinc-800 px-4 py-3 text-sm font-medium text-zinc-500 opacity-70"
+        >
+          <ArrowRight className="h-4 w-4" />
+          Create day-by-day itinerary
+        </button>
+        <p className="mt-2 text-center text-xs text-zinc-500">
+          Choose at least one stay to continue
+        </p>
+      </div>
+    );
+  }
 
   const handleClick = () => {
     if (isClickLocked) return;

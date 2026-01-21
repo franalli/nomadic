@@ -5,6 +5,11 @@
  * Two variants:
  * 1. Empty (no destination) - Compact bar with stepper only
  * 2. Hero (destination exists) - Full image header with title/subtitle
+ *
+ * Single progress system: Setup • Plan • Book
+ * - Amber = active
+ * - Green = completed only
+ * - Gray = locked
  */
 
 'use client';
@@ -13,6 +18,13 @@ import { Loader2 } from 'lucide-react';
 import React from 'react';
 
 import { placeholderImagesForBranch } from '@/lib/placeholders';
+import {
+  getCompletedSteps,
+  getStepIndex,
+  getStatusPillText,
+  getSubStatusText,
+  STATUS_COPY,
+} from '@/lib/statusCopyMap';
 import { cn } from '@/lib/utils';
 import type { DestinationCard } from '@/types/plan-envelope';
 
@@ -22,41 +34,32 @@ export interface PlanHeaderProps {
   isGenerating?: boolean;
   /** Fallback title from tripInputs if destinationCard not available */
   fallbackTitle?: string;
-}
-
-const STAGE_LABELS = ['Structure', 'Strategy', 'Itinerary'] as const;
-
-function getStageIndex(stage: PlanHeaderProps['currentStage']): number {
-  switch (stage) {
-    case 'bootstrap':
-      return -1;
-    case 'structure':
-      return 0;
-    case 'strategy':
-      return 1;
-    case 'itinerary':
-      return 2;
-    default:
-      return -1;
-  }
+  /** PlanViewState for accurate step tracking */
+  planViewState?: string;
+  /** Whether user has set dates */
+  hasDates?: boolean;
+  /** Whether expanding to itinerary (S3 generation) */
+  isExpandingItinerary?: boolean;
+  /** Current backend sub-stage (structure, strategy, itinerary, deals) */
+  currentSubStage?: string | null;
 }
 
 /** Stage progress stepper - used in both variants */
 function StageStepper({
-  stageIndex,
+  currentStepIndex,
+  completedSteps,
   isGenerating,
-  variant: _variant = 'default',
 }: {
-  stageIndex: number;
+  currentStepIndex: number;
+  completedSteps: boolean[];
   isGenerating: boolean;
-  variant?: 'default' | 'compact';
 }) {
   return (
     <div className="flex items-center gap-4">
-      {STAGE_LABELS.map((label, idx) => {
-        const isActive = idx === stageIndex;
-        const isCompleted = idx < stageIndex;
-        const isLocked = idx > stageIndex;
+      {STATUS_COPY.steps.map((label, idx) => {
+        const isActive = idx === currentStepIndex;
+        const isCompleted = completedSteps[idx] && !isActive;
+        const isLocked = idx > currentStepIndex && !completedSteps[idx];
         const isCurrentGenerating = isActive && isGenerating;
 
         return (
@@ -64,10 +67,10 @@ function StageStepper({
             key={label}
             className={cn(
               'flex items-center gap-1.5 text-xs transition-colors',
-              // Enhanced visual emphasis per spec
-              isActive && 'text-white font-medium',
-              isCompleted && 'text-zinc-400',
-              isLocked && 'text-zinc-600 opacity-60'
+              // Color semantics: Amber=active, Green=completed, Gray=locked
+              isActive && 'text-zinc-100 font-medium',
+              isCompleted && 'text-emerald-400',
+              isLocked && 'text-zinc-600/70'
             )}
           >
             {/* Progress dot */}
@@ -92,15 +95,28 @@ function StageStepper({
 
 export function PlanHeader({
   destinationCard,
-  currentStage,
+  currentStage: _currentStage,
   isGenerating = false,
   fallbackTitle,
+  planViewState = 'S0_BOOTSTRAP',
+  hasDates = false,
+  isExpandingItinerary = false,
+  currentSubStage,
 }: PlanHeaderProps) {
+  // currentStage kept for backwards compatibility but planViewState is preferred
+  void _currentStage;
   // Determine variant based on whether we have a destination
   const title = destinationCard?.title || fallbackTitle || '';
   const hasDestination = Boolean(title);
   const subtitle = destinationCard?.subtitle;
-  const stageIndex = getStageIndex(currentStage);
+
+  // Use statusCopyMap for accurate step tracking
+  const currentStepIndex = getStepIndex(planViewState, hasDestination, hasDates);
+  const completedSteps = getCompletedSteps(planViewState, hasDestination, hasDates);
+
+  // Status pill and sub-status text
+  const statusPillText = getStatusPillText(isGenerating, isExpandingItinerary);
+  const subStatusText = isGenerating ? getSubStatusText(currentSubStage) : null;
 
   // Get image URL: always use placeholder if destination exists (never grey gradient)
   const imageUrl = React.useMemo(() => {
@@ -118,9 +134,13 @@ export function PlanHeader({
   // EMPTY VARIANT: Compact bar when no destination
   if (!hasDestination) {
     return (
-      <div className="sticky top-0 z-10 flex-shrink-0 h-14 bg-black/30 backdrop-blur-md border-b border-zinc-800/60">
-        <div className="max-w-[1100px] mx-auto w-full h-full px-6 flex items-center justify-between">
-          <StageStepper stageIndex={stageIndex} isGenerating={isGenerating} variant="compact" />
+      <div className="sticky top-0 z-10 flex-shrink-0 bg-black/30 backdrop-blur-md border-b border-zinc-800/60">
+        <div className="max-w-[1100px] mx-auto w-full h-14 px-6 flex items-center justify-between">
+          <StageStepper
+            currentStepIndex={currentStepIndex}
+            completedSteps={completedSteps}
+            isGenerating={isGenerating}
+          />
           <span className="text-xs text-zinc-500">Set destination + dates</span>
         </div>
       </div>
@@ -159,15 +179,29 @@ export function PlanHeader({
         </div>
       </div>
 
-      {/* Stage progress indicator */}
-      <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 py-2">
-        <StageStepper stageIndex={stageIndex} isGenerating={isGenerating} />
+      {/* Stage progress indicator with status pill */}
+      <div className="border-b border-zinc-800 bg-zinc-900">
+        <div className="flex items-center justify-between px-4 py-2">
+          <StageStepper
+            currentStepIndex={currentStepIndex}
+            completedSteps={completedSteps}
+            isGenerating={isGenerating}
+          />
 
-        {/* Status indicator */}
-        {isGenerating && (
-          <span className="text-xs text-amber-500">
-            Generating...
-          </span>
+          {/* Status pill - shown during generation */}
+          {statusPillText && (
+            <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs text-amber-400">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>{statusPillText}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Sub-status line - shown during generation */}
+        {subStatusText && (
+          <div className="px-4 pb-2">
+            <p className="text-xs text-zinc-500">{subStatusText}</p>
+          </div>
         )}
       </div>
     </div>

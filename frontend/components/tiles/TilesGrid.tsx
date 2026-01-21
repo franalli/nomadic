@@ -73,6 +73,8 @@ type TilesGridProps = {
   onRetry?: () => void;
   /** Callback to show toast notification when tile is selected (Tier 10.19) */
   onSelectionToast?: (message: string) => void;
+  /** Set of tile IDs that were saved/shortlisted (show first with badge) */
+  savedTileIds?: Set<string>;
 };
 
 export const TilesGrid = memo(function TilesGrid({
@@ -86,6 +88,7 @@ export const TilesGrid = memo(function TilesGrid({
   loadError = false,
   onRetry,
   onSelectionToast,
+  savedTileIds = new Set(),
 }: TilesGridProps) {
   const [activeTab, setActiveTab] = useState<TileTabKey>(forcedTab ?? 'stays');
   const effectiveTab = forcedTab ?? activeTab;
@@ -102,8 +105,17 @@ export const TilesGrid = memo(function TilesGrid({
   }, [tiles]);
 
   const filteredTiles = useMemo(() => {
-    return tiles.filter((tile) => resolveTabForTile(tile) === effectiveTab);
-  }, [effectiveTab, tiles]);
+    const filtered = tiles.filter((tile) => resolveTabForTile(tile) === effectiveTab);
+    // Sort saved tiles first
+    if (savedTileIds.size > 0) {
+      return [...filtered].sort((a, b) => {
+        const aIsSaved = savedTileIds.has(a.id) ? 1 : 0;
+        const bIsSaved = savedTileIds.has(b.id) ? 1 : 0;
+        return bIsSaved - aIsSaved; // Saved items first
+      });
+    }
+    return filtered;
+  }, [effectiveTab, tiles, savedTileIds]);
 
   const priceSummary = useMemo(() => {
     const priceValues = tiles
@@ -231,6 +243,7 @@ export const TilesGrid = memo(function TilesGrid({
               }
               onToggleSelect={() => onTileToggle?.(tile, effectiveTab)}
               onSelectionToast={onSelectionToast}
+              isSaved={savedTileIds.has(tile.id)}
             />
           ))
         )}

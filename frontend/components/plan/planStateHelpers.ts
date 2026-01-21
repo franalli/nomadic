@@ -40,9 +40,22 @@ export function canShowBookingTiles(state: PlanViewState): boolean {
   return state === 'S3_ITINERARY_READY';
 }
 
-/** Can show tiles preview? (collapsed in S2 if tiles exist) */
-export function canShowTilesPreview(state: PlanViewState, tileCount: number): boolean {
-  return state.startsWith('S2_') && tileCount > 0;
+/**
+ * Can show tiles preview? Only when S2 READY, not generating, AND has strategy content.
+ * This prevents showing deals while strategy is still loading (skeleton).
+ */
+export function canShowTilesPreview(
+  state: PlanViewState,
+  tileCount: number,
+  generation?: GenerationState | null,
+  hasStrategyContent?: boolean
+): boolean {
+  return (
+    state === 'S2_STRATEGY_READY' &&
+    tileCount > 0 &&
+    !isGenerating(generation) &&
+    hasStrategyContent === true
+  );
 }
 
 /** Get the appropriate stage label */

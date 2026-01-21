@@ -46,6 +46,9 @@ interface NodeProgressProps {
   // Strategy-specific (optional)
   stage?: number;
   topic?: string;
+  // Action-specific copy (optional, overrides default label/stage)
+  actionTitle?: string;
+  actionSubtext?: string;
 }
 
 // Stage labels for strategy node
@@ -62,6 +65,8 @@ export const NodeProgress = ({
   estimatedDurationMs,
   startTime,
   stage,
+  actionTitle,
+  actionSubtext,
 }: NodeProgressProps) => {
   const [elapsed, setElapsed] = useState(0);
 
@@ -94,6 +99,10 @@ export const NodeProgress = ({
       ? 'Almost done...'
       : `~${remainingSec}s remaining`;
 
+  // Use action-specific copy if provided, otherwise fall back to default
+  const displayLabel = actionTitle ?? label;
+  const displaySubtext = actionSubtext ?? stageLabel ?? null;
+
   return (
     <div className="text-left message-enter">
       <div className="border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-flex flex-col gap-2 rounded-2xl rounded-bl-md px-4 py-3 shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -101,11 +110,11 @@ export const NodeProgress = ({
           <Icon
             className={`h-4 w-4 animate-pulse transition-colors duration-500 ${isComplete ? 'text-amber-500' : 'text-primary'}`}
           />
-          <span className="font-medium">{label}</span>
-          {stageLabel && (
+          <span className="font-medium">{displayLabel}</span>
+          {displaySubtext && (
             <>
               <span className="text-muted-foreground">-</span>
-              <span className="text-muted-foreground">{stageLabel}</span>
+              <span className="text-muted-foreground">{displaySubtext}</span>
             </>
           )}
         </div>

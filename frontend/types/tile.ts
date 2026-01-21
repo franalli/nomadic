@@ -19,6 +19,8 @@ export type Tile = {
   rating?: number;
   location_label?: string;
   meta?: Record<string, unknown>;
+  /** Price basis: 'per_night', 'per_person', 'per_trip', etc. */
+  price_basis?: string;
 
   // Expedia Rapid API pricing fields
   /** Total price including all taxes and fees (property_inclusive from Expedia) */

@@ -13,9 +13,18 @@ export interface CompactTilesListProps {
   tiles: Tile[];
 }
 
-function formatPrice(amount: number | undefined, currency: string): string {
-  if (amount === undefined || amount === null) return '';
-  return `${currency} ${amount.toLocaleString()}`;
+function formatPrice(
+  amount: number | undefined,
+  currency: string,
+  priceBasis?: string
+): string {
+  if (amount == null || !currency) return '';
+  const rounded = Math.round(amount).toLocaleString();
+  const suffix =
+    priceBasis === 'per_night' ? '/night' :
+    priceBasis === 'per_person' ? '/person' :
+    priceBasis === 'per_trip' ? '' : '';  // No suffix for total
+  return `${currency} ${rounded}${suffix}`;
 }
 
 export function CompactTilesList({ tiles }: CompactTilesListProps) {
@@ -38,7 +47,7 @@ export function CompactTilesList({ tiles }: CompactTilesListProps) {
               </span>
             )}
             <span className="text-sm text-zinc-400 font-medium">
-              {formatPrice(tile.total_inclusive ?? tile.price_estimate, tile.currency)}
+              {formatPrice(tile.total_inclusive ?? tile.price_estimate, tile.currency, tile.price_basis)}
             </span>
           </div>
         </li>

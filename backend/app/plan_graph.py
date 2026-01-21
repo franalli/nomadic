@@ -74,12 +74,17 @@ from app.pattern_matching import (
     DENSE_INPUT_KEYWORDS,
     ENTHUSIASTIC_TONE_PATTERNS,
     FAMILY_COMPOSITION_PATTERN,
+    # Field request pattern (for "set budget", "budget?", etc.)
+    FIELD_REQUEST_PATTERN,
+    FIELD_REQUEST_TARGET_MAP,
     FROM_VERB_TO_PATTERN,
     FRUSTRATED_TONE_PATTERNS,
     # Generate request pattern
     GENERATE_REQUEST_PATTERN,
     GREETING_BLOCKLIST,
     GREETING_PATTERN,
+    # Guard for field request (skip if contains values)
+    HAS_VALUE_PATTERN,
     # Hotel patterns
     INFEASIBILITY_SIGNALS,
     # Destination patterns
@@ -7732,6 +7737,68 @@ def _detect_short_circuit(text: str, state: "GraphState") -> Optional[Dict[str, 
             "parsed": None,
         }
 
+    # 5a. Booking type add pattern (e.g., "Add hotels", "Include flights")
+    # Must come BEFORE field_request to intercept these commands and enable booking_types
+    # instead of falling through to the "Missing constraint." fallback
+    BOOKING_ADD_KEYWORDS = {"hotel", "hotels", "flight", "flights", "activity", "activities"}
+    text_clean_lower = text_clean.lower()
+    words = set(text_clean_lower.split())
+    # Check if this is an "add X" pattern for booking types
+    if words & {"add", "include", "yes"} and words & BOOKING_ADD_KEYWORDS:
+        # Map to booking_type key
+        booking_key = None
+        if words & {"hotel", "hotels"}:
+            booking_key = "hotels"
+        elif words & {"flight", "flights"}:
+            booking_key = "flights"
+        elif words & {"activity", "activities"}:
+            booking_key = "activities"
+
+        if booking_key:
+            _debug_short_circuit_decision(
+                text,
+                "booking_type_add",
+                last_field,
+                "TRIGGERED",
+                reason=f"booking_type_add:{booking_key}",
+            )
+            # Human-friendly confirmation
+            confirmations = {
+                "hotels": "Got it, I'll include hotel options.",
+                "flights": "Got it, I'll include flight options.",
+                "activities": "Got it, I'll include activity options.",
+            }
+            return {
+                "type": "booking_type_add",
+                "response": confirmations[booking_key],
+                "action": None,
+                "parsed": {"booking_types": {booking_key: True}},
+                "field_target": None,
+            }
+
+    # 5b. Field request pattern (e.g., "Set budget", "budget?", "add budget")
+    # GUARD: Skip if text contains digits/currency - let normal extraction handle values
+    if not HAS_VALUE_PATTERN.search(text_clean):
+        field_match = FIELD_REQUEST_PATTERN.match(text_clean)
+        if field_match:
+            matched_field = field_match.group(1).lower()
+            target_field = FIELD_REQUEST_TARGET_MAP.get(matched_field)
+            if target_field:
+                _debug_short_circuit_decision(
+                    text,
+                    "field_request",
+                    last_field,
+                    "TRIGGERED",
+                    reason=f"field_request:{target_field}",
+                )
+                return {
+                    "type": "field_request",
+                    "response": None,
+                    "action": "ask_field",
+                    "parsed": None,
+                    "field_target": target_field,
+                }
+
     # 6-10. Off-topic, bare inputs - REMOVED: Now handled by LLM for better accuracy
     # Off-topic detection moved to router node with off_topic intent
     # Bare destination/date/travelers/origin detection removed - too brittle
@@ -14789,6 +14856,10 @@ async def generate_responder(state: GraphState) -> GraphState:
 
     _, start_ns = _debug_node_entry("generate_responder", state)
 
+    # Clear stale strategy_sections to prevent showing old data during destination changes
+    if state.metadata:
+        state.metadata.pop("strategy_sections", None)
+
     ti = state.trip_inputs
 
     # Minimum requirement: at least destinations must be set
@@ -14870,6 +14941,22 @@ async def generate_responder(state: GraphState) -> GraphState:
         # Fallback to the raw branch if normalization fails
         state.branches = [default_branch]
 
+    # Populate strategy_sections from branches for UI rendering
+    # Uses resilient field access with fallbacks
+    if state.branches:
+        strategy_sections = []
+        for i, branch in enumerate(state.branches[:3]):
+            title = branch.get("label") or branch.get("name") or f"Option {i+1}"
+            bullets = branch.get("highlights") or branch.get("bullets") or []
+            strategy_sections.append(
+                {
+                    "id": branch.get("id") or f"section_{i}",
+                    "title": title,
+                    "bullets": bullets[:6],
+                }
+            )
+        state.metadata["strategy_sections"] = strategy_sections
+
     _debug(
         "Generate responder complete",
         ready=state.ready_to_generate,
@@ -14915,6 +15002,23 @@ def short_circuit_responder(state: GraphState) -> GraphState:
         if sc_type == "greeting":
             state.metadata["last_question_field"] = "destinations"
         _debug("Using template response", response=sc_response[:50])
+    elif sc_type == "field_request":
+        # User explicitly requested a specific field (e.g., "Set budget", "budget?")
+        # The extractor already set up the question via llm_blocked_fallback()
+        # Just preserve that state - don't regenerate or overwrite
+        _debug(
+            "Preserving field_request question",
+            question_target=state.question_target,
+            last_summary=state.last_summary[:50] if state.last_summary else None,
+        )
+    elif sc_type == "booking_type_add":
+        # User requested to add a booking type (e.g., "Add hotels", "Include flights")
+        # Response was already set by _detect_short_circuit, parsed data flows
+        # through normalize_inputs. Just preserve the state - don't regenerate.
+        _debug(
+            "Booking type add - preserving response",
+            response_preview=state.last_summary[:50] if state.last_summary else None,
+        )
     else:
         # Generate a contextual follow-up question with field tracking
         follow_up, asked_field = _default_follow_up_with_field(
@@ -14943,8 +15047,11 @@ def short_circuit_responder(state: GraphState) -> GraphState:
     # Always regenerate contextual suggestions to match the current question
     # (Previous suggestions may be stale from a different question)
     # Note: We no longer use static fallback suggestions - LLM generates them
-    question_target = state.metadata.get("last_question_field")
-    state.question_target = question_target
+    # Don't overwrite question_target for field_request or booking_type_add
+    # (extractor already set it)
+    if sc_type not in ("field_request", "booking_type_add"):
+        question_target = state.metadata.get("last_question_field")
+        state.question_target = question_target
     state.suggested_responses = []  # LLM will generate context-aware suggestions
     _debug_suggestions(state.suggested_responses, source="short_circuit_responder")
 

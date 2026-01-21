@@ -59,6 +59,12 @@ interface StrategyStageRendererProps {
   canGeneratePlan?: boolean;
   /** Fallback title from tripInputs if no destinationCard */
   fallbackTitle?: string;
+  /** Whether user has set dates (for stepper state) */
+  hasDates?: boolean;
+  /** Whether currently expanding to itinerary (S3 generation) */
+  isExpandingItinerary?: boolean;
+  /** Current backend sub-stage for status text */
+  currentSubStage?: string | null;
   onExpandToItinerary?: () => void;
   onViewBookingOptions?: () => void;
   onReset?: () => void;
@@ -67,6 +73,12 @@ interface StrategyStageRendererProps {
   lastError?: string | null;
   /** Retry handler for itinerary generation */
   onRetry?: () => void;
+  /** Shortlist: set of saved tile IDs */
+  savedTileIds?: Set<string>;
+  /** Shortlist: count of saved stays */
+  savedStaysCount?: number;
+  /** Shortlist: callback when user saves/unsaves a tile */
+  onSaveTile?: (tile: Tile) => void;
 }
 
 function renderStageContent(
@@ -155,12 +167,18 @@ export function StrategyStageRenderer({
   generation,
   canGeneratePlan = false,
   fallbackTitle,
+  hasDates = false,
+  isExpandingItinerary = false,
+  currentSubStage,
   onExpandToItinerary,
   onViewBookingOptions,
   onReset: _onReset,
   onRefineAssumptions,
   lastError,
   onRetry,
+  savedTileIds = new Set(),
+  savedStaysCount = 0,
+  onSaveTile,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -170,7 +188,8 @@ export function StrategyStageRenderer({
     guardedEnforcePolicy(state, viewModel);
   }, [state, viewModel]);
 
-  const nextAction = getNextAction(state, generation);
+  // hasTripContext = canGeneratePlan (destination + dates set)
+  const nextAction = getNextAction(state, generation, canGeneratePlan);
   const currentStage = getStageFromState(state);
   const generating = isGenerating(generation);
 
@@ -182,6 +201,8 @@ export function StrategyStageRenderer({
           destinationCard={undefined}
           currentStage="bootstrap"
           fallbackTitle={fallbackTitle}
+          planViewState="S0_BOOTSTRAP"
+          hasDates={hasDates}
         />
         <div className="flex flex-1 items-center justify-center p-4">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-center">
@@ -196,12 +217,16 @@ export function StrategyStageRenderer({
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      {/* Renderer owns header */}
+      {/* Renderer owns header - single stepper + status pill */}
       <PlanHeader
         destinationCard={destinationCard}
         currentStage={currentStage}
         isGenerating={generating}
         fallbackTitle={fallbackTitle}
+        planViewState={state}
+        hasDates={hasDates}
+        isExpandingItinerary={isExpandingItinerary}
+        currentSubStage={currentSubStage}
       />
 
       {/* Stage content - scrollable with bottom padding for footer */}
@@ -221,7 +246,14 @@ export function StrategyStageRenderer({
         )}
 
         {/* BookingSection rendered conditionally (not "always") */}
-        <BookingSection state={state} tiles={tiles} />
+        <BookingSection
+          state={state}
+          tiles={tiles}
+          generation={generation}
+          hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+          savedTileIds={savedTileIds}
+          onSaveTile={onSaveTile}
+        />
       </div>
 
       {/* Sticky footer - inside container, not global */}
@@ -234,6 +266,7 @@ export function StrategyStageRenderer({
           onViewBookingOptions={onViewBookingOptions}
           lastError={lastError}
           onRetry={onRetry}
+          savedStaysCount={savedStaysCount}
         />
       )}
     </div>

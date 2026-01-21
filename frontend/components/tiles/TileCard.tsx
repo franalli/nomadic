@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { apiFetch } from '@/lib/api';
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -25,6 +26,8 @@ type TileCardProps = {
   onToggleSelect?: (tile: Tile) => void;
   /** Callback to show a toast notification when tile is selected */
   onSelectionToast?: (message: string) => void;
+  /** Whether this tile was saved/shortlisted (show "Saved" badge) */
+  isSaved?: boolean;
 };
 
 /**
@@ -58,8 +61,9 @@ export const TileCard = memo(function TileCard({
   isSelected,
   onToggleSelect,
   onSelectionToast,
+  isSaved = false,
 }: TileCardProps) {
-  const [isLiked, setIsLiked] = useState(false);
+  const [isLiked, setIsLiked] = useState(isSaved);
   // Track just-selected state for animation feedback
   const [justSelected, setJustSelected] = useState(false);
   // Track previous selection state to detect transitions
@@ -162,27 +166,21 @@ export const TileCard = memo(function TileCard({
       onKeyDown={handleKeyDown}
     >
       <div className="relative aspect-[4/3] w-full overflow-hidden">
-        {tile.image_url && !imageError ? (
-          <>
-            {/* Tier 11.7: Skeleton shown while image loads */}
-            {!imageLoaded && (
-              <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
-            )}
-            <img
-              src={tile.image_url}
-              alt={tile.title}
-              loading="lazy"
-              onLoad={() => setImageLoaded(true)}
-              onError={() => setImageError(true)}
-              className={cn(
-                'h-full w-full object-cover transition duration-700 group-hover:scale-105',
-                !imageLoaded && 'opacity-0'
-              )}
-            />
-          </>
-        ) : (
-          <div className="from-primary/15 via-card to-background h-full w-full bg-gradient-to-br" />
+        {/* Tier 11.7: Skeleton shown while image loads */}
+        {!imageLoaded && (
+          <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
         )}
+        <img
+          src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
+          alt={tile.title}
+          loading="lazy"
+          onLoad={() => setImageLoaded(true)}
+          onError={() => setImageError(true)}
+          className={cn(
+            'h-full w-full object-cover transition duration-700 group-hover:scale-105',
+            !imageLoaded && 'opacity-0'
+          )}
+        />
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
 
         {/* Tier 9: Increased touch target to 44x44px for mobile accessibility */}
@@ -195,13 +193,19 @@ export const TileCard = memo(function TileCard({
           <Heart className={`h-5 w-5 ${isLiked ? 'fill-red-500 text-red-500' : ''}`} />
         </button>
 
+        {/* Saved badge (from shortlist) */}
+        {isSaved && (
+          <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
+            Saved
+          </div>
+        )}
         {/* Refundable/Non-refundable badge - Expedia compliance */}
-        {tile.is_refundable === false && (
+        {!isSaved && tile.is_refundable === false && (
           <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
             Non-refundable
           </div>
         )}
-        {tile.is_refundable === true && (
+        {!isSaved && tile.is_refundable === true && (
           <div className="absolute left-2 top-2 rounded bg-emerald-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
             Free cancellation
           </div>

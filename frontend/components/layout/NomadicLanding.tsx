@@ -18,6 +18,7 @@ import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
+import { useShortlist } from '@/hooks/useShortlist';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
@@ -156,6 +157,9 @@ export function NomadicLanding() {
     handleAddActivity,
     handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
+
+  // Shortlist hook - manages user's saved tiles in S2
+  const shortlist = useShortlist();
 
   // Branch manager hook - manages branches, tiles, and generating state
   const branchManager = useBranchManager({
@@ -399,16 +403,26 @@ export function NomadicLanding() {
   // Plan View State (for StrategyStageRenderer)
   // Use backend's plan_view_state if available, otherwise derive locally
   const backendPlanViewState = storeDocument?.plan_view_state;
+  const hasStrategyContent = (storeDocument?.strategy_sections?.length ?? 0) > 0;
+
   const planViewState: PlanViewState = useMemo(() => {
-    // During generation, always show loading state (shadow loader)
+    // During generation, show loading state
     if (isGenerating) return 'S1_FRAMING';
-    // Use backend-provided state when not generating
+
+    // Use backend-provided state when available
     if (backendPlanViewState) return backendPlanViewState;
+
     // Fallback: derive from local state
     if (!hasDestination) return 'S0_BOOTSTRAP';
-    if (hasBranchesReady) return 'S1_FRAMING';
+
+    // Branches exist - determine S2 sub-state based on strategy content
+    if (hasBranchesReady) {
+      // Has strategy content = ready, otherwise still loading/blocked
+      return hasStrategyContent ? 'S2_STRATEGY_READY' : 'S2_BLOCKED';
+    }
+
     return 'S0_BOOTSTRAP';
-  }, [backendPlanViewState, hasDestination, isGenerating, hasBranchesReady]);
+  }, [backendPlanViewState, hasDestination, isGenerating, hasBranchesReady, hasStrategyContent]);
 
   // Auto-switch to Plan Mode when generation is in progress (mobile only)
   useEffect(() => {
@@ -623,8 +637,14 @@ export function NomadicLanding() {
       llmUpdatedFields={llmUpdatedFields}
       onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       planViewState={planViewState}
+      // Note: onOpenBudgetInput not wired - falls back to chat insertion.
+      // Users can also click budget pill in OptionalRefinementsSection directly.
     />
   );
+
+  // Derive sub-stage info for header status display
+  const isExpandingItinerary = generation?.stage === 'itinerary';
+  const currentSubStage = generation?.stage ?? null;
 
   // Plan View content (right panel): Stage-aware StrategyStageRenderer
   const planViewContent = (
@@ -636,112 +656,148 @@ export function NomadicLanding() {
       generation={generation}
       canGeneratePlan={canGeneratePlan}
       fallbackTitle={fallbackTitle}
+      hasDates={hasDates}
+      isExpandingItinerary={isExpandingItinerary}
+      currentSubStage={currentSubStage}
       onExpandToItinerary={handleExpandToItinerary}
       onViewBookingOptions={handleViewBookingOptions}
       onReset={handleStartNewSession}
       lastError={lastGenerationError}
       onRetry={handleExpandToItinerary}
+      savedTileIds={shortlist.savedTileIds}
+      savedStaysCount={shortlist.counts.stays}
+      onSaveTile={shortlist.toggleItem}
     />
   );
 
-  return (
-    <div className="appTopo text-foreground">
-      {/* Error Toasts - Top Right (demands attention) */}
-      <div className="fixed right-4 top-4 z-50 flex flex-col items-end gap-2">
-        <AnimatePresence mode="popLayout">
-          {toasts
-            .filter((t) => t.type === 'error')
-            .map((toast) => (
+  // Toast container elements - rendered outside .appTopo to avoid CSS conflicts
+  const errorToasts = (
+    <div
+      style={{
+        position: 'fixed',
+        top: '16px',
+        right: '16px',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        gap: '8px',
+      }}
+    >
+      <AnimatePresence mode="popLayout">
+        {toasts
+          .filter((t) => t.type === 'error')
+          .map((toast) => (
+            <motion.div
+              key={toast.id}
+              layout
+              initial={{ opacity: 0, y: -50, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9, y: -20 }}
+              transition={{
+                type: 'spring',
+                stiffness: 500,
+                damping: 35,
+                layout: { type: 'spring', stiffness: 500, damping: 35 },
+              }}
+              role="alert"
+              aria-live="assertive"
+              className="border-destructive/40 bg-destructive/5 dark:bg-destructive/20 text-destructive/70 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur-sm dark:text-red-200"
+            >
+              <span className="max-w-[260px] truncate sm:max-w-[320px]">
+                {toast.message}
+              </span>
+              <button
+                type="button"
+                className="text-destructive/60 hover:text-destructive/50 text-xs font-semibold transition-colors dark:text-red-300/70 dark:hover:text-red-300"
+                onClick={() => removeToast(toast.id)}
+                aria-label="Dismiss notification"
+              >
+                ✕
+              </button>
+            </motion.div>
+          ))}
+      </AnimatePresence>
+    </div>
+  );
+
+  const successToasts = (
+    <div
+      style={{
+        position: 'fixed',
+        top: 'auto',
+        bottom: '24px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '8px',
+        pointerEvents: 'none',
+      }}
+    >
+      <AnimatePresence mode="popLayout">
+        {toasts
+          .filter((t) => t.type !== 'error')
+          .map((toast) => {
+            const typeStyles: Record<string, string> = {
+              success:
+                'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
+              info: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
+              confirmation:
+                'border-primary/20 bg-primary/5 dark:bg-primary/20 text-primary/80 dark:text-primary-foreground/90',
+            };
+            const buttonStyles: Record<string, string> = {
+              success:
+                'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
+              info: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
+              confirmation:
+                'text-primary/40 hover:text-primary/60 dark:text-primary-foreground/50 dark:hover:text-primary-foreground/80',
+            };
+
+            return (
               <motion.div
                 key={toast.id}
                 layout
-                initial={{ opacity: 0, y: -50, scale: 0.9 }}
+                initial={{ opacity: 0, y: 20, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9, y: -20 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
                 transition={{
                   type: 'spring',
                   stiffness: 500,
                   damping: 35,
                   layout: { type: 'spring', stiffness: 500, damping: 35 },
                 }}
-                role="alert"
-                aria-live="assertive"
-                className="border-destructive/40 bg-destructive/5 dark:bg-destructive/20 text-destructive/70 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur-sm dark:text-red-200"
+                role="status"
+                aria-live="polite"
+                style={{ pointerEvents: 'auto' }}
+                className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-md backdrop-blur-sm ${typeStyles[toast.type] || typeStyles.info}`}
               >
-                <span className="max-w-[260px] truncate sm:max-w-[320px]">
+                <span className="max-w-[280px] truncate sm:max-w-[360px]">
                   {toast.message}
                 </span>
                 <button
                   type="button"
-                  className="text-destructive/60 hover:text-destructive/50 text-xs font-semibold transition-colors dark:text-red-300/70 dark:hover:text-red-300"
+                  className={`text-xs font-medium transition-colors ${buttonStyles[toast.type] || buttonStyles.info}`}
                   onClick={() => removeToast(toast.id)}
                   aria-label="Dismiss notification"
                 >
                   ✕
                 </button>
               </motion.div>
-            ))}
-        </AnimatePresence>
-      </div>
+            );
+          })}
+      </AnimatePresence>
+    </div>
+  );
 
-      {/* Confirmation/Info/Success Toasts - Bottom Center (non-intrusive) */}
-      <div className="pb-safe fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
-        <AnimatePresence mode="popLayout">
-          {toasts
-            .filter((t) => t.type !== 'error')
-            .map((toast) => {
-              // Determine colors based on toast type
-              const typeStyles: Record<string, string> = {
-                success:
-                  'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
-                info: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
-                confirmation:
-                  'border-primary/20 bg-primary/5 dark:bg-primary/20 text-primary/80 dark:text-primary-foreground/90',
-              };
-              const buttonStyles: Record<string, string> = {
-                success:
-                  'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
-                info: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
-                confirmation:
-                  'text-primary/40 hover:text-primary/60 dark:text-primary-foreground/50 dark:hover:text-primary-foreground/80',
-              };
-
-              return (
-                <motion.div
-                  key={toast.id}
-                  layout
-                  initial={{ opacity: 0, y: 50, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                  transition={{
-                    type: 'spring',
-                    stiffness: 500,
-                    damping: 35,
-                    layout: { type: 'spring', stiffness: 500, damping: 35 },
-                  }}
-                  role="status"
-                  aria-live="polite"
-                  className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-md backdrop-blur-sm ${typeStyles[toast.type] || typeStyles.info}`}
-                >
-                  <span className="max-w-[280px] truncate sm:max-w-[360px]">
-                    {toast.message}
-                  </span>
-                  <button
-                    type="button"
-                    className={`text-xs font-medium transition-colors ${buttonStyles[toast.type] || buttonStyles.info}`}
-                    onClick={() => removeToast(toast.id)}
-                    aria-label="Dismiss notification"
-                  >
-                    ✕
-                  </button>
-                </motion.div>
-              );
-            })}
-        </AnimatePresence>
-      </div>
-
-      {/* Unified Split Layout - always visible from the start */}
-      <SplitLayoutView
+  return (
+    <>
+      {/* Main app content */}
+      <div className="appTopo text-foreground">
+        {/* Unified Split Layout - always visible from the start */}
+        <SplitLayoutView
         plannerContent={plannerContent}
         planViewContent={planViewContent}
         planState={planState}
@@ -770,7 +826,12 @@ export function NomadicLanding() {
           </div>
         }
       />
-    </div>
+      </div>
+
+      {/* Toast containers - rendered outside .appTopo to avoid CSS conflicts */}
+      {errorToasts}
+      {successToasts}
+    </>
   );
 }
 

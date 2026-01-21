@@ -3,6 +3,12 @@
  * Defines which operations should show the inline loader based on node type and ETA.
  */
 
+import type {
+  LoaderActionType,
+  TriggerContext,
+  VerticalFetchType,
+} from '@/types/loader';
+
 /**
  * ETA thresholds by node type.
  * Operations with ETA below threshold won't show loader.
@@ -53,4 +59,96 @@ export function shouldShowLoaderForNode(nodeType: string, estimatedMs: number): 
 
   // Otherwise, only show if estimated duration exceeds threshold
   return estimatedMs >= threshold;
+}
+
+/**
+ * Node types that map to each action type.
+ * Used to classify incoming node_status events.
+ */
+const ACTION_TYPE_NODE_MAP: Record<string, LoaderActionType> = {
+  // Generate plan nodes
+  strategy_node: 'generate_plan',
+  plan_generation: 'generate_plan',
+  structure_node: 'generate_plan',
+
+  // Specialist nodes (part of generate_plan)
+  hiking_specialist: 'generate_plan',
+  diving_specialist: 'generate_plan',
+  skiing_specialist: 'generate_plan',
+  cycling_specialist: 'generate_plan',
+  boating_specialist: 'generate_plan',
+
+  // Create itinerary nodes
+  itinerary_node: 'create_itinerary',
+
+  // Refresh deals nodes
+  deals_search: 'refresh_deals',
+  price_refresh: 'refresh_deals',
+
+  // Vertical fetch nodes
+  flight_search: 'vertical_fetch',
+  hotel_search: 'vertical_fetch',
+  activity_search: 'vertical_fetch',
+
+  // Multi-city routing (part of generate_plan)
+  multi_city_routing: 'generate_plan',
+};
+
+/**
+ * Map vertical fetch node types to their specific vertical type.
+ */
+const VERTICAL_FETCH_NODE_MAP: Record<string, VerticalFetchType> = {
+  flight_search: 'flights',
+  hotel_search: 'stays',
+  activity_search: 'activities',
+};
+
+/**
+ * Result of action classification.
+ */
+export interface ActionClassification {
+  actionType: LoaderActionType;
+  verticalType?: VerticalFetchType;
+}
+
+/**
+ * Classify an incoming node_status event into an action type.
+ * Returns null if the node should NOT trigger the loader.
+ *
+ * @param nodeType - The type of node from SSE node_status event
+ * @param triggerContext - Optional context about what triggered the operation
+ * @returns ActionClassification or null if node should not show loader
+ */
+export function classifyNodeAction(
+  nodeType: string,
+  triggerContext?: TriggerContext
+): ActionClassification | null {
+  // Priority 1: Use trigger context if available (most reliable)
+  if (triggerContext?.isGeneratePlanTrigger) {
+    return { actionType: 'generate_plan' };
+  }
+  if (triggerContext?.isItineraryExpand) {
+    return { actionType: 'create_itinerary' };
+  }
+
+  // Priority 2: Map node type to action type
+  const actionType = ACTION_TYPE_NODE_MAP[nodeType];
+  if (!actionType) {
+    // Node type not recognized - don't show loader
+    // This handles pure chat, acknowledgment_node, validation_node, etc.
+    return null;
+  }
+
+  // For constraint changes when we already have a plan, classify as update_plan
+  if (
+    triggerContext?.isConstraintChange &&
+    actionType === 'generate_plan'
+  ) {
+    return { actionType: 'update_plan' };
+  }
+
+  // Get vertical type if applicable
+  const verticalType = VERTICAL_FETCH_NODE_MAP[nodeType];
+
+  return { actionType, verticalType };
 }

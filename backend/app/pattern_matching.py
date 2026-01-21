@@ -104,6 +104,39 @@ GENERATE_REQUEST_PATTERN = re.compile(
 COMMA_LIST_PATTERN = re.compile(r",\s*(?:and\s+)?[A-Z][a-z]+", re.IGNORECASE)
 MULTI_DESTINATION_PATTERN = re.compile(r"\b(?:and|then|also|plus)\s+[A-Z][a-z]+", re.IGNORECASE)
 
+# Field request pattern - field-only utterances (no values)
+# Matches: "set budget", "budget?", "add my budget", "budget please", "dates?"
+FIELD_REQUEST_PATTERN = re.compile(
+    r"^(?:"
+    r"(?:set|add|change|update|edit|modify|enter|specify)\s+(?:my\s+|the\s+)?"
+    r"|"
+    r"(?:my\s+|the\s+)?"
+    r")?"
+    r"(budget|dates?|destination|origin|travelers?|flights?|hotels?|activities?)"
+    r"(?:\s+please)?[\s\?\!\.]*$",
+    re.IGNORECASE,
+)
+
+# Guard: skip field request if text contains values (digits, currency)
+HAS_VALUE_PATTERN = re.compile(r"[\d$€£¥]")
+
+# Map matched field names to canonical question_target values
+FIELD_REQUEST_TARGET_MAP: Dict[str, str] = {
+    "budget": "budget",
+    "date": "dates",
+    "dates": "dates",
+    "destination": "destinations",
+    "origin": "origin",
+    "traveler": "travelers",
+    "travelers": "travelers",
+    "flight": "flights",
+    "flights": "flights",
+    "hotel": "hotels",
+    "hotels": "hotels",
+    "activity": "activities",
+    "activities": "activities",
+}
+
 
 # =============================================================================
 # 3. DATE PATTERNS

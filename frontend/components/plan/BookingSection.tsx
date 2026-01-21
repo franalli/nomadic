@@ -3,89 +3,300 @@
  *
  * Conditional tiles section for the plan view.
  * - S3: Full "Booking options" grid with tabs
- * - S2 with tiles: Collapsed "Deals found" preview (compact list, max 4 items)
+ * - S2 with tiles + strategy content: "Options to choose from" with MiniCards
+ * - S2 generating: "Searching deals…" or "Refreshing deals…" placeholder
  * - S2 without tiles: Minimal placeholder
  * - Other states: Not rendered
  */
 
 'use client';
 
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
 
-import { CompactTilesList } from '@/components/tiles/CompactTilesList';
+import { MiniCard } from '@/components/tiles/MiniCard';
+import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
+import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
-import { getTotalTileCount,selectTilesByType } from '@/lib/tileSelectors';
-import type { PlanViewState } from '@/types/plan-envelope';
+import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
+import { cn } from '@/lib/utils';
+import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
-import { canShowBookingTiles, canShowTilesPreview } from './planStateHelpers';
+import { canShowBookingTiles, canShowTilesPreview, isGenerating } from './planStateHelpers';
+
+// Category types for S2 preview
+type TileCategory = 'stays' | 'flights' | 'activities';
 
 export interface BookingSectionProps {
   state: PlanViewState;
   tiles: Record<string, Tile> | Tile[];
+  generation?: GenerationState | null;
+  hasStrategyContent?: boolean;
+  /** Set of saved tile IDs (from shortlist) */
+  savedTileIds?: Set<string>;
+  /** Callback when user clicks Save on a tile */
+  onSaveTile?: (tile: Tile) => void;
 }
 
-export function BookingSection({ state, tiles }: BookingSectionProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+export function BookingSection({
+  state,
+  tiles,
+  generation,
+  hasStrategyContent,
+  savedTileIds = new Set(),
+  onSaveTile,
+}: BookingSectionProps) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
+  const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
+  const [filters, setFilters] = useState<TileFilters>({
+    sort: 'recommended',
+    freeCancel: false,
+    maxPrice: null,
+  });
 
   // Convert tiles to array if needed
   const tileArray = Array.isArray(tiles) ? tiles : Object.values(tiles);
   const tilesByType = selectTilesByType(tiles);
   const totalTiles = getTotalTileCount(tilesByType);
 
-  // S2 with tiles: "Deals found" collapsed preview (compact list, not full TilesGrid)
-  if (canShowTilesPreview(state, totalTiles)) {
-    // For preview, show stays (hotels) first, max 4 items
-    const stayTiles = tileArray.filter(t => t.type === 'hotel' || t.type === 'stay');
-    const previewTiles = stayTiles.length > 0 ? stayTiles.slice(0, 4) : tileArray.slice(0, 4);
-    const remainingCount = totalTiles - previewTiles.length;
+  // Compute category counts
+  const stayTiles = tileArray.filter(t => t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation');
+  const flightTiles = tileArray.filter(t => t.type === 'flight');
+  const activityTiles = tileArray.filter(t => t.type === 'activity' || t.type === 'experience' || t.type === 'tour' || t.type === 'attraction');
 
+  const categoryCounts = {
+    stays: stayTiles.length,
+    flights: flightTiles.length,
+    activities: activityTiles.length,
+  };
+
+  // Apply filters and sorting to tiles
+  const applyFilters = useCallback((tilesToFilter: Tile[]): Tile[] => {
+    let result = [...tilesToFilter];
+
+    // Filter: free cancellation
+    if (filters.freeCancel) {
+      result = result.filter((t) => t.is_refundable === true);
+    }
+
+    // Filter: max price
+    if (filters.maxPrice !== null) {
+      result = result.filter((t) => {
+        const price = t.total_inclusive ?? t.price_estimate;
+        return price != null && price <= filters.maxPrice!;
+      });
+    }
+
+    // Sort
+    switch (filters.sort) {
+      case 'price_low':
+        result.sort((a, b) => {
+          const aPrice = a.total_inclusive ?? a.price_estimate ?? Infinity;
+          const bPrice = b.total_inclusive ?? b.price_estimate ?? Infinity;
+          return aPrice - bPrice;
+        });
+        break;
+      case 'price_high':
+        result.sort((a, b) => {
+          const aPrice = a.total_inclusive ?? a.price_estimate ?? 0;
+          const bPrice = b.total_inclusive ?? b.price_estimate ?? 0;
+          return bPrice - aPrice;
+        });
+        break;
+      case 'rating':
+        result.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+        break;
+      // 'recommended' keeps original order
+    }
+
+    return result;
+  }, [filters]);
+
+  // Get max price for current category (for filter presets)
+  const maxPriceInCategory = useMemo(() => {
+    const categoryTiles = activeCategory === 'stays' ? stayTiles
+      : activeCategory === 'flights' ? flightTiles
+      : activityTiles;
+    const prices = categoryTiles
+      .map((t) => t.total_inclusive ?? t.price_estimate)
+      .filter((p): p is number => p != null);
+    return prices.length > 0 ? Math.max(...prices) : undefined;
+  }, [activeCategory, stayTiles, flightTiles, activityTiles]);
+
+  // Get currency from first tile with price
+  const currency = useMemo(() => {
+    const tile = tileArray.find((t) => t.currency);
+    return tile?.currency === 'EUR' ? '€' : tile?.currency === 'GBP' ? '£' : '$';
+  }, [tileArray]);
+
+  // Get filtered tiles for active category (max 6 for S2 preview)
+  const getFilteredCategoryTiles = useCallback((category: TileCategory): Tile[] => {
+    const baseTiles = category === 'stays' ? stayTiles
+      : category === 'flights' ? flightTiles
+      : activityTiles;
+    return applyFilters(baseTiles).slice(0, 6);
+  }, [stayTiles, flightTiles, activityTiles, applyFilters]);
+
+  const previewTiles = getFilteredCategoryTiles(activeCategory);
+  const categoryTotalCount = categoryCounts[activeCategory];
+  const filteredCount = applyFilters(
+    activeCategory === 'stays' ? stayTiles
+      : activeCategory === 'flights' ? flightTiles
+      : activityTiles
+  ).length;
+  const remainingCount = Math.max(0, filteredCount - previewTiles.length);
+
+  // Handlers for MiniCard actions
+  const handleDetailsClick = useCallback((tile: Tile) => {
+    setSelectedTile(tile);
+  }, []);
+
+  const handleSaveClick = useCallback(
+    (tile: Tile) => {
+      onSaveTile?.(tile);
+    },
+    [onSaveTile]
+  );
+
+  const handleCloseModal = useCallback(() => {
+    setSelectedTile(null);
+  }, []);
+
+  // S2 with tiles + strategy content: "Options to choose from" with MiniCards
+  if (canShowTilesPreview(state, totalTiles, generation, hasStrategyContent) && totalTiles > 0) {
     return (
-      <div id="booking-section" className="border-t border-zinc-800">
-        {/* Header */}
-        <div className="px-4 pt-3 pb-1">
-          <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wide">
-            Deals found
-          </h3>
+      <>
+        <div id="booking-section" className="border-t border-zinc-800">
+          {/* Header */}
+          <div className="px-4 pt-4 pb-1">
+            <h3 className="text-sm font-medium text-zinc-200">
+              Options to choose from
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Compare and save favorites. Booking links unlock after itinerary.
+            </p>
+          </div>
+
+          {/* Category chips with counts */}
+          <div className="flex gap-2 px-4 py-3">
+            {(['stays', 'flights', 'activities'] as const).map((category) => {
+              const count = categoryCounts[category];
+              const isActive = activeCategory === category;
+              const isDisabled = count === 0;
+
+              return (
+                <button
+                  key={category}
+                  onClick={() => !isDisabled && setActiveCategory(category)}
+                  disabled={isDisabled}
+                  className={cn(
+                    'px-3 py-1.5 text-xs rounded-full transition-colors font-medium',
+                    isActive
+                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                      : isDisabled
+                        ? 'bg-zinc-800/30 text-zinc-600 border border-zinc-700/30 cursor-not-allowed'
+                        : 'bg-zinc-800/50 text-zinc-400 border border-zinc-700/50 hover:border-zinc-600'
+                  )}
+                >
+                  {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Filter bar */}
+          <div className="px-4 pb-2">
+            <TileFilterBar
+              filters={filters}
+              onFiltersChange={setFilters}
+              currency={currency}
+              maxPriceInSet={maxPriceInCategory}
+            />
+          </div>
+
+          {/* Expand/collapse toggle */}
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-zinc-800/30"
+          >
+            <span className="text-zinc-400">
+              {isExpanded ? 'Hide' : 'Show'} {filteredCount} {activeCategory}
+              {filteredCount !== categoryTotalCount && (
+                <span className="text-zinc-600"> (of {categoryTotalCount})</span>
+              )}
+            </span>
+            {isExpanded ? (
+              <ChevronUp className="h-4 w-4 text-zinc-500" />
+            ) : (
+              <ChevronDown className="h-4 w-4 text-zinc-500" />
+            )}
+          </button>
+
+          {/* MiniCards grid */}
+          {isExpanded && (
+            <div className="px-4 pb-4 space-y-2">
+              {previewTiles.length > 0 ? (
+                <>
+                  {previewTiles.map((tile) => (
+                    <MiniCard
+                      key={tile.id}
+                      tile={tile}
+                      isSaved={savedTileIds.has(tile.id)}
+                      onDetailsClick={handleDetailsClick}
+                      onSaveClick={handleSaveClick}
+                    />
+                  ))}
+                  {remainingCount > 0 && (
+                    <p className="text-xs text-zinc-500 pt-2">
+                      +{remainingCount} more {activeCategory} available
+                    </p>
+                  )}
+                </>
+              ) : filteredCount === 0 && categoryTotalCount > 0 ? (
+                <div className="text-xs text-zinc-500 py-2">
+                  <p>No {activeCategory} match your filters.</p>
+                  <button
+                    type="button"
+                    onClick={() => setFilters({ sort: 'recommended', freeCancel: false, maxPrice: null })}
+                    className="text-amber-500 hover:text-amber-400 mt-1"
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-500 py-2">
+                  No {activeCategory} found yet.
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
-        <button
-          onClick={() => setIsExpanded(!isExpanded)}
-          className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-zinc-800/50"
-        >
-          <div className="flex items-center gap-2">
-            <span className="text-zinc-300">{totalTiles} options</span>
-            <span className="text-zinc-500">- Preview</span>
-          </div>
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-zinc-500" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-zinc-500" />
-          )}
-        </button>
+        {/* Details modal */}
+        <TileDetailsModal
+          tile={selectedTile}
+          isOpen={selectedTile !== null}
+          isSaved={selectedTile ? savedTileIds.has(selectedTile.id) : false}
+          onClose={handleCloseModal}
+          onSaveClick={handleSaveClick}
+        />
+      </>
+    );
+  }
 
-        {!isExpanded && (
-          <p className="px-4 pb-3 text-xs text-zinc-500">
-            Preview only — finalize itinerary to book.
-          </p>
-        )}
-
-        {isExpanded && (
-          <div className="px-4 pb-4">
-            <CompactTilesList tiles={previewTiles} />
-            {remainingCount > 0 && (
-              <p className="text-xs text-zinc-500 mt-2">
-                +{remainingCount} more options available after itinerary
-              </p>
-            )}
-          </div>
-        )}
+  // S2 generating: context-aware placeholder
+  if (state.startsWith('S2_') && isGenerating(generation)) {
+    const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
+    return (
+      <div id="booking-section" className="px-4 py-2">
+        <p className="text-xs text-zinc-500">{message}</p>
       </div>
     );
   }
 
-  // S2 without tiles: minimal 1-line placeholder (no heavy borders)
+  // S2 without tiles or without strategy content: minimal placeholder
   if (state.startsWith('S2_')) {
     return (
       <div id="booking-section" className="px-4 py-2">
@@ -115,7 +326,7 @@ export function BookingSection({ state, tiles }: BookingSectionProps) {
           </div>
           <span className="text-xs text-zinc-500">Prices from partners</span>
         </div>
-        <TilesGrid tiles={tileArray} hideTabSwitcher={false} />
+        <TilesGrid tiles={tileArray} hideTabSwitcher={false} savedTileIds={savedTileIds} />
       </div>
     );
   }
