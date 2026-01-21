@@ -418,28 +418,58 @@ input[type="number"]::-webkit-outer-spin-button {
 /* These tokens automatically adapt to light/dark mode */
 
 :root {
-  /* Light mode semantic tokens - "ink on paper" approach */
+  /* Light mode semantic tokens - "ink on paper" approach, improved contrast */
   --theme-bg: #F3F5F7;        /* paper tint, not pure white */
   --theme-panel: #FFFFFF;      /* cards/surfaces are white */
-  --theme-surface-2: rgba(0, 0, 0, 0.045);
-  --theme-overlay: rgba(0, 0, 0, 0.06);
-  --theme-border: rgba(0, 0, 0, 0.16);  /* stronger borders */
+  --theme-surface-2: rgba(0, 0, 0, 0.055);  /* was 0.045 - chips more visible */
+  --theme-overlay: rgba(0, 0, 0, 0.07);     /* was 0.06 - better hover states */
+  --theme-border: rgba(0, 0, 0, 0.12);      /* card/chip outlines */
+  --theme-hairline: rgba(0, 0, 0, 0.06);    /* subtle dividers, footer borders */
   --theme-text: rgba(0, 0, 0, 0.90);
-  --theme-text-muted: rgba(0, 0, 0, 0.66);
+  --theme-text-muted: rgba(0, 0, 0, 0.72);  /* was 0.66 - improved contrast */
+  --theme-link-muted: rgba(0, 0, 0, 0.50);  /* footer links */
+  --theme-link-muted-hover: rgba(0, 0, 0, 0.70);
   --theme-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+
+  /* Chip state tokens - 3 visual states: inactive, active, open */
+  --chip-bg: rgba(255, 255, 255, 0.85);
+  --chip-border: rgba(0, 0, 0, 0.12);
+  --chip-text: rgba(0, 0, 0, 0.75);
+  --chip-border-hover: rgba(0, 0, 0, 0.20);
+  --chip-active-bg: rgba(16, 185, 129, 0.10);
+  --chip-active-border: rgba(16, 185, 129, 0.45);
+  --chip-active-text: rgba(0, 0, 0, 0.85);
+  --chip-active-icon: rgba(16, 185, 129, 0.95);
+  --chip-open-border: rgba(16, 185, 129, 0.55);
+  --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Dark mode semantic tokens */
+    /* Dark mode semantic tokens - improved contrast for WCAG AA */
     --theme-bg: #080A0B;
     --theme-panel: #0B0F10;
-    --theme-surface-2: rgba(255, 255, 255, 0.04);
-    --theme-overlay: rgba(255, 255, 255, 0.06);
-    --theme-border: rgba(255, 255, 255, 0.12);
+    --theme-surface-2: rgba(255, 255, 255, 0.08);   /* was 0.04 - chips more visible */
+    --theme-overlay: rgba(255, 255, 255, 0.08);     /* was 0.06 - better hover states */
+    --theme-border: rgba(255, 255, 255, 0.12);      /* card/chip outlines */
+    --theme-hairline: rgba(255, 255, 255, 0.06);    /* subtle dividers */
     --theme-text: rgba(255, 255, 255, 0.92);
-    --theme-text-muted: rgba(255, 255, 255, 0.70);
+    --theme-text-muted: rgba(255, 255, 255, 0.78);  /* was 0.70 - WCAG AA compliant */
+    --theme-link-muted: rgba(255, 255, 255, 0.50);  /* footer links - improved contrast */
+    --theme-link-muted-hover: rgba(255, 255, 255, 0.70);
     --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+
+    /* Chip state tokens - dark mode */
+    --chip-bg: rgba(255, 255, 255, 0.04);
+    --chip-border: rgba(255, 255, 255, 0.12);
+    --chip-text: rgba(255, 255, 255, 0.78);
+    --chip-border-hover: rgba(255, 255, 255, 0.20);
+    --chip-active-bg: rgba(16, 185, 129, 0.12);
+    --chip-active-border: rgba(16, 185, 129, 0.55);
+    --chip-active-text: rgba(255, 255, 255, 0.92);
+    --chip-active-icon: rgba(185, 255, 230, 0.95);
+    --chip-open-border: rgba(16, 185, 129, 0.65);
+    --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
   }
 }
 
@@ -447,23 +477,53 @@ input[type="number"]::-webkit-outer-spin-button {
 .light {
   --theme-bg: #F3F5F7;
   --theme-panel: #FFFFFF;
-  --theme-surface-2: rgba(0, 0, 0, 0.045);
-  --theme-overlay: rgba(0, 0, 0, 0.06);
-  --theme-border: rgba(0, 0, 0, 0.16);
+  --theme-surface-2: rgba(0, 0, 0, 0.055);  /* was 0.045 - chips more visible */
+  --theme-overlay: rgba(0, 0, 0, 0.07);     /* was 0.06 - better hover states */
+  --theme-border: rgba(0, 0, 0, 0.12);      /* card/chip outlines */
+  --theme-hairline: rgba(0, 0, 0, 0.06);    /* subtle dividers, footer borders */
   --theme-text: rgba(0, 0, 0, 0.90);
-  --theme-text-muted: rgba(0, 0, 0, 0.66);
+  --theme-text-muted: rgba(0, 0, 0, 0.72);  /* was 0.66 - improved contrast */
+  --theme-link-muted: rgba(0, 0, 0, 0.50);  /* footer links */
+  --theme-link-muted-hover: rgba(0, 0, 0, 0.70);
   --theme-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+
+  /* Chip state tokens - light mode */
+  --chip-bg: rgba(255, 255, 255, 0.85);
+  --chip-border: rgba(0, 0, 0, 0.12);
+  --chip-text: rgba(0, 0, 0, 0.75);
+  --chip-border-hover: rgba(0, 0, 0, 0.20);
+  --chip-active-bg: rgba(16, 185, 129, 0.10);
+  --chip-active-border: rgba(16, 185, 129, 0.45);
+  --chip-active-text: rgba(0, 0, 0, 0.85);
+  --chip-active-icon: rgba(16, 185, 129, 0.95);
+  --chip-open-border: rgba(16, 185, 129, 0.55);
+  --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.12);
 }
 
 .dark {
   --theme-bg: #080A0B;
   --theme-panel: #0B0F10;
-  --theme-surface-2: rgba(255, 255, 255, 0.04);
-  --theme-overlay: rgba(255, 255, 255, 0.06);
-  --theme-border: rgba(255, 255, 255, 0.12);
+  --theme-surface-2: rgba(255, 255, 255, 0.08);   /* was 0.04 - chips more visible */
+  --theme-overlay: rgba(255, 255, 255, 0.08);     /* was 0.06 - better hover states */
+  --theme-border: rgba(255, 255, 255, 0.12);      /* card/chip outlines */
+  --theme-hairline: rgba(255, 255, 255, 0.06);    /* subtle dividers */
   --theme-text: rgba(255, 255, 255, 0.92);
-  --theme-text-muted: rgba(255, 255, 255, 0.70);
+  --theme-text-muted: rgba(255, 255, 255, 0.78);  /* was 0.70 - WCAG AA compliant */
+  --theme-link-muted: rgba(255, 255, 255, 0.50);  /* footer links - improved contrast */
+  --theme-link-muted-hover: rgba(255, 255, 255, 0.70);
   --theme-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+
+  /* Chip state tokens - dark mode */
+  --chip-bg: rgba(255, 255, 255, 0.04);
+  --chip-border: rgba(255, 255, 255, 0.12);
+  --chip-text: rgba(255, 255, 255, 0.78);
+  --chip-border-hover: rgba(255, 255, 255, 0.20);
+  --chip-active-bg: rgba(16, 185, 129, 0.12);
+  --chip-active-border: rgba(16, 185, 129, 0.55);
+  --chip-active-text: rgba(255, 255, 255, 0.92);
+  --chip-active-icon: rgba(185, 255, 230, 0.95);
+  --chip-open-border: rgba(16, 185, 129, 0.65);
+  --chip-open-shadow: 0 0 0 2px rgba(16, 185, 129, 0.18);
 }
 
 /* ===== Chip Hierarchy System ===== */
@@ -647,36 +707,33 @@ input[type="number"]::-webkit-outer-spin-button {
 }
 
 /* ===== Topography Variables (Single Source of Truth) ===== */
+/* SVG used as mask-image; background-color controls stroke color */
+/* Uniform topo - content readability via local backplates, not masking */
 :root {
-  --topo-opacity: 0.14;
-  --topo-contrast: 1.04;
-  --topo-blend: multiply;
+  --topo-opacity: 0.05;
+  --topo-color: rgba(0, 0, 0, 0.24);  /* effective: 0.05 × 0.24 = 0.012 - subtle, not wallpaper */
   --topo-scale: 1400px;
 }
 
 .dark {
-  --topo-opacity: 0.20;
-  --topo-contrast: 1.06;
-  --topo-blend: screen;
+  --topo-opacity: 0.095;
+  --topo-color: rgba(255, 255, 255, 0.50);  /* effective: 0.095 × 0.50 = 0.048 */
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
-    --topo-opacity: 0.20;
-    --topo-contrast: 1.06;
-    --topo-blend: screen;
+    --topo-opacity: 0.095;
+    --topo-color: rgba(255, 255, 255, 0.50);
   }
 }
 
 /* Mobile: boost visibility */
 @media (max-width: 768px) {
   :root {
-    --topo-opacity: 0.16;
-    --topo-contrast: 1.08;
+    --topo-opacity: 0.07;
   }
   .dark, :root:not(.light) {
-    --topo-opacity: 0.22;
-    --topo-contrast: 1.10;
+    --topo-opacity: 0.11;
   }
 }
 
@@ -692,13 +749,17 @@ input[type="number"]::-webkit-outer-spin-button {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background-image: url("/assets/contours.svg");
-  background-repeat: repeat;
-  background-size: var(--topo-scale);
-  background-position: center;
+  /* Simple SVG mask - uniform topo across entire viewport */
+  -webkit-mask-image: url("/assets/contours.svg");
+  mask-image: url("/assets/contours.svg");
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+  -webkit-mask-size: var(--topo-scale);
+  mask-size: var(--topo-scale);
+  -webkit-mask-position: center;
+  mask-position: center;
+  background-color: var(--topo-color);
   opacity: var(--topo-opacity);
-  mix-blend-mode: var(--topo-blend);
-  filter: contrast(var(--topo-contrast));
 }
 
 /* All content above topo */
@@ -707,17 +768,54 @@ input[type="number"]::-webkit-outer-spin-button {
   z-index: 1;
 }
 
-/* ===== Right Canvas (Surface only, no topo) ===== */
+/* ===== Right Canvas (Surface only, topo shows through) ===== */
 .rightCanvas {
   position: relative;
   overflow: hidden;
   background: transparent; /* Let global topo show through */
 }
 
-/* Content layering */
+/* Content layering - above topo */
 .rightCanvas > * {
   position: relative;
   z-index: 1;
+}
+
+/*
+ * Right panel subtle vignette - helps focus content without obscuring topo.
+ * Uses edge vignette (not center gradient) so topo remains visible in main area.
+ */
+.rightCanvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Edge vignette - darkens edges slightly, keeps center clear for topo */
+  background: radial-gradient(
+    ellipse 90% 80% at 50% 50%,
+    transparent 50%,
+    rgba(0, 0, 0, 0.02) 100%
+  );
+}
+
+/* Dark mode: lighter edge vignette */
+@media (prefers-color-scheme: dark) {
+  .rightCanvas::after {
+    background: radial-gradient(
+      ellipse 90% 80% at 50% 50%,
+      transparent 50%,
+      rgba(255, 255, 255, 0.01) 100%
+    );
+  }
+}
+
+.dark .rightCanvas::after {
+  background: radial-gradient(
+    ellipse 90% 80% at 50% 50%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.01) 100%
+  );
 }
 
 /* ===== Chip Fill Animation ===== */

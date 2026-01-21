@@ -159,6 +159,34 @@ class TileRefreshResponse(BaseModel):
     verticals_refreshed: List[str]
 
 
+# =============================================================================
+# Expand Itinerary (Stage 3 Generation)
+# =============================================================================
+
+
+class ExpandItineraryRequest(BaseModel):
+    """Request to expand strategy into full itinerary (Stage 2 -> Stage 3)."""
+
+    trip_context_id: int
+    idempotency_key: str = Field(
+        description="Client-generated UUID to prevent duplicate generation"
+    )
+
+
+class ExpandItineraryStreamEvent(BaseModel):
+    """NDJSON streaming event for expand-itinerary endpoint."""
+
+    type: Literal["progress", "envelope", "done", "error"]
+    # Progress events
+    stage: Optional[Literal["structure", "strategy", "itinerary"]] = None
+    message: Optional[str] = None
+    pct: Optional[int] = None
+    # Envelope events - partial document update
+    plan_envelope: Optional[Dict[str, Any]] = None
+    # Done events
+    plan_view_state: Optional[str] = None
+
+
 class TileClickEvent(BaseModel):
     request_id: Optional[str] = None
     tile_id: str  # the tile identifier coming from the UI
@@ -505,6 +533,18 @@ class Conflict(BaseModel):
     code: ConflictCode
 
 
+class AckUpdate(BaseModel):
+    """Detailed update info for collapsible message UI."""
+
+    field: str  # Canonical UI key (e.g., "destination", "origin", "dates")
+    to: str  # New value (human-readable)
+    from_value: Optional[str] = None  # Previous value if overwritten
+
+
+# Ack status for constraint updates
+AckStatus = Literal["applied", "partial", "no_change", "needs_clarification", "failed"]
+
+
 class PlanDocumentData(BaseModel):
     """
     The JSON structure stored in plan_documents.document column.
@@ -529,6 +569,9 @@ class PlanDocumentData(BaseModel):
         None  # Previous trip_inputs for rollback (whitelisted fields)
     )
     update_provenance: Optional[Literal["lqa", "extractor", "user_edit"]] = None  # Debugging aid
+    # Detailed ack payload for collapsible messages UI
+    ack_status: AckStatus = "applied"
+    ack_updates: List[AckUpdate] = Field(default_factory=list)  # Field + value changes
 
     # ==========================================================================
     # Plan State Envelope - unified frontend state (populated at response time)

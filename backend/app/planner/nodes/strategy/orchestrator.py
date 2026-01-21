@@ -285,22 +285,18 @@ async def call_strategy_for_plan(
 
         context = "\n".join(context_parts)
 
-        messages = [
-            {"role": "system", "content": prompt + context},
-            {"role": "user", "content": f"Generate a detailed {topic} plan for {dest_str}"},
-        ]
+        system_prompt = prompt + context
+        user_message = f"Generate a detailed {topic} plan for {dest_str}"
 
         # Call LLM with FULL tier token budget (1536)
-        response_text = ""
-        async for chunk in call_llm_streaming_with_json_field(
-            messages=messages,
+        response_text = await call_llm_streaming_with_json_field(
             model=settings.llm_specialist_model,
+            prompt=system_prompt,
+            stream_field="",  # Empty string - no field streaming needed
             max_tokens=1536,  # FULL tier for Stage 2
-            json_field=None,
-            timeout=settings.llm_timeout_specialist,
-        ):
-            if isinstance(chunk, str):
-                response_text += chunk
+            user_message=user_message,
+            timeout_seconds=settings.llm_timeout_specialist,
+        )
 
         # Parse JSON response (primary path)
         content = _parse_json_strategy_response(response_text, topic)

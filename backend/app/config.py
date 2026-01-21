@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     openai_plan_model: str = "gpt-4o-mini"  # Model for planning
     openai_small_model: str = "gpt-4o-mini"  # Small model for simple tasks
     openai_medium_model: str = "gpt-4o-mini"  # Medium model for moderate tasks
+    llm_specialist_model: str = "gpt-4o-mini"  # Model for strategy specialist calls
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning

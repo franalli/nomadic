@@ -117,6 +117,21 @@ export interface BookingStatus {
 }
 
 // =============================================================================
+// Generation State (Progress Tracking)
+// =============================================================================
+
+/**
+ * Generation state for tracking async operations.
+ * Envelope wins if present, else use local UI state.
+ */
+export interface GenerationState {
+  active: boolean;
+  stage: 'structure' | 'strategy' | 'itinerary';
+  message?: string;
+  pct?: number;
+}
+
+// =============================================================================
 // Plan View State Machine (Stage-Aware Right-Side View)
 // =============================================================================
 
@@ -263,6 +278,20 @@ export interface UndoSnapshot {
 }
 
 /**
+ * Ack status for collapsible messages.
+ */
+export type AckStatus = 'applied' | 'partial' | 'no_change' | 'needs_clarification' | 'failed';
+
+/**
+ * Detailed update info for collapsible message UI.
+ */
+export interface AckUpdate {
+  field: string;  // Canonical UI key
+  to: string;     // New value (human-readable)
+  from_value?: string;  // Previous value if overwritten
+}
+
+/**
  * Update provenance for debugging.
  */
 export type UpdateProvenance = 'lqa' | 'extractor' | 'user_edit';
@@ -297,9 +326,18 @@ export interface PlanEnvelope {
   conflicts?: Conflict[];
   undo_snapshot?: UndoSnapshot | null;
   update_provenance?: UpdateProvenance | null;
+  // Detailed ack payload for collapsible messages
+  ack_status?: AckStatus;
+  ack_updates?: AckUpdate[];
 
   // Suggestions (backend emits, frontend displays only in bootstrap)
   suggested_responses?: string[];
+
+  // ==========================================================================
+  // Generation State (Progress Tracking)
+  // ==========================================================================
+  /** Generation progress - envelope wins if present, else use local UI state */
+  generation?: GenerationState;
 
   // ==========================================================================
   // Plan View State Machine (Stage-Aware Right-Side View)

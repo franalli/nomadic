@@ -19,6 +19,15 @@ import type {
   Conflict,
   UndoSnapshot,
   UpdateProvenance,
+  AckStatus,
+  AckUpdate,
+  PlanViewState,
+  StrategySection,
+  OpenDecision,
+  ItineraryOverview,
+  DayCard,
+  ItineraryAssumptions,
+  GenerationState,
 } from './plan-envelope';
 
 export type UpdatedBy = 'user' | 'planner';
@@ -140,6 +149,9 @@ export type PlanDocumentData = {
   conflicts?: Conflict[];
   undo_snapshot?: UndoSnapshot | null;
   update_provenance?: UpdateProvenance | null;
+  // Detailed ack payload for collapsible messages
+  ack_status?: AckStatus;
+  ack_updates?: AckUpdate[];
 
   // ==========================================================================
   // Plan State Envelope - unified frontend state (populated at response time)
@@ -156,6 +168,28 @@ export type PlanDocumentData = {
   destination_card?: DestinationCard | null;
   /** Per-tab booking status (factual, no tone, no emoji) */
   booking_status?: BookingStatus | null;
+
+  // ==========================================================================
+  // Plan View State Machine (Stage-Aware Right-Side View)
+  // ==========================================================================
+  /** State machine state - determines what content to show in right panel */
+  plan_view_state?: PlanViewState;
+
+  /** Stage 2 content (populated when plan_view_state in S2_*) */
+  strategy_sections?: StrategySection[];
+  open_decisions?: OpenDecision[];
+
+  /** Stage 3 content (populated when plan_view_state in S3_*) */
+  itinerary_overview?: ItineraryOverview | null;
+  day_cards?: DayCard[];
+  itinerary_assumptions?: ItineraryAssumptions | null;
+
+  /** State flags */
+  needs_refresh?: boolean;
+  can_expand_to_itinerary?: boolean;
+
+  /** Generation progress - envelope wins if present, else use local UI state */
+  generation?: GenerationState;
 };
 
 export type PlanDocumentResponse = {

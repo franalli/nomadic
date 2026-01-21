@@ -75,9 +75,9 @@ function InlineEditPillInner({
   // Icon color based on constraint state (not LLM update status)
   // Priority: conflict > set > unset
   const getIconColor = () => {
-    if (hasConflict) return 'text-[#C88A1E]';    // Conflict Amber
-    if (hasValue) return 'text-[#E2A23A]';       // State Amber (set)
-    return '';                                    // Uses parent opacity
+    if (hasConflict) return 'text-[#C88A1E]';                  // Conflict Amber
+    if (hasValue) return 'text-[var(--chip-active-icon)]';    // Teal accent (set)
+    return '';                                                  // Uses parent color
   };
 
   // Echo overlay for causal feedback (one-shot, 300ms total)
@@ -107,19 +107,19 @@ function InlineEditPillInner({
       className={cn(
         'flex flex-col gap-1.5 rounded-2xl px-3 py-2.5 relative overflow-visible',
         'transition-all duration-[120ms] ease-out h-full',
-        // State-based styling per chip spec (using theme tokens for light/dark mode)
+        // State-based styling using chip tokens
         hasValue
-          // Filled: stronger presence
-          ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] font-semibold'
-          // Empty (subdued): lower contrast for cold start per spec
-          : 'border border-[var(--theme-border)] bg-[var(--theme-surface-2)] text-[var(--theme-text-muted)] opacity-70',
+          // Active/Filled state: accent tint, stronger presence
+          ? 'border border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold'
+          // Inactive/Default state: subtle, clickable appearance
+          : 'border border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
         // Hover state for empty pills
-        !hasValue && 'hover:opacity-90 hover:bg-[var(--theme-overlay)]',
-        // Conflict state: dashed border
-        hasConflict && 'border-dashed border-[rgba(255,176,0,0.35)]',
+        !hasValue && 'hover:border-[var(--chip-border-hover)]',
+        // Conflict state: dashed amber border
+        hasConflict && 'border-dashed border-[rgba(255,176,0,0.45)]',
         hasError && 'border-destructive/50 bg-destructive/5',
         // Focus visible ring
-        'focus-within:ring-1 focus-within:ring-primary/65',
+        'focus-within:ring-1 focus-within:ring-[var(--chip-active-icon)]/50',
         className
       )}
       style={{

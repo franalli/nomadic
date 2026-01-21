@@ -1,6 +1,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
+import Link from 'next/link';
 import React, { memo } from 'react';
 
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
@@ -71,10 +72,10 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   const { mode, isDesktop } = useMobileMode();
 
   return (
-    <div className="flex flex-col min-h-screen bg-[var(--theme-bg)] pt-[calc(48px+env(safe-area-inset-top))] lg:pt-0">
+    <div className="flex flex-col min-h-screen pt-[calc(48px+env(safe-area-inset-top))] lg:pt-0">
       {/* Compact Header (branding) - always visible on desktop, mode-aware on mobile */}
       {headerContent && (
-        <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-border)] bg-[var(--theme-panel)]">
+        <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-hairline)] bg-[var(--theme-panel)]">
           {headerContent}
         </header>
       )}
@@ -104,9 +105,10 @@ export const SplitLayoutView = memo(function SplitLayoutView({
               className={cn(
                 'hidden lg:flex lg:flex-col',
                 'h-[calc(100vh-48px)]', // Full height minus header
-                'border-r border-[var(--theme-border)]',
+                'border-r border-[var(--theme-hairline)]',
                 'bg-[var(--theme-panel)]',
-                'shadow-[8px_0_20px_rgba(0,0,0,0.04)]' // subtle separation
+                // Enhanced multi-layer shadow for better panel separation
+                'shadow-[4px_0_12px_rgba(0,0,0,0.06),8px_0_24px_rgba(0,0,0,0.04)]'
               )}
               style={{ position: 'relative', zIndex: 1 }}
               aria-label="Trip planner"
@@ -114,6 +116,16 @@ export const SplitLayoutView = memo(function SplitLayoutView({
               <div className="flex-1 overflow-y-auto no-scrollbar p-5">
                 {plannerContent}
               </div>
+              {/* Desktop footer - pinned at bottom of left rail */}
+              <footer className="shrink-0 flex items-center justify-center gap-3 px-5 py-3 border-t border-[var(--theme-hairline)] text-[11px] text-[var(--theme-link-muted)]">
+                <Link href="/privacy" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Privacy</Link>
+                <span aria-hidden="true" className="opacity-30">·</span>
+                <Link href="/terms" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Terms</Link>
+                <span aria-hidden="true" className="opacity-30">·</span>
+                <Link href="/cookies" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Cookies</Link>
+                <span aria-hidden="true" className="opacity-30">·</span>
+                <Link href="/contact" className="hover:text-[var(--theme-link-muted-hover)] transition-colors">Contact</Link>
+              </footer>
             </aside>
 
             {/* Right Panel: Plan View (60% or remaining space) */}
@@ -141,7 +153,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
             {mode === 'planner' ? (
               <motion.main
                 key="mobile-planner"
-                className="flex-1 overflow-y-auto p-4 lg:hidden"
+                className="flex-1 overflow-y-auto p-4 lg:hidden bg-[var(--theme-panel)]"
                 initial="plannerEnter"
                 animate="plannerCenter"
                 exit="plannerExit"

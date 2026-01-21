@@ -1,25 +1,29 @@
 'use client';
 
-import { addDays, addWeeks, nextSaturday } from 'date-fns';
+// date-fns imports removed - no longer needed after TripDetailsForm removal
 import { AnimatePresence, motion } from 'framer-motion';
 import { Compass, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
-import { useBranchManager, type PlanResultPayload } from '@/components/layout/hooks/useBranchManager';
+import {
+  useBranchManager,
+  type PlanResultPayload,
+} from '@/components/layout/hooks/useBranchManager';
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
-import { TripDetailsForm } from '@/components/layout/TripDetailsForm';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
+import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewState, PlanViewModel } from '@/types/plan-envelope';
+import type { GenerationState } from '@/components/plan/planStateHelpers';
 
 // Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
 interface ChangeReceiptData {
@@ -41,38 +45,6 @@ export interface Toast {
   type: ToastType;
   createdAt: number;
 }
-
-// Date presets for quick date selection - extracted to avoid duplication
-const DATE_PRESETS = [
-  {
-    label: 'This weekend',
-    getDates: () => {
-      const sat = nextSaturday(new Date());
-      return { from: sat, to: addDays(sat, 1) };
-    },
-  },
-  {
-    label: 'Next weekend',
-    getDates: () => {
-      const sat = nextSaturday(addWeeks(new Date(), 1));
-      return { from: sat, to: addDays(sat, 1) };
-    },
-  },
-  {
-    label: '1 week',
-    getDates: () => {
-      const start = addDays(new Date(), 1);
-      return { from: start, to: addDays(start, 6) };
-    },
-  },
-  {
-    label: '2 weeks',
-    getDates: () => {
-      const start = addDays(new Date(), 1);
-      return { from: start, to: addDays(start, 13) };
-    },
-  },
-];
 
 // Helper to detect which trip input fields changed between two states
 function detectChangedFieldNames(
@@ -134,10 +106,12 @@ export function NomadicLanding() {
     return { ...DEFAULT_TRIP_INPUTS, ...storeTripInputs };
   }, [storeTripInputs]);
 
-
   // Toast notification state - supports multiple stacked toasts
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
+
+  // Local UI generation state (fallback if backend doesn't emit generation in envelope)
+  const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
 
   // Add a toast with optional type (defaults to 'info')
   // Confirmation toasts coalesce (replace existing confirmations) to avoid stacking rapid changes
@@ -177,7 +151,7 @@ export function NomadicLanding() {
     handleUpdateFlightSettings,
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
-    handleUpdateActivitySettings,
+    handleUpdateActivitySettings: _handleUpdateActivitySettings,
     handleAddActivity,
     handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
@@ -227,7 +201,10 @@ export function NomadicLanding() {
 
       // Compute what changed for receipt
       const newInputs = result.response?.document?.trip_inputs ?? null;
-      const changedFields = detectChangedFieldNames(previousTripInputsRef.current, newInputs);
+      const changedFields = detectChangedFieldNames(
+        previousTripInputsRef.current,
+        newInputs
+      );
 
       if (changedFields.length > 0) {
         setReceiptData({
@@ -264,37 +241,38 @@ export function NomadicLanding() {
   // Note: resetDraft is accessed via tripInputsEditorRef.current in branchManager callback
   const {
     tripInputsDraft,
-    editingField,
-    selectedLocationBadge,
-    destinationInput,
-    destinationInputExpanded,
-    originInput,
-    originInputExpanded,
-    pendingOrigin,
-    pendingDestination,
-    validationError,
-    clearValidationError,
     setTripInputsDraft,
-    setEditingField,
-    setSelectedLocationBadge,
-    setDestinationInput,
-    setDestinationInputExpanded,
-    setOriginInput,
-    setOriginInputExpanded,
-    handleStartEditingField,
-    handleFieldChange,
-    handleCommitField,
-    handleSetOrigin,
-    handleRemoveOrigin,
-    handleRemoveTravelers,
+    handleFieldChange: _handleFieldChange,
+    handleCommitField: _handleCommitField,
     handleUpdateAdults,
     handleUpdateChildren,
     handleToggleRequiresAssistance,
-    handleRemoveBudget,
-    handleUpdateCurrency,
-    handleToggleMultiCity,
-    handleAddDestination,
-    handleRemoveDestination,
+    handleUpdateCurrency: _handleUpdateCurrency,
+    // Unused after TripDetailsForm removal - kept for potential future use
+    editingField: _editingField,
+    selectedLocationBadge: _selectedLocationBadge,
+    destinationInput: _destinationInput,
+    destinationInputExpanded: _destinationInputExpanded,
+    originInput: _originInput,
+    originInputExpanded: _originInputExpanded,
+    pendingOrigin: _pendingOrigin,
+    pendingDestination: _pendingDestination,
+    validationError: _validationError,
+    clearValidationError: _clearValidationError,
+    setEditingField: _setEditingField,
+    setSelectedLocationBadge: _setSelectedLocationBadge,
+    setDestinationInput: _setDestinationInput,
+    setDestinationInputExpanded: _setDestinationInputExpanded,
+    setOriginInput: _setOriginInput,
+    setOriginInputExpanded: _setOriginInputExpanded,
+    handleStartEditingField: _handleStartEditingField,
+    handleSetOrigin: _handleSetOrigin,
+    handleRemoveOrigin: _handleRemoveOrigin,
+    handleRemoveTravelers: _handleRemoveTravelers,
+    handleRemoveBudget: _handleRemoveBudget,
+    handleToggleMultiCity: _handleToggleMultiCity,
+    handleAddDestination: _handleAddDestination,
+    handleRemoveDestination: _handleRemoveDestination,
   } = tripInputsEditor;
 
   // Date range selector hook - manages calendar state and date selection
@@ -306,17 +284,18 @@ export function NomadicLanding() {
   });
 
   // Destructure commonly used values from the date range hook
+  // Note: Currently unused after TripDetailsForm removal, kept for potential future use
   const {
-    calendarOpen,
-    selectedDateRange,
-    previewDays,
-    hasDateValidationWarning,
-    handleCalendarDayClick,
-    handleCalendarDayMouseEnter,
-    handleCalendarMouseLeave,
-    handleCalendarOpenChange,
-    handleDatePresetClick,
-    handleResetDates,
+    calendarOpen: _calendarOpen,
+    selectedDateRange: _selectedDateRange,
+    previewDays: _previewDays,
+    hasDateValidationWarning: _hasDateValidationWarning,
+    handleCalendarDayClick: _handleCalendarDayClick,
+    handleCalendarDayMouseEnter: _handleCalendarDayMouseEnter,
+    handleCalendarMouseLeave: _handleCalendarMouseLeave,
+    handleCalendarOpenChange: _handleCalendarOpenChange,
+    handleDatePresetClick: _handleDatePresetClick,
+    handleResetDates: _handleResetDates,
   } = dateRangeSelector;
 
   // Toast auto-dismiss effect - handles multiple toasts with different timings
@@ -371,30 +350,64 @@ export function NomadicLanding() {
       return 'INCOMPLETE';
     }
     return 'STABLE';
-  }, [documentPlanState, isGenerating, missingFields.length, hasOrigin, hasDestination, hasStartDate]);
+  }, [
+    documentPlanState,
+    isGenerating,
+    missingFields.length,
+    hasOrigin,
+    hasDestination,
+    hasStartDate,
+  ]);
 
   // Readiness and resolver state - kept for future use when backend provides these fields
   // These will power a visual progress indicator in the planner panel
 
   // Destination card (from backend or derive locally)
-  const destinationCard = storeDocument?.destination_card ?? (
-    hasDestination ? {
-      title: tripInputs.destinations?.[0] ?? '',
-      subtitle: `Your adventure in ${tripInputs.destinations?.[0] ?? ''}`,
-    } : undefined
-  );
+  // Use route-derived subtitle: "Origin → Destination · Date"
+  const destinationCard =
+    storeDocument?.destination_card ??
+    (hasDestination
+      ? {
+          title: tripInputs.destinations?.[0] ?? '',
+          subtitle: (() => {
+            const parts: string[] = [];
+            // Add origin → destination if we have origin
+            if (tripInputs.origin) {
+              parts.push(`${tripInputs.origin} → ${tripInputs.destinations?.[0] ?? ''}`);
+            }
+            // Add date if available
+            if (tripInputs.start_date) {
+              // Format date nicely (e.g., "Jan 21")
+              const date = new Date(tripInputs.start_date);
+              const formatted = date.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+              });
+              parts.push(formatted);
+            }
+            // Return route-derived subtitle or fallback
+            return parts.length > 0
+              ? parts.join(' · ')
+              : `Trip to ${tripInputs.destinations?.[0] ?? ''}`;
+          })(),
+        }
+      : undefined);
 
   // Booking status (from backend, for per-tab display) - kept for future booking UI
 
   // Plan View State (for StrategyStageRenderer)
-  // Derive from local state - backend doesn't populate plan_view_state yet
-  // Note: Stay at S1_FRAMING until backend provides actual strategy content with open_decisions
-  // S2_STRATEGY_READY requires open_decisions per content policy guard
+  // Use backend's plan_view_state if available, otherwise derive locally
+  const backendPlanViewState = storeDocument?.plan_view_state;
   const planViewState: PlanViewState = useMemo(() => {
+    // During generation, always show loading state (shadow loader)
+    if (isGenerating) return 'S1_FRAMING';
+    // Use backend-provided state when not generating
+    if (backendPlanViewState) return backendPlanViewState;
+    // Fallback: derive from local state
     if (!hasDestination) return 'S0_BOOTSTRAP';
-    if (isGenerating || hasBranchesReady) return 'S1_FRAMING';
+    if (hasBranchesReady) return 'S1_FRAMING';
     return 'S0_BOOTSTRAP';
-  }, [hasDestination, isGenerating, hasBranchesReady]);
+  }, [backendPlanViewState, hasDestination, isGenerating, hasBranchesReady]);
 
   // Auto-switch to Plan Mode when generation is in progress (mobile only)
   useEffect(() => {
@@ -403,127 +416,165 @@ export function NomadicLanding() {
     }
   }, [isDesktop, planViewState, switchToPlan]);
 
-  // Plan View Model - empty for now, stage views will show placeholder content
-  const planViewModel: PlanViewModel = useMemo(() => ({}), []);
+  // Plan View Model - populated from backend response via storeDocument
+  const planViewModel: PlanViewModel = useMemo(() => ({
+    strategy_sections: storeDocument?.strategy_sections,
+    open_decisions: storeDocument?.open_decisions ?? [],
+    itinerary_overview: storeDocument?.itinerary_overview,
+    day_cards: storeDocument?.day_cards,
+    itinerary_assumptions: storeDocument?.itinerary_assumptions,
+    needs_refresh: storeDocument?.needs_refresh,
+    can_expand_to_itinerary: storeDocument?.can_expand_to_itinerary,
+  }), [storeDocument]);
+
+  // Merged generation state: envelope wins if present, else local UI fallback
+  const envelopeGeneration = storeDocument?.generation as GenerationState | undefined;
+  const generation: GenerationState | null = useMemo(() => {
+    if (envelopeGeneration) return envelopeGeneration;
+    if (uiGeneration) return uiGeneration;
+    // Derive from isGenerating flag when no explicit generation state
+    if (isGenerating) return { active: true, stage: 'structure' as const };
+    return null;
+  }, [envelopeGeneration, uiGeneration, isGenerating]);
+
+  // Tiles from document store
+  const tiles = storeDocument?.tiles ?? {};
+
+  // Fallback title from tripInputs (used when destinationCard not yet available)
+  const fallbackTitle = tripInputs.destinations?.[0] ?? undefined;
 
   // CTA gating flags per strict render contract
-  // hasDates: either explicit dates OR flexible dates with duration
-  const hasDates = Boolean(tripInputs.start_date && tripInputs.end_date) ||
+  // hasDates: at least start_date OR flexible dates with duration
+  const hasDates =
+    Boolean(tripInputs.start_date) ||
     (tripInputs.date_flex === true && tripInputs.trip_duration != null);
   const canGeneratePlan = hasDestination && hasDates;
   const hasPlan = hasBranchesReady;
 
-  // Trip details section content - passed to ChatPanel
-  const tripDetailsSection = {
-    content: (
-      <TripDetailsForm
-        tripInputs={tripInputs}
-        tripInputsDraft={tripInputsDraft}
-        editingField={editingField}
-        hasOrigin={hasOrigin}
-        hasDestination={hasDestination}
-        hasDates={hasDates}
-        hasStartDate={hasStartDate}
-        hasEndDate={hasEndDate}
-        calendarOpen={calendarOpen}
-        selectedDateRange={selectedDateRange}
-        previewDays={previewDays}
-        hasDateValidationWarning={hasDateValidationWarning}
-        selectedLocationBadge={selectedLocationBadge}
-        datePresets={DATE_PRESETS}
-        originInput={originInput}
-        originInputExpanded={originInputExpanded}
-        destinationInput={destinationInput}
-        destinationInputExpanded={destinationInputExpanded}
-        pendingOrigin={pendingOrigin}
-        pendingDestination={pendingDestination}
-        validationError={validationError}
-        onClearValidationError={clearValidationError}
-        onStartEditingField={handleStartEditingField}
-        onFieldChange={handleFieldChange}
-        onCommitField={handleCommitField}
-        setTripInputsDraft={setTripInputsDraft}
-        setEditingField={setEditingField}
-        onSetOrigin={handleSetOrigin}
-        onRemoveOrigin={handleRemoveOrigin}
-        setOriginInput={setOriginInput}
-        setOriginInputExpanded={setOriginInputExpanded}
-        onAddDestination={handleAddDestination}
-        onRemoveDestination={handleRemoveDestination}
-        setDestinationInput={setDestinationInput}
-        setDestinationInputExpanded={setDestinationInputExpanded}
-        onToggleMultiCity={handleToggleMultiCity}
-        onCalendarOpenChange={handleCalendarOpenChange}
-        onCalendarDayClick={handleCalendarDayClick}
-        onCalendarDayMouseEnter={handleCalendarDayMouseEnter}
-        onCalendarMouseLeave={handleCalendarMouseLeave}
-        onDatePresetClick={handleDatePresetClick}
-        onResetDates={handleResetDates}
-        onRemoveTravelers={handleRemoveTravelers}
-        onUpdateAdults={handleUpdateAdults}
-        onUpdateChildren={handleUpdateChildren}
-        onToggleRequiresAssistance={handleToggleRequiresAssistance}
-        onRemoveBudget={handleRemoveBudget}
-        onUpdateCurrency={handleUpdateCurrency}
-        onSelectLocationBadge={setSelectedLocationBadge}
-        bookingTypes={bookingTypes}
-        flightSettings={flightSettings}
-        hotelSettings={hotelSettings}
-        activitySettings={activitySettings}
-        transportSettings={transportSettings}
-        onUpdateBookingTypes={handleUpdateBookingTypes}
-        onUpdateFlightSettings={handleUpdateFlightSettings}
-        onUpdateHotelSettings={handleUpdateHotelSettings}
-        onUpdateActivitySettings={handleUpdateActivitySettings}
-        onUpdateTransportSettings={handleUpdateTransportSettings}
-        onAddActivity={handleAddActivity}
-        onRemoveActivity={handleRemoveActivity}
-        llmUpdatedFields={llmUpdatedFields}
-        onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
-        hasPlan={hasPlan}
-      />
-    ),
-    missingFields,
-  };
+  // Handler for expanding to itinerary (streaming endpoint)
+  const handleExpandToItinerary = useCallback(async () => {
+    const tripContextId = storeDocument?.trip_context_id;
+    if (!tripContextId) {
+      addToast('Cannot generate itinerary: no trip context', 'error');
+      return;
+    }
 
-  // Planner content (left panel): TripDetailsForm + ChatPanel
+    const idempotencyKey = crypto.randomUUID();
+
+    // Set local UI generation state immediately (button disables via gating helpers)
+    setUiGeneration({ active: true, stage: 'itinerary' });
+
+    try {
+      const response = await fetch('/api/v1/expand-itinerary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trip_context_id: tripContextId,
+          idempotency_key: idempotencyKey,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Response body is null');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      // Robust buffered NDJSON parser
+      const parser = createStreamParser((event: StreamEvent) => {
+        if (event.type === 'envelope') {
+          // Merge envelope updates into document store
+          documentStore.mergeEnvelope(event.plan_envelope);
+        } else if (event.type === 'progress') {
+          setUiGeneration({
+            active: true,
+            stage: event.stage,
+            message: event.message,
+            pct: event.pct,
+          });
+        } else if (event.type === 'done') {
+          setUiGeneration(null);
+        } else if (event.type === 'error') {
+          addToast(event.message || 'Failed to generate itinerary', 'error');
+        }
+      });
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parser.feed(decoder.decode(value, { stream: true }));
+      }
+      parser.flush();
+
+    } catch (error) {
+      console.error('Failed to expand to itinerary:', error);
+      addToast('Failed to generate itinerary', 'error');
+    } finally {
+      setUiGeneration(null);
+    }
+  }, [storeDocument?.trip_context_id, documentStore, addToast]);
+
+  // Handler for viewing booking options (scroll to section)
+  const handleViewBookingOptions = useCallback(() => {
+    document.getElementById('booking-section')?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
   const plannerContent = (
-    <div className="flex flex-col gap-4">
-      {/* Trip Details Form */}
-      {tripDetailsSection.content}
-
-      {/* Chat Panel */}
-      <div className="flex-1">
-        <ChatPanel
-          ref={chatPanelRef}
-          key={chatKey}
-          selectedBranchId={selectedBranchId}
-          onPlanResult={handlePlanResultWithReceipt}
-          onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
-          onFreshStart={handleStartNewSession}
-          fullHeight={false}
-          hasBranches={hasBranchesReady}
-          readyToGenerate={readyToGenerate}
-          isGenerating={isGenerating}
-          planState={planState}
-          // Onboarding chips props - click handlers are internal to ChatPanel
-          destination={tripInputs.destinations?.[0]}
-          origin={tripInputs.origin ?? undefined}
-          dateRange={
-            hasStartDate || hasEndDate
-              ? `${formatDateForDisplay(tripInputs.start_date)}${hasStartDate && hasEndDate ? ' - ' : ''}${formatDateForDisplay(tripInputs.end_date)}`
-              : undefined
-          }
-          budget={tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined}
-          dateFlex={tripInputs.date_flex}
-          tripDuration={tripInputs.trip_duration ?? undefined}
-          // CTA gating flags
-          hasDestination={hasDestination}
-          canGeneratePlan={canGeneratePlan}
-          hasPlan={hasPlan}
-        />
-      </div>
-    </div>
+    <ChatPanel
+      ref={chatPanelRef}
+      key={chatKey}
+      selectedBranchId={selectedBranchId}
+      onPlanResult={handlePlanResultWithReceipt}
+      onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
+      onFreshStart={handleStartNewSession}
+      fullHeight={false}
+      hasBranches={hasBranchesReady}
+      readyToGenerate={readyToGenerate}
+      isGenerating={isGenerating}
+      planState={planState}
+      // Onboarding chips props - click handlers are internal to ChatPanel
+      destination={tripInputs.destinations?.[0]}
+      origin={tripInputs.origin ?? undefined}
+      dateRange={
+        hasStartDate || hasEndDate
+          ? `${formatDateForDisplay(tripInputs.start_date)}${hasStartDate && hasEndDate ? ' - ' : ''}${formatDateForDisplay(tripInputs.end_date)}`
+          : undefined
+      }
+      budget={
+        tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined
+      }
+      dateFlex={tripInputs.date_flex}
+      tripDuration={tripInputs.trip_duration ?? undefined}
+      // CTA gating flags
+      hasDestination={hasDestination}
+      canGeneratePlan={canGeneratePlan}
+      hasPlan={hasPlan}
+      // Optional Refinements props (now rendered inside ChatPanel)
+      hasDates={hasDates}
+      tripInputs={tripInputs}
+      bookingTypes={bookingTypes}
+      flightSettings={flightSettings}
+      hotelSettings={hotelSettings}
+      activitySettings={activitySettings}
+      transportSettings={transportSettings}
+      onUpdateBookingTypes={handleUpdateBookingTypes}
+      onUpdateFlightSettings={handleUpdateFlightSettings}
+      onUpdateHotelSettings={handleUpdateHotelSettings}
+      onUpdateTransportSettings={handleUpdateTransportSettings}
+      onAddActivity={handleAddActivity}
+      onRemoveActivity={handleRemoveActivity}
+      onUpdateAdults={handleUpdateAdults}
+      onUpdateChildren={handleUpdateChildren}
+      onToggleRequiresAssistance={handleToggleRequiresAssistance}
+      llmUpdatedFields={llmUpdatedFields}
+      onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
+    />
   );
 
   // Plan View content (right panel): Stage-aware StrategyStageRenderer
@@ -532,21 +583,18 @@ export function NomadicLanding() {
       state={planViewState}
       viewModel={planViewModel}
       destinationCard={destinationCard ?? undefined}
+      tiles={tiles}
+      generation={generation}
       canGeneratePlan={canGeneratePlan}
-      onExpandToItinerary={() => {
-        // TODO: Trigger expand to itinerary action
-        console.log('Expand to itinerary clicked');
-      }}
-      onViewBookingOptions={() => {
-        // TODO: Trigger view booking options
-        console.log('View booking options clicked');
-      }}
+      fallbackTitle={fallbackTitle}
+      onExpandToItinerary={handleExpandToItinerary}
+      onViewBookingOptions={handleViewBookingOptions}
       onReset={handleStartNewSession}
     />
   );
 
   return (
-    <div className="appTopo bg-background text-foreground">
+    <div className="appTopo text-foreground">
       {/* Error Toasts - Top Right (demands attention) */}
       <div className="fixed right-4 top-4 z-50 flex flex-col items-end gap-2">
         <AnimatePresence mode="popLayout">
@@ -567,12 +615,14 @@ export function NomadicLanding() {
                 }}
                 role="alert"
                 aria-live="assertive"
-                className="flex items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 dark:bg-destructive/20 px-4 py-3 text-sm text-destructive/70 dark:text-red-200 shadow-lg backdrop-blur-sm"
+                className="border-destructive/40 bg-destructive/5 dark:bg-destructive/20 text-destructive/70 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur-sm dark:text-red-200"
               >
-                <span className="max-w-[260px] truncate sm:max-w-[320px]">{toast.message}</span>
+                <span className="max-w-[260px] truncate sm:max-w-[320px]">
+                  {toast.message}
+                </span>
                 <button
                   type="button"
-                  className="text-xs font-semibold text-destructive/60 dark:text-red-300/70 transition-colors hover:text-destructive/50 dark:hover:text-red-300"
+                  className="text-destructive/60 hover:text-destructive/50 text-xs font-semibold transition-colors dark:text-red-300/70 dark:hover:text-red-300"
                   onClick={() => removeToast(toast.id)}
                   aria-label="Dismiss notification"
                 >
@@ -584,21 +634,25 @@ export function NomadicLanding() {
       </div>
 
       {/* Confirmation/Info/Success Toasts - Bottom Center (non-intrusive) */}
-      <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2 pb-safe">
+      <div className="pb-safe fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col items-center gap-2">
         <AnimatePresence mode="popLayout">
           {toasts
             .filter((t) => t.type !== 'error')
             .map((toast) => {
               // Determine colors based on toast type
               const typeStyles: Record<string, string> = {
-                success: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
+                success:
+                  'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
                 info: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
-                confirmation: 'border-primary/20 bg-primary/5 dark:bg-primary/20 text-primary/80 dark:text-primary-foreground/90',
+                confirmation:
+                  'border-primary/20 bg-primary/5 dark:bg-primary/20 text-primary/80 dark:text-primary-foreground/90',
               };
               const buttonStyles: Record<string, string> = {
-                success: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
+                success:
+                  'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
                 info: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
-                confirmation: 'text-primary/40 hover:text-primary/60 dark:text-primary-foreground/50 dark:hover:text-primary-foreground/80',
+                confirmation:
+                  'text-primary/40 hover:text-primary/60 dark:text-primary-foreground/50 dark:hover:text-primary-foreground/80',
               };
 
               return (
@@ -618,7 +672,9 @@ export function NomadicLanding() {
                   aria-live="polite"
                   className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-md backdrop-blur-sm ${typeStyles[toast.type] || typeStyles.info}`}
                 >
-                  <span className="max-w-[280px] truncate sm:max-w-[360px]">{toast.message}</span>
+                  <span className="max-w-[280px] truncate sm:max-w-[360px]">
+                    {toast.message}
+                  </span>
                   <button
                     type="button"
                     className={`text-xs font-medium transition-colors ${buttonStyles[toast.type] || buttonStyles.info}`}
@@ -641,14 +697,14 @@ export function NomadicLanding() {
         hasDestination={hasDestination}
         onReset={handleStartNewSession}
         headerContent={
-          <div className="flex items-center justify-between w-full">
+          <div className="flex w-full items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
-                <Compass className="h-5 w-5 text-primary" />
-                <span className="text-lg font-semibold text-foreground">Nomadic</span>
+                <Compass className="text-primary h-5 w-5" />
+                <span className="text-foreground text-lg font-semibold">Nomadic</span>
               </div>
-              <span className="text-sm text-muted-foreground hidden sm:inline">
-                Set trip constraints once. Everything updates together.
+              <span className="text-muted-foreground hidden text-sm sm:inline">
+                Change constraints. Keep the plan.
               </span>
             </div>
             <Button
@@ -657,7 +713,7 @@ export function NomadicLanding() {
               onClick={handleStartNewSession}
               className="text-muted-foreground hover:text-foreground"
             >
-              <RotateCcw className="h-4 w-4 mr-1.5" />
+              <RotateCcw className="mr-1.5 h-4 w-4" />
               Reset
             </Button>
           </div>

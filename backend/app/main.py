@@ -80,6 +80,7 @@ from app.planner import (
 )
 from app.planner.gates import compute_trip_readiness
 from app.schemas import (
+    AckUpdate,
     BookingStatus,
     BookingStatusItem,
     ChatHistoryResponse,
@@ -89,6 +90,8 @@ from app.schemas import (
     DeleteLastMessageResponse,
     DestinationCard,
     EntityConfidenceInfo,
+    ExpandItineraryRequest,
+    ExpandItineraryStreamEvent,
     ExtractionConfidenceInfo,
     GraphPlanErrorCode,
     GraphPlanObservability,
@@ -128,11 +131,15 @@ logger = logging.getLogger(__name__)
 
 
 def _has_missing_critical_fields(trip_inputs: dict) -> bool:
-    """Check if critical fields are missing for Stage 2."""
+    """Check if critical fields are missing for Stage 2.
+
+    For S2_STRATEGY_READY, we only require destination and start_date.
+    end_date is optional for strategy display (user can refine later).
+    """
     destinations = trip_inputs.get("destinations", [])
     start_date = trip_inputs.get("start_date")
-    end_date = trip_inputs.get("end_date")
-    return not destinations or not start_date or not end_date
+    # end_date is NOT required for S2 - strategy can be shown without it
+    return not destinations or not start_date
 
 
 def _check_stage3_gate(metadata: dict, trip_inputs: dict) -> bool:
@@ -140,7 +147,9 @@ def _check_stage3_gate(metadata: dict, trip_inputs: dict) -> bool:
     open_decisions = metadata.get("open_decisions", [])
     blocking_count = sum(1 for d in open_decisions if d.get("is_blocking"))
 
-    return (
+    # Use bool() to ensure we return True/False, not the truthy/falsy value itself
+    # (e.g., empty list [] should return False, not [])
+    return bool(
         blocking_count == 0
         and trip_inputs.get("destinations")
         and trip_inputs.get("start_date")
@@ -270,6 +279,60 @@ def _build_itinerary_assumptions(metadata: dict) -> ItineraryAssumptions | None:
         assumptions=raw_assumptions.get("assumptions", [])[:4],  # Max 4
         flexible_elements=raw_assumptions.get("flexible_elements", [])[:3],  # Max 3
     )
+
+
+def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
+    """
+    Get human-readable display value for a UI key from trip_inputs.
+
+    Maps canonical UI keys to their corresponding trip_inputs values
+    and formats them for display in collapsible message summaries.
+    """
+    # Map UI key to trip_inputs field(s)
+    if ui_key == "destination":
+        destinations = trip_inputs.get("destinations", [])
+        return ", ".join(destinations) if destinations else None
+    elif ui_key == "origin":
+        return trip_inputs.get("origin")
+    elif ui_key == "dates":
+        start = trip_inputs.get("start_date")
+        end = trip_inputs.get("end_date")
+        if start and end:
+            return f"{start} – {end}"
+        elif start:
+            return start
+        return None
+    elif ui_key == "budget":
+        budget = trip_inputs.get("budget")
+        currency = trip_inputs.get("currency", "USD")
+        return f"{currency} {budget}" if budget else None
+    elif ui_key == "travelers":
+        adults = trip_inputs.get("adults")
+        children = trip_inputs.get("children", 0)
+        if adults:
+            parts = [f"{adults} adult{'s' if adults != 1 else ''}"]
+            if children:
+                parts.append(f"{children} child{'ren' if children != 1 else ''}")
+            return ", ".join(parts)
+        return None
+    elif ui_key == "flights":
+        if trip_inputs.get("booking_types", {}).get("flights"):
+            settings = trip_inputs.get("flight_settings", {})
+            parts = []
+            if settings.get("direct_only"):
+                parts.append("Direct")
+            cabin = settings.get("cabin_class", "economy")
+            if cabin != "economy":
+                parts.append(cabin.title())
+            return " · ".join(parts) if parts else "Enabled"
+        return None
+    elif ui_key == "hotels":
+        if trip_inputs.get("booking_types", {}).get("hotels"):
+            settings = trip_inputs.get("hotel_settings", {})
+            stars = settings.get("min_stars", 0)
+            return f"{stars}+ stars" if stars else "Enabled"
+        return None
+    return None
 
 
 def _populate_plan_view_state_fields(
@@ -1085,6 +1148,22 @@ async def graph_plan_endpoint(
     if response_document.applied_updates:
         response_document.undo_snapshot = session_metadata.get("prev_trip_inputs_snapshot")
 
+    # --- Build detailed ack_updates for collapsible messages UI ---
+    ack_updates = []
+    for ui_key in response_document.applied_updates:
+        # Map UI key to trip_inputs field and get current value
+        value = _get_trip_input_display_value(ui_key, trip_inputs)
+        if value:
+            ack_updates.append(AckUpdate(field=ui_key, to=value))
+    response_document.ack_updates = ack_updates
+    # Set ack_status based on whether updates were applied
+    if ack_updates:
+        response_document.ack_status = "applied"
+    elif response_document.applied_updates:
+        response_document.ack_status = "partial"
+    else:
+        response_document.ack_status = "no_change"
+
     # --- Compute Plan State Envelope fields ---
     # Get ui_phase from request (defaults to "bootstrap")
     response_document.ui_phase = req.ui_phase or "bootstrap"
@@ -1454,6 +1533,20 @@ async def graph_plan_stream_endpoint(
             response_document.update_provenance = session_metadata.get("update_provenance")
             if response_document.applied_updates:
                 response_document.undo_snapshot = session_metadata.get("prev_trip_inputs_snapshot")
+
+            # --- Build detailed ack_updates for collapsible messages UI ---
+            ack_updates = []
+            for ui_key in response_document.applied_updates:
+                value = _get_trip_input_display_value(ui_key, trip_inputs)
+                if value:
+                    ack_updates.append(AckUpdate(field=ui_key, to=value))
+            response_document.ack_updates = ack_updates
+            if ack_updates:
+                response_document.ack_status = "applied"
+            elif response_document.applied_updates:
+                response_document.ack_status = "partial"
+            else:
+                response_document.ack_status = "no_change"
 
             # --- Compute Plan State Envelope fields ---
             # Get ui_phase from request (defaults to "bootstrap")
@@ -2073,6 +2166,197 @@ async def refresh_tiles(
         tiles=tiles_response.tiles,
         refreshed_at=datetime.utcnow().isoformat(),
         verticals_refreshed=verticals,
+    )
+
+
+# =============================================================================
+# Expand Itinerary Endpoint (Stage 2 -> Stage 3)
+# =============================================================================
+
+# Simple in-memory idempotency cache (TTL: 5 minutes)
+# In production, use Redis with TTL
+_idempotency_cache: dict[str, float] = {}
+_IDEMPOTENCY_TTL_SECONDS = 300
+
+
+def _check_idempotency(key: str) -> bool:
+    """Check if idempotency key was recently used. Returns True if duplicate."""
+    import time
+
+    now = time.time()
+
+    # Clean up old entries
+    expired = [k for k, v in _idempotency_cache.items() if now - v > _IDEMPOTENCY_TTL_SECONDS]
+    for k in expired:
+        del _idempotency_cache[k]
+
+    if key in _idempotency_cache:
+        return True  # Duplicate
+
+    _idempotency_cache[key] = now
+    return False
+
+
+@app.post("/v1/expand-itinerary")
+async def expand_itinerary_endpoint(
+    request: Request,
+    req: ExpandItineraryRequest,
+    db: AsyncSession = async_db_dependency,
+):
+    """
+    Expand strategy into full itinerary (Stage 2 -> Stage 3).
+
+    Streams NDJSON events:
+        {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
+        {"type": "envelope", "plan_envelope": {...}}
+        {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+        {"type": "error", "message": "..."}
+    """
+    # Check idempotency - return early if duplicate request
+    if _check_idempotency(req.idempotency_key):
+
+        async def duplicate_response():
+            event = ExpandItineraryStreamEvent(
+                type="error", message="Duplicate request - itinerary generation already in progress"
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+        return StreamingResponse(
+            duplicate_response(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Get session from request
+    session_id = get_session_from_request(request)
+
+    async def generate_ndjson():
+        """Generator that yields NDJSON events for itinerary generation."""
+        try:
+            session = await get_session_by_token(db, session_id)
+            if not session:
+                event = ExpandItineraryStreamEvent(type="error", message="Session not found")
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                return
+
+            doc = await get_document(db, session=session)
+            if not doc:
+                event = ExpandItineraryStreamEvent(type="error", message="No plan document found")
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                return
+
+            doc_data = get_document_data(doc)
+
+            # Emit progress: starting
+            event = ExpandItineraryStreamEvent(
+                type="progress",
+                stage="itinerary",
+                message="Generating itinerary...",
+                pct=10,
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+            # Build session state from document for planner
+            session_state = {
+                "trip_inputs": doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {},
+                "branches": (
+                    [b.model_dump() for b in doc_data.branches] if doc_data.branches else []
+                ),
+                "metadata": {"strategy_stage": 3},  # Force Stage 3
+                "today_iso": compute_today_iso(),
+            }
+
+            # Emit progress: processing
+            event = ExpandItineraryStreamEvent(
+                type="progress",
+                stage="itinerary",
+                message="Building day cards...",
+                pct=30,
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+            # Run planner to generate itinerary
+            # Use a synthetic message to trigger itinerary generation
+            try:
+                result = await asyncio.wait_for(
+                    run_turn("Generate the full day-by-day itinerary", session_state),
+                    timeout=60.0,
+                )
+            except asyncio.TimeoutError:
+                event = ExpandItineraryStreamEvent(
+                    type="error", message="Itinerary generation timed out"
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                return
+
+            # Emit progress: finalizing
+            event = ExpandItineraryStreamEvent(
+                type="progress",
+                stage="itinerary",
+                message="Finalizing itinerary...",
+                pct=80,
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+            # Extract itinerary data from result
+            new_session_state = result.get("session_state", {})
+            metadata = new_session_state.get("metadata", {})
+            trip_inputs = new_session_state.get("trip_inputs", {})
+
+            # Build envelope update
+            plan_envelope = {}
+
+            # Add itinerary fields if present
+            if "day_cards" in metadata:
+                plan_envelope["day_cards"] = metadata["day_cards"]
+            if "itinerary_overview" in metadata:
+                plan_envelope["itinerary_overview"] = metadata["itinerary_overview"]
+            if "itinerary_assumptions" in metadata:
+                plan_envelope["itinerary_assumptions"] = metadata["itinerary_assumptions"]
+
+            # Compute new plan_view_state
+            new_plan_view_state = _compute_plan_view_state(metadata, trip_inputs)
+            plan_envelope["plan_view_state"] = new_plan_view_state
+
+            # Emit envelope update
+            event = ExpandItineraryStreamEvent(
+                type="envelope",
+                plan_envelope=plan_envelope,
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+            # Persist to document if we have itinerary data
+            if plan_envelope.get("day_cards"):
+                try:
+                    await apply_planner_update(
+                        db,
+                        doc=doc,
+                        session_state=new_session_state,
+                        assistant_message=result.get("assistant_message", ""),
+                        today_iso=compute_today_iso(),
+                    )
+                    await db.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to persist itinerary: {e}")
+
+            # Emit done
+            event = ExpandItineraryStreamEvent(
+                type="done",
+                plan_view_state=new_plan_view_state,
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+        except Exception as e:
+            logger.exception(f"Error in expand-itinerary: {e}")
+            event = ExpandItineraryStreamEvent(
+                type="error", message=str(e) or "Failed to generate itinerary"
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+    return StreamingResponse(
+        generate_ndjson(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

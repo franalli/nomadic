@@ -7,16 +7,21 @@
 
 'use client';
 
+import { Sparkles } from 'lucide-react';
 import type { DestinationCard, PlanViewModel } from '@/types/plan-envelope';
 
 interface S1FramingViewProps {
   viewModel: PlanViewModel;
   destinationCard?: DestinationCard;
+  isGenerating?: boolean;
+  onGenerateStrategy?: () => void;
 }
 
 export function S1FramingView({
   viewModel,
   destinationCard,
+  isGenerating = false,
+  onGenerateStrategy,
 }: S1FramingViewProps) {
   return (
     <div className="flex flex-col h-full p-4 space-y-4">
@@ -37,7 +42,27 @@ export function S1FramingView({
       {/* Status indicator */}
       <div className="flex items-center gap-2 text-zinc-400">
         <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-        <span className="text-sm">Creating draft structure...</span>
+        <span className="text-sm">
+          {isGenerating ? 'Building your plan...' : 'Structure ready'}
+        </span>
+      </div>
+
+      {/* Progress stepper */}
+      <div className="flex items-center justify-center gap-2 py-2">
+        <div className="flex items-center gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <span className="text-xs text-zinc-400">Structure</span>
+        </div>
+        <div className="w-4 h-px bg-zinc-700" />
+        <div className="flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full ${isGenerating ? 'bg-amber-500 animate-pulse' : 'bg-zinc-600'}`} />
+          <span className="text-xs text-zinc-500">Strategy</span>
+        </div>
+        <div className="w-4 h-px bg-zinc-700" />
+        <div className="flex items-center gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-zinc-600" />
+          <span className="text-xs text-zinc-500">Itinerary</span>
+        </div>
       </div>
 
       {/* Skeleton content - max 5 lines per spec */}
@@ -67,12 +92,19 @@ export function S1FramingView({
         )}
       </div>
 
-      {/* Footer hint */}
-      <div className="text-center pt-2">
-        <p className="text-zinc-500 text-xs">
-          Ready to generate strategy
-        </p>
-      </div>
+      {/* Generate strategy button */}
+      {!isGenerating && onGenerateStrategy && (
+        <div className="text-center pt-4">
+          <button
+            type="button"
+            onClick={onGenerateStrategy}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors shadow-lg shadow-amber-500/20"
+          >
+            <Sparkles className="h-4 w-4" />
+            Generate strategy
+          </button>
+        </div>
+      )}
     </div>
   );
 }

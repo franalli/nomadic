@@ -1,6 +1,6 @@
 'use client';
 
-import { Calendar, DollarSign, MapPin, Plane } from 'lucide-react';
+import { Calendar, Check, DollarSign, MapPin, Plane } from 'lucide-react';
 import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -56,32 +56,31 @@ const Chip = memo(function Chip({ icon: Icon, label, value, onClick, disabled = 
         // Base chip styling per spec (h-7 = 28px)
         'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full',
         'transition-all duration-[120ms] ease-out active:scale-[0.98]',
-        // State-based styling using theme tokens for light/dark mode support
+        // State-based styling using chip tokens
         hasValue
-          // Filled: stronger presence, font-weight 600
-          ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] font-semibold'
-          // Empty (subdued): ~10% lower contrast - informational, not actionable
-          : 'border border-[var(--theme-border)] bg-[var(--theme-surface-2)] opacity-70',
-        // Text colors using theme tokens
-        hasValue ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-muted)]',
+          // Active/Filled state: accent tint, stronger presence
+          ? 'border border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold'
+          // Inactive/Default state: subtle, clickable appearance
+          : 'border border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
         // Hover states
-        !hasValue && !disabled && 'hover:opacity-90 hover:bg-[var(--theme-overlay)]',
-        hasValue && !disabled && 'hover:opacity-100',
+        !hasValue && !disabled && 'hover:border-[var(--chip-border-hover)]',
+        hasValue && !disabled && 'hover:border-[var(--chip-active-border)]',
         // Disabled state
         disabled && 'opacity-40 cursor-not-allowed',
         // Focus visible ring
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/65'
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50'
       )}
     >
       <Icon
         className={cn(
           'h-3.5 w-3.5 flex-shrink-0',
-          hasValue ? 'text-[#E2A23A]' : 'text-[var(--theme-text-muted)]' // State Amber when filled
+          hasValue ? 'text-[var(--chip-active-icon)]' : '' // Teal accent when filled
         )}
       />
       <span className="text-xs truncate max-w-[120px]">
         {value || label}
       </span>
+      {hasValue && <Check className="h-2.5 w-2.5 text-[var(--chip-active-icon)]" />}
     </button>
   );
 });
@@ -113,7 +112,7 @@ export const OnboardingChips = memo(function OnboardingChips({
     : undefined;
 
   return (
-    <div className="flex flex-wrap gap-2 mb-3">
+    <div className="flex flex-wrap gap-2 mb-2">
       {/* Fixed order per spec: Destination → Origin → Dates → Budget */}
       <Chip
         icon={MapPin}

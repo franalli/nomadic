@@ -170,6 +170,9 @@ type DocumentState = {
   // Set document from graph plan response (when /v1/graph_plan returns new document)
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
+  // Merge partial envelope update (used for streaming updates)
+  mergeEnvelope: (envelope: Partial<PlanDocumentData>) => void;
+
   // Restore trip inputs from a snapshot (used when undoing a message)
   restoreTripInputs: (tripInputs: DocumentTripInputs) => void;
 
@@ -683,6 +686,36 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         response.document.branches[0]?.id ||
         null,
       llmUpdatedFields: newLLMUpdatedFields,
+    });
+  },
+
+  mergeEnvelope: (envelope: Partial<PlanDocumentData>) => {
+    const { document: currentDoc } = get();
+    if (!currentDoc) return;
+
+    // Merge envelope fields into current document
+    // Only update fields that are present in the envelope
+    const updatedDoc: PlanDocumentData = {
+      ...currentDoc,
+      // Plan view state fields
+      ...(envelope.plan_view_state !== undefined && { plan_view_state: envelope.plan_view_state }),
+      ...(envelope.strategy_sections !== undefined && { strategy_sections: envelope.strategy_sections }),
+      ...(envelope.open_decisions !== undefined && { open_decisions: envelope.open_decisions }),
+      ...(envelope.itinerary_overview !== undefined && { itinerary_overview: envelope.itinerary_overview }),
+      ...(envelope.day_cards !== undefined && { day_cards: envelope.day_cards }),
+      ...(envelope.itinerary_assumptions !== undefined && { itinerary_assumptions: envelope.itinerary_assumptions }),
+      ...(envelope.needs_refresh !== undefined && { needs_refresh: envelope.needs_refresh }),
+      ...(envelope.can_expand_to_itinerary !== undefined && { can_expand_to_itinerary: envelope.can_expand_to_itinerary }),
+      // Generation state
+      ...(envelope.generation !== undefined && { generation: envelope.generation }),
+      // Tiles (if included in envelope)
+      ...(envelope.tiles !== undefined && { tiles: envelope.tiles }),
+    };
+
+    set({
+      document: updatedDoc,
+      updatedBy: 'planner',
+      updatedAt: new Date().toISOString(),
     });
   },
 

@@ -19,8 +19,8 @@ import type {
 
 interface S3ItineraryViewProps {
   viewModel: PlanViewModel;
+  /** Kept for context but not rendered (header owns destination display) */
   destinationCard?: DestinationCard;
-  onViewBookingOptions?: () => void;
 }
 
 function PeriodIcon({ period }: { period: DayBlock['period'] }) {
@@ -118,9 +118,11 @@ function OverviewCard({ overview }: { overview: ItineraryOverview }) {
 
 export function S3ItineraryView({
   viewModel,
-  destinationCard,
-  onViewBookingOptions,
+  destinationCard: _destinationCard,
 }: S3ItineraryViewProps) {
+  // destinationCard reserved for future use (header owns destination display)
+  void _destinationCard;
+
   const { day_cards = [], itinerary_overview, itinerary_assumptions } = viewModel;
   const [expandedDay, setExpandedDay] = React.useState<number | null>(null);
 
@@ -129,28 +131,14 @@ export function S3ItineraryView({
   };
 
   return (
-    <div className="flex flex-col h-full p-4 space-y-4">
-      {/* Destination card */}
-      {destinationCard && (
-        <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700/50">
-          <h2 className="text-lg font-medium text-zinc-100">
-            {destinationCard.title}
-          </h2>
-          {destinationCard.subtitle && (
-            <p className="text-sm text-zinc-400 mt-1">
-              {destinationCard.subtitle}
-            </p>
-          )}
-        </div>
-      )}
-
+    <div className="flex flex-col p-4 space-y-4">
       {/* Overview */}
       {itinerary_overview && (
         <OverviewCard overview={itinerary_overview} />
       )}
 
       {/* Day cards - collapsed by default, max 1 expanded */}
-      <div className="flex-1 space-y-2 overflow-y-auto">
+      <div className="space-y-2">
         {day_cards.map((card) => (
           <DayCardComponent
             key={card.day_number}
@@ -175,21 +163,6 @@ export function S3ItineraryView({
           </p>
         </div>
       )}
-
-      {/* CTAs */}
-      <div className="flex flex-col gap-2 pt-2">
-        <button
-          onClick={onViewBookingOptions}
-          className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white transition-colors"
-        >
-          View booking options
-        </button>
-        <button
-          className="w-full py-2 px-4 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition-colors"
-        >
-          Adjust itinerary
-        </button>
-      </div>
     </div>
   );
 }

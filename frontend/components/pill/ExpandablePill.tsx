@@ -34,6 +34,8 @@ export interface ExpandablePillProps {
   onAcknowledge?: () => void;
   /** Whether chip was just filled (triggers fill animation) */
   justFilled?: boolean;
+  /** Summary text to display when chip has a value (e.g., "Round trip · Economy") */
+  summary?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ function ExpandablePillInner({
   isLLMUpdated = false,
   onAcknowledge,
   justFilled = false,
+  summary,
 }: ExpandablePillProps) {
   const handleOpenChange = (open: boolean) => {
     // Acknowledge LLM update when user opens the pill
@@ -78,10 +81,10 @@ function ExpandablePillInner({
   // Icon color based on constraint state
   // Priority: open (editing) > conflict > set > unset
   const getIconColor = () => {
-    if (isOpen) return 'text-[#FF8A00]';           // CTA Orange (editing)
-    if (hasConflict) return 'text-[#C88A1E]';      // Conflict Amber
-    if (hasValue) return 'text-[#E2A23A]';         // State Amber (set)
-    return '';                                      // Uses parent opacity
+    if (isOpen) return 'text-[var(--chip-active-icon)]';      // Teal accent (editing)
+    if (hasConflict) return 'text-[#C88A1E]';                  // Conflict Amber
+    if (hasValue) return 'text-[var(--chip-active-icon)]';    // Teal accent (set)
+    return '';                                                  // Uses parent color
   };
 
   // Echo overlay style for one-shot feedback
@@ -108,26 +111,27 @@ function ExpandablePillInner({
             // Base chip styles per spec: 28px height, 10px padding, pill shape
             'group inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full',
             'transition-all duration-[120ms] ease-out active:scale-[0.98]',
-            // State-based styling (using theme tokens for light/dark mode)
+            // State-based styling using chip tokens
             isOpen
-              // Active/Open: higher contrast
-              ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)]'
+              // Open state: accent border + glow
+              ? 'border border-[var(--chip-open-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)]'
               : hasValue
-                // Filled: stronger presence, weight 600
-                ? 'border border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] font-semibold'
-                // Empty (subdued): lower contrast per spec
-                : 'border border-[var(--theme-border)] bg-[var(--theme-surface-2)] text-[var(--theme-text-muted)] opacity-70',
+                // Active/Filled state: accent tint, stronger presence
+                ? 'border border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold'
+                // Inactive/Default state: subtle, clickable appearance
+                : 'border border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
             // Hover states
-            !isOpen && !hasValue && 'hover:opacity-90 hover:bg-[var(--theme-overlay)]',
-            !isOpen && hasValue && 'hover:opacity-100',
-            // Conflict state: dashed border
-            hasConflict && !isOpen && 'border-dashed border-[rgba(255,176,0,0.35)]',
+            !isOpen && !hasValue && 'hover:border-[var(--chip-border-hover)]',
+            !isOpen && hasValue && 'hover:border-[var(--chip-active-border)]',
+            // Conflict state: dashed amber border
+            hasConflict && !isOpen && 'border-dashed border-[rgba(255,176,0,0.45)]',
             // Focus visible ring
-            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/65'
+            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50'
           )}
           style={{
             ...getEchoStyle(),
             ...fillAnimationStyle,
+            ...(isOpen ? { boxShadow: 'var(--chip-open-shadow)' } : {}),
           }}
         >
           <Icon
@@ -140,6 +144,11 @@ function ExpandablePillInner({
           )}>
             {label}
           </span>
+          {summary && hasValue && (
+            <span className="text-[10px] text-muted-foreground/70 truncate max-w-[100px]">
+              · {summary}
+            </span>
+          )}
           <ChevronDown
             className={cn(
               'h-3.5 w-3.5 transition-transform duration-200',

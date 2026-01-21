@@ -3,6 +3,9 @@
  *
  * Strategy ready state - shows strategy sections (collapsed) and open decisions.
  * This is the main planning view before itinerary generation.
+ *
+ * NOTE: This component renders CONTENT ONLY.
+ * Header and CTAs are owned by StrategyStageRenderer.
  */
 
 'use client';
@@ -13,10 +16,11 @@ import type { DestinationCard, PlanViewModel, StrategySection, OpenDecision } fr
 
 interface S2StrategyViewProps {
   viewModel: PlanViewModel;
+  /** @deprecated Header is now rendered by StrategyStageRenderer */
   destinationCard?: DestinationCard;
-  onExpandToItinerary?: () => void;
   onRefineAssumptions?: () => void;
-  canExpandToItinerary: boolean;
+  /** @deprecated CTA is now rendered by NextStepBar */
+  canExpandToItinerary?: boolean;
 }
 
 function StrategySectionCard({ section }: { section: StrategySection }) {
@@ -98,31 +102,20 @@ function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] }) {
 
 export function S2StrategyView({
   viewModel,
-  destinationCard,
-  onExpandToItinerary,
+  destinationCard: _destinationCard,
   onRefineAssumptions,
-  canExpandToItinerary,
+  canExpandToItinerary: _canExpandToItinerary,
 }: S2StrategyViewProps) {
+  // Unused props - header and CTA now owned by StrategyStageRenderer
+  void _destinationCard;
+  void _canExpandToItinerary;
+
   const { strategy_sections = [], open_decisions = [] } = viewModel;
 
   return (
-    <div className="flex flex-col h-full p-4 space-y-4">
-      {/* Destination card */}
-      {destinationCard && (
-        <div className="bg-zinc-800/50 rounded-lg p-4 border border-zinc-700/50">
-          <h2 className="text-lg font-medium text-zinc-100">
-            {destinationCard.title}
-          </h2>
-          {destinationCard.subtitle && (
-            <p className="text-sm text-zinc-400 mt-1">
-              {destinationCard.subtitle}
-            </p>
-          )}
-        </div>
-      )}
-
+    <div className="flex flex-col p-4 space-y-4">
       {/* Strategy sections - collapsed by default */}
-      <div className="flex-1 space-y-2 overflow-y-auto">
+      <div className="space-y-2">
         {strategy_sections.map((section) => (
           <StrategySectionCard key={section.id} section={section} />
         ))}
@@ -131,26 +124,15 @@ export function S2StrategyView({
       {/* Open decisions panel */}
       <OpenDecisionsPanel decisions={open_decisions} />
 
-      {/* CTAs */}
-      <div className="flex flex-col gap-2 pt-2">
-        <button
-          onClick={onExpandToItinerary}
-          disabled={!canExpandToItinerary}
-          className={`w-full py-2.5 px-4 rounded-lg text-sm font-medium transition-colors ${
-            canExpandToItinerary
-              ? 'bg-blue-600 hover:bg-blue-500 text-white'
-              : 'bg-zinc-700 text-zinc-400 cursor-not-allowed'
-          }`}
-        >
-          Expand to itinerary
-        </button>
+      {/* Secondary action - refine assumptions (optional) */}
+      {onRefineAssumptions && (
         <button
           onClick={onRefineAssumptions}
           className="w-full py-2 px-4 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition-colors"
         >
           Refine assumptions
         </button>
-      </div>
+      )}
     </div>
   );
 }

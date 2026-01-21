@@ -2,16 +2,19 @@
  * StrategyStageRenderer
  *
  * Main orchestrator for stage-aware right-side plan view.
- * Renders appropriate content based on current PlanViewState.
+ * Owns the chrome: header, scrollable body, sticky footer.
+ * Stage views render content only.
  *
- * State machine states:
- * - S0_BOOTSTRAP: Placeholders only
- * - S1_FRAMING: Skeleton structure
- * - S2_STRATEGY_READY: Strategy sections + open decisions
- * - S2_BLOCKED: Missing fields indicator
- * - S3_ITINERARY_READY: Day cards + overview
- * - S3_EDITING: Stale indicator + refresh CTA
- * - S3_BLOCKED: Gate failure indicator
+ * Layout:
+ * ┌─────────────────────────────┐
+ * │ PlanHeader (sticky top)     │  ← Renderer owns
+ * ├─────────────────────────────┤
+ * │ StageBody (scrollable)      │  ← Stage views render content here
+ * │   - S0/S1/S2/S3 content     │
+ * │   - BookingSection (S3)     │
+ * ├─────────────────────────────┤
+ * │ NextStepBar (sticky bottom) │  ← Renderer owns, gated by state
+ * └─────────────────────────────┘
  */
 
 'use client';
@@ -19,12 +22,23 @@
 import React from 'react';
 
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
+import { cn } from '@/lib/utils';
 import type {
   DestinationCard,
   PlanViewModel,
   PlanViewState,
 } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
 
+import { BookingSection } from './BookingSection';
+import { NextStepBar } from './NextStepBar';
+import { PlanHeader } from './PlanHeader';
+import {
+  getNextAction,
+  getStageFromState,
+  isGenerating,
+  type GenerationState,
+} from './planStateHelpers';
 import { S0BootstrapView } from './stages/S0BootstrapView';
 import { S1FramingView } from './stages/S1FramingView';
 import { S2BlockedView } from './stages/S2BlockedView';
@@ -37,35 +51,36 @@ interface StrategyStageRendererProps {
   state: PlanViewState;
   viewModel: PlanViewModel;
   destinationCard?: DestinationCard;
+  /** Tiles for BookingSection */
+  tiles?: Record<string, Tile>;
+  /** Generation state for gating */
+  generation?: GenerationState | null;
   /** Whether user can generate a plan (has destination + dates) */
   canGeneratePlan?: boolean;
+  /** Fallback title from tripInputs if no destinationCard */
+  fallbackTitle?: string;
   onExpandToItinerary?: () => void;
   onViewBookingOptions?: () => void;
   onReset?: () => void;
   onRefineAssumptions?: () => void;
 }
 
-export function StrategyStageRenderer({
-  state,
-  viewModel,
-  destinationCard,
-  canGeneratePlan = false,
-  onExpandToItinerary,
-  onViewBookingOptions,
-  onReset: _onReset,
-  onRefineAssumptions,
-}: StrategyStageRendererProps) {
-  // onReset reserved for future use (E_RESET event)
-  void _onReset;
-  // Enforce content policy in development
-  React.useEffect(() => {
-    guardedEnforcePolicy(state, viewModel);
-  }, [state, viewModel]);
-
-  // Render based on current state
+function renderStageContent(
+  state: PlanViewState,
+  viewModel: PlanViewModel,
+  destinationCard: DestinationCard | undefined,
+  canGeneratePlan: boolean,
+  onRefineAssumptions?: () => void,
+  onExpandToItinerary?: () => void
+): React.ReactNode {
   switch (state) {
     case 'S0_BOOTSTRAP':
-      return <S0BootstrapView destinationCard={destinationCard} canGeneratePlan={canGeneratePlan} />;
+      return (
+        <S0BootstrapView
+          destinationCard={destinationCard}
+          canGeneratePlan={canGeneratePlan}
+        />
+      );
 
     case 'S1_FRAMING':
       return (
@@ -80,7 +95,6 @@ export function StrategyStageRenderer({
         <S2StrategyView
           viewModel={viewModel}
           destinationCard={destinationCard}
-          onExpandToItinerary={onExpandToItinerary}
           onRefineAssumptions={onRefineAssumptions}
           canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
         />
@@ -99,7 +113,6 @@ export function StrategyStageRenderer({
         <S3ItineraryView
           viewModel={viewModel}
           destinationCard={destinationCard}
-          onViewBookingOptions={onViewBookingOptions}
         />
       );
 
@@ -121,9 +134,101 @@ export function StrategyStageRenderer({
       );
 
     default:
-      // Fallback to bootstrap view
-      return <S0BootstrapView destinationCard={destinationCard} canGeneratePlan={canGeneratePlan} />;
+      return (
+        <S0BootstrapView
+          destinationCard={destinationCard}
+          canGeneratePlan={canGeneratePlan}
+        />
+      );
   }
+}
+
+export function StrategyStageRenderer({
+  state,
+  viewModel,
+  destinationCard,
+  tiles = {},
+  generation,
+  canGeneratePlan = false,
+  fallbackTitle,
+  onExpandToItinerary,
+  onViewBookingOptions,
+  onReset: _onReset,
+  onRefineAssumptions,
+}: StrategyStageRendererProps) {
+  // onReset reserved for future use (E_RESET event)
+  void _onReset;
+
+  // Enforce content policy in development
+  React.useEffect(() => {
+    guardedEnforcePolicy(state, viewModel);
+  }, [state, viewModel]);
+
+  const nextAction = getNextAction(state, generation);
+  const currentStage = getStageFromState(state);
+  const generating = isGenerating(generation);
+
+  // Default fallback for unknown/empty states
+  if (!state) {
+    return (
+      <div className="relative flex h-full flex-col overflow-hidden">
+        <PlanHeader
+          destinationCard={undefined}
+          currentStage="bootstrap"
+          fallbackTitle={fallbackTitle}
+        />
+        <div className="flex flex-1 items-center justify-center p-4">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-center">
+            <p className="text-sm text-zinc-500">
+              Set destination and dates to begin
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex h-full flex-col overflow-hidden">
+      {/* Renderer owns header */}
+      <PlanHeader
+        destinationCard={destinationCard}
+        currentStage={currentStage}
+        isGenerating={generating}
+        fallbackTitle={fallbackTitle}
+      />
+
+      {/* Stage content - scrollable with bottom padding for footer */}
+      <div
+        className={cn(
+          'flex-1 overflow-y-auto',
+          nextAction && 'pb-20' // Reserve space for sticky footer
+        )}
+      >
+        {renderStageContent(
+          state,
+          viewModel,
+          destinationCard,
+          canGeneratePlan,
+          onRefineAssumptions,
+          onExpandToItinerary
+        )}
+
+        {/* BookingSection rendered conditionally (not "always") */}
+        <BookingSection state={state} tiles={tiles} />
+      </div>
+
+      {/* Sticky footer - inside container, not global */}
+      {nextAction && (
+        <NextStepBar
+          state={state}
+          generation={generation}
+          onExpandToItinerary={onExpandToItinerary}
+          onViewBookingOptions={onViewBookingOptions}
+        />
+      )}
+    </div>
+  );
 }
 
 export default StrategyStageRenderer;

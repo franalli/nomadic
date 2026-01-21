@@ -1,8 +1,10 @@
 'use client';
 
-import { ArrowLeft, Check, Compass, Loader2, RotateCcw } from 'lucide-react';
-import { memo } from 'react';
+import { ArrowLeft, Check, Compass, Loader2, MoreVertical, RotateCcw } from 'lucide-react';
+import Link from 'next/link';
+import { memo, useState } from 'react';
 
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import type { PlanState } from '@/types/plan-envelope';
@@ -64,6 +66,7 @@ const STATUS_CONFIG: Record<
  */
 function MobileModeHeaderInner({ planState = 'INCOMPLETE', onReset, className }: MobileModeHeaderProps) {
   const { mode, isDesktop, switchToPlanner } = useMobileMode();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Don't render on desktop - split view shows both panels
   if (isDesktop) {
@@ -126,21 +129,69 @@ function MobileModeHeaderInner({ planState = 'INCOMPLETE', onReset, className }:
           <span>{status.text}</span>
         </div>
       ) : (
-        // Planner Mode: Reset button
-        <button
-          type="button"
-          onClick={onReset}
-          className={cn(
-            'flex items-center gap-1.5',
-            'text-sm font-medium text-muted-foreground',
-            'hover:text-foreground transition-colors',
-            'px-1 py-1' // Expand tap target
-          )}
-          aria-label="Reset"
-        >
-          <RotateCcw className="h-4 w-4" />
-          <span>Reset</span>
-        </button>
+        // Planner Mode: Reset button + Menu
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onReset}
+            className={cn(
+              'flex items-center gap-1.5',
+              'text-sm font-medium text-muted-foreground',
+              'hover:text-foreground transition-colors',
+              'px-1 py-1' // Expand tap target
+            )}
+            aria-label="Reset"
+          >
+            <RotateCcw className="h-4 w-4" />
+            <span>Reset</span>
+          </button>
+
+          {/* Menu button with Popover for Help & Legal */}
+          <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="p-2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Menu"
+              >
+                <MoreVertical className="h-5 w-5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-[200px] p-2">
+              <nav className="flex flex-col">
+                <span className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Help & Legal</span>
+                <Link
+                  href="/privacy"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Privacy Policy
+                </Link>
+                <Link
+                  href="/terms"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Terms of Service
+                </Link>
+                <Link
+                  href="/cookies"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Cookie Policy
+                </Link>
+                <Link
+                  href="/contact"
+                  className="px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Contact Us
+                </Link>
+              </nav>
+            </PopoverContent>
+          </Popover>
+        </div>
       )}
     </header>
   );

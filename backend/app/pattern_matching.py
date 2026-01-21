@@ -715,7 +715,9 @@ INITIAL_DESTINATION_PATTERN = re.compile(
 # NOTE: Uses negative lookahead to prevent capturing temporal words (tomorrow, today, etc.)
 # as part of the place name. Without this, "from rome tomorrow" would capture "rome tomorrow"
 # instead of just "rome".
-_TRAILING_ORIGIN_DATE_STOP = r"tomorrow|today|tonight|next|this|on|in|for"
+_TRAILING_ORIGIN_DATE_STOP = (
+    r"tomorrow|today|tonight|next|this|on|in|for|leaving|departing|traveling|flying|driving"
+)
 TRAILING_ORIGIN_PATTERN = re.compile(
     rf"\bfrom\s+([A-Za-z]+(?:\s+(?!(?:{_TRAILING_ORIGIN_DATE_STOP}))[A-Za-z]+)?)"
     rf"(?:\s+(?:{_TRAILING_ORIGIN_DATE_STOP}|\d)|\s*[.!?,]|\s*$)",
@@ -811,14 +813,24 @@ def is_likely_location(text: str) -> bool:
 
 
 # Origin-destination pattern (e.g., "from London to Paris")
-# The destination capture excludes trailing date/time words like "tomorrow",
-# "today", etc. and numbers (e.g., "2 days") to avoid capturing
-# "Amsterdam tomorrow" or "Amsterdam 2" as a destination.
-_DATE_STOP_WORDS = (
-    r"tomorrow|today|tonight|next|this|on|in|for|with|direct|nonstop|one[- ]?way|round[- ]?trip|\d"
+# Both origin and destination captures exclude trailing date/time words and
+# travel verbs to avoid capturing "dubai going" or "rome leaving" as places.
+_TRAVEL_STOP_WORDS = (
+    r"tomorrow|today|tonight|next|this|on|in|for|with|direct|nonstop|one[- ]?way|round[- ]?trip|"
+    r"leaving|departing|flying|traveling|starting|going|heading|visiting|\d"
 )
+
+# Pattern for "from X [travel verb] to Y" (e.g., "from dubai going to rome")
+# This handles cases where a travel verb appears between origin and destination.
+# Must be checked BEFORE the generic ORIGIN_DESTINATION_PATTERN to avoid backtracking issues.
+_TRAVEL_VERBS = r"going|flying|traveling|heading|leaving|departing"
+FROM_VERB_TO_PATTERN = re.compile(
+    rf"\bfrom\s+(\w+(?:\s+\w+)?)\s+(?:{_TRAVEL_VERBS})\s+to\s+(\w+(?:\s+(?!{_TRAVEL_STOP_WORDS})\w+)?)",
+    re.IGNORECASE,
+)
+
 ORIGIN_DESTINATION_PATTERN = re.compile(
-    rf"(?:from\s+)?(\w+(?:\s+\w+)?)\s+to\s+(\w+(?:\s+(?!{_DATE_STOP_WORDS})\w+)?)",
+    rf"(?:from\s+)?(\w+(?:\s+(?!{_TRAVEL_STOP_WORDS})\w+)?)\s+to\s+(\w+(?:\s+(?!{_TRAVEL_STOP_WORDS})\w+)?)",
     re.IGNORECASE,
 )
 

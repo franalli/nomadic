@@ -74,6 +74,7 @@ from app.pattern_matching import (
     DENSE_INPUT_KEYWORDS,
     ENTHUSIASTIC_TONE_PATTERNS,
     FAMILY_COMPOSITION_PATTERN,
+    FROM_VERB_TO_PATTERN,
     FRUSTRATED_TONE_PATTERNS,
     # Generate request pattern
     GENERATE_REQUEST_PATTERN,
@@ -6995,6 +6996,31 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
                 parsed["origin_delta"] = origin_final
                 fields_extracted.append("origin")
                 _debug(f"[INITIAL_EXTRACT] Pattern 1b matched: origin={origin_final}")
+
+    # Try pattern 1c: "from X [verb] to Y" (e.g., "from dubai going to rome")
+    # This must be checked BEFORE the generic "from X to Y" pattern to handle
+    # travel verbs between origin and destination.
+    if not parsed.get("destinations_delta"):
+        from_verb_match = FROM_VERB_TO_PATTERN.search(text_clean)
+        if from_verb_match:
+            origin_text = from_verb_match.group(1).strip()
+            dest_text = from_verb_match.group(2).strip()
+
+            # Pre-validate locations
+            if is_likely_location(origin_text) and is_likely_location(dest_text):
+                origin_norm = normalize_place_synonym(origin_text)
+                dest_norm = normalize_place_synonym(dest_text)
+
+                if is_known_place(dest_norm):
+                    parsed["destinations_delta"] = [dest_norm]
+                    fields_extracted.append("destinations")
+                    _debug(f"[INITIAL_EXTRACT] Pattern 1c matched: destinations={dest_norm}")
+
+                if is_known_place(origin_norm):
+                    origin_final = normalize_place_with_fuzzy(origin_text)
+                    parsed["origin_delta"] = origin_final
+                    fields_extracted.append("origin")
+                    _debug(f"[INITIAL_EXTRACT] Pattern 1c matched: origin={origin_final}")
 
     # Try pattern 2: "from X to Y" or "X to Y"
     if not parsed.get("destinations_delta"):
@@ -13950,31 +13976,29 @@ def summarize(state: GraphState) -> GraphState:
         destinations = ti.destinations or []
         dest_str = ", ".join(destinations) if destinations else "your destination"
 
-        # Build trip summary preview for confirmation
-        preview_parts = []
+        # Build brief acknowledgment instead of verbose constraints display
+        # Format: "Got it, [destination] from [origin] on [date]" or similar
+        ack_parts = []
         if destinations:
-            preview_parts.append(f"**Destination:** {dest_str}")
-        if ti.start_date:
-            date_info = ti.start_date
-            if ti.end_date:
-                date_info = f"{ti.start_date} to {ti.end_date}"
-            preview_parts.append(f"**Dates:** {date_info}")
-        if ti.adults:
-            traveler_str = f"{ti.adults} adult{'s' if ti.adults > 1 else ''}"
-            if ti.children:
-                traveler_str += f", {ti.children} child{'ren' if ti.children > 1 else ''}"
-            preview_parts.append(f"**Travelers:** {traveler_str}")
+            ack_parts.append(dest_str)
         if ti.origin:
-            preview_parts.append(f"**From:** {ti.origin}")
+            ack_parts.append(f"from {ti.origin}")
+        if ti.start_date:
+            # Format date nicely
+            try:
+                from datetime import datetime
 
-        # Use double newlines for proper markdown paragraph breaks
-        preview = "\n\n".join(preview_parts) if preview_parts else ""
+                date_obj = datetime.strptime(ti.start_date, "%Y-%m-%d")
+                date_str = date_obj.strftime("%b %d")  # e.g., "Jan 21"
+            except (ValueError, TypeError):
+                date_str = ti.start_date
+            ack_parts.append(f"on {date_str}")
 
-        # Generate fresh ready-to-generate message with preview
-        if preview:
-            state.last_summary = f"Constraints:\n\n{preview}"
+        # Generate brief acknowledgment
+        if ack_parts:
+            state.last_summary = f"Got it, {' '.join(ack_parts)}."
         else:
-            state.last_summary = f"Ready to generate. {dest_str}."
+            state.last_summary = "Ready to generate your plan."
         # Build context-aware suggestions focused on advancing the booking
         state.suggested_responses = _build_booking_suggestions(ti, primary_action="Generate plan")
         state.question_target = None  # Clear stale question target
@@ -14782,6 +14806,21 @@ async def generate_responder(state: GraphState) -> GraphState:
     state.ready_to_generate = True
     state.last_summary = "Generating plan."
 
+    # Auto-enable default booking types when user explicitly requests generation
+    # This ensures tile_search runs and populates branches with actual tiles
+    if not ti.booking_types or not any(
+        getattr(ti.booking_types, k, False) for k in ["flights", "hotels", "activities"]
+    ):
+        from app.schemas import BookingTypes as BookingTypesSchema
+
+        ti.booking_types = BookingTypesSchema(
+            flights=True,
+            hotels=True,
+            activities=True,
+            ground_transport=False,
+        )
+        _debug("Auto-enabled default booking types for explicit plan generation")
+
     # Call strategy orchestrator to get enriched content
     strategy_results = await orchestrate_strategies(state)
     merged_content = merge_strategy_results(strategy_results)
@@ -14792,6 +14831,12 @@ async def generate_responder(state: GraphState) -> GraphState:
         has_vibe=bool(merged_content.vibe),
         highlights_count=len(merged_content.highlights),
     )
+
+    # Set strategy_stage to 2 (S2_STRATEGY_READY) after strategy orchestration
+    # This enables the frontend to display the plan view state correctly
+    meta = state.metadata or {}
+    meta["strategy_stage"] = 2
+    state.metadata = meta
 
     # Create a default branch from trip_inputs with strategy enrichment
     fallback_inputs = ti.model_dump(exclude_none=True)

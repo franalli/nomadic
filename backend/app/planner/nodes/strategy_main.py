@@ -1023,7 +1023,21 @@ async def strategy_node(state: "GraphState") -> "GraphState":
 
             state.metadata["model_used"] = llm_config["model_hint"]
             state.metadata["token_estimate"] = len(out) // 4  # Approximation
-            state.metadata["strategy_stage"] = stage_name
+            # Map stage_name string to integer for state machine compatibility
+            stage_int = {"stage0": 0, "stage1": 1, "stage2": 2, "stage3": 3}.get(stage_name, 0)
+            state.metadata["strategy_stage"] = stage_int
+
+            # Populate strategy_sections from branches for UI rendering
+            if state.branches:
+                strategy_sections = []
+                for i, branch in enumerate(state.branches[:3]):  # Max 3 sections
+                    section = {
+                        "id": branch.get("id", f"section_{i}"),
+                        "title": branch.get("name", branch.get("theme", f"Option {i+1}")),
+                        "bullets": branch.get("highlights", [])[:6],  # Max 6 bullets
+                    }
+                    strategy_sections.append(section)
+                state.metadata["strategy_sections"] = strategy_sections
             # Set provenance for streaming mode decision
             state.metadata["response_writer_node"] = f"strategy_node:{topic}:{stage_name}"
             state.metadata["response_generation_provenance"] = "llm"
@@ -1127,7 +1141,21 @@ async def strategy_node(state: "GraphState") -> "GraphState":
 
                 state.metadata["response_writer_node"] = f"strategy:{topic}:json_recovery"
                 state.metadata["response_generation_provenance"] = "llm_fallback"
-                state.metadata["strategy_stage"] = stage_name
+                # Map stage_name string to integer for state machine compatibility
+                stage_int = {"stage0": 0, "stage1": 1, "stage2": 2, "stage3": 3}.get(stage_name, 0)
+                state.metadata["strategy_stage"] = stage_int
+
+                # Populate strategy_sections from branches for UI rendering (recovery path)
+                if state.branches:
+                    strategy_sections = []
+                    for i, branch in enumerate(state.branches[:3]):
+                        section = {
+                            "id": branch.get("id", f"section_{i}"),
+                            "title": branch.get("name", branch.get("theme", f"Option {i+1}")),
+                            "bullets": branch.get("highlights", [])[:6],
+                        }
+                        strategy_sections.append(section)
+                    state.metadata["strategy_sections"] = strategy_sections
 
                 # Set pending expansion for stage 1 even on recovery
                 if stage_name == "stage1":

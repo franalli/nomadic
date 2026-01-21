@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, Loader2, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, Loader2, Lock, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -15,7 +15,18 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import { OnboardingChips } from '@/components/planner/OnboardingChips';
+import { OptionalRefinementsSection } from '@/components/planner/OptionalRefinementsSection';
+import { useDelayedLoader } from '@/hooks/useDelayedLoader';
+import type { LLMUpdatableField } from '@/state/documentStore';
+import type {
+  ActivitySettings,
+  BookingTypes,
+  FlightSettings,
+  HotelSettings,
+  TransportSettings,
+} from '@/types/document';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
+import { shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
@@ -28,6 +39,7 @@ import type {
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
+import { CollapsedMessageRow } from './CollapsedMessageRow';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
 
@@ -250,6 +262,43 @@ interface ChatPanelProps {
   canGeneratePlan?: boolean;
   /** Whether a plan has been generated (branches exist) */
   hasPlan?: boolean;
+  // Optional Refinements Section props
+  /** Whether user has set dates (for refinements gating) */
+  hasDates?: boolean;
+  /** Trip inputs for refinements */
+  tripInputs?: DocumentTripInputs;
+  /** Booking type settings */
+  bookingTypes?: BookingTypes;
+  /** Flight settings */
+  flightSettings?: FlightSettings;
+  /** Hotel settings */
+  hotelSettings?: HotelSettings;
+  /** Activity settings */
+  activitySettings?: ActivitySettings;
+  /** Transport settings */
+  transportSettings?: TransportSettings;
+  /** Update booking types callback */
+  onUpdateBookingTypes?: (settings: Partial<BookingTypes>) => void;
+  /** Update flight settings callback */
+  onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
+  /** Update hotel settings callback */
+  onUpdateHotelSettings?: (settings: Partial<HotelSettings>) => void;
+  /** Update transport settings callback */
+  onUpdateTransportSettings?: (settings: Partial<TransportSettings>) => void;
+  /** Add activity callback */
+  onAddActivity?: (activity: string) => void;
+  /** Remove activity callback */
+  onRemoveActivity?: (index: number) => void;
+  /** Update adults callback */
+  onUpdateAdults?: (value: number | null) => void;
+  /** Update children callback */
+  onUpdateChildren?: (value: number | null) => void;
+  /** Toggle requires assistance callback */
+  onToggleRequiresAssistance?: () => void;
+  /** LLM updated fields for visual indicators */
+  llmUpdatedFields?: Set<LLMUpdatableField>;
+  /** Acknowledge LLM update callback */
+  onAcknowledgeLLMUpdate?: (field: LLMUpdatableField) => void;
 }
 
 export interface ChatPanelHandle {
@@ -281,6 +330,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       hasDestination = false,
       canGeneratePlan = false,
       hasPlan = false,
+      // Optional Refinements Section props
+      hasDates = false,
+      tripInputs,
+      bookingTypes,
+      flightSettings,
+      hotelSettings,
+      activitySettings,
+      transportSettings,
+      onUpdateBookingTypes,
+      onUpdateFlightSettings,
+      onUpdateHotelSettings,
+      onUpdateTransportSettings,
+      onAddActivity,
+      onRemoveActivity,
+      onUpdateAdults,
+      onUpdateChildren,
+      onToggleRequiresAssistance,
+      llmUpdatedFields,
+      onAcknowledgeLLMUpdate,
     } = props;
 
     void _onFreshStart; // Reserved for future use - Reset button moved to global header
@@ -313,6 +381,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [hasAnimatedPulse, setHasAnimatedPulse] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
+    // Track which messages are collapsed (by message ID)
+    const [collapsedMessages, setCollapsedMessages] = useState<Set<string>>(new Set());
+    // Track last user message ID for ack updates
+    const lastUserMsgIdRef = useRef<string | null>(null);
     // Tier 11.12: Track last user message for retry on transient errors
     const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
     // Node progress tracking for showing progress bar instead of typing dots
@@ -327,6 +399,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       stage?: number;
       topic?: string;
     } | null>(null);
+
+    // Delayed loader: shows after 400ms delay, only for operations with ETA > 600ms
+    // Avoids flicker for quick operations and only shows when user would wonder "is anything happening?"
+    const delayedLoader = useDelayedLoader({ showDelay: 400, etaThreshold: 600 });
+
     const scrollContainerRef = useRef<HTMLDivElement | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
@@ -464,7 +541,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setNodeStatus(null);
       setHasReceivedFirstToken(false);
       setIsLoading(false);
-    }, [streamingMessageId, messages, updateMessage]);
+      delayedLoader.reset(); // Clear delayed loader on interrupt
+    }, [streamingMessageId, messages, updateMessage, delayedLoader]);
 
     // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
     useEffect(() => {
@@ -547,12 +625,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
 
         // Add user message - show friendly text for generate trigger
+        const userMsgId = `u_${Date.now()}`;
         const userMessage: ChatMessage = {
-          id: `u_${Date.now()}`,
+          id: userMsgId,
           role: 'user',
           content: isGenerateTrigger ? 'Generate plan' : trimmed,
+          // Mark as constraint if not a generate trigger or question
+          classification: isGenerateTrigger ? undefined : 'constraint',
+          ackStatus: 'pending',
         };
         addMessage(userMessage);
+        lastUserMsgIdRef.current = userMsgId; // Track for ack updates
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
@@ -578,11 +661,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onToken: (token: string) => {
               // Mark that we've received the first token (hides typing/progress indicator)
               setHasReceivedFirstToken(true);
+              // Dismiss delayed loader on first tangible output
+              delayedLoader.onTangibleOutput();
               // Append token to the streaming message
               appendToMessage(streamingMsgId, token);
             },
             onNodeStatus: (status: SSENodeStatusEvent['data']) => {
               if (status.status === 'started') {
+                // Check if this node qualifies for loader display based on type and ETA
+                const shouldShow = shouldShowLoaderForNode(
+                  status.node,
+                  status.estimated_duration_ms
+                );
+
+                if (shouldShow) {
+                  // Start delayed loader - will show after 400ms if no tangible output arrives
+                  delayedLoader.startLoading(status.estimated_duration_ms);
+                }
+
+                // Always set nodeStatus for the progress component (when visible)
                 setNodeStatus({
                   active: true,
                   node: status.node,
@@ -600,6 +697,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setStreamingMessageId(null);
               setNodeStatus(null); // Clear strategy progress on completion
               abortStreamRef.current = null; // Clear abort ref
+              delayedLoader.reset(); // Ensure loader is hidden
 
               // Parse the response - it matches GraphPlanResponse structure
               const data = response as unknown as GraphPlanResponse;
@@ -637,6 +735,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
               }
 
+              // --- Update user message with ack data for collapsible UI ---
+              if (lastUserMsgIdRef.current && doc.ack_updates && doc.ack_updates.length > 0) {
+                const userMsgId = lastUserMsgIdRef.current;
+                // Update the user message with ack data
+                updateMessage(userMsgId, {
+                  ackStatus: doc.ack_status || 'applied',
+                  ackUpdates: doc.ack_updates,
+                });
+                // Auto-collapse after delay (1200ms)
+                setTimeout(() => {
+                  setCollapsedMessages((prev) => new Set(prev).add(userMsgId));
+                }, 1200);
+              } else if (lastUserMsgIdRef.current) {
+                // No ack updates - mark as no_change
+                updateMessage(lastUserMsgIdRef.current, {
+                  ackStatus: 'no_change',
+                });
+              }
+
               setIsLoading(false);
               resolve();
             },
@@ -644,6 +761,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setStreamingMessageId(null);
               setNodeStatus(null); // Clear strategy progress on error
               abortStreamRef.current = null; // Clear abort ref
+              delayedLoader.reset(); // Ensure loader is hidden on error
               console.error('Failed to plan trip', error);
 
               // Replace streaming message with specific error message
@@ -658,7 +776,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -762,9 +880,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Show typing indicator when loading and haven't received first streaming token yet
     // Don't show when node progress is active (we show progress bar instead)
-    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !nodeStatus?.active;
-    // Show node progress when an LLM node is executing, hide once tokens start arriving
-    const showNodeProgress = isLoading && !hasReceivedFirstToken && nodeStatus?.active;
+    // Also don't show when delayed loader is handling progress display
+    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !nodeStatus?.active && !delayedLoader.isVisible;
+    // Show node progress only when:
+    // 1. The delayed loader says it's time to show (after 400ms delay, and ETA > threshold)
+    // 2. We have active node status data to display
+    const showNodeProgress = delayedLoader.isVisible && nodeStatus?.active;
 
     return (
       <div
@@ -808,6 +929,31 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
         />
 
+        {/* Optional Refinements - directly under core chips, gated by destination + dates */}
+        {tripInputs && bookingTypes && flightSettings && hotelSettings && activitySettings && transportSettings && (
+          <OptionalRefinementsSection
+            tripInputs={tripInputs}
+            hasDestination={hasDestination}
+            hasDates={hasDates}
+            bookingTypes={bookingTypes}
+            flightSettings={flightSettings}
+            hotelSettings={hotelSettings}
+            activitySettings={activitySettings}
+            transportSettings={transportSettings}
+            onUpdateBookingTypes={onUpdateBookingTypes!}
+            onUpdateFlightSettings={onUpdateFlightSettings!}
+            onUpdateHotelSettings={onUpdateHotelSettings!}
+            onUpdateTransportSettings={onUpdateTransportSettings!}
+            onAddActivity={onAddActivity!}
+            onRemoveActivity={onRemoveActivity!}
+            onUpdateAdults={onUpdateAdults!}
+            onUpdateChildren={onUpdateChildren!}
+            onToggleRequiresAssistance={onToggleRequiresAssistance!}
+            llmUpdatedFields={llmUpdatedFields}
+            onAcknowledgeLLMUpdate={onAcknowledgeLLMUpdate}
+          />
+        )}
+
         <div
           ref={scrollContainerRef}
           className="min-h-0 flex-1 space-y-3 overflow-y-auto text-sm no-scrollbar"
@@ -836,6 +982,33 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 // For user messages, wrap in a relative container for delete button positioning
                 const isUserMessage = m.role === 'user';
                 const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
+
+                // Check if this user message should be collapsed
+                const isCollapsed = isUserMessage && collapsedMessages.has(m.id) && m.ackUpdates && m.ackUpdates.length > 0;
+
+                // Render collapsed row for eligible messages
+                if (isCollapsed) {
+                  return (
+                    <div
+                      key={m.id}
+                      className="message-enter"
+                      style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
+                    >
+                      <CollapsedMessageRow
+                        ackStatus={m.ackStatus || 'applied'}
+                        ackUpdates={m.ackUpdates || []}
+                        isExpanded={false}
+                        onToggle={() => {
+                          setCollapsedMessages((prev) => {
+                            const next = new Set(prev);
+                            next.delete(m.id);
+                            return next;
+                          });
+                        }}
+                      />
+                    </div>
+                  );
+                }
 
                 return (
                   <div
@@ -957,8 +1130,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
           <form onSubmit={handleSubmit} className="relative">
             {/* Static placeholder - only when input is empty and no user message */}
+            {/* Calculation: 52px height - 4px border = 48px inner. (48px - 20px line-height) / 2 = 14px padding each side */}
             {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
-              <div className="absolute top-0 left-0 right-0 px-4 py-3 pr-14 text-sm text-muted-foreground/70 pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis" aria-hidden="true">
+              <div className="absolute top-0 left-0 right-0 px-4 py-[14px] pr-14 text-sm leading-5 text-muted-foreground/70 pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis" aria-hidden="true">
                 {isInputDisabledByPlanState
                   ? 'Updating...'
                   : !hasDestination
@@ -969,7 +1143,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <textarea
             ref={inputRef}
             disabled={isInputDisabledByPlanState}
-            className={`border-input bg-muted/50 hover:bg-muted/60 text-foreground focus-visible:ring-primary/70 focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-3 pr-14 text-sm focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[52px] max-h-[200px] scroll-mb-4 disabled:opacity-50 disabled:cursor-not-allowed ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
+            className={`border-input bg-muted/50 hover:bg-muted/60 text-foreground focus-visible:ring-primary/70 focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-[14px] pr-14 text-sm leading-5 focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[52px] max-h-[200px] scroll-mb-4 disabled:opacity-50 disabled:cursor-not-allowed ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
             placeholder={
               isInputDisabledByPlanState
                 ? 'Updating...'
@@ -1031,8 +1205,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               disabled={generateState === 'DISABLED_INCOMPLETE' || generateState === 'GENERATING'}
               className={cn(
                 "group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold rounded-full transition-all",
-                // DISABLED_INCOMPLETE
-                generateState === 'DISABLED_INCOMPLETE' && "opacity-45 cursor-not-allowed text-muted-foreground border border-muted-foreground/20 bg-muted/5",
+                // DISABLED_INCOMPLETE - intentional locked state (opacity raised from 0.45 to 0.60 for WCAG)
+                generateState === 'DISABLED_INCOMPLETE' && "opacity-60 cursor-not-allowed text-muted-foreground/80 border border-muted-foreground/30 bg-muted/8",
                 // ENABLED_READY
                 generateState === 'ENABLED_READY' && cn(
                   "text-primary border border-primary/50 bg-primary/10 hover:bg-primary/15 hover:border-primary/70",
@@ -1055,6 +1229,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   <Sparkles className="h-4 w-4" />
                   <span>Regenerate plan</span>
                 </>
+              ) : generateState === 'DISABLED_INCOMPLETE' ? (
+                <>
+                  <Lock className="h-4 w-4 opacity-70" />
+                  <span>Generate plan</span>
+                </>
               ) : (
                 <>
                   <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
@@ -1065,34 +1244,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
             {/* Subtext per state */}
             {generateState === 'DISABLED_INCOMPLETE' && (
-              <p className="text-center text-xs text-muted-foreground/60">
-                Set destination and dates to generate your plan
+              <p className="text-center text-[11px] text-muted-foreground/50">
+                Set destination + dates to unlock.
               </p>
             )}
           </div>
-
-          {/* Secondary CTAs - Optional preferences (never block generation) */}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              title="Optional. You can add this later."
-              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground/80 border border-muted-foreground/20 rounded-full hover:border-muted-foreground/35 hover:text-muted-foreground transition-all"
-            >
-              Flight preferences
-            </button>
-            <button
-              type="button"
-              title="Optional. You can add this later."
-              className="flex-1 py-1.5 px-3 text-xs font-medium text-muted-foreground/80 border border-muted-foreground/20 rounded-full hover:border-muted-foreground/35 hover:text-muted-foreground transition-all"
-            >
-              Hotel preferences
-            </button>
-          </div>
-
-          {/* Persistent hint */}
-          <p className="text-center text-[11px] text-muted-foreground/50">
-            You can generate anytime — refinements are optional.
-          </p>
         </div>
 
       </div>
