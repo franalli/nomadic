@@ -13,9 +13,10 @@
 'use client';
 
 import { ArrowRight, Loader2, ShoppingBag } from 'lucide-react';
-import { useEffect,useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { PlanViewState } from '@/types/plan-envelope';
 
 import type { GenerationState } from './planStateHelpers';
@@ -30,8 +31,6 @@ export interface NextStepBarProps {
   /** Last error for inline retry (itinerary generation only) */
   lastError?: string | null;
   onRetry?: () => void;
-  /** Count of saved stays (for gating CTA) */
-  savedStaysCount?: number;
   className?: string;
 }
 
@@ -43,16 +42,19 @@ export function NextStepBar({
   onViewBookingOptions,
   lastError,
   onRetry,
-  savedStaysCount = 0,
   className,
 }: NextStepBarProps) {
   // Click lock to prevent double-clicks
   const [isClickLocked, setIsClickLocked] = useState(false);
 
+  // Read tripInputs from same store as chips - no prop drilling
+  const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
+
   const isGeneratingItinerary = generation?.active && generation?.stage === 'itinerary';
 
-  // Shortlist gating: must have at least one saved stay to proceed to itinerary
-  const needsStaySelection = nextAction === 'expand_itinerary' && savedStaysCount === 0;
+  // Check if duration is set (end_date OR trip_duration - no date_flex requirement)
+  const hasDuration = !!tripInputs?.end_date || tripInputs?.trip_duration != null;
+  const needsDuration = nextAction === 'expand_itinerary' && !hasDuration;
 
   // Reset click lock when generation completes
   useEffect(() => {
@@ -80,8 +82,8 @@ export function NextStepBar({
   // Don't render if no action
   if (!nextAction) return null;
 
-  // Show flow guide when user needs to save a stay first
-  if (needsStaySelection) {
+  // Show hint when duration is missing - CTA still clickable to open TripLengthSheet
+  if (needsDuration) {
     return (
       <div
         className={cn(
@@ -89,34 +91,15 @@ export function NextStepBar({
           className
         )}
       >
-        {/* Flow indicator */}
-        <div className="flex items-center justify-center gap-3 text-xs mb-3">
-          <span className="flex items-center gap-1.5 text-amber-400">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-500/20 text-[10px] font-medium">1</span>
-            Save a stay
-          </span>
-          <span className="text-zinc-600">→</span>
-          <span className="flex items-center gap-1.5 text-zinc-500">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium">2</span>
-            Create itinerary
-          </span>
-          <span className="text-zinc-600">→</span>
-          <span className="flex items-center gap-1.5 text-zinc-500">
-            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-zinc-800 text-[10px] font-medium">3</span>
-            Book
-          </span>
-        </div>
-
-        {/* Disabled CTA with hint */}
         <button
-          disabled
-          className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-lg bg-zinc-800 px-4 py-3 text-sm font-medium text-zinc-500 opacity-70"
+          onClick={onExpandToItinerary}
+          className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-600 text-white px-4 py-3 text-sm font-medium hover:bg-amber-500 transition-colors"
         >
           <ArrowRight className="h-4 w-4" />
           Create day-by-day itinerary
         </button>
-        <p className="mt-2 text-center text-xs text-zinc-500">
-          Choose at least one stay to continue
+        <p className="mt-2 text-center text-xs text-amber-400">
+          Set trip length to create itinerary
         </p>
       </div>
     );

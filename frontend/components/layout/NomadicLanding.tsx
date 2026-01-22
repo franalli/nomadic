@@ -14,12 +14,15 @@ import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSele
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
+import { ConfirmStaySheet } from '@/components/plan/ConfirmStaySheet';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
+import { TripLengthSheet } from '@/components/plan/TripLengthSheet';
 import { Button } from '@/components/ui/button';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
 import { useShortlist } from '@/hooks/useShortlist';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
+import { filterTilesByType } from '@/lib/tileSelectors';
 import { formatDateForDisplay } from '@/lib/utils';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
@@ -31,6 +34,14 @@ interface ChangeReceiptData {
   type: 'partial' | 'updated' | 'reverted';
   fields: string[];
   canUndo: boolean;
+}
+
+// Trip context selections for itinerary generation
+// Used to deterministically build context from saved OR recommended items
+interface TripContextSelections {
+  selected_stay_id?: string;
+  selected_flight_id?: string;
+  selected_activity_ids?: string[];
 }
 
 // Toast notification system
@@ -160,6 +171,10 @@ export function NomadicLanding() {
 
   // Shortlist hook - manages user's saved tiles in S2
   const shortlist = useShortlist();
+
+  // Sheet states for itinerary validation flow
+  const [tripLengthSheetOpen, setTripLengthSheetOpen] = useState(false);
+  const [confirmStaySheetOpen, setConfirmStaySheetOpen] = useState(false);
 
   // Branch manager hook - manages branches, tiles, and generating state
   const branchManager = useBranchManager({
@@ -466,15 +481,71 @@ export function NomadicLanding() {
   const canGeneratePlan = hasDestination && hasDates;
   const hasPlan = hasBranchesReady;
 
-  // Handler for expanding to itinerary (streaming endpoint)
-  // Includes runId tracking, abort signal, and timeout handling for streaming robustness
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Itinerary Generation Flow
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // Timezone-safe date addition utility
+  const addDaysUTC = useCallback((isoDate: string, days: number): string => {
+    const [y, m, d] = isoDate.split('-').map(Number);
+    const dateUTC = new Date(Date.UTC(y, m - 1, d));
+    dateUTC.setUTCDate(dateUTC.getUTCDate() + days);
+    return dateUTC.toISOString().slice(0, 10);
+  }, []);
+
+  // Actual itinerary generation logic - accepts optional override to avoid state race
   const STREAM_TIMEOUT_MS = 30000;
-  const handleExpandToItinerary = useCallback(async () => {
-    const tripContextId = storeDocument?.trip_context_id;
-    if (!tripContextId) {
-      addToast('Cannot generate itinerary: no trip context', 'error');
-      return;
+  const proceedWithItineraryGeneration = useCallback(async (
+    override?: Partial<TripContextSelections>
+  ) => {
+    const currentTiles = storeDocument?.tiles ?? {};
+    const currentTripInputs = storeDocument?.trip_inputs;
+    const currentBookingTypes = currentTripInputs?.booking_types;
+    const savedTileIds = shortlist.savedTileIds;
+
+    // Build selections respecting enabled modules
+    const staysEnabled = currentBookingTypes?.hotels !== false;
+    const flightsEnabled = currentBookingTypes?.flights !== false;
+    const activitiesEnabled = currentBookingTypes?.activities !== false;
+
+    // Select stay: override > first saved > first recommended
+    let selectedStayId: string | undefined;
+    if (staysEnabled) {
+      const stayTiles = filterTilesByType(currentTiles, 'stay');
+      selectedStayId = override?.selected_stay_id
+        ?? stayTiles.find(t => savedTileIds.has(t.id))?.id
+        ?? stayTiles[0]?.id;
     }
+
+    // Select flight: override > first saved > first recommended (only if enabled)
+    let selectedFlightId: string | undefined;
+    if (flightsEnabled) {
+      const flightTiles = filterTilesByType(currentTiles, 'flight');
+      selectedFlightId = override?.selected_flight_id
+        ?? flightTiles.find(t => savedTileIds.has(t.id))?.id
+        ?? flightTiles[0]?.id;
+    }
+
+    // Select activities: override > all saved > top 3 recommended (only if enabled)
+    let selectedActivityIds: string[] | undefined;
+    if (activitiesEnabled) {
+      const activityTiles = filterTilesByType(currentTiles, 'activity');
+      if (override?.selected_activity_ids) {
+        selectedActivityIds = override.selected_activity_ids;
+      } else {
+        const savedActivities = activityTiles.filter(t => savedTileIds.has(t.id));
+        selectedActivityIds = savedActivities.length > 0
+          ? savedActivities.map(a => a.id)
+          : activityTiles.slice(0, 3).map(a => a.id);
+      }
+    }
+
+    // Build trip_context
+    const tripContext: TripContextSelections = {
+      ...(selectedStayId && { selected_stay_id: selectedStayId }),
+      ...(selectedFlightId && { selected_flight_id: selectedFlightId }),
+      ...(selectedActivityIds?.length && { selected_activity_ids: selectedActivityIds }),
+    };
 
     // Generate runId for this generation (also serves as idempotency key)
     const runId = crypto.randomUUID();
@@ -482,23 +553,21 @@ export function NomadicLanding() {
     // Start generation in documentStore - gets AbortController and registers runId
     const abortController = documentStore.startGeneration(runId);
 
-    // Set local UI generation state immediately (button disables via gating helpers)
+    // Set local UI generation state immediately
     setUiGeneration({ active: true, stage: 'itinerary' });
-    setLastGenerationError(null); // Clear any previous error
+    setLastGenerationError(null);
 
-    // Timeout handling - browser-safe typing
+    // Timeout handling
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const resetTimeout = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        // Only show "still working" if this run is still current
         if (documentStore.isCurrentRun(runId)) {
           setUiGeneration({ active: true, stage: 'itinerary', message: 'Still working...' });
         }
       }, STREAM_TIMEOUT_MS);
     };
 
-    // Start timeout
     resetTimeout();
 
     try {
@@ -506,17 +575,16 @@ export function NomadicLanding() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          trip_context_id: tripContextId,
           idempotency_key: runId,
+          trip_context: tripContext,
         }),
-        signal: abortController.signal, // Pass abort signal to fetch
+        signal: abortController.signal,
       });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      // Guard for response.body === null (some environments/proxies)
       if (!response.body) {
         setLastGenerationError('Streaming not supported. Please retry.');
         setUiGeneration(null);
@@ -527,19 +595,15 @@ export function NomadicLanding() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
-      // Robust buffered NDJSON parser with runId guard
       const parser = createStreamParser((event: StreamEvent) => {
-        // Ignore events from stale runs
         if (!documentStore.isCurrentRun(runId)) {
           console.debug('Ignoring late event from stale run');
           return;
         }
 
-        // Re-arm timeout on each event
         resetTimeout();
 
         if (event.type === 'envelope') {
-          // Merge envelope updates into document store
           documentStore.mergeEnvelope(event.plan_envelope);
         } else if (event.type === 'progress') {
           setUiGeneration({
@@ -550,7 +614,7 @@ export function NomadicLanding() {
           });
         } else if (event.type === 'done') {
           setUiGeneration(null);
-          setLastGenerationError(null); // Clear error on success
+          setLastGenerationError(null);
         } else if (event.type === 'error') {
           setLastGenerationError(event.message || 'Failed to generate itinerary');
         }
@@ -564,22 +628,105 @@ export function NomadicLanding() {
       parser.flush();
 
     } catch (error) {
-      // Handle abort (user-initiated reset)
       if (error instanceof Error && error.name === 'AbortError') {
         console.debug('Itinerary generation aborted');
         return;
       }
       console.error('Failed to expand to itinerary:', error);
-      setLastGenerationError('Failed to generate itinerary. Please retry.');
+      setLastGenerationError('Something went wrong. Please try again.');
     } finally {
-      // Clear timeout
       if (timeoutId) clearTimeout(timeoutId);
-      // Only clear generation state if this run is still current
       if (documentStore.isCurrentRun(runId)) {
         setUiGeneration(null);
       }
     }
-  }, [storeDocument?.trip_context_id, documentStore, addToast]);
+  }, [storeDocument, shortlist.savedTileIds, documentStore]);
+
+  // Handler for expanding to itinerary - validation gates before generation
+  const handleExpandToItinerary = useCallback(async () => {
+    const currentTripInputs = storeDocument?.trip_inputs;
+    const currentTiles = storeDocument?.tiles ?? {};
+    const currentBookingTypes = currentTripInputs?.booking_types;
+
+    // GATE 1: Check for duration (end_date OR trip_duration - no date_flex requirement)
+    const hasDuration = !!currentTripInputs?.end_date || currentTripInputs?.trip_duration != null;
+    if (!hasDuration) {
+      // Only open TripLengthSheet if we have a start date
+      if (!currentTripInputs?.start_date) {
+        addToast('Set a start date first', 'info');
+        return;
+      }
+      setTripLengthSheetOpen(true);
+      return;
+    }
+
+    // GATE 2: If Stays ON, check for stay selection
+    const staysEnabled = currentBookingTypes?.hotels !== false;
+    const stayTiles = filterTilesByType(currentTiles, 'stay');
+    const hasSavedStay = stayTiles.some(t => shortlist.savedTileIds.has(t.id));
+
+    if (staysEnabled) {
+      // No stay tiles exist - need to generate plan first
+      if (stayTiles.length === 0) {
+        addToast('Build a plan first to see stay options', 'info');
+        return;
+      }
+      // Need selection - open ConfirmStaySheet
+      if (!hasSavedStay) {
+        setConfirmStaySheetOpen(true);
+        return;
+      }
+    }
+
+    // All gates passed - proceed with itinerary generation (no override needed)
+    await proceedWithItineraryGeneration();
+  }, [storeDocument, shortlist.savedTileIds, addToast, proceedWithItineraryGeneration]);
+
+  // Handle quick pick from TripLengthSheet
+  const handleSelectNights = useCallback(async (nights: number) => {
+    const startDate = storeDocument?.trip_inputs?.start_date;
+    if (!startDate) return;
+
+    // Calculate end date (timezone-safe)
+    const endDateStr = addDaysUTC(startDate, nights);
+
+    // Update trip inputs and await confirmation
+    const success = await documentStore.commitTripInputs({ end_date: endDateStr });
+
+    // Close sheet
+    setTripLengthSheetOpen(false);
+
+    // Only proceed if store update succeeded
+    if (success) {
+      // Call directly - store is already updated
+      handleExpandToItinerary();
+    }
+  }, [storeDocument?.trip_inputs?.start_date, addDaysUTC, documentStore, handleExpandToItinerary]);
+
+  // Handle "Use recommended" from ConfirmStaySheet
+  // CRITICAL: Pass override directly to avoid state race
+  const handleUseRecommendedStay = useCallback(async () => {
+    const currentTiles = storeDocument?.tiles ?? {};
+    const firstStay = filterTilesByType(currentTiles, 'stay')[0];
+
+    if (!firstStay) {
+      addToast('No stays available', 'error');
+      return;
+    }
+
+    // Close sheet first
+    setConfirmStaySheetOpen(false);
+
+    // Pass override directly to generation - no state race
+    await proceedWithItineraryGeneration({ selected_stay_id: firstStay.id });
+  }, [storeDocument?.tiles, proceedWithItineraryGeneration, addToast]);
+
+  // Handle "Choose a stay" from ConfirmStaySheet
+  const handleChooseStay = useCallback(() => {
+    setConfirmStaySheetOpen(false);
+    // Switch to stays tab if on mobile, or scroll to stays section
+    // TODO: Implement navigation to stays section
+  }, []);
 
   // Handler for viewing booking options (scroll to section)
   const handleViewBookingOptions = useCallback(() => {
@@ -665,7 +812,6 @@ export function NomadicLanding() {
       lastError={lastGenerationError}
       onRetry={handleExpandToItinerary}
       savedTileIds={shortlist.savedTileIds}
-      savedStaysCount={shortlist.counts.stays}
       onSaveTile={shortlist.toggleItem}
     />
   );
@@ -831,6 +977,25 @@ export function NomadicLanding() {
       {/* Toast containers - rendered outside .appTopo to avoid CSS conflicts */}
       {errorToasts}
       {successToasts}
+
+      {/* Validation sheets for itinerary generation */}
+      <TripLengthSheet
+        open={tripLengthSheetOpen}
+        onOpenChange={setTripLengthSheetOpen}
+        startDate={storeDocument?.trip_inputs?.start_date ?? null}
+        onSelectNights={handleSelectNights}
+        onOpenDatePicker={() => {
+          setTripLengthSheetOpen(false);
+          // TODO: Open DatesSheet for custom date selection
+        }}
+      />
+
+      <ConfirmStaySheet
+        open={confirmStaySheetOpen}
+        onOpenChange={setConfirmStaySheetOpen}
+        onUseRecommended={handleUseRecommendedStay}
+        onChooseStay={handleChooseStay}
+      />
     </>
   );
 }

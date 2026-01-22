@@ -3,6 +3,7 @@ import './globals.css';
 import type { ReactNode } from 'react';
 
 import { ConsentManager } from '@/components/nomadic/consent-manager';
+import { Providers } from '@/components/providers/Providers';
 
 export const metadata = {
   title: 'Nomadic – Interactive Travel Planner',
@@ -20,10 +21,14 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         >
           Skip to main content
         </a>
-        <main id="main-content" role="main">
-          {children}
-        </main>
+        <Providers>
+          <main id="main-content" role="main">
+            {children}
+          </main>
+        </Providers>
         <ConsentManager />
+        {/* Toast portal target */}
+        <div id="toast-portal" />
       </body>
     </html>
   );

@@ -75,8 +75,6 @@ interface StrategyStageRendererProps {
   onRetry?: () => void;
   /** Shortlist: set of saved tile IDs */
   savedTileIds?: Set<string>;
-  /** Shortlist: count of saved stays */
-  savedStaysCount?: number;
   /** Shortlist: callback when user saves/unsaves a tile */
   onSaveTile?: (tile: Tile) => void;
 }
@@ -89,14 +87,14 @@ function renderStageContent(
   onRefineAssumptions?: () => void,
   onExpandToItinerary?: () => void
 ): React.ReactNode {
+  // Note: S0BootstrapView now reads from document store directly
+  // Action handlers for opening sheets will be added when we wire up the full chip row integration
+  void canGeneratePlan; // Used to be passed to S0BootstrapView, now computed from store
+  void destinationCard; // S0 no longer uses destination card (reads from store)
+
   switch (state) {
     case 'S0_BOOTSTRAP':
-      return (
-        <S0BootstrapView
-          destinationCard={destinationCard}
-          canGeneratePlan={canGeneratePlan}
-        />
-      );
+      return <S0BootstrapView />;
 
     case 'S1_FRAMING':
       return (
@@ -150,12 +148,7 @@ function renderStageContent(
       );
 
     default:
-      return (
-        <S0BootstrapView
-          destinationCard={destinationCard}
-          canGeneratePlan={canGeneratePlan}
-        />
-      );
+      return <S0BootstrapView />;
   }
 }
 
@@ -177,7 +170,6 @@ export function StrategyStageRenderer({
   lastError,
   onRetry,
   savedTileIds = new Set(),
-  savedStaysCount = 0,
   onSaveTile,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
@@ -266,7 +258,6 @@ export function StrategyStageRenderer({
           onViewBookingOptions={onViewBookingOptions}
           lastError={lastError}
           onRetry={onRetry}
-          savedStaysCount={savedStaysCount}
         />
       )}
     </div>

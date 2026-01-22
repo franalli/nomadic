@@ -1,160 +1,60 @@
 /**
  * S0BootstrapView
  *
- * Bootstrap state view - shows scaffold checklist with state indicators.
- * Displays progress toward plan generation.
+ * Bootstrap state view - shows NextStepPanel with truthful checklist.
+ * Uses "Finish setup" panel instead of misleading "Strategy/Itinerary" scaffold.
  *
  * Content rules:
- * - No destination: "Your plan" title, "Set destination and dates to begin"
- * - With destination: Destination name as title, scaffold with status indicators
- * - Status indicators: Set (check), Next (arrow), Locked (lock)
+ * - Shows actual requirements: Destination, Start date
+ * - Optional: Trip length (needed to price stays + build itinerary)
+ * - Defaulted: Travelers (1 adult)
+ * - Optional: Budget
+ * - Conditional: Origin (only when Flights ON)
+ * - No "Strategy" wording in setup phase
+ * - "Build plan" CTA disabled until required fields met
+ *
+ * NOTE: NextStepPanel reads from document store directly (single source of truth)
+ * so we only pass action handlers and generation state.
  */
 
 'use client';
 
-import { ArrowRight, Check, Lock } from 'lucide-react';
-
-import { cn } from '@/lib/utils';
-import type { DestinationCard } from '@/types/plan-envelope';
+import { NextStepPanel } from '@/components/planner/NextStepPanel';
 
 interface S0BootstrapViewProps {
-  destinationCard?: DestinationCard;
-  /** Whether user can generate a plan (has destination + dates) */
-  canGeneratePlan?: boolean;
+  /** Generation state */
+  isGenerating?: boolean;
+  generatingSubtitle?: string;
+  /** Actions - open corresponding sheets */
+  onBuildPlan?: () => void;
+  onSetDestination?: () => void;
+  onSetOrigin?: () => void;
+  onSetDates?: () => void;
+  onSetTravelers?: () => void;
+  onSetBudget?: () => void;
 }
 
-type ScaffoldStatus = 'Set' | 'Next' | 'Locked';
-
-export function S0BootstrapView({ destinationCard, canGeneratePlan = false }: S0BootstrapViewProps) {
-  const hasDestination = !!destinationCard;
-
-  // No destination yet - show initial scaffold
-  if (!hasDestination) {
-    return (
-      <EmptyScaffold
-        title="Your plan"
-        subtitle="Set destination and dates to begin."
-        rows={[
-          { label: 'Destination', state: 'Next' },
-          { label: 'Strategy', state: 'Locked' },
-          { label: 'Itinerary', state: 'Locked' },
-        ]}
-      />
-    );
-  }
-
-  // Destination set, no plan yet - show progress scaffold
+export function S0BootstrapView({
+  isGenerating,
+  generatingSubtitle,
+  onBuildPlan,
+  onSetDestination,
+  onSetOrigin,
+  onSetDates,
+  onSetTravelers,
+  onSetBudget,
+}: S0BootstrapViewProps) {
   return (
-    <EmptyScaffold
-      title={destinationCard.title}
-      subtitle="As you set constraints, your trip plan will take shape here."
-      rows={[
-        { label: 'Destination', state: 'Set' },
-        { label: 'Strategy', state: canGeneratePlan ? 'Next' : 'Locked' },
-        { label: 'Itinerary', state: 'Locked' },
-      ]}
+    <NextStepPanel
+      isGenerating={isGenerating}
+      generatingSubtitle={generatingSubtitle}
+      onBuildPlan={onBuildPlan}
+      onSetDestination={onSetDestination}
+      onSetOrigin={onSetOrigin}
+      onSetDates={onSetDates}
+      onSetTravelers={onSetTravelers}
+      onSetBudget={onSetBudget}
     />
-  );
-}
-
-interface ScaffoldRow {
-  label: string;
-  state: ScaffoldStatus;
-}
-
-interface EmptyScaffoldProps {
-  title: string;
-  subtitle: string;
-  rows: ScaffoldRow[];
-}
-
-function EmptyScaffold({ title, subtitle, rows }: EmptyScaffoldProps) {
-  return (
-    <div className="flex flex-col h-full p-6 justify-center items-center">
-      {/* Backplate - soft fog for readability, not a card */}
-      <div
-        className={cn(
-          'w-full max-w-xs mx-auto text-center',
-          'px-6 py-7 rounded-2xl',
-          // Light mode: subtle frosted white
-          'bg-[rgba(255,255,255,0.62)] border border-[rgba(0,0,0,0.06)]',
-          'shadow-[0_14px_50px_rgba(0,0,0,0.08)]',
-          // Dark mode: neutral charcoal (more opaque for separation)
-          'dark:bg-[rgba(10,12,12,0.58)] dark:border-[rgba(255,255,255,0.08)]',
-          'dark:shadow-[0_18px_60px_rgba(0,0,0,0.45)]',
-          // Soft blur for frosted effect
-          'backdrop-blur-[10px]'
-        )}
-        style={{
-          // Inner highlight for dark mode subtle top edge
-          boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)',
-        }}
-      >
-        {/* Title */}
-        <h2 className="text-lg font-medium text-[var(--theme-text)]">
-          {title}
-        </h2>
-        {/* Subtitle */}
-        <p className="text-sm text-[var(--theme-text-muted)] mt-1 mb-6">
-          {subtitle}
-        </p>
-
-        {/* Progress checklist */}
-        <div className="space-y-2">
-          {rows.map((row) => (
-            <ScaffoldRowComponent key={row.label} label={row.label} state={row.state} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ScaffoldRowComponent({ label, state }: { label: string; state: ScaffoldStatus }) {
-  const isActive = state === 'Next';
-  const isSet = state === 'Set';
-  const isLocked = state === 'Locked';
-
-  // Icon and styling config per state
-  const config: Record<ScaffoldStatus, { Icon: typeof Check; iconClass: string; textClass: string; badgeText: string }> = {
-    Set: { Icon: Check, iconClass: 'text-primary', textClass: 'text-primary font-medium', badgeText: 'Set' },
-    Next: { Icon: ArrowRight, iconClass: 'text-accent', textClass: 'text-accent font-semibold', badgeText: 'Set' },
-    // Locked: improved contrast - lighter in dark, darker in light
-    Locked: {
-      Icon: Lock,
-      iconClass: 'text-[rgba(0,0,0,0.35)] dark:text-[rgba(255,255,255,0.55)]',
-      textClass: 'text-[rgba(0,0,0,0.35)] dark:text-[rgba(255,255,255,0.40)]',
-      badgeText: 'Locked',
-    },
-  };
-  const { Icon, iconClass, textClass, badgeText } = config[state];
-
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-3 px-3 py-2.5 rounded-md transition-all',
-        // Base styles - explicit light/dark for better contrast
-        'bg-[rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.08)]',
-        'dark:bg-[rgba(255,255,255,0.03)] dark:border-[rgba(255,255,255,0.08)]',
-        // Active step: accent left border + background tint + clickable appearance
-        isActive && [
-          'border-l-2 border-l-accent',
-          'bg-accent/5 dark:bg-accent/8',
-          'cursor-pointer hover:bg-accent/8 dark:hover:bg-accent/12',
-        ],
-        // Locked step: slightly reduced presence but still readable
-        isLocked && 'opacity-70',
-      )}
-    >
-      <Icon className={cn('w-4 h-4', iconClass)} />
-      <span className={cn(
-        'flex-1 text-sm text-left',
-        isActive ? 'text-accent font-semibold' : isSet ? 'text-primary' : 'text-[var(--theme-text)]',
-      )}>
-        {label}
-      </span>
-      <span className={cn('text-xs', textClass)}>{badgeText}</span>
-    </div>
   );
 }
 

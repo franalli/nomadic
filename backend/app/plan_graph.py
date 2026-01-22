@@ -13991,15 +13991,6 @@ def _build_booking_suggestions(
     if primary_action:
         suggestions.append(primary_action)
 
-    # Suggest booking types that aren't enabled yet
-    booking_types = ti.booking_types or {}
-    if not booking_types.get("flights") and len(suggestions) < max_suggestions:
-        suggestions.append("Add flights")
-    if not booking_types.get("hotels") and len(suggestions) < max_suggestions:
-        suggestions.append("Add hotels")
-    if not booking_types.get("activities") and len(suggestions) < max_suggestions:
-        suggestions.append("Add activities")
-
     # Fallback: suggest budget if still missing and we have room
     if len(suggestions) < max_suggestions and ti.budget is None:
         suggestions.append("Set budget")

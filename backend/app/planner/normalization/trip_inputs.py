@@ -939,6 +939,16 @@ class TripInputNormalizer:
                         booking_types[cat] = enabled
                 updates["booking_types"] = booking_types
 
+        # --- Direct booking_types updates (from UI toggles) ---
+        if "booking_types" in deltas:
+            booking_types_delta = deltas["booking_types"]
+            if isinstance(booking_types_delta, dict):
+                booking_types = dict(trip_inputs.booking_types or self._default_booking_types)
+                for cat, enabled in booking_types_delta.items():
+                    if cat in booking_types and isinstance(enabled, bool):
+                        booking_types[cat] = enabled
+                updates["booking_types"] = booking_types
+
         # --- Budget Per Night Derivation ---
         # Compute budget_per_night if we have budget_total and dates
         budget_total = updates.get("budget") or trip_inputs.budget

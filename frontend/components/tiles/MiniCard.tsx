@@ -3,12 +3,20 @@
  *
  * Compact tile card for S2 (Plan) discovery view.
  * Shows enough info to evaluate: thumbnail, name, area, rating, price, perks.
- * Actions: Details (opens modal) + Save (adds to shortlist)
+ * Actions: Details (opens modal) + Save (adds to shortlist) + View deal (locked until S3)
+ *
+ * Preview mode (S2):
+ * - Shows "Preview" label on card
+ * - View deal button is locked with tooltip
+ *
+ * Booking mode (S3):
+ * - No preview label
+ * - View deal button is enabled
  */
 
 'use client';
 
-import { Heart, Info, Star } from 'lucide-react';
+import { ExternalLink, Heart, Info, Lock, Star } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
@@ -18,6 +26,10 @@ import type { Tile } from '@/types/tile';
 export interface MiniCardProps {
   tile: Tile;
   isSaved?: boolean;
+  /** Show "Preview" label (for S2 discovery) */
+  showPreviewLabel?: boolean;
+  /** Whether booking links are unlocked (S3) */
+  isBookingUnlocked?: boolean;
   onDetailsClick?: (tile: Tile) => void;
   onSaveClick?: (tile: Tile) => void;
 }
@@ -86,6 +98,8 @@ function getReviewCount(tile: Tile): number | null {
 export const MiniCard = memo(function MiniCard({
   tile,
   isSaved = false,
+  showPreviewLabel = false,
+  isBookingUnlocked = false,
   onDetailsClick,
   onSaveClick,
 }: MiniCardProps) {
@@ -112,8 +126,24 @@ export const MiniCard = memo(function MiniCard({
     [onSaveClick, tile]
   );
 
+  const handleViewDealClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (!isBookingUnlocked || !tile.deeplink_url) return;
+      window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
+    },
+    [isBookingUnlocked, tile.deeplink_url]
+  );
+
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 transition-colors hover:bg-zinc-800/50">
+    <div className="relative flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 transition-colors hover:bg-zinc-800/50">
+      {/* Preview label (S2 only) */}
+      {showPreviewLabel && (
+        <div className="absolute right-2 top-2 rounded bg-zinc-800/90 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+          Preview
+        </div>
+      )}
+
       {/* Thumbnail - use Unsplash placeholder if no image_url */}
       <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-zinc-800">
         <img
@@ -201,6 +231,26 @@ export const MiniCard = memo(function MiniCard({
                 className={cn('h-3 w-3', isSaved && 'fill-amber-400')}
               />
               {isSaved ? 'Saved' : 'Save'}
+            </button>
+            {/* View deal - locked until S3 */}
+            <button
+              type="button"
+              onClick={handleViewDealClick}
+              disabled={!isBookingUnlocked}
+              title={!isBookingUnlocked ? 'Unlocks after itinerary' : 'Open booking link'}
+              className={cn(
+                'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
+                isBookingUnlocked
+                  ? 'bg-amber-500 text-white hover:bg-amber-600'
+                  : 'cursor-not-allowed bg-zinc-800 text-zinc-500'
+              )}
+            >
+              {isBookingUnlocked ? (
+                <ExternalLink className="h-3 w-3" />
+              ) : (
+                <Lock className="h-3 w-3" />
+              )}
+              View deal
             </button>
           </div>
         </div>
