@@ -46,14 +46,6 @@ interface ChangeReceiptData {
   canUndo: boolean;
 }
 
-// Trip context selections for itinerary generation
-// Used to deterministically build context from saved OR recommended items
-interface TripContextSelections {
-  selected_stay_id?: string;
-  selected_flight_id?: string;
-  selected_activity_ids?: string[];
-}
-
 // Toast notification system
 const MAX_TOASTS = 3;
 const TOAST_DISMISS_MS = 4000;
@@ -558,51 +550,7 @@ export function NomadicLanding() {
 
   // Actual itinerary generation logic - accepts optional override to avoid state race
   const STREAM_TIMEOUT_MS = 30000;
-  const proceedWithItineraryGeneration = useCallback(async (
-    override?: Partial<TripContextSelections>
-  ) => {
-    const currentTiles = storeDocument?.tiles ?? {};
-    const currentTripInputs = storeDocument?.trip_inputs;
-    const currentBookingTypes = currentTripInputs?.booking_types;
-    const savedTileIds = shortlist.savedTileIds;
-
-    // Build selections respecting enabled modules (tri-state: suggested or on = enabled)
-    const staysEnabled = isBookingEnabled(currentBookingTypes?.hotels);
-    const flightsEnabled = isBookingEnabled(currentBookingTypes?.flights);
-    const activitiesEnabled = isBookingEnabled(currentBookingTypes?.activities);
-
-    // Select stay: override > first saved > first recommended
-    let selectedStayId: string | undefined;
-    if (staysEnabled) {
-      const stayTiles = filterTilesByType(currentTiles, 'stay');
-      selectedStayId = override?.selected_stay_id
-        ?? stayTiles.find(t => savedTileIds.has(t.id))?.id
-        ?? stayTiles[0]?.id;
-    }
-
-    // Select flight: override > first saved > first recommended (only if enabled)
-    let selectedFlightId: string | undefined;
-    if (flightsEnabled) {
-      const flightTiles = filterTilesByType(currentTiles, 'flight');
-      selectedFlightId = override?.selected_flight_id
-        ?? flightTiles.find(t => savedTileIds.has(t.id))?.id
-        ?? flightTiles[0]?.id;
-    }
-
-    // Select activities: override > all saved > top 3 recommended (only if enabled)
-    let selectedActivityIds: string[] | undefined;
-    if (activitiesEnabled) {
-      const activityTiles = filterTilesByType(currentTiles, 'activity');
-      if (override?.selected_activity_ids) {
-        selectedActivityIds = override.selected_activity_ids;
-      } else {
-        const savedActivities = activityTiles.filter(t => savedTileIds.has(t.id));
-        selectedActivityIds = savedActivities.length > 0
-          ? savedActivities.map(a => a.id)
-          : activityTiles.slice(0, 3).map(a => a.id);
-      }
-    }
-
+  const proceedWithItineraryGeneration = useCallback(async () => {
     // Generate runId for this generation (also serves as idempotency key)
     const runId = crypto.randomUUID();
 
@@ -758,22 +706,13 @@ export function NomadicLanding() {
   }, [storeDocument?.trip_inputs?.start_date, addDaysUTC, documentStore, handleExpandToItinerary]);
 
   // Handle "Use recommended" from ConfirmStaySheet
-  // CRITICAL: Pass override directly to avoid state race
   const handleUseRecommendedStay = useCallback(async () => {
-    const currentTiles = storeDocument?.tiles ?? {};
-    const firstStay = filterTilesByType(currentTiles, 'stay')[0];
-
-    if (!firstStay) {
-      addToast('No stays available', 'error');
-      return;
-    }
-
     // Close sheet first
     setConfirmStaySheetOpen(false);
 
-    // Pass override directly to generation - no state race
-    await proceedWithItineraryGeneration({ selected_stay_id: firstStay.id });
-  }, [storeDocument?.tiles, proceedWithItineraryGeneration, addToast]);
+    // Proceed with itinerary generation
+    await proceedWithItineraryGeneration();
+  }, [proceedWithItineraryGeneration]);
 
   // Handle "Choose a stay" from ConfirmStaySheet
   const handleChooseStay = useCallback(() => {
