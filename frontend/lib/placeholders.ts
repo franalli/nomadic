@@ -37,9 +37,9 @@ const PLACEHOLDER_IMAGES: Record<string, string[]> = {
   ],
   destination: [
     'photo-1488646953014-85cb44e25828',
-    'photo-1507525428034-b723cf961d3e',
     'photo-1501785888041-af3ef285b470',
     'photo-1476514525535-07fb3b4ae5f1',
+    'photo-1469474968028-56623f02e42e',
   ],
   default: [
     'photo-1488646953014-85cb44e25828',

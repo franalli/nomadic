@@ -74,12 +74,34 @@ export type DocumentBranch = {
 // Plan regeneration status for reactive updates
 export type PlanStatus = 'ready' | 'stale' | 'updating';
 
+// Tri-state booking type: off (user disabled), suggested (default/auto), on (user enabled)
+export type BookingTypeState = 'off' | 'suggested' | 'on';
+
+/**
+ * Check if a booking type state is enabled (suggested or on).
+ * Handles legacy boolean values during migration.
+ */
+export function isBookingEnabled(state: BookingTypeState | boolean | undefined | null): boolean {
+  if (state === null || state === undefined) {
+    return false;
+  }
+  // Handle legacy boolean values
+  if (typeof state === 'boolean') {
+    return state;
+  }
+  return state === 'suggested' || state === 'on';
+}
+
 // Booking type toggles - which categories to search for
+// Uses tri-state model:
+// - 'off': User explicitly disabled, never show or search
+// - 'suggested': Default state, show provisional items
+// - 'on': User explicitly enabled, may require confirmation gates
 export type BookingTypes = {
-  hotels: boolean;
-  flights: boolean;
-  ground_transport: boolean;
-  activities: boolean;
+  hotels: BookingTypeState;
+  flights: BookingTypeState;
+  ground_transport: BookingTypeState;
+  activities: BookingTypeState;
 };
 
 // Flight-specific search settings

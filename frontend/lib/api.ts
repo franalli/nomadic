@@ -281,6 +281,30 @@ export async function validateTripInput(
 }
 
 /**
+ * Fetch the destination image URL from Unsplash.
+ * Called when user selects a destination to show the correct banner image.
+ */
+export interface DestinationImageResponse {
+  image_url: string;
+  destination: string;
+}
+
+export async function fetchDestinationImage(
+  destination: string
+): Promise<DestinationImageResponse> {
+  const res = await apiFetch('/v1/destination-image', {
+    method: 'POST',
+    body: JSON.stringify({ destination }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch destination image: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/**
  * Track a suggestion pill click for analytics.
  * Fire-and-forget - we don't wait for confirmation.
  */

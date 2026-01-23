@@ -34,13 +34,14 @@ import type { DateRange } from 'react-day-picker';
 import { ExpandablePill } from '@/components/pill/ExpandablePill';
 import { Switch } from '@/components/ui/switch';
 import type { LLMUpdatableField } from '@/state/documentStore';
-import type {
-  ActivitySettings,
-  BookingTypes,
-  DocumentTripInputs,
-  FlightSettings,
-  HotelSettings,
-  TransportSettings,
+import {
+  isBookingEnabled,
+  type ActivitySettings,
+  type BookingTypes,
+  type DocumentTripInputs,
+  type FlightSettings,
+  type HotelSettings,
+  type TransportSettings,
 } from '@/types/document';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -425,7 +426,7 @@ function TripDetailsFormInner({
           icon={Plane}
           isOpen={flightsSettingsOpen}
           onOpenChange={setFlightsSettingsOpen}
-          hasValue={bookingTypes.flights}
+          hasValue={isBookingEnabled(bookingTypes.flights)}
           isLLMUpdated={isFieldLLMUpdated('flight_settings') || flightsBookingUpdated}
           onAcknowledge={() => {
             acknowledgeField('flight_settings');
@@ -436,9 +437,9 @@ function TripDetailsFormInner({
               <div className="flex flex-col gap-2">
                 <label className="flex items-center gap-2">
                   <Switch
-                    checked={bookingTypes.flights}
+                    checked={isBookingEnabled(bookingTypes.flights)}
                     onCheckedChange={(checked) => {
-                      onUpdateBookingTypes({ flights: checked });
+                      onUpdateBookingTypes({ flights: checked ? 'on' : 'off' });
                       acknowledgeField('booking_types.flights' as LLMUpdatableField);
                     }}
                   />
@@ -497,7 +498,7 @@ function TripDetailsFormInner({
             icon={Car}
             isOpen={transportSettingsOpen}
             onOpenChange={setTransportSettingsOpen}
-            hasValue={bookingTypes.ground_transport}
+            hasValue={isBookingEnabled(bookingTypes.ground_transport)}
             isLLMUpdated={isFieldLLMUpdated('transport_settings') || transportBookingUpdated}
             onAcknowledge={() => {
               acknowledgeField('transport_settings');
@@ -508,9 +509,9 @@ function TripDetailsFormInner({
               <div className="flex flex-col gap-2">
                 <label className="flex items-center gap-2">
                   <Switch
-                    checked={bookingTypes.ground_transport}
+                    checked={isBookingEnabled(bookingTypes.ground_transport)}
                     onCheckedChange={(checked) => {
-                      onUpdateBookingTypes({ ground_transport: checked });
+                      onUpdateBookingTypes({ ground_transport: checked ? 'on' : 'off' });
                       acknowledgeField('booking_types.ground_transport' as LLMUpdatableField);
                     }}
                   />
@@ -573,7 +574,7 @@ function TripDetailsFormInner({
             icon={Hotel}
             isOpen={hotelsSettingsOpen}
             onOpenChange={setHotelsSettingsOpen}
-            hasValue={bookingTypes.hotels}
+            hasValue={isBookingEnabled(bookingTypes.hotels)}
             isLLMUpdated={isFieldLLMUpdated('hotel_settings') || hotelsBookingUpdated}
             onAcknowledge={() => {
               acknowledgeField('hotel_settings');
@@ -584,9 +585,9 @@ function TripDetailsFormInner({
               <div className="flex flex-col gap-3">
                 <label className="flex items-center gap-2">
                   <Switch
-                    checked={bookingTypes.hotels}
+                    checked={isBookingEnabled(bookingTypes.hotels)}
                     onCheckedChange={(checked) => {
-                      onUpdateBookingTypes({ hotels: checked });
+                      onUpdateBookingTypes({ hotels: checked ? 'on' : 'off' });
                       acknowledgeField('booking_types.hotels' as LLMUpdatableField);
                     }}
                   />
@@ -653,7 +654,7 @@ function TripDetailsFormInner({
             icon={Ticket}
             isOpen={activitiesSettingsOpen}
             onOpenChange={setActivitiesSettingsOpen}
-            hasValue={bookingTypes.activities || activitySettings.categories.length > 0}
+            hasValue={isBookingEnabled(bookingTypes.activities) || activitySettings.categories.length > 0}
             isLLMUpdated={isFieldLLMUpdated('activity_settings') || activitiesBookingUpdated}
             onAcknowledge={() => {
               acknowledgeField('activity_settings');
@@ -664,9 +665,9 @@ function TripDetailsFormInner({
               <div className="flex flex-col gap-3">
                 <label className="flex items-center gap-2">
                   <Switch
-                    checked={bookingTypes.activities}
+                    checked={isBookingEnabled(bookingTypes.activities)}
                     onCheckedChange={(checked) => {
-                      onUpdateBookingTypes({ activities: checked });
+                      onUpdateBookingTypes({ activities: checked ? 'on' : 'off' });
                       acknowledgeField('booking_types.activities' as LLMUpdatableField);
                     }}
                   />

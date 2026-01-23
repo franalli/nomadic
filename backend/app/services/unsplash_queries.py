@@ -11,9 +11,9 @@ for unknown destinations.
 # Keys are lowercase for case-insensitive lookup
 DESTINATION_QUERIES: dict[str, str] = {
     # Europe
-    "paris": "paris eiffel tower cityscape",
-    "london": "london big ben tower bridge",
-    "rome": "rome colosseum ancient ruins",
+    "paris": "paris eiffel tower iconic landmark",
+    "london": "london big ben tower bridge iconic",
+    "rome": "rome colosseum iconic landmark",
     "barcelona": "barcelona sagrada familia gaudi",
     "amsterdam": "amsterdam canals houses",
     "berlin": "berlin brandenburg gate",
@@ -44,12 +44,12 @@ DESTINATION_QUERIES: dict[str, str] = {
     "krakow": "krakow old town square",
     "warsaw": "warsaw old town",
     # Asia
-    "tokyo": "tokyo skyline shibuya",
+    "tokyo": "tokyo skyline neon cityscape iconic",
     "kyoto": "kyoto temple bamboo",
     "osaka": "osaka castle dotonbori",
     "seoul": "seoul gyeongbokgung palace",
     "bangkok": "bangkok grand palace temple",
-    "singapore": "singapore marina bay skyline",
+    "singapore": "singapore marina bay skyline iconic",
     "hong kong": "hong kong victoria harbor skyline",
     "shanghai": "shanghai bund skyline",
     "beijing": "beijing forbidden city",
@@ -68,7 +68,7 @@ DESTINATION_QUERIES: dict[str, str] = {
     "kathmandu": "kathmandu nepal temples",
     "colombo": "colombo sri lanka",
     # Middle East
-    "dubai": "dubai burj khalifa skyline",
+    "dubai": "dubai burj khalifa skyline iconic",
     "abu dhabi": "abu dhabi sheikh zayed mosque",
     "doha": "doha qatar skyline",
     "istanbul": "istanbul hagia sophia bosphorus",
@@ -86,7 +86,7 @@ DESTINATION_QUERIES: dict[str, str] = {
     "casablanca": "casablanca morocco hassan mosque",
     "tunis": "tunis medina",
     # Americas
-    "new york": "new york manhattan skyline",
+    "new york": "new york manhattan skyline iconic",
     "los angeles": "los angeles hollywood beach",
     "san francisco": "san francisco golden gate bridge",
     "las vegas": "las vegas strip night",
@@ -110,7 +110,7 @@ DESTINATION_QUERIES: dict[str, str] = {
     "cusco": "cusco peru machu picchu",
     "machu picchu": "machu picchu peru inca",
     # Oceania
-    "sydney": "sydney opera house harbor bridge",
+    "sydney": "sydney opera house harbor iconic",
     "melbourne": "melbourne australia",
     "auckland": "auckland new zealand",
     "queenstown": "queenstown new zealand mountains",
@@ -135,16 +135,24 @@ DESTINATION_QUERIES: dict[str, str] = {
 }
 
 
-def get_query_for_destination(destination: str) -> str:
+def get_query_for_destination(destination: str, activities: list[str] | None = None) -> str:
     """
-    Get a deterministic search query for a destination.
+    Get a deterministic search query for a destination, optionally enhanced with activities.
 
     Args:
         destination: The destination name (case-insensitive)
+        activities: Optional list of activity categories (e.g., ["Hiking", "Photography"])
 
     Returns:
-        A curated search query for known destinations,
-        or "{destination} travel landmark" for unknown ones.
+        A curated search query for known destinations (with activity if provided),
+        or "{destination} travel landmark {activity}" for unknown ones.
     """
     normalized = destination.lower().strip()
-    return DESTINATION_QUERIES.get(normalized, f"{destination} travel landmark")
+    base_query = DESTINATION_QUERIES.get(normalized, f"{destination} travel landmark")
+
+    # Enhance query with primary activity if provided
+    if activities and len(activities) > 0:
+        activity = activities[0].lower()
+        return f"{base_query} {activity}"
+
+    return base_query

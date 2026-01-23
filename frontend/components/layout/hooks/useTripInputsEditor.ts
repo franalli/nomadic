@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   toTripInputsDraft,
@@ -60,8 +60,8 @@ export interface TripInputsEditorActions {
   handleSetOrigin: (origin: string) => Promise<void>;
   handleRemoveOrigin: () => Promise<void>;
   handleRemoveTravelers: () => Promise<void>;
-  handleUpdateAdults: (value: number | null) => Promise<void>;
-  handleUpdateChildren: (value: number | null) => Promise<void>;
+  handleUpdateAdults: (value: number | null) => void;
+  handleUpdateChildren: (value: number | null) => void;
   handleToggleRequiresAssistance: () => Promise<void>;
   handleRemoveBudget: () => Promise<void>;
   handleUpdateCurrency: (currency: string) => Promise<void>;
@@ -354,19 +354,40 @@ export function useTripInputsEditor(
     onToast('Cleared the travelers info. 👥', 'confirmation');
   }, [tripInputs.adults, tripInputs.children, tripInputs.requires_assistance, documentStore, onToast]);
 
-  const handleUpdateAdults = useCallback(async (value: number | null) => {
-    const success = await documentStore.commitTripInputs({ adults: value });
+  // Refs for debouncing travelers updates to prevent rapid API calls
+  const pendingTravelersUpdate = useRef<{ adults?: number | null; children?: number | null }>({});
+  const travelersDebounceTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced commit function for travelers
+  const commitTravelersUpdate = useCallback(async () => {
+    const updates = pendingTravelersUpdate.current;
+    if (Object.keys(updates).length === 0) return;
+
+    pendingTravelersUpdate.current = {};
+
+    const success = await documentStore.commitTripInputs(updates);
     if (!success) {
-      onToast('Failed to update adults. Please try again.', 'error');
+      onToast('Failed to update travelers. Please try again.', 'error');
     }
   }, [documentStore, onToast]);
 
-  const handleUpdateChildren = useCallback(async (value: number | null) => {
-    const success = await documentStore.commitTripInputs({ children: value });
-    if (!success) {
-      onToast('Failed to update children. Please try again.', 'error');
+  const handleUpdateAdults = useCallback((value: number | null) => {
+    pendingTravelersUpdate.current.adults = value;
+
+    if (travelersDebounceTimer.current) {
+      clearTimeout(travelersDebounceTimer.current);
     }
-  }, [documentStore, onToast]);
+    travelersDebounceTimer.current = setTimeout(commitTravelersUpdate, 300);
+  }, [commitTravelersUpdate]);
+
+  const handleUpdateChildren = useCallback((value: number | null) => {
+    pendingTravelersUpdate.current.children = value;
+
+    if (travelersDebounceTimer.current) {
+      clearTimeout(travelersDebounceTimer.current);
+    }
+    travelersDebounceTimer.current = setTimeout(commitTravelersUpdate, 300);
+  }, [commitTravelersUpdate]);
 
   const handleToggleRequiresAssistance = useCallback(async () => {
     const newValue = !tripInputs.requires_assistance;

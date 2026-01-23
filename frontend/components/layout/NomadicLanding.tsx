@@ -21,11 +21,13 @@ import { TripLengthSheet } from '@/components/plan/TripLengthSheet';
 import { Button } from '@/components/ui/button';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
 import { useShortlist } from '@/hooks/useShortlist';
+import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { filterTilesByType } from '@/lib/tileSelectors';
 import { formatDateForDisplay } from '@/lib/utils';
+import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
-import type { DocumentTripInputs } from '@/types/document';
+import { isBookingEnabled, type DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel,PlanViewState } from '@/types/plan-envelope';
 
@@ -176,6 +178,30 @@ export function NomadicLanding() {
   const [tripLengthSheetOpen, setTripLengthSheetOpen] = useState(false);
   const [confirmStaySheetOpen, setConfirmStaySheetOpen] = useState(false);
 
+  // Destination image state - fetched from Unsplash when destination changes
+  const [destinationImageUrl, setDestinationImageUrl] = useState<string | null>(null);
+  const lastFetchedDestination = useRef<string | null>(null);
+
+  // Fetch destination image when destination changes
+  useEffect(() => {
+    const destination = tripInputs.destinations?.[0];
+    if (!destination || destination === lastFetchedDestination.current) return;
+
+    lastFetchedDestination.current = destination;
+    setDestinationImageUrl(null); // Clear while loading
+
+    fetchDestinationImage(destination)
+      .then((res) => {
+        // Only update if this is still the current destination
+        if (lastFetchedDestination.current === destination) {
+          setDestinationImageUrl(res.image_url);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch destination image:', err);
+      });
+  }, [tripInputs.destinations]);
+
   // Branch manager hook - manages branches, tiles, and generating state
   const branchManager = useBranchManager({
     tripInputs,
@@ -198,10 +224,30 @@ export function NomadicLanding() {
     hasBranchesReady,
     setBranches,
     setSelectedBranchId,
-    handleStartNewSession,
+    handleStartNewSession: branchManagerStartNewSession,
     handlePlanResult,
     handleGeneratePlanStart,
   } = branchManager;
+
+  // Wrap handleStartNewSession to also clear all local state
+  const handleStartNewSession = useCallback(async () => {
+    // Clear shortlist (saved tiles)
+    shortlist.clear();
+    // Clear local UI generation state
+    setUiGeneration(null);
+    setLastGenerationError(null);
+    // Clear receipt data
+    setReceiptData(null);
+    previousTripInputsRef.current = null;
+    // Clear destination image
+    setDestinationImageUrl(null);
+    lastFetchedDestination.current = null;
+    // Close any open sheets
+    setTripLengthSheetOpen(false);
+    setConfirmStaySheetOpen(false);
+    // Proceed with branch manager reset (clears document store, chat, branches, etc.)
+    await branchManagerStartNewSession();
+  }, [shortlist, branchManagerStartNewSession]);
 
   // Wrapped handlers for receipt functionality
   // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
@@ -384,6 +430,7 @@ export function NomadicLanding() {
 
   // Destination card (from backend or derive locally)
   // Use route-derived subtitle: "Origin → Destination · Date"
+  // Include fetched destination image URL for immediate display
   const destinationCard =
     storeDocument?.destination_card ??
     (hasDestination
@@ -410,6 +457,8 @@ export function NomadicLanding() {
               ? parts.join(' · ')
               : `Trip to ${tripInputs.destinations?.[0] ?? ''}`;
           })(),
+          // Use fetched destination image URL (from Unsplash API)
+          image_url: destinationImageUrl ?? undefined,
         }
       : undefined);
 
@@ -503,10 +552,10 @@ export function NomadicLanding() {
     const currentBookingTypes = currentTripInputs?.booking_types;
     const savedTileIds = shortlist.savedTileIds;
 
-    // Build selections respecting enabled modules
-    const staysEnabled = currentBookingTypes?.hotels !== false;
-    const flightsEnabled = currentBookingTypes?.flights !== false;
-    const activitiesEnabled = currentBookingTypes?.activities !== false;
+    // Build selections respecting enabled modules (tri-state: suggested or on = enabled)
+    const staysEnabled = isBookingEnabled(currentBookingTypes?.hotels);
+    const flightsEnabled = isBookingEnabled(currentBookingTypes?.flights);
+    const activitiesEnabled = isBookingEnabled(currentBookingTypes?.activities);
 
     // Select stay: override > first saved > first recommended
     let selectedStayId: string | undefined;
@@ -571,9 +620,8 @@ export function NomadicLanding() {
     resetTimeout();
 
     try {
-      const response = await fetch('/api/v1/expand-itinerary', {
+      const response = await apiFetch('/v1/expand-itinerary', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           idempotency_key: runId,
           trip_context: tripContext,
@@ -660,8 +708,8 @@ export function NomadicLanding() {
       return;
     }
 
-    // GATE 2: If Stays ON, check for stay selection
-    const staysEnabled = currentBookingTypes?.hotels !== false;
+    // GATE 2: If Stays ON, check for stay selection (tri-state: suggested or on = enabled)
+    const staysEnabled = isBookingEnabled(currentBookingTypes?.hotels);
     const stayTiles = filterTilesByType(currentTiles, 'stay');
     const hasSavedStay = stayTiles.some(t => shortlist.savedTileIds.has(t.id));
 
@@ -731,6 +779,12 @@ export function NomadicLanding() {
   // Handler for viewing booking options (scroll to section)
   const handleViewBookingOptions = useCallback(() => {
     document.getElementById('booking-section')?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  // Handler for "Build plan" CTA in right panel (S0BootstrapView)
+  // Triggers plan generation via ChatPanel
+  const handleBuildPlan = useCallback(() => {
+    chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
   }, []);
 
   // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
@@ -806,6 +860,7 @@ export function NomadicLanding() {
       hasDates={hasDates}
       isExpandingItinerary={isExpandingItinerary}
       currentSubStage={currentSubStage}
+      onBuildPlan={handleBuildPlan}
       onExpandToItinerary={handleExpandToItinerary}
       onViewBookingOptions={handleViewBookingOptions}
       onReset={handleStartNewSession}

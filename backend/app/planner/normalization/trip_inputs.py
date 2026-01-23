@@ -109,7 +109,9 @@ class TripInputNormalizer:
         normalize_booking_field_fn: Optional[Callable[[str, dict], Optional[dict]]] = None,
         normalize_multi_city_fn: Optional[Callable[[Any], Optional[str]]] = None,
         default_currency: str = "USD",
-        default_booking_types: Optional[Dict[str, bool]] = None,
+        default_booking_types: Optional[
+            Dict[str, Any]
+        ] = None,  # Tri-state: "off"|"suggested"|"on" or legacy bool
         update_stats_fn: Optional[StatsUpdater] = None,
     ):
         """
@@ -934,8 +936,11 @@ class TripInputNormalizer:
                 updates["booking_types"] = booking_types
             elif isinstance(activation, dict):
                 # Handle dict format: {"flights": true, "hotels": true}
+                # Also supports tri-state strings: "off", "suggested", "on"
                 for cat, enabled in activation.items():
-                    if cat in booking_types and isinstance(enabled, bool):
+                    if cat in booking_types and (
+                        isinstance(enabled, bool) or enabled in ("off", "suggested", "on")
+                    ):
                         booking_types[cat] = enabled
                 updates["booking_types"] = booking_types
 
@@ -945,7 +950,10 @@ class TripInputNormalizer:
             if isinstance(booking_types_delta, dict):
                 booking_types = dict(trip_inputs.booking_types or self._default_booking_types)
                 for cat, enabled in booking_types_delta.items():
-                    if cat in booking_types and isinstance(enabled, bool):
+                    # Accept both boolean (legacy) and tri-state strings
+                    if cat in booking_types and (
+                        isinstance(enabled, bool) or enabled in ("off", "suggested", "on")
+                    ):
                         booking_types[cat] = enabled
                 updates["booking_types"] = booking_types
 

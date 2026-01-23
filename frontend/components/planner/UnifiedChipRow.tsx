@@ -30,7 +30,7 @@ import {
 import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
-import type { BookingTypes, FlightSettings, HotelSettings, ActivitySettings } from '@/types/document';
+import { isBookingEnabled, type BookingTypes, type FlightSettings, type HotelSettings, type ActivitySettings } from '@/types/document';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -296,22 +296,22 @@ function UnifiedChipRowInner({
   onOpenStays,
   onOpenActivities,
 }: UnifiedChipRowProps) {
-  // Determine if Origin should be visible (only when Flights ON)
-  const showOrigin = bookingTypes.flights === true;
+  // Determine if Origin should be visible (only when Flights ON - tri-state check)
+  const showOrigin = isBookingEnabled(bookingTypes.flights);
 
-  // Determine module chip states
+  // Determine module chip states (tri-state: suggested or on = enabled)
   const getFlightState = (): ModuleState => {
-    if (!bookingTypes.flights) return 'off';
+    if (!isBookingEnabled(bookingTypes.flights)) return 'off';
     return isFlightCustom(flightSettings) ? 'on-custom' : 'on-default';
   };
 
   const getStaysState = (): ModuleState => {
-    if (!bookingTypes.hotels) return 'off';
+    if (!isBookingEnabled(bookingTypes.hotels)) return 'off';
     return isHotelCustom(hotelSettings) ? 'on-custom' : 'on-default';
   };
 
   const getActivitiesState = (): ModuleState => {
-    if (!bookingTypes.activities) return 'off';
+    if (!isBookingEnabled(bookingTypes.activities)) return 'off';
     return isActivityCustom(activitySettings) ? 'on-custom' : 'on-default';
   };
 

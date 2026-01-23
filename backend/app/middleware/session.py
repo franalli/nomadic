@@ -157,6 +157,9 @@ CSRF_EXEMPT_PATHS = {
     "/openapi.json",
     "/v1/validate-trip-input",
     "/v1/admin/clear-validation-cache",
+    "/v1/admin/clear-all-caches",
+    "/v1/admin/clear-all-checkpoints",
+    "/v1/admin/fresh-start",
 }
 
 # Header name for CSRF token

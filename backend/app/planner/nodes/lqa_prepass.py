@@ -29,6 +29,43 @@ if TYPE_CHECKING:
     from app.plan_graph import GraphState
 
 
+def _clear_stale_question_and_ack(state: "GraphState", field: str, parsed: dict) -> None:
+    """Clear stale last_summary after successful LQA parse and set acknowledgment.
+
+    This prevents the infinite loop where the old question (e.g., "Budget:") gets
+    echoed back even after the field was successfully parsed.
+    """
+    state.question_target = None
+
+    # Generate brief acknowledgment based on field
+    ack = None
+    if field == "budget":
+        if "budget_delta" in parsed:
+            amount = int(parsed["budget_delta"])
+            ack = f"Got it, ${amount:,} budget."
+        elif parsed.get("budget_answered"):
+            ack = "Got it, flexible budget."
+    elif field == "destinations":
+        dests = parsed.get("destinations_delta") or parsed.get("destinations", [])
+        if dests:
+            ack = f"Got it, {dests[0]}."
+    elif field == "origin":
+        origin = parsed.get("origin_delta") or parsed.get("origin")
+        if origin:
+            ack = f"Got it, from {origin}."
+    elif field == "travelers":
+        adults = parsed.get("adults_delta", 0)
+        children = parsed.get("children_delta", 0)
+        total = adults + children
+        if total == 1:
+            ack = "Got it, solo traveler."
+        elif total > 0:
+            ack = f"Got it, {total} travelers."
+
+    # Set acknowledgment (or clear stale question if no ack)
+    state.last_summary = ack
+
+
 def lqa_prepass(state: "GraphState") -> "GraphState":
     """
     LQA (Last Question Answer) pre-pass node.
@@ -116,6 +153,7 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
                         state.flags["lqa_prepass"] = True
                         state.flags["lqa_field"] = question_target
                         _lqa_stats["successes"] += 1
+                        _clear_stale_question_and_ack(state, question_target, parsed)
                         _debug(
                             "[LQA] SUGGESTION_CLICK: parsed successfully",
                             matched_suggestion=suggestion[:40],
@@ -362,7 +400,8 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
             # Determine if we should advance question_target
             keep_target = det_result.get("_keep_question_target", False)
             if not keep_target:
-                state.question_target = None
+                lqa_field = lqa_reason.replace("deterministic:", "")
+                _clear_stale_question_and_ack(state, lqa_field, parsed)
 
             # Set high confidence for deterministic parsing
             state.metadata["extraction_confidence"] = high_confidence(lqa_reason, overall=0.98)
@@ -455,9 +494,9 @@ def lqa_prepass(state: "GraphState") -> "GraphState":
     state.flags["lqa_field"] = question_target
     state.parsed_inputs = parsed
 
-    # Clear question_target after successfully answering it, so required_fields
-    # will ask about the next missing field instead of repeating the same question
-    state.question_target = None
+    # Clear question_target and stale last_summary after successfully answering it,
+    # so required_fields will ask about the next missing field instead of repeating
+    _clear_stale_question_and_ack(state, question_target, parsed)
 
     # Set high confidence since we matched deterministically
     state.metadata["extraction_confidence"] = high_confidence("lqa_prepass", overall=0.95)

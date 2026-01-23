@@ -65,6 +65,8 @@ interface StrategyStageRendererProps {
   isExpandingItinerary?: boolean;
   /** Current backend sub-stage for status text */
   currentSubStage?: string | null;
+  /** Handler to trigger plan generation from S0 "Build plan" CTA */
+  onBuildPlan?: () => void;
   onExpandToItinerary?: () => void;
   onViewBookingOptions?: () => void;
   onReset?: () => void;
@@ -85,7 +87,8 @@ function renderStageContent(
   destinationCard: DestinationCard | undefined,
   canGeneratePlan: boolean,
   onRefineAssumptions?: () => void,
-  onExpandToItinerary?: () => void
+  onExpandToItinerary?: () => void,
+  onBuildPlan?: () => void
 ): React.ReactNode {
   // Note: S0BootstrapView now reads from document store directly
   // Action handlers for opening sheets will be added when we wire up the full chip row integration
@@ -94,7 +97,7 @@ function renderStageContent(
 
   switch (state) {
     case 'S0_BOOTSTRAP':
-      return <S0BootstrapView />;
+      return <S0BootstrapView onBuildPlan={onBuildPlan} />;
 
     case 'S1_FRAMING':
       return (
@@ -148,7 +151,7 @@ function renderStageContent(
       );
 
     default:
-      return <S0BootstrapView />;
+      return <S0BootstrapView onBuildPlan={onBuildPlan} />;
   }
 }
 
@@ -163,6 +166,7 @@ export function StrategyStageRenderer({
   hasDates = false,
   isExpandingItinerary = false,
   currentSubStage,
+  onBuildPlan,
   onExpandToItinerary,
   onViewBookingOptions,
   onReset: _onReset,
@@ -234,7 +238,8 @@ export function StrategyStageRenderer({
           destinationCard,
           canGeneratePlan,
           onRefineAssumptions,
-          onExpandToItinerary
+          onExpandToItinerary,
+          onBuildPlan
         )}
 
         {/* BookingSection rendered conditionally (not "always") */}

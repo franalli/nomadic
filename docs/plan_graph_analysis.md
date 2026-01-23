@@ -28,8 +28,8 @@ LangGraph-based conversational trip planning system with **19 nodes**.
 
 | Category            | Count | Description                       |
 | ------------------- | ----- | --------------------------------- |
-| LLM-Powered Nodes   | 11    | Use OpenAI API for generation     |
-| Deterministic Nodes | 8     | Pure Python logic, no LLM         |
+| LLM-Powered Nodes   | 10    | Use OpenAI API for generation     |
+| Deterministic Nodes | 9     | Pure Python logic, no LLM         |
 | Short Circuit Types | 9     | Bypass patterns for fast response |
 | Caching Strategies  | 5     | Token-saving cache mechanisms     |
 
@@ -252,10 +252,10 @@ backend/app/planner/
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  response_polish                                                             │
 │  ───────────────                                                             │
-│  Message tone and formatting                                                 │
-│  • Deterministic-first: safe transforms without LLM                          │
-│  • LLM fallback: response_polish.txt (512 tokens)                           │
+│  Deterministic message stripping                                             │
+│  • Removes: emojis, filler phrases                                           │
 │  • Skips: template responses, short-circuit messages                         │
+│  No LLM                                                                      │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
                                    ▼
@@ -282,7 +282,6 @@ backend/app/planner/
 | `activities_node` | `activities.txt` | Activity preferences | 512 | 🌊 Real | `jloads_safe` |
 | `correction_node` | `correction.txt` | Handle user corrections | 512 | 🌊 Real | `jloads_safe` |
 | `general_node` | `general.txt` | Multi-domain queries | 512 | 🌊 Real | `jloads_safe` |
-| `response_polish` | `response_polish.txt` | Polish message tone | 512 | 🔒 None | `jloads_safe` |
 
 ### Validation Legend
 
@@ -318,6 +317,7 @@ backend/app/planner/
 | `summarize` | Generate follow-ups, format responses | ✨ Simulated | None |
 | `short_circuit_responder` | Handle greetings/confirmations | ✨ Simulated | None |
 | `generate_responder` | Handle explicit generation requests, call strategy orchestrator | ✨ Simulated | None |
+| `response_polish` | Deterministic message stripping (emojis, filler phrases) | 🔒 None | None |
 
 ### Streaming Legend
 
@@ -560,7 +560,7 @@ def _detect_short_circuit(text, state):
 | `ExtractorCache` | `CacheNode` | 100 | 300s | session_id, user_text_hash, core_fields_hash, extractor_mode, model_id | Avoid re-extracting same input |
 | `ResponseCache` | `CacheNode` | 200 | 3600s | node_name, core_fields_hash, follow_up_hash, user_text_hash, model_id, settings_hash | Reuse specialist responses |
 | `StrategyCache` | `CacheNode` | 100 | 300s | session_id, topic, core_fields_hash, user_text_hash, section_id, stage0_lifecycle_hash, model_id | Reuse strategy content |
-| `TileCache` | `CacheNode` | 100 | 300s | session_id, tile_type, query_hash, settings_hash | Cache tile API results |
+| `TileCache` | `CacheNode` | 100 | 300s | session_id, tile_type, query_hash | Cache tile API results |
 | `GateEvaluationCache` | `CacheNode` | 200 | 300s | session_id, user_text_hash, trip_inputs_hash, metadata_hash | Cache routing decisions |
 
 ### Per-Node Caching Strategy
@@ -621,10 +621,11 @@ Located in `backend/app/validation.py`, this cache stores LLM-verified place nam
 | Cache | Purpose | TTL |
 |-------|---------|-----|
 | `_validation_cache` | Positive validation results | 7 days |
-| `_negative_cache` | Invalid locations | Short (prevents retry spam) |
+| `_negative_cache` | Invalid locations | 15 minutes |
 | `_split_cache` | Multi-destination splits ("Paris and Rome") | 7 days |
 | `_prompt_cache` | Formatted prompts | 7 days |
 | `_fallback_cache` | Last known good answer | 7 days |
+| `_rate_counter_cache` | Per-session rate limiting counters | 5 minutes |
 
 **When Validation is Called:**
 - Origin extracted from "from X to Y" pattern
@@ -636,6 +637,40 @@ Located in `backend/app/validation.py`, this cache stores LLM-verified place nam
 **Progressive Learning:**
 - Verified places logged as `LEARNED_PLACE: '{place}' verified`
 - Review logs periodically to add popular places to `KNOWN_CITIES`
+
+### Image Cache (Unsplash)
+
+Located in `backend/app/services/unsplash.py`, this two-tier cache stores destination images.
+
+**Tier 1: In-Memory Cache**
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Storage | Python dict `_memory_cache` | Hot cache within process |
+| TTL | None (process lifetime) | Lost on server restart |
+| Key format | `"destination:variant"` | e.g., `"paris:0"`, `"paris:hiking:2"` |
+| Max variants | 6 per destination | Different images for different tiles |
+
+**Tier 2: Database Cache**
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Table | `unsplash_image_cache` | Persistent across restarts |
+| TTL | None (permanent) | Images never expire |
+| Primary Key | `(destination, variant)` | Composite key for multi-variant support |
+
+**Lookup Order:**
+1. In-memory cache (fastest)
+2. Database cache (persistent)
+3. Unsplash API (fresh fetch)
+4. Picsum fallback (deterministic seed-based)
+
+**Stored Fields:**
+- `image_id`: Unsplash image ID
+- `photographer`: Photographer name
+- `photographer_url`: Profile link
+- `unsplash_url`: Image page URL
+- `download_location`: API endpoint for tracking
 
 ---
 
@@ -656,7 +691,6 @@ Located in `backend/app/validation.py`, this cache stores LLM-verified place nam
 | `activities.txt` | `activities_node` | 512 | Yes | Activity preferences |
 | `correction.txt` | `correction_node` | 512 | Yes | Handle corrections |
 | `general.txt` | `general_node` | 512 | Yes | Multi-domain queries |
-| `response_polish.txt` | `response_polish` | 512 | Yes | Polish message tone |
 | `missing_fields_guard.txt` | `_invoke_guard` | 100 | No | Missing fields guard |
 | `condense.txt` | `condense_long_message` | 256 | No | Condense long messages |
 | `required_fields_templates.json` | `required_fields_node` | N/A | Yes | Template cache for field collection |
@@ -838,6 +872,57 @@ This ensures:
 
 ---
 
+## Retention Policy Summary
+
+Comprehensive view of all cache and data retention policies.
+
+### LLM Response Caches (In-Memory)
+
+| Cache | TTL | Max Size | Configurable |
+|-------|-----|----------|--------------|
+| ResponseCache | 1 hour | 200 | `response_cache_ttl_seconds` |
+| ExtractorCache | 5 minutes | 100 | `extractor_cache_ttl_seconds` |
+| StrategyCache | 5 minutes | 100 | `strategy_cache_ttl_seconds` |
+| GateEvaluationCache | 5 minutes | 200 | (hardcoded) |
+| TileCache | 5 minutes | 100 | (hardcoded) |
+
+### Validation Caches (In-Memory)
+
+| Cache | TTL | Max Size | Configurable |
+|-------|-----|----------|--------------|
+| Place validation | 7 days | 5000 | `validation_cache_ttl` |
+| Negative cache | 15 minutes | 500 | `validation_negative_cache_ttl` |
+| Split cache | 7 days | 500 | `validation_split_cache_size` |
+| Prompt cache | 7 days | 500 | `validation_prompt_cache_size` |
+| Fallback cache | 7 days | 500 | `validation_fallback_cache_size` |
+| Rate counter | 5 minutes | 10000 | `validation_rate_limit_window` |
+
+### Image Caches
+
+| Cache | TTL | Storage | Configurable |
+|-------|-----|---------|--------------|
+| Unsplash in-memory | Process lifetime | Python dict | None |
+| Unsplash DB | Permanent | PostgreSQL | None |
+
+### Session & State
+
+| Component | TTL | Storage | Configurable |
+|-----------|-----|---------|--------------|
+| Session Cookie | 14 days | Browser | `SESSION_MAX_AGE` |
+| DB Session (idle) | 14 days | PostgreSQL | `SESSION_IDLE_TIMEOUT_DAYS` |
+| DB Session (absolute) | 90 days | PostgreSQL | `SESSION_ABSOLUTE_TIMEOUT_DAYS` |
+| LangGraph Checkpoints | 24 hours | In-memory | `checkpoint_ttl_hours` |
+
+### Persistent Data (No TTL)
+
+| Component | Storage | Notes |
+|-----------|---------|-------|
+| PlanDocument | PostgreSQL | Trip data, branches, tiles, selections |
+| Chat Messages | PostgreSQL | Full conversation history |
+| Unsplash Images | PostgreSQL | Cached image metadata with attribution |
+
+---
+
 ## Key Exports
 
 | Module | Exports |
@@ -851,10 +936,60 @@ This ensures:
 | `planner.gates.topic_detection` | `detect_strategy_topic_from_text`, `detect_strategy_topic_from_settings`, `detect_strategy_topic` |
 | `planner.gates.suppression` | `SuppressionPredicates` |
 | `planner.gates.checks` | `is_strategy_expansion_request`, `is_vague_affirmation`, `StrategyExpansionResult` |
-| `planner.state` | `StateWriter` (methods: `set_trip_input`, `append_branch`, `get_applied_updates`, `set_active_category`, `set_last_summary`, `set_suggested_responses`, `set_pending_strategy_expansion`, `set_flag`, `set_parsed_inputs`) |
+| `planner.state` | `StateWriter` (methods: `set_question_target`, `write_trip_input`, `write_trip_inputs`, `set_metadata`, `get_mutations`, `get_mutation_summary`, `get_applied_updates`, `set_active_category`, `set_last_summary`, `set_suggested_responses`, `set_pending_strategy_expansion`, `set_flag`, `set_parsed_inputs`, `apply`) |
 | `planner.nodes` | `extractor`, `lqa_prepass`, `router`, `_specialist`, `strategy_node` |
 | `planner.nodes.schemas` | `ExtractorOutput`, `RouterOutput`, `BudgetDelta`, `IntentType`, `TopicType` |
 | `planner.nodes.strategy` | `orchestrate_strategies`, `merge_strategy_results`, `detect_relevant_strategies`, `StrategyContent`, `StrategyResult` |
+
+---
+
+## Admin Cache Management Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/v1/admin/clear-validation-cache` | POST | Clear validation caches, re-populate with common values |
+| `/v1/admin/fresh-start` | POST | Clear validation + response + prune stale checkpoints (preserves rate limiting) |
+| `/v1/admin/clear-all-checkpoints` | POST | Clear ALL LangGraph checkpoints |
+| `/v1/admin/clear-all-caches` | POST | **Comprehensive clear of ALL caches including Unsplash** |
+
+### `/v1/admin/clear-all-caches`
+
+Clears everything:
+
+| Cache System | What's Cleared |
+|--------------|----------------|
+| Planner Framework | ResponseCache, ExtractorCache, StrategyCache, TileCache, GateEvaluationCache |
+| Validation | All 6 validation caches including rate limiting |
+| Unsplash Memory | In-memory image cache (`_memory_cache`) |
+| Unsplash Database | Persistent image cache (`UnsplashImageCache` table) |
+| Checkpoints | All LangGraph checkpoints |
+| Prompts | LRU prompt cache, Jinja2 template cache, `_PROMPTS_LOADED` set |
+
+**Response Format:**
+
+```json
+{
+    "timestamp": "2024-01-15T10:30:00.000000",
+    "caches_cleared": {
+        "planner_and_validation": 150,
+        "unsplash_memory": 45,
+        "unsplash_database": 100
+    },
+    "total_entries_cleared": 295,
+    "before": {
+        "validation": {"positive": 100, "negative": 50, ...},
+        "response": {"follow_up": 50},
+        "checkpoints": {"total": 5},
+        "unsplash_memory": {"entries": 45, "destinations": 15}
+    },
+    "after": {
+        "validation": {"positive": 0, "negative": 0, ...},
+        "response": {"follow_up": 0},
+        "checkpoints": {"total": 0},
+        "unsplash_memory": {"entries": 0, "destinations": 0}
+    }
+}
+```
 
 ---
 

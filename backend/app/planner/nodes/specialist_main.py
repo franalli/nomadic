@@ -27,7 +27,7 @@ from app.planner.nodes.specialist.guards import (
     check_noop_gate,
 )
 from app.planner.nodes.specialist.response_processor import (
-    cache_required_fields_response,
+    cache_specialist_response,
     process_llm_response,
 )
 from app.planner.streaming import (
@@ -661,7 +661,43 @@ async def _specialist(
             _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state
     else:
-        cache_key = None
+        # =====================================================================
+        # DOMAIN SPECIALIST CACHING (flights, hotels, transport, activities)
+        # =====================================================================
+        # Compute cache key for domain specialists to enable response caching.
+        # Key components: node name, core fields, user text, domain settings
+        import hashlib
+
+        core_fields = _get_core_fields_state(state.trip_inputs)
+        user_text_hash = hashlib.md5((state.user_text or "").encode()).hexdigest()[:16]
+
+        # Get domain-specific settings hash for cache isolation
+        ti = state.trip_inputs
+        settings_parts = []
+        if name == "flights" and ti.flight_settings:
+            settings_parts.append(str(ti.flight_settings))
+        elif name == "hotels" and ti.hotel_settings:
+            settings_parts.append(str(ti.hotel_settings))
+        elif name == "transport" and ti.transport_settings:
+            settings_parts.append(str(ti.transport_settings))
+        elif name == "activities" and ti.activity_settings:
+            settings_parts.append(str(ti.activity_settings))
+        settings_hash = hashlib.md5("|".join(settings_parts).encode()).hexdigest()[:16]
+
+        cache_key = _compute_cache_key(name, core_fields, user_text_hash, settings_hash)
+
+        # Check cache for domain specialists
+        cached = _get_cached_response(_follow_up_cache, cache_key, state)
+        if cached is not None:
+            _debug_cache_hit(name, cache_key[:16])
+            state.last_summary = cached.get("assistant_message", "")
+            state.question_target = cached.get("question_target")
+            state.suggested_responses = cached.get("suggested_responses", [])
+            state.metadata[f"{name}_path"] = "cache"
+            state.metadata["response_writer_node"] = f"specialist:{name}:cache"
+            state.metadata["response_generation_provenance"] = "cached"
+            _debug_node_exit(f"specialist:{name}", state, start_ns)
+            return state
 
     # Get today's date for prompt injection
     today_iso = state.metadata.get("today_iso") or _today_iso()
@@ -866,9 +902,9 @@ async def _specialist(
             # =====================================================================
             process_llm_response(state, j, name, llm_config)
 
-            # Cache the response for required_fields node
-            if name == "required_fields" and cache_key is not None:
-                cache_required_fields_response(state, cache_key)
+            # Cache the response for all specialists (required_fields and domain specialists)
+            if cache_key is not None:
+                cache_specialist_response(state, cache_key, name)
 
             _debug_node_exit(f"specialist:{name}", state, start_ns)
             return state

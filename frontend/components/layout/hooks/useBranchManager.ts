@@ -6,6 +6,7 @@ import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api'
 import { saveTripSummary } from '@/lib/summary';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
+import { clearPersistedUIState } from '@/state/uiStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { TripSummaryPayload } from '@/types/summary';
@@ -373,6 +374,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     } finally {
       // Clear session-related localStorage (preserves consent preferences)
       clearSessionLocalStorage();
+
+      // Clear persisted UI state (selectedBranchId, comparison mode) from localStorage
+      clearPersistedUIState();
 
       handleClearContext();
 

@@ -8,6 +8,7 @@ from typing import List
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -112,6 +113,18 @@ from app.schemas import (
     TilesSearchRequest,
     TripInputValidationRequest,
     TripInputValidationResponse,
+)
+from app.services.unsplash import (
+    clear_db_cache as clear_unsplash_db_cache,
+)
+from app.services.unsplash import (
+    clear_memory_cache as clear_unsplash_memory_cache,
+)
+from app.services.unsplash import (
+    get_image_for_destination,
+)
+from app.services.unsplash import (
+    get_memory_cache_stats as get_unsplash_memory_stats,
 )
 from app.tile_service.service import search_tiles
 from app.validation import (
@@ -513,6 +526,44 @@ async def validate_trip_input(req: TripInputValidationRequest, request: Request)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+# =============================================================================
+# Destination Image Endpoint
+# =============================================================================
+
+
+class DestinationImageRequest(BaseModel):
+    """Request for destination image."""
+
+    destination: str
+
+
+class DestinationImageResponse(BaseModel):
+    """Response with destination image URL."""
+
+    image_url: str
+    destination: str
+
+
+@app.post("/v1/destination-image", response_model=DestinationImageResponse)
+async def get_destination_image(req: DestinationImageRequest, db: AsyncSession = db_dependency):
+    """
+    Get the Unsplash image URL for a destination.
+
+    Called when user selects a destination to show the correct banner image
+    immediately, without waiting for plan generation.
+    """
+    dest_name = req.destination.strip()
+    if not dest_name:
+        raise HTTPException(status_code=400, detail="Destination is required")
+
+    image_url = await get_image_for_destination(dest_name, variant=0, db=db, width=1600, height=900)
+
+    return DestinationImageResponse(
+        image_url=image_url,
+        destination=dest_name,
+    )
+
+
 @app.post("/v1/admin/clear-validation-cache")
 def admin_clear_validation_cache():
     """
@@ -650,6 +701,64 @@ def admin_clear_all_checkpoints():
         "before": before,
         "after": checkpoint_stats(),
     }
+
+
+@app.post("/v1/admin/clear-all-caches")
+async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
+    """
+    Clear ALL caches in the system - comprehensive cache reset.
+
+    Clears:
+    - All LangGraph/planner caches (Response, Extractor, Strategy, Tile, GateEvaluation)
+    - All validation caches (including rate limiting)
+    - Unsplash memory cache
+    - Unsplash database cache
+    - All LangGraph checkpoints
+    - Prompt/template caches
+
+    WARNING: Destructive operation for development/maintenance only.
+    """
+    results = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "caches_cleared": {},
+    }
+
+    # 1. Get before stats
+    before_validation = cache_stats()
+    before_response = response_cache_stats()
+    before_checkpoints = checkpoint_stats()
+    before_unsplash = get_unsplash_memory_stats()
+
+    # 2. Clear planner caches + validation + checkpointer + prompts
+    planner_cleared = clear_all_caches()
+    results["caches_cleared"]["planner_and_validation"] = planner_cleared
+
+    # 3. Clear Unsplash memory cache
+    unsplash_memory_count = before_unsplash["entries"]
+    clear_unsplash_memory_cache()
+    results["caches_cleared"]["unsplash_memory"] = unsplash_memory_count
+
+    # 4. Clear Unsplash database cache
+    unsplash_db_count = await clear_unsplash_db_cache(db)
+    results["caches_cleared"]["unsplash_database"] = unsplash_db_count
+
+    # 5. Summary
+    total = planner_cleared + unsplash_memory_count + unsplash_db_count
+    results["total_entries_cleared"] = total
+    results["before"] = {
+        "validation": before_validation,
+        "response": before_response,
+        "checkpoints": before_checkpoints,
+        "unsplash_memory": before_unsplash,
+    }
+    results["after"] = {
+        "validation": cache_stats(),
+        "response": response_cache_stats(),
+        "checkpoints": checkpoint_stats(),
+        "unsplash_memory": get_unsplash_memory_stats(),
+    }
+
+    return results
 
 
 @app.post("/v1/admin/gate-trace")
@@ -1195,10 +1304,15 @@ async def graph_plan_endpoint(
     destinations = trip_inputs.get("destinations", [])
     if destinations and len(destinations) > 0:
         dest_name = destinations[0]
+        # Use async version to actually fetch from Unsplash API (sync version only checks cache)
+        # Banner image is based on location only, not activities
+        dest_image_url = await get_image_for_destination(
+            dest_name, variant=0, db=db, width=1600, height=900
+        )
         response_document.destination_card = DestinationCard(
             title=dest_name,
             subtitle=f"Your adventure in {dest_name}" if dest_name else None,
-            image_url=None,  # Will be populated by frontend from branch or Unsplash
+            image_url=dest_image_url,
         )
 
     # resolver is None for sync endpoint (only used during SSE streaming)
@@ -1575,10 +1689,15 @@ async def graph_plan_stream_endpoint(
             destinations = trip_inputs.get("destinations", [])
             if destinations and len(destinations) > 0:
                 dest_name = destinations[0]
+                # Use async version to actually fetch from Unsplash API
+                # Banner image is based on location only, not activities
+                dest_image_url = await get_image_for_destination(
+                    dest_name, variant=0, db=db, width=1600, height=900
+                )
                 response_document.destination_card = DestinationCard(
                     title=dest_name,
                     subtitle=f"Your adventure in {dest_name}" if dest_name else None,
-                    image_url=None,
+                    image_url=dest_image_url,
                 )
 
             # resolver is None at completion (was used during streaming)

@@ -1,8 +1,10 @@
-import type {
-  ActivitySettings,
-  FlightSettings,
-  HotelSettings,
-  TransportSettings,
+import {
+  isBookingEnabled,
+  type ActivitySettings,
+  type BookingTypeState,
+  type FlightSettings,
+  type HotelSettings,
+  type TransportSettings,
 } from '@/types/document';
 
 /**
@@ -11,9 +13,9 @@ import type {
  */
 export function getFlightsSummary(
   settings: FlightSettings,
-  enabled: boolean
+  enabled: boolean | BookingTypeState
 ): string | undefined {
-  if (!enabled) return undefined;
+  if (!isBookingEnabled(enabled)) return undefined;
 
   const cabinLabels: Record<FlightSettings['cabin_class'], string> = {
     economy: 'Economy',
@@ -40,9 +42,9 @@ export function getFlightsSummary(
  */
 export function getHotelsSummary(
   settings: HotelSettings,
-  enabled: boolean
+  enabled: boolean | BookingTypeState
 ): string | undefined {
-  if (!enabled) return undefined;
+  if (!isBookingEnabled(enabled)) return undefined;
 
   const parts: string[] = [];
 
@@ -82,9 +84,9 @@ export function getHotelsSummary(
  */
 export function getTransportSummary(
   settings: TransportSettings,
-  enabled: boolean
+  enabled: boolean | BookingTypeState
 ): string | undefined {
-  if (!enabled) return undefined;
+  if (!isBookingEnabled(enabled)) return undefined;
 
   const modes: string[] = [];
   if (settings.car) modes.push('Car');
@@ -100,12 +102,13 @@ export function getTransportSummary(
  */
 export function getActivitiesSummary(
   settings: ActivitySettings,
-  enabled: boolean
+  enabled: boolean | BookingTypeState
 ): string | undefined {
-  if (!enabled && settings.categories.length === 0) return undefined;
+  const isEnabled = isBookingEnabled(enabled);
+  if (!isEnabled && settings.categories.length === 0) return undefined;
 
   if (settings.categories.length === 0) {
-    return enabled ? 'Enabled' : undefined;
+    return isEnabled ? 'Enabled' : undefined;
   }
 
   if (settings.categories.length <= 2) {

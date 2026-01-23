@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { cn , formatBudgetDisplay } from '@/lib/utils';
 import type { DocumentBranch, DocumentTripInputs, PlanStatus } from '@/types/document';
+import { isBookingEnabled } from '@/types/document';
 import type { BookingStatus, DestinationCard,PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 import type { Tile, TileSelection } from '@/types/tile';
 
@@ -171,10 +172,11 @@ export const BranchPanel = memo(function BranchPanel({
   const selectedHighlights = selected?.highlights?.length ? selected.highlights : [];
   const selectedNotes = selected?.notes?.length ? selected.notes : [];
   // Check if any booking types are enabled (don't show "searching..." if none enabled)
+  // Uses tri-state check: 'suggested' or 'on' = enabled
   const hasAnyBookingEnabled = tripInputs?.booking_types && (
-    tripInputs.booking_types.hotels ||
-    tripInputs.booking_types.flights ||
-    tripInputs.booking_types.activities
+    isBookingEnabled(tripInputs.booking_types.hotels) ||
+    isBookingEnabled(tripInputs.booking_types.flights) ||
+    isBookingEnabled(tripInputs.booking_types.activities)
   );
   const selectedDuration = resolveDurationForBranch(selected, tripInputs);
   const selectedBudget = resolveBudgetForBranch(selected, tripInputs);

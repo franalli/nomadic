@@ -8595,18 +8595,46 @@ def _should_enable_booking_for_transport(transport_settings: dict | None) -> boo
     return any(transport_settings.get(key) is True for key in ("car", "train", "bus"))
 
 
+def _is_booking_enabled(state: str | bool | None) -> bool:
+    """Check if a booking type state is enabled (suggested or on).
+
+    Tri-state model:
+    - 'off' / False / None -> disabled
+    - 'suggested' / 'on' / True -> enabled
+    """
+    if state is None:
+        return False
+    # Handle legacy boolean values during migration
+    if isinstance(state, bool):
+        return state
+    return state in ("suggested", "on")
+
+
 def _auto_enable_booking_types(trip_inputs: TripInputs) -> None:
-    """Auto-enable booking_types based on sub-settings."""
+    """Auto-upgrade booking_types from 'off' to 'suggested' based on sub-settings.
+
+    Tri-state invariant: ONLY upgrade 'off' -> 'suggested'.
+    NEVER change 'suggested' or 'on' states.
+    """
     booking_types = dict(trip_inputs.booking_types) if trip_inputs.booking_types else {}
 
-    if _should_enable_booking_for_flights(trip_inputs.flight_settings):
-        booking_types["flights"] = True
-    if _should_enable_booking_for_hotels(trip_inputs.hotel_settings):
-        booking_types["hotels"] = True
-    if _should_enable_booking_for_activities(trip_inputs.activity_settings):
-        booking_types["activities"] = True
-    if _should_enable_booking_for_transport(trip_inputs.transport_settings):
-        booking_types["ground_transport"] = True
+    # Only upgrade 'off' to 'suggested' if sub-settings indicate interest
+    if booking_types.get("flights") == "off" and _should_enable_booking_for_flights(
+        trip_inputs.flight_settings
+    ):
+        booking_types["flights"] = "suggested"
+    if booking_types.get("hotels") == "off" and _should_enable_booking_for_hotels(
+        trip_inputs.hotel_settings
+    ):
+        booking_types["hotels"] = "suggested"
+    if booking_types.get("activities") == "off" and _should_enable_booking_for_activities(
+        trip_inputs.activity_settings
+    ):
+        booking_types["activities"] = "suggested"
+    if booking_types.get("ground_transport") == "off" and _should_enable_booking_for_transport(
+        trip_inputs.transport_settings
+    ):
+        booking_types["ground_transport"] = "suggested"
 
     trip_inputs.booking_types = booking_types
 
@@ -9584,7 +9612,8 @@ class TripInputs(BaseModel):
     budget: Optional[float] = None
     currency: Optional[str] = None
     multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
-    booking_types: Dict[str, bool] = Field(default_factory=dict)
+    # Tri-state: "off" | "suggested" | "on" (also accepts legacy bool for migration)
+    booking_types: Dict[str, Any] = Field(default_factory=dict)
     flight_settings: Dict[str, Any] = Field(default_factory=dict)
     hotel_settings: Dict[str, Any] = Field(default_factory=dict)
     activity_settings: Dict[str, Any] = Field(default_factory=lambda: {"categories": []})
@@ -13946,19 +13975,19 @@ def _are_suggestions_stale(ti: "TripInputs", suggestions: List[str]) -> bool:
     joined = " ".join(suggestions_lower)
 
     # Check if suggestions are about flights when flights already enabled
-    if booking_types.get("flights"):
+    if _is_booking_enabled(booking_types.get("flights")):
         flight_keywords = ["economy", "business", "first class", "direct flight", "cabin", "flight"]
         if any(kw in joined for kw in flight_keywords):
             return True
 
     # Check if suggestions are about hotels when hotels already enabled
-    if booking_types.get("hotels"):
+    if _is_booking_enabled(booking_types.get("hotels")):
         hotel_keywords = ["star", "hotel", "amenities", "resort", "boutique"]
         if any(kw in joined for kw in hotel_keywords):
             return True
 
     # Check if suggestions are about activities when activities already enabled
-    if booking_types.get("activities"):
+    if _is_booking_enabled(booking_types.get("activities")):
         activity_keywords = ["activity", "tour", "adventure", "excursion"]
         if any(kw in joined for kw in activity_keywords):
             return True
@@ -14628,9 +14657,9 @@ async def tile_search(state: GraphState) -> GraphState:
         _debug_node_exit("tile_search", state, start_ns)
         return state
 
-    # Check if any booking types are enabled
+    # Check if any booking types are enabled (tri-state: suggested or on)
     booking_types = state.trip_inputs.booking_types or {}
-    any_enabled = any(booking_types.values())
+    any_enabled = any(_is_booking_enabled(v) for v in booking_types.values())
 
     if not any_enabled:
         _debug("No booking types enabled, skipping tile search")
@@ -14645,13 +14674,13 @@ async def tile_search(state: GraphState) -> GraphState:
     ti = state.trip_inputs
     tiles_dict: Dict[str, Any] = {}
 
-    # Determine which verticals to search based on booking_types
+    # Determine which verticals to search based on booking_types (tri-state)
     verticals: List[str] = []
-    if booking_types.get("hotels"):
+    if _is_booking_enabled(booking_types.get("hotels")):
         verticals.append("hotel")
-    if booking_types.get("flights"):
+    if _is_booking_enabled(booking_types.get("flights")):
         verticals.append("flight")
-    if booking_types.get("activities"):
+    if _is_booking_enabled(booking_types.get("activities")):
         verticals.append("activity")
 
     if not verticals:
@@ -14868,20 +14897,9 @@ async def generate_responder(state: GraphState) -> GraphState:
     state.ready_to_generate = True
     state.last_summary = "Generating plan."
 
-    # Auto-enable default booking types when user explicitly requests generation
-    # This ensures tile_search runs and populates branches with actual tiles
-    if not ti.booking_types or not any(
-        getattr(ti.booking_types, k, False) for k in ["flights", "hotels", "activities"]
-    ):
-        from app.schemas import BookingTypes as BookingTypesSchema
-
-        ti.booking_types = BookingTypesSchema(
-            flights=True,
-            hotels=True,
-            activities=True,
-            ground_transport=False,
-        )
-        _debug("Auto-enabled default booking types for explicit plan generation")
+    # NOTE: We intentionally do NOT auto-enable booking types here.
+    # The tri-state model (off/suggested/on) means user scope preferences
+    # are preserved. Tile search treats 'suggested' and 'on' as enabled.
 
     # Call strategy orchestrator to get enriched content
     strategy_results = await orchestrate_strategies(state)
@@ -16590,12 +16608,26 @@ async def run_turn(
     if result.branches:
         from app.services.unsplash import get_image_url_sync, prefetch_destination_images
 
+        # Get activities for activity-specific images
+        activities = None
+        if (
+            hasattr(result.trip_inputs, "activity_settings")
+            and result.trip_inputs.activity_settings
+        ):
+            activities = getattr(result.trip_inputs.activity_settings, "categories", None)
+
         # Pre-fetch Unsplash images for all branch destinations to populate cache
+        # Always prefetch base destination first (no activities) as fallback,
+        # then optionally prefetch activity-specific variants
         for branch in result.branches:
             dests = branch.get("destinations", [])
             if dests and dests[0]:
                 try:
+                    # First, ensure base destination images are cached
                     await prefetch_destination_images(dests[0])
+                    # Then, if activities specified, try activity-specific images
+                    if activities:
+                        await prefetch_destination_images(dests[0], activities=activities)
                 except Exception as e:
                     _debug(f"Image prefetch failed for {dests[0]}: {e}")
 
@@ -16604,24 +16636,25 @@ async def run_turn(
             dests = branch_copy.get("destinations", [])
             primary_dest = dests[0] if dests else "travel"
             # Add image fields if not already present (using different variants)
+            # If activities provided, images will be activity-specific (e.g., "Dubai hiking")
             if "image_url" not in branch_copy:
                 branch_copy["image_url"] = get_image_url_sync(
-                    primary_dest, variant=0, width=1600, height=900
+                    primary_dest, variant=0, width=1600, height=900, activities=activities
                 )
             if "hero_images" not in branch_copy:
                 branch_copy["hero_images"] = [
                     get_image_url_sync(
-                        primary_dest, variant=0, width=1600, height=900
+                        primary_dest, variant=0, width=1600, height=900, activities=activities
                     ),  # Signature view
                     get_image_url_sync(
-                        primary_dest, variant=1, width=900, height=600
+                        primary_dest, variant=1, width=900, height=600, activities=activities
                     ),  # Daylight wander
                     get_image_url_sync(
-                        primary_dest, variant=2, width=900, height=600
+                        primary_dest, variant=2, width=900, height=600, activities=activities
                     ),  # Evening vibe
                 ]
             enriched_branches.append(branch_copy)
-        _debug(f"Enriched {len(enriched_branches)} branches with images")
+        _debug(f"Enriched {len(enriched_branches)} branches with images (activities={activities})")
 
     # Assemble response
     resp = {
@@ -17100,12 +17133,26 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     if result.branches:
         from app.services.unsplash import get_image_url_sync, prefetch_destination_images
 
+        # Get activities for activity-specific images
+        activities = None
+        if (
+            hasattr(result.trip_inputs, "activity_settings")
+            and result.trip_inputs.activity_settings
+        ):
+            activities = getattr(result.trip_inputs.activity_settings, "categories", None)
+
         # Pre-fetch Unsplash images for all branch destinations to populate cache
+        # Always prefetch base destination first (no activities) as fallback,
+        # then optionally prefetch activity-specific variants
         for branch in result.branches:
             dests = branch.get("destinations", [])
             if dests and dests[0]:
                 try:
+                    # First, ensure base destination images are cached
                     await prefetch_destination_images(dests[0])
+                    # Then, if activities specified, try activity-specific images
+                    if activities:
+                        await prefetch_destination_images(dests[0], activities=activities)
                 except Exception as e:
                     _debug(f"Image prefetch failed for {dests[0]}: {e}")
 
@@ -17114,24 +17161,25 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
             dests = branch_copy.get("destinations", [])
             primary_dest = dests[0] if dests else "travel"
             # Add image fields if not already present (using different variants)
+            # If activities provided, images will be activity-specific (e.g., "Dubai hiking")
             if "image_url" not in branch_copy:
                 branch_copy["image_url"] = get_image_url_sync(
-                    primary_dest, variant=0, width=1600, height=900
+                    primary_dest, variant=0, width=1600, height=900, activities=activities
                 )
             if "hero_images" not in branch_copy:
                 branch_copy["hero_images"] = [
                     get_image_url_sync(
-                        primary_dest, variant=0, width=1600, height=900
+                        primary_dest, variant=0, width=1600, height=900, activities=activities
                     ),  # Signature view
                     get_image_url_sync(
-                        primary_dest, variant=1, width=900, height=600
+                        primary_dest, variant=1, width=900, height=600, activities=activities
                     ),  # Daylight wander
                     get_image_url_sync(
-                        primary_dest, variant=2, width=900, height=600
+                        primary_dest, variant=2, width=900, height=600, activities=activities
                     ),  # Evening vibe
                 ]
             enriched_branches.append(branch_copy)
-        _debug(f"Enriched {len(enriched_branches)} branches with images")
+        _debug(f"Enriched {len(enriched_branches)} branches with images (activities={activities})")
 
     # Build final response (same as run_turn)
     resp = {
@@ -17222,13 +17270,13 @@ def _trip_inputs_to_document(ti: TripInputs) -> DocumentTripInputs:
 
     Includes all fields including booking preferences to match plan.py behavior.
     """
-    # Convert booking_types dict to BookingTypes model
+    # Convert booking_types dict to BookingTypes model (tri-state defaults)
     booking_types_data = ti.booking_types or {}
     booking_types = BookingTypes(
-        hotels=booking_types_data.get("hotels", False),
-        flights=booking_types_data.get("flights", False),
-        ground_transport=booking_types_data.get("ground_transport", False),
-        activities=booking_types_data.get("activities", False),
+        hotels=booking_types_data.get("hotels", "suggested"),
+        flights=booking_types_data.get("flights", "off"),
+        ground_transport=booking_types_data.get("ground_transport", "off"),
+        activities=booking_types_data.get("activities", "suggested"),
     )
 
     # Convert flight_settings dict to FlightSettings model
@@ -17288,10 +17336,11 @@ def _trip_inputs_to_document(ti: TripInputs) -> DocumentTripInputs:
 def _branches_to_document(
     branches: List[Dict[str, Any]],
     trip_context_id: int,
+    activities: list[str] | None = None,
 ) -> List[DocumentBranch]:
     """Convert graph branches to DocumentBranch list for persistence."""
     doc_branches: List[DocumentBranch] = []
-    _debug(f"_branches_to_document called with {len(branches)} branches")
+    _debug(f"_branches_to_document called with {len(branches)} branches, activities={activities}")
 
     # Import here to avoid circular imports
     from app.services.unsplash import get_image_url_sync
@@ -17305,15 +17354,26 @@ def _branches_to_document(
         # variant 0: Main branch image + signature view
         # variant 1: Daylight wander
         # variant 2: Evening vibe
+        # If activities provided, images will be activity-specific (e.g., "Dubai hiking")
         primary_dest = branch_destinations[0] if branch_destinations else "travel"
-        _debug(f"Branch {idx}: generating images for destination: {primary_dest}")
-        branch_image_url = get_image_url_sync(primary_dest, variant=0, width=1600, height=900)
+        _debug(
+            f"Branch {idx}: generating images for dest: {primary_dest}, " f"activities={activities}"
+        )
+        branch_image_url = get_image_url_sync(
+            primary_dest, variant=0, width=1600, height=900, activities=activities
+        )
         _debug(f"Branch {idx}: image_url={branch_image_url[:80]}...")
         # Generate hero images with different variants for unique imagery
         branch_hero_images = [
-            get_image_url_sync(primary_dest, variant=0, width=1600, height=900),  # Signature view
-            get_image_url_sync(primary_dest, variant=1, width=900, height=600),  # Daylight wander
-            get_image_url_sync(primary_dest, variant=2, width=900, height=600),  # Evening vibe
+            get_image_url_sync(
+                primary_dest, variant=0, width=1600, height=900, activities=activities
+            ),
+            get_image_url_sync(
+                primary_dest, variant=1, width=900, height=600, activities=activities
+            ),
+            get_image_url_sync(
+                primary_dest, variant=2, width=900, height=600, activities=activities
+            ),
         ]
         _debug(f"Branch {idx}: hero_images generated, first={branch_hero_images[0][:80]}...")
 
@@ -17541,19 +17601,35 @@ async def plan_trip_graph(
             # branches get unique Unsplash images.
             from app.services.unsplash import prefetch_destination_images
 
+            # Get activities for activity-specific images
+            trip_inputs_dict = result.get("trip_inputs", {})
+            activities = trip_inputs_dict.get("activity_settings", {}).get("categories", [])
+
             for branch_spec in result_branches:
                 branch_dests = branch_spec.get("destinations", [])
                 if branch_dests and isinstance(branch_dests, list) and branch_dests[0]:
                     try:
-                        num_cached = await prefetch_destination_images(branch_dests[0], db)
+                        # First, ensure base destination images are cached (with DB persistence)
+                        num_base = await prefetch_destination_images(branch_dests[0], db)
                         _debug(
-                            f"Pre-fetched {num_cached} image variants for "
+                            f"Pre-fetched {num_base} base image variants for "
                             f"branch destination: {branch_dests[0]}"
                         )
+                        # Then, if activities specified, try activity-specific images
+                        if activities:
+                            num_activity = await prefetch_destination_images(
+                                branch_dests[0], db, activities=activities
+                            )
+                            _debug(
+                                f"Pre-fetched {num_activity} activity-specific image variants for "
+                                f"branch destination: {branch_dests[0]} (activities={activities})"
+                            )
                     except Exception as e:
                         _debug(f"Image prefetch failed for {branch_dests[0]}: {e}")
 
-            doc_branches = _branches_to_document(result_branches, trip_ctx.id)
+            doc_branches = _branches_to_document(
+                result_branches, trip_ctx.id, activities=activities
+            )
 
             # Get tiles from metadata
             tiles_from_search = result.get("session_state", {}).get("metadata", {}).get("tiles", {})

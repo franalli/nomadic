@@ -27,13 +27,14 @@ import {
 } from '@/lib/refinementSummaries';
 import { cn } from '@/lib/utils';
 import type { LLMUpdatableField } from '@/state/documentStore';
-import type {
-  ActivitySettings,
-  BookingTypes,
-  DocumentTripInputs,
-  FlightSettings,
-  HotelSettings,
-  TransportSettings,
+import {
+  isBookingEnabled,
+  type ActivitySettings,
+  type BookingTypes,
+  type DocumentTripInputs,
+  type FlightSettings,
+  type HotelSettings,
+  type TransportSettings,
 } from '@/types/document';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -94,10 +95,10 @@ function countActiveRefinements(
   tripInputs: DocumentTripInputs
 ): number {
   let count = 0;
-  if (bookingTypes.flights) count++;
-  if (bookingTypes.hotels) count++;
-  if (bookingTypes.ground_transport) count++;
-  if (bookingTypes.activities || activitySettings.categories.length > 0) count++;
+  if (isBookingEnabled(bookingTypes.flights)) count++;
+  if (isBookingEnabled(bookingTypes.hotels)) count++;
+  if (isBookingEnabled(bookingTypes.ground_transport)) count++;
+  if (isBookingEnabled(bookingTypes.activities) || activitySettings.categories.length > 0) count++;
   if (tripInputs.adults != null || tripInputs.children != null) count++;
   // Budget is now a core constraint, not a refinement
   return count;
@@ -230,9 +231,9 @@ function OptionalRefinementsSectionInner({
     tripInputs.requires_assistance
   );
 
-  // Reset handlers
+  // Reset handlers - set to 'off' for tri-state model
   const resetFlights = () => {
-    onUpdateBookingTypes({ flights: false });
+    onUpdateBookingTypes({ flights: 'off' });
     onUpdateFlightSettings({
       round_trip: true,
       cabin_class: 'economy',
@@ -241,17 +242,17 @@ function OptionalRefinementsSectionInner({
   };
 
   const resetHotels = () => {
-    onUpdateBookingTypes({ hotels: false });
+    onUpdateBookingTypes({ hotels: 'off' });
     onUpdateHotelSettings({ min_stars: 0, amenities: [] });
   };
 
   const resetTransport = () => {
-    onUpdateBookingTypes({ ground_transport: false });
+    onUpdateBookingTypes({ ground_transport: 'off' });
     onUpdateTransportSettings({ car: false, train: false, bus: false });
   };
 
   const resetActivities = () => {
-    onUpdateBookingTypes({ activities: false });
+    onUpdateBookingTypes({ activities: 'off' });
     // Clear all activity categories
     for (let i = activitySettings.categories.length - 1; i >= 0; i--) {
       onRemoveActivity(i);
@@ -274,16 +275,16 @@ function OptionalRefinementsSectionInner({
     <PopoverContentWrapper hint="Optional. Improves flight results." onReset={resetFlights}>
       <label className="flex items-center gap-2">
         <Switch
-          checked={bookingTypes.flights}
+          checked={isBookingEnabled(bookingTypes.flights)}
           onCheckedChange={(checked) => {
-            onUpdateBookingTypes({ flights: checked });
+            onUpdateBookingTypes({ flights: checked ? 'on' : 'off' });
             acknowledgeField('booking_types.flights' as LLMUpdatableField);
           }}
         />
         <span className="text-[11px] text-muted-foreground">Book flights</span>
       </label>
       <GatingMessage
-        show={bookingTypes.flights && needsCoreInputs}
+        show={isBookingEnabled(bookingTypes.flights) && needsCoreInputs}
         hasDestination={hasDestination}
         hasDates={hasDates}
       />
@@ -341,9 +342,9 @@ function OptionalRefinementsSectionInner({
     <PopoverContentWrapper hint="Optional. Improves transport results." onReset={resetTransport}>
       <label className="flex items-center gap-2">
         <Switch
-          checked={bookingTypes.ground_transport}
+          checked={isBookingEnabled(bookingTypes.ground_transport)}
           onCheckedChange={(checked) => {
-            onUpdateBookingTypes({ ground_transport: checked });
+            onUpdateBookingTypes({ ground_transport: checked ? 'on' : 'off' });
             acknowledgeField('booking_types.ground_transport' as LLMUpdatableField);
           }}
         />
@@ -406,16 +407,16 @@ function OptionalRefinementsSectionInner({
     <PopoverContentWrapper hint="Optional. Improves hotel results." onReset={resetHotels}>
       <label className="flex items-center gap-2">
         <Switch
-          checked={bookingTypes.hotels}
+          checked={isBookingEnabled(bookingTypes.hotels)}
           onCheckedChange={(checked) => {
-            onUpdateBookingTypes({ hotels: checked });
+            onUpdateBookingTypes({ hotels: checked ? 'on' : 'off' });
             acknowledgeField('booking_types.hotels' as LLMUpdatableField);
           }}
         />
         <span className="text-[11px] text-muted-foreground">Book hotels</span>
       </label>
       <GatingMessage
-        show={bookingTypes.hotels && needsCoreInputs}
+        show={isBookingEnabled(bookingTypes.hotels) && needsCoreInputs}
         hasDestination={hasDestination}
         hasDates={hasDates}
       />
@@ -474,9 +475,9 @@ function OptionalRefinementsSectionInner({
     <PopoverContentWrapper hint="Optional. Improves activity results." onReset={resetActivities}>
       <label className="flex items-center gap-2">
         <Switch
-          checked={bookingTypes.activities}
+          checked={isBookingEnabled(bookingTypes.activities)}
           onCheckedChange={(checked) => {
-            onUpdateBookingTypes({ activities: checked });
+            onUpdateBookingTypes({ activities: checked ? 'on' : 'off' });
             acknowledgeField('booking_types.activities' as LLMUpdatableField);
           }}
         />
@@ -700,7 +701,7 @@ function OptionalRefinementsSectionInner({
                   Plane,
                   flightsOpen,
                   setFlightsOpen,
-                  bookingTypes.flights,
+                  isBookingEnabled(bookingTypes.flights),
                   isFieldLLMUpdated('flight_settings') || isSubFieldUpdated('booking_types.flights'),
                   () => {
                     acknowledgeField('flight_settings');
@@ -715,7 +716,7 @@ function OptionalRefinementsSectionInner({
                   Car,
                   transportOpen,
                   setTransportOpen,
-                  bookingTypes.ground_transport,
+                  isBookingEnabled(bookingTypes.ground_transport),
                   isFieldLLMUpdated('transport_settings') || isSubFieldUpdated('booking_types.ground_transport'),
                   () => {
                     acknowledgeField('transport_settings');
@@ -730,7 +731,7 @@ function OptionalRefinementsSectionInner({
                   Hotel,
                   hotelsOpen,
                   setHotelsOpen,
-                  bookingTypes.hotels,
+                  isBookingEnabled(bookingTypes.hotels),
                   isFieldLLMUpdated('hotel_settings') || isSubFieldUpdated('booking_types.hotels'),
                   () => {
                     acknowledgeField('hotel_settings');
@@ -745,7 +746,7 @@ function OptionalRefinementsSectionInner({
                   Ticket,
                   activitiesOpen,
                   setActivitiesOpen,
-                  bookingTypes.activities || activitySettings.categories.length > 0,
+                  isBookingEnabled(bookingTypes.activities) || activitySettings.categories.length > 0,
                   isFieldLLMUpdated('activity_settings') || isSubFieldUpdated('booking_types.activities'),
                   () => {
                     acknowledgeField('activity_settings');

@@ -36,9 +36,14 @@ _memory_cache: dict[str, "UnsplashImage"] = {}
 NUM_VARIANTS = 6
 
 
-def _cache_key(destination: str, variant: int) -> str:
-    """Generate cache key for destination:variant."""
+def _cache_key(destination: str, variant: int, activities: list[str] | None = None) -> str:
+    """Generate cache key for destination:activity:variant."""
     normalized = destination.lower().strip()
+    # Only use activity in key if we have a non-empty activity string
+    if activities and len(activities) > 0:
+        activity = activities[0].lower().strip()
+        if activity:  # Only include if non-empty after strip
+            return f"{normalized}:{activity}:{variant}"
     return f"{normalized}:{variant}"
 
 
@@ -125,7 +130,9 @@ def _extract_image_from_photo(photo: dict) -> Optional[UnsplashImage]:
     )
 
 
-async def _fetch_variants_from_unsplash(destination: str) -> List[UnsplashImage]:
+async def _fetch_variants_from_unsplash(
+    destination: str, activities: list[str] | None = None
+) -> List[UnsplashImage]:
     """
     Fetch multiple images from Unsplash API for a destination.
 
@@ -138,8 +145,8 @@ async def _fetch_variants_from_unsplash(destination: str) -> List[UnsplashImage]
         return []
 
     logger.info(f"[UNSPLASH-API] API key configured (length={len(api_key)})")
-    query = get_query_for_destination(destination)
-    logger.info(f"[UNSPLASH-API] Query for '{destination}': {query}")
+    query = get_query_for_destination(destination, activities)
+    logger.info(f"[UNSPLASH-API] Query for '{destination}' (activities={activities}): {query}")
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -149,6 +156,8 @@ async def _fetch_variants_from_unsplash(destination: str) -> List[UnsplashImage]
                     "query": query,
                     "per_page": NUM_VARIANTS,
                     "orientation": "landscape",
+                    "order_by": "relevant",
+                    "content_filter": "high",
                 },
                 headers={
                     "Authorization": f"Client-ID {api_key}",
@@ -431,6 +440,7 @@ def get_attribution_sync(destination: str, variant: int = 0) -> dict:
 async def prefetch_destination_images(
     destination: str,
     db: Optional[AsyncSession] = None,
+    activities: list[str] | None = None,
 ) -> int:
     """
     Prefetch all image variants for a destination.
@@ -441,53 +451,80 @@ async def prefetch_destination_images(
     Args:
         destination: The destination name
         db: Optional database session for cache storage
+        activities: Optional list of activity categories for activity-specific images
 
     Returns:
         Number of images successfully cached
     """
     normalized = destination.lower().strip()
-    logger.info(f"[UNSPLASH] Prefetching images for: {normalized}")
+    activity_str = f" (activities={activities})" if activities else ""
+    logger.info(f"[UNSPLASH] Prefetching images for: {normalized}{activity_str}")
 
     # Check if we already have variants cached
-    cache_key_0 = _cache_key(destination, 0)
+    cache_key_0 = _cache_key(destination, 0, activities)
     if cache_key_0 in _memory_cache:
         # Count how many variants we have
-        count = sum(1 for i in range(NUM_VARIANTS) if _cache_key(destination, i) in _memory_cache)
-        logger.info(f"[UNSPLASH] Already have {count} variants cached for {normalized}")
+        count = sum(
+            1
+            for i in range(NUM_VARIANTS)
+            if _cache_key(destination, i, activities) in _memory_cache
+        )
+        logger.info(
+            f"[UNSPLASH] Already have {count} variants cached for {normalized}{activity_str}"
+        )
         return count
 
-    # Check DB cache
-    if db:
+    # Check DB cache (only if no activity filter - DB cache is destination-only)
+    if db and not activities:
         try:
             db_images = await _get_all_variants_from_db(db, destination)
             if db_images:
                 # Populate memory cache from DB
                 for i, img in enumerate(db_images):
-                    _memory_cache[_cache_key(destination, i)] = img
+                    _memory_cache[_cache_key(destination, i, activities)] = img
                 logger.info(f"[UNSPLASH] Loaded {len(db_images)} variants from DB for {normalized}")
                 return len(db_images)
         except Exception as e:
             logger.warning(f"[UNSPLASH] DB lookup failed: {e}")
 
     # Fetch from Unsplash API
-    images = await _fetch_variants_from_unsplash(destination)
+    images = await _fetch_variants_from_unsplash(destination, activities)
 
     if images:
         # Store all variants in memory cache
         for i, img in enumerate(images):
-            _memory_cache[_cache_key(destination, i)] = img
+            _memory_cache[_cache_key(destination, i, activities)] = img
 
-        # Store in DB
-        if db:
+        # Store in DB (only for non-activity queries to avoid DB bloat)
+        if db and not activities:
             try:
                 await _save_all_variants_to_db(db, destination, images)
             except Exception as e:
                 logger.warning(f"[UNSPLASH] DB save failed: {e}")
 
-        logger.info(f"[UNSPLASH] Cached {len(images)} variants for {normalized}")
+        logger.info(f"[UNSPLASH] Cached {len(images)} variants for {normalized}{activity_str}")
         return len(images)
 
-    logger.info(f"[UNSPLASH] No images fetched for {normalized}")
+    # If API returned no images and activities were provided, fall back to base destination
+    # This ensures we use cached destination images even if activity-specific query fails
+    if activities and db:
+        logger.info("[UNSPLASH] Activity query returned no images, trying base destination from DB")
+        try:
+            db_images = await _get_all_variants_from_db(db, destination)
+            if db_images:
+                # Populate memory cache with base destination images
+                # (using activity key for consistency)
+                for i, img in enumerate(db_images):
+                    _memory_cache[_cache_key(destination, i, activities)] = img
+                logger.info(
+                    f"[UNSPLASH] Fallback: loaded {len(db_images)} base "
+                    f"variants from DB for {normalized}"
+                )
+                return len(db_images)
+        except Exception as e:
+            logger.warning(f"[UNSPLASH] DB fallback lookup failed: {e}")
+
+    logger.info(f"[UNSPLASH] No images fetched for {normalized}{activity_str}")
     return 0
 
 
@@ -497,13 +534,14 @@ async def get_image_for_destination(
     db: Optional[AsyncSession] = None,
     width: int = 800,
     height: int = 600,
+    activities: list[str] | None = None,
 ) -> str:
     """
     Get image URL for a destination.
 
     Lookup order:
     1. In-memory cache (fastest)
-    2. Database cache (persistent)
+    2. Database cache (persistent, only for non-activity queries)
     3. Unsplash API (fresh fetch - fetches all variants)
     4. Picsum fallback (on any failure)
 
@@ -513,13 +551,17 @@ async def get_image_for_destination(
         db: Optional database session for cache lookup/storage
         width: Image width
         height: Image height
+        activities: Optional list of activity categories for activity-specific images
 
     Returns:
         Image URL (Unsplash or Picsum fallback)
     """
     normalized = destination.lower().strip()
-    cache_key = _cache_key(destination, variant)
-    logger.info(f"[UNSPLASH] get_image_for_destination: dest={destination}, variant={variant}")
+    cache_key = _cache_key(destination, variant, activities)
+    activity_str = f", activities={activities}" if activities else ""
+    logger.info(
+        f"[UNSPLASH] get_image_for_destination: dest={destination}, variant={variant}{activity_str}"
+    )
 
     # 1. Check in-memory cache for this variant
     if cache_key in _memory_cache:
@@ -528,9 +570,9 @@ async def get_image_for_destination(
         logger.info(f"[UNSPLASH] Memory cache HIT for {cache_key}: {url[:80]}...")
         return url
 
-    # 2. Check database cache for this variant
+    # 2. Check database cache for this variant (only for non-activity queries)
     logger.info(f"[UNSPLASH] Memory cache MISS for {cache_key}, checking DB")
-    if db:
+    if db and not activities:
         try:
             cached = await _get_from_db_cache(db, destination, variant)
             if cached:
@@ -543,17 +585,19 @@ async def get_image_for_destination(
             logger.warning(f"[UNSPLASH] DB cache lookup failed: {e}")
 
     # 3. Fetch ALL variants from Unsplash API (better to fetch once)
-    logger.info(f"[UNSPLASH] Fetching from Unsplash API for {normalized}...")
-    images = await _fetch_variants_from_unsplash(destination)
+    logger.info(f"[UNSPLASH] Fetching from Unsplash API for {normalized}{activity_str}...")
+    images = await _fetch_variants_from_unsplash(destination, activities)
 
     if images:
         # Store all fetched variants in memory cache
         for i, img in enumerate(images):
-            _memory_cache[_cache_key(destination, i)] = img
-        logger.info(f"[UNSPLASH] API SUCCESS: cached {len(images)} variants for {normalized}")
+            _memory_cache[_cache_key(destination, i, activities)] = img
+        logger.info(
+            f"[UNSPLASH] API SUCCESS: cached {len(images)} variants for {normalized}{activity_str}"
+        )
 
-        # Store all in DB
-        if db:
+        # Store all in DB (only for non-activity queries to avoid DB bloat)
+        if db and not activities:
             try:
                 await _save_all_variants_to_db(db, destination, images)
                 logger.info(f"[UNSPLASH] Saved {len(images)} variants to DB for {normalized}")
@@ -580,11 +624,54 @@ def clear_memory_cache() -> None:
     _memory_cache.clear()
 
 
+async def clear_db_cache(db: AsyncSession) -> int:
+    """
+    Clear all cached Unsplash images from the database.
+
+    This removes all persistent image cache entries. Use with caution
+    as it will require re-fetching images from Unsplash API.
+
+    Args:
+        db: Async database session
+
+    Returns:
+        Number of cache entries deleted
+    """
+    from sqlalchemy import delete, func
+
+    from app.db_models import UnsplashImageCache
+
+    try:
+        # Count before delete
+        count_result = await db.execute(select(func.count()).select_from(UnsplashImageCache))
+        count = count_result.scalar() or 0
+
+        # Delete all entries
+        await db.execute(delete(UnsplashImageCache))
+        await db.commit()
+
+        logger.info(f"[UNSPLASH-DB] Cleared {count} cached images from database")
+        return count
+    except Exception as e:
+        logger.warning(f"[UNSPLASH-DB] Failed to clear cache: {e}")
+        await db.rollback()
+        return 0
+
+
+def get_memory_cache_stats() -> dict:
+    """Return statistics about the in-memory Unsplash cache."""
+    return {
+        "entries": len(_memory_cache),
+        "destinations": len(set(k.split(":")[0] for k in _memory_cache.keys())),
+    }
+
+
 def get_image_url_sync(
     destination: str,
     variant: int = 0,
     width: int = 800,
     height: int = 600,
+    activities: list[str] | None = None,
 ) -> str:
     """
     Synchronous version for use in sync contexts (e.g., mock providers).
@@ -597,14 +684,16 @@ def get_image_url_sync(
         variant: Which image variant to return (0-5, default 0)
         width: Image width
         height: Image height
+        activities: Optional list of activity categories for activity-specific images
 
     Returns:
         Image URL (cached Unsplash or Picsum fallback)
     """
-    cache_key = _cache_key(destination, variant)
+    cache_key = _cache_key(destination, variant, activities)
+    activity_str = f", activities={activities}" if activities else ""
     logger.info(
         f"[UNSPLASH-SYNC] get_image_url_sync: dest={destination}, "
-        f"variant={variant}, cache_size={len(_memory_cache)}"
+        f"variant={variant}{activity_str}, cache_size={len(_memory_cache)}"
     )
 
     # Check in-memory cache (may be populated by previous async calls or prefetch)
@@ -613,6 +702,16 @@ def get_image_url_sync(
         url = build_image_url(image.image_id, width, height)
         logger.info(f"[UNSPLASH-SYNC] Cache HIT for {cache_key}: {url[:80]}...")
         return url
+
+    # If activity-specific cache miss, try base destination key as fallback
+    # This ensures destination images work even if activities parameter is inconsistent
+    if activities and len(activities) > 0:
+        base_key = _cache_key(destination, variant, None)
+        if base_key in _memory_cache:
+            image = _memory_cache[base_key]
+            url = build_image_url(image.image_id, width, height)
+            logger.info(f"[UNSPLASH-SYNC] Fallback to base key {base_key}: {url[:80]}...")
+            return url
 
     # Fall back to Picsum (deterministic based on destination + variant)
     fallback_url = _get_picsum_fallback(destination, variant, width, height)

@@ -28,10 +28,10 @@ import type {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const DEFAULT_BOOKING_TYPES: BookingTypes = {
-  hotels: false,
-  flights: false,
-  ground_transport: false,
-  activities: false,
+  hotels: 'suggested',
+  flights: 'off',  // Upgrades to 'suggested' when origin is set
+  ground_transport: 'off',
+  activities: 'suggested',
 };
 
 export const DEFAULT_FLIGHT_SETTINGS: FlightSettings = {

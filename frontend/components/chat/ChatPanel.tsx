@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, Lock, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, RotateCcw, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -14,7 +14,6 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { shouldShowLeftPanelGenerateCTA } from '@/components/plan/planStateHelpers';
 import { UnifiedChipRow } from '@/components/planner/UnifiedChipRow';
 import {
   DestinationSheet,
@@ -32,19 +31,21 @@ import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import type { TriggerContext } from '@/types/loader';
-import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
-import { useDocumentStore } from '@/state/documentStore';
+import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
-import type {
-  ActivitySettings,
-  BookingTypes,
-  DocumentBranch,
-  DocumentTripInputs,
-  FlightSettings,
-  GraphPlanResponse,  HotelSettings,
-  TransportSettings} from '@/types/document';
+import {
+  isBookingEnabled,
+  type ActivitySettings,
+  type BookingTypes,
+  type DocumentBranch,
+  type DocumentTripInputs,
+  type FlightSettings,
+  type GraphPlanResponse,
+  type HotelSettings,
+  type TransportSettings,
+} from '@/types/document';
 import type { PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
@@ -342,8 +343,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       tripDuration: _tripDuration,
       // CTA gating flags
       hasDestination = false,
-      canGeneratePlan = false,
-      hasPlan = false,
+      canGeneratePlan: _canGeneratePlan = false,
+      hasPlan: _hasPlan = false,
       // Optional Refinements Section props
       hasDates = false,
       tripInputs,
@@ -363,7 +364,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onToggleRequiresAssistance: _onToggleRequiresAssistance,
       llmUpdatedFields: _llmUpdatedFields,
       onAcknowledgeLLMUpdate: _onAcknowledgeLLMUpdate,
-      planViewState,
+      planViewState: _planViewState,
       onOpenBudgetInput: _onOpenBudgetInput,
     } = props;
 
@@ -371,6 +372,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     void _onFreshStart;
     void _dateFlex;
     void _tripDuration;
+    void _canGeneratePlan;
+    void _hasPlan;
     void _transportSettings;
     void _onUpdateTransportSettings;
     void _onAddActivity;
@@ -378,6 +381,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     void _onToggleRequiresAssistance;
     void _llmUpdatedFields;
     void _onAcknowledgeLLMUpdate;
+    void _planViewState;
     void _onOpenBudgetInput;
 
     // Derive input disabled state from planState (RESOLVING = disabled)
@@ -405,7 +409,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
     const [generateTriggered, setGenerateTriggered] = useState(false);
-    const [hasAnimatedPulse, setHasAnimatedPulse] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     // Track which messages are collapsed (by message ID)
@@ -460,22 +463,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
     const hasUserMessage = messages.some((msg) => msg.role === 'user');
-
-    // Generate plan button state machine
-    type GenerateState = 'DISABLED_INCOMPLETE' | 'ENABLED_READY' | 'GENERATING' | 'GENERATED';
-    const generateState: GenerateState = useMemo(() => {
-      if (!canGeneratePlan) return 'DISABLED_INCOMPLETE';
-      if (isLoading || generateTriggered) return 'GENERATING';
-      if (hasPlan) return 'GENERATED';
-      return 'ENABLED_READY';
-    }, [canGeneratePlan, isLoading, generateTriggered, hasPlan]);
-
-    // Track first transition to ENABLED_READY for pulse animation
-    useEffect(() => {
-      if (generateState === 'ENABLED_READY' && !hasAnimatedPulse) {
-        setHasAnimatedPulse(true);
-      }
-    }, [generateState, hasAnimatedPulse]);
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     // Note: missingFields now derived from planState instead of tripDetails
@@ -694,6 +681,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         // Notify parent that generate plan has started (for loading screen)
         if (isGenerateTrigger) {
+          setGenerateTriggered(true);
           onGeneratePlanStart?.();
         }
 
@@ -1003,7 +991,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           dateRange={dateRange}
           travelers={tripInputs?.adults ? `${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}${tripInputs.children ? `, ${tripInputs.children} child${tripInputs.children > 1 ? 'ren' : ''}` : ''}` : undefined}
           budget={budget}
-          bookingTypes={bookingTypes || { flights: false, hotels: true, activities: false, ground_transport: false }}
+          bookingTypes={bookingTypes || DEFAULT_BOOKING_TYPES}
           flightSettings={flightSettings}
           hotelSettings={hotelSettings}
           activitySettings={activitySettings}
@@ -1259,57 +1247,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </button>
           )}
           </form>
-
-          {/* Primary CTA - Generate plan (hidden after S2_STRATEGY_READY and during generation) */}
-          {shouldShowLeftPanelGenerateCTA(planViewState) && generateState !== 'GENERATING' && (
-            <div className="space-y-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setGenerateTriggered(true);
-                  sendMessageCore(GENERATE_PLAN_TRIGGER);
-                }}
-                disabled={generateState === 'DISABLED_INCOMPLETE'}
-                className={cn(
-                  "group w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold rounded-full transition-all",
-                  // DISABLED_INCOMPLETE - intentional locked state (opacity raised from 0.45 to 0.60 for WCAG)
-                  generateState === 'DISABLED_INCOMPLETE' && "opacity-60 cursor-not-allowed text-muted-foreground/80 border border-muted-foreground/30 bg-muted/8",
-                  // ENABLED_READY
-                  generateState === 'ENABLED_READY' && cn(
-                    "text-primary border border-primary/50 bg-primary/10 hover:bg-primary/15 hover:border-primary/70",
-                    "dark:text-accent dark:border-accent/50 dark:bg-accent/15 dark:hover:bg-accent/25",
-                    !hasAnimatedPulse && "cta-pulse-once"
-                  ),
-                  // GENERATED
-                  generateState === 'GENERATED' && "text-muted-foreground border border-muted-foreground/30 bg-transparent hover:border-muted-foreground/50 hover:text-foreground"
-                )}
-              >
-                {generateState === 'GENERATED' ? (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    <span>Regenerate plan</span>
-                  </>
-                ) : generateState === 'DISABLED_INCOMPLETE' ? (
-                  <>
-                    <Lock className="h-4 w-4 opacity-70" />
-                    <span>Generate plan</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4 transition-transform group-hover:scale-110" />
-                    <span>Generate plan</span>
-                  </>
-                )}
-              </button>
-
-              {/* Subtext per state */}
-              {generateState === 'DISABLED_INCOMPLETE' && (
-                <p className="text-center text-[11px] text-muted-foreground/50">
-                  Set destination + dates to unlock.
-                </p>
-              )}
-            </div>
-          )}
         </div>
 
         {/* Sheet components for chip interactions */}
@@ -1382,14 +1319,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         <FlightsSheet
           open={flightsSheetOpen}
           onOpenChange={setFlightsSheetOpen}
-          enabled={bookingTypes?.flights ?? false}
+          enabled={isBookingEnabled(bookingTypes?.flights)}
           settings={flightSettings || { round_trip: true, cabin_class: 'economy', direct_only: false }}
           hasOrigin={!!origin}
           hasDestination={hasDestination}
           hasDates={hasDates}
           onToggle={(enabled) => {
             if (onUpdateBookingTypes) {
-              onUpdateBookingTypes({ flights: enabled });
+              onUpdateBookingTypes({ flights: enabled ? 'on' : 'off' });
             }
             toast(enabled ? 'Flights included' : 'Flights removed');
           }}
@@ -1416,13 +1353,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         <StaysSheet
           open={staysSheetOpen}
           onOpenChange={setStaysSheetOpen}
-          enabled={bookingTypes?.hotels ?? true}
+          enabled={isBookingEnabled(bookingTypes?.hotels)}
           settings={hotelSettings || { min_stars: 0, amenities: [] }}
           hasDestination={hasDestination}
           hasDates={hasDates}
           onToggle={(enabled) => {
             if (onUpdateBookingTypes) {
-              onUpdateBookingTypes({ hotels: enabled });
+              onUpdateBookingTypes({ hotels: enabled ? 'on' : 'off' });
             }
             toast(enabled ? 'Stays included' : 'Stays removed');
           }}
@@ -1445,12 +1382,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         <ActivitiesSheet
           open={activitiesSheetOpen}
           onOpenChange={setActivitiesSheetOpen}
-          enabled={bookingTypes?.activities ?? false}
+          enabled={isBookingEnabled(bookingTypes?.activities)}
           settings={activitySettings || { categories: [], skill_level: null }}
           hasDestination={hasDestination}
           onToggle={(enabled) => {
             if (onUpdateBookingTypes) {
-              onUpdateBookingTypes({ activities: enabled });
+              onUpdateBookingTypes({ activities: enabled ? 'on' : 'off' });
             }
             toast(enabled ? 'Activities included' : 'Activities removed');
           }}

@@ -20,6 +20,7 @@
 import { ArrowRight, Check, Loader2, MapPin, Calendar, Users, DollarSign, Plane, Clock } from 'lucide-react';
 import { cn, formatDateForDisplay } from '@/lib/utils';
 import { useDocumentTripInputs } from '@/state/documentStore';
+import { isBookingEnabled } from '@/types/document';
 
 interface ChecklistItem {
   id: string;
@@ -71,7 +72,7 @@ export function NextStepPanel({
   const children = tripInputs?.children ?? 0;
   const budget = tripInputs?.budget ?? null;
   const currency = tripInputs?.currency ?? 'USD';
-  const isFlightsEnabled = tripInputs?.booking_types?.flights ?? false;
+  const isFlightsEnabled = isBookingEnabled(tripInputs?.booking_types?.flights);
 
   // Format display values
   const startDateDisplay = startDate ? formatDateForDisplay(startDate) : null;

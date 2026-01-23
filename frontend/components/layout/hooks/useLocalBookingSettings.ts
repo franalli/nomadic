@@ -11,14 +11,16 @@ import {
   DEFAULT_TRIP_INPUTS,
   useDocumentStore,
 } from '@/state/documentStore';
-import type {
-  ActivitySettings,
-  BookingTypes,
-  DocumentTripInputs,
-  DocumentTripInputsPatch,
-  FlightSettings,
-  HotelSettings,
-  TransportSettings,
+import {
+  isBookingEnabled,
+  type ActivitySettings,
+  type BookingTypes,
+  type BookingTypeState,
+  type DocumentTripInputs,
+  type DocumentTripInputsPatch,
+  type FlightSettings,
+  type HotelSettings,
+  type TransportSettings,
 } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 
@@ -143,10 +145,14 @@ export function useLocalBookingSettings(
 
   // Sync local state from store when store values change (only if no pending local changes)
   // 8.1.2: Using shallow comparison instead of JSON.stringify for better performance
+  // Also reset to defaults when storeTripInputs becomes null (e.g., on session reset)
   useEffect(() => {
     const storeVal = storeTripInputs?.booking_types;
-    if (storeVal && !hasPendingBookingTypesChanges.current) {
-      if (!shallowSettingsEqual(storeVal, prevStoreBookingTypes.current)) {
+    if (!hasPendingBookingTypesChanges.current) {
+      if (!storeVal) {
+        // Reset to defaults when store is cleared
+        setLocalBookingTypes(DEFAULT_TRIP_INPUTS.booking_types!);
+      } else if (!shallowSettingsEqual(storeVal, prevStoreBookingTypes.current)) {
         setLocalBookingTypes(storeVal);
       }
     }
@@ -155,8 +161,10 @@ export function useLocalBookingSettings(
 
   useEffect(() => {
     const storeVal = storeTripInputs?.flight_settings;
-    if (storeVal && !hasPendingFlightChanges.current) {
-      if (!shallowSettingsEqual(storeVal, prevStoreFlightSettings.current)) {
+    if (!hasPendingFlightChanges.current) {
+      if (!storeVal) {
+        setLocalFlightSettings(DEFAULT_TRIP_INPUTS.flight_settings!);
+      } else if (!shallowSettingsEqual(storeVal, prevStoreFlightSettings.current)) {
         setLocalFlightSettings(storeVal);
       }
     }
@@ -165,8 +173,10 @@ export function useLocalBookingSettings(
 
   useEffect(() => {
     const storeVal = storeTripInputs?.hotel_settings;
-    if (storeVal && !hasPendingHotelChanges.current) {
-      if (!shallowSettingsEqual(storeVal, prevStoreHotelSettings.current)) {
+    if (!hasPendingHotelChanges.current) {
+      if (!storeVal) {
+        setLocalHotelSettings(DEFAULT_TRIP_INPUTS.hotel_settings!);
+      } else if (!shallowSettingsEqual(storeVal, prevStoreHotelSettings.current)) {
         setLocalHotelSettings(storeVal);
       }
     }
@@ -175,8 +185,10 @@ export function useLocalBookingSettings(
 
   useEffect(() => {
     const storeVal = storeTripInputs?.transport_settings;
-    if (storeVal && !hasPendingTransportChanges.current) {
-      if (!shallowSettingsEqual(storeVal, prevStoreTransportSettings.current)) {
+    if (!hasPendingTransportChanges.current) {
+      if (!storeVal) {
+        setLocalTransportSettings(DEFAULT_TRIP_INPUTS.transport_settings!);
+      } else if (!shallowSettingsEqual(storeVal, prevStoreTransportSettings.current)) {
         setLocalTransportSettings(storeVal);
       }
     }
@@ -185,8 +197,10 @@ export function useLocalBookingSettings(
 
   useEffect(() => {
     const storeVal = storeTripInputs?.activity_settings;
-    if (storeVal && !hasPendingActivityChanges.current) {
-      if (!shallowSettingsEqual(storeVal, prevStoreActivitySettings.current)) {
+    if (!hasPendingActivityChanges.current) {
+      if (!storeVal) {
+        setLocalActivitySettings(DEFAULT_TRIP_INPUTS.activity_settings!);
+      } else if (!shallowSettingsEqual(storeVal, prevStoreActivitySettings.current)) {
         setLocalActivitySettings(storeVal);
       }
     }
@@ -210,6 +224,41 @@ export function useLocalBookingSettings(
     }
   }, [document, documentStore]);
 
+  // Clear pending flags and timers when store is reset (storeTripInputs becomes null)
+  useEffect(() => {
+    if (!storeTripInputs) {
+      // Clear all pending flags so sync-back can reset local state
+      hasPendingBookingTypesChanges.current = false;
+      hasPendingFlightChanges.current = false;
+      hasPendingHotelChanges.current = false;
+      hasPendingTransportChanges.current = false;
+      hasPendingActivityChanges.current = false;
+      // Clear any pending commits queue
+      pendingCommitsQueue.current = null;
+      // Clear all debounce timers
+      if (bookingTypesCommitTimer.current) {
+        clearTimeout(bookingTypesCommitTimer.current);
+        bookingTypesCommitTimer.current = null;
+      }
+      if (flightCommitTimer.current) {
+        clearTimeout(flightCommitTimer.current);
+        flightCommitTimer.current = null;
+      }
+      if (hotelCommitTimer.current) {
+        clearTimeout(hotelCommitTimer.current);
+        hotelCommitTimer.current = null;
+      }
+      if (transportCommitTimer.current) {
+        clearTimeout(transportCommitTimer.current);
+        transportCommitTimer.current = null;
+      }
+      if (activityCommitTimer.current) {
+        clearTimeout(activityCommitTimer.current);
+        activityCommitTimer.current = null;
+      }
+    }
+  }, [storeTripInputs]);
+
   // Cleanup timers on unmount
   useEffect(() => {
     return () => {
@@ -220,6 +269,29 @@ export function useLocalBookingSettings(
       if (activityCommitTimer.current) clearTimeout(activityCommitTimer.current);
     };
   }, []);
+
+  // Origin-aware flights: Auto-suggest flights when origin is set
+  // Tri-state invariant: Only upgrade 'off' -> 'suggested', never touch 'on' or existing 'suggested'
+  useEffect(() => {
+    const hasOrigin = !!storeTripInputs?.origin;
+    const currentFlightsState = bookingTypesRef.current.flights;
+
+    if (hasOrigin && currentFlightsState === 'off') {
+      const updated = { ...bookingTypesRef.current, flights: 'suggested' as BookingTypeState };
+      bookingTypesRef.current = updated;
+      setLocalBookingTypes(updated);
+
+      // Commit the auto-suggestion (if document exists)
+      if (document) {
+        documentStore.commitTripInputs({ booking_types: updated });
+      } else {
+        pendingCommitsQueue.current = {
+          ...pendingCommitsQueue.current,
+          booking_types: updated,
+        };
+      }
+    }
+  }, [storeTripInputs?.origin, document, documentStore]);
 
   // Helper to commit settings with debounce and queue support
   const commitWithDebounce = useCallback(
@@ -260,9 +332,11 @@ export function useLocalBookingSettings(
 
   const ensureBookingTypeEnabled = useCallback(
     (key: keyof BookingTypes) => {
-      if (bookingTypesRef.current[key]) return bookingTypesRef.current;
+      // Tri-state: 'suggested' or 'on' are considered enabled
+      if (isBookingEnabled(bookingTypesRef.current[key])) return bookingTypesRef.current;
 
-      const updated = { ...bookingTypesRef.current, [key]: true };
+      // When enabling via sub-settings, set to 'on' (user intent)
+      const updated = { ...bookingTypesRef.current, [key]: 'on' as BookingTypeState };
       bookingTypesRef.current = updated;
       setLocalBookingTypes(updated);
 
@@ -301,13 +375,15 @@ export function useLocalBookingSettings(
         ground_transport: 'ground transport',
         activities: 'activities',
       };
-      for (const [type, enabled] of Object.entries(settings) as [keyof BookingTypes, boolean][]) {
+      for (const [type, newValue] of Object.entries(settings) as [keyof BookingTypes, BookingTypeState][]) {
         if (type in typeLabels) {
           const oldValue = currentSettings[type];
-          if (oldValue !== enabled) {
+          const wasEnabled = isBookingEnabled(oldValue);
+          const isEnabled = isBookingEnabled(newValue);
+          if (wasEnabled !== isEnabled) {
             const label = typeLabels[type];
             onToast(
-              enabled ? `Added ${label} to search!` : `Removed ${label} from search.`,
+              isEnabled ? `Added ${label} to search!` : `Removed ${label} from search.`,
               'confirmation'
             );
           }

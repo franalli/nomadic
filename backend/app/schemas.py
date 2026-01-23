@@ -317,13 +317,23 @@ class DocumentTripInputsPatch(BaseModel):
     activity_settings: Optional["ActivitySettings"] = None
 
 
-class BookingTypes(BaseModel):
-    """Which booking categories to search for."""
+# Tri-state booking type: off (user disabled), suggested (default/auto), on (user enabled)
+BookingTypeState = Literal["off", "suggested", "on"]
 
-    hotels: bool = False
-    flights: bool = False
-    ground_transport: bool = False
-    activities: bool = False
+
+class BookingTypes(BaseModel):
+    """Which booking categories to search for.
+
+    Uses tri-state model:
+    - 'off': User explicitly disabled, never show or search
+    - 'suggested': Default state, show provisional items
+    - 'on': User explicitly enabled, may require confirmation gates
+    """
+
+    hotels: BookingTypeState = "suggested"
+    flights: BookingTypeState = "off"  # Upgrades to 'suggested' when origin is set
+    ground_transport: BookingTypeState = "off"
+    activities: BookingTypeState = "suggested"
 
 
 class FlightSettings(BaseModel):

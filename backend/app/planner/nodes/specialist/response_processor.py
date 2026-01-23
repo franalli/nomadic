@@ -314,3 +314,33 @@ def cache_required_fields_response(
         },
     )
     state.metadata["required_fields_path"] = "llm"
+
+
+def cache_specialist_response(
+    state: "GraphState",
+    cache_key: str,
+    name: str,
+) -> None:
+    """
+    Cache the response for any specialist node.
+
+    Generalizes caching for all specialists (required_fields, flights, hotels,
+    transport, activities) using ResponseCache.
+
+    Args:
+        state: Current graph state with response data
+        cache_key: Pre-computed cache key
+        name: Specialist name (e.g., "flights", "hotels")
+    """
+    from app.plan_graph import _follow_up_cache, _set_cached_response
+
+    _set_cached_response(
+        _follow_up_cache,
+        cache_key,
+        {
+            "assistant_message": state.last_summary,
+            "question_target": state.question_target,
+            "suggested_responses": state.suggested_responses,
+        },
+    )
+    state.metadata[f"{name}_path"] = "llm"
