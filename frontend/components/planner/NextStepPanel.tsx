@@ -255,7 +255,7 @@ export function NextStepPanel({
               'transition-all duration-200',
               canBuildPlan
                 ? 'bg-amber-500 text-white hover:bg-amber-600 active:scale-[0.98]'
-                : 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600 cursor-not-allowed'
+                : 'bg-muted text-muted-foreground/60 cursor-not-allowed'
             )}
           >
             Build plan
@@ -292,7 +292,7 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
         'w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0',
         item.isSet
           ? 'bg-emerald-500/20 text-emerald-500'
-          : 'bg-zinc-200/50 text-zinc-400 dark:bg-zinc-700/50 dark:text-zinc-500'
+          : 'bg-muted/50 text-muted-foreground'
       )}>
         {item.isSet ? (
           <Check className="w-3 h-3" />
@@ -311,7 +311,7 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
             {item.label}
           </span>
           {item.isOptional && !item.isSet && (
-            <span className="text-xs text-zinc-400 dark:text-zinc-600">(optional)</span>
+            <span className="text-xs text-muted-foreground">(optional)</span>
           )}
         </div>
         {item.isSet && item.value && (
@@ -321,7 +321,7 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
         )}
         {/* Helper text for optional items when not set */}
         {!item.isSet && item.helperText && (
-          <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5">
+          <p className="text-xs text-muted-foreground mt-0.5">
             {item.helperText}
           </p>
         )}

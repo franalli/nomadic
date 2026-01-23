@@ -68,11 +68,11 @@ export function NextStepBar({
     return (
       <div
         className={cn(
-          'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm',
+          'sticky bottom-0 left-0 right-0 border-t border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
           className
         )}
       >
-        <p className="text-xs text-zinc-500 text-center">
+        <p className="text-xs text-muted-foreground text-center">
           Create a plan first (destination + dates).
         </p>
       </div>
@@ -87,7 +87,7 @@ export function NextStepBar({
     return (
       <div
         className={cn(
-          'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm',
+          'sticky bottom-0 left-0 right-0 border-t border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
           className
         )}
       >
@@ -98,7 +98,7 @@ export function NextStepBar({
           <ArrowRight className="h-4 w-4" />
           Create day-by-day itinerary
         </button>
-        <p className="mt-2 text-center text-xs text-amber-400">
+        <p className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">
           Set trip length to create itinerary
         </p>
       </div>
@@ -145,13 +145,13 @@ export function NextStepBar({
   return (
     <div
       className={cn(
-        'sticky bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-900/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm',
+        'sticky bottom-0 left-0 right-0 border-t border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
         className
       )}
     >
       {/* Left label for S2 */}
       {config.leftLabel && (
-        <div className="text-xs text-zinc-400 mb-2">{config.leftLabel}</div>
+        <div className="text-xs text-muted-foreground mb-2">{config.leftLabel}</div>
       )}
 
       <button
@@ -165,8 +165,8 @@ export function NextStepBar({
             config.disabled && 'cursor-not-allowed opacity-70',
           ],
           config.variant === 'secondary' && [
-            'bg-zinc-800 text-zinc-200',
-            'hover:bg-zinc-700',
+            'bg-muted text-card-foreground',
+            'hover:bg-muted/80',
           ]
         )}
       >
@@ -176,7 +176,7 @@ export function NextStepBar({
 
       {/* Subtext for S2 */}
       {config.subtext && (
-        <p className="text-xs text-zinc-500 mt-2 text-center">{config.subtext}</p>
+        <p className="text-xs text-muted-foreground mt-2 text-center">{config.subtext}</p>
       )}
 
       {/* Inline retry for itinerary generation errors only */}

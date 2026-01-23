@@ -15,6 +15,15 @@
 import { Check, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { memo, useCallback, useMemo, useRef, useState } from 'react';
 
+import {
+  chipActive,
+  chipActiveEmerald,
+  chipBase,
+  chipInactive,
+  dropdown,
+  dropdownItem,
+  dropdownItemActive,
+} from '@/lib/chipStyles';
 import { cn } from '@/lib/utils';
 
 export type SortOption = 'recommended' | 'price_low' | 'price_high' | 'rating';
@@ -116,12 +125,7 @@ export const TileFilterBar = memo(function TileFilterBar({
         <button
           type="button"
           onClick={() => setSortOpen(!sortOpen)}
-          className={cn(
-            'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors',
-            sortOpen
-              ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
-              : 'border-zinc-700/50 bg-zinc-800/50 text-zinc-400 hover:border-zinc-600'
-          )}
+          className={cn(chipBase, sortOpen ? chipActive : chipInactive)}
         >
           <SlidersHorizontal className="h-3 w-3" />
           <span>{currentSortLabel}</span>
@@ -129,7 +133,7 @@ export const TileFilterBar = memo(function TileFilterBar({
         </button>
 
         {sortOpen && (
-          <div className="absolute left-0 top-full z-20 mt-1 min-w-[160px] rounded-lg border border-zinc-700 bg-zinc-800 py-1 shadow-lg">
+          <div className={cn('absolute left-0 top-full z-20 mt-1 min-w-[160px] py-1', dropdown)}>
             {SORT_OPTIONS.map((option) => (
               <button
                 key={option.value}
@@ -137,9 +141,7 @@ export const TileFilterBar = memo(function TileFilterBar({
                 onClick={() => handleSortChange(option.value)}
                 className={cn(
                   'flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors',
-                  filters.sort === option.value
-                    ? 'bg-amber-500/10 text-amber-400'
-                    : 'text-zinc-300 hover:bg-zinc-700/50'
+                  filters.sort === option.value ? dropdownItemActive : dropdownItem
                 )}
               >
                 <span>{option.label}</span>
@@ -154,12 +156,7 @@ export const TileFilterBar = memo(function TileFilterBar({
       <button
         type="button"
         onClick={handleFreeCancelToggle}
-        className={cn(
-          'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors',
-          filters.freeCancel
-            ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-            : 'border-zinc-700/50 bg-zinc-800/50 text-zinc-400 hover:border-zinc-600'
-        )}
+        className={cn(chipBase, filters.freeCancel ? chipActiveEmerald : chipInactive)}
       >
         {filters.freeCancel && <Check className="h-3 w-3" />}
         <span>Free cancellation</span>
@@ -172,12 +169,8 @@ export const TileFilterBar = memo(function TileFilterBar({
             type="button"
             onClick={() => setPriceOpen(!priceOpen)}
             className={cn(
-              'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors',
-              filters.maxPrice !== null
-                ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
-                : priceOpen
-                  ? 'border-zinc-600 bg-zinc-800/50 text-zinc-300'
-                  : 'border-zinc-700/50 bg-zinc-800/50 text-zinc-400 hover:border-zinc-600'
+              chipBase,
+              filters.maxPrice !== null || priceOpen ? chipActive : chipInactive
             )}
           >
             <span>
@@ -189,15 +182,13 @@ export const TileFilterBar = memo(function TileFilterBar({
           </button>
 
           {priceOpen && (
-            <div className="absolute left-0 top-full z-20 mt-1 min-w-[140px] rounded-lg border border-zinc-700 bg-zinc-800 py-1 shadow-lg">
+            <div className={cn('absolute left-0 top-full z-20 mt-1 min-w-[140px] py-1', dropdown)}>
               <button
                 type="button"
                 onClick={() => handleMaxPriceChange(null)}
                 className={cn(
                   'flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors',
-                  filters.maxPrice === null
-                    ? 'bg-amber-500/10 text-amber-400'
-                    : 'text-zinc-300 hover:bg-zinc-700/50'
+                  filters.maxPrice === null ? dropdownItemActive : dropdownItem
                 )}
               >
                 <span>Any price</span>
@@ -210,9 +201,7 @@ export const TileFilterBar = memo(function TileFilterBar({
                   onClick={() => handleMaxPriceChange(price)}
                   className={cn(
                     'flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors',
-                    filters.maxPrice === price
-                      ? 'bg-amber-500/10 text-amber-400'
-                      : 'text-zinc-300 hover:bg-zinc-700/50'
+                    filters.maxPrice === price ? dropdownItemActive : dropdownItem
                   )}
                 >
                   <span>Under {currency}{price.toLocaleString()}</span>
@@ -229,7 +218,7 @@ export const TileFilterBar = memo(function TileFilterBar({
         <button
           type="button"
           onClick={() => onFiltersChange({ sort: 'recommended', freeCancel: false, maxPrice: null })}
-          className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           Clear
         </button>

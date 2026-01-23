@@ -18,6 +18,7 @@ import { MiniCard } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
+import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
@@ -168,13 +169,13 @@ export function BookingSection({
   if (canShowTilesPreview(state, totalTiles, generation, hasStrategyContent) && totalTiles > 0) {
     return (
       <>
-        <div id="booking-section" className="border-t border-zinc-800">
+        <div id="booking-section" className="border-t border-border">
           {/* Header */}
           <div className="px-4 pt-4 pb-1">
-            <h3 className="text-sm font-medium text-zinc-200">
+            <h3 className="text-sm font-medium text-card-foreground">
               Options to choose from
             </h3>
-            <p className="text-xs text-zinc-500 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Compare and save favorites. Booking links unlock after itinerary.
             </p>
           </div>
@@ -192,12 +193,13 @@ export function BookingSection({
                   onClick={() => !isDisabled && setActiveCategory(category)}
                   disabled={isDisabled}
                   className={cn(
-                    'px-3 py-1.5 text-xs rounded-full transition-colors font-medium',
+                    chipBase,
+                    'font-medium',
                     isActive
-                      ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                      ? chipActive
                       : isDisabled
-                        ? 'bg-zinc-800/30 text-zinc-600 border border-zinc-700/30 cursor-not-allowed'
-                        : 'bg-zinc-800/50 text-zinc-400 border border-zinc-700/50 hover:border-zinc-600'
+                        ? 'bg-muted/30 text-muted-foreground/50 border-border/30 cursor-not-allowed'
+                        : chipInactive
                   )}
                 >
                   {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
@@ -219,18 +221,18 @@ export function BookingSection({
           {/* Expand/collapse toggle */}
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-zinc-800/30"
+            className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-muted"
           >
-            <span className="text-zinc-400">
+            <span className="text-muted-foreground">
               {isExpanded ? 'Hide' : 'Show'} {filteredCount} {activeCategory}
               {filteredCount !== categoryTotalCount && (
-                <span className="text-zinc-600"> (of {categoryTotalCount})</span>
+                <span className="text-muted-foreground/70"> (of {categoryTotalCount})</span>
               )}
             </span>
             {isExpanded ? (
-              <ChevronUp className="h-4 w-4 text-zinc-500" />
+              <ChevronUp className="h-4 w-4 text-muted-foreground" />
             ) : (
-              <ChevronDown className="h-4 w-4 text-zinc-500" />
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
             )}
           </button>
 
@@ -249,24 +251,24 @@ export function BookingSection({
                     />
                   ))}
                   {remainingCount > 0 && (
-                    <p className="text-xs text-zinc-500 pt-2">
+                    <p className="text-xs text-muted-foreground pt-2">
                       +{remainingCount} more {activeCategory} available
                     </p>
                   )}
                 </>
               ) : filteredCount === 0 && categoryTotalCount > 0 ? (
-                <div className="text-xs text-zinc-500 py-2">
+                <div className="text-xs text-muted-foreground py-2">
                   <p>No {activeCategory} match your filters.</p>
                   <button
                     type="button"
                     onClick={() => setFilters({ sort: 'recommended', freeCancel: false, maxPrice: null })}
-                    className="text-amber-500 hover:text-amber-400 mt-1"
+                    className="text-amber-600 hover:text-amber-500 dark:text-amber-500 dark:hover:text-amber-400 mt-1"
                   >
                     Clear filters
                   </button>
                 </div>
               ) : (
-                <p className="text-xs text-zinc-500 py-2">
+                <p className="text-xs text-muted-foreground py-2">
                   No {activeCategory} found yet.
                 </p>
               )}
@@ -291,7 +293,7 @@ export function BookingSection({
     const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
     return (
       <div id="booking-section" className="px-4 py-2">
-        <p className="text-xs text-zinc-500">{message}</p>
+        <p className="text-xs text-muted-foreground">{message}</p>
       </div>
     );
   }
@@ -300,7 +302,7 @@ export function BookingSection({
   if (state.startsWith('S2_')) {
     return (
       <div id="booking-section" className="px-4 py-2">
-        <p className="text-xs text-zinc-600">
+        <p className="text-xs text-muted-foreground/70">
           Booking options appear after itinerary.
         </p>
       </div>
@@ -311,20 +313,20 @@ export function BookingSection({
   if (canShowBookingTiles(state)) {
     if (totalTiles === 0) {
       return (
-        <div id="booking-section" className="border-t border-zinc-800 p-4">
-          <p className="text-sm text-zinc-500">No booking options available yet.</p>
+        <div id="booking-section" className="border-t border-border p-4">
+          <p className="text-sm text-muted-foreground">No booking options available yet.</p>
         </div>
       );
     }
 
     return (
-      <div id="booking-section" className="border-t border-zinc-800 p-4">
+      <div id="booking-section" className="border-t border-border p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-medium text-zinc-200">Booking options</h3>
-            <span className="text-xs text-zinc-500">({totalTiles})</span>
+            <h3 className="text-sm font-medium text-card-foreground">Booking options</h3>
+            <span className="text-xs text-muted-foreground">({totalTiles})</span>
           </div>
-          <span className="text-xs text-zinc-500">Prices from partners</span>
+          <span className="text-xs text-muted-foreground">Prices from partners</span>
         </div>
         <TilesGrid tiles={tileArray} hideTabSwitcher={false} savedTileIds={savedTileIds} />
       </div>

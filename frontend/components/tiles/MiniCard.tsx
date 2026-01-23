@@ -136,16 +136,16 @@ export const MiniCard = memo(function MiniCard({
   );
 
   return (
-    <div className="relative flex items-start gap-3 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 transition-colors hover:bg-zinc-800/50">
+    <div className="relative flex items-start gap-3 rounded-lg border border-border bg-card p-3 shadow-sm transition-all hover:shadow-md hover:border-border/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
       {/* Preview label (S2 only) */}
       {showPreviewLabel && (
-        <div className="absolute right-2 top-2 rounded bg-zinc-800/90 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400">
+        <div className="absolute right-2 top-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
           Preview
         </div>
       )}
 
       {/* Thumbnail - use Unsplash placeholder if no image_url */}
-      <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-zinc-800">
+      <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
         <img
           src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
           alt={tile.title}
@@ -163,15 +163,15 @@ export const MiniCard = memo(function MiniCard({
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         {/* Row 1: Name + Rating */}
         <div className="flex items-start justify-between gap-2">
-          <h4 className="line-clamp-1 text-sm font-medium text-zinc-200">
+          <h4 className="line-clamp-1 text-sm font-medium text-card-foreground">
             {tile.title}
           </h4>
           {tile.rating != null && (
-            <div className="flex shrink-0 items-center gap-0.5 text-xs text-zinc-400">
+            <div className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
               <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
               <span>{tile.rating.toFixed(1)}</span>
               {reviewCount != null && (
-                <span className="text-zinc-500">({reviewCount})</span>
+                <span className="text-muted-foreground/70">({reviewCount})</span>
               )}
             </div>
           )}
@@ -179,7 +179,7 @@ export const MiniCard = memo(function MiniCard({
 
         {/* Row 2: Area */}
         {tile.location_label && (
-          <p className="line-clamp-1 text-xs text-zinc-500">
+          <p className="line-clamp-1 text-xs text-muted-foreground">
             {tile.location_label}
           </p>
         )}
@@ -193,8 +193,8 @@ export const MiniCard = memo(function MiniCard({
                 className={cn(
                   'rounded px-1.5 py-0.5 text-[10px] font-medium',
                   perk === 'Free cancel'
-                    ? 'bg-emerald-500/20 text-emerald-400'
-                    : 'bg-zinc-800 text-zinc-400'
+                    ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+                    : 'bg-muted text-muted-foreground'
                 )}
               >
                 {perk}
@@ -205,14 +205,14 @@ export const MiniCard = memo(function MiniCard({
 
         {/* Row 4: Price + Actions */}
         <div className="mt-1 flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-zinc-200">
+          <span className="text-sm font-semibold text-card-foreground">
             {priceDisplay}
           </span>
           <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={handleDetailsClick}
-              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-700 hover:text-zinc-200"
+              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
             >
               <Info className="h-3 w-3" />
               Details
@@ -223,8 +223,8 @@ export const MiniCard = memo(function MiniCard({
               className={cn(
                 'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
                 isSaved
-                  ? 'bg-amber-500/20 text-amber-400'
-                  : 'text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200'
+                  ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                  : 'text-muted-foreground hover:bg-muted hover:text-card-foreground'
               )}
             >
               <Heart
@@ -242,7 +242,7 @@ export const MiniCard = memo(function MiniCard({
                 'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
                 isBookingUnlocked
                   ? 'bg-amber-500 text-white hover:bg-amber-600'
-                  : 'cursor-not-allowed bg-zinc-800 text-zinc-500'
+                  : 'cursor-not-allowed bg-muted/50 text-muted-foreground/50'
               )}
             >
               {isBookingUnlocked ? (

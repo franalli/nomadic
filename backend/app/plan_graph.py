@@ -12631,9 +12631,42 @@ def normalize_inputs(state: GraphState) -> GraphState:
     # This is the SINGLE normalization pass. All field normalization, validation,
     # and error collection happens here via TripInputNormalizer.
 
+    # -------------------------------------------------------------------------
+    # Destination replacement detection (P4.1 negation handling)
+    # -------------------------------------------------------------------------
+    # Check if user is replacing (not adding) destinations based on negation signals
+    # from LQA prepass. "actually I want Paris" should replace, not add.
+    # But "actually I also want Paris" should add (additive signal overrides).
+    negation_type = state.metadata.get("negation_type")
+    replace_destinations = False
+    if negation_type and "destinations_delta" in parsed:
+        # Negation types that indicate replacement intent
+        replacement_negation_types = (
+            "actually",
+            "instead_of",
+            "x_instead",
+            "change_to",
+            "not_but",
+            "not_maybe",
+        )
+        if negation_type in replacement_negation_types:
+            # Check for additive signals that override replacement intent
+            user_text_lower = (user_text or "").lower()
+            additive_signals = ("also", "too", "as well", "and also", "addition")
+            has_additive_signal = any(signal in user_text_lower for signal in additive_signals)
+            if not has_additive_signal:
+                replace_destinations = True
+                _debug(
+                    "DESTINATION_REPLACE: Negation detected, replacing destinations",
+                    negation_type=negation_type,
+                    new_destinations=parsed.get("destinations_delta"),
+                )
+
     # Pass turn number for provenance tracking
     parsed["_turn_number"] = state.turn_number
-    updates, norm_errors = _trip_normalizer.normalize_all(ti, parsed, user_text=user_text)
+    updates, norm_errors = _trip_normalizer.normalize_all(
+        ti, parsed, user_text=user_text, replace_destinations=replace_destinations
+    )
 
     # =========================================================================
     # DATE PROVENANCE MERGE PROTECTION (Explicit Year Wins)

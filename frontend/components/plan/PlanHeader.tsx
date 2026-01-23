@@ -17,6 +17,7 @@
 import { Loader2 } from 'lucide-react';
 import React from 'react';
 
+import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import {
   getCompletedSteps,
@@ -26,7 +27,9 @@ import {
   STATUS_COPY,
 } from '@/lib/statusCopyMap';
 import { cn } from '@/lib/utils';
+import type { DocumentTripInputs } from '@/types/document';
 import type { DestinationCard } from '@/types/plan-envelope';
+import type { SheetType } from '@/types/sheets';
 
 export interface PlanHeaderProps {
   destinationCard?: DestinationCard;
@@ -42,6 +45,12 @@ export interface PlanHeaderProps {
   isExpandingItinerary?: boolean;
   /** Current backend sub-stage (structure, strategy, itinerary, deals) */
   currentSubStage?: string | null;
+  /** Trip inputs for displaying summary pills in S1+ */
+  tripInputs?: DocumentTripInputs;
+  /** Handler to open a sheet for editing trip inputs */
+  onOpenSheet?: (sheet: SheetType) => void;
+  /** Whether streaming/generation is in progress (disables pills) */
+  isStreaming?: boolean;
 }
 
 /** Stage progress stepper - used in both variants */
@@ -49,10 +58,13 @@ function StageStepper({
   currentStepIndex,
   completedSteps,
   isGenerating,
+  variant = 'default',
 }: {
   currentStepIndex: number;
   completedSteps: boolean[];
   isGenerating: boolean;
+  /** 'hero' for on-image, 'default' for placeholder/toolbar */
+  variant?: 'default' | 'hero';
 }) {
   return (
     <div className="flex items-center gap-4">
@@ -68,18 +80,19 @@ function StageStepper({
             className={cn(
               'flex items-center gap-1.5 text-xs transition-colors',
               // Color semantics: Amber=active, Green=completed, Gray=locked
-              isActive && 'text-zinc-100 font-medium',
-              isCompleted && 'text-emerald-400',
-              isLocked && 'text-zinc-600/70'
+              // Variant-aware: hero uses light text, default uses foreground
+              isActive && (variant === 'hero' ? 'text-white font-medium' : 'text-foreground font-medium'),
+              isCompleted && 'text-emerald-500 dark:text-emerald-400',
+              isLocked && 'text-muted-foreground/70'
             )}
           >
             {/* Progress dot */}
             <div
               className={cn(
                 'h-1.5 w-1.5 rounded-full transition-colors',
-                isActive && 'bg-amber-500',
+                isActive && 'bg-amber-500 ring-2 ring-amber-500/30',
                 isCompleted && 'bg-emerald-500',
-                isLocked && 'bg-zinc-700'
+                isLocked && 'bg-muted-foreground/30'
               )}
             />
             <span>{label}</span>
@@ -102,6 +115,9 @@ export function PlanHeader({
   hasDates = false,
   isExpandingItinerary = false,
   currentSubStage,
+  tripInputs,
+  onOpenSheet,
+  isStreaming = false,
 }: PlanHeaderProps) {
   // currentStage kept for backwards compatibility but planViewState is preferred
   void _currentStage;
@@ -131,17 +147,40 @@ export function PlanHeader({
     return null;
   }, [destinationCard?.image_url, title]);
 
-  // EMPTY VARIANT: Compact bar when no destination
+  // Check if we should show pills (S1+ with tripInputs and handler)
+  const showPills =
+    planViewState !== 'S0_BOOTSTRAP' && tripInputs && onOpenSheet;
+
+  // PLACEHOLDER VARIANT: Compact bar when no destination
+  // Uses secondary surface with visible border for light mode readability
   if (!hasDestination) {
     return (
-      <div className="sticky top-0 z-10 flex-shrink-0 bg-black/30 backdrop-blur-md border-b border-zinc-800/60">
+      <div className="sticky top-0 z-10 flex-shrink-0 bg-secondary border-b border-border shadow-sm dark:bg-card/80 dark:backdrop-blur-md dark:border-border/60">
         <div className="max-w-[1100px] mx-auto w-full h-14 px-6 flex items-center justify-between">
           <StageStepper
             currentStepIndex={currentStepIndex}
             completedSteps={completedSteps}
             isGenerating={isGenerating}
+            variant="default"
           />
-          <span className="text-xs text-zinc-500">Set destination + dates</span>
+          {/* In S0: show CTA chip. In S1+: show pills if available */}
+          {planViewState === 'S0_BOOTSTRAP' ? (
+            <button
+              type="button"
+              onClick={() => onOpenSheet?.('destination')}
+              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors bg-amber-500/15 text-amber-900 border-amber-500/40 hover:bg-amber-500/25 dark:text-amber-300 dark:bg-amber-500/10 dark:hover:bg-amber-500/20"
+            >
+              Add destination + dates
+            </button>
+          ) : showPills ? (
+            <TripSummaryPills
+              tripInputs={tripInputs}
+              onOpenSheet={onOpenSheet}
+              disabled={isStreaming}
+            />
+          ) : (
+            <span className="text-xs text-muted-foreground">Complete setup to continue</span>
+          )}
         </div>
       </div>
     );
@@ -160,37 +199,46 @@ export function PlanHeader({
           />
         ) : (
           // Fallback gradient only if somehow no image (should not happen)
-          <div className="absolute inset-0 bg-gradient-to-br from-zinc-800 to-zinc-900" />
+          <div className="absolute inset-0 bg-gradient-to-br from-secondary to-background" />
         )}
 
-        {/* Dark overlay for text readability */}
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-900/90 via-zinc-900/50 to-transparent" />
+        {/* Scrim overlay for guaranteed text readability on any photo */}
+        <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
 
         {/* Content overlay */}
         <div className="absolute inset-0 flex flex-col justify-end p-4">
-          <h2 className="text-xl font-semibold text-white">
-            {title}
-          </h2>
+          <h2 className="text-xl font-semibold text-white">{title}</h2>
           {subtitle && (
-            <p className="mt-0.5 text-sm text-zinc-300">
-              {subtitle}
-            </p>
+            <p className="mt-0.5 text-sm text-white/85">{subtitle}</p>
+          )}
+          {/* Trip summary pills - only in S1+ (use onImage variant for hero) */}
+          {showPills && (
+            <div className="mt-3">
+              <TripSummaryPills
+                tripInputs={tripInputs}
+                onOpenSheet={onOpenSheet}
+                disabled={isStreaming}
+                variant="onImage"
+              />
+            </div>
           )}
         </div>
       </div>
 
       {/* Stage progress indicator with status pill */}
-      <div className="border-b border-zinc-800 bg-zinc-900">
+      <div className="border-b border-border bg-secondary dark:bg-card dark:border-border/60">
         <div className="flex items-center justify-between px-4 py-2">
           <StageStepper
             currentStepIndex={currentStepIndex}
             completedSteps={completedSteps}
             isGenerating={isGenerating}
+            variant="default"
           />
 
           {/* Status pill - shown during generation */}
           {statusPillText && (
-            <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs text-amber-400">
+            <div className="flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs text-amber-600 dark:text-amber-400 dark:bg-amber-500/10">
               <Loader2 className="h-3 w-3 animate-spin" />
               <span>{statusPillText}</span>
             </div>
@@ -200,7 +248,7 @@ export function PlanHeader({
         {/* Sub-status line - shown during generation */}
         {subStatusText && (
           <div className="px-4 pb-2">
-            <p className="text-xs text-zinc-500">{subStatusText}</p>
+            <p className="text-xs text-muted-foreground">{subStatusText}</p>
           </div>
         )}
       </div>

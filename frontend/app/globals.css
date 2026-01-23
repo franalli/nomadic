@@ -8,7 +8,6 @@
   --bg-soft: 160 20% 92%;
   --bg-strong: 160 50% 8%;
   --surface: 0 0% 100%;
-  --border: 160 20% 90%;
 
   --text: 160 40% 15%;
   --text-soft: 160 25% 32%;
@@ -20,25 +19,27 @@
   --bronze: 25 90% 60%;
   --sky: 160 45% 25%;
 
-  /* Core theme tokens */
-  --background: 35 30% 96%;
-  --foreground: 160 40% 15%;
+  /* Core theme tokens - Light mode surface ladder */
+  --background: 0 0% 99%;           /* page background - near white */
+  --foreground: 222 22% 12%;        /* primary text - near black */
 
-  --card: 0 0% 100%;
-  --card-foreground: 160 40% 15%;
+  --card: 0 0% 100%;                /* cards/panels - pure white */
+  --card-foreground: 222 22% 12%;
+
+  --elevated: 210 20% 97%;          /* raised surfaces (header pill trays, secondary panels) */
 
   --popover: 0 0% 100%;
-  --popover-foreground: 160 40% 15%;
+  --popover-foreground: 222 22% 12%;
 
   --primary: 160 45% 25%;
-  --primary-foreground: 35 30% 96%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 25 40% 90%;
-  --secondary-foreground: 25 60% 30%;
+  --secondary: 210 18% 92%;         /* headers/toolbars - slightly darker than muted */
+  --secondary-foreground: 222 22% 12%;
 
-  --muted: 160 20% 92%;
-  /* Improved contrast: changed from 40% to 35% for WCAG AA compliance */
-  --muted-foreground: 160 20% 35%;
+  --muted: 210 20% 95%;             /* chips, filters, disabled areas */
+  /* Improved contrast: 32% lightness for WCAG AA compliance */
+  --muted-foreground: 215 16% 32%;
 
   --accent: 25 90% 60%;
   --accent-foreground: 0 0% 100%;
@@ -46,7 +47,8 @@
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
 
-  --input: 160 20% 90%;
+  --input: 214 16% 82%;             /* visible input borders */
+  --border: 214 16% 80%;            /* stronger border for visibility at 125-150% zoom */
   --ring: 38 92% 50%;  /* Amber-500 for focus rings */
 
   /* Constraint state colors (locked) */
@@ -708,32 +710,44 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ===== Topography Variables (Single Source of Truth) ===== */
 /* SVG used as mask-image; background-color controls stroke color */
-/* Uniform topo - content readability via local backplates, not masking */
+/* Light mode: multiply blend for natural integration */
+/* Dark mode: normal blend (multiply would darken too much) */
 :root {
-  --topo-opacity: 0.05;
-  --topo-color: rgba(0, 0, 0, 0.24);  /* effective: 0.05 × 0.24 = 0.012 - subtle, not wallpaper */
+  --topo-opacity: 0.08;
+  --topo-color: rgba(0, 0, 0, 0.22);
   --topo-scale: 1400px;
 }
 
-.dark {
-  --topo-opacity: 0.095;
-  --topo-color: rgba(255, 255, 255, 0.50);  /* effective: 0.095 × 0.50 = 0.048 */
-}
-
+/* Dark mode via OS preference */
 @media (prefers-color-scheme: dark) {
-  :root:not(.light) {
+  :root {
     --topo-opacity: 0.095;
     --topo-color: rgba(255, 255, 255, 0.50);
+    --elevated: 222 20% 11%;
   }
+}
+
+/* Also support .dark class for manual toggle (if added later) */
+.dark {
+  --topo-opacity: 0.095;
+  --topo-color: rgba(255, 255, 255, 0.50);
+  --elevated: 222 20% 11%;
 }
 
 /* Mobile: boost visibility */
 @media (max-width: 768px) {
   :root {
-    --topo-opacity: 0.07;
+    --topo-opacity: 0.10;
   }
-  .dark, :root:not(.light) {
-    --topo-opacity: 0.11;
+}
+@media (max-width: 768px) and (prefers-color-scheme: dark) {
+  :root {
+    --topo-opacity: 0.12;
+  }
+}
+@media (max-width: 768px) {
+  .dark {
+    --topo-opacity: 0.12;
   }
 }
 
@@ -760,6 +774,21 @@ input[type="number"]::-webkit-outer-spin-button {
   mask-position: center;
   background-color: var(--topo-color);
   opacity: var(--topo-opacity);
+  /* Light mode: multiply blend for natural integration */
+  mix-blend-mode: multiply;
+  /* Safari/blend stability */
+  will-change: opacity;
+  transform: translateZ(0);
+}
+
+/* Dark mode: normal blend (multiply would darken too much) */
+@media (prefers-color-scheme: dark) {
+  .appTopo::before {
+    mix-blend-mode: normal;
+  }
+}
+.dark .appTopo::before {
+  mix-blend-mode: normal;
 }
 
 /* All content above topo */
@@ -809,7 +838,6 @@ input[type="number"]::-webkit-outer-spin-button {
     );
   }
 }
-
 .dark .rightCanvas::after {
   background: radial-gradient(
     ellipse 90% 80% at 50% 50%,

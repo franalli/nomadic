@@ -167,7 +167,6 @@ class TileRefreshResponse(BaseModel):
 class ExpandItineraryRequest(BaseModel):
     """Request to expand strategy into full itinerary (Stage 2 -> Stage 3)."""
 
-    trip_context_id: int
     idempotency_key: str = Field(
         description="Client-generated UUID to prevent duplicate generation"
     )

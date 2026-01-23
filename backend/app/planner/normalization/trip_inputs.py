@@ -416,6 +416,7 @@ class TripInputNormalizer:
         self,
         destinations: List[str],
         new_destinations: Optional[List[str]] = None,
+        replace: bool = False,
     ) -> tuple[List[str], List[NormalizationError]]:
         """
         Normalize and merge destinations.
@@ -428,13 +429,20 @@ class TripInputNormalizer:
         Args:
             destinations: Existing destinations list
             new_destinations: New destinations to merge (optional)
+            replace: If True, replaces existing destinations instead of merging.
+                     Used when user says "actually X" or "change to X".
 
         Returns:
             Tuple of (normalized_destinations, errors)
         """
         errors: List[NormalizationError] = []
-        result = list(destinations)
-        existing_lower = {d.lower() for d in result}
+        # If replace mode, start fresh; otherwise keep existing destinations
+        if replace and new_destinations:
+            result = []
+            existing_lower: set[str] = set()
+        else:
+            result = list(destinations)
+            existing_lower = {d.lower() for d in result}
 
         if new_destinations:
             for d in new_destinations:
@@ -510,6 +518,7 @@ class TripInputNormalizer:
         trip_inputs: "TripInputs",
         deltas: Dict[str, Any],
         user_text: Optional[str] = None,
+        replace_destinations: bool = False,
     ) -> tuple[Dict[str, Any], List[NormalizationError]]:
         """
         Single normalization pass for all trip inputs.
@@ -521,6 +530,8 @@ class TripInputNormalizer:
             trip_inputs: Current TripInputs state
             deltas: Dict of field deltas to apply (from extractor)
             user_text: Original user text, used to recover dates when LLM strips the day
+            replace_destinations: If True, replaces existing destinations instead of
+                merging. Used when user says "actually X" or "change to X".
 
         Returns:
             Tuple of (updates_dict, errors_list)
@@ -564,7 +575,7 @@ class TripInputNormalizer:
                 dest_list = [dest_list]
             if isinstance(dest_list, list):
                 normalized_dests, dest_errors = self.normalize_destinations(
-                    trip_inputs.destinations, dest_list
+                    trip_inputs.destinations, dest_list, replace=replace_destinations
                 )
                 if normalized_dests != trip_inputs.destinations:
                     updates["destinations"] = normalized_dests

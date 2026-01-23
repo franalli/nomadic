@@ -16,11 +16,6 @@ import remarkGfm from 'remark-gfm';
 
 import { UnifiedChipRow } from '@/components/planner/UnifiedChipRow';
 import {
-  DestinationSheet,
-  OriginSheet,
-  DatesSheet,
-  TravelersSheet,
-  BudgetSheet,
   FlightsSheet,
   StaysSheet,
   ActivitiesSheet,
@@ -314,6 +309,8 @@ interface ChatPanelProps {
   planViewState?: PlanViewState;
   /** Open budget input in TripDetailsForm */
   onOpenBudgetInput?: () => void;
+  /** Shared sheet opener - opens trip input sheets at common parent level */
+  onOpenSheet?: (sheet: 'destination' | 'origin' | 'dates' | 'travelers' | 'budget') => void;
 }
 
 export interface ChatPanelHandle {
@@ -359,13 +356,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onUpdateTransportSettings: _onUpdateTransportSettings,
       onAddActivity: _onAddActivity,
       onRemoveActivity: _onRemoveActivity,
-      onUpdateAdults,
-      onUpdateChildren,
+      onUpdateAdults: _onUpdateAdults,
+      onUpdateChildren: _onUpdateChildren,
       onToggleRequiresAssistance: _onToggleRequiresAssistance,
       llmUpdatedFields: _llmUpdatedFields,
       onAcknowledgeLLMUpdate: _onAcknowledgeLLMUpdate,
-      planViewState: _planViewState,
+      planViewState,
       onOpenBudgetInput: _onOpenBudgetInput,
+      onOpenSheet,
     } = props;
 
     // Reserved for future use
@@ -381,8 +379,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     void _onToggleRequiresAssistance;
     void _llmUpdatedFields;
     void _onAcknowledgeLLMUpdate;
-    void _planViewState;
     void _onOpenBudgetInput;
+    void _onUpdateAdults;
+    void _onUpdateChildren;
 
     // Derive input disabled state from planState (RESOLVING = disabled)
     const isInputDisabledByPlanState = planState === 'RESOLVING';
@@ -430,12 +429,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       topic?: string;
     } | null>(null);
 
-    // Sheet open states for UnifiedChipRow
-    const [destinationSheetOpen, setDestinationSheetOpen] = useState(false);
-    const [originSheetOpen, setOriginSheetOpen] = useState(false);
-    const [datesSheetOpen, setDatesSheetOpen] = useState(false);
-    const [travelersSheetOpen, setTravelersSheetOpen] = useState(false);
-    const [budgetSheetOpen, setBudgetSheetOpen] = useState(false);
+    // Module sheet open states (flights/stays/activities remain in ChatPanel)
+    // Trip input sheets (destination/origin/dates/travelers/budget) are now in NomadicLanding
     const [flightsSheetOpen, setFlightsSheetOpen] = useState(false);
     const [staysSheetOpen, setStaysSheetOpen] = useState(false);
     const [activitiesSheetOpen, setActivitiesSheetOpen] = useState(false);
@@ -985,25 +980,29 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         </div>
 
         {/* Unified Chip Row - two-row layout: core constraints + module toggles */}
-        <UnifiedChipRow
-          destination={destination}
-          origin={origin}
-          dateRange={dateRange}
-          travelers={tripInputs?.adults ? `${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}${tripInputs.children ? `, ${tripInputs.children} child${tripInputs.children > 1 ? 'ren' : ''}` : ''}` : undefined}
-          budget={budget}
-          bookingTypes={bookingTypes || DEFAULT_BOOKING_TYPES}
-          flightSettings={flightSettings}
-          hotelSettings={hotelSettings}
-          activitySettings={activitySettings}
-          onOpenDestination={() => setDestinationSheetOpen(true)}
-          onOpenOrigin={() => setOriginSheetOpen(true)}
-          onOpenDates={() => setDatesSheetOpen(true)}
-          onOpenTravelers={() => setTravelersSheetOpen(true)}
-          onOpenBudget={() => setBudgetSheetOpen(true)}
-          onOpenFlights={() => setFlightsSheetOpen(true)}
-          onOpenStays={() => setStaysSheetOpen(true)}
-          onOpenActivities={() => setActivitiesSheetOpen(true)}
-        />
+        {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
+        {/* Show UnifiedChipRow in S0 only (bootstrap phase) */}
+        {planViewState === 'S0_BOOTSTRAP' && (
+          <UnifiedChipRow
+            destination={destination}
+            origin={origin}
+            dateRange={dateRange}
+            travelers={tripInputs?.adults ? `${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}${tripInputs.children ? `, ${tripInputs.children} child${tripInputs.children > 1 ? 'ren' : ''}` : ''}` : undefined}
+            budget={budget}
+            bookingTypes={bookingTypes || DEFAULT_BOOKING_TYPES}
+            flightSettings={flightSettings}
+            hotelSettings={hotelSettings}
+            activitySettings={activitySettings}
+            onOpenDestination={() => onOpenSheet?.('destination')}
+            onOpenOrigin={() => onOpenSheet?.('origin')}
+            onOpenDates={() => onOpenSheet?.('dates')}
+            onOpenTravelers={() => onOpenSheet?.('travelers')}
+            onOpenBudget={() => onOpenSheet?.('budget')}
+            onOpenFlights={() => setFlightsSheetOpen(true)}
+            onOpenStays={() => setStaysSheetOpen(true)}
+            onOpenActivities={() => setActivitiesSheetOpen(true)}
+          />
+        )}
 
         <div
           ref={scrollContainerRef}
@@ -1249,73 +1248,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           </form>
         </div>
 
-        {/* Sheet components for chip interactions */}
-        <DestinationSheet
-          open={destinationSheetOpen}
-          onOpenChange={setDestinationSheetOpen}
-          value={destination || ''}
-          onSave={(value) => {
-            // Send destination via chat for processing
-            sendMessageCore(`going to ${value}`);
-            toast(`Destination set: ${value}`);
-          }}
-        />
-
-        <OriginSheet
-          open={originSheetOpen}
-          onOpenChange={setOriginSheetOpen}
-          value={origin || ''}
-          onSave={(value) => {
-            sendMessageCore(`from ${value}`);
-            toast(`Origin set: ${value}`);
-          }}
-        />
-
-        <DatesSheet
-          open={datesSheetOpen}
-          onOpenChange={setDatesSheetOpen}
-          startDate={tripInputs?.start_date ? new Date(tripInputs.start_date) : null}
-          endDate={tripInputs?.end_date ? new Date(tripInputs.end_date) : null}
-          onSave={(start, end) => {
-            // Format dates for chat
-            const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            sendMessageCore(`dates are ${startFormatted} to ${endFormatted}`);
-            toast(`Dates set: ${startFormatted}–${endFormatted}`);
-          }}
-        />
-
-        <TravelersSheet
-          open={travelersSheetOpen}
-          onOpenChange={setTravelersSheetOpen}
-          adults={tripInputs?.adults ?? 1}
-          children={tripInputs?.children ?? 0}
-          onSave={(adults, children) => {
-            if (onUpdateAdults) onUpdateAdults(adults);
-            if (onUpdateChildren) onUpdateChildren(children);
-            const label = `${adults} adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} child${children > 1 ? 'ren' : ''}` : ''}`;
-            toast(`Travelers: ${label}`);
-          }}
-        />
-
-        <BudgetSheet
-          open={budgetSheetOpen}
-          onOpenChange={setBudgetSheetOpen}
-          amount={tripInputs?.budget ?? null}
-          currency={tripInputs?.currency || 'USD'}
-          budgetType="total"
-          onSave={(amount, currency, budgetType) => {
-            const formatted = new Intl.NumberFormat('en-US', {
-              style: 'currency',
-              currency,
-              maximumFractionDigits: 0,
-            }).format(amount);
-            const basisLabel = budgetType === 'per_night' ? '/night' : budgetType === 'per_person' ? '/person' : '';
-            sendMessageCore(`budget ${formatted}${basisLabel}`);
-            toast(`Budget set: ${formatted}${basisLabel}`);
-          }}
-        />
-
+        {/* Module sheets (flights/stays/activities) - control booking types */}
+        {/* Trip input sheets (destination/origin/dates/travelers/budget) are in NomadicLanding */}
         <FlightsSheet
           open={flightsSheetOpen}
           onOpenChange={setFlightsSheetOpen}
@@ -1338,15 +1272,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
           onOpenOrigin={() => {
             setFlightsSheetOpen(false);
-            setTimeout(() => setOriginSheetOpen(true), 150);
+            setTimeout(() => onOpenSheet?.('origin'), 150);
           }}
           onOpenDestination={() => {
             setFlightsSheetOpen(false);
-            setTimeout(() => setDestinationSheetOpen(true), 150);
+            setTimeout(() => onOpenSheet?.('destination'), 150);
           }}
           onOpenDates={() => {
             setFlightsSheetOpen(false);
-            setTimeout(() => setDatesSheetOpen(true), 150);
+            setTimeout(() => onOpenSheet?.('dates'), 150);
           }}
         />
 
@@ -1371,11 +1305,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
           onOpenDestination={() => {
             setStaysSheetOpen(false);
-            setTimeout(() => setDestinationSheetOpen(true), 150);
+            setTimeout(() => onOpenSheet?.('destination'), 150);
           }}
           onOpenDates={() => {
             setStaysSheetOpen(false);
-            setTimeout(() => setDatesSheetOpen(true), 150);
+            setTimeout(() => onOpenSheet?.('dates'), 150);
           }}
         />
 
@@ -1398,7 +1332,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           }}
           onOpenDestination={() => {
             setActivitiesSheetOpen(false);
-            setTimeout(() => setDestinationSheetOpen(true), 150);
+            setTimeout(() => onOpenSheet?.('destination'), 150);
           }}
         />
       </div>

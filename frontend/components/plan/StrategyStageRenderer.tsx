@@ -23,11 +23,13 @@ import React from 'react';
 
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { cn } from '@/lib/utils';
+import type { DocumentTripInputs } from '@/types/document';
 import type {
   DestinationCard,
   PlanViewModel,
   PlanViewState,
 } from '@/types/plan-envelope';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { BookingSection } from './BookingSection';
@@ -79,6 +81,12 @@ interface StrategyStageRendererProps {
   savedTileIds?: Set<string>;
   /** Shortlist: callback when user saves/unsaves a tile */
   onSaveTile?: (tile: Tile) => void;
+  /** Trip inputs for displaying summary pills in header (S1+) */
+  tripInputs?: DocumentTripInputs;
+  /** Handler to open a sheet for editing trip inputs */
+  onOpenSheet?: (sheet: SheetType) => void;
+  /** Whether committing/streaming is in progress (disables pills) */
+  isCommitting?: boolean;
 }
 
 function renderStageContent(
@@ -175,6 +183,9 @@ export function StrategyStageRenderer({
   onRetry,
   savedTileIds = new Set(),
   onSaveTile,
+  tripInputs,
+  onOpenSheet,
+  isCommitting = false,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -189,6 +200,9 @@ export function StrategyStageRenderer({
   const currentStage = getStageFromState(state);
   const generating = isGenerating(generation);
 
+  // Compute streaming state for disabling pills
+  const isStreaming = generating || isCommitting || isExpandingItinerary;
+
   // Default fallback for unknown/empty states
   if (!state) {
     return (
@@ -199,10 +213,13 @@ export function StrategyStageRenderer({
           fallbackTitle={fallbackTitle}
           planViewState="S0_BOOTSTRAP"
           hasDates={hasDates}
+          tripInputs={tripInputs}
+          onOpenSheet={onOpenSheet}
+          isStreaming={isStreaming}
         />
         <div className="flex flex-1 items-center justify-center p-4">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-6 text-center">
-            <p className="text-sm text-zinc-500">
+          <div className="rounded-lg border border-border bg-card p-6 text-center shadow-sm">
+            <p className="text-sm text-muted-foreground">
               Set destination and dates to begin
             </p>
           </div>
@@ -213,7 +230,7 @@ export function StrategyStageRenderer({
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      {/* Renderer owns header - single stepper + status pill */}
+      {/* Renderer owns header - single stepper + status pill + trip pills (S1+) */}
       <PlanHeader
         destinationCard={destinationCard}
         currentStage={currentStage}
@@ -223,6 +240,9 @@ export function StrategyStageRenderer({
         hasDates={hasDates}
         isExpandingItinerary={isExpandingItinerary}
         currentSubStage={currentSubStage}
+        tripInputs={tripInputs}
+        onOpenSheet={onOpenSheet}
+        isStreaming={isStreaming}
       />
 
       {/* Stage content - scrollable with bottom padding for footer */}
@@ -232,25 +252,33 @@ export function StrategyStageRenderer({
           nextAction && 'pb-20' // Reserve space for sticky footer
         )}
       >
-        {renderStageContent(
-          state,
-          viewModel,
-          destinationCard,
-          canGeneratePlan,
-          onRefineAssumptions,
-          onExpandToItinerary,
-          onBuildPlan
-        )}
+        {/* Content scrim - preserves topo visibility while ensuring content readability */}
+        <div className="relative">
+          {/* Scrim layer - stronger in light mode, subtle in dark */}
+          <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+          {/* Content layer - above scrim */}
+          <div className="relative z-[2]">
+            {renderStageContent(
+              state,
+              viewModel,
+              destinationCard,
+              canGeneratePlan,
+              onRefineAssumptions,
+              onExpandToItinerary,
+              onBuildPlan
+            )}
 
-        {/* BookingSection rendered conditionally (not "always") */}
-        <BookingSection
-          state={state}
-          tiles={tiles}
-          generation={generation}
-          hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
-          savedTileIds={savedTileIds}
-          onSaveTile={onSaveTile}
-        />
+            {/* BookingSection rendered conditionally (not "always") */}
+            <BookingSection
+              state={state}
+              tiles={tiles}
+              generation={generation}
+              hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+              savedTileIds={savedTileIds}
+              onSaveTile={onSaveTile}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Sticky footer - inside container, not global */}

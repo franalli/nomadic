@@ -28,30 +28,30 @@ function StrategySectionCard({ section }: { section: StrategySection }) {
   const [isExpanded, setIsExpanded] = React.useState(false);
 
   return (
-    <div className="bg-zinc-800/40 rounded-lg border border-zinc-700/50 overflow-hidden">
+    <div className="bg-card rounded-lg border border-border overflow-hidden shadow-sm">
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-zinc-700/20 transition-colors"
+        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-muted/50 transition-colors"
       >
-        <span className="text-sm font-medium text-zinc-200">
+        <span className="text-sm font-medium text-card-foreground">
           {section.title}
         </span>
         {isExpanded ? (
-          <ChevronDown className="w-4 h-4 text-zinc-400" />
+          <ChevronDown className="w-4 h-4 text-muted-foreground" />
         ) : (
-          <ChevronRight className="w-4 h-4 text-zinc-400" />
+          <ChevronRight className="w-4 h-4 text-muted-foreground" />
         )}
       </button>
 
       {isExpanded && section.bullets.length > 0 && (
-        <div className="px-4 pb-3 pt-1 border-t border-zinc-700/30">
+        <div className="px-4 pb-3 pt-1 border-t border-border/50">
           <ul className="space-y-1.5">
             {section.bullets.slice(0, 6).map((bullet, idx) => (
               <li
                 key={idx}
-                className="text-xs text-zinc-400 flex items-start gap-2"
+                className="text-xs text-muted-foreground flex items-start gap-2"
               >
-                <span className="text-zinc-600 mt-1">-</span>
+                <span className="text-muted-foreground/50 mt-1">-</span>
                 <span>{bullet}</span>
               </li>
             ))}
@@ -68,13 +68,13 @@ function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] }) {
   const blockingCount = decisions.filter(d => d.is_blocking).length;
 
   return (
-    <div className="bg-amber-900/20 rounded-lg border border-amber-700/30 p-4">
+    <div className="bg-amber-500/10 rounded-lg border border-amber-500/30 p-4 dark:bg-amber-900/20 dark:border-amber-700/30">
       <div className="flex items-center gap-2 mb-3">
-        <AlertCircle className="w-4 h-4 text-amber-500" />
-        <h3 className="text-sm font-medium text-amber-200">
+        <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-500" />
+        <h3 className="text-sm font-medium text-amber-900 dark:text-amber-200">
           Open decisions
           {blockingCount > 0 && (
-            <span className="text-amber-400 ml-1">
+            <span className="text-amber-700 dark:text-amber-400 ml-1">
               ({blockingCount} blocking)
             </span>
           )}
@@ -88,10 +88,10 @@ function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] }) {
           >
             <span
               className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                decision.is_blocking ? 'bg-amber-500' : 'bg-zinc-500'
+                decision.is_blocking ? 'bg-amber-500' : 'bg-muted-foreground/50'
               }`}
             />
-            <span className="text-xs text-zinc-300">
+            <span className="text-xs text-card-foreground">
               {decision.statement}
             </span>
           </li>
@@ -117,12 +117,12 @@ export function S2StrategyView({
   if (strategy_sections.length === 0) {
     return (
       <div className="flex flex-col p-4 space-y-4">
-        <div className="bg-zinc-800/30 rounded-lg border border-zinc-700/30 px-4 py-3">
-          <p className="text-xs text-zinc-500">Strategy is being prepared...</p>
+        <div className="bg-card rounded-lg border border-border px-4 py-3 shadow-sm">
+          <p className="text-xs text-muted-foreground">Strategy is being prepared...</p>
         </div>
         {[1, 2, 3].map((i) => (
-          <div key={i} className="bg-zinc-800/30 rounded-lg border border-zinc-700/30 px-4 py-3">
-            <div className="h-4 bg-zinc-700/50 rounded w-2/3 animate-pulse" />
+          <div key={i} className="bg-card rounded-lg border border-border px-4 py-3 shadow-sm">
+            <div className="h-4 bg-muted rounded w-2/3 animate-pulse" />
           </div>
         ))}
       </div>
@@ -133,11 +133,11 @@ export function S2StrategyView({
     <div className="flex flex-col p-4 space-y-4">
       {/* Strategy summary for short strategies (1-2 sections) */}
       {strategy_sections.length > 0 && strategy_sections.length < 3 && (
-        <div className="bg-zinc-800/20 rounded-lg border border-zinc-700/20 p-4 mb-2">
-          <h4 className="text-xs font-medium text-zinc-400 uppercase tracking-wide mb-2">
+        <div className="bg-card rounded-lg border border-border p-4 mb-2 shadow-sm">
+          <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
             Strategy summary
           </h4>
-          <ul className="text-sm text-zinc-300 space-y-1">
+          <ul className="text-sm text-card-foreground space-y-1">
             {strategy_sections.map(s => (
               <li key={s.id}>• {s.title}</li>
             ))}
@@ -159,7 +159,7 @@ export function S2StrategyView({
       {onRefineAssumptions && (
         <button
           onClick={onRefineAssumptions}
-          className="w-full py-2 px-4 rounded-lg text-sm text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition-colors"
+          className="w-full py-2 px-4 rounded-lg text-sm text-muted-foreground hover:text-card-foreground hover:bg-muted transition-colors"
         >
           Refine assumptions
         </button>

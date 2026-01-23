@@ -18,8 +18,16 @@ import { ConfirmStaySheet } from '@/components/plan/ConfirmStaySheet';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { TripLengthSheet } from '@/components/plan/TripLengthSheet';
+import {
+  BudgetSheet,
+  DatesSheet,
+  DestinationSheet,
+  OriginSheet,
+  TravelersSheet,
+} from '@/components/planner/sheets';
 import { Button } from '@/components/ui/button';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
+import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
@@ -108,6 +116,11 @@ export function NomadicLanding() {
   const llmUpdatedFields = documentStore.llmUpdatedFields;
   const acknowledgeLLMUpdate = documentStore.acknowledgeLLMUpdate;
   const restoreTripInputs = documentStore.restoreTripInputs;
+  const isCommitting = documentStore.isCommitting;
+
+  // Sheet manager - shared between header pills and chat panel
+  // In S1+, header pills are the only interactive surface for trip inputs
+  const { activeSheet, openSheet, closeSheet } = useSheetManager();
 
   // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
   // Kept for future receipt UI implementation
@@ -242,12 +255,13 @@ export function NomadicLanding() {
     // Clear destination image
     setDestinationImageUrl(null);
     lastFetchedDestination.current = null;
-    // Close any open sheets
+    // Close any open sheets (validation + trip input sheets)
     setTripLengthSheetOpen(false);
     setConfirmStaySheetOpen(false);
+    closeSheet(); // Close any open trip input sheet
     // Proceed with branch manager reset (clears document store, chat, branches, etc.)
     await branchManagerStartNewSession();
-  }, [shortlist, branchManagerStartNewSession]);
+  }, [shortlist, branchManagerStartNewSession, closeSheet]);
 
   // Wrapped handlers for receipt functionality
   // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
@@ -624,7 +638,6 @@ export function NomadicLanding() {
         method: 'POST',
         body: JSON.stringify({
           idempotency_key: runId,
-          trip_context: tripContext,
         }),
         signal: abortController.signal,
       });
@@ -838,6 +851,7 @@ export function NomadicLanding() {
       llmUpdatedFields={llmUpdatedFields}
       onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       planViewState={planViewState}
+      onOpenSheet={openSheet}
       // Note: onOpenBudgetInput not wired - falls back to chat insertion.
       // Users can also click budget pill in OptionalRefinementsSection directly.
     />
@@ -868,6 +882,9 @@ export function NomadicLanding() {
       onRetry={handleExpandToItinerary}
       savedTileIds={shortlist.savedTileIds}
       onSaveTile={shortlist.toggleItem}
+      tripInputs={tripInputs}
+      isCommitting={isCommitting}
+      onOpenSheet={openSheet}
     />
   );
 
@@ -1041,7 +1058,8 @@ export function NomadicLanding() {
         onSelectNights={handleSelectNights}
         onOpenDatePicker={() => {
           setTripLengthSheetOpen(false);
-          // TODO: Open DatesSheet for custom date selection
+          // Delay to let TripLengthSheet close animation finish
+          setTimeout(() => openSheet('dates'), 150);
         }}
       />
 
@@ -1050,6 +1068,77 @@ export function NomadicLanding() {
         onOpenChange={setConfirmStaySheetOpen}
         onUseRecommended={handleUseRecommendedStay}
         onChooseStay={handleChooseStay}
+      />
+
+      {/* Trip input sheets - shared between header pills and chat panel */}
+      {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
+      <DestinationSheet
+        open={activeSheet === 'destination'}
+        onOpenChange={(open) => !open && closeSheet()}
+        value={tripInputs.destinations?.[0] || ''}
+        onSave={async (value) => {
+          await documentStore.commitTripInputs({ destinations: [value] });
+          closeSheet();
+          addToast(`Destination: ${value}`, 'confirmation');
+        }}
+      />
+
+      <OriginSheet
+        open={activeSheet === 'origin'}
+        onOpenChange={(open) => !open && closeSheet()}
+        value={tripInputs.origin || ''}
+        onSave={async (value) => {
+          await documentStore.commitTripInputs({ origin: value });
+          closeSheet();
+          addToast(`Origin: ${value}`, 'confirmation');
+        }}
+      />
+
+      <DatesSheet
+        open={activeSheet === 'dates'}
+        onOpenChange={(open) => !open && closeSheet()}
+        startDate={tripInputs.start_date ? new Date(tripInputs.start_date) : null}
+        endDate={tripInputs.end_date ? new Date(tripInputs.end_date) : null}
+        onSave={async (start, end) => {
+          const startStr = start.toISOString().slice(0, 10);
+          const endStr = end.toISOString().slice(0, 10);
+          await documentStore.commitTripInputs({ start_date: startStr, end_date: endStr });
+          closeSheet();
+          const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          addToast(`Dates: ${startFormatted}–${endFormatted}`, 'confirmation');
+        }}
+      />
+
+      <TravelersSheet
+        open={activeSheet === 'travelers'}
+        onOpenChange={(open) => !open && closeSheet()}
+        adults={tripInputs.adults ?? 1}
+        children={tripInputs.children ?? 0}
+        onSave={async (adults, children) => {
+          await documentStore.commitTripInputs({ adults, children });
+          closeSheet();
+          const label = `${adults} adult${adults > 1 ? 's' : ''}${children > 0 ? `, ${children} child${children > 1 ? 'ren' : ''}` : ''}`;
+          addToast(`Travelers: ${label}`, 'confirmation');
+        }}
+      />
+
+      <BudgetSheet
+        open={activeSheet === 'budget'}
+        onOpenChange={(open) => !open && closeSheet()}
+        amount={tripInputs.budget ?? null}
+        currency={tripInputs.currency || 'USD'}
+        budgetType="total"
+        onSave={async (amount, currency, _budgetType) => {
+          await documentStore.commitTripInputs({ budget: amount, currency });
+          closeSheet();
+          const formatted = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency,
+            maximumFractionDigits: 0,
+          }).format(amount);
+          addToast(`Budget: ${formatted}`, 'confirmation');
+        }}
       />
     </>
   );

@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Protocol
 
 from app.debug_utils import _debug
-from app.known_places import is_known_place, normalize_place_synonym
+from app.known_places import is_known_place, normalize_place_synonym, normalize_place_with_fuzzy
 from app.pattern_matching import (
     ARTICLE_PREFIX_PATTERN,
     BUDGET_PATTERN,
@@ -286,6 +286,21 @@ def _parse_destination_answer(text: str, state: "GraphState") -> Optional[Dict[s
         if is_known_place(normalized):
             return {"destinations_delta": [normalized]}
 
+    # V37: Geocoding fallback for unknown places (e.g., "Torun, Poland")
+    # Uses fuzzy matching + Nominatim geocoding API to recognize any valid place
+    try:
+        geocoded = normalize_place_with_fuzzy(text, use_geocoding=True)
+        # Only accept if geocoding actually resolved it (different from title-case fallback)
+        if geocoded and geocoded.lower() != text.lower().title().lower():
+            _debug(
+                "[LQA] DESTINATION: Geocoded unknown place",
+                original=text,
+                geocoded=geocoded,
+            )
+            return {"destinations_delta": [geocoded]}
+    except Exception as e:
+        _debug(f"[LQA] DESTINATION: Geocoding failed for '{text}': {e}")
+
     return None
 
 
@@ -307,6 +322,20 @@ def _parse_origin_answer(text: str, state: "GraphState") -> Optional[Dict[str, A
     normalized = normalize_place_synonym(origin_text)
     if is_known_place(normalized):
         return {"origin_delta": normalized}
+
+    # V37: Geocoding fallback for unknown origins (e.g., "Torun, Poland")
+    try:
+        geocoded = normalize_place_with_fuzzy(origin_text, use_geocoding=True)
+        if geocoded and geocoded.lower() != origin_text.lower().title().lower():
+            _debug(
+                "[LQA] ORIGIN: Geocoded unknown place",
+                original=origin_text,
+                geocoded=geocoded,
+            )
+            return {"origin_delta": geocoded}
+    except Exception as e:
+        _debug(f"[LQA] ORIGIN: Geocoding failed for '{origin_text}': {e}")
+
     return None
 
 
