@@ -603,13 +603,6 @@ export function NomadicLanding() {
       }
     }
 
-    // Build trip_context
-    const tripContext: TripContextSelections = {
-      ...(selectedStayId && { selected_stay_id: selectedStayId }),
-      ...(selectedFlightId && { selected_flight_id: selectedFlightId }),
-      ...(selectedActivityIds?.length && { selected_activity_ids: selectedActivityIds }),
-    };
-
     // Generate runId for this generation (also serves as idempotency key)
     const runId = crypto.randomUUID();
 
