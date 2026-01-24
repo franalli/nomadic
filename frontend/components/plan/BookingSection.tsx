@@ -11,7 +11,7 @@
 
 'use client';
 
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Lock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { MiniCard } from '@/components/tiles/MiniCard';
@@ -22,6 +22,7 @@ import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 import { canShowBookingTiles, canShowTilesPreview, isGenerating } from './planStateHelpers';
@@ -38,6 +39,8 @@ export interface BookingSectionProps {
   savedTileIds?: Set<string>;
   /** Callback when user clicks Save on a tile */
   onSaveTile?: (tile: Tile) => void;
+  /** Callback to open a sheet (for "set trip length" link) */
+  onOpenSheet?: (sheet: SheetType) => void;
 }
 
 export function BookingSection({
@@ -47,6 +50,7 @@ export function BookingSection({
   hasStrategyContent,
   savedTileIds = new Set(),
   onSaveTile,
+  onOpenSheet,
 }: BookingSectionProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
@@ -176,7 +180,26 @@ export function BookingSection({
               Options to choose from
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Compare and save favorites. Booking links unlock after itinerary.
+              Compare and save favorites.
+            </p>
+            {/* Section-level lock message */}
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
+              <Lock className="h-3 w-3" />
+              <span>
+                Booking links unlock after you{' '}
+                {onOpenSheet ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenSheet('dates')}
+                    className="text-amber-600 hover:text-amber-500 dark:text-amber-500 dark:hover:text-amber-400 underline underline-offset-2"
+                  >
+                    set trip dates
+                  </button>
+                ) : (
+                  'set trip dates'
+                )}{' '}
+                and create your itinerary.
+              </span>
             </p>
           </div>
 
@@ -190,7 +213,11 @@ export function BookingSection({
               return (
                 <button
                   key={category}
-                  onClick={() => !isDisabled && setActiveCategory(category)}
+                  onClick={() => {
+                    if (!isDisabled) {
+                      setActiveCategory(category);
+                    }
+                  }}
                   disabled={isDisabled}
                   className={cn(
                     chipBase,

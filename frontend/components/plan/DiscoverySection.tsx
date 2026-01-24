@@ -13,12 +13,13 @@
 
 'use client';
 
-import { Heart } from 'lucide-react';
+import { Heart, Lock } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { MiniCard } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { cn } from '@/lib/utils';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ export interface DiscoverySectionProps {
   onSaveTile: (tile: Tile) => void;
   /** Callback to open shortlist drawer */
   onOpenShortlist?: () => void;
+  /** Callback to open a sheet (for "set trip dates" link) */
+  onOpenSheet?: (sheet: SheetType) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,9 +68,11 @@ export const DiscoverySection = memo(function DiscoverySection({
   isBookingUnlocked = false,
   onSaveTile,
   onOpenShortlist,
+  onOpenSheet,
 }: DiscoverySectionProps) {
   // Reserved for future use
   void _savedStaysCount;
+  void isBookingUnlocked;
   // Modal state for tile details
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
 
@@ -149,7 +154,26 @@ export const DiscoverySection = memo(function DiscoverySection({
             Options to choose from
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            Shortlist options now. We'll build the itinerary next, then unlock booking links.
+            Shortlist options now. We'll build the itinerary next.
+          </p>
+          {/* Section-level lock message */}
+          <p className="flex items-center gap-1.5 text-sm text-zinc-500 mt-2">
+            <Lock className="h-3 w-3" />
+            <span>
+              Booking links unlock after you{' '}
+              {onOpenSheet ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenSheet('dates')}
+                  className="text-amber-500 hover:text-amber-400 underline underline-offset-2"
+                >
+                  set trip dates
+                </button>
+              ) : (
+                'set trip dates'
+              )}{' '}
+              and create your itinerary.
+            </span>
           </p>
         </div>
 
@@ -181,7 +205,6 @@ export const DiscoverySection = memo(function DiscoverySection({
             label="Stays"
             tiles={groupedTiles.stays}
             savedTileIds={savedTileIds}
-            isBookingUnlocked={isBookingUnlocked}
             onDetailsClick={handleDetailsClick}
             onSaveClick={handleSaveClick}
           />
@@ -193,7 +216,6 @@ export const DiscoverySection = memo(function DiscoverySection({
             label="Flights"
             tiles={groupedTiles.flights}
             savedTileIds={savedTileIds}
-            isBookingUnlocked={isBookingUnlocked}
             onDetailsClick={handleDetailsClick}
             onSaveClick={handleSaveClick}
           />
@@ -205,7 +227,6 @@ export const DiscoverySection = memo(function DiscoverySection({
             label="Activities"
             tiles={groupedTiles.activities}
             savedTileIds={savedTileIds}
-            isBookingUnlocked={isBookingUnlocked}
             onDetailsClick={handleDetailsClick}
             onSaveClick={handleSaveClick}
           />
@@ -234,7 +255,6 @@ interface TileGroupProps {
   label: string;
   tiles: Tile[];
   savedTileIds: Set<string>;
-  isBookingUnlocked: boolean;
   onDetailsClick: (tile: Tile) => void;
   onSaveClick: (tile: Tile) => void;
 }
@@ -243,13 +263,9 @@ const TileGroup = memo(function TileGroup({
   label,
   tiles,
   savedTileIds,
-  isBookingUnlocked,
   onDetailsClick,
   onSaveClick,
 }: TileGroupProps) {
-  // Show preview label when booking is NOT unlocked (S2 discovery mode)
-  const showPreviewLabel = !isBookingUnlocked;
-
   return (
     <div>
       <h3 className="mb-2 text-sm font-medium text-zinc-400">{label}</h3>
@@ -259,8 +275,6 @@ const TileGroup = memo(function TileGroup({
             key={tile.id}
             tile={tile}
             isSaved={savedTileIds.has(tile.id)}
-            showPreviewLabel={showPreviewLabel}
-            isBookingUnlocked={isBookingUnlocked}
             onDetailsClick={onDetailsClick}
             onSaveClick={onSaveClick}
           />

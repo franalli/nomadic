@@ -3,20 +3,16 @@
  *
  * Compact tile card for S2 (Plan) discovery view.
  * Shows enough info to evaluate: thumbnail, name, area, rating, price, perks.
- * Actions: Details (opens modal) + Save (adds to shortlist) + View deal (locked until S3)
  *
- * Preview mode (S2):
- * - Shows "Preview" label on card
- * - View deal button is locked with tooltip
- *
- * Booking mode (S3):
- * - No preview label
- * - View deal button is enabled
+ * Interaction model:
+ * - Click card → opens modal (full details)
+ * - Click Save → saves to shortlist
+ * - Click Quick facts → toggles inline expansion (independent per tile)
  */
 
 'use client';
 
-import { ExternalLink, Heart, Info, Lock, Star } from 'lucide-react';
+import { ChevronDown, Heart, Star } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
@@ -26,10 +22,7 @@ import type { Tile } from '@/types/tile';
 export interface MiniCardProps {
   tile: Tile;
   isSaved?: boolean;
-  /** Show "Preview" label (for S2 discovery) */
-  showPreviewLabel?: boolean;
-  /** Whether booking links are unlocked (S3) */
-  isBookingUnlocked?: boolean;
+  /** Callback when card is clicked (opens modal) */
   onDetailsClick?: (tile: Tile) => void;
   onSaveClick?: (tile: Tile) => void;
 }
@@ -86,38 +79,72 @@ function formatPrice(tile: Tile): string {
 }
 
 /**
- * Get review count from meta
+ * Get amenities from tile meta (for inline expansion)
  */
-function getReviewCount(tile: Tile): number | null {
+function getAmenities(tile: Tile): string[] {
   const meta = tile.meta as Record<string, unknown> | undefined;
-  if (typeof meta?.review_count === 'number') return meta.review_count;
-  if (typeof meta?.reviews === 'number') return meta.reviews;
+  if (meta?.amenities && Array.isArray(meta.amenities)) {
+    return meta.amenities as string[];
+  }
+  if (meta?.features && Array.isArray(meta.features)) {
+    return meta.features as string[];
+  }
+  return [];
+}
+
+/**
+ * Get cancellation text (for inline expansion)
+ */
+function getCancellationText(tile: Tile): string | null {
+  if (tile.is_refundable === true) {
+    const meta = tile.meta as Record<string, unknown> | undefined;
+    if (typeof meta?.cancellation_deadline === 'string') {
+      return `Free cancellation until ${meta.cancellation_deadline}`;
+    }
+    return 'Free cancellation available';
+  }
+  if (tile.is_refundable === false) {
+    return 'Non-refundable';
+  }
   return null;
+}
+
+/**
+ * Get check-in/out times (for inline expansion)
+ */
+function getCheckTimes(tile: Tile): { checkIn?: string; checkOut?: string } {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  return {
+    checkIn: typeof meta?.check_in === 'string' ? meta.check_in : undefined,
+    checkOut: typeof meta?.check_out === 'string' ? meta.check_out : undefined,
+  };
 }
 
 export const MiniCard = memo(function MiniCard({
   tile,
   isSaved = false,
-  showPreviewLabel = false,
-  isBookingUnlocked = false,
   onDetailsClick,
   onSaveClick,
 }: MiniCardProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
+  // Independent inline expansion state (not accordion)
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const perks = useMemo(() => getPerks(tile), [tile]);
   const priceDisplay = useMemo(() => formatPrice(tile), [tile]);
-  const reviewCount = useMemo(() => getReviewCount(tile), [tile]);
 
-  const handleDetailsClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onDetailsClick?.(tile);
-    },
-    [onDetailsClick, tile]
-  );
+  // Expanded content data
+  const amenities = useMemo(() => getAmenities(tile), [tile]);
+  const cancellationText = useMemo(() => getCancellationText(tile), [tile]);
+  const checkTimes = useMemo(() => getCheckTimes(tile), [tile]);
 
+  // Card click → opens modal
+  const handleCardClick = useCallback(() => {
+    onDetailsClick?.(tile);
+  }, [onDetailsClick, tile]);
+
+  // Save button - stopPropagation to prevent modal open
   const handleSaveClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
@@ -126,135 +153,195 @@ export const MiniCard = memo(function MiniCard({
     [onSaveClick, tile]
   );
 
-  const handleViewDealClick = useCallback(
+  // Quick facts toggle - stopPropagation to prevent modal open
+  const handleQuickFactsToggle = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!isBookingUnlocked || !tile.deeplink_url) return;
-      window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer');
+      setIsExpanded((prev) => !prev);
     },
-    [isBookingUnlocked, tile.deeplink_url]
+    []
   );
 
+  const quickFactsPanelId = `quickfacts-${tile.id}`;
+
   return (
-    <div className="relative flex items-start gap-3 rounded-lg border border-border bg-card p-3 shadow-sm transition-all hover:shadow-md hover:border-border/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background">
-      {/* Preview label (S2 only) */}
-      {showPreviewLabel && (
-        <div className="absolute right-2 top-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-          Preview
-        </div>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleCardClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleCardClick();
+        }
+      }}
+      className={cn(
+        'relative rounded-lg border border-border bg-card shadow-sm transition-all cursor-pointer',
+        'hover:border-border/80 hover:shadow-md hover:translate-y-[-1px]',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        isExpanded && 'ring-1 ring-primary/20'
       )}
-
-      {/* Thumbnail - use Unsplash placeholder if no image_url */}
-      <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
-        <img
-          src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
-          alt={tile.title}
-          loading="lazy"
-          onLoad={() => setImageLoaded(true)}
-          onError={() => setImageError(true)}
-          className={cn(
-            'h-full w-full object-cover transition-opacity duration-300',
-            !imageLoaded && 'opacity-0'
-          )}
-        />
-      </div>
-
-      {/* Content */}
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        {/* Row 1: Name + Rating */}
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="line-clamp-1 text-sm font-medium text-card-foreground">
-            {tile.title}
-          </h4>
-          {tile.rating != null && (
-            <div className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
-              <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-              <span>{tile.rating.toFixed(1)}</span>
-              {reviewCount != null && (
-                <span className="text-muted-foreground/70">({reviewCount})</span>
-              )}
-            </div>
-          )}
+    >
+      {/* Main content area */}
+      <div className="flex items-start gap-3 p-3">
+        {/* Thumbnail */}
+        <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
+          <img
+            src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
+            alt={tile.title}
+            loading="lazy"
+            onLoad={() => setImageLoaded(true)}
+            onError={() => setImageError(true)}
+            className={cn(
+              'h-full w-full object-cover transition-opacity duration-300',
+              !imageLoaded && 'opacity-0'
+            )}
+          />
         </div>
 
-        {/* Row 2: Area */}
-        {tile.location_label && (
-          <p className="line-clamp-1 text-xs text-muted-foreground">
-            {tile.location_label}
-          </p>
-        )}
-
-        {/* Row 3: Perk chips */}
-        {perks.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {perks.map((perk) => (
-              <span
-                key={perk}
+        {/* Content */}
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          {/* Row 1: Name + Rating + Save */}
+          <div className="flex items-start justify-between gap-2">
+            <h4 className="line-clamp-1 text-sm font-medium text-card-foreground">
+              {tile.title}
+            </h4>
+            <div className="flex shrink-0 items-center gap-2">
+              {tile.rating != null && (
+                <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                  <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                  <span>{tile.rating.toFixed(1)}</span>
+                </div>
+              )}
+              {/* Save button */}
+              <button
+                type="button"
+                onClick={handleSaveClick}
                 className={cn(
-                  'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                  perk === 'Free cancel'
-                    ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
-                    : 'bg-muted text-muted-foreground'
+                  'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
+                  isSaved
+                    ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                    : 'text-muted-foreground hover:bg-muted hover:text-card-foreground'
                 )}
               >
-                {perk}
-              </span>
-            ))}
+                <Heart
+                  className={cn('h-3 w-3', isSaved && 'fill-amber-400')}
+                />
+                {isSaved ? 'Saved' : 'Save'}
+              </button>
+            </div>
           </div>
-        )}
 
-        {/* Row 4: Price + Actions */}
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-card-foreground">
-            {priceDisplay}
-          </span>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={handleDetailsClick}
-              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-card-foreground"
-            >
-              <Info className="h-3 w-3" />
-              Details
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveClick}
-              className={cn(
-                'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
-                isSaved
-                  ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
-                  : 'text-muted-foreground hover:bg-muted hover:text-card-foreground'
-              )}
-            >
-              <Heart
-                className={cn('h-3 w-3', isSaved && 'fill-amber-400')}
-              />
-              {isSaved ? 'Saved' : 'Save'}
-            </button>
-            {/* View deal - locked until S3 */}
-            <button
-              type="button"
-              onClick={handleViewDealClick}
-              disabled={!isBookingUnlocked}
-              title={!isBookingUnlocked ? 'Unlocks after itinerary' : 'Open booking link'}
-              className={cn(
-                'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
-                isBookingUnlocked
-                  ? 'bg-amber-500 text-white hover:bg-amber-600'
-                  : 'cursor-not-allowed bg-muted/50 text-muted-foreground/50'
-              )}
-            >
-              {isBookingUnlocked ? (
-                <ExternalLink className="h-3 w-3" />
-              ) : (
-                <Lock className="h-3 w-3" />
-              )}
-              View deal
-            </button>
+          {/* Row 2: Area */}
+          {tile.location_label && (
+            <p className="line-clamp-1 text-xs text-muted-foreground">
+              {tile.location_label}
+            </p>
+          )}
+
+          {/* Row 3: Perk chips */}
+          {perks.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {perks.map((perk) => (
+                <span
+                  key={perk}
+                  className={cn(
+                    'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                    perk === 'Free cancel'
+                      ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+                      : 'bg-muted text-muted-foreground'
+                  )}
+                >
+                  {perk}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Row 4: Price */}
+          <div className="mt-1">
+            <span className="text-sm font-semibold text-card-foreground">
+              {priceDisplay}
+            </span>
           </div>
         </div>
       </div>
+
+      {/* Quick facts toggle row - separate from card click */}
+      <div className="border-t border-border/50">
+        <button
+          type="button"
+          onClick={handleQuickFactsToggle}
+          aria-expanded={isExpanded}
+          aria-controls={quickFactsPanelId}
+          className="flex w-full items-center gap-1.5 px-3 py-2 min-h-[44px] text-xs text-muted-foreground transition-colors hover:text-foreground hover:bg-muted/50"
+        >
+          <ChevronDown
+            className={cn(
+              'h-3 w-3 transition-transform duration-200',
+              isExpanded && 'rotate-180'
+            )}
+          />
+          <span>Quick facts</span>
+        </button>
+      </div>
+
+      {/* Inline expanded content */}
+      {isExpanded && (
+        <div
+          id={quickFactsPanelId}
+          className="border-t border-border/50 px-3 pb-3 pt-2 space-y-2"
+        >
+          {/* Key facts - 2-3 bullets max */}
+          {(cancellationText || checkTimes.checkIn || checkTimes.checkOut) && (
+            <div className="space-y-1">
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Key facts
+              </h5>
+              <ul className="space-y-0.5 text-xs text-card-foreground">
+                {checkTimes.checkIn && (
+                  <li>• Check-in: {checkTimes.checkIn}</li>
+                )}
+                {checkTimes.checkOut && (
+                  <li>• Check-out: {checkTimes.checkOut}</li>
+                )}
+                {cancellationText && <li>• {cancellationText}</li>}
+              </ul>
+            </div>
+          )}
+
+          {/* Amenities - 4 chips max */}
+          {amenities.length > 0 && (
+            <div className="space-y-1">
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Amenities
+              </h5>
+              <div className="flex flex-wrap gap-1">
+                {amenities.slice(0, 4).map((amenity) => (
+                  <span
+                    key={amenity}
+                    className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                  >
+                    {amenity}
+                  </span>
+                ))}
+                {amenities.length > 4 && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/70">
+                    +{amenities.length - 4} more
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Provider */}
+          {tile.provider && (
+            <p className="text-xs text-muted-foreground">
+              via {tile.provider}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 });

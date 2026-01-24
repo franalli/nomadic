@@ -17,6 +17,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Heart,
+  Lock,
   MapPin,
   Star,
   X,
@@ -25,14 +26,19 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
+import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
 export interface TileDetailsModalProps {
   tile: Tile | null;
   isOpen: boolean;
   isSaved?: boolean;
+  /** Whether booking links are unlocked (S3) */
+  isBookingUnlocked?: boolean;
   onClose: () => void;
   onSaveClick?: (tile: Tile) => void;
+  /** Callback to open a sheet (for "Set trip dates" CTA) */
+  onOpenSheet?: (sheet: SheetType) => void;
 }
 
 /**
@@ -225,8 +231,10 @@ export const TileDetailsModal = memo(function TileDetailsModal({
   tile,
   isOpen,
   isSaved = false,
+  isBookingUnlocked = false,
   onClose,
   onSaveClick,
+  onOpenSheet,
 }: TileDetailsModalProps) {
   // Close on escape key
   useEffect(() => {
@@ -413,9 +421,45 @@ export const TileDetailsModal = memo(function TileDetailsModal({
               {isSaved ? 'Saved to shortlist' : 'Add to shortlist'}
             </button>
           </div>
-          <p className="mt-2 text-center text-xs text-zinc-500">
-            Booking links unlock after creating your itinerary
-          </p>
+
+          {/* Booking unlock status */}
+          {isBookingUnlocked ? (
+            // S3: View deal button enabled
+            tile?.deeplink_url && (
+              <button
+                type="button"
+                onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 py-2.5 font-medium text-white transition-colors hover:bg-amber-600"
+              >
+                View deal
+              </button>
+            )
+          ) : (
+            // S2: Locked state with actionable CTA
+            <div className="mt-3 space-y-2">
+              <div className="flex items-center justify-center gap-1.5 text-xs text-zinc-500">
+                <Lock className="h-3 w-3" />
+                <span>Booking links are locked</span>
+              </div>
+              {onOpenSheet && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenSheet('dates');
+                    onClose();
+                  }}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 py-2 text-sm font-medium text-zinc-200 transition-colors hover:bg-zinc-700"
+                >
+                  Set trip dates to unlock
+                </button>
+              )}
+              {!onOpenSheet && (
+                <p className="text-center text-xs text-zinc-500">
+                  Set trip dates and create your itinerary to unlock booking links.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
