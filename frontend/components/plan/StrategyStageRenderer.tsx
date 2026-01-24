@@ -87,6 +87,8 @@ interface StrategyStageRendererProps {
   onOpenSheet?: (sheet: SheetType) => void;
   /** Whether committing/streaming is in progress (disables pills) */
   isCommitting?: boolean;
+  /** Whether user has ever had a plan generated (for CTA label) */
+  hasEverHadPlan?: boolean;
 }
 
 function renderStageContent(
@@ -96,7 +98,8 @@ function renderStageContent(
   canGeneratePlan: boolean,
   onRefineAssumptions?: () => void,
   onExpandToItinerary?: () => void,
-  onBuildPlan?: () => void
+  onBuildPlan?: () => void,
+  hasEverHadPlan?: boolean
 ): React.ReactNode {
   // Note: S0BootstrapView now reads from document store directly
   // Action handlers for opening sheets will be added when we wire up the full chip row integration
@@ -105,7 +108,7 @@ function renderStageContent(
 
   switch (state) {
     case 'S0_BOOTSTRAP':
-      return <S0BootstrapView onBuildPlan={onBuildPlan} />;
+      return <S0BootstrapView onBuildPlan={onBuildPlan} hasEverHadPlan={hasEverHadPlan} />;
 
     case 'S1_FRAMING':
       return (
@@ -122,6 +125,8 @@ function renderStageContent(
           destinationCard={destinationCard}
           onRefineAssumptions={onRefineAssumptions}
           canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
+          pendingTopics={viewModel.pending_strategy_topics}
+          executedTopics={viewModel.executed_strategy_topics}
         />
       );
 
@@ -159,7 +164,7 @@ function renderStageContent(
       );
 
     default:
-      return <S0BootstrapView onBuildPlan={onBuildPlan} />;
+      return <S0BootstrapView onBuildPlan={onBuildPlan} hasEverHadPlan={hasEverHadPlan} />;
   }
 }
 
@@ -186,6 +191,7 @@ export function StrategyStageRenderer({
   tripInputs,
   onOpenSheet,
   isCommitting = false,
+  hasEverHadPlan = false,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -265,7 +271,8 @@ export function StrategyStageRenderer({
               canGeneratePlan,
               onRefineAssumptions,
               onExpandToItinerary,
-              onBuildPlan
+              onBuildPlan,
+              hasEverHadPlan
             )}
 
             {/* BookingSection rendered conditionally (not "always") */}

@@ -3737,10 +3737,10 @@ def _estimate_prompt_tokens(prompt: str, parsed_inputs: Dict[str, Any]) -> int:
 DEFAULT_CURRENCY = settings.default_trip_currency
 SUPPORTED_CURRENCIES = {"USD", "EUR", "GBP", "CAD", "AUD", "JPY"}
 DEFAULT_BOOKING_TYPES = {
-    "hotels": False,
-    "flights": False,
-    "ground_transport": False,
-    "activities": False,
+    "hotels": "off",
+    "flights": "off",
+    "ground_transport": "off",
+    "activities": "off",
 }
 DEFAULT_FLIGHT_SETTINGS = {"round_trip": True, "cabin_class": "economy", "direct_only": False}
 DEFAULT_HOTEL_SETTINGS = {"min_stars": 0, "amenities": []}
@@ -12690,7 +12690,7 @@ def normalize_inputs(state: GraphState) -> GraphState:
                     new_value = new_prov.get("value", "")
                     if existing_value and new_value:
                         existing_year = existing_value[:4]
-                        new_month_day = new_value[5:]  # "-MM-DD"
+                        new_month_day = new_value[4:]  # "-MM-DD" (includes leading dash)
                         protected_value = f"{existing_year}{new_month_day}"
 
                         _debug(
@@ -12768,9 +12768,9 @@ def normalize_inputs(state: GraphState) -> GraphState:
         existing_settings["categories"] = existing_cats
         updates["activity_settings"] = existing_settings
 
-        # Also enable activities booking type
+        # Also enable activities booking type (tri-state: 'off' | 'suggested' | 'on')
         existing_booking = dict(updates.get("booking_types") or ti.booking_types or {})
-        existing_booking["activities"] = True
+        existing_booking["activities"] = "on"
         updates["booking_types"] = existing_booking
 
         _debug(
@@ -14120,7 +14120,7 @@ def summarize(state: GraphState) -> GraphState:
         else:
             state.last_summary = "Ready to generate your plan."
         # Build context-aware suggestions focused on advancing the booking
-        state.suggested_responses = _build_booking_suggestions(ti, primary_action="Generate plan")
+        state.suggested_responses = _build_booking_suggestions(ti, primary_action="Build Plan")
         state.question_target = None  # Clear stale question target
         state.metadata["question_target"] = None  # SSoT sync
         state.metadata["response_writer_node"] = "summarize:ready"
@@ -14236,9 +14236,7 @@ def summarize(state: GraphState) -> GraphState:
             topic = state.metadata.get("last_strategy_topic", "trip")
             dest_str = destinations[0] if destinations else "destination"
             state.last_summary = f"{topic.capitalize()} to {dest_str}."
-            state.suggested_responses = _build_booking_suggestions(
-                ti, primary_action="Generate plan"
-            )
+            state.suggested_responses = _build_booking_suggestions(ti, primary_action="Build Plan")
             state.metadata["response_writer_node"] = "summarize:strategy_fallback"
         elif len(destinations) > 0:
             # Has destinations - offer to generate
@@ -14248,7 +14246,7 @@ def summarize(state: GraphState) -> GraphState:
             if readiness.core_complete:
                 state.last_summary = f"Ready to generate. {dest_str}."
                 state.suggested_responses = _build_booking_suggestions(
-                    ti, primary_action="Generate plan"
+                    ti, primary_action="Build Plan"
                 )
                 state.metadata["pending_action"] = "generate_plan"
             else:
@@ -14888,6 +14886,24 @@ async def tile_search(state: GraphState) -> GraphState:
 
 
 # -----------------------
+# Helper: Compute impact areas for strategy topics
+# -----------------------
+def _compute_impact_areas(topic: str) -> List[str]:
+    """Map topic to plan areas it affects.
+
+    Used to show users which parts of the plan a specialist agent influences.
+    """
+    TOPIC_IMPACTS = {
+        "diving": ["Schedule", "Location", "Gear"],
+        "hiking": ["Schedule", "Weather", "Gear"],
+        "skiing": ["Schedule", "Location", "Budget", "Gear"],
+        "boating": ["Schedule", "Weather", "Budget"],
+        "cycling": ["Schedule", "Location"],
+    }
+    return TOPIC_IMPACTS.get(topic, ["Schedule"])
+
+
+# -----------------------
 # Generate responder (handles GENERATE_PLAN_NOW trigger)
 # -----------------------
 async def generate_responder(state: GraphState) -> GraphState:
@@ -14934,6 +14950,27 @@ async def generate_responder(state: GraphState) -> GraphState:
     # The tri-state model (off/suggested/on) means user scope preferences
     # are preserved. Tile search treats 'suggested' and 'on' as enabled.
 
+    # Handle re-orchestration when adding topics to existing plan (PR1 Step 3)
+    meta = state.metadata or {}
+    reorchestrate = meta.get("reorchestrate_strategies", False)
+    pending_topics = meta.get("pending_strategy_topics", [])
+
+    if reorchestrate and pending_topics:
+        existing_topics = meta.get("executed_strategy_topics", [])
+        # Use dict.fromkeys for stable deduplication (preserves order)
+        combined_topics = list(dict.fromkeys(existing_topics + pending_topics))
+        meta["force_strategy_topics"] = combined_topics
+        state.metadata = meta
+        _debug(
+            "Re-orchestrating with merged topics",
+            existing=existing_topics,
+            pending=pending_topics,
+            combined=combined_topics,
+        )
+        # Clear the reorchestrate flag after processing
+        meta["reorchestrate_strategies"] = False
+        meta["pending_strategy_topics"] = []
+
     # Call strategy orchestrator to get enriched content
     # Returns List[StrategyResult] - one per executed topic
     strategy_results_list = await orchestrate_strategies(state)
@@ -14951,12 +14988,17 @@ async def generate_responder(state: GraphState) -> GraphState:
         if not result.success or not result.content:
             continue
         content = result.content
+        topic = content.topic
+
+        # Compute impact areas based on topic type
+        impact_areas = _compute_impact_areas(topic)
+
         strategy_sections.append(
             {
-                "id": f"strategy_{content.topic}",
+                "id": f"strategy_{topic}",
                 "title": "Strategy",
                 "subtitle": f"{dest_name} Trip",
-                "specialist_type": content.topic,
+                "specialist_type": topic,
                 # Collapsed state
                 "one_liner": content.one_liner,
                 "principles": content.principles,
@@ -14968,6 +15010,10 @@ async def generate_responder(state: GraphState) -> GraphState:
                 # Provenance (debug)
                 "strategy_node_id": content.strategy_node_id,
                 "strategy_version": content.strategy_version,
+                # Booking artifacts - will be populated when tiles are tagged with source_agent
+                "booking_artifacts": None,  # Computed when tiles are available
+                # Impact areas - which parts of plan this agent affects
+                "impact_areas": impact_areas,
                 # Legacy fallback
                 "bullets": content.highlights,
             }
@@ -16040,6 +16086,9 @@ async def run_turn(
     metadata.pop("deferred_strategy_topic", None)
     # Clear routing_reason (set fresh each turn by gate evaluator)
     metadata.pop("routing_reason", None)
+    # Clear auto_fire_topic_switch - it's consumed once and shouldn't persist
+    # to the next turn (would override user's actual topic request)
+    metadata.pop("auto_fire_topic_switch", None)
 
     # =========================================================================
     # LLM BUDGET: Reset per-turn counters (PR2: Use constants)
@@ -16509,7 +16558,7 @@ async def run_turn(
                 result.suggested_responses = [
                     "Add flights",
                     "Add hotels",
-                    "Generate plan",
+                    "Build Plan",
                 ]
         # Update last_response_turn to current
         result_meta["last_response_turn"] = current_turn
@@ -16838,6 +16887,9 @@ async def run_turn_streaming(user_text: str, session_state: Optional[Dict[str, A
     metadata.pop("deferred_strategy_topic", None)
     # Clear routing_reason (set fresh each turn by gate evaluator)
     metadata.pop("routing_reason", None)
+    # Clear auto_fire_topic_switch - it's consumed once and shouldn't persist
+    # to the next turn (would override user's actual topic request)
+    metadata.pop("auto_fire_topic_switch", None)
 
     # =========================================================================
     # LLM BUDGET: Reset per-turn counters (must match run_turn) (PR2: Use constants)

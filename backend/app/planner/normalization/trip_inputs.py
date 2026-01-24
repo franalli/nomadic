@@ -144,10 +144,10 @@ class TripInputNormalizer:
         self._normalize_multi_city = normalize_multi_city_fn or _default_normalize_multi_city
         self._default_currency = default_currency
         self._default_booking_types = default_booking_types or {
-            "flights": True,
-            "hotels": True,
-            "transport": True,
-            "activities": True,
+            "flights": "off",
+            "hotels": "off",
+            "ground_transport": "off",
+            "activities": "off",
         }
         self._update_stats = update_stats_fn
 
@@ -935,37 +935,55 @@ class TripInputNormalizer:
                 updates["activity_settings"] = {"categories": existing_cats}
 
         # --- Category Activation (booking types) ---
+        # Tri-state coercion helper (bool → string)
+        _TRI_STATE = ("off", "suggested", "on")
+
+        def _coerce_tri_state(value):
+            """Convert bool to tri-state string, pass through valid strings."""
+            if isinstance(value, bool):
+                return "on" if value else "off"
+            if isinstance(value, str) and value in _TRI_STATE:
+                return value
+            return None
+
+        def _get_booking_types_dict(bt):
+            """Safely convert booking_types to dict, handling Pydantic models."""
+            if bt is None:
+                return dict(self._default_booking_types)
+            # Pydantic v2 model_dump, fallback to dict()
+            return bt.model_dump() if hasattr(bt, "model_dump") else dict(bt)
+
         if "category_activation" in deltas:
             activation = deltas["category_activation"]
-            booking_types = dict(trip_inputs.booking_types or self._default_booking_types)
+            booking_types = _get_booking_types_dict(trip_inputs.booking_types)
 
             if isinstance(activation, list):
                 # Handle array format from extractor: ["flights", "hotels"]
                 for cat in activation:
                     if cat in booking_types:
-                        booking_types[cat] = True
+                        booking_types[cat] = "on"
                 updates["booking_types"] = booking_types
             elif isinstance(activation, dict):
                 # Handle dict format: {"flights": true, "hotels": true}
-                # Also supports tri-state strings: "off", "suggested", "on"
+                # Coerce booleans to tri-state strings
                 for cat, enabled in activation.items():
-                    if cat in booking_types and (
-                        isinstance(enabled, bool) or enabled in ("off", "suggested", "on")
-                    ):
-                        booking_types[cat] = enabled
+                    if cat in booking_types:
+                        coerced = _coerce_tri_state(enabled)
+                        if coerced is not None:
+                            booking_types[cat] = coerced
                 updates["booking_types"] = booking_types
 
         # --- Direct booking_types updates (from UI toggles) ---
         if "booking_types" in deltas:
             booking_types_delta = deltas["booking_types"]
             if isinstance(booking_types_delta, dict):
-                booking_types = dict(trip_inputs.booking_types or self._default_booking_types)
+                booking_types = _get_booking_types_dict(trip_inputs.booking_types)
                 for cat, enabled in booking_types_delta.items():
-                    # Accept both boolean (legacy) and tri-state strings
-                    if cat in booking_types and (
-                        isinstance(enabled, bool) or enabled in ("off", "suggested", "on")
-                    ):
-                        booking_types[cat] = enabled
+                    # Coerce booleans to tri-state strings
+                    if cat in booking_types:
+                        coerced = _coerce_tri_state(enabled)
+                        if coerced is not None:
+                            booking_types[cat] = coerced
                 updates["booking_types"] = booking_types
 
         # --- Budget Per Night Derivation ---

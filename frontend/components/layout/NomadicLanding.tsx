@@ -46,6 +46,27 @@ interface ChangeReceiptData {
   canUndo: boolean;
 }
 
+// Topic keywords for detecting specialist topics from user messages
+// Matches backend orchestrator.py TOPIC_KEYWORDS
+const TOPIC_KEYWORDS: Record<string, string[]> = {
+  diving: ['dive', 'diving', 'scuba', 'snorkel', 'reef'],
+  hiking: ['hike', 'hiking', 'trek', 'trail', 'mountain'],
+  skiing: ['ski', 'skiing', 'snowboard', 'piste'],
+  cycling: ['bike', 'cycling', 'bicycle'],
+  boating: ['sail', 'boat', 'yacht', 'kayak'],
+};
+
+/**
+ * Detect specialist topics from user message text.
+ * Used for optimistic UI - shows placeholder AgentCards before backend responds.
+ */
+function detectTopicsFromMessage(message: string): string[] {
+  const lower = message.toLowerCase();
+  return Object.entries(TOPIC_KEYWORDS)
+    .filter(([_, keywords]) => keywords.some(k => lower.includes(k)))
+    .map(([topic]) => topic);
+}
+
 // Toast notification system
 const MAX_TOASTS = 3;
 const TOAST_DISMISS_MS = 4000;
@@ -118,6 +139,19 @@ export function NomadicLanding() {
   // Kept for future receipt UI implementation
   const [_receiptData, setReceiptData] = useState<ChangeReceiptData | null>(null);
   const previousTripInputsRef = useRef<DocumentTripInputs | null>(null);
+
+  // Track if we've ever had a plan to prevent regression to Setup mode
+  // Once a plan is generated, we stay in Plan mode (never revert to S0_BOOTSTRAP)
+  // Using state (not ref) so changes trigger re-renders and useMemo re-computation
+  const [hasEverHadPlan, setHasEverHadPlan] = useState(false);
+
+  // Track if user explicitly requested plan generation (clicked "Build Plan")
+  // This prevents Plan tab from showing prematurely when backend sends data
+  const [userRequestedGeneration, setUserRequestedGeneration] = useState(false);
+
+  // Optimistic pending topics - detected from user messages before backend responds
+  // Used to show placeholder AgentCards immediately while backend processes
+  const [localPendingTopics, setLocalPendingTopics] = useState<string[]>([]);
 
   // Derive tripInputs from store (with defaults)
   const tripInputs: DocumentTripInputs = useMemo(() => {
@@ -212,6 +246,7 @@ export function NomadicLanding() {
     tripInputs,
     chatPanelContainerRef,
     chatPanelRef,
+    hasEverHadPlan,
     onToast: addToast,
     onChatKeyIncrement: useCallback(() => setChatKey((prev) => prev + 1), []),
     resetDraft: () => tripInputsEditorRef.current?.resetDraft(),
@@ -244,6 +279,8 @@ export function NomadicLanding() {
     // Clear receipt data
     setReceiptData(null);
     previousTripInputsRef.current = null;
+    // Reset plan history flag - allows returning to S0_BOOTSTRAP
+    setHasEverHadPlan(false);
     // Clear destination image
     setDestinationImageUrl(null);
     lastFetchedDestination.current = null;
@@ -259,6 +296,7 @@ export function NomadicLanding() {
   // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
   const handleGeneratePlanStartWithSnapshot = useCallback(() => {
     previousTripInputsRef.current = storeTripInputs ? { ...storeTripInputs } : null;
+    setUserRequestedGeneration(true); // Track explicit user request for Plan tab
     handleGeneratePlanStart();
     // Switch to Plan Mode on mobile when generation starts
     if (!isDesktop) {
@@ -288,6 +326,26 @@ export function NomadicLanding() {
     },
     [handlePlanResult]
   );
+
+  // Handle user message submission for optimistic topic detection
+  // Detects specialist topics from message and adds placeholder AgentCards immediately
+  const handleUserMessageSubmit = useCallback((message: string) => {
+    if (!hasEverHadPlan) return; // Only do optimistic UI after first plan
+
+    const detectedTopics = detectTopicsFromMessage(message);
+    // Use documentStore.document directly to avoid variable scope issues
+    const existingTopics = new Set(documentStore.document?.executed_strategy_topics ?? []);
+    const newTopics = detectedTopics.filter(t => !existingTopics.has(t));
+
+    if (newTopics.length > 0) {
+      setLocalPendingTopics(prev => {
+        // Stable deduplication using Map
+        return Array.from(
+          new Map([...prev, ...newTopics].map(t => [t, true])).keys()
+        );
+      });
+    }
+  }, [hasEverHadPlan, documentStore.document?.executed_strategy_topics]);
 
   // Receipt undo/dismiss handlers removed - re-add when receipt UI is implemented
   // Uses: previousTripInputsRef, storeTripInputs, restoreTripInputs, setReceiptData, detectChangedFieldNames
@@ -475,24 +533,65 @@ export function NomadicLanding() {
   const backendPlanViewState = storeDocument?.plan_view_state;
   const hasStrategyContent = (storeDocument?.strategy_sections?.length ?? 0) > 0;
 
+  // Update hasEverHadPlan when branches become available AND user explicitly requested generation
+  // Using state ensures useMemo re-computes when this changes
+  // Only set when userRequestedGeneration is true to prevent Plan tab showing prematurely
+  useEffect(() => {
+    if (hasBranchesReady && hasStrategyContent && !hasEverHadPlan && userRequestedGeneration) {
+      setHasEverHadPlan(true);
+    }
+  }, [hasBranchesReady, hasStrategyContent, hasEverHadPlan, userRequestedGeneration]);
+
+  // Clear local pending topics when backend responds with executed_strategy_topics
+  // Topics that appear in executed are successfully processed
+  // Topics that were pending but didn't execute stay (backend didn't process them)
+  const executedTopics = storeDocument?.executed_strategy_topics ?? [];
+  useEffect(() => {
+    if (executedTopics.length > 0) {
+      setLocalPendingTopics(prev =>
+        prev.filter(topic => !executedTopics.includes(topic))
+      );
+    }
+  }, [executedTopics]);
+
   const planViewState: PlanViewState = useMemo(() => {
+    // =========================================================================
+    // CRITICAL: Setup → Plan transition ONLY via explicit "Build Plan" click
+    // =========================================================================
+    // Before user clicks "Build Plan" (userRequestedGeneration=false AND hasEverHadPlan=false),
+    // we ALWAYS stay in S0_BOOTSTRAP regardless of backend state.
+    // This prevents the Plan tab from showing prematurely.
+
+    if (!hasEverHadPlan && !userRequestedGeneration) {
+      // User hasn't clicked "Build Plan" yet - stay in Setup mode
+      return 'S0_BOOTSTRAP';
+    }
+
     // During generation, show loading state
-    if (isGenerating) return 'S1_FRAMING';
+    if (isGenerating && userRequestedGeneration) return 'S1_FRAMING';
 
-    // Use backend-provided state when available
-    if (backendPlanViewState) return backendPlanViewState;
-
-    // Fallback: derive from local state
-    if (!hasDestination) return 'S0_BOOTSTRAP';
-
-    // Branches exist - determine S2 sub-state based on strategy content
-    if (hasBranchesReady) {
-      // Has strategy content = ready, otherwise still loading/blocked
+    // CRITICAL: Check hasEverHadPlan BEFORE backend state
+    // This prevents regression to S0_BOOTSTRAP when backend sends stale state
+    if (hasEverHadPlan) {
+      // Backend can still override for valid transitions (RESOLVING, S1_FRAMING, etc.)
+      // But we block S0_BOOTSTRAP specifically
+      if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
+        return backendPlanViewState;
+      }
+      // Stay in Plan mode - show strategy content or blocked state
       return hasStrategyContent ? 'S2_STRATEGY_READY' : 'S2_BLOCKED';
     }
 
+    // User requested generation but plan not ready yet - show loading
+    if (userRequestedGeneration) {
+      if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
+        return backendPlanViewState;
+      }
+      return 'S1_FRAMING';
+    }
+
     return 'S0_BOOTSTRAP';
-  }, [backendPlanViewState, hasDestination, isGenerating, hasBranchesReady, hasStrategyContent]);
+  }, [backendPlanViewState, isGenerating, hasStrategyContent, hasEverHadPlan, userRequestedGeneration]);
 
   // Auto-switch to Plan Mode when generation is in progress (mobile only)
   useEffect(() => {
@@ -501,16 +600,27 @@ export function NomadicLanding() {
     }
   }, [isDesktop, planViewState, switchToPlan]);
 
+  // Merge pending topics: backend + local optimistic (stable ordering via Map)
+  const mergedPendingTopics = useMemo(() => {
+    const backendPending = storeDocument?.pending_strategy_topics ?? [];
+    // Use Map for stable deduplication (like Python's dict.fromkeys)
+    return Array.from(
+      new Map([...backendPending, ...localPendingTopics].map(t => [t, true])).keys()
+    );
+  }, [storeDocument?.pending_strategy_topics, localPendingTopics]);
+
   // Plan View Model - populated from backend response via storeDocument
   const planViewModel: PlanViewModel = useMemo(() => ({
     strategy_sections: storeDocument?.strategy_sections,
+    executed_strategy_topics: storeDocument?.executed_strategy_topics,
+    pending_strategy_topics: mergedPendingTopics,
     open_decisions: storeDocument?.open_decisions ?? [],
     itinerary_overview: storeDocument?.itinerary_overview ?? undefined,
     day_cards: storeDocument?.day_cards,
     itinerary_assumptions: storeDocument?.itinerary_assumptions ?? undefined,
     needs_refresh: storeDocument?.needs_refresh,
     can_expand_to_itinerary: storeDocument?.can_expand_to_itinerary,
-  }), [storeDocument]);
+  }), [storeDocument, mergedPendingTopics]);
 
   // Merged generation state: envelope wins if present, else local UI fallback
   const envelopeGeneration = storeDocument?.generation as GenerationState | undefined;
@@ -746,6 +856,8 @@ export function NomadicLanding() {
       readyToGenerate={readyToGenerate}
       isGenerating={isGenerating}
       planState={planState}
+      hasEverHadPlan={hasEverHadPlan}
+      onUserMessageSubmit={handleUserMessageSubmit}
       // Onboarding chips props - click handlers are internal to ChatPanel
       destination={tripInputs.destinations?.[0]}
       origin={tripInputs.origin ?? undefined}
@@ -817,6 +929,7 @@ export function NomadicLanding() {
       tripInputs={tripInputs}
       isCommitting={isCommitting}
       onOpenSheet={openSheet}
+      hasEverHadPlan={hasEverHadPlan}
     />
   );
 

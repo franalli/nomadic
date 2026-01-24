@@ -25,10 +25,10 @@ class GatePrecedence(IntEnum):
     - GENERATE_REQUESTED (20): Explicit generate request detected
     - SHORT_CIRCUIT (30): High priority for greetings/confirmations
     - STRATEGY_POST_CORE (35): Stage 1 trigger when core complete after stage 0
+    - STRATEGY_TOPIC_SWITCH (38): Mid-session topic changes BEFORE ready check
     - READY_NO_FIELDS (40): Plan is ready, no fields to ask
     - FAST_PATH (50): Bootstrap optimization (turn 1 only when strategy_bootstrap_active)
     - SPECIALIST_PRE_CORE (60): Domain keywords before core complete
-    - STRATEGY_TOPIC_SWITCH (70): Mid-session topic changes (e.g., adding "diving")
     - STRATEGY_PRE_CORE_VALUE (80): Strategy topic detected -> value-first response
     - CORE_COLLECTION (90): Collect missing core fields
     - QUESTION_KEYWORD (110): Question-word + domain keyword combo + heuristics
@@ -39,10 +39,10 @@ class GatePrecedence(IntEnum):
     GENERATE_REQUESTED = 20  # Explicit generate request (pattern match or pending_action)
     SHORT_CIRCUIT = 30  # Greeting, acknowledgment, off-topic
     STRATEGY_POST_CORE = 35  # Stage 1 trigger: core complete after stage 0
+    STRATEGY_TOPIC_SWITCH = 38  # Mid-session topic change - MUST fire before READY_NO_FIELDS
     READY_NO_FIELDS = 40  # Plan ready, missing_all empty, no blocking errors
     FAST_PATH = 50  # Direct field updates (bootstrap only when strategy_bootstrap_active)
     SPECIALIST_PRE_CORE = 60  # Specialist keyword when core fields missing (pre-core mode)
-    STRATEGY_TOPIC_SWITCH = 70  # Mid-session strategy topic change (e.g., "diving")
     STRATEGY_PRE_CORE_VALUE = 80  # Strategy topic detected -> value-first response
     CORE_COLLECTION = 90  # Core fields missing -> required_fields
     QUESTION_KEYWORD = 110  # Question-word + domain keyword combo + keyword heuristic

@@ -82,10 +82,10 @@ class GateEvaluator:
         ShortCircuitGate(),  # 30
         InfeasibilityGate(),  # 30 (same precedence as SHORT_CIRCUIT)
         StrategyPostCoreGate(),  # 35: Stage 1 trigger after core complete
+        StrategyTopicSwitchGate(),  # 38: Mid-session topic switch BEFORE READY_NO_FIELDS
         ReadyNoFieldsGate(),  # 40
         FastPathGate(),  # 50
         SpecialistPreCoreGate(),  # 60
-        StrategyTopicSwitchGate(),  # 70
         StrategyPreCoreValueGate(),  # 80 (now handles both with/without destinations)
         CoreCollectionGate(),  # 90
         QuestionKeywordGate(),  # 110 (now includes keyword heuristic fallback)

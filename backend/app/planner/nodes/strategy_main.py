@@ -317,7 +317,10 @@ async def strategy_node(state: "GraphState") -> "GraphState":
         # =====================================================================
         # In central planner view, show only minimal destination lists (no descriptions).
         # This keeps the central view clean for coherence checking.
-        if not state.ready_to_generate:
+        # EXCEPTION: If destination is already set, call the specialist LLM for
+        # destination-specific recommendations instead of showing generic templates.
+        destinations = state.trip_inputs.destinations or []
+        if not state.ready_to_generate and not destinations:
             from app.planner.nodes.strategy.stage0 import apply_minimal_strategy_template
 
             _debug(
@@ -703,7 +706,10 @@ async def strategy_node(state: "GraphState") -> "GraphState":
         # =====================================================================
         # In central planner view, show only minimal destination lists (no descriptions).
         # This keeps the central view clean for coherence checking.
-        if not state.ready_to_generate:
+        # EXCEPTION: If destination is already set, call the specialist LLM for
+        # destination-specific recommendations instead of showing generic templates.
+        destinations = state.trip_inputs.destinations or []
+        if not state.ready_to_generate and not destinations:
             from app.planner.nodes.strategy.stage0 import apply_minimal_strategy_template
 
             _debug(

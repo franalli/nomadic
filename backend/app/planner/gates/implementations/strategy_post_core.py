@@ -47,6 +47,13 @@ class StrategyPostCoreGate(Gate):
         readiness = ctx.readiness
         ti = ctx.ti
 
+        # Guard 0: Don't fire if plan already exists (stage >= 2)
+        # Adding topics to existing plans is handled by STRATEGY_TOPIC_SWITCH gate
+        current_stage = metadata.get("strategy_stage", 0)
+        if current_stage >= 2:
+            self.record(ctx, fired=False, reason="plan_exists_stage2")
+            return None
+
         # Guard 1: Core must be complete
         if not readiness.core_complete:
             self.record(ctx, fired=False, reason="core_not_complete")

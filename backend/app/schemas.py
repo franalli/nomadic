@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 TileType = Literal["flight", "hotel", "activity"]
 
@@ -97,6 +97,9 @@ class Tile(BaseModel):
     meta: dict = Field(default_factory=dict)
     score: Optional[float] = None
     source: Optional[str] = None  # "cache" | "live"
+
+    # Agent provenance - which specialist agent produced this tile
+    source_agent: Optional[str] = None  # "diving", "hiking", etc. - set at creation
 
     # Expedia Rapid API pricing fields for compliance
     total_inclusive: Optional[float] = None  # Total price including all taxes/fees
@@ -334,6 +337,14 @@ class BookingTypes(BaseModel):
     ground_transport: BookingTypeState = "off"
     activities: BookingTypeState = "suggested"
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def coerce_bool(cls, v):
+        """Coerce legacy boolean values to tri-state strings."""
+        if isinstance(v, bool):
+            return "on" if v else "off"
+        return v
+
 
 class FlightSettings(BaseModel):
     """Flight-specific search settings."""
@@ -451,6 +462,12 @@ class StrategySection(BaseModel):
     # Provenance (debug only, not shown in UI)
     strategy_node_id: Optional[str] = None
     strategy_version: Optional[str] = None
+
+    # Booking artifacts - counts of tiles produced by this agent (NO status field - computed by UI)
+    booking_artifacts: Optional[Dict[str, int]] = None  # {"activities_count": 3, "hotels_count": 2}
+
+    # Impact areas - which parts of the plan this agent affects
+    impact_areas: List[str] = Field(default_factory=list)  # ["Schedule", "Location", "Gear"]
 
     # Legacy field for backward compatibility
     bullets: List[str] = Field(default_factory=list)

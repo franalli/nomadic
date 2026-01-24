@@ -80,10 +80,10 @@ class TestReadyToGenerateTransition:
 
         result = summarize(state)
 
-        # Should generate fresh ready message (YC style: system-like, declarative)
+        # Should generate fresh ready message that confirms the trip details
         lower_summary = result.last_summary.lower()
-        # YC-aligned: messages are terse, system-like ("Constraints:" or "Ready to generate.")
-        assert "constraints" in lower_summary or "ready" in lower_summary
+        # Current format: "Got it, [destinations] from [origin] on [date]." or similar
+        # Must include destinations to confirm we understood the user
         assert "paris" in lower_summary or "rome" in lower_summary
 
     def test_clears_question_target_when_plan_ready(self):

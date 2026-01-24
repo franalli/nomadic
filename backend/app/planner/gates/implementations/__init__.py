@@ -8,10 +8,10 @@ Gates are listed in precedence order (13 active gates):
 - 20: GenerateRequestedGate
 - 30: ShortCircuitGate, InfeasibilityGate
 - 35: StrategyPostCoreGate
+- 38: StrategyTopicSwitchGate
 - 40: ReadyNoFieldsGate
 - 50: FastPathGate
 - 60: SpecialistPreCoreGate
-- 70: StrategyTopicSwitchGate
 - 80: StrategyPreCoreValueGate
 - 90: CoreCollectionGate
 - 110: QuestionKeywordGate
@@ -49,14 +49,14 @@ __all__ = [
     "InfeasibilityGate",
     # Precedence 35
     "StrategyPostCoreGate",
+    # Precedence 38
+    "StrategyTopicSwitchGate",
     # Precedence 40
     "ReadyNoFieldsGate",
     # Precedence 50
     "FastPathGate",
     # Precedence 60
     "SpecialistPreCoreGate",
-    # Precedence 70
-    "StrategyTopicSwitchGate",
     # Precedence 80
     "StrategyPreCoreValueGate",
     # Precedence 90

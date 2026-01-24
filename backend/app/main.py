@@ -221,7 +221,19 @@ def _build_strategy_sections(metadata: dict) -> list:
                 StrategySection(
                     id=s.get("id", ""),
                     title=s.get("title", ""),
-                    bullets=s.get("bullets", [])[:6],  # Max 6 bullets
+                    subtitle=s.get("subtitle"),
+                    specialist_type=s.get("specialist_type"),
+                    one_liner=s.get("one_liner"),
+                    principles=s.get("principles", [])[:4],
+                    must_dos=s.get("must_dos", [])[:5],
+                    optional_upgrades=s.get("optional_upgrades", [])[:3],
+                    logistics_notes=s.get("logistics_notes", [])[:4],
+                    tradeoffs_summary=s.get("tradeoffs_summary"),
+                    strategy_node_id=s.get("strategy_node_id"),
+                    strategy_version=s.get("strategy_version"),
+                    booking_artifacts=s.get("booking_artifacts"),
+                    impact_areas=s.get("impact_areas", []),
+                    bullets=s.get("bullets", [])[:6],
                 )
             )
     return sections

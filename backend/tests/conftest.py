@@ -10,8 +10,21 @@ PR4: Sets PYTEST_RUNNING env var for test-mode detection.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
+
+# =============================================================================
+# Load .env for LLM smoke tests (before any other imports)
+# =============================================================================
+try:
+    from dotenv import load_dotenv
+
+    env_path = Path(__file__).parents[1] / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass  # dotenv not installed, skip
 
 # =============================================================================
 # PR4: Test-mode detection - set env var before any imports

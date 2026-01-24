@@ -25,6 +25,8 @@ interface S0BootstrapViewProps {
   /** Generation state */
   isGenerating?: boolean;
   generatingSubtitle?: string;
+  /** Whether user has ever had a plan generated (for CTA label) */
+  hasEverHadPlan?: boolean;
   /** Actions - open corresponding sheets */
   onBuildPlan?: () => void;
   onSetDestination?: () => void;
@@ -37,6 +39,7 @@ interface S0BootstrapViewProps {
 export function S0BootstrapView({
   isGenerating,
   generatingSubtitle,
+  hasEverHadPlan,
   onBuildPlan,
   onSetDestination,
   onSetOrigin,
@@ -48,6 +51,7 @@ export function S0BootstrapView({
     <NextStepPanel
       isGenerating={isGenerating}
       generatingSubtitle={generatingSubtitle}
+      hasEverHadPlan={hasEverHadPlan}
       onBuildPlan={onBuildPlan}
       onSetDestination={onSetDestination}
       onSetOrigin={onSetOrigin}

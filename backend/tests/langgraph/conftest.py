@@ -5,6 +5,7 @@ Provides:
 - Prompt-to-stub coverage validation
 - Graph stats reset between tests
 - Future date constants for tests
+- Hermetic E2E fixture (FakeLLM for @pytest.mark.e2e tests)
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from app.plan_graph import reset_graph_stats
+from tests.langgraph.fake_llm import FakeLLM
 
 
 # =============================================================================
@@ -38,6 +40,41 @@ def auto_reset_graph_stats():
     yield
     # Optional: reset after test as well for cleaner state
     reset_graph_stats()
+
+
+# =============================================================================
+# Hermetic E2E Fixture (FakeLLM for @pytest.mark.e2e tests)
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def hermetic_e2e_mode(request):
+    """Force FakeLLM for E2E tests (except llm_smoke), ensuring no network calls.
+
+    This fixture:
+    - Auto-applies to all tests
+    - For @pytest.mark.e2e tests (without llm_smoke): uses FakeLLM.patch_with_stub()
+    - For @pytest.mark.llm_smoke tests: allows real LLM calls (skips if no API key)
+    - For all other tests: no change (existing behavior)
+
+    Acceptance criterion: `pytest -m "e2e and not llm_smoke"` never makes network calls.
+    """
+    markers = {m.name for m in request.node.iter_markers()}
+
+    if "e2e" in markers and "llm_smoke" not in markers:
+        # Hermetic E2E: force FakeLLM with deterministic stub responses
+        with FakeLLM.patch_with_stub():
+            yield
+    else:
+        # Non-E2E tests or llm_smoke tests: no FakeLLM patching
+        yield
+
+
+@pytest.fixture
+def fake_llm_strict():
+    """Explicit fixture for tests that want strict FakeLLM (fails on any LLM call)."""
+    with FakeLLM.patch_strict() as config:
+        yield config
 
 
 # =============================================================================

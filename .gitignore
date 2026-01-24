@@ -30,6 +30,7 @@ backend/.venv/
 # E2E test results
 backend/tests/e2e/generated_results/
 backend/tests/e2e/nightly_results/
+backend/test_artifacts/
 e2e_results/
 
 # Claude Code temp files

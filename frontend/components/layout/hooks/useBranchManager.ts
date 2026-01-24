@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { clearSessionLocalStorage, refreshTiles, resetSession } from '@/lib/api';
+import { clearSessionLocalStorage, refreshTiles, resetSession, streamGraphPlan } from '@/lib/api';
 import { saveTripSummary } from '@/lib/summary';
-import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
+import { useChatStore } from '@/state/chatStore';
 import { useDocumentStore } from '@/state/documentStore';
 import { clearPersistedUIState } from '@/state/uiStore';
 import type { DocumentBranch, DocumentTripInputs, GraphPlanResponse, PlanStatus } from '@/types/document';
@@ -46,10 +46,17 @@ export interface BranchManagerOptions {
   chatPanelContainerRef: React.RefObject<HTMLDivElement | null>;
 
   /**
-   * Ref to the chat panel for triggering regeneration.
-   * Used to send GENERATE_PLAN_TRIGGER when constraints change.
+   * Ref to the chat panel (currently unused after removing auto-trigger).
+   * Kept for potential future use.
    */
   chatPanelRef?: React.RefObject<{ sendMessage: (text: string) => void } | null>;
+
+  /**
+   * Whether a plan has ever been generated in this session.
+   * When true, regeneration should be silent (no chat messages).
+   * Defaults to false if not provided.
+   */
+  hasEverHadPlan?: boolean;
 
   /**
    * Toast notification callback.
@@ -103,6 +110,8 @@ export interface BranchManagerState {
   isHydratingSnapshot: boolean;
   /** Plan regeneration status: ready, stale, or updating */
   planStatus: PlanStatus;
+  /** Whether a regeneration is currently in-flight */
+  isRegenerating: boolean;
 }
 
 /**
@@ -195,7 +204,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const {
     tripInputs,
     chatPanelContainerRef,
-    chatPanelRef,
+    chatPanelRef: _chatPanelRef, // Unused after removing auto-trigger, kept for future use
+    hasEverHadPlan,
     onToast,
     onChatKeyIncrement,
     resetDraft,
@@ -252,24 +262,84 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // Ref to store handlePlanResult for use in silent regeneration
+  // (needed because handlePlanResult is defined after usePlanRegeneration)
+  const handlePlanResultRef = useRef<((result: PlanResultPayload) => void) | null>(null);
+
   /**
    * Plan regeneration state.
    * Tracks whether plan is ready, stale, or updating after constraint changes.
    *
    * When constraints change after plan generation, the hook automatically
-   * triggers regeneration via the chat panel's sendMessage.
+   * triggers regeneration. After first plan (hasEverHadPlan=true), regeneration
+   * is silent (no chat messages). Before first plan, shows in chat.
+   *
+   * IMPORTANT: Do NOT clear branches during regeneration - keep existing plan visible.
    *
    * markRegenerationComplete is called in handlePlanResult when branches actually
    * arrive, ensuring the UI stays in 'updating' state until data is ready.
    */
-  const { planStatus, markRegenerationComplete } = usePlanRegeneration({
+  const { planStatus, isRegenerating, markRegenerationComplete } = usePlanRegeneration({
     tripInputs,
     hasBranches: branchState.branches.length > 0,
-    onRegenerate: async () => {
-      // Clear existing branches to show loading state
-      branchState.setBranches([]);
-      // Trigger regeneration via chat panel
-      chatPanelRef?.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
+    onRegenerate: async (_cause) => {
+      // IMPORTANT: Do NOT clear branches - keep existing plan visible during regen
+      // branchState.setBranches([]); // REMOVED - causes regression
+
+      // IMPORTANT: This hook is ONLY for RE-generation after a plan exists.
+      // First plan generation happens ONLY through explicit "Build Plan" CTA click.
+      // If hasEverHadPlan is false, this is a no-op - user must click "Build Plan".
+      if (!hasEverHadPlan) {
+        console.warn('usePlanRegeneration triggered but hasEverHadPlan=false. Ignoring - user must click "Build Plan".');
+        markRegenerationComplete(); // Reset status since we're not regenerating
+        return;
+      }
+
+      // Silent regeneration for constraint changes after first plan
+      // No chat messages - UI state shows "Updating..." via AgentCards
+      const sessionState = useChatStore.getState().sessionState;
+      const setSessionState = useChatStore.getState().setSessionState;
+
+      await new Promise<void>((resolve) => {
+        streamGraphPlan(
+          {
+            message: '__REGEN__', // Internal trigger, not shown in chat
+            session_state: sessionState ?? undefined,
+          },
+          {
+            onToken: () => {
+              // Ignore tokens in silent mode - no streaming message
+            },
+            onComplete: (response: unknown) => {
+              const data = response as GraphPlanResponse;
+              // Persist session state for next turn
+              setSessionState(data.session_state ?? null);
+
+              // Process result via handlePlanResult ref
+              const doc = data.document;
+              const primaryBranch =
+                doc.branches?.find((b) => b.is_primary) ?? doc.branches?.[0];
+
+              handlePlanResultRef.current?.({
+                tripContextId: doc.trip_context_id ?? null,
+                branches: doc.branches ?? [],
+                tiles: doc.tiles ?? {},
+                primaryBranchId: primaryBranch?.id ?? null,
+                tripInputs: doc.trip_inputs ?? null,
+                readyToGenerate: doc.ready_to_generate ?? false,
+                response: data,
+              });
+
+              resolve();
+            },
+            onError: (error: Error) => {
+              console.error('Silent regeneration failed:', error);
+              markRegenerationComplete(); // Reset status on error
+              resolve();
+            },
+          }
+        );
+      });
     },
   });
 
@@ -504,6 +574,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     [finalizeGenerating, markRegenerationComplete]
   );
 
+  // Keep ref updated for silent regeneration callback
+  handlePlanResultRef.current = handlePlanResult;
+
   /**
    * Books the selected trip configuration.
    *
@@ -710,6 +783,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     isGenerating,
     isHydratingSnapshot,
     planStatus,
+    isRegenerating,
 
     // Computed (from branchState)
     selectedBranch: branchState.selectedBranch,

@@ -162,7 +162,18 @@ export type PlanViewEvent =
   | { type: 'E_RESET' };
 
 /**
+ * Booking artifacts - counts of tiles produced by this agent.
+ */
+export interface BookingArtifacts {
+  activities_count: number;
+  hotels_count: number;
+}
+
+/**
  * A strategy section for Stage 2 view - one card per executed strategy topic.
+ *
+ * NOTE: Agent status is COMPUTED by the UI from pending_strategy_topics + executed_strategy_topics.
+ * Do NOT add a status field here - compute it using computeAgentStatus() helper.
  */
 export interface StrategySection {
   id: string;
@@ -180,12 +191,37 @@ export interface StrategySection {
   logistics_notes: string[]; // max 4 items
   tradeoffs_summary?: string; // max 300 chars
 
+  // Booking artifacts - shortlist counts from this agent
+  booking_artifacts?: BookingArtifacts;
+
+  // Impact areas - which parts of the plan this agent affects
+  impact_areas?: string[]; // e.g., ["Schedule", "Location", "Gear"]
+
   // Provenance (debug only, not shown in UI)
   strategy_node_id?: string;
   strategy_version?: string;
 
   // Legacy field for backward compatibility
   bullets: string[];
+}
+
+/**
+ * Agent status type - computed by UI, not stored on StrategySection.
+ */
+export type AgentStatus = 'ready' | 'updating' | 'needs_input';
+
+/**
+ * Compute agent status from pending and executed topics.
+ * Use this instead of storing status on StrategySection.
+ */
+export function computeAgentStatus(
+  topic: string,
+  pendingTopics: string[],
+  executedTopics: string[]
+): AgentStatus {
+  if (pendingTopics.includes(topic)) return 'updating';
+  if (executedTopics.includes(topic)) return 'ready';
+  return 'needs_input';
 }
 
 /**
@@ -242,6 +278,7 @@ export interface PlanViewModel {
   // Stage 2 content
   strategy_sections?: StrategySection[];
   executed_strategy_topics?: string[]; // Topics that ran: ["hiking", "diving"]
+  pending_strategy_topics?: string[]; // Topics being generated (optimistic UI)
   open_decisions?: OpenDecision[];
 
   // Stage 3 content

@@ -199,6 +199,8 @@ export type PlanDocumentData = {
 
   /** Stage 2 content (populated when plan_view_state in S2_*) */
   strategy_sections?: StrategySection[];
+  executed_strategy_topics?: string[]; // Topics that ran: ["hiking", "diving"]
+  pending_strategy_topics?: string[]; // Topics being generated (optimistic UI)
   open_decisions?: OpenDecision[];
 
   /** Stage 3 content (populated when plan_view_state in S3_*) */

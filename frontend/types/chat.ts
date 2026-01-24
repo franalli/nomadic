@@ -1,5 +1,8 @@
 // frontend/types/chat.ts
-type ChatRole = 'user' | 'assistant';
+export type ChatRole = 'user' | 'assistant' | 'system';
+
+// Display mode for message rendering
+export type MessageDisplayMode = 'full' | 'ack_line' | 'collapsed_summary';
 
 // Message classification for collapse eligibility
 export type MessageClassification = 'constraint' | 'preference' | 'question' | 'meta';
@@ -18,6 +21,8 @@ export interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
+  // Display mode for rendering (full message, ack line, or collapsed summary)
+  displayMode?: MessageDisplayMode;
   // Collapsible message fields
   classification?: MessageClassification;
   ackStatus?: AckStatus;

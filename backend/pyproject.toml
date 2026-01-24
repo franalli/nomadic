@@ -24,4 +24,6 @@ markers = [
     "nightly: mark test as nightly (slow, comprehensive)",
     "slow: mark test as slow running",
     "golden: mark test as golden replay test",
+    "e2e: End-to-end integration test (hermetic with FakeLLM unless llm_smoke)",
+    "llm_smoke: LLM-judged smoke test (requires OPENAI_API_KEY, manual only)",
 ]

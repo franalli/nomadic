@@ -865,3 +865,289 @@ def llm_json_for_prompt(
         "branches": [],
         "suggested_responses": [],
     }
+
+
+def llm_json_for_strategy_streaming(prompt: str) -> str:
+    """Return JSON string for strategy streaming calls (orchestrator).
+
+    This is used by call_strategy_for_plan which expects JSON with strategy content fields.
+    Returns JSON text (not dict) as expected by call_llm_streaming_with_json_field.
+
+    The JSON must include: vibe, focus, highlights, flow, notes,
+    one_liner, principles, must_dos, optional_upgrades, logistics_notes, tradeoffs_summary
+    """
+    # Detect which topic from the prompt
+    prompt_lower = prompt.lower()
+
+    if "hiking" in prompt_lower or "trek" in prompt_lower:
+        return json.dumps(
+            {
+                "vibe": "An immersive alpine adventure through pristine mountain trails",
+                "focus": "Experience the best hiking in the Alps with stunning views",
+                "highlights": [
+                    "Hike the classic Eiger Trail with panoramic views",
+                    "Summit a moderate peak suitable for your group",
+                    "Explore alpine meadows and waterfalls",
+                ],
+                "flow": [
+                    "Day 1: Arrival and acclimatization walk",
+                    "Day 2: Main trail hike with packed lunch",
+                    "Day 3: Summit attempt or alternative route",
+                ],
+                "notes": [
+                    "Start early to avoid afternoon weather",
+                    "Pack layers - mountain weather changes quickly",
+                    "Book mountain huts in advance during peak season",
+                ],
+                "one_liner": "Alpine trails with stunning views",
+                "principles": [
+                    "Home base: Valley town with trail access",
+                    "Daily rhythm: Early starts, afternoon rest",
+                    "Difficulty: Moderate, 4-6 hours daily",
+                ],
+                "must_dos": [
+                    "Eiger Trail panoramic hike - iconic views",
+                    "Alpine lake circuit - crystal clear waters",
+                    "Mountain hut dinner experience",
+                ],
+                "optional_upgrades": [
+                    "Guided glacier hike with equipment",
+                    "Via ferrata experience for thrill-seekers",
+                ],
+                "logistics_notes": [
+                    "Take the early train to trailheads",
+                    "Download offline maps - no signal in valleys",
+                    "Reserve huts 2+ weeks ahead in summer",
+                ],
+                "tradeoffs_summary": (
+                    "Focused on classic trails over hidden gems for reliability and safety."
+                ),
+            }
+        )
+
+    if "skiing" in prompt_lower or "ski" in prompt_lower:
+        return json.dumps(
+            {
+                "vibe": "Perfect powder days in world-class ski terrain",
+                "focus": "Maximize ski time with optimal resort selection",
+                "highlights": [
+                    "Ski varied terrain from groomers to powder bowls",
+                    "Experience mountain dining with panoramic views",
+                    "Early morning first tracks on fresh snow",
+                ],
+                "flow": [
+                    "Day 1: Warm-up on intermediate runs",
+                    "Day 2: Full day exploring the mountain",
+                    "Day 3: Favorite runs and final descents",
+                ],
+                "notes": [
+                    "Book lift passes in advance for discounts",
+                    "Rent equipment at resort for convenience",
+                    "Check avalanche conditions for off-piste",
+                ],
+                "one_liner": "World-class skiing with perfect conditions",
+                "principles": [
+                    "Home base: Slope-side accommodation",
+                    "Daily rhythm: First lifts, lunch break, afternoon session",
+                    "Skill focus: Progress from blues to blacks",
+                ],
+                "must_dos": [
+                    "Top-to-bottom signature run",
+                    "Mountain restaurant lunch with views",
+                    "Sunset skiing on the last run",
+                ],
+                "optional_upgrades": [
+                    "Private instructor for technique refinement",
+                    "Heli-skiing day trip for expert skiers",
+                ],
+                "logistics_notes": [
+                    "Pre-book rentals to skip morning queues",
+                    "Get multi-day lift pass for savings",
+                    "Download resort trail map app",
+                ],
+                "tradeoffs_summary": (
+                    "Prioritized reliable conditions over extreme terrain "
+                    "for consistent enjoyment."
+                ),
+            }
+        )
+
+    if "diving" in prompt_lower or "dive" in prompt_lower:
+        return json.dumps(
+            {
+                "vibe": "Underwater exploration in crystal-clear waters",
+                "focus": "Safe diving with incredible marine life encounters",
+                "highlights": [
+                    "Dive pristine coral reefs teeming with life",
+                    "Night dive to see nocturnal marine creatures",
+                    "Explore underwater caves and swim-throughs",
+                ],
+                "flow": [
+                    "Day 1: Check dive and reef orientation",
+                    "Day 2: Two-tank boat dive to top sites",
+                    "Day 3: Specialty dive based on interests",
+                ],
+                "notes": [
+                    "Maintain proper surface intervals between dives",
+                    "Stay hydrated and avoid alcohol before diving",
+                    "Bring dive computer or rent from reputable shop",
+                ],
+                "one_liner": "Pristine reefs with abundant marine life",
+                "principles": [
+                    "Safety first: Proper intervals and limits",
+                    "Two dives per day max with rest",
+                    "Skill level: Respect certification limits",
+                ],
+                "must_dos": [
+                    "Morning reef dive with peak visibility",
+                    "Drift dive along coral wall",
+                    "Manta or shark encounter (seasonal)",
+                ],
+                "optional_upgrades": [
+                    "Advanced certification course",
+                    "Underwater photography package",
+                ],
+                "logistics_notes": [
+                    "Book with PADI/SSI certified operators",
+                    "Bring log book and certification card",
+                    "No flying within 24 hours of diving",
+                ],
+                "tradeoffs_summary": (
+                    "Chose established dive sites over remote spots " "for safety and logistics."
+                ),
+            }
+        )
+
+    if "cycling" in prompt_lower or "bike" in prompt_lower:
+        return json.dumps(
+            {
+                "vibe": "Scenic cycling through stunning landscapes",
+                "focus": "Perfect routes matched to your fitness level",
+                "highlights": [
+                    "Ride along the coast with ocean views",
+                    "Conquer a classic mountain climb",
+                    "Explore charming villages by bike",
+                ],
+                "flow": [
+                    "Day 1: Easy warm-up ride to settle in",
+                    "Day 2: Main route with the big climb",
+                    "Day 3: Recovery ride through countryside",
+                ],
+                "notes": [
+                    "Check bike fit before long rides",
+                    "Pack nutrition and hydration for climbs",
+                    "Download routes to GPS device",
+                ],
+                "one_liner": "Iconic routes through breathtaking scenery",
+                "principles": [
+                    "Build-up: Easy to hard to recovery",
+                    "Distance: 50-80km daily average",
+                    "Support: Luggage transfer available",
+                ],
+                "must_dos": [
+                    "The signature coastal route",
+                    "Mountain pass with cafe stop at summit",
+                    "Wine region loop with tastings",
+                ],
+                "optional_upgrades": [
+                    "Carbon road bike upgrade",
+                    "Guided group ride option",
+                ],
+                "logistics_notes": [
+                    "Reserve quality rental bikes early",
+                    "Confirm bike transport for transfers",
+                    "Pack chamois cream for long days",
+                ],
+                "tradeoffs_summary": "Balanced challenge and enjoyment with rest days built in.",
+            }
+        )
+
+    if "boating" in prompt_lower or "sail" in prompt_lower or "yacht" in prompt_lower:
+        return json.dumps(
+            {
+                "vibe": "Island hopping under sail through turquoise waters",
+                "focus": "Freedom of the sea with perfect anchorages",
+                "highlights": [
+                    "Sail between stunning islands",
+                    "Anchor in secluded bays for swimming",
+                    "Fresh seafood dinner at waterfront taverna",
+                ],
+                "flow": [
+                    "Day 1: Boat briefing and first short sail",
+                    "Day 2: Island hopping with beach stops",
+                    "Day 3: Return voyage with final swim",
+                ],
+                "notes": [
+                    "Check weather forecast daily",
+                    "Provision boat with fresh local produce",
+                    "Respect marine protected areas",
+                ],
+                "one_liner": "Island hopping adventure under sail",
+                "principles": [
+                    "Sail early, anchor by mid-afternoon",
+                    "Weather watch: Safety over schedule",
+                    "Crew involvement: Learn as you go",
+                ],
+                "must_dos": [
+                    "Sunrise sail to beat the crowds",
+                    "Snorkel stop at hidden cove",
+                    "Traditional harbor-side dinner",
+                ],
+                "optional_upgrades": [
+                    "Professional skipper for full relaxation",
+                    "Water sports equipment package",
+                ],
+                "logistics_notes": [
+                    "Arrive day before for boat check-in",
+                    "Pack soft bags only (no hard cases)",
+                    "Bring seasickness remedy just in case",
+                ],
+                "tradeoffs_summary": (
+                    "Chose well-known routes with reliable anchorages " "over remote exploration."
+                ),
+            }
+        )
+
+    # Default generic strategy response
+    return json.dumps(
+        {
+            "vibe": "A well-planned adventure tailored to your interests",
+            "focus": "Optimized for your travel style and preferences",
+            "highlights": [
+                "Experience the best local attractions",
+                "Immerse yourself in the culture",
+                "Create lasting memories",
+            ],
+            "flow": [
+                "Day 1: Arrival and orientation",
+                "Day 2: Main activities",
+                "Day 3: Exploration and departure",
+            ],
+            "notes": [
+                "Book popular activities in advance",
+                "Stay flexible for weather changes",
+                "Keep copies of important documents",
+            ],
+            "one_liner": "A perfectly planned adventure awaits",
+            "principles": [
+                "Balance: Activity and rest time",
+                "Flexibility: Adapt to conditions",
+                "Quality: Experience over quantity",
+            ],
+            "must_dos": [
+                "The signature local experience",
+                "Authentic cultural immersion",
+                "Scenic viewpoint visit",
+            ],
+            "optional_upgrades": [
+                "Private guide option",
+                "Premium experience add-on",
+            ],
+            "logistics_notes": [
+                "Confirm all bookings 48h ahead",
+                "Have backup plans for weather",
+                "Download offline maps",
+            ],
+            "tradeoffs_summary": "Prioritized reliability and quality over obscure alternatives.",
+        }
+    )

@@ -112,6 +112,27 @@ class ReadyNoFieldsGate(Gate):
                 strategy_topic = "hiking"  # Default adventure topic
 
         if strategy_topic:
+            # Check if plan already exists (stage >= 2) - need to reorchestrate, not start fresh
+            current_stage = ctx.metadata.get("strategy_stage", 0)
+            if current_stage >= 2:
+                # Route to generate_responder for reorchestration (preserves existing plan)
+                self.record(ctx, fired=True, reason=f"strategy_reorchestrate:{strategy_topic}")
+                return self.build_result(
+                    ctx,
+                    destination="generate_responder",
+                    reason=f"strategy_reorchestrate:{strategy_topic}",
+                    intent="strategy",
+                    strategy_topic=strategy_topic,
+                    metadata_updates={
+                        "router_path": f"strategy_reorchestrate:{strategy_topic}",
+                        "router_bypassed": True,
+                        "strategy_stage": current_stage,  # Preserve stage 2+
+                        "strategy_dest_known": bool(ctx.ti.destinations),
+                        "pending_strategy_topics": [strategy_topic],
+                        "reorchestrate_strategies": True,
+                    },
+                )
+            # New plan - route to strategy_node with stage 0
             self.record(ctx, fired=True, reason=f"strategy_request:{strategy_topic}")
             return self.build_result(
                 ctx,

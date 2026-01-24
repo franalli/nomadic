@@ -57,8 +57,10 @@ class TestStrategyTopicConstants:
 
     def test_gate_precedence_order(self):
         """STRATEGY_TOPIC_SWITCH should have correct precedence."""
-        # Topic switch should be after FAST_PATH but before CORE_COLLECTION
-        assert GatePrecedence.FAST_PATH < GatePrecedence.STRATEGY_TOPIC_SWITCH
+        # Topic switch fires BEFORE READY_NO_FIELDS to handle topic addition on existing plans
+        # This is the key invariant for the "Dubai→diving" regression guard
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH < GatePrecedence.READY_NO_FIELDS
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH < GatePrecedence.FAST_PATH
         assert GatePrecedence.STRATEGY_TOPIC_SWITCH < GatePrecedence.CORE_COLLECTION
 
 

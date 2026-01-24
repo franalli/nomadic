@@ -47,6 +47,9 @@ type ChatState = {
   setSessionState: (state: Record<string, unknown> | null) => void;
   resetChat: () => void;
 
+  // Collapse Setup assistant messages into a single summary
+  collapseSetupMessages: (summaryText: string) => void;
+
   // Delete last message (calls backend and updates state)
   deleteLastMessage: () => Promise<{
     success: boolean;
@@ -84,7 +87,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
               // Transform any stored trigger to friendly text (handles legacy data)
               content:
                 m.content === GENERATE_PLAN_TRIGGER
-                  ? 'Generate plan'
+                  ? 'Build Plan'
                   : m.content,
             })
           );
@@ -149,6 +152,36 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       isLoadingHistory: false,
       historyLoaded: false,
       sessionState: null,
+    }),
+
+  collapseSetupMessages: (summaryText: string) =>
+    set((state) => {
+      // Find assistant messages that are not ack_lines
+      const setupAssistant = state.messages.filter(
+        (m) => m.role === 'assistant' && m.displayMode !== 'ack_line'
+      );
+
+      // If no Setup assistant messages, nothing to collapse
+      if (setupAssistant.length === 0) return state;
+
+      // Create a collapsed summary message
+      const summaryMessage: ChatMessage = {
+        id: `setup_summary_${Date.now()}`,
+        role: 'assistant',
+        content: '',
+        displayMode: 'collapsed_summary',
+        summaryText,
+        collapsed: true,
+      };
+
+      // Keep user messages, system messages, and ack_line messages; replace assistant messages with summary
+      const filteredMessages = state.messages.filter(
+        (m) => m.role !== 'assistant' || m.displayMode === 'ack_line'
+      );
+
+      return {
+        messages: [...filteredMessages, summaryMessage],
+      };
     }),
 
   deleteLastMessage: async () => {

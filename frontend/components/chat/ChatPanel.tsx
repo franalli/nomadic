@@ -14,24 +14,23 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { UnifiedChipRow } from '@/components/planner/UnifiedChipRow';
 import {
+  ActivitiesSheet,
   FlightsSheet,
   StaysSheet,
-  ActivitiesSheet,
 } from '@/components/planner/sheets';
+import { UnifiedChipRow } from '@/components/planner/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
+import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
-import type { TriggerContext } from '@/types/loader';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
 import type { ChatMessage } from '@/types/chat';
 import {
-  isBookingEnabled,
   type ActivitySettings,
   type BookingTypes,
   type DocumentBranch,
@@ -39,15 +38,20 @@ import {
   type FlightSettings,
   type GraphPlanResponse,
   type HotelSettings,
+  isBookingEnabled,
   type TransportSettings,
 } from '@/types/document';
+import type { TriggerContext } from '@/types/loader';
 import type { PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
 import { CollapsedMessageRow } from './CollapsedMessageRow';
+import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { NodeProgress } from './NodeProgress';
+import { PlanModeHint } from './PlanModeHint';
+import { SystemAckLine } from './SystemAckLine';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -311,6 +315,17 @@ interface ChatPanelProps {
   onOpenBudgetInput?: () => void;
   /** Shared sheet opener - opens trip input sheets at common parent level */
   onOpenSheet?: (sheet: 'destination' | 'origin' | 'dates' | 'travelers' | 'budget') => void;
+  /**
+   * Whether a plan has ever been generated in this session.
+   * When true, suppress "Generate plan" user messages and full assistant streaming
+   * for regeneration triggers. Regeneration communicates via UI state instead.
+   */
+  hasEverHadPlan?: boolean;
+  /**
+   * Callback when user submits a message (before backend responds).
+   * Used for optimistic UI - detect topics and show placeholder AgentCards.
+   */
+  onUserMessageSubmit?: (message: string) => void;
 }
 
 export interface ChatPanelHandle {
@@ -364,6 +379,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       planViewState,
       onOpenBudgetInput: _onOpenBudgetInput,
       onOpenSheet,
+      hasEverHadPlan,
+      onUserMessageSubmit,
     } = props;
 
     // Reserved for future use
@@ -393,6 +410,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const appendToMessage = useChatStore((state) => state.appendToMessage);
     const updateMessageId = useChatStore((state) => state.updateMessageId);
     const filterMessages = useChatStore((state) => state.filterMessages);
+    const collapseSetupMessages = useChatStore((state) => state.collapseSetupMessages);
     const isLoadingHistory = useChatStore((state) => state.isLoadingHistory);
     const loadHistory = useChatStore((state) => state.loadHistory);
     const sessionState = useChatStore((state) => state.sessionState);
@@ -401,6 +419,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Document store for restoring trip inputs on delete
     const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
+
+    // Get desktop mode to determine if right panel with "Build Plan" button is visible
+    const { isDesktop } = useMobileMode();
 
     const [input, setInput] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
@@ -414,6 +435,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [collapsedMessages, setCollapsedMessages] = useState<Set<string>>(new Set());
     // Track last user message ID for ack updates
     const lastUserMsgIdRef = useRef<string | null>(null);
+    // Track last system event ID for updating status on completion
+    const lastSystemEventIdRef = useRef<string | null>(null);
     // Tier 11.12: Track last user message for retry on transient errors
     const [lastUserMessage, setLastUserMessage] = useState<string | null>(null);
     // Node progress tracking for showing progress bar instead of typing dots
@@ -479,7 +502,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       // Dedupe: keep first occurrence of each field-type CTA (e.g., "Set budget")
       // to avoid multiple identical buttons
       const seen = new Set<string>();
-      return suggestions.filter((s) => {
+      const filtered = suggestions.filter((s) => {
         const isFieldCTA = /^(set|add|change)\s/i.test(s);
         if (!isFieldCTA) return true;
         const lower = s.toLowerCase();
@@ -487,7 +510,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         seen.add(lower);
         return true;
       });
-    }, [suggestedResponses, isLoading, hasBranches, missingFields]);
+
+      // On desktop, filter out "Build Plan" chip since the right panel has that CTA
+      // Keep one primary CTA at a time to avoid competing buttons
+      if (isDesktop) {
+        return filtered.filter((s) => s.toLowerCase() !== 'build plan');
+      }
+      return filtered;
+    }, [suggestedResponses, isLoading, hasBranches, missingFields, isDesktop]);
 
     // Show suggestions when: plan is incomplete, has missing fields, not generating, and has suggestions to show
     // This gates on state + missing fields, not ui_phase
@@ -680,27 +710,49 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onGeneratePlanStart?.();
         }
 
-        // Add user message - show friendly text for generate trigger
+        // Silent regeneration mode: after first plan, suppress chat messages for GENERATE_PLAN_TRIGGER
+        // Regeneration should be communicated via UI state (AgentCard "Updating..."), not chat
+        const isSilentRegeneration = isGenerateTrigger && hasEverHadPlan;
+
+        // Handle message creation based on type
         const userMsgId = `u_${Date.now()}`;
-        const userMessage: ChatMessage = {
-          id: userMsgId,
-          role: 'user',
-          content: isGenerateTrigger ? 'Generate plan' : trimmed,
-          // Mark as constraint if not a generate trigger or question
-          classification: isGenerateTrigger ? undefined : 'constraint',
-          ackStatus: 'pending',
-        };
-        addMessage(userMessage);
-        lastUserMsgIdRef.current = userMsgId; // Track for ack updates
+        if (isGenerateTrigger && !isSilentRegeneration) {
+          // System event line for "Build Plan" (not a user bubble)
+          const systemEventId = `sys_${Date.now()}`;
+          addMessage({
+            id: systemEventId,
+            role: 'system',
+            content: '',
+            displayMode: 'ack_line',
+            ackStatus: 'pending',
+          });
+          lastSystemEventIdRef.current = systemEventId;
+        } else if (!isSilentRegeneration) {
+          // Regular user message
+          const userMessage: ChatMessage = {
+            id: userMsgId,
+            role: 'user',
+            content: trimmed,
+            classification: 'constraint',
+            ackStatus: 'pending',
+          };
+          addMessage(userMessage);
+          lastUserMsgIdRef.current = userMsgId; // Track for ack updates
+
+          // Notify parent of user message for optimistic topic detection
+          onUserMessageSubmit?.(trimmed);
+        }
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
 
-        // Create a message bubble for streaming tokens into
+        // Create a message bubble for streaming tokens into - but NOT for silent regeneration
         const streamingMsgId = `a_stream_${Date.now()}`;
-        addMessage({ id: streamingMsgId, role: 'assistant', content: '' });
-        setStreamingMessageId(streamingMsgId);
-        setHasReceivedFirstToken(false); // Reset for new streaming message
+        if (!isSilentRegeneration) {
+          addMessage({ id: streamingMsgId, role: 'assistant', content: '' });
+          setStreamingMessageId(streamingMsgId);
+          setHasReceivedFirstToken(false); // Reset for new streaming message
+        }
 
         // Use SSE streaming for real-time token display
         const body: Parameters<typeof streamGraphPlan>[0] = {
@@ -720,8 +772,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Dismiss delayed loader on first tangible output
               delayedLoader.onTangibleOutput();
               actionLoader.onTangibleOutput();
-              // Append token to the streaming message
-              appendToMessage(streamingMsgId, token);
+              // Append token to the streaming message (skip in silent regeneration mode)
+              if (!isSilentRegeneration) {
+                appendToMessage(streamingMsgId, token);
+              }
             },
             onNodeStatus: (status: SSENodeStatusEvent['data']) => {
               if (status.status === 'started') {
@@ -802,33 +856,61 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Update suggested responses from LLM (if provided)
               setSuggestedResponses(doc.suggested_responses || []);
 
-              if (hasBranchesNow) {
-                // Branches generated: remove streaming message
-                // Status is now shown via PlanStateBanner, not as a chat message
-                filterMessages((msg) => msg.id !== streamingMsgId);
-              } else if (isReadyToGenerate) {
-                // Update the streaming message ID to use the ready prefix
-                // so it can be removed when generation starts
-                updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
-              }
+              // Handle streaming message cleanup (skip in silent regeneration mode)
+              if (!isSilentRegeneration) {
+                if (hasBranchesNow) {
+                  // Branches generated: remove empty streaming message
+                  filterMessages((msg) => msg.id !== streamingMsgId);
 
-              // --- Update user message with ack data for collapsible UI ---
-              if (lastUserMsgIdRef.current && doc.ack_updates && doc.ack_updates.length > 0) {
-                const userMsgId = lastUserMsgIdRef.current;
-                // Update the user message with ack data
-                updateMessage(userMsgId, {
-                  ackStatus: doc.ack_status || 'applied',
-                  ackUpdates: doc.ack_updates,
-                });
-                // Auto-collapse after delay (1200ms)
-                setTimeout(() => {
-                  setCollapsedMessages((prev) => new Set(prev).add(userMsgId));
-                }, 1200);
-              } else if (lastUserMsgIdRef.current) {
-                // No ack updates - mark as no_change
-                updateMessage(lastUserMsgIdRef.current, {
-                  ackStatus: 'no_change',
-                });
+                  // Update system event line for Build Plan completion
+                  if (lastSystemEventIdRef.current && isGenerateTrigger) {
+                    updateMessage(lastSystemEventIdRef.current, {
+                      ackStatus: 'applied',
+                      ackUpdates: [{ field: 'plan', to: 'Built successfully' }],
+                    });
+                    lastSystemEventIdRef.current = null;
+                  }
+
+                  // Collapse Setup assistant messages into a summary
+                  // Generate summary from trip inputs
+                  const summaryParts: string[] = [];
+                  if (tripInputs?.destinations?.[0]) {
+                    summaryParts.push(tripInputs.destinations[0]);
+                  }
+                  if (tripInputs?.start_date) {
+                    summaryParts.push(tripInputs.start_date);
+                  }
+                  if (tripInputs?.adults) {
+                    summaryParts.push(`${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}`);
+                  }
+                  const summaryText = summaryParts.length > 0
+                    ? `Setup complete: ${summaryParts.join(' · ')}`
+                    : 'Setup conversation';
+                  collapseSetupMessages(summaryText);
+                } else if (isReadyToGenerate) {
+                  // Update the streaming message ID to use the ready prefix
+                  // so it can be removed when generation starts
+                  updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
+                }
+
+                // --- Update user message with ack data for collapsible UI ---
+                if (lastUserMsgIdRef.current && doc.ack_updates && doc.ack_updates.length > 0) {
+                  const userMsgId = lastUserMsgIdRef.current;
+                  // Update the user message with ack data
+                  updateMessage(userMsgId, {
+                    ackStatus: doc.ack_status || 'applied',
+                    ackUpdates: doc.ack_updates,
+                  });
+                  // Auto-collapse after delay (1200ms)
+                  setTimeout(() => {
+                    setCollapsedMessages((prev) => new Set(prev).add(userMsgId));
+                  }, 1200);
+                } else if (lastUserMsgIdRef.current) {
+                  // No ack updates - mark as no_change
+                  updateMessage(lastUserMsgIdRef.current, {
+                    ackStatus: 'no_change',
+                  });
+                }
               }
 
               setIsLoading(false);
@@ -843,11 +925,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               setTriggerContext(null); // Clear trigger context
               console.error('Failed to plan trip', error);
 
-              // Replace streaming message with specific error message
-              const errorMessage = getErrorMessage(error);
-              const errorMsgId = `a_err_${Date.now()}`;
-              updateMessageId(streamingMsgId, errorMsgId);
-              updateMessage(errorMsgId, { content: errorMessage });
+              // Replace streaming message with specific error message (skip in silent mode)
+              if (!isSilentRegeneration) {
+                const errorMessage = getErrorMessage(error);
+                const errorMsgId = `a_err_${Date.now()}`;
+                updateMessageId(streamingMsgId, errorMsgId);
+                updateMessage(errorMsgId, { content: errorMessage });
+              }
 
               setIsLoading(false);
               resolve(); // Resolve instead of reject to prevent unhandled promise rejection
@@ -855,7 +939,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, tripInputs?.adults, tripInputs?.destinations, tripInputs?.start_date]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -923,6 +1007,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Split assistant messages by paragraph breaks into separate bubbles for better readability
     const visibleMessages = messages
       .filter((m) => {
+        // Always show system messages and messages with special displayMode
+        if (m.role === 'system' || m.displayMode === 'ack_line' || m.displayMode === 'collapsed_summary') {
+          return true;
+        }
         if (!m.content || m.content.trim().length === 0) return false;
         if (isGenerating && m.id === 'm0') return false;
         return true;
@@ -1018,6 +1106,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <ChatSkeleton count={2} />
           ) : (
             <>
+              {/* Plan mode hint - shown after Setup→Plan transition */}
+              {planViewState !== 'S0_BOOTSTRAP' && hasEverHadPlan && (
+                <PlanModeHint
+                  hasSetupHistory={messages.some((m) => m.displayMode === 'collapsed_summary')}
+                />
+              )}
+
               {visibleMessages.map((m, idx) => {
                 // Check if this is part of a split message (for styling and retry button logic)
                 const isSplitMessage = '_isPartOfSplit' in m && m._isPartOfSplit;
@@ -1035,6 +1130,38 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
                 // Check if this user message should be collapsed
                 const isCollapsed = isUserMessage && collapsedMessages.has(m.id) && m.ackUpdates && m.ackUpdates.length > 0;
+
+                // Render system ack line for system messages or ack_line displayMode
+                if (m.role === 'system' || m.displayMode === 'ack_line') {
+                  return (
+                    <div
+                      key={m.id}
+                      className="message-enter"
+                      style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
+                    >
+                      <SystemAckLine
+                        status={m.ackStatus || 'applied'}
+                        updates={m.ackUpdates}
+                        isPending={m.ackStatus === 'pending'}
+                      />
+                    </div>
+                  );
+                }
+
+                // Render collapsed Setup summary
+                if (m.displayMode === 'collapsed_summary') {
+                  return (
+                    <div
+                      key={m.id}
+                      className="message-enter"
+                      style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
+                    >
+                      <CollapsedSetupSummary
+                        summaryText={m.summaryText || 'Setup conversation'}
+                      />
+                    </div>
+                  );
+                }
 
                 // Render collapsed row for eligible messages
                 if (isCollapsed) {
@@ -1179,6 +1306,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 </button>
               ))}
             </div>
+          )}
+
+          {/* Nudge text - on desktop, point to the right panel's Build Plan button */}
+          {isDesktop && readyToGenerate && !isGenerating && !hasBranches && (
+            <p className="text-center text-xs text-muted-foreground py-2">
+              Ready. Click <span className="font-medium text-foreground">{hasEverHadPlan ? 'Update plan' : 'Build plan'}</span> to continue →
+            </p>
           )}
 
           <form onSubmit={handleSubmit} className="relative">

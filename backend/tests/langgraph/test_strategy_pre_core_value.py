@@ -627,21 +627,29 @@ class TestGatePrecedenceGuard:
         """
         STRATEGY_PRE_CORE_VALUE must be evaluated after SPECIALIST_PRE_CORE
         but before CORE_COLLECTION. This is the key ordering invariant.
-        It now includes STRATEGY_TOPIC_SWITCH between
-        SPECIALIST_PRE_CORE and STRATEGY_PRE_CORE_VALUE.
 
-        Note: Gate precedence values use increments of 10 for intuitive ordering.
+        Current gate ordering (lower value = higher priority):
+        - STRATEGY_TOPIC_SWITCH (38): Mid-session topic changes fire early
+        - READY_NO_FIELDS (40): Plan ready check
+        - FAST_PATH (50): Bootstrap optimization
+        - SPECIALIST_PRE_CORE (60): Domain keywords before core complete
+        - STRATEGY_PRE_CORE_VALUE (80): Strategy topic detected -> value-first
+        - CORE_COLLECTION (90): Collect missing core fields
         """
         # Verify the ordering invariant (lower value = higher priority)
-        assert GatePrecedence.SPECIALIST_PRE_CORE.value < GatePrecedence.STRATEGY_TOPIC_SWITCH.value
+        # STRATEGY_TOPIC_SWITCH fires before READY_NO_FIELDS to handle topic addition
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value < GatePrecedence.READY_NO_FIELDS.value
+        assert GatePrecedence.READY_NO_FIELDS.value < GatePrecedence.FAST_PATH.value
+        assert GatePrecedence.FAST_PATH.value < GatePrecedence.SPECIALIST_PRE_CORE.value
         assert (
-            GatePrecedence.STRATEGY_TOPIC_SWITCH.value
-            < GatePrecedence.STRATEGY_PRE_CORE_VALUE.value
+            GatePrecedence.SPECIALIST_PRE_CORE.value < GatePrecedence.STRATEGY_PRE_CORE_VALUE.value
         )
         assert GatePrecedence.STRATEGY_PRE_CORE_VALUE.value < GatePrecedence.CORE_COLLECTION.value
-        # Verify specific values (increments of 10)
+        # Verify specific values
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 38
+        assert GatePrecedence.READY_NO_FIELDS.value == 40
+        assert GatePrecedence.FAST_PATH.value == 50
         assert GatePrecedence.SPECIALIST_PRE_CORE.value == 60
-        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 70
         assert GatePrecedence.STRATEGY_PRE_CORE_VALUE.value == 80
         assert GatePrecedence.CORE_COLLECTION.value == 90
 

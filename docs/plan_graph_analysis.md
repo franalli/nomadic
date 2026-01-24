@@ -437,7 +437,7 @@ When `generate_responder` is triggered, it calls the strategy orchestrator to en
 |----------|---------|
 | `detect_relevant_strategies(state)` | Maps `activity_settings.categories` to strategy topics |
 | `orchestrate_strategies(state)` | Calls strategy nodes in parallel via `asyncio.gather` |
-| `call_strategy_for_plan(state, topic)` | LLM call for single topic (768 tokens max) |
+| `call_strategy_for_plan(state, topic)` | LLM call for single topic (1536 tokens max) |
 | `parse_strategy_response(response, topic)` | Extracts vibe, highlights, flow, notes from markdown |
 | `merge_strategy_results(results)` | Combines multiple strategy results into one |
 
@@ -451,15 +451,23 @@ When `generate_responder` is triggered, it calls the strategy orchestrator to en
 | cycling, biking, bicycle | `cycling` |
 | boating, sailing, yachting, kayaking | `boating` |
 
-**Branch Enrichment Fields:**
+**Branch Enrichment Fields (StrategyContent):**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `vibe` | `string` | Trip mood/theme (1 sentence) |
 | `focus` | `string` | Trip focus description |
 | `highlights` | `string[]` | Key experiences (3-5 items) |
-| `flow` | `string[]` | Day-by-day outline (3-5 items) |
+| `flow` | `string[]` | Day-by-day outline (3-7 items) |
 | `notes` | `string[]` | Practical tips (3-4 items) |
+| `one_liner` | `string` | Single sentence trip essence (max 80 chars) |
+| `principles` | `string[]` | Core approach chips (2-4 items, max 50 chars each) |
+| `must_dos` | `string[]` | Essential experiences (3-5 items) |
+| `optional_upgrades` | `string[]` | Nice-to-haves (2-3 items) |
+| `logistics_notes` | `string[]` | Practical logistics tips (2-4 items) |
+| `tradeoffs_summary` | `string` | Why this approach (max 300 chars) |
+| `strategy_node_id` | `string` | Provenance identifier (e.g., "hiking_strategist_v1") |
+| `strategy_version` | `string` | Prompt/logic version |
 
 ---
 
@@ -494,10 +502,10 @@ Gates are checked in strict precedence order. First match wins.
 | 30 | `SHORT_CIRCUIT` | `short_circuit_responder` | Greeting/yes/no/thanks patterns | Quick response bypass |
 | 30 | `INFEASIBILITY_DETECTION` | `correction_node` | Infeasibility signals detected | Conflict handling |
 | 35 | `STRATEGY_POST_CORE` | `strategy_node` (stage 1) | core_complete + last_strategy_topic | Stage 1 after core complete |
+| 38 | `STRATEGY_TOPIC_SWITCH` | `strategy_node` | Intent verb + new topic + cooldown | Mid-session topic change (before READY_NO_FIELDS) |
 | 40 | `READY_NO_FIELDS` | `summarize` / specialist / `strategy_node` | core_complete + no blocking errors | Ready state routing |
 | 50 | `FAST_PATH` | `required_fields_node` | strategy_bootstrap_active | Bootstrap optimization |
 | 60 | `SPECIALIST_PRE_CORE` | Specialists (pre-core) | Domain keyword + core missing | Pre-core domain response |
-| 70 | `STRATEGY_TOPIC_SWITCH` | `strategy_node` | Intent verb + new topic + cooldown | Mid-session topic change |
 | 80 | `STRATEGY_PRE_CORE_VALUE` | `strategy_node` (stage 0) | Strategy topic + dates + destination | Value-first response |
 | 90 | `CORE_COLLECTION` | `required_fields_node` | Core fields missing | Collect missing fields |
 | 110 | `QUESTION_KEYWORD` | Based on keyword | Question word + domain keyword | Question heuristic |
@@ -935,9 +943,9 @@ Comprehensive view of all cache and data retention policies.
 | `planner.parsing` | `PARSE_PROVENANCE_PRECEDENCE`, `LQA_FIELD_PARSERS` |
 | `planner.gates.topic_detection` | `detect_strategy_topic_from_text`, `detect_strategy_topic_from_settings`, `detect_strategy_topic` |
 | `planner.gates.suppression` | `SuppressionPredicates` |
-| `planner.gates.checks` | `is_strategy_expansion_request`, `is_vague_affirmation`, `StrategyExpansionResult` |
+| `planner.gates.checks` | `is_strategy_expansion_request`, `is_vague_affirmation`, `StrategyExpansionResult`, `StrategyTier`, `STRATEGY_TIER_MAX_TOKENS`, `StrategyExpansionTarget` |
 | `planner.state` | `StateWriter` (methods: `set_question_target`, `write_trip_input`, `write_trip_inputs`, `set_metadata`, `get_mutations`, `get_mutation_summary`, `get_applied_updates`, `set_active_category`, `set_last_summary`, `set_suggested_responses`, `set_pending_strategy_expansion`, `set_flag`, `set_parsed_inputs`, `apply`) |
-| `planner.nodes` | `extractor`, `lqa_prepass`, `router`, `_specialist`, `strategy_node` |
+| `planner.nodes` | `extractor`, `lqa_prepass`, `router`, `_specialist`, `_strategy_stage0`, `strategy_node` |
 | `planner.nodes.schemas` | `ExtractorOutput`, `RouterOutput`, `BudgetDelta`, `IntentType`, `TopicType` |
 | `planner.nodes.strategy` | `orchestrate_strategies`, `merge_strategy_results`, `detect_relevant_strategies`, `StrategyContent`, `StrategyResult` |
 

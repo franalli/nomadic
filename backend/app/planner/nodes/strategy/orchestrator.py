@@ -137,9 +137,10 @@ def detect_relevant_strategies(
     Detect which strategy topics are relevant from multiple sources.
 
     Sources (union with deduplication):
-    1. Explicit categories from activity_settings.categories (UI selection)
-    2. Inferred topics from user message intent
-    3. (Future) Activity shortlist contents
+    1. Forced topics from re-orchestration (takes precedence)
+    2. Explicit categories from activity_settings.categories (UI selection)
+    3. Inferred topics from user message intent
+    4. (Future) Activity shortlist contents
 
     Returns list of topic names sorted by TOPIC_PRIORITY.
     Falls back to 'general' only if no specialist topics detected.
@@ -149,6 +150,15 @@ def detect_relevant_strategies(
     - If inferred only: allow up to max_inferred (default 2)
     - General is never stacked alongside specialists
     """
+    # Check for forced topics from re-orchestration (PR1 Step 4)
+    # When adding topics to existing plan, force_strategy_topics overrides detection
+    forced_topics = state.metadata.get("force_strategy_topics") if state.metadata else None
+    if forced_topics:
+        _debug("Using forced strategy topics from re-orchestration", topics=forced_topics)
+        # Clear the force flag after use to avoid persistence issues
+        state.metadata["force_strategy_topics"] = None
+        return forced_topics
+
     explicit_topics: Set[str] = set()
     inferred_topics: Set[str] = set()
 

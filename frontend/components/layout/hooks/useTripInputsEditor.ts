@@ -557,7 +557,7 @@ export function useTripInputsEditor(
           if (prunedBranches.length === 0) {
             onSelectedBranchIdChange(null);
             onToast(
-              `Removed ${removedDestination} — your plan was reset. Click "Generate Plan" to create a new plan.`,
+              `Removed ${removedDestination} — your plan was reset. Click "Build Plan" to create a new plan.`,
               'info'
             );
           } else {

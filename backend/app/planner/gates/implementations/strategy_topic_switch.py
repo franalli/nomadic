@@ -70,7 +70,39 @@ class StrategyTopicSwitchGate(Gate):
 
         new_topic, switch_reason = topic_switch_result
 
-        # Check for blocking errors - must handle dates first
+        # Get current stage from metadata - preserve stage 2+ when plan exists
+        current_stage = ctx.metadata.get("strategy_stage", 0)
+        has_destinations = bool(ctx.ti.destinations)
+
+        # Step 3b: Handle missing core inputs when plan exists (stage >= 2)
+        # Stay in Plan mode with inline panel, don't revert to Setup
+        if current_stage >= 2 and ctx.readiness.has_blocking_errors:
+            _debug(
+                "STRATEGY_TOPIC_SWITCH: stage2+ missing inputs, staying in Plan",
+                new_topic=new_topic,
+                current_stage=current_stage,
+                blocking_errors=ctx.readiness.blocking_errors,
+            )
+            self.record(ctx, fired=True, reason=f"topic_switch_stage2_missing_inputs:{new_topic}")
+            return self.build_result(
+                ctx,
+                destination="required_fields_node",
+                reason=f"topic_switch_stage2_missing_inputs:{new_topic}",
+                intent="required_fields",
+                question_target="dates",
+                strategy_topic=new_topic,
+                metadata_updates={
+                    "router_path": f"topic_switch_stage2_missing:{new_topic}",
+                    "router_bypassed": True,
+                    "strategy_stage": current_stage,  # Preserve stage 2+
+                    "reorchestrate_strategies": False,  # Block re-orchestration
+                    "pending_strategy_topics": [],
+                    "needs_core_inputs": True,
+                    "topic_switch_reason": switch_reason,
+                },
+            )
+
+        # Check for blocking errors - must handle dates first (for stage < 2)
         if ctx.readiness.has_blocking_errors:
             _debug(
                 "STRATEGY_TOPIC_SWITCH: deferred due to blocking errors",
@@ -94,17 +126,46 @@ class StrategyTopicSwitchGate(Gate):
                 },
             )
 
-        # Determine stage based on readiness
-        has_destinations = bool(ctx.ti.destinations)
-        if ctx.readiness.core_complete:
+        # Step 1: Preserve strategy_stage when plan already exists (stage >= 2)
+        if current_stage >= 2:
+            strategy_stage = current_stage  # Stay in Plan mode
+        elif ctx.readiness.core_complete:
             strategy_stage = 1
-        elif not ctx.ti.destinations:
+        elif not has_destinations:
             strategy_stage = 0
         else:
             strategy_stage = 1
 
-        destination = STRATEGY_TOPIC_TO_NODE.get(new_topic, "strategy_node")
+        # Step 2: Route to generate_responder when plan exists for re-orchestration
+        if current_stage >= 2:
+            destination = "generate_responder"
+            _debug(
+                "STRATEGY_TOPIC_SWITCH: routing to generate_responder for re-orchestration",
+                new_topic=new_topic,
+                current_stage=current_stage,
+            )
+        else:
+            destination = STRATEGY_TOPIC_TO_NODE.get(new_topic, "strategy_node")
+
         self.record(ctx, fired=True, reason=f"topic_switch:{new_topic}")
+
+        # Build metadata updates - include re-orchestration flags when stage >= 2
+        metadata_updates = {
+            "router_path": f"strategy_topic_switch:{new_topic}",
+            "router_bypassed": True,
+            "router_bypass_reason": f"topic_switch:{new_topic}",
+            "strategy_stage": strategy_stage,
+            "strategy_dest_known": has_destinations,
+            "last_strategy_topic": new_topic,
+            "last_strategy_topic_turn": ctx.state.turn_number,
+            "topic_switch_cooldown_until_turn": ctx.state.turn_number + 1,
+            "topic_switch_reason": switch_reason,
+        }
+
+        # Step 2: Add re-orchestration flags when plan exists
+        if current_stage >= 2:
+            metadata_updates["pending_strategy_topics"] = [new_topic]
+            metadata_updates["reorchestrate_strategies"] = True
 
         return self.build_result(
             ctx,
@@ -112,17 +173,7 @@ class StrategyTopicSwitchGate(Gate):
             reason=f"topic_switch:{new_topic}:{switch_reason}",
             intent="strategy",
             strategy_topic=new_topic,
-            metadata_updates={
-                "router_path": f"strategy_topic_switch:{new_topic}",
-                "router_bypassed": True,
-                "router_bypass_reason": f"topic_switch:{new_topic}",
-                "strategy_stage": strategy_stage,
-                "strategy_dest_known": has_destinations,
-                "last_strategy_topic": new_topic,
-                "last_strategy_topic_turn": ctx.state.turn_number,
-                "topic_switch_cooldown_until_turn": ctx.state.turn_number + 1,
-                "topic_switch_reason": switch_reason,
-            },
+            metadata_updates=metadata_updates,
         )
 
     def _check_strategy_topic_switch(

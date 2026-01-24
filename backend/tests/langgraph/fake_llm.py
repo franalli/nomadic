@@ -139,6 +139,82 @@ class FakeLLM:
             raise AssertionError(f"Expected {expected} LLM calls but got {actual}: {calls}")
 
     @classmethod
+    async def _fake_call_llm_streaming(
+        cls,
+        model: str,
+        prompt: str,
+        stream_field: str,
+        streaming_ctx: Any = None,
+        max_tokens: int = 512,
+        user_message: Optional[str] = None,
+        timeout_seconds: float = 60.0,
+        **kwargs,
+    ) -> str:
+        """Fake streaming LLM call for call_llm_streaming_with_json_field.
+
+        This is used by the orchestrator's call_strategy_for_plan function.
+        Returns JSON string with strategy content fields.
+        """
+        import hashlib
+
+        config = cls._config
+        if config is None:
+            raise AssertionError("FakeLLM not configured - use patch_strict() or patch_map()")
+
+        # Infer node name from prompt content
+        node_name = cls._infer_node_from_prompt(prompt)
+        callsite_name = "streaming"
+
+        # Compute prompt hash for drift detection
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
+
+        # Create call record
+        record = LLMCallRecord(
+            node_name=node_name,
+            callsite_name=callsite_name,
+            prompt_hash=prompt_hash,
+            model=model,
+            max_tokens=max_tokens,
+        )
+
+        if config.mode == "strict":
+            record.error = "LLM streaming called unexpectedly in strict mode"
+            config.call_records.append(record)
+            raise AssertionError(
+                f"LLM streaming called unexpectedly in strict mode: "
+                f"node={node_name}, callsite={callsite_name}, model={model}"
+            )
+
+        # Check for strategy calls - need to return proper JSON structure
+        # The orchestrator expects: vibe, focus, highlights, flow, notes,
+        # one_liner, principles, must_dos, optional_upgrades, logistics_notes, tradeoffs_summary
+        if config.allow_fallback:
+            from tests.llm_stub import llm_json_for_strategy_streaming
+
+            response_text = llm_json_for_strategy_streaming(prompt=prompt)
+            record.response = {"_raw": response_text[:100]}
+            config.call_records.append(record)
+            return response_text
+
+        # Map mode - look up response by semantic key
+        key: SemanticKey = (node_name, callsite_name)
+
+        if key in config.responses:
+            response = config.responses[key]
+            record.response = response
+            config.call_records.append(record)
+            return json.dumps(response)
+
+        # No match found - raise
+        record.error = f"No response configured for streaming key {key}"
+        config.call_records.append(record)
+        raise AssertionError(
+            f"No response configured for LLM streaming call: "
+            f"node={node_name}, callsite={callsite_name}. "
+            f"Add entry to responses dict: {key}"
+        )
+
+    @classmethod
     async def _fake_call_llm(
         cls,
         model: str,
@@ -245,7 +321,13 @@ class FakeLLM:
         config = FakeLLMConfig(mode="strict")
         cls._config = config
 
-        with patch("app.plan_graph.call_llm_with_timeout", cls._fake_call_llm):
+        with (
+            patch("app.plan_graph.call_llm_with_timeout", cls._fake_call_llm),
+            patch(
+                "app.planner.streaming.call_llm_streaming_with_json_field",
+                cls._fake_call_llm_streaming,
+            ),
+        ):
             try:
                 yield config
             finally:
@@ -285,7 +367,13 @@ class FakeLLM:
         )
         cls._config = config
 
-        with patch("app.plan_graph.call_llm_with_timeout", cls._fake_call_llm):
+        with (
+            patch("app.plan_graph.call_llm_with_timeout", cls._fake_call_llm),
+            patch(
+                "app.planner.streaming.call_llm_streaming_with_json_field",
+                cls._fake_call_llm_streaming,
+            ),
+        ):
             try:
                 yield config
             finally:
@@ -303,7 +391,13 @@ class FakeLLM:
         config = FakeLLMConfig(mode="map", allow_fallback=True)
         cls._config = config
 
-        with patch("app.plan_graph.call_llm_with_timeout", cls._fake_call_llm):
+        with (
+            patch("app.plan_graph.call_llm_with_timeout", cls._fake_call_llm),
+            patch(
+                "app.planner.streaming.call_llm_streaming_with_json_field",
+                cls._fake_call_llm_streaming,
+            ),
+        ):
             try:
                 yield config
             finally:

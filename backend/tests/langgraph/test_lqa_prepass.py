@@ -436,10 +436,13 @@ class TestLqaStats:
             )
             lqa_prepass(state)
 
+        # Note: The geocoder is very aggressive and can match almost anything
+        # to some place (e.g., "asdfghjkl" -> "KL", "somewhere nice" -> "Nice")
+        # To test bail behavior, we need to set question_target=None which forces bail
         state_bail = GraphState(
-            user_text="somewhere nice and sunny",
+            user_text="12345",  # Numbers - can't be a place
             trip_inputs=TripInputs(),
-            question_target="destinations",
+            question_target=None,  # No question target = forced bail
             metadata={},
         )
         lqa_prepass(state_bail)

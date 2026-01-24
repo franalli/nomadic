@@ -15,7 +15,7 @@ repos:
     hooks:
       - id: detect-secrets
         args: ["--baseline", ".secrets.baseline"]
-        exclude: ^backend/migrations/
+        exclude: ^backend/(migrations|test_artifacts)/
 
   # ----- Python formatting / linting -----
   - repo: https://github.com/psf/black

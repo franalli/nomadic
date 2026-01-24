@@ -304,9 +304,10 @@ class TestPreciseTopicDetection:
 class TestStrategyTopicSwitchGate:
     """Tests for the STRATEGY_TOPIC_SWITCH gate."""
 
-    def test_gate_precedence_is_70(self):
-        """STRATEGY_TOPIC_SWITCH should have precedence 70."""
-        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 70
+    def test_gate_precedence_is_38(self):
+        """STRATEGY_TOPIC_SWITCH should have precedence 38 (before READY_NO_FIELDS)."""
+        # Changed from 70 to 38 to fire before READY_NO_FIELDS for topic addition
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 38
 
     def test_topic_switch_detected_with_intent_verb(self):
         """Topic switch should be detected with intent verbs."""
@@ -455,7 +456,7 @@ class TestStrategyGateIntegration:
     def test_strategy_topic_switch_gate_exists(self):
         """STRATEGY_TOPIC_SWITCH gate should exist."""
         assert hasattr(GatePrecedence, "STRATEGY_TOPIC_SWITCH")
-        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 70
+        assert GatePrecedence.STRATEGY_TOPIC_SWITCH.value == 38  # Before READY_NO_FIELDS
 
     def test_gate_ordering_topic_switch_before_pre_core_value(self):
         """

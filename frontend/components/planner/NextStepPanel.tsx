@@ -39,6 +39,8 @@ interface NextStepPanelProps {
   // Generation state
   isGenerating?: boolean;
   generatingSubtitle?: string;
+  /** Whether user has ever had a plan generated (for CTA label) */
+  hasEverHadPlan?: boolean;
 
   // Actions
   onBuildPlan?: () => void;
@@ -52,6 +54,7 @@ interface NextStepPanelProps {
 export function NextStepPanel({
   isGenerating = false,
   generatingSubtitle,
+  hasEverHadPlan = false,
   onBuildPlan,
   onSetDestination,
   onSetOrigin,
@@ -258,7 +261,7 @@ export function NextStepPanel({
                 : 'bg-muted text-muted-foreground/60 cursor-not-allowed'
             )}
           >
-            Build plan
+            {hasEverHadPlan ? 'Update plan' : 'Build plan'}
             <ArrowRight className="h-4 w-4" />
           </button>
 
