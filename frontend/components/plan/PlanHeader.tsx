@@ -190,7 +190,7 @@ export function PlanHeader({
   return (
     <div className="relative flex-shrink-0">
       {/* Hero image - always has image when destination exists */}
-      <div className="relative h-32 overflow-hidden">
+      <div className="relative h-40 overflow-hidden">
         {imageUrl ? (
           <img
             src={imageUrl}
@@ -203,8 +203,9 @@ export function PlanHeader({
         )}
 
         {/* Scrim overlay for guaranteed text readability on any photo */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/35 to-black/10" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+        {/* Reduced darkness so image reads as intentional banner */}
+        <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-black/25 to-black/10" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
 
         {/* Content overlay */}
         <div className="absolute inset-0 flex flex-col justify-end p-4">
