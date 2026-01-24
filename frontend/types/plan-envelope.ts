@@ -162,12 +162,30 @@ export type PlanViewEvent =
   | { type: 'E_RESET' };
 
 /**
- * A strategy section for Stage 2 view (e.g., "Hiking strategy (draft)").
+ * A strategy section for Stage 2 view - one card per executed strategy topic.
  */
 export interface StrategySection {
   id: string;
-  title: string; // "X strategy (draft)" - max 30 chars
-  bullets: string[]; // Max 6 bullets, ≤12 words each
+  title: string;
+  subtitle?: string; // e.g., "Dubai Trip"
+  specialist_type?: string; // e.g., "hiking", "diving", "general"
+
+  // Collapsed state
+  one_liner?: string; // max 60 chars
+  principles: string[]; // max 4 items, 50 chars each
+
+  // Expanded state
+  must_dos: string[]; // max 5 items, 110 chars each
+  optional_upgrades: string[]; // max 3 items
+  logistics_notes: string[]; // max 4 items
+  tradeoffs_summary?: string; // max 300 chars
+
+  // Provenance (debug only, not shown in UI)
+  strategy_node_id?: string;
+  strategy_version?: string;
+
+  // Legacy field for backward compatibility
+  bullets: string[];
 }
 
 /**
@@ -223,6 +241,7 @@ export interface ItineraryAssumptions {
 export interface PlanViewModel {
   // Stage 2 content
   strategy_sections?: StrategySection[];
+  executed_strategy_topics?: string[]; // Topics that ran: ["hiking", "diving"]
   open_decisions?: OpenDecision[];
 
   // Stage 3 content
@@ -346,6 +365,7 @@ export interface PlanEnvelope {
 
   // Stage 2 content (populated when plan_view_state in S2_*)
   strategy_sections?: StrategySection[];
+  executed_strategy_topics?: string[]; // Topics that ran: ["hiking", "diving"]
   open_decisions?: OpenDecision[];
 
   // Stage 3 content (populated when plan_view_state in S3_*)

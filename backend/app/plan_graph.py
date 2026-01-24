@@ -7356,7 +7356,7 @@ def _try_initial_message_extraction(text: str, state: "GraphState") -> Optional[
     # Try inline date extraction (Pattern 7: "tomorrow", "today", "next week", etc.)
     if not parsed.get("start_date_hint"):
         date_patterns = [
-            r"\btomorrow\b",
+            r"\b(?:tomorrow|tmrw)\b",
             r"\btoday\b",
             r"\bnext\s+(?:week|month|weekend)\b",
             r"\bthis\s+(?:week|weekend)\b",
@@ -14935,12 +14935,48 @@ async def generate_responder(state: GraphState) -> GraphState:
     # are preserved. Tile search treats 'suggested' and 'on' as enabled.
 
     # Call strategy orchestrator to get enriched content
-    strategy_results = await orchestrate_strategies(state)
-    merged_content = merge_strategy_results(strategy_results)
+    # Returns List[StrategyResult] - one per executed topic
+    strategy_results_list = await orchestrate_strategies(state)
+
+    # Convert to dict for legacy merge (branch enrichment)
+    strategy_results_dict = {r.topic: r for r in strategy_results_list}
+    merged_content = merge_strategy_results(strategy_results_dict)
+
+    # Build strategy_sections from per-topic results (NEW: stacked cards)
+    executed_topics = [r.topic for r in strategy_results_list if r.success]
+    dest_name = ti.destinations[0] if ti.destinations else "Trip"
+
+    strategy_sections = []
+    for result in strategy_results_list:
+        if not result.success or not result.content:
+            continue
+        content = result.content
+        strategy_sections.append(
+            {
+                "id": f"strategy_{content.topic}",
+                "title": "Strategy",
+                "subtitle": f"{dest_name} Trip",
+                "specialist_type": content.topic,
+                # Collapsed state
+                "one_liner": content.one_liner,
+                "principles": content.principles,
+                # Expanded state
+                "must_dos": content.must_dos,
+                "optional_upgrades": content.optional_upgrades,
+                "logistics_notes": content.logistics_notes,
+                "tradeoffs_summary": content.tradeoffs_summary,
+                # Provenance (debug)
+                "strategy_node_id": content.strategy_node_id,
+                "strategy_version": content.strategy_version,
+                # Legacy fallback
+                "bullets": content.highlights,
+            }
+        )
 
     _debug(
         "Strategy orchestration complete",
-        topics=list(strategy_results.keys()),
+        topics=executed_topics,
+        sections_count=len(strategy_sections),
         has_vibe=bool(merged_content.vibe),
         highlights_count=len(merged_content.highlights),
     )
@@ -14983,27 +15019,16 @@ async def generate_responder(state: GraphState) -> GraphState:
         # Fallback to the raw branch if normalization fails
         state.branches = [default_branch]
 
-    # Populate strategy_sections from branches for UI rendering
-    # Uses resilient field access with fallbacks
-    if state.branches:
-        strategy_sections = []
-        for i, branch in enumerate(state.branches[:3]):
-            title = branch.get("label") or branch.get("name") or f"Option {i+1}"
-            bullets = branch.get("highlights") or branch.get("bullets") or []
-            strategy_sections.append(
-                {
-                    "id": branch.get("id") or f"section_{i}",
-                    "title": title,
-                    "bullets": bullets[:6],
-                }
-            )
-        state.metadata["strategy_sections"] = strategy_sections
+    # Populate strategy_sections and executed_strategy_topics from per-topic results
+    # (strategy_sections was built above from strategy_results_list)
+    state.metadata["strategy_sections"] = strategy_sections
+    state.metadata["executed_strategy_topics"] = executed_topics
 
     _debug(
         "Generate responder complete",
         ready=state.ready_to_generate,
         branches=len(state.branches),
-        strategies_called=list(strategy_results.keys()),
+        strategies_called=executed_topics,
     )
     _debug_node_exit("generate_responder", state, start_ns)
     return state

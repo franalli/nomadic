@@ -188,6 +188,7 @@ RELATIVE_DATE_WORDS_SIMPLE = frozenset(
     {
         "today",
         "tomorrow",
+        "tmrw",
         "tonight",
         "weekend",
     }
@@ -220,8 +221,8 @@ RELATIVE_DATE_WORDS_ALL = (
 # NOTE: This is the canonical pattern for checking if text answers a dates question.
 DATES_COMPATIBILITY_PATTERN = re.compile(
     r"(?:"
-    # Standalone relative date words (tomorrow, today, tonight, weekend)
-    r"\b(?:today|tomorrow|tonight|weekend)\b|"
+    # Standalone relative date words (tomorrow, tmrw, today, tonight, weekend)
+    r"\b(?:today|tomorrow|tmrw|tonight|weekend)\b|"
     # Full month names
     r"\b(?:january|february|march|april|may|june|july|august|september|"
     r"october|november|december)\b|"
@@ -749,7 +750,7 @@ INITIAL_DESTINATION_PATTERN = re.compile(
 # as part of the place name. Without this, "from rome tomorrow" would capture "rome tomorrow"
 # instead of just "rome".
 _TRAILING_ORIGIN_DATE_STOP = (
-    r"tomorrow|today|tonight|next|this|on|in|for|leaving|departing|traveling|flying|driving"
+    r"tomorrow|tmrw|today|tonight|next|this|on|in|for|leaving|departing|traveling|flying|driving"
 )
 TRAILING_ORIGIN_PATTERN = re.compile(
     rf"\bfrom\s+([A-Za-z]+(?:\s+(?!(?:{_TRAILING_ORIGIN_DATE_STOP}))[A-Za-z]+)?)"
@@ -849,7 +850,8 @@ def is_likely_location(text: str) -> bool:
 # Both origin and destination captures exclude trailing date/time words and
 # travel verbs to avoid capturing "dubai going" or "rome leaving" as places.
 _TRAVEL_STOP_WORDS = (
-    r"tomorrow|today|tonight|next|this|on|in|for|with|direct|nonstop|one[- ]?way|round[- ]?trip|"
+    r"tomorrow|tmrw|today|tonight|next|this|on|in|for|with|direct|nonstop|"
+    r"one[- ]?way|round[- ]?trip|"
     r"leaving|departing|flying|traveling|starting|going|heading|visiting|\d"
 )
 

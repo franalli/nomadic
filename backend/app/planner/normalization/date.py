@@ -179,7 +179,7 @@ class DateNormalizer:
         if lowered in TODAY_WORDS:
             return today.strftime("%Y-%m-%d")
 
-        if lowered == "tomorrow":
+        if lowered in ("tomorrow", "tmrw"):
             return (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
         if "next week" in lowered:

@@ -431,11 +431,29 @@ PlanViewState = Literal[
 
 
 class StrategySection(BaseModel):
-    """A strategy section for Stage 2 view (e.g., 'Hiking strategy (draft)')."""
+    """A strategy section for Stage 2 view - one card per executed strategy topic."""
 
     id: str
-    title: str  # "X strategy (draft)" - max 30 chars
-    bullets: List[str] = Field(default_factory=list)  # Max 6 bullets, ≤12 words each
+    title: str = "Strategy"
+    subtitle: Optional[str] = None  # e.g., "Dubai Trip"
+    specialist_type: Optional[str] = None  # e.g., "hiking", "diving", "general"
+
+    # Collapsed state
+    one_liner: Optional[str] = None  # max 60 chars
+    principles: List[str] = Field(default_factory=list)  # max 4 items, 50 chars each
+
+    # Expanded state
+    must_dos: List[str] = Field(default_factory=list)  # max 5 items, 110 chars each
+    optional_upgrades: List[str] = Field(default_factory=list)  # max 3 items
+    logistics_notes: List[str] = Field(default_factory=list)  # max 4 items
+    tradeoffs_summary: Optional[str] = None  # max 300 chars
+
+    # Provenance (debug only, not shown in UI)
+    strategy_node_id: Optional[str] = None
+    strategy_version: Optional[str] = None
+
+    # Legacy field for backward compatibility
+    bullets: List[str] = Field(default_factory=list)
 
 
 class OpenDecision(BaseModel):
@@ -606,6 +624,9 @@ class PlanDocumentData(BaseModel):
 
     # Stage 2 content (populated when plan_view_state in S2_*)
     strategy_sections: List[StrategySection] = Field(default_factory=list)
+    executed_strategy_topics: List[str] = Field(
+        default_factory=list
+    )  # Topics that ran: ["hiking", "diving"]
     open_decisions: List[OpenDecision] = Field(default_factory=list)
 
     # Stage 3 content (populated when plan_view_state in S3_*)

@@ -45,4 +45,49 @@ Keep Stage 1 responses concise (~300-400 words). Do not provide full itinerary u
 
 {% include "_markdown_rules.txt" %}
 
+==============================
+STRUCTURED OUTPUT CONTRACT
+==============================
+Your JSON response MUST include these SEMANTIC fields for UI rendering:
+
+{
+  "one_liner": "Single sentence capturing trip essence (max 60 chars)",
+  "principles": [
+    "Core approach #1 (e.g., 'Home base: Chamonix valley')",
+    "Core approach #2 (e.g., 'Daily rhythm: AM activity → PM rest')",
+    "Core approach #3 (e.g., 'Difficulty: moderate, suits all levels')"
+  ],
+  "must_dos": [
+    "Essential experience #1 - cannot miss, defines the trip",
+    "Essential experience #2 - core value proposition",
+    "Essential experience #3 - trip-defining moment"
+  ],
+  "optional_upgrades": [
+    "Nice-to-have if time/budget allows",
+    "Alternative for adventurous travelers"
+  ],
+  "logistics_notes": [
+    "Practical tip #1 (transport, timing)",
+    "Practical tip #2 (booking, permits)",
+    "Safety consideration if applicable"
+  ],
+  "tradeoffs_summary": "Why this approach over alternatives (1-2 sentences)"
+}
+
+CRITICAL SEMANTIC DISTINCTIONS:
+- must_dos: Trip-defining experiences user should NOT skip. These make or break the trip.
+- optional_upgrades: Enhancements for extra time/budget/adventure. Trip is complete without these.
+- principles: Your strategic approach distilled to 3-4 chips (home base, rhythm, intensity).
+- logistics_notes: Practical "how" tips, NOT "what" activities.
+
+Do NOT just slice a single list - decide intentionally based on semantic meaning.
+
+FIELD LIMITS:
+- one_liner: max 60 chars
+- principles: max 4 items, each max 50 chars
+- must_dos: max 5 items, each max 110 chars
+- optional_upgrades: max 3 items, each max 110 chars
+- logistics_notes: max 4 items, each max 110 chars
+- tradeoffs_summary: max 300 chars
+
 {% include "_json_output.txt" %}

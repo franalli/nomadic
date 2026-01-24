@@ -2,9 +2,10 @@
 Strategy Node Orchestrator - Calls relevant strategy nodes for plan generation.
 
 Used by generate_responder to enrich branches with strategy content:
-- Detects relevant strategy topics from activity_settings.categories
-- Calls strategy nodes for each topic
-- Parses LLM responses into structured content (vibe, highlights, flow, notes)
+- Detects relevant strategy topics from multiple sources (categories, message intent)
+- Calls strategy nodes for each topic (capped to avoid latency/cost overrun)
+- Parses LLM responses into structured content for UI cards
+- Returns one StrategyResult per topic (no merging)
 """
 
 from __future__ import annotations
@@ -13,13 +14,28 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from app.debug_utils import _debug
 
 if TYPE_CHECKING:
     from app.plan_graph import GraphState
 
+
+# Topic priority for stable ordering (higher priority = lower index)
+TOPIC_PRIORITY: List[str] = ["skiing", "hiking", "diving", "boating", "cycling", "general"]
+
+# Valid specialist topics (excludes "general" which is fallback only)
+SPECIALIST_TOPICS: Set[str] = {"skiing", "hiking", "diving", "boating", "cycling"}
+
+# Keywords for detecting topics from user message intent
+TOPIC_KEYWORDS: Dict[str, List[str]] = {
+    "hiking": ["hike", "hiking", "trek", "trekking", "trail", "trails", "mountain", "mountains"],
+    "diving": ["dive", "diving", "scuba", "snorkel", "snorkeling", "underwater", "reef"],
+    "skiing": ["ski", "skiing", "snowboard", "snowboarding", "slopes", "piste"],
+    "boating": ["sail", "sailing", "boat", "boating", "yacht", "kayak", "kayaking"],
+    "cycling": ["bike", "biking", "cycle", "cycling", "bicycle"],
+}
 
 # Map activity categories to strategy topics
 CATEGORY_TO_STRATEGY: Dict[str, str] = {
@@ -62,14 +78,30 @@ CATEGORY_TO_STRATEGY: Dict[str, str] = {
 
 @dataclass
 class StrategyContent:
-    """Structured content parsed from strategy LLM response."""
+    """Structured content from strategy node - directly populates UI card."""
 
     topic: str
+
+    # Legacy fields (still used by other consumers)
     vibe: str = ""
     focus: str = ""
     highlights: List[str] = field(default_factory=list)
     flow: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+
+    # NEW: UI card fields - populated BY THE NODE, not derived downstream
+    one_liner: str = ""  # Single sentence capturing trip essence (max 80 chars)
+    principles: List[str] = field(
+        default_factory=list
+    )  # Core approach chips (2-4 items, max 50 chars each)
+    must_dos: List[str] = field(default_factory=list)  # Essential experiences (3-5 items)
+    optional_upgrades: List[str] = field(default_factory=list)  # Nice-to-haves (2-3 items)
+    logistics_notes: List[str] = field(default_factory=list)  # Practical tips (2-4 items)
+    tradeoffs_summary: str = ""  # Why this approach (1 paragraph, max 300 chars)
+
+    # Provenance for debugging (hidden in UI by default)
+    strategy_node_id: str = ""  # e.g., "hiking_strategist_v1"
+    strategy_version: str = ""  # Prompt/logic version
 
 
 @dataclass
@@ -82,19 +114,47 @@ class StrategyResult:
     error: Optional[str] = None
 
 
-def detect_relevant_strategies(state: "GraphState") -> List[str]:
-    """
-    Detect which strategy topics are relevant based on activity_settings.categories.
+def _detect_topics_from_message(user_text: str) -> Set[str]:
+    """Detect strategy topics from user message intent."""
+    topics: Set[str] = set()
+    text_lower = user_text.lower()
 
-    Returns list of topic names (hiking, diving, skiing, cycling, boating, general).
-    Falls back to 'general' if no specific strategies are detected, ensuring
-    all trips get vibe/highlights/flow content.
-    """
-    topics: set[str] = set()
+    for topic, keywords in TOPIC_KEYWORDS.items():
+        for keyword in keywords:
+            if keyword in text_lower:
+                topics.add(topic)
+                break  # Found this topic, move to next
 
+    return topics
+
+
+def detect_relevant_strategies(
+    state: "GraphState",
+    max_inferred: int = 2,
+    max_explicit: int = 3,
+) -> List[str]:
+    """
+    Detect which strategy topics are relevant from multiple sources.
+
+    Sources (union with deduplication):
+    1. Explicit categories from activity_settings.categories (UI selection)
+    2. Inferred topics from user message intent
+    3. (Future) Activity shortlist contents
+
+    Returns list of topic names sorted by TOPIC_PRIORITY.
+    Falls back to 'general' only if no specialist topics detected.
+
+    Topic budget rules:
+    - If user explicitly selected categories: allow up to max_explicit (default 3)
+    - If inferred only: allow up to max_inferred (default 2)
+    - General is never stacked alongside specialists
+    """
+    explicit_topics: Set[str] = set()
+    inferred_topics: Set[str] = set()
+
+    # Source 1: Explicit categories from activity_settings
     activity_settings = state.trip_inputs.activity_settings
     if activity_settings:
-        # Handle both dict and object access (activity_settings can be either)
         if isinstance(activity_settings, dict):
             categories = activity_settings.get("categories", []) or []
         else:
@@ -103,14 +163,49 @@ def detect_relevant_strategies(state: "GraphState") -> List[str]:
         for category in categories:
             category_lower = category.lower().strip()
             if category_lower in CATEGORY_TO_STRATEGY:
-                topics.add(CATEGORY_TO_STRATEGY[category_lower])
+                mapped = CATEGORY_TO_STRATEGY[category_lower]
+                if mapped != "general":  # Don't count general as explicit
+                    explicit_topics.add(mapped)
 
-    # Always include 'general' as fallback if no specific strategies found
-    # This ensures all trips get vibe/highlights/flow content
-    if not topics:
-        topics.add("general")
+    # Source 2: Inferred from user message
+    user_text = state.metadata.get("user_text", "") or ""
+    if user_text:
+        inferred_topics = _detect_topics_from_message(user_text)
 
-    return list(topics)
+    # Union all topics (explicit takes precedence)
+    all_topics = explicit_topics | inferred_topics
+
+    # Filter out "general" - it's only used as fallback
+    specialist_topics = {t for t in all_topics if t in SPECIALIST_TOPICS}
+
+    # Apply topic budget
+    if explicit_topics:
+        # User explicitly selected - allow more
+        budget = max_explicit
+    else:
+        # Inferred only - be conservative
+        budget = max_inferred
+
+    # Sort by priority and apply budget
+    sorted_topics = sorted(
+        specialist_topics,
+        key=lambda t: TOPIC_PRIORITY.index(t) if t in TOPIC_PRIORITY else 999,
+    )
+    final_topics = sorted_topics[:budget]
+
+    # Fallback to general only if no specialists
+    if not final_topics:
+        final_topics = ["general"]
+
+    _debug(
+        "Strategy topics detected",
+        explicit=list(explicit_topics),
+        inferred=list(inferred_topics),
+        final=final_topics,
+        budget=budget,
+    )
+
+    return final_topics
 
 
 def parse_strategy_response(response: str, topic: str) -> StrategyContent:
@@ -318,20 +413,65 @@ async def call_strategy_for_plan(
         return StrategyResult(topic=topic, success=False, error=str(e))
 
 
+def _validate_strategy_content(content: StrategyContent) -> StrategyContent:
+    """
+    Quality gates: ensure fields meet minimum requirements and char limits.
+
+    Applies:
+    - Character limits per field
+    - Minimum count fallbacks
+    - Truncation for oversized content
+    """
+    # Character limits
+    if content.one_liner:
+        content.one_liner = content.one_liner[:80]
+    if content.tradeoffs_summary:
+        content.tradeoffs_summary = content.tradeoffs_summary[:300]
+
+    # List field limits
+    content.principles = [p[:50] for p in content.principles[:4]]
+    content.must_dos = [m[:110] for m in content.must_dos[:5]]
+    content.optional_upgrades = [o[:110] for o in content.optional_upgrades[:3]]
+    content.logistics_notes = [n[:110] for n in content.logistics_notes[:4]]
+
+    # Legacy field limits
+    content.highlights = content.highlights[:5]
+    content.flow = content.flow[:7]
+    content.notes = content.notes[:4]
+
+    # Quality fallbacks: if new fields are empty, derive from legacy
+    if not content.one_liner and content.vibe:
+        content.one_liner = content.vibe[:80]
+
+    if len(content.principles) < 2 and content.flow:
+        content.principles = [f[:50] for f in content.flow[:3]]
+
+    if len(content.must_dos) < 3 and content.highlights:
+        content.must_dos = content.highlights[:5]
+
+    if len(content.logistics_notes) < 2 and content.notes:
+        content.logistics_notes = content.notes[:4]
+
+    if not content.tradeoffs_summary and content.focus:
+        content.tradeoffs_summary = content.focus[:300]
+
+    return content
+
+
 def _parse_json_strategy_response(response_text: str, topic: str) -> StrategyContent:
     """
     Parse strategy LLM response, trying JSON first then markdown fallback.
 
-    The strategy prompts output JSON with vibe, focus, highlights, flow, notes fields.
+    Extracts both legacy fields (vibe, focus, highlights, flow, notes) and
+    new UI card fields (one_liner, principles, must_dos, optional_upgrades,
+    logistics_notes, tradeoffs_summary) with fallbacks for backward compatibility.
     """
     # Try to extract JSON from response (may be wrapped in markdown code blocks)
     json_text = response_text.strip()
 
     # Remove markdown code block wrapper if present
     if json_text.startswith("```"):
-        # Find the end of the code block
         lines = json_text.split("\n")
-        # Skip first line (```json or ```) and find closing ```
         json_lines = []
         in_block = False
         for line in lines:
@@ -348,25 +488,50 @@ def _parse_json_strategy_response(response_text: str, topic: str) -> StrategyCon
     try:
         parsed = json.loads(json_text)
 
-        # Extract fields from JSON response
+        # Extract legacy fields (always present in old responses)
+        vibe = str(parsed.get("vibe", "") or "")
+        focus = str(parsed.get("focus", "") or "")
+        highlights = [str(h) for h in (parsed.get("highlights") or []) if h]
+        flow = [str(f) for f in (parsed.get("flow") or []) if f]
+        notes = [str(n) for n in (parsed.get("notes") or []) if n]
+
+        # Extract NEW UI card fields (may not be present in old cached responses)
+        one_liner = str(parsed.get("one_liner", "") or "")
+        principles = [str(p) for p in (parsed.get("principles") or []) if p]
+        must_dos = [str(m) for m in (parsed.get("must_dos") or []) if m]
+        optional_upgrades = [str(o) for o in (parsed.get("optional_upgrades") or []) if o]
+        logistics_notes = [str(n) for n in (parsed.get("logistics_notes") or []) if n]
+        tradeoffs_summary = str(parsed.get("tradeoffs_summary", "") or "")
+
         content = StrategyContent(
             topic=topic,
-            vibe=parsed.get("vibe", "") or "",
-            focus=parsed.get("focus", "") or "",
-            highlights=parsed.get("highlights", []) or [],
-            flow=parsed.get("flow", []) or [],
-            notes=parsed.get("notes", []) or [],
+            # Legacy fields
+            vibe=vibe,
+            focus=focus,
+            highlights=highlights,
+            flow=flow,
+            notes=notes,
+            # New UI card fields
+            one_liner=one_liner,
+            principles=principles,
+            must_dos=must_dos,
+            optional_upgrades=optional_upgrades,
+            logistics_notes=logistics_notes,
+            tradeoffs_summary=tradeoffs_summary,
+            # Provenance
+            strategy_node_id=f"{topic}_strategist_v1",
+            strategy_version="1.0",
         )
 
-        # Ensure lists contain strings
-        content.highlights = [str(h) for h in content.highlights if h][:5]
-        content.flow = [str(f) for f in content.flow if f][:7]  # Allow up to 7 for longer trips
-        content.notes = [str(n) for n in content.notes if n][:4]
+        # Apply quality gates and fallbacks
+        content = _validate_strategy_content(content)
 
         _debug(
             "Strategy JSON parsed successfully",
             topic=topic,
-            vibe_preview=content.vibe[:50] if content.vibe else None,
+            one_liner_preview=content.one_liner[:40] if content.one_liner else None,
+            must_dos_count=len(content.must_dos),
+            principles_count=len(content.principles),
         )
 
         return content
@@ -378,38 +543,71 @@ def _parse_json_strategy_response(response_text: str, topic: str) -> StrategyCon
             error=str(e),
             response_preview=response_text[:200],
         )
-        # Fallback to markdown parsing
-        return parse_strategy_response(response_text, topic)
+        # Fallback to markdown parsing, then apply validation
+        content = parse_strategy_response(response_text, topic)
+        content.strategy_node_id = f"{topic}_strategist_v1"
+        content.strategy_version = "1.0"
+        content = _validate_strategy_content(content)
+        return content
 
 
-async def orchestrate_strategies(state: "GraphState") -> Dict[str, StrategyResult]:
+async def orchestrate_strategies(state: "GraphState") -> List[StrategyResult]:
     """
     Orchestrate strategy node calls for plan generation.
 
-    Detects relevant topics from activity_settings and calls strategies in parallel.
-    Returns dict of topic -> StrategyResult.
+    Detects relevant topics from multiple sources, applies topic budget,
+    and calls strategies in parallel.
+
+    Returns List[StrategyResult] - one per executed topic, NOT merged.
+    Failed topics are excluded (no empty cards in UI).
+    Results are sorted by TOPIC_PRIORITY for stable ordering.
     """
     topics = detect_relevant_strategies(state)
 
     if not topics:
         _debug("No relevant strategies detected for trip inputs")
-        return {}
+        return []
 
     _debug(f"Orchestrating strategies for topics: {topics}")
 
     # Call strategies in parallel
     tasks = [call_strategy_for_plan(state, topic) for topic in topics]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Build results dict
-    output: Dict[str, StrategyResult] = {}
-    for topic, result in zip(topics, results, strict=True):
+    # Filter to successful results only (failed topics = no card in UI)
+    successful_results: List[StrategyResult] = []
+    for topic, result in zip(topics, raw_results, strict=True):
         if isinstance(result, Exception):
-            output[topic] = StrategyResult(topic=topic, success=False, error=str(result))
-        else:
-            output[topic] = result
+            _debug(f"Strategy {topic} failed with exception", error=str(result))
+            continue
+        if not result.success:
+            _debug(f"Strategy {topic} returned failure", error=result.error)
+            continue
+        successful_results.append(result)
 
-    return output
+    # Sort by TOPIC_PRIORITY for stable ordering
+    successful_results.sort(
+        key=lambda r: TOPIC_PRIORITY.index(r.topic) if r.topic in TOPIC_PRIORITY else 999
+    )
+
+    _debug(
+        "Strategy orchestration complete",
+        requested=topics,
+        successful=[r.topic for r in successful_results],
+    )
+
+    return successful_results
+
+
+# Legacy function - kept for backward compatibility with existing code
+async def orchestrate_strategies_dict(state: "GraphState") -> Dict[str, StrategyResult]:
+    """
+    Legacy wrapper that returns dict format for backward compatibility.
+
+    Prefer orchestrate_strategies() which returns List[StrategyResult].
+    """
+    results = await orchestrate_strategies(state)
+    return {r.topic: r for r in results}
 
 
 def merge_strategy_results(results: Dict[str, StrategyResult]) -> StrategyContent:
