@@ -1,29 +1,21 @@
 # backend/app/planner/__init__.py
 """
-Planner facade module.
+Planner facade module - V2 Architecture.
 
 This module exports the stable public API for the planner.
-External code should import from here, not from plan_graph.py directly.
-
-PR1: Import surface freeze - defines the supported import surface.
+External code should import from here, not from plan_graph_v2.py directly.
 
 Usage:
     from app.planner import run_turn, run_turn_streaming
-    from app.planner import GateEvaluator, GateResult, GatePrecedence
-    from app.planner import GraphState
+    from app.planner import GraphState, TripInputs
     from app.planner import get_planner_debug_info
-
-Note: Imports from plan_graph are lazy to avoid circular imports.
-      The submodules (hashing, meta_keys, etc.) are imported by plan_graph.py
-      before __init__.py completes, so we defer plan_graph imports.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-# These submodules don't import from plan_graph and are safe to import eagerly
-# Cache access (PR3)
+# Cache access
 from app.planner.cache_access import (
     cache_clear,
     cache_contains,
@@ -37,19 +29,7 @@ from app.planner.cache_access import (
     update_nested_counters_safe,
 )
 
-# P1: Gate system types - extracted from plan_graph.py
-# P3: Gate constants and readiness
-from app.planner.gates import (
-    CANONICAL_FIELD_ORDER,
-    CORE_FIELD_PRIORITY,
-    DATE_BLOCKING_ERROR_CODES,
-    DateErrorCode,
-    GatePrecedence,
-    GateResult,
-    TripReadiness,
-)
-
-# Stable hashing (PR5)
+# Stable hashing
 from app.planner.hashing import (
     canonicalize_destinations,
     canonicalize_dict,
@@ -61,7 +41,7 @@ from app.planner.hashing import (
     stable_hash_short,
 )
 
-# Metadata helpers (PR2)
+# Metadata helpers
 from app.planner.meta import (
     init_turn_metadata,
     meta_append,
@@ -77,25 +57,23 @@ from app.planner.meta_keys import (
     TRACE_ENVELOPE,
 )
 
-# P2: Node utilities - instrumentation and context
-from app.planner.nodes import NodeContext, node_decorator
-
-# P1: State management - SSoT enforcement
-from app.planner.state import StateWriter
-
-# Streaming utilities (true LLM streaming)
-from app.planner.streaming import (
-    DEFAULT_STREAMING_CONFIG,
-    StreamingConfig,
-    StreamingResult,
-    call_llm_streaming_with_accumulator,
-    get_streaming_mode,
-    should_use_true_streaming,
-    stream_specialist_response,
-    stream_strategy_response,
+# V2 State models
+from app.planner.state import (
+    GraphStateV2,
+    ItineraryBlock,
+    MissingFieldsResponse,
+    SpecialistConstraint,
+    SpecialistOutput,
+    SynthesizerOutput,
+    TripPlan,
+    TripSegment,
+    UIEvent,
+    create_missing_fields_response,
+    get_missing_fields,
+    trip_plan_is_ready,
 )
 
-# Telemetry (PR-T1..T3)
+# Telemetry
 from app.planner.telemetry import (
     TraceEnvelope,
     compute_latency_breakdown,
@@ -115,7 +93,7 @@ from app.planner.telemetry import (
     redact_text,
 )
 
-# Test mode detection (PR4)
+# Test mode detection
 from app.planner.test_mode import (
     is_test_mode,
     raise_if_test_mode,
@@ -123,13 +101,10 @@ from app.planner.test_mode import (
 
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
-    # P1: GatePrecedence and GateResult are now imported eagerly from planner.gates
-    # GateEvaluator still needs lazy import from plan_graph until full extraction
-    from app.plan_graph import (
+    from app.plan_graph_v2 import (
         CACHE_SCHEMA_VERSION,
         PLANNER_BUILD_ID,
         PROMPT_BUNDLE_HASH,
-        GateEvaluator,
         GraphState,
         TripInputs,
         checkpoint_stats,
@@ -151,14 +126,11 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str):
-    """Lazy import for plan_graph exports to avoid circular imports."""
-    # P1: GatePrecedence and GateResult are now eagerly imported from planner.gates
-    # GateEvaluator still needs lazy import from plan_graph until full extraction
+    """Lazy import for plan_graph_v2 exports to avoid circular imports."""
     _PLAN_GRAPH_EXPORTS = {
         "CACHE_SCHEMA_VERSION",
         "PLANNER_BUILD_ID",
         "PROMPT_BUNDLE_HASH",
-        "GateEvaluator",  # P1: Still in plan_graph, will be extracted to gates/evaluator.py
         "GraphState",
         "TripInputs",
         "checkpoint_stats",
@@ -179,9 +151,9 @@ def __getattr__(name: str):
     }
 
     if name in _PLAN_GRAPH_EXPORTS:
-        from app import plan_graph
+        from app import plan_graph_v2
 
-        return getattr(plan_graph, name)
+        return getattr(plan_graph_v2, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -190,24 +162,22 @@ __all__ = [
     # Entry points
     "run_turn",
     "run_turn_streaming",
-    # Gate evaluation
-    "GateEvaluator",
-    "GatePrecedence",
-    "GateResult",
-    # P3: Gate constants
-    "DateErrorCode",
-    "DATE_BLOCKING_ERROR_CODES",
-    "CORE_FIELD_PRIORITY",
-    "CANONICAL_FIELD_ORDER",
-    "TripReadiness",
     # State types
     "GraphState",
     "TripInputs",
-    # P1: State management
-    "StateWriter",
-    # P2: Node utilities
-    "NodeContext",
-    "node_decorator",
+    # V2 State models
+    "GraphStateV2",
+    "TripPlan",
+    "TripSegment",
+    "ItineraryBlock",
+    "SpecialistConstraint",
+    "SpecialistOutput",
+    "UIEvent",
+    "MissingFieldsResponse",
+    "SynthesizerOutput",
+    "trip_plan_is_ready",
+    "get_missing_fields",
+    "create_missing_fields_response",
     # Debug/observability
     "get_planner_debug_info",
     "get_planner_snapshot",
@@ -229,7 +199,7 @@ __all__ = [
     "condense_long_message",
     "prewarm_prompts",
     "validate_template_coverage",
-    # Metadata (PR2)
+    # Metadata
     "init_turn_metadata",
     "meta_get",
     "meta_set",
@@ -240,10 +210,10 @@ __all__ = [
     "ALL_META_KEYS",
     "PER_TURN_KEYS",
     "TRACE_ENVELOPE",
-    # Test mode (PR4)
+    # Test mode
     "is_test_mode",
     "raise_if_test_mode",
-    # Cache access (PR3)
+    # Cache access
     "init_cache_handles",
     "cache_get",
     "cache_set",
@@ -254,7 +224,7 @@ __all__ = [
     "cache_contains",
     "update_counters_safe",
     "update_nested_counters_safe",
-    # Stable hashing (PR5)
+    # Stable hashing
     "stable_hash",
     "stable_hash_short",
     "stable_hash_int",
@@ -263,7 +233,7 @@ __all__ = [
     "canonicalize_missing_fields",
     "canonicalize_dict",
     "make_cache_key",
-    # Telemetry (PR-T1..T3)
+    # Telemetry
     "TraceEnvelope",
     "create_envelope",
     "emit_event",
@@ -280,13 +250,4 @@ __all__ = [
     "redact_prompt",
     "now_ns",
     "compute_latency_breakdown",
-    # Streaming utilities
-    "StreamingConfig",
-    "StreamingResult",
-    "DEFAULT_STREAMING_CONFIG",
-    "call_llm_streaming_with_accumulator",
-    "stream_specialist_response",
-    "stream_strategy_response",
-    "get_streaming_mode",
-    "should_use_true_streaming",
 ]

@@ -26,12 +26,15 @@ from app.config import settings
 # =============================================================================
 
 # Cache the debug flag at import time for performance
+# Note: For V2, we also check env var directly for runtime flexibility
 _DEBUG_LOG = settings.debug_plan_messages
 
 
 def is_debug_enabled() -> bool:
     """Check if debug logging is enabled."""
-    return _DEBUG_LOG
+    import os
+
+    return _DEBUG_LOG or os.getenv("DEBUG_PLAN_MESSAGES", "").lower() in ("true", "1", "yes")
 
 
 def _debug(message: str, **kwargs: Any) -> None:
@@ -144,3 +147,72 @@ def safe_debug_error(message: str, **kwargs: Any) -> None:
         _debug_error(message, **kwargs)
     except Exception:
         pass
+
+
+# =============================================================================
+# V2 ARCHITECTURE DEBUG: Node input/output logging
+# =============================================================================
+
+
+def _safe_print(msg: str) -> None:
+    """Print with fallback for Unicode encoding issues on Windows."""
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        # Fallback: replace emojis with ASCII equivalents
+        ascii_msg = msg.encode("ascii", "replace").decode("ascii")
+        print(ascii_msg)
+
+
+def _debug_v2_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
+    """Log V2 node start with inputs.
+
+    Example:
+        _debug_v2_node_start("router", "🧭", user_text="hello", intent=None)
+        # Output: [V2 DEBUG] 🧭 ROUTER START | user_text=hello intent=None
+    """
+    if not is_debug_enabled():
+        return
+    try:
+        inputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in inputs.items())
+        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} START | {inputs_str}")
+    except Exception:
+        pass
+
+
+def _debug_v2_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
+    """Log V2 node end with outputs.
+
+    Example:
+        _debug_v2_node_end("router", "🧭", intent="specialist", specialist="diving")
+        # Output: [V2 DEBUG] 🧭 ROUTER END | intent=specialist specialist=diving
+    """
+    if not is_debug_enabled():
+        return
+    try:
+        outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())
+        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} END | {outputs_str}")
+    except Exception:
+        pass
+
+
+def _debug_v2(message: str, **kwargs: Any) -> None:
+    """General V2 debug message."""
+    if not is_debug_enabled():
+        return
+    try:
+        extras = " ".join(f"{k}={_truncate(v)}" for k, v in kwargs.items()) if kwargs else ""
+        _safe_print(f"[V2 DEBUG] {message} {extras}".strip())
+    except Exception:
+        pass
+
+
+def _truncate(value: Any, max_len: int = 100) -> str:
+    """Truncate value for debug output."""
+    try:
+        s = str(value)
+        if len(s) > max_len:
+            return s[:max_len] + "..."
+        return s
+    except Exception:
+        return "<unserializable>"

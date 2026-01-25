@@ -2,8 +2,9 @@ import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,9 +57,6 @@ from app.planner import (
     PLANNER_BUILD_ID,
     PROMPT_BUNDLE_HASH,
     TRACE_ENVELOPE,
-    GateEvaluator,
-    GraphState,
-    TripInputs,
     checkpoint_stats,
     clear_all_caches,
     clear_all_checkpoints,
@@ -79,7 +77,6 @@ from app.planner import (
     run_turn_streaming,
     validate_template_coverage,
 )
-from app.planner.gates import compute_trip_readiness
 from app.schemas import (
     AckUpdate,
     BookingStatus,
@@ -153,6 +150,27 @@ def _has_missing_critical_fields(trip_inputs: dict) -> bool:
     start_date = trip_inputs.get("start_date")
     # end_date is NOT required for S2 - strategy can be shown without it
     return not destinations or not start_date
+
+
+@dataclass
+class TripReadiness:
+    """Simple trip readiness checker (V2 replacement for gates.compute_trip_readiness)."""
+
+    has_origin: bool
+    has_destinations: bool
+    has_dates: bool
+    core_complete: bool
+
+
+def compute_trip_readiness(trip_inputs: Dict[str, Any], errors: List[Any] = None) -> TripReadiness:
+    """Compute trip readiness from trip inputs."""
+    destinations = trip_inputs.get("destinations", [])
+    return TripReadiness(
+        has_origin=bool(trip_inputs.get("origin")),
+        has_destinations=bool(destinations),
+        has_dates=bool(trip_inputs.get("start_date")),
+        core_complete=bool(destinations and trip_inputs.get("start_date")),
+    )
 
 
 def _check_stage3_gate(metadata: dict, trip_inputs: dict) -> bool:
@@ -771,71 +789,6 @@ async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
     }
 
     return results
-
-
-@app.post("/v1/admin/gate-trace")
-def admin_gate_trace(request_body: schemas.GateTraceRequest):
-    """
-    P2: Debug endpoint that shows gate evaluation trace without executing the graph.
-
-    Evaluates all gates for the provided state and returns detailed trace information
-    showing which gates were checked, which fired, and why.
-
-    This is useful for debugging routing issues without modifying state.
-
-    Request body:
-        user_text: str - The user message to evaluate
-        trip_inputs: dict - Current trip inputs (destinations, dates, etc.)
-        metadata: dict - Optional metadata (thread_id, today_iso, etc.)
-        turn_number: int - Current turn number (default 0)
-
-    Response:
-        gate_fired: str - Name of the gate that matched
-        destination: str - Node that would be routed to
-        reason: str - Human-readable explanation
-        gate_trace: list - Detailed trace of all gates evaluated
-        eval_time_ms: float - Time taken to evaluate gates
-    """
-    from datetime import date
-
-    # Build trip inputs from request
-    trip_inputs_dict = request_body.trip_inputs or {}
-    trip_inputs = TripInputs(**trip_inputs_dict)
-
-    # Build metadata with defaults
-    metadata = request_body.metadata or {}
-    if "thread_id" not in metadata:
-        metadata["thread_id"] = "gate_trace_debug"
-    if "today_iso" not in metadata:
-        metadata["today_iso"] = date.today().isoformat()
-
-    # Create minimal state for gate evaluation
-    state = GraphState(
-        user_text=request_body.user_text,
-        trip_inputs=trip_inputs,
-        metadata=metadata,
-        turn_number=request_body.turn_number,
-    )
-
-    # Evaluate gates
-    gate_result = GateEvaluator.evaluate(state)
-
-    # Extract gate trace from metadata
-    gate_trace = state.metadata.get("gate_trace", [])
-
-    return {
-        "gate_fired": gate_result.gate_fired.name if gate_result.gate_fired else None,
-        "gate_precedence": gate_result.gate_fired.value if gate_result.gate_fired else None,
-        "destination": gate_result.destination,
-        "reason": gate_result.reason,
-        "gate_trace": gate_trace,
-        "eval_time_ms": round(gate_result.eval_time_ms, 3),
-        "intent": gate_result.intent,
-        "strategy_topic": gate_result.strategy_topic,
-        "question_target": gate_result.question_target,
-        "skipped_gates": gate_result.skipped_gates,
-        "metadata_updates": gate_result.metadata_updates,
-    }
 
 
 @app.post("/v1/tiles/click")
@@ -2459,12 +2412,22 @@ async def expand_itinerary_endpoint(
             # Persist to document if we have itinerary data
             if plan_envelope.get("day_cards"):
                 try:
+                    from app.schemas import DocumentTripInputs
+
+                    # Convert trip_inputs to DocumentTripInputs
+                    trip_inputs_obj = None
+                    if trip_inputs:
+                        trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs)
+
+                    # Get trip context
+                    trip_context = await get_latest_trip_context_for_session(db, session=session)
+                    trip_context_id = trip_context.id if trip_context else 0
+
                     await apply_planner_update(
                         db,
                         doc=doc,
-                        session_state=new_session_state,
-                        assistant_message=result.get("assistant_message", ""),
-                        today_iso=compute_today_iso(),
+                        trip_context_id=trip_context_id,
+                        trip_inputs=trip_inputs_obj,
                     )
                     await db.commit()
                 except Exception as e:

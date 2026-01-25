@@ -28,20 +28,15 @@ HASH_PATTERN = re.compile(r"(?<![_a-zA-Z])hash\(")
 
 # Files in planner package that should use stable_hash
 PLANNER_PATHS = [
-    "backend/app/plan_graph.py",
+    "backend/app/plan_graph_v2.py",
     "backend/app/planner/",
     "backend/app/pattern_matching.py",
     "backend/app/graph_plan_utils.py",
 ]
 
 # Specific lines that are allowed to use hash() with justification
-ALLOWLIST = [
-    # _compute_prompt_bundle_hash uses hashlib, not hash()
-    # The function name contains "hash" but doesn't call hash()
-    # _hash_value has a fallback that uses hash() for non-serializable types
-    # This is acceptable as a last resort fallback
-    ("backend/app/plan_graph.py", "_hash_value", "Fallback for non-JSON-serializable types"),
-]
+# Note: V2 architecture uses stable_hash* functions from app.planner.hashing
+ALLOWLIST = []
 
 
 def get_backend_root() -> Path:
@@ -87,17 +82,17 @@ def is_allowed(file_path: str, line_content: str) -> bool:
 class TestHashBan:
     """Tests that enforce the hash() ban in planner code."""
 
-    def test_no_hash_in_plan_graph(self):
+    def test_no_hash_in_plan_graph_v2(self):
         """
-        plan_graph.py should not use hash() except in allowlisted locations.
+        plan_graph_v2.py should not use hash() except in allowlisted locations.
 
         Use stable_hash(), stable_hash_int(), or stable_hash_index() instead.
         """
         backend_root = get_backend_root()
-        plan_graph = backend_root / "app" / "plan_graph.py"
+        plan_graph = backend_root / "app" / "plan_graph_v2.py"
 
         if not plan_graph.exists():
-            pytest.skip("plan_graph.py not found")
+            pytest.skip("plan_graph_v2.py not found")
 
         violations = find_hash_usages(plan_graph)
 
@@ -110,7 +105,7 @@ class TestHashBan:
 
         if actual_violations:
             msg_lines = [
-                f"Found {len(actual_violations)} banned hash() usage(s) in plan_graph.py:",
+                f"Found {len(actual_violations)} banned hash() usage(s) in plan_graph_v2.py:",
             ]
             for line_num, line in actual_violations:
                 msg_lines.append(f"  Line {line_num}: {line}")

@@ -50,7 +50,7 @@ def pytest_collection_modifyitems(session, config, items):
 @pytest.fixture(autouse=True)
 def clear_all_plan_graph_caches():
     """
-    Clear ALL plan_graph caches before and after each test.
+    Clear ALL planner caches before and after each test.
 
     This fixture runs automatically for every test and ensures:
     - LLM response caches are cleared
@@ -64,12 +64,17 @@ def clear_all_plan_graph_caches():
     - Destination confusion/hallucinations
     - Stale validation results
     """
-    from app.plan_graph import clear_all_caches
+    import asyncio
 
-    # Clear before test
-    clear_all_caches()
+    from app.planner import clear_all_caches
+
+    async def _clear():
+        await clear_all_caches()
+
+    # Clear before test (V2 clear_all_caches is async)
+    asyncio.run(_clear())
 
     yield
 
     # Clear after test
-    clear_all_caches()
+    asyncio.run(_clear())

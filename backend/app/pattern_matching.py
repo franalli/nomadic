@@ -7,18 +7,17 @@ LLM calls for common user inputs.
 
 Sections:
     1. UTILITY PATTERNS - Common patterns (ANSI escape, sentence endings, etc.)
-    2. SHORT-CIRCUIT PATTERNS - Greeting/yes/no detection for quick responses
-    3. DATE PATTERNS - Relative dates, seasons, months
-    4. TRAVELER PATTERNS - Solo, couple, family, group detection
-    5. BUDGET PATTERNS - Currency, amounts, budget phrases
-    6. DURATION PATTERNS - Days, nights, weeks
-    7. DESTINATION PATTERNS - Place extraction, origin/destination
-    8. FLIGHT PATTERNS - Cabin class, layovers, airline preferences
-    9. HOTEL PATTERNS - Star ratings, amenities, room preferences
-    10. TRANSPORT PATTERNS - Car rental, train, ferry, bus
-    11. ACTIVITY PATTERNS - Tours, museums, specific activities
-    12. INFEASIBILITY PATTERNS - Impossible requests detection
-    13. LQA (Last Question Answer) PATTERNS - Field-specific answer patterns
+    2. DATE PATTERNS - Relative dates, seasons, months
+    3. TRAVELER PATTERNS - Solo, couple, family, group detection
+    4. BUDGET PATTERNS - Currency, amounts, budget phrases
+    5. DURATION PATTERNS - Days, nights, weeks
+    6. DESTINATION PATTERNS - Place extraction, origin/destination
+    7. FLIGHT PATTERNS - Cabin class, layovers, airline preferences
+    8. HOTEL PATTERNS - Star ratings, amenities, room preferences
+    9. TRANSPORT PATTERNS - Car rental, train, ferry, bus
+    10. ACTIVITY PATTERNS - Tours, museums, specific activities
+    11. INFEASIBILITY PATTERNS - Impossible requests detection
+    12. LQA (Last Question Answer) PATTERNS - Field-specific answer patterns
 """
 
 import re
@@ -49,97 +48,7 @@ PLACE_SEPARATORS_PATTERN = re.compile(r"\s*(?:,|/|\band\b|&|\+)\s*", re.IGNORECA
 
 
 # =============================================================================
-# 2. SHORT-CIRCUIT PATTERNS
-# =============================================================================
-# Patterns for quick response without full LLM processing
-
-GREETING_PATTERN = re.compile(
-    r"^(h(i|ey|ello|iya|owdy)|yo|sup|good\s+(morning|afternoon|evening|day)|"
-    r"what'?s\s+up|greetings?)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
-
-YES_PATTERN = re.compile(
-    r"^(yes|yeah|yep|yup|yea|ya|sure|ok(ay)?|alright|all\s+right|"
-    r"sounds?\s+good|absolutely|definitely|of\s+course|please|do\s+it|go\s+ahead|"
-    r"let'?s\s+do\s+(it|this|that)|ok(ay)?\s+go\s+ahead)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
-
-NO_PATTERN = re.compile(
-    r"^(no|nope|nah|not\s+really|no\s+thanks?|never\s*mind|cancel|"
-    r"don'?t|stop|wait|hold\s+on)[\s\.\!\?]*$",
-    re.IGNORECASE,
-)
-
-# Generate request pattern - detect explicit plan generation requests
-# Matches: "generate my itinerary", "create my plan", "show me the plan",
-# "I'm ready", "looks good, go ahead", "let's go", "book it now", etc.
-# IMPORTANT: Avoid matching multi-city intent phrases like "do it all together"
-GENERATE_REQUEST_PATTERN = re.compile(
-    r"(?:"
-    # "yes, generate my itinerary" / "generate my plan" / "create the itinerary"
-    r"(?:yes[,!]?\s+)?(?:generate|create|build|make)\s+(?:my\s+|the\s+)?(?:itinerary|plan|trip)"
-    r"|"
-    # "show me the plan" / "show the itinerary"
-    r"(?:show|give)\s+(?:me\s+)?(?:the\s+)?(?:plan|itinerary)" r"|"
-    # "I'm ready" / "ready to go" / "ready to generate"
-    r"(?:i'?m\s+)?ready(?:\s+to\s+(?:go|book|generate|plan))?" r"|"
-    # "looks good, go ahead" / "sounds good, let's go"
-    r"(?:looks?|sounds?)\s+good[,!]?\s*(?:go\s+ahead|let'?s\s+(?:go|do\s+it))?" r"|"
-    # "let's go" / "let's do it" / "let's book"
-    r"let'?s\s+(?:go|do\s+it|book|plan|generate)" r"|"
-    # "go ahead" / "go ahead and generate"
-    r"go\s+ahead(?:\s+(?:and\s+)?(?:generate|create|book|plan))?" r"|"
-    # "book it" / "book it now"
-    r"book\s+it(?:\s+now)?" r"|"
-    # "do it now" / "make it happen" (NOT "do it all together" which is multi-city intent)
-    r"(?:do|make)\s+it\s+(?:now|happen)" r"|"
-    # "yes please generate" / "yes generate"
-    r"yes[,!]?\s*(?:please\s+)?generate" r")",
-    re.IGNORECASE,
-)
-
-# Patterns indicating complex/dense input
-COMMA_LIST_PATTERN = re.compile(r",\s*(?:and\s+)?[A-Z][a-z]+", re.IGNORECASE)
-MULTI_DESTINATION_PATTERN = re.compile(r"\b(?:and|then|also|plus)\s+[A-Z][a-z]+", re.IGNORECASE)
-
-# Field request pattern - field-only utterances (no values)
-# Matches: "set budget", "budget?", "add my budget", "budget please", "dates?"
-FIELD_REQUEST_PATTERN = re.compile(
-    r"^(?:"
-    r"(?:set|add|change|update|edit|modify|enter|specify)\s+(?:my\s+|the\s+)?"
-    r"|"
-    r"(?:my\s+|the\s+)?"
-    r")?"
-    r"(budget|dates?|destination|origin|travelers?|flights?|hotels?|activities?)"
-    r"(?:\s+please)?[\s\?\!\.]*$",
-    re.IGNORECASE,
-)
-
-# Guard: skip field request if text contains values (digits, currency)
-HAS_VALUE_PATTERN = re.compile(r"[\d$€£¥]")
-
-# Map matched field names to canonical question_target values
-FIELD_REQUEST_TARGET_MAP: Dict[str, str] = {
-    "budget": "budget",
-    "date": "dates",
-    "dates": "dates",
-    "destination": "destinations",
-    "origin": "origin",
-    "traveler": "travelers",
-    "travelers": "travelers",
-    "flight": "flights",
-    "flights": "flights",
-    "hotel": "hotels",
-    "hotels": "hotels",
-    "activity": "activities",
-    "activities": "activities",
-}
-
-
-# =============================================================================
-# 3. DATE PATTERNS
+# 2. DATE PATTERNS
 # =============================================================================
 
 # Relative date patterns for deterministic parsing
@@ -1563,10 +1472,7 @@ def is_text_date_compatible(text: str) -> bool:
     Check if text looks like a date answer (Single Source of Truth).
 
     This is the canonical function for determining if user text is answering
-    a dates question. It consolidates the logic from:
-    - DATES_COMPATIBILITY_PATTERN
-    - GateEvaluator.text_is_compatible_with_target (dates branch)
-    - _is_date_like_text
+    a dates question.
 
     Args:
         text: User input text
@@ -2232,9 +2138,8 @@ DOMAIN_KEYWORDS: Dict[str, FrozenSet[str]] = {
     ),
 }
 
-# Specialist keywords for gate routing (unified definition)
-# Used by: SpecialistPreCoreGate, ReadyNoFieldsGate, GateEvaluator
-# Superset of all gate-specific keyword definitions
+# Specialist keywords for intent detection
+# Used by: IntentRouter for specialist hint detection
 SPECIALIST_KEYWORDS: Dict[str, FrozenSet[str]] = {
     "flights": frozenset(
         {

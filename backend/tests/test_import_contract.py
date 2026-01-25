@@ -2,10 +2,7 @@
 """
 Import contract enforcement tests.
 
-PR1: Import surface freeze - bans direct imports from plan_graph.py
-outside the planner package and tests directory.
-
-This test uses grep-based pattern matching to enforce the import contract.
+Verifies that the planner facade exports expected V2 symbols.
 """
 
 import re
@@ -20,9 +17,9 @@ BANNED_IMPORT_PATTERNS = [
     r"import\s+app\.plan_graph",
 ]
 
-# Directories/files allowed to import directly from plan_graph
+# Directories/files allowed to import directly from plan_graph_v2
 ALLOWLIST_PATHS = [
-    # The planner package itself can import from plan_graph
+    # The planner package itself can import from plan_graph_v2
     "backend/app/planner/",
     # Tests can import directly (for now)
     "backend/tests/",
@@ -32,13 +29,11 @@ ALLOWLIST_PATHS = [
 
 def get_backend_root() -> Path:
     """Get the backend directory root."""
-    # This file is at backend/tests/test_import_contract.py
     return Path(__file__).parent.parent
 
 
 def is_allowed_path(file_path: Path, backend_root: Path) -> bool:
     """Check if a file path is in the allowlist."""
-    # Normalize to forward slashes for cross-platform compatibility
     rel_path = str(file_path.relative_to(backend_root.parent)).replace("\\", "/")
 
     for allowed in ALLOWLIST_PATHS:
@@ -54,7 +49,6 @@ def find_python_files(root: Path, exclude_dirs: set = None) -> list:
     python_files = []
 
     for path in root.rglob("*.py"):
-        # Skip excluded directories
         if any(ex in path.parts for ex in exclude_dirs):
             continue
         python_files.append(path)
@@ -90,16 +84,7 @@ class TestImportContract:
     """Test that import contract is enforced."""
 
     def test_no_direct_plan_graph_imports_outside_allowlist(self):
-        """
-        No file outside the allowlist should import directly from plan_graph.py.
-
-        Allowed:
-        - backend/app/planner/* (the facade package)
-        - backend/tests/* and tests/* (test files)
-
-        Banned:
-        - Any other module importing 'from app.plan_graph import ...'
-        """
+        """No file outside the allowlist should import directly from plan_graph.py."""
         backend_root = get_backend_root()
         app_root = backend_root / "app"
 
@@ -109,12 +94,11 @@ class TestImportContract:
         violations = []
 
         for py_file in find_python_files(app_root):
-            # Skip files in allowlist
             if is_allowed_path(py_file, backend_root):
                 continue
 
-            # Skip plan_graph.py itself
-            if py_file.name == "plan_graph.py":
+            # Skip plan_graph files themselves
+            if "plan_graph" in py_file.name:
                 continue
 
             file_violations = check_file_for_banned_imports(py_file, BANNED_IMPORT_PATTERNS)
@@ -131,11 +115,7 @@ class TestImportContract:
             )
 
     def test_main_py_uses_planner_facade(self):
-        """
-        main.py should import from app.planner, not app.plan_graph directly.
-
-        This test specifically checks main.py as it's the main entry point.
-        """
+        """main.py should import from app.planner, not app.plan_graph directly."""
         backend_root = get_backend_root()
         main_py = backend_root / "app" / "main.py"
 
@@ -144,11 +124,9 @@ class TestImportContract:
 
         content = main_py.read_text(encoding="utf-8")
 
-        # Check for banned patterns
         for pattern in BANNED_IMPORT_PATTERNS:
             match = re.search(pattern, content)
             if match:
-                # Find line number
                 line_num = content[: match.start()].count("\n") + 1
                 line_content = content.splitlines()[line_num - 1].strip()
 
@@ -178,16 +156,7 @@ class TestPlannerFacadeExports:
         """run_turn_streaming should be exported from facade."""
         from app.planner import run_turn_streaming
 
-        # It's an async generator function
         assert run_turn_streaming is not None
-
-    def test_facade_exports_gate_classes(self):
-        """Gate classes should be exported from facade."""
-        from app.planner import GateEvaluator, GatePrecedence, GateResult
-
-        assert GateEvaluator is not None
-        assert GatePrecedence is not None
-        assert GateResult is not None
 
     def test_facade_exports_graph_state(self):
         """GraphState should be exported from facade."""
@@ -244,6 +213,20 @@ class TestPlannerFacadeExports:
         assert callable(cache_set)
         assert callable(cache_delete)
 
+    def test_facade_exports_v2_state_models(self):
+        """V2 state models should be exported from facade."""
+        from app.planner import (
+            GraphStateV2,
+            ItineraryBlock,
+            SpecialistConstraint,
+            TripPlan,
+        )
+
+        assert GraphStateV2 is not None
+        assert TripPlan is not None
+        assert ItineraryBlock is not None
+        assert SpecialistConstraint is not None
+
     def test_facade_all_exports(self):
         """__all__ should contain all expected exports."""
         from app import planner
@@ -251,9 +234,6 @@ class TestPlannerFacadeExports:
         expected_exports = [
             "run_turn",
             "run_turn_streaming",
-            "GateEvaluator",
-            "GatePrecedence",
-            "GateResult",
             "GraphState",
             "TripInputs",
             "get_planner_debug_info",
@@ -261,6 +241,9 @@ class TestPlannerFacadeExports:
             "meta_set",
             "is_test_mode",
             "cache_get",
+            # V2 state models
+            "GraphStateV2",
+            "TripPlan",
         ]
 
         for export in expected_exports:
