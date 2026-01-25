@@ -27,7 +27,7 @@ function DocumentHeaderInner({
 }: DocumentHeaderProps) {
   // Build summary line parts
   const origin = tripInputs.origin || branch.origin;
-  const destination = branch.destinations?.[0] || tripInputs.destinations?.[0];
+  const destination = branch.destination || tripInputs.destination;
   const dateRange = formatDateRange(
     branch.start_date || tripInputs.start_date,
     branch.end_date || tripInputs.end_date

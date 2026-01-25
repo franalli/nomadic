@@ -89,6 +89,14 @@ interface StrategyStageRendererProps {
   isCommitting?: boolean;
   /** Whether user has ever had a plan generated (for CTA label) */
   hasEverHadPlan?: boolean;
+  /** Stage navigation: Setup click handler */
+  onSetupClick?: () => void;
+  /** Stage navigation: Plan click handler */
+  onPlanClick?: () => void;
+  /** Stage navigation: Book click handler */
+  onBookClick?: () => void;
+  /** Whether user has minimum selections to enable Book stage */
+  hasMinimumSelections?: boolean;
 }
 
 function renderStageContent(
@@ -99,7 +107,8 @@ function renderStageContent(
   onRefineAssumptions?: () => void,
   onExpandToItinerary?: () => void,
   onBuildPlan?: () => void,
-  hasEverHadPlan?: boolean
+  hasEverHadPlan?: boolean,
+  tiles?: Record<string, Tile>
 ): React.ReactNode {
   // Note: S0BootstrapView now reads from document store directly
   // Action handlers for opening sheets will be added when we wire up the full chip row integration
@@ -121,12 +130,14 @@ function renderStageContent(
     case 'S2_STRATEGY_READY':
       return (
         <S2StrategyView
+          key={`strategy-${destinationCard?.destination}`}
           viewModel={viewModel}
           destinationCard={destinationCard}
           onRefineAssumptions={onRefineAssumptions}
           canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
           pendingTopics={viewModel.pending_strategy_topics}
           executedTopics={viewModel.executed_strategy_topics}
+          tiles={tiles}
         />
       );
 
@@ -192,6 +203,10 @@ export function StrategyStageRenderer({
   onOpenSheet,
   isCommitting = false,
   hasEverHadPlan = false,
+  onSetupClick,
+  onPlanClick,
+  onBookClick,
+  hasMinimumSelections = false,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -222,6 +237,10 @@ export function StrategyStageRenderer({
           tripInputs={tripInputs}
           onOpenSheet={onOpenSheet}
           isStreaming={isStreaming}
+          onSetupClick={onSetupClick}
+          onPlanClick={onPlanClick}
+          onBookClick={onBookClick}
+          hasMinimumSelections={hasMinimumSelections}
         />
         <div className="flex flex-1 items-center justify-center p-4">
           <div className="rounded-lg border border-border bg-card p-6 text-center shadow-sm">
@@ -249,6 +268,10 @@ export function StrategyStageRenderer({
         tripInputs={tripInputs}
         onOpenSheet={onOpenSheet}
         isStreaming={isStreaming}
+        onSetupClick={onSetupClick}
+        onPlanClick={onPlanClick}
+        onBookClick={onBookClick}
+        hasMinimumSelections={hasMinimumSelections}
       />
 
       {/* Stage content - scrollable with bottom padding for footer */}
@@ -272,7 +295,8 @@ export function StrategyStageRenderer({
               onRefineAssumptions,
               onExpandToItinerary,
               onBuildPlan,
-              hasEverHadPlan
+              hasEverHadPlan,
+              tiles
             )}
 
             {/* BookingSection rendered conditionally (not "always") */}

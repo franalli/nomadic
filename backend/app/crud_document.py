@@ -6,7 +6,6 @@ Most recent update wins regardless of source (user or LLM).
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from sqlalchemy import select
@@ -14,7 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app import db_models as models
-from app.graph_plan_utils import normalize_destinations
+from app.debug_utils import _debug
+
+# normalize_destinations removed - single destination only
 from app.schemas import (
     ActivitySettings,
     BookingTypes,
@@ -32,9 +33,6 @@ from app.schemas import (
 from app.schemas import (
     Tile as TileSchema,
 )
-
-_DEBUG_LOG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
-
 
 # =============================================================================
 # Async functions (for async endpoints and LangGraph)
@@ -169,6 +167,7 @@ def merge_trip_inputs(
 
     # Fields that can be merged (excluding meta fields)
     mergeable_fields = [
+        "destination",
         "origin",
         "start_date",
         "end_date",
@@ -177,8 +176,6 @@ def merge_trip_inputs(
         "requires_assistance",
         "budget",
         "currency",
-        "multi_city_intent",
-        "destinations",
         # Booking preferences (nested objects - replace entirely)
         "booking_types",
         "flight_settings",
@@ -205,23 +202,19 @@ def merge_trip_inputs(
         if field not in incoming_data and not is_explicit_null:
             continue
 
-        # Handle destinations specially
-        if field == "destinations":
-            if replace_destinations or is_explicit_null:
-                # Replace entirely (or clear if explicitly nulled)
-                result.destinations = incoming_value if incoming_value else []
-            elif incoming_value:
-                # Merge destinations (union)
-                existing_dest = set(result.destinations or [])
-                incoming_dest = set(incoming_value or [])
-                result.destinations = list(existing_dest | incoming_dest)
+        # Handle destination (single destination, replaces old value)
+        if field == "destination":
+            if is_explicit_null:
+                result.destination = None
+            elif incoming_value is not None:
+                result.destination = incoming_value
+                _debug(f"Set 'destination' to '{incoming_value}'")
         elif field in booking_defaults:
             if is_explicit_null:
                 # Reset booking preference to default instance
                 default_factory = booking_defaults[field]
                 setattr(result, field, default_factory())
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] Reset '{field}' to default (explicit null)")
+                _debug(f"Reset '{field}' to default (explicit null)")
             elif incoming_value is not None:
                 # Convert dict to Pydantic model if needed to avoid serialization warnings
                 model_class = booking_defaults[field]
@@ -230,32 +223,26 @@ def merge_trip_inputs(
                 elif not isinstance(incoming_value, model_class):
                     incoming_value = model_class.model_validate(incoming_value)
                 setattr(result, field, incoming_value)
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
+                _debug(f"Set '{field}' to '{incoming_value}'")
         else:
             # Scalar fields: origin, start_date, end_date, adults, children,
             # requires_assistance, budget, multi_city_intent
             if is_explicit_null:
                 # User explicitly deleted this field
                 setattr(result, field, None)
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] Deleted '{field}' (explicit null)")
+                _debug(f"Deleted '{field}' (explicit null)")
             elif incoming_value is not None:
                 setattr(result, field, incoming_value)
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] Set '{field}' to '{incoming_value}'")
+                _debug(f"Set '{field}' to '{incoming_value}'")
 
     # Handle missing_fields - always recompute based on actual values
-    # ONLY include REQUIRED fields: destinations, origin, start_date
-    # end_date is OPTIONAL and should not block ready_to_generate
+    # ONLY include REQUIRED fields: destination, start_date
+    # origin and end_date are OPTIONAL
     missing = []
-    if not result.destinations:
-        missing.append("destinations")
-    if result.origin is None:
-        missing.append("origin")
+    if not result.destination:
+        missing.append("destination")
     if result.start_date is None:
         missing.append("start_date")
-    # NOTE: end_date is intentionally NOT included - it's optional
     result.missing_fields = missing
 
     return result
@@ -336,16 +323,16 @@ def merge_selections(
 def prune_branches_and_tiles(
     branches: list[DocumentBranch],
     tiles: dict[str, TileSchema],
-    current_destinations: list[str],
+    current_destination: Optional[str],
 ) -> tuple[list[DocumentBranch], dict[str, TileSchema]]:
     """
-    Prune branches that reference destinations no longer in trip_inputs.
+    Prune branches that reference a different destination than trip_inputs.
     Also remove orphaned tiles that are no longer referenced by any remaining branch.
 
     Args:
         branches: Current list of branches
         tiles: Current tiles map
-        current_destinations: The current destinations list from trip_inputs
+        current_destination: The current destination from trip_inputs
 
     Returns:
         Tuple of (pruned_branches, pruned_tiles)
@@ -353,21 +340,21 @@ def prune_branches_and_tiles(
     if not branches:
         return branches, tiles
 
-    # Lowercase current destinations for case-insensitive matching
-    current_lower = {d.lower() for d in current_destinations}
-
-    # Filter branches: keep only those whose destinations are all still valid
+    # Filter branches: keep only those matching the current destination
     pruned_branches = []
+    current_lower = current_destination.lower() if current_destination else None
+
     for branch in branches:
-        branch_destinations = branch.destinations or []
-        # Keep branch if all its destinations are in current destinations
-        # (or if branch has no destinations, which shouldn't happen but be safe)
-        if not branch_destinations or all(d.lower() in current_lower for d in branch_destinations):
+        branch_dest = branch.destination
+        # Keep branch if it has no destination or matches current
+        if not branch_dest or not current_lower:
             pruned_branches.append(branch)
-        elif _DEBUG_LOG:
-            print(
-                f"[DEBUG] Pruning branch '{branch.id}' - "
-                f"destinations {branch_destinations} not in {current_destinations}"
+        elif branch_dest.lower() == current_lower:
+            pruned_branches.append(branch)
+        else:
+            _debug(
+                f"Pruning branch '{branch.id}' - "
+                f"destination '{branch_dest}' != current '{current_destination}'"
             )
 
     # If no branches were removed, tiles are unchanged
@@ -390,10 +377,9 @@ def prune_branches_and_tiles(
     # Prune orphaned tiles
     pruned_tiles = {tid: tile for tid, tile in tiles.items() if tid in referenced_tile_ids}
 
-    if _DEBUG_LOG:
-        removed_count = len(tiles) - len(pruned_tiles)
-        if removed_count > 0:
-            print(f"[DEBUG] Pruned {removed_count} orphaned tiles")
+    removed_count = len(tiles) - len(pruned_tiles)
+    if removed_count > 0:
+        _debug(f"Pruned {removed_count} orphaned tiles")
 
     return pruned_branches, pruned_tiles
 
@@ -423,8 +409,7 @@ def apply_user_patch_sync(
         for field_name in patch.trip_inputs.model_fields_set:
             if getattr(patch.trip_inputs, field_name, "NOT_NONE") is None:
                 explicit_nulls.add(field_name)
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] apply_user_patch_sync: '{field_name}' set to null")
+                _debug(f"apply_user_patch_sync: '{field_name}' set to null")
 
     # Merge trip inputs with replace_destinations=True
     data.trip_inputs = merge_trip_inputs(
@@ -443,24 +428,24 @@ def apply_user_patch_sync(
     # Update selections
     data.branches = merge_selections(data.branches, patch.selections)
 
-    # Prune branches referencing removed destinations, and clean up orphaned tiles
+    # Prune branches referencing different destination, and clean up orphaned tiles
     if patch.trip_inputs is not None and data.branches:
         data.branches, data.tiles = prune_branches_and_tiles(
             data.branches,
             data.tiles,
-            data.trip_inputs.destinations,
+            data.trip_inputs.destination,
         )
 
     # Cascade trip_inputs changes to the primary branch
-    # This ensures destination removals are reflected in the branch
+    # This ensures destination changes are reflected in the branch
     if patch.trip_inputs is not None and data.branches:
         primary_idx = next(
             (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
         )
         if primary_idx is not None:
             primary = data.branches[primary_idx]
-            # Always sync destinations (including empty list for removals)
-            primary.destinations = data.trip_inputs.destinations
+            # Always sync destination
+            primary.destination = data.trip_inputs.destination
 
             # Sync other fields only if they were explicitly provided in the patch
             def _field_was_provided(field_name: str) -> bool:
@@ -509,8 +494,7 @@ async def apply_user_patch(
         for field_name in patch.trip_inputs.model_fields_set:
             if getattr(patch.trip_inputs, field_name, "NOT_NONE") is None:
                 explicit_nulls.add(field_name)
-                if _DEBUG_LOG:
-                    print(f"[DEBUG] apply_user_patch: Field '{field_name}' explicitly set to null")
+                _debug(f"apply_user_patch: Field '{field_name}' explicitly set to null")
 
     # Merge trip inputs with replace_destinations=True
     data.trip_inputs = merge_trip_inputs(
@@ -529,24 +513,24 @@ async def apply_user_patch(
     # Update selections
     data.branches = merge_selections(data.branches, patch.selections)
 
-    # Prune branches referencing removed destinations, and clean up orphaned tiles
+    # Prune branches referencing different destination, and clean up orphaned tiles
     if patch.trip_inputs is not None and data.branches:
         data.branches, data.tiles = prune_branches_and_tiles(
             data.branches,
             data.tiles,
-            data.trip_inputs.destinations,
+            data.trip_inputs.destination,
         )
 
     # Cascade trip_inputs changes to the primary branch
-    # This ensures destination removals are reflected in the branch
+    # This ensures destination changes are reflected in the branch
     if patch.trip_inputs is not None and data.branches:
         primary_idx = next(
             (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
         )
         if primary_idx is not None:
             primary = data.branches[primary_idx]
-            # Always sync destinations (including empty list for removals)
-            primary.destinations = data.trip_inputs.destinations
+            # Always sync destination
+            primary.destination = data.trip_inputs.destination
 
             # Sync other fields only if they were explicitly provided in the patch
             def _field_was_provided(field_name: str) -> bool:
@@ -597,11 +581,8 @@ async def apply_planner_update(
     # Update trip context
     data.trip_context_id = trip_context_id
 
-    if _DEBUG_LOG:
-        if trip_inputs:
-            print(
-                f"[DEBUG] apply_planner_update: Incoming trip_inputs = {trip_inputs.model_dump()}"
-            )
+    if trip_inputs:
+        _debug(f"apply_planner_update: Incoming trip_inputs = {trip_inputs.model_dump()}")
 
     # Merge trip inputs - most recent update wins
     data.trip_inputs = merge_trip_inputs(
@@ -610,25 +591,24 @@ async def apply_planner_update(
         replace_destinations=True,
     )
 
-    # Normalize destinations: case-insensitive deduplication + title-casing
-    # This ensures "rome" and "Rome" become a single "Rome"
-    if data.trip_inputs.destinations:
-        data.trip_inputs.destinations = normalize_destinations(data.trip_inputs.destinations)
+    # Title-case destination for consistent display
+    if data.trip_inputs.destination:
+        data.trip_inputs.destination = data.trip_inputs.destination.title()
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:
         data.branches = merge_branches(data.branches, branches)
     elif trip_inputs is not None and data.branches:
         # No new branches but trip_inputs changed - update the primary branch
-        # to reflect the new values so UI displays updated destinations/dates/etc
+        # to reflect the new values so UI displays updated destination/dates/etc
         primary_idx = next(
             (i for i, b in enumerate(data.branches) if b.is_primary), 0 if data.branches else None
         )
         if primary_idx is not None:
             primary = data.branches[primary_idx]
             # Update branch parameters from trip_inputs
-            # Always sync destinations, even if empty (user may have removed all)
-            primary.destinations = trip_inputs.destinations
+            # Always sync destination
+            primary.destination = trip_inputs.destination
             if trip_inputs.origin is not None:
                 primary.origin = trip_inputs.origin
             if trip_inputs.start_date is not None:
@@ -679,10 +659,9 @@ def apply_planner_update_sync(
         replace_destinations=True,
     )
 
-    # Normalize destinations: case-insensitive deduplication + title-casing
-    # This ensures "rome" and "Rome" become a single "Rome"
-    if data.trip_inputs.destinations:
-        data.trip_inputs.destinations = normalize_destinations(data.trip_inputs.destinations)
+    # Title-case destination for consistent display
+    if data.trip_inputs.destination:
+        data.trip_inputs.destination = data.trip_inputs.destination.title()
 
     # Merge branches (planner branches are added/updated) - only if provided
     if branches is not None:
@@ -694,7 +673,7 @@ def apply_planner_update_sync(
         )
         if primary_idx is not None:
             primary = data.branches[primary_idx]
-            primary.destinations = trip_inputs.destinations
+            primary.destination = trip_inputs.destination
             if trip_inputs.origin is not None:
                 primary.origin = trip_inputs.origin
             if trip_inputs.start_date is not None:

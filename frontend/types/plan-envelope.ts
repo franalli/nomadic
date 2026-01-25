@@ -77,6 +77,30 @@ export interface ReadinessItem {
   ok: boolean;
 }
 
+/**
+ * Trip Health status for General Agent dashboard.
+ * Shows constraint validation, inventory counts, and alerts.
+ */
+export interface TripHealth {
+  /** Constraint validation status (green/yellow/red) */
+  constraints: Array<{
+    key: ReadinessKey;
+    status: 'valid' | 'warning' | 'error';
+    label: string;
+  }>;
+  /** Inventory counts from tiles */
+  inventory: {
+    hotels: number;
+    flights: number;
+    activities: number;
+  };
+  /** Critical alerts from open_decisions where is_blocking: true */
+  alerts: Array<{
+    level: 'warning' | 'error';
+    message: string;
+  }>;
+}
+
 // =============================================================================
 // Destination Card
 // =============================================================================
@@ -181,6 +205,11 @@ export interface StrategySection {
   subtitle?: string; // e.g., "Dubai Trip"
   specialist_type?: string; // e.g., "hiking", "diving", "general"
 
+  // Feasibility state (from Constraint Engine)
+  feasibility_status?: 'feasible' | 'caveat' | 'infeasible';
+  feasibility_reason?: string; // e.g., "Indoor skiing only (SnowWorld)"
+  alternative_suggestion?: string; // e.g., "Consider Chamonix, Zermatt, or Niseko"
+
   // Collapsed state
   one_liner?: string; // max 60 chars
   principles: string[]; // max 4 items, 50 chars each
@@ -196,6 +225,26 @@ export interface StrategySection {
 
   // Impact areas - which parts of the plan this agent affects
   impact_areas?: string[]; // e.g., ["Schedule", "Location", "Gear"]
+
+  // Technical log data for "System Log" display
+  constraints_applied?: Array<{
+    rule: string;
+    type: string;
+    reason?: string;
+  }>;
+
+  content_added?: Array<{
+    title: string;
+    day?: number;
+    type?: string;
+  }>;
+
+  // For General Agent: trip parameters summary (inventory counts from tiles, not here)
+  trip_summary?: {
+    destination: string;
+    dates: string;
+    travelers: string;
+  };
 
   // Provenance (debug only, not shown in UI)
   strategy_node_id?: string;
@@ -242,6 +291,10 @@ export interface DayBlock {
   activity_type: string; // e.g., "moderate hike", "city stroll"
   intensity?: 'light' | 'moderate' | 'challenging';
   summary: string; // ≤15 words, no times/prices
+  // Buffer/Safety block fields (for No-Fly intervals, acclimatization, etc.)
+  is_buffer?: boolean;
+  buffer_type?: 'no_fly' | 'rest_day' | 'acclimatization' | 'arrival' | 'departure';
+  buffer_reason?: string; // e.g., "PADI Standard - 24h surface interval before flying"
 }
 
 /**

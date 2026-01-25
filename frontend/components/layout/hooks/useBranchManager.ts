@@ -588,7 +588,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const handleBookTrip = useCallback(
     (branchId: string) => {
       console.log('[handleBookTrip] Called with branchId:', branchId);
-      console.log('[handleBookTrip] Available branches:', branchState.branches.map(b => ({ id: b.id, dest: b.destinations })));
+      console.log('[handleBookTrip] Available branches:', branchState.branches.map(b => ({ id: b.id, dest: b.destination })));
 
       const branch = branchState.branches.find((b) => b.id === branchId);
       if (!branch) {

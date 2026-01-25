@@ -46,14 +46,14 @@ export interface UsePlanRegenerationReturn {
 /**
  * Computes a hash of constraints that trigger full plan regeneration.
  *
- * Hard constraints: origin, destinations, dates, adults, children, budget
+ * Hard constraints: origin, destination, dates, adults, children, budget
  * Activity constraints: activity_settings.categories (triggers specialist re-orchestration)
  *
  * Arrays are sorted before hashing to ensure stable comparison regardless of order.
  */
 function computeConstraintHash(inputs: DocumentTripInputs): string {
   const {
-    destinations,
+    destination,
     origin,
     start_date,
     end_date,
@@ -64,11 +64,10 @@ function computeConstraintHash(inputs: DocumentTripInputs): string {
   } = inputs;
 
   // Sort arrays for stable hashing (prevents spurious regenerations from order changes)
-  const sortedDestinations = [...(destinations || [])].sort();
   const sortedCategories = [...(activity_settings?.categories || [])].sort();
 
   return JSON.stringify({
-    destinations: sortedDestinations,
+    destination: destination || null,
     origin: origin || null,
     start_date: start_date || null,
     end_date: end_date || null,

@@ -48,7 +48,7 @@ export type DocumentBranch = {
   id: string;
   label: string;
   description: string;
-  destinations: string[];
+  destination?: string | null;
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -131,7 +131,7 @@ export type TransportSettings = {
 };
 
 export type DocumentTripInputs = {
-  destinations: string[];
+  destination?: string | null;
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -141,7 +141,6 @@ export type DocumentTripInputs = {
   budget?: number | null;
   currency?: string | null;
   missing_fields: string[];
-  multi_city_intent?: 'multi_city' | 'separate' | null;
   booking_types?: BookingTypes;
   flight_settings?: FlightSettings;
   hotel_settings?: HotelSettings;

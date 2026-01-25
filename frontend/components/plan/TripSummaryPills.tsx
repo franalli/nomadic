@@ -41,7 +41,7 @@ export function TripSummaryPills({
   const bookingTypes = tripInputs.booking_types ?? DEFAULT_BOOKING_TYPES;
 
   // Compute display values
-  const destination = tripInputs.destinations?.[0] || null;
+  const destination = tripInputs.destination || null;
   const origin = tripInputs.origin || null;
   const dateRange = formatDateRangeForPills(
     tripInputs.start_date,

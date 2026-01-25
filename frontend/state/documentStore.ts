@@ -64,7 +64,7 @@ export const DEFAULT_TRANSPORT_SETTINGS: TransportSettings = {
  * recomputes it based on actual values during merge operations.
  */
 export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
-  destinations: [],
+  destination: null,
   origin: null,
   start_date: null,
   end_date: null,
@@ -73,9 +73,8 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
   requires_assistance: null,
   budget: null,
   currency: 'USD',
-  multi_city_intent: null,
   // Per YC demo spec: destination + dates (or flexible dates) required to generate a plan
-  missing_fields: ['destinations'],
+  missing_fields: ['destination'],
   booking_types: DEFAULT_BOOKING_TYPES,
   flight_settings: DEFAULT_FLIGHT_SETTINGS,
   hotel_settings: DEFAULT_HOTEL_SETTINGS,
@@ -95,7 +94,7 @@ export const DEFAULT_TRIP_INPUTS: DocumentTripInputs = {
 export type LLMUpdatableField =
   // Core trip inputs
   | 'origin'
-  | 'destinations'
+  | 'destination'
   | 'start_date'
   | 'end_date'
   | 'adults'
@@ -103,7 +102,6 @@ export type LLMUpdatableField =
   | 'requires_assistance'
   | 'budget'
   | 'currency'
-  | 'multi_city_intent'
   // Settings objects (parent level)
   | 'booking_types'
   | 'flight_settings'
@@ -263,7 +261,7 @@ function detectChangedFields(
   if (!oldInputs) {
     // If no old inputs, check which fields have values (differ from defaults)
     if (newInputs.origin) changed.push('origin');
-    if (newInputs.destinations?.length) changed.push('destinations');
+    if (newInputs.destination) changed.push('destination');
     if (newInputs.start_date) changed.push('start_date');
     if (newInputs.end_date) changed.push('end_date');
     if (newInputs.adults != null) changed.push('adults');
@@ -271,7 +269,6 @@ function detectChangedFields(
     if (newInputs.requires_assistance != null) changed.push('requires_assistance');
     if (newInputs.budget != null) changed.push('budget');
     if (newInputs.currency && newInputs.currency !== DEFAULT_TRIP_INPUTS.currency) changed.push('currency');
-    if (newInputs.multi_city_intent) changed.push('multi_city_intent');
 
     // Booking types - use shallow comparison
     const newBooking = newInputs.booking_types;
@@ -326,10 +323,7 @@ function detectChangedFields(
 
   // Compare each field
   if (oldInputs.origin !== newInputs.origin) changed.push('origin');
-  // Destinations - use array comparison instead of JSON.stringify
-  if (!arraysEqual(oldInputs.destinations, newInputs.destinations)) {
-    changed.push('destinations');
-  }
+  if (oldInputs.destination !== newInputs.destination) changed.push('destination');
   if (oldInputs.start_date !== newInputs.start_date) changed.push('start_date');
   if (oldInputs.end_date !== newInputs.end_date) changed.push('end_date');
   if (oldInputs.adults !== newInputs.adults) changed.push('adults');
@@ -337,7 +331,6 @@ function detectChangedFields(
   if (oldInputs.requires_assistance !== newInputs.requires_assistance) changed.push('requires_assistance');
   if (oldInputs.budget !== newInputs.budget) changed.push('budget');
   if (oldInputs.currency !== newInputs.currency) changed.push('currency');
-  if (oldInputs.multi_city_intent !== newInputs.multi_city_intent) changed.push('multi_city_intent');
 
   // Booking types - use shallow comparison
   const oldBooking = oldInputs.booking_types;
@@ -401,7 +394,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const tripInputs = document?.trip_inputs;
 
     // Require destination
-    const hasDestination = (tripInputs?.destinations?.length ?? 0) > 0;
+    const hasDestination = Boolean(tripInputs?.destination);
 
     // Dates are "set" if either:
     // 1. Explicit start_date && end_date
@@ -479,12 +472,28 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const response = await attemptPatch(version);
 
-      // Update with backend response (authoritative)
+      // Get current document to preserve strategy fields
+      // Strategy fields come from graph SSE response, not persisted in DB
+      // PATCH response doesn't include them, so we must preserve them
+      const currentDoc = get().document;
+
+      // Update with backend response, but preserve strategy fields from current state
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
-        document: response.document,
+        document: {
+          ...response.document,
+          // Preserve strategy fields from graph (not persisted in DB)
+          strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
+          executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
+          pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
+          plan_view_state: currentDoc?.plan_view_state ?? response.document.plan_view_state,
+          // Also preserve tiles which may come from graph
+          tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
+            ? currentDoc.tiles
+            : response.document.tiles,
+        },
         isCommitting: false,
         error: null,
       });
@@ -506,12 +515,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           // Retry with fresh version
           const retryResponse = await attemptPatch(freshResponse.version);
 
-          // Update with retry response (authoritative)
+          // Get current document to preserve strategy fields
+          const currentDocRetry = get().document;
+
+          // Update with retry response, preserving strategy fields
           set({
             version: retryResponse.version,
             updatedBy: retryResponse.updated_by,
             updatedAt: retryResponse.updated_at,
-            document: retryResponse.document,
+            document: {
+              ...retryResponse.document,
+              // Preserve strategy fields from graph (not persisted in DB)
+              strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
+              executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
+              pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
+              plan_view_state: currentDocRetry?.plan_view_state ?? retryResponse.document.plan_view_state,
+              tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
+                ? currentDocRetry.tiles
+                : retryResponse.document.tiles,
+            },
             isCommitting: false,
             error: null,
           });
@@ -670,6 +692,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   setFromPlanResponse: (response: PlanDocumentResponse) => {
     const { document: currentDoc, llmUpdatedFields } = get();
     const primaryBranch = response.document.branches.find((b) => b.is_primary);
+
+    // DEBUG: Log strategy sections when setting document
+    console.log('[documentStore] setFromPlanResponse:', {
+      strategy_sections_count: response.document.strategy_sections?.length ?? 0,
+      strategy_sections: response.document.strategy_sections,
+      plan_view_state: response.document.plan_view_state,
+      executed_strategy_topics: response.document.executed_strategy_topics,
+    });
 
     // If update is from planner, detect which fields changed
     let newLLMUpdatedFields = llmUpdatedFields;

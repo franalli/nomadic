@@ -30,19 +30,28 @@ class ConstraintViolation:
         message: str,
         severity: str = "warning",
         category: str = "general",
+        suggested_action: str | None = None,
+        suggested_specialist: str | None = None,
     ):
         self.code = code
         self.message = message
         self.severity = severity  # "blocking", "warning", "info"
-        self.category = category  # "budget", "temporal", "geographic", "specialist"
+        self.category = category  # "budget", "temporal", "geographic", "specialist", "seasonal"
+        self.suggested_action = suggested_action  # Human-readable action
+        self.suggested_specialist = suggested_specialist  # Alternative specialist to switch to
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        result = {
             "code": self.code,
             "message": self.message,
             "severity": self.severity,
             "category": self.category,
         }
+        if self.suggested_action:
+            result["suggested_action"] = self.suggested_action
+        if self.suggested_specialist:
+            result["suggested_specialist"] = self.suggested_specialist
+        return result
 
 
 # =============================================================================
@@ -230,6 +239,48 @@ def check_specialist_constraints(
     return violations
 
 
+def check_seasonal_constraints(plan: TripPlan) -> List[ConstraintViolation]:
+    """
+    Check if trip_type is compatible with the season at destination.
+
+    Examples:
+    - Hiking in Swiss Alps in November → Trails closed due to snow
+    - Skiing in Chamonix in July → No snow conditions
+
+    Returns violations with suggested alternative specialists.
+    """
+    from app.planner.season import get_activity_season_conflict
+
+    violations = []
+
+    if not plan.trip_type or not plan.start_date or not plan.destination:
+        return violations
+
+    # Get season conflict
+    conflict = get_activity_season_conflict(
+        activity_type=plan.trip_type,
+        date_str=plan.start_date,
+        destination=plan.destination,
+    )
+
+    if conflict:
+        violation_message, suggested_specialist = conflict
+        # season variable intentionally not used - conflict message already contains context
+
+        violations.append(
+            ConstraintViolation(
+                code="SEASONAL_ACTIVITY_CONFLICT",
+                message=violation_message,
+                severity="warning",  # Warning, not blocking - user can override
+                category="seasonal",
+                suggested_action=f"Try {suggested_specialist} instead?",
+                suggested_specialist=suggested_specialist,
+            )
+        )
+
+    return violations
+
+
 def check_geographic_constraints(plan: TripPlan) -> List[ConstraintViolation]:
     """
     Check geographic feasibility.
@@ -351,6 +402,9 @@ class ConstraintGuard:
         # Temporal constraints
         violations.extend(check_temporal_constraints(state.trip_plan, state.tiles))
 
+        # Seasonal constraints (hiking in winter, skiing in summer)
+        violations.extend(check_seasonal_constraints(state.trip_plan))
+
         # Specialist constraints
         violations.extend(check_specialist_constraints(state.trip_plan, state.tiles))
 
@@ -386,8 +440,24 @@ async def constraint_guard(state: GraphStateV2) -> GraphStateV2:
 
     guard = ConstraintGuard()
 
-    # Run all checks
+    from app.debug_utils import log
+
+    log("GUARD", "Validation (pure Python, no LLM)...")
+
+    # Run all checks (pure Python, no LLM)
     violations, has_blocking = guard.check_all(state)
+
+    log("GUARD", f"Violations found: {len(violations)}")
+    for v in violations:
+        severity_icon = "⚠️" if v.severity == "warning" else "ℹ️" if v.severity == "info" else "❌"
+        log("CONSTRAINT", f"{severity_icon} {v.code} ({v.severity})", data=v.message, sleep=0.2)
+
+    if has_blocking:
+        log("SOLVER", "Blocking violations detected - triggering auto-fix loop")
+    elif violations:
+        log("GUARD", "No blocking violations - proceeding to synthesis")
+    else:
+        log("GUARD", "All constraints satisfied")
 
     # Update state
     state.constraints_violated = [v.message for v in violations]
@@ -395,6 +465,14 @@ async def constraint_guard(state: GraphStateV2) -> GraphStateV2:
     # Store detailed violations in metadata
     state.metadata["constraint_violations"] = [v.to_dict() for v in violations]
     state.metadata["has_blocking_violations"] = has_blocking
+
+    # Prepare violation context for Architect retry (Auto-Fix Loop)
+    if has_blocking:
+        state.metadata["violations_for_retry"] = [
+            {"code": v.code, "message": v.message, "severity": v.severity}
+            for v in violations
+            if v.severity == "blocking"
+        ]
 
     # Add UI event if violations found
     if violations:

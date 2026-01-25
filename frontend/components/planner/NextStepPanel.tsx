@@ -6,10 +6,10 @@
  *
  * Rules (updated):
  * - Required: Destination, Start date
- * - Optional: Trip length (required for Stays pricing, itinerary creation)
+ * - Origin: Always visible. Required when Flights ON, optional otherwise
+ * - Optional: Nights (shows calculated date range when set, e.g., "5 nights (Feb 1 - Feb 6)")
  * - Defaulted (show as set): Travelers (1 adult)
  * - Optional: Budget (show with "optional" marker)
- * - Conditional: Origin (only show if Flights module ON)
  * - No "Strategy" wording in setup phase
  *
  * IMPORTANT: Reads from document store directly (single source of truth)
@@ -30,6 +30,8 @@ interface ChecklistItem {
   isOptional?: boolean;
   /** Helper text shown when item is not set */
   helperText?: string;
+  /** Secondary helper shown below value when item IS set (e.g., date range for nights) */
+  valueHelper?: string | null;
   isSet: boolean;
   icon: typeof MapPin;
   onSet?: () => void;
@@ -66,7 +68,7 @@ export function NextStepPanel({
   const tripInputs = useDocumentTripInputs();
 
   // Extract and format values from store
-  const destination = tripInputs?.destinations?.[0] ?? null;
+  const destination = tripInputs?.destination ?? null;
   const origin = tripInputs?.origin ?? null;
   const startDate = tripInputs?.start_date ?? null;
   const endDate = tripInputs?.end_date ?? null;
@@ -79,17 +81,39 @@ export function NextStepPanel({
 
   // Format display values
   const startDateDisplay = startDate ? formatDateForDisplay(startDate) : null;
-  const tripLengthDisplay = (() => {
+
+  // Calculate nights and date range for Duration display
+  const { nightsDisplay, dateRangeHelper } = (() => {
     if (endDate && startDate) {
       const start = new Date(startDate);
       const end = new Date(endDate);
       const nights = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-      return `${nights} night${nights !== 1 ? 's' : ''}`;
+      const startFormatted = formatDateForDisplay(startDate);
+      const endFormatted = formatDateForDisplay(endDate);
+      return {
+        nightsDisplay: `${nights} night${nights !== 1 ? 's' : ''}`,
+        dateRangeHelper: `${startFormatted} - ${endFormatted}`,
+      };
+    }
+    if (tripDuration && startDate) {
+      // Calculate end date from start + duration
+      const start = new Date(startDate);
+      const end = new Date(start);
+      end.setDate(end.getDate() + tripDuration);
+      const startFormatted = formatDateForDisplay(startDate);
+      const endFormatted = formatDateForDisplay(end.toISOString().split('T')[0]);
+      return {
+        nightsDisplay: `${tripDuration} night${tripDuration !== 1 ? 's' : ''}`,
+        dateRangeHelper: `${startFormatted} - ${endFormatted}`,
+      };
     }
     if (tripDuration) {
-      return `${tripDuration} night${tripDuration !== 1 ? 's' : ''}`;
+      return {
+        nightsDisplay: `${tripDuration} night${tripDuration !== 1 ? 's' : ''}`,
+        dateRangeHelper: null,
+      };
     }
-    return null;
+    return { nightsDisplay: null, dateRangeHelper: null };
   })();
 
   const travelersDisplay = (() => {
@@ -119,6 +143,18 @@ export function NextStepPanel({
       onSet: onSetDestination,
     },
     {
+      id: 'origin',
+      label: 'Origin',
+      value: origin,
+      // Origin is required only if Flights is enabled, otherwise optional
+      isRequired: isFlightsEnabled,
+      isOptional: !isFlightsEnabled,
+      helperText: !isFlightsEnabled ? 'Required when Flights is enabled' : undefined,
+      isSet: !!origin,
+      icon: Plane,
+      onSet: onSetOrigin,
+    },
+    {
       id: 'startDate',
       label: 'Start date',
       value: startDateDisplay,
@@ -128,12 +164,13 @@ export function NextStepPanel({
       onSet: onSetDates,
     },
     {
-      id: 'tripLength',
-      label: 'Trip length',
-      value: tripLengthDisplay,
+      id: 'nights',
+      label: 'Nights',
+      value: nightsDisplay,
       isRequired: false,
       isOptional: true,
       helperText: 'Needed to price stays + build itinerary',
+      valueHelper: dateRangeHelper,
       isSet: hasTripLength,
       icon: Clock,
       onSet: onSetDates,
@@ -158,19 +195,6 @@ export function NextStepPanel({
       onSet: onSetBudget,
     },
   ];
-
-  // Add Origin only if Flights is enabled
-  if (isFlightsEnabled) {
-    items.splice(1, 0, {
-      id: 'origin',
-      label: 'Origin',
-      value: origin,
-      isRequired: true,
-      isSet: !!origin,
-      icon: Plane,
-      onSet: onSetOrigin,
-    });
-  }
 
   // Check if can generate plan
   // Required: Destination + Start date
@@ -320,6 +344,10 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
         {item.isSet && item.value && (
           <p className="text-xs text-emerald-600 dark:text-emerald-400 truncate">
             {item.value}
+            {/* Show date range helper inline for Nights */}
+            {item.valueHelper && (
+              <span className="text-muted-foreground ml-1">({item.valueHelper})</span>
+            )}
           </p>
         )}
         {/* Helper text for optional items when not set */}

@@ -157,7 +157,7 @@ const CURRENCY_OPTIONS = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TripInputsDraft = {
-  destinations: string[];
+  destination: string | null;
   origin?: string | null;
   start_date?: string | null;
   end_date?: string | null;
@@ -174,7 +174,7 @@ export type TripInputsDraft = {
 
 const FIELD_LABELS: Record<string, string> = {
   origin: 'From',
-  destinations: 'To',
+  destination: 'To',
   dates: 'Dates',
   travelers: 'Travelers',
   budget: 'Budget',
@@ -193,7 +193,7 @@ export type DatePreset = {
 
 export const toTripInputsDraft = (inputs: DocumentTripInputs): TripInputsDraft => {
   return {
-    destinations: inputs.destinations ?? [],
+    destination: inputs.destination ?? null,
     origin: inputs.origin ?? null,
     start_date: inputs.start_date ?? null,
     end_date: inputs.end_date ?? null,

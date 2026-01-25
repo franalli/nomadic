@@ -36,8 +36,17 @@ export interface ActivitiesSheetProps {
   onOpenDestination?: () => void;
 }
 
-// Activity category options
-const CATEGORY_OPTIONS = [
+// Specialist activity categories (trigger specialist agents)
+const SPECIALIST_CATEGORIES = [
+  { value: 'diving', label: 'Diving', icon: '🤿', specialist: true },
+  { value: 'hiking', label: 'Hiking', icon: '🥾', specialist: true },
+  { value: 'skiing', label: 'Skiing', icon: '⛷️', specialist: true },
+  { value: 'cycling', label: 'Cycling', icon: '🚴', specialist: true },
+  { value: 'sailing', label: 'Sailing', icon: '⛵', specialist: true },
+];
+
+// General activity categories
+const GENERAL_CATEGORIES = [
   { value: 'culture', label: 'Culture', icon: '🏛️' },
   { value: 'food', label: 'Food & Drink', icon: '🍽️' },
   { value: 'outdoors', label: 'Outdoors', icon: '🏔️' },
@@ -47,6 +56,9 @@ const CATEGORY_OPTIONS = [
   { value: 'adventure', label: 'Adventure', icon: '🪂' },
   { value: 'family', label: 'Family', icon: '👨‍👩‍👧' },
 ];
+
+// Combined: Specialists first, then general
+const CATEGORY_OPTIONS = [...SPECIALIST_CATEGORIES, ...GENERAL_CATEGORIES];
 
 // Skill level options
 const SKILL_OPTIONS = [
@@ -242,13 +254,45 @@ function ActivitiesSheetInner({
             !localEnabled && 'opacity-40 pointer-events-none'
           )}
         >
-          {/* Categories */}
+          {/* Specialist Activities */}
           <div>
             <h3 className="text-xs font-medium text-[var(--theme-text-muted)] uppercase tracking-wide mb-2">
-              Categories
+              Specialist Activities
+            </h3>
+            <p className="text-xs text-[var(--theme-text-muted)] mb-3">
+              Get expert planning with safety constraints
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {SPECIALIST_CATEGORIES.map((option) => {
+                const isSelected = localCategories.includes(option.value);
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => toggleCategory(option.value)}
+                    className={cn(
+                      'flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm',
+                      'border transition-colors text-left',
+                      isSelected
+                        ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                        : 'border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] hover:border-amber-500/50'
+                    )}
+                  >
+                    <span>{option.icon}</span>
+                    <span>{option.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* General Categories */}
+          <div>
+            <h3 className="text-xs font-medium text-[var(--theme-text-muted)] uppercase tracking-wide mb-2">
+              General Categories
             </h3>
             <div className="grid grid-cols-2 gap-2">
-              {CATEGORY_OPTIONS.map((option) => {
+              {GENERAL_CATEGORIES.map((option) => {
                 const isSelected = localCategories.includes(option.value);
                 return (
                   <button

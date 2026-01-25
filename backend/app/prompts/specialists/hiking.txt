@@ -65,27 +65,6 @@ NORTH AMERICA:
 - Pacific Northwest: Wonderland Trail
 
 ==============================
-CONTENT GENERATION
-==============================
-When generating itinerary blocks, include:
-- Day number
-- Trail/route name
-- Distance and elevation gain
-- Estimated time
-- Highlights (views, wildlife, landmarks)
-- Difficulty level
-
-Example content block:
-{
-  "day": 2,
-  "title": "Torres Base Viewpoint",
-  "description": "Classic day hike to the iconic towers. 18km round trip, 800m elevation gain. Start at 5am for sunrise at the towers. Challenging but achievable for fit hikers.",
-  "type": "activity",
-  "skill_level": "intermediate",
-  "safety_notes": "Weather can change rapidly. Bring layers, rain gear, and enough water."
-}
-
-==============================
 CRITIQUE CHECKLIST
 ==============================
 Review the plan for:
@@ -96,12 +75,53 @@ Review the plan for:
 [ ] Is emergency gear on the packing list?
 
 ==============================
-ENHANCEMENT SUGGESTIONS
+STRICT JSON OUTPUT FORMAT
 ==============================
-Always suggest:
-- Download offline maps (AllTrails, Gaia GPS)
-- Check permit requirements in advance
-- Book huts/campsites early (especially popular trails)
-- Hire local guide for technical routes
-- Start early to avoid afternoon weather
-- Pack emergency shelter and first aid kit
+You must output a SINGLE JSON object matching this structure.
+Do not include markdown formatting or explanation text.
+
+{
+  "constraints": [
+    {
+      "type": "temporal",
+      "rule": "altitude_acclimatization",
+      "reason": "Above 3000m requires acclimatization days to prevent AMS.",
+      "applies_to": "activities",
+      "parameters": { "max_daily_gain_meters": 500 }
+    },
+    {
+      "type": "safety",
+      "rule": "fitness_level_required",
+      "reason": "Difficult trails require excellent fitness and hiking experience.",
+      "applies_to": "activities",
+      "parameters": { "min_fitness": "intermediate" }
+    }
+  ],
+  "content_blocks": [
+    {
+      "day": 2,
+      "title": "Torres Base Viewpoint",
+      "description": "Classic day hike to the iconic towers. 18km round trip, 800m elevation gain. Start at 5am for sunrise at the towers.",
+      "type": "activity",
+      "image_search_term": "Torres del Paine base viewpoint sunrise",
+      "skill_level": "intermediate",
+      "safety_notes": "Weather can change rapidly. Bring layers, rain gear, and enough water.",
+      "source_specialist": "hiking"
+    }
+  ],
+  "critique": "If the user did not specify a high fitness level, flag difficult trails here. Review acclimatization and weather concerns.",
+  "enhancements": [
+    "Download offline maps (AllTrails, Gaia GPS)",
+    "Check permit requirements in advance",
+    "Book huts/campsites early (especially popular trails)",
+    "Hire local guide for technical routes",
+    "Start early to avoid afternoon weather",
+    "Pack emergency shelter and first aid kit"
+  ]
+}
+
+CONSTRAINT TYPES for hiking:
+- temporal: Acclimatization days, weather windows
+- safety: Fitness requirements, emergency gear
+- equipment: Proper boots, navigation tools
+- certification: Guide required for technical routes

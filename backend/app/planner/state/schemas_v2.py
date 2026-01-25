@@ -45,7 +45,7 @@ class ItineraryBlock(BaseModel):
     day: int
     title: str
     description: str
-    type: Literal["activity", "meal", "transport", "rest", "experience"]
+    type: Literal["activity", "meal", "transport", "rest", "experience", "buffer"]
     image_url: Optional[str] = None
     duration_hours: Optional[float] = None
     location: Optional[str] = None
@@ -55,6 +55,14 @@ class ItineraryBlock(BaseModel):
     safety_notes: Optional[str] = None
     # Tile reference if bookable
     tile_id: Optional[str] = None
+    # Buffer/Safety block fields (for No-Fly intervals, acclimatization, etc.)
+    is_buffer: bool = False
+    buffer_type: Optional[
+        Literal["no_fly", "rest_day", "acclimatization", "arrival", "departure"]
+    ] = None
+    buffer_reason: Optional[str] = (
+        None  # e.g., "PADI Standard - 24h surface interval before flying"
+    )
 
 
 class SpecialistConstraint(BaseModel):
@@ -80,7 +88,6 @@ class TripPlan(BaseModel):
 
     # Core fields (required for booking)
     destination: Optional[str] = None
-    destinations: List[str] = Field(default_factory=list)  # For multi-city
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -122,6 +129,11 @@ class SpecialistOutput(BaseModel):
 
     Contains BOTH constraints AND content (the key insight from planning).
     """
+
+    # Feasibility assessment (checked BEFORE generating content)
+    feasibility_status: Literal["feasible", "caveat", "infeasible"] = "feasible"
+    feasibility_reason: Optional[str] = None  # e.g., "Indoor skiing only (SnowWorld)"
+    alternative_suggestion: Optional[str] = None  # e.g., "Try Winterberg (3.5h drive)"
 
     # Safety/logic constraints
     constraints: List[SpecialistConstraint] = Field(default_factory=list)
@@ -193,6 +205,104 @@ class SynthesizerOutput(BaseModel):
 
 
 # =============================================================================
+# LLM Extraction Schema
+# =============================================================================
+
+
+class ExtractedTripFields(BaseModel):
+    """
+    Structured extraction from user message via LLM.
+
+    Used by TripArchitect to extract trip fields without regex.
+    GPT-4o-mini resolves relative dates (e.g., "next Friday") to ISO format.
+    """
+
+    destination: Optional[str] = Field(None, description="Destination city/country")
+    origin: Optional[str] = Field(None, description="Origin city for flights")
+    start_date: Optional[str] = Field(None, description="Start date in YYYY-MM-DD format")
+    end_date: Optional[str] = Field(None, description="End date in YYYY-MM-DD format")
+    duration_days: Optional[int] = Field(
+        None, description="Trip duration if mentioned (e.g., 'for a week' = 7)"
+    )
+    adults: Optional[int] = Field(None, description="Number of adults")
+    children: Optional[int] = Field(None, description="Number of children")
+    budget: Optional[float] = Field(None, description="Budget amount in USD (e.g., '2k' = 2000)")
+    budget_tier: Optional[str] = Field(
+        None, description="Budget tier if qualitative: budget/mid-range/luxury"
+    )
+    trip_type: Optional[str] = Field(
+        None, description="Trip type: diving/hiking/skiing/beach/city/etc"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "destination": "Bali",
+                "origin": "London",
+                "start_date": "2026-02-15",
+                "end_date": "2026-02-22",
+                "adults": 2,
+                "budget": 3000,
+            }
+        }
+    }
+
+
+class ExtractedSettingsFields(BaseModel):
+    """
+    Structured extraction for booking toggles and settings from user message.
+
+    Used by TripArchitect to extract settings changes via LLM.
+    All fields are Optional - only extract what the user explicitly mentions.
+    """
+
+    # Booking type toggles (tri-state: "off", "suggested", "on")
+    flights_toggle: Optional[Literal["off", "suggested", "on"]] = Field(
+        None, description="Toggle for flight search: off/suggested/on"
+    )
+    hotels_toggle: Optional[Literal["off", "suggested", "on"]] = Field(
+        None, description="Toggle for hotel search: off/suggested/on"
+    )
+    activities_toggle: Optional[Literal["off", "suggested", "on"]] = Field(
+        None, description="Toggle for activity search: off/suggested/on"
+    )
+    ground_transport_toggle: Optional[Literal["off", "suggested", "on"]] = Field(
+        None, description="Toggle for ground transport: off/suggested/on"
+    )
+
+    # Flight settings
+    flight_direct_only: Optional[bool] = Field(
+        None, description="Only show direct flights (no layovers)"
+    )
+    flight_cabin_class: Optional[Literal["economy", "premium_economy", "business", "first"]] = (
+        Field(None, description="Cabin class preference")
+    )
+    flight_round_trip: Optional[bool] = Field(
+        None, description="Round trip (true) or one-way (false)"
+    )
+
+    # Hotel settings
+    hotel_min_stars: Optional[int] = Field(
+        None, ge=0, le=5, description="Minimum hotel star rating (0-5)"
+    )
+
+    # Activity settings
+    activity_skill_level: Optional[Literal["beginner", "intermediate", "advanced"]] = Field(
+        None, description="Activity skill level filter"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "flights_toggle": "off",
+                "hotel_min_stars": 5,
+                "flight_cabin_class": "business",
+            }
+        }
+    }
+
+
+# =============================================================================
 # V2 Graph State
 # =============================================================================
 
@@ -228,6 +338,9 @@ class GraphStateV2(BaseModel):
     # Constraint violations (from ConstraintGuard)
     constraints_violated: List[str] = Field(default_factory=list)
 
+    # Auto-fix loop retry counter (Guard → Architect)
+    guard_retry_count: int = 0
+
     # UI events for frontend
     ui_events: List[str] = Field(default_factory=list)
 
@@ -248,13 +361,13 @@ class GraphStateV2(BaseModel):
 
 def trip_plan_is_ready(plan: TripPlan) -> bool:
     """Check if trip plan has all required fields for booking."""
-    return bool((plan.destination or plan.destinations) and plan.start_date)
+    return bool(plan.destination and plan.start_date)
 
 
 def get_missing_fields(plan: TripPlan) -> List[str]:
     """Get list of missing required fields."""
     missing = []
-    if not plan.destination and not plan.destinations:
+    if not plan.destination:
         missing.append("destination")
     if not plan.start_date:
         missing.append("dates")

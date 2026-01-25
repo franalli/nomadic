@@ -36,7 +36,7 @@ export function deriveEffectivePhase(status: PlanStatus): PlanStatus['phase'] {
  */
 const FIELD_LABELS: Record<string, string> = {
   origin: 'origin',
-  destinations: 'destination',
+  destination: 'destination',
   start_date: 'dates',
   end_date: 'dates',
   dates: 'dates',

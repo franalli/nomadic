@@ -77,7 +77,7 @@ export const ChangeReceipt = memo(function ChangeReceipt({
   // Format fields for display: ["start_date", "end_date"] → "Dates"
   const formatFields = (fields: string[]): string => {
     const fieldMap: Record<string, string> = {
-      destinations: 'Destination',
+      destination: 'Destination',
       origin: 'Origin',
       start_date: 'Dates',
       end_date: 'Dates',

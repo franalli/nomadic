@@ -149,7 +149,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
                 ? 'w-6 bg-indigo-600'
                 : 'w-2 bg-gray-300 hover:bg-gray-400'
             )}
-            aria-label={`View ${index === 0 ? firstBranch.destinations[0] || 'Option A' : secondBranch.destinations[0] || 'Option B'}`}
+            aria-label={`View ${index === 0 ? firstBranch.destination || 'Option A' : secondBranch.destination || 'Option B'}`}
           />
         ))}
       </div>
@@ -188,7 +188,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
       {diff && (
         <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
           <h3 className="mb-2 text-sm font-medium text-gray-700">
-            Quick Comparison: {firstBranch.destinations[0] || 'Option A'} vs {secondBranch.destinations[0] || 'Option B'}
+            Quick Comparison: {firstBranch.destination || 'Option A'} vs {secondBranch.destination || 'Option B'}
           </h3>
           <ul className="space-y-2 text-sm text-gray-600">
             {/* Tier 9: Show actual cost from selected tiles if available */}
@@ -196,7 +196,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
               <li className="flex items-center gap-2">
                 <span className="font-medium">Actual Cost:</span>
                 <span>
-                  {secondBranch.destinations[0] || 'Option B'} is {diff.actualCost.percentageFormatted || diff.actualCost.formatted} (from selected items)
+                  {secondBranch.destination || 'Option B'} is {diff.actualCost.percentageFormatted || diff.actualCost.formatted} (from selected items)
                 </span>
               </li>
             )}
@@ -204,7 +204,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
               <li className="flex items-center gap-2">
                 <span className="font-medium">Budget:</span>
                 <span>
-                  {secondBranch.destinations[0] || 'Option B'} is {diff.budget.percentageFormatted || diff.budget.formatted}
+                  {secondBranch.destination || 'Option B'} is {diff.budget.percentageFormatted || diff.budget.formatted}
                   {diff.perDayRate && (
                     <span className="text-gray-500 ml-1">({diff.perDayRate.formatted})</span>
                   )}
@@ -215,7 +215,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
               <li className="flex items-center gap-2">
                 <span className="font-medium">Duration:</span>
                 <span>
-                  {secondBranch.destinations[0] || 'Option B'} is {diff.duration.value > 0 ? 'shorter' : 'longer'} (
+                  {secondBranch.destination || 'Option B'} is {diff.duration.value > 0 ? 'shorter' : 'longer'} (
                   {diff.duration.formatted})
                 </span>
               </li>
@@ -224,7 +224,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
               <li className="flex items-center gap-2">
                 <span className="font-medium">Stays:</span>
                 <span>
-                  {secondBranch.destinations[0] || 'Option B'} has {Math.abs(diff.stayCount.value)} {diff.stayCount.value < 0 ? 'more' : 'fewer'} stay option{Math.abs(diff.stayCount.value) !== 1 ? 's' : ''}
+                  {secondBranch.destination || 'Option B'} has {Math.abs(diff.stayCount.value)} {diff.stayCount.value < 0 ? 'more' : 'fewer'} stay option{Math.abs(diff.stayCount.value) !== 1 ? 's' : ''}
                 </span>
               </li>
             )}
@@ -232,7 +232,7 @@ export const BranchComparisonView = memo(function BranchComparisonView({
               <li className="flex items-center gap-2">
                 <span className="font-medium">Activities:</span>
                 <span>
-                  {secondBranch.destinations[0] || 'Option B'} has {Math.abs(diff.activityCount.value)} {diff.activityCount.value < 0 ? 'more' : 'fewer'} activit{Math.abs(diff.activityCount.value) !== 1 ? 'ies' : 'y'}
+                  {secondBranch.destination || 'Option B'} has {Math.abs(diff.activityCount.value)} {diff.activityCount.value < 0 ? 'more' : 'fewer'} activit{Math.abs(diff.activityCount.value) !== 1 ? 'ies' : 'y'}
                 </span>
               </li>
             )}

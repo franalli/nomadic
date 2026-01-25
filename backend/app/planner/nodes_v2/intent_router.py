@@ -59,6 +59,86 @@ STATIC_RESPONSES = {
 
 
 # =============================================================================
+# Exact Match Short Circuit (saves LLM call for trivial inputs)
+# =============================================================================
+
+EXACT_MATCH_GREETINGS = frozenset(
+    {
+        "hi",
+        "hello",
+        "hey",
+        "yo",
+        "sup",
+        "hi!",
+        "hello!",
+        "hey!",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "morning",
+        "afternoon",
+        "evening",
+        "thanks",
+        "thank you",
+        "thanks!",
+        "thank you!",
+        "bye",
+        "goodbye",
+        "bye!",
+        "goodbye!",
+        "cheers",
+        "ciao",
+        "hola",
+    }
+)
+
+# Generate plan trigger from frontend "Build plan" button
+GENERATE_PLAN_TRIGGER = "GENERATE_PLAN_NOW"
+
+
+def _check_exact_match_greeting(text: str) -> Optional[IntentClassification]:
+    """
+    Check if input matches known greeting patterns exactly.
+
+    Returns IntentClassification if matched, None otherwise.
+    Saves an LLM call for trivial inputs (~300ms, ~150 tokens).
+    """
+    normalized = text.strip().lower()
+
+    if normalized in EXACT_MATCH_GREETINGS:
+        logger.debug(f"Exact match greeting detected: '{text}'")
+        return IntentClassification(
+            intent="GREETING",
+            confidence=1.0,
+            reasoning="Exact match greeting - no LLM needed",
+            specialist_hint=None,
+        )
+
+    return None
+
+
+def _check_generate_plan_trigger(text: str) -> Optional[IntentClassification]:
+    """
+    Check if input is the generate plan trigger from frontend.
+
+    The frontend sends "GENERATE_PLAN_NOW" when user clicks "Build plan".
+    Returns IntentClassification with PLANNING intent to trigger tile fetching.
+    """
+    normalized = text.strip().upper()
+
+    if normalized == GENERATE_PLAN_TRIGGER:
+        logger.debug("Generate plan trigger detected")
+        return IntentClassification(
+            intent="PLANNING",
+            confidence=1.0,
+            reasoning="Generate plan trigger - execute plan with tiles",
+            specialist_hint=None,
+        )
+
+    return None
+
+
+# =============================================================================
 # Specialist Keywords (for hint detection)
 # =============================================================================
 
@@ -151,6 +231,75 @@ SPECIALIST_KEYWORDS = {
     ],
 }
 
+# =============================================================================
+# Activity Category to Specialist Mapping (for UI pill selection)
+# =============================================================================
+
+# Maps activity category strings (from UI) to specialist types
+# These are the canonical category names that should show in the activity pill
+ACTIVITY_CATEGORY_TO_SPECIALIST = {
+    # Diving
+    "diving": "diving",
+    "scuba": "diving",
+    "scuba diving": "diving",
+    "snorkeling": "diving",
+    "freediving": "diving",
+    # Hiking
+    "hiking": "hiking",
+    "trekking": "hiking",
+    "mountaineering": "hiking",
+    "camping": "hiking",
+    "backpacking": "hiking",
+    # Skiing
+    "skiing": "skiing",
+    "snowboarding": "skiing",
+    "snow sports": "skiing",
+    "winter sports": "skiing",
+    # Cycling
+    "cycling": "cycling",
+    "biking": "cycling",
+    "mountain biking": "cycling",
+    "road cycling": "cycling",
+    # Boating
+    "sailing": "boating",
+    "boating": "boating",
+    "yachting": "boating",
+}
+
+# Canonical specialist activity categories (should appear at top of activity pill)
+SPECIALIST_ACTIVITY_CATEGORIES = [
+    "diving",
+    "hiking",
+    "skiing",
+    "cycling",
+    "sailing",
+]
+
+
+def _detect_specialist_from_activity_settings(state: GraphStateV2) -> Optional[str]:
+    """
+    Detect specialist from activity_settings.categories (UI pill selection).
+
+    Returns the first matching specialist type, or None if no match.
+    """
+    # Get activity categories from trip_inputs in metadata
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    activity_settings = trip_inputs.get("activity_settings", {})
+    categories = activity_settings.get("categories", [])
+
+    if not categories:
+        return None
+
+    # Check each category for a specialist match
+    for category in categories:
+        category_lower = category.lower().strip()
+        if category_lower in ACTIVITY_CATEGORY_TO_SPECIALIST:
+            specialist = ACTIVITY_CATEGORY_TO_SPECIALIST[category_lower]
+            logger.debug(f"Detected specialist '{specialist}' from activity category '{category}'")
+            return specialist
+
+    return None
+
 
 # =============================================================================
 # LLM Classification
@@ -209,33 +358,45 @@ def _get_router_llm() -> ChatOpenAI:
     )
 
 
-async def _classify_intent_with_llm(user_text: str, state: GraphStateV2) -> IntentClassification:
+async def _classify_intent_with_llm(
+    user_text: str, state: GraphStateV2
+) -> tuple[IntentClassification, dict]:
     """
     Classify user intent using LLM.
 
-    Returns IntentClassification with intent, confidence, reasoning, and optional specialist_hint.
+    Returns tuple of (IntentClassification, token_usage_dict).
     """
     try:
         llm = _get_router_llm()
 
         # Use structured output for reliable JSON parsing
-        structured_llm = llm.with_structured_output(IntentClassification)
+        structured_llm = llm.with_structured_output(IntentClassification, include_raw=True)
 
         prompt = CLASSIFICATION_PROMPT.format(user_message=user_text)
 
         result = await structured_llm.ainvoke([HumanMessage(content=prompt)])
 
-        logger.debug(f"Intent classification: {result.intent} (confidence={result.confidence})")
-        return result
+        # Extract parsed result and token usage
+        parsed = result["parsed"]
+        raw = result["raw"]
+        token_usage = {}
+        if hasattr(raw, "response_metadata"):
+            token_usage = raw.response_metadata.get("token_usage", {})
+
+        logger.debug(f"Intent classification: {parsed.intent} (confidence={parsed.confidence})")
+        return parsed, token_usage
 
     except Exception as e:
         logger.warning(f"LLM classification failed, defaulting to PLANNING: {e}")
         # Default to PLANNING on error - let the architect handle it
-        return IntentClassification(
-            intent="PLANNING",
-            confidence=0.5,
-            reasoning=f"LLM classification failed: {e}",
-            specialist_hint=_detect_specialist_keyword(user_text),
+        return (
+            IntentClassification(
+                intent="PLANNING",
+                confidence=0.5,
+                reasoning=f"LLM classification failed: {e}",
+                specialist_hint=_detect_specialist_keyword(user_text),
+            ),
+            {},
         )
 
 
@@ -289,8 +450,33 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
         current_specialist=state.active_specialist,
     )
 
-    # Classify intent using LLM
-    classification = await _classify_intent_with_llm(user_text, state)
+    # Try exact match first (no LLM cost, instant response)
+    classification = _check_exact_match_greeting(user_text)
+    token_usage = {}
+
+    # Check for generate plan trigger from frontend "Build plan" button
+    if classification is None:
+        classification = _check_generate_plan_trigger(user_text)
+
+    # Fall back to LLM classification if no exact match
+    if classification is None:
+        from app.debug_utils import log, log_tokens
+
+        classification, token_usage = await _classify_intent_with_llm(user_text, state)
+        if token_usage:
+            log_tokens(
+                "ROUTER",
+                token_usage.get("prompt_tokens", 0),
+                token_usage.get("completion_tokens", 0),
+                token_usage.get("total_tokens", 0),
+            )
+        else:
+            log("ROUTER", "No LLM call (exact match or error)")
+        log(
+            "ROUTER",
+            f"Intent: {classification.intent}",
+            data=f"specialist_hint={classification.specialist_hint}",
+        )
 
     # Handle GREETING - return static response, skip architect
     if classification.intent == "GREETING":
@@ -325,14 +511,37 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
         return state
 
     # PLANNING intent - pass to architect
-    state.intent = "general"
+    # Check if this is the generate plan trigger (user clicked "Build plan")
+    # Use "booking" intent to trigger tile fetching in the Architect
+    is_generate_trigger = user_text.strip().upper() == GENERATE_PLAN_TRIGGER
+    state.intent = "booking" if is_generate_trigger else "general"
     state.metadata["short_circuit_response"] = False
     state.metadata["router_output"] = classification.model_dump()
+    state.metadata["is_generate_trigger"] = is_generate_trigger
 
-    # Set specialist if detected
-    if classification.specialist_hint:
-        state.active_specialist = classification.specialist_hint
-        state.active_agent_id = classification.specialist_hint
+    # Set specialist if detected from text OR from UI activity settings
+    specialist_hint = classification.specialist_hint
+
+    # Also check activity_settings.categories for UI-selected activities
+    if not specialist_hint:
+        specialist_hint = _detect_specialist_from_activity_settings(state)
+        if specialist_hint:
+            from app.debug_utils import log
+
+            log("ROUTER", f"Specialist '{specialist_hint}' detected from activity settings")
+
+    if specialist_hint:
+        state.active_specialist = specialist_hint
+        state.active_agent_id = specialist_hint
+        state.ui_events.append("SPECIALIST_ACTIVE")
+    elif state.trip_plan.destination and state.intent in ("booking", "general"):
+        # FALLBACK: No niche specialist detected, but we have a destination
+        # Activate Local Expert for city-specific logistics
+        from app.debug_utils import log
+
+        log("ROUTER", f"Auto-triggering Local Expert for {state.trip_plan.destination}")
+        state.active_specialist = "local_expert"
+        state.active_agent_id = "local_expert"
         state.ui_events.append("SPECIALIST_ACTIVE")
 
     _debug_v2_node_end(

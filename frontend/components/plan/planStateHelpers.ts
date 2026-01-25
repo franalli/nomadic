@@ -41,20 +41,20 @@ export function canShowBookingTiles(state: PlanViewState): boolean {
 }
 
 /**
- * Can show tiles preview? Only when S2 READY, not generating, AND has strategy content.
- * This prevents showing deals while strategy is still loading (skeleton).
+ * Can show tiles preview? When S2 READY and has tiles, not generating.
+ * Strategy content check removed - tiles should show as soon as available.
  */
 export function canShowTilesPreview(
   state: PlanViewState,
   tileCount: number,
   generation?: GenerationState | null,
-  hasStrategyContent?: boolean
+  _hasStrategyContent?: boolean
 ): boolean {
+  void _hasStrategyContent; // Unused - tiles show regardless of strategy sections
   return (
     state === 'S2_STRATEGY_READY' &&
     tileCount > 0 &&
-    !isGenerating(generation) &&
-    hasStrategyContent === true
+    !isGenerating(generation)
   );
 }
 

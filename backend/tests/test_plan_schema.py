@@ -51,10 +51,10 @@ class TestResolutionStatus:
         "constraints,expected_status",
         [
             ({}, "empty"),
-            ({"destinations": ["Lisbon"]}, "partial"),
+            ({"destination": "Lisbon"}, "partial"),
             (
                 {
-                    "destinations": ["Lisbon"],
+                    "destination": "Lisbon",
                     "start_date": "2025-04-12",
                     "end_date": "2025-04-18",
                     "origin": "Amsterdam",
@@ -66,7 +66,7 @@ class TestResolutionStatus:
     def test_resolution_status_levels(self, constraints: dict[str, Any], expected_status: str):
         """Resolution status correctly derives from constraints."""
         # Derive status from constraints
-        has_destination = bool(constraints.get("destinations"))
+        has_destination = bool(constraints.get("destination"))
         has_dates = bool(constraints.get("start_date") or constraints.get("end_date"))
         has_origin = bool(constraints.get("origin"))
 
@@ -82,7 +82,7 @@ class TestResolutionStatus:
     def test_budget_conflict_is_valid_state(self):
         """Budget exceeding estimate is a conflict, not an error."""
         constraints = {
-            "destinations": ["Lisbon"],
+            "destination": "Lisbon",
             "budget": 100,  # Very low budget
         }
         estimated_cost = 1500
@@ -104,7 +104,7 @@ class TestPartialConstraints:
     def test_partial_constraints_allowed(self):
         """Unknown ≠ invalid - partial values don't error."""
         partial_inputs = {
-            "destinations": ["Lisbon"],
+            "destination": "Lisbon",
             "origin": None,
             "start_date": None,
             "end_date": None,
@@ -122,10 +122,10 @@ class TestPartialConstraints:
     def test_only_destination_is_valid(self):
         """Having only destination set is a valid state."""
         inputs = {
-            "destinations": ["Lisbon"],
+            "destination": "Lisbon",
         }
 
-        has_destination = bool(inputs.get("destinations"))
+        has_destination = bool(inputs.get("destination"))
         is_valid = True
 
         assert has_destination
@@ -191,7 +191,7 @@ class TestConstraintOrder:
     def test_any_constraint_can_be_set_first(self):
         """Setting any constraint first is valid."""
         # Each of these is a valid starting state
-        destination_only = {"destinations": ["Lisbon"]}
+        destination_only = {"destination": "Lisbon"}
         origin_only = {"origin": "Amsterdam"}
         dates_only = {"start_date": "2025-04-12", "end_date": "2025-04-18"}
         budget_only = {"budget": 1500}
@@ -203,15 +203,15 @@ class TestConstraintOrder:
     def test_constraints_editable_independently(self):
         """Each constraint can be edited without affecting others."""
         initial = {
-            "destinations": ["Lisbon"],
+            "destination": "Lisbon",
             "origin": "Amsterdam",
         }
 
         # Change origin without affecting destination
         updated = {
-            "destinations": initial["destinations"],  # unchanged
+            "destination": initial["destination"],  # unchanged
             "origin": "London",  # changed
         }
 
-        assert updated["destinations"] == initial["destinations"]
+        assert updated["destination"] == initial["destination"]
         assert updated["origin"] != initial["origin"]

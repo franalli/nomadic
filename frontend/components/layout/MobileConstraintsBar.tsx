@@ -27,10 +27,10 @@ function MobileConstraintsBarInner({ className }: MobileConstraintsBarProps) {
     const unset: { icon: typeof MapPin; label: string }[] = [];
 
     // Destination
-    if ((tripInputs.destinations ?? []).length > 0) {
+    if (tripInputs.destination) {
       resolved.push({
         icon: MapPin,
-        label: tripInputs.destinations![0],
+        label: tripInputs.destination,
       });
     } else {
       unset.push({ icon: MapPin, label: 'Destination' });

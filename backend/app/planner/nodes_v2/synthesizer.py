@@ -14,16 +14,187 @@ Key responsibilities:
 - Handle constraint violation warnings gracefully
 
 Key Principle: "One voice, regardless of which agents contributed."
+
+V2 Enhancement: Uses LLM for complex planning responses to weave together
+Architect, Specialist, and Guard outputs into a coherent narrative.
 """
 
+import logging
 import os
+from pathlib import Path
 from typing import List
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
 
 from app.planner.state import (
     GraphStateV2,
     SynthesizerOutput,
     UIEvent,
 )
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+
+SYNTHESIZER_MODEL = os.getenv("SYNTHESIZER_MODEL", "gpt-4o")
+
+
+def _get_synthesizer_llm() -> ChatOpenAI:
+    """Get the LLM for synthesis with streaming enabled."""
+    return ChatOpenAI(
+        model=SYNTHESIZER_MODEL,
+        temperature=0.7,  # Slightly creative for natural voice
+        streaming=True,  # Enable token streaming
+        max_tokens=500,  # Keep responses concise
+    )
+
+
+def _load_system_prompt() -> str:
+    """Load the synthesizer system prompt from file."""
+    prompt_path = Path(__file__).parent.parent.parent / "prompts" / "synthesizer.txt"
+    if prompt_path.exists():
+        return prompt_path.read_text(encoding="utf-8")
+    return (
+        "You are a helpful travel assistant. "
+        "Synthesize the trip information into a friendly response."
+    )
+
+
+def _build_synthesis_context(state: GraphStateV2) -> str:
+    """Build context string from all graph sources for LLM synthesis."""
+    parts = []
+    plan = state.trip_plan
+
+    # Architect mode context - CRITICAL for LLM to know what response to generate
+    architect_mode = state.metadata.get("architect_mode", "unknown")
+    parts.append("## Current Mode")
+    parts.append(f"- Architect mode: {architect_mode}")
+
+    # Plan view state for tone differentiation (Setup vs Plan mode)
+    plan_view_state = state.metadata.get("plan_view_state", "S0_BOOTSTRAP")
+    is_setup_mode = (
+        plan_view_state.startswith("S0")
+        or plan_view_state.startswith("S1")
+        or plan_view_state.startswith("S2")
+    )
+    tone_mode = "SETUP" if is_setup_mode else "PLAN"
+    parts.append(f"- Plan view state: {plan_view_state}")
+    parts.append(f"- Tone mode: {tone_mode}")
+
+    # Flexible date resolution info
+    if state.metadata.get("flexible_date_resolved"):
+        parts.append("- flexible_date_resolved: true")
+        parts.append(f"- resolved_start_date: {state.metadata.get('resolved_start_date')}")
+        parts.append(f"- resolved_end_date: {state.metadata.get('resolved_end_date')}")
+
+    # Fields changed this turn (for acknowledgment)
+    turn_applied = state.metadata.get("turn_applied_fields", [])
+    if turn_applied:
+        parts.append(f"- Fields changed this turn: {', '.join(turn_applied)}")
+
+    if architect_mode == "missing_fields":
+        missing = state.metadata.get("missing_fields", [])
+        if missing:
+            parts.append(f"- Missing fields: {', '.join(missing)}")
+            parts.append("- YOUR TASK: Ask the user for the missing information naturally")
+    elif architect_mode == "pre_core":
+        parts.append("- YOUR TASK: Inspire the user and help them explore options")
+    elif architect_mode == "core_planning":
+        parts.append("- YOUR TASK: Summarize progress and guide to next steps")
+
+    # User's latest message (find the last HumanMessage)
+    from langchain_core.messages import HumanMessage
+
+    for msg in reversed(state.messages):
+        if isinstance(msg, HumanMessage):
+            parts.append("\n## User's Latest Message")
+            parts.append(f'"{msg.content}"')
+            break
+
+    # Core trip info
+    parts.append("\n## TripPlan")
+    parts.append(f"- Destination: {plan.destination or 'Not set'}")
+    if plan.start_date:
+        parts.append(f"- Dates: {plan.start_date} to {plan.end_date or 'TBD'}")
+    parts.append(f"- Travelers: {plan.adults} adults, {plan.children} children")
+    if plan.budget:
+        parts.append(f"- Budget: {plan.currency} {plan.budget}")
+    if plan.trip_type:
+        parts.append(f"- Trip Type: {plan.trip_type}")
+
+    # Specialist content
+    if plan.itinerary_blocks:
+        parts.append("\n## Specialist Recommendations")
+        for block in plan.itinerary_blocks[:5]:
+            parts.append(f"- **{block.title}**: {block.description}")
+            if block.safety_notes:
+                parts.append(f"  - Safety: {block.safety_notes}")
+            if block.skill_level:
+                parts.append(f"  - Level: {block.skill_level}")
+
+    # Constraints from specialist
+    if plan.constraints:
+        parts.append("\n## Active Constraints")
+        for c in plan.constraints:
+            parts.append(f"- {c.rule}: {c.reason or 'No reason provided'}")
+
+    # Constraint violations from Guard
+    if state.constraints_violated:
+        parts.append("\n## Constraint Violations (address these naturally!)")
+        for v in state.constraints_violated:
+            parts.append(f"- {v}")
+
+    # Tile results
+    if state.tiles:
+        parts.append("\n## Available Options")
+        for category, tiles in state.tiles.items():
+            if tiles:
+                parts.append(f"- {len(tiles)} {category} found")
+                # Show first 2 tiles as examples
+                for tile in tiles[:2]:
+                    name = tile.get("title") or tile.get("name", "Option")
+                    price = tile.get("price_estimate") or tile.get("live_price")
+                    if price:
+                        parts.append(f"  - {name}: ${price}")
+                    else:
+                        parts.append(f"  - {name}")
+
+    return "\n".join(parts)
+
+
+async def synthesize_with_llm(state: GraphStateV2) -> tuple[str | None, dict]:
+    """
+    Generate response using LLM for coherent synthesis.
+
+    Weaves together Architect, Specialist, and Guard outputs
+    into a single, natural-sounding response.
+
+    Returns tuple of (response_content, token_usage_dict).
+    """
+    llm = _get_synthesizer_llm()
+    system_prompt = _load_system_prompt()
+    context = _build_synthesis_context(state)
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Synthesize a response for this context:\n\n{context}"),
+    ]
+
+    try:
+        # Use non-streaming for the node (streaming handled by astream_events)
+        response = await llm.ainvoke(messages)
+        token_usage = {}
+        if hasattr(response, "response_metadata"):
+            token_usage = response.response_metadata.get("token_usage", {})
+        return response.content, token_usage
+    except Exception as e:
+        logger.error(f"LLM synthesis failed: {e}")
+        # Fall back to template-based response
+        return None, {}
+
 
 # =============================================================================
 # Response Templates
@@ -274,7 +445,17 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
     Synthesizer node function for LangGraph.
 
     Generates the final user-facing response.
+
+    Uses LLM synthesis for planning mode to weave together outputs from
+    Architect, Specialist, and Guard into a coherent narrative.
+    Template-based for simple greetings (speed optimization).
+
+    True token streaming is captured via astream_events in run_turn_streaming.
+
+    Performance: Image fetch runs in parallel with LLM synthesis to mask latency.
     """
+    import asyncio
+
     from langchain_core.messages import AIMessage
 
     from app.debug_utils import _debug_v2_node_end, _debug_v2_node_start
@@ -289,28 +470,102 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
 
     synth = Synthesizer()
 
-    # Enrich content with images
-    await enrich_with_images(state)
+    # Start image fetch in parallel with LLM synthesis (latency masking)
+    image_task = asyncio.create_task(enrich_with_images(state))
 
-    # Generate response
-    output = synth.generate_response(state)
+    # Determine if we should use LLM synthesis or templates
+    use_llm = _should_use_llm_synthesis(state)
+    message = ""
+
+    from app.debug_utils import log, log_tokens
+
+    if use_llm:
+        # Use LLM for complex planning responses
+        logger.debug("Using LLM synthesis for response generation")
+        log("SYNTH", "Generating LLM response...")
+        llm_response, token_usage = await synthesize_with_llm(state)
+        if llm_response:
+            message = llm_response
+            if token_usage:
+                log_tokens(
+                    "SYNTH",
+                    token_usage.get("prompt_tokens", 0),
+                    token_usage.get("completion_tokens", 0),
+                    token_usage.get("total_tokens", 0),
+                )
+        else:
+            # Fallback to template
+            output = synth.generate_response(state)
+            message = output.message
+            log("SYNTH", "Using template (LLM failed)")
+    else:
+        # Use templates for simple responses (greetings, pre-core)
+        output = synth.generate_response(state)
+        message = output.message
+        log("SYNTH", "Using template (no LLM needed)")
+
+    # Wait for image fetch to complete before returning (safety check)
+    await image_task
+
+    # Generate suggestion chips (always template-based for consistency)
+    suggested_replies = generate_suggested_replies(state)
+
+    # Log response details
+    log("SYNTH", f"Response: {len(message)} chars")
+    log("SYNTH", f"Suggested replies: {suggested_replies[:3]}")
 
     # Update state
-    state.last_summary = output.message
-    state.suggested_replies = output.suggested_replies
+    state.last_summary = message
+    state.suggested_replies = suggested_replies
 
     # Add AI message to chat history
-    state.messages.append(AIMessage(content=output.message))
+    state.messages.append(AIMessage(content=message))
+
+    # Collect UI events
+    plan = state.trip_plan
+    ui_events = [
+        UIEvent(
+            type="PLAN_READY" if plan.status == "ready" else "PLAN_READY",
+            agent_id=state.active_agent_id or "architect",
+        )
+    ]
 
     # Store synthesizer output in metadata
-    state.metadata["synthesizer_output"] = output.model_dump()
+    state.metadata["synthesizer_output"] = {
+        "message": message,
+        "suggested_replies": suggested_replies,
+        "ui_events": [e.model_dump() for e in ui_events],
+        "used_llm": use_llm,
+    }
 
     _debug_v2_node_end(
         "synthesizer",
         "📝",
-        response_len=len(output.message),
-        suggested_replies=output.suggested_replies,
-        ui_events=output.ui_events,
+        response_len=len(message),
+        suggested_replies=suggested_replies,
+        used_llm=use_llm,
     )
 
     return state
+
+
+def _should_use_llm_synthesis(state: GraphStateV2) -> bool:
+    """
+    Determine if we should use LLM synthesis or templates.
+
+    PRINCIPLE: Always use LLM for user-facing responses.
+    All response text should be controlled via prompts, not hardcoded templates.
+
+    Only skip LLM for:
+    - Short-circuit GREETING/RESET responses (simple acknowledgments)
+
+    Everything else should go through LLM to ensure natural, contextual responses.
+    """
+    # Short-circuit responses (GREETING/RESET) use static responses for speed
+    # These are simple acknowledgments, not planning responses
+    if state.metadata.get("short_circuit_response"):
+        return False
+
+    # Everything else uses LLM - even missing_fields, pre_core, etc.
+    # The prompt controls the response style and content
+    return True

@@ -125,13 +125,13 @@ def llm_json_for_prompt(
                 {
                     "label": "Option A",
                     "description": "Balanced itinerary",
-                    "destinations": [],
+                    "destination": None,
                     "tiles": {"stays": [], "flights": [], "activities": []},
                 },
                 {
                     "label": "Option B",
                     "description": "More relaxed pace",
-                    "destinations": [],
+                    "destination": None,
                     "tiles": {"stays": [], "flights": [], "activities": []},
                 },
             ],
@@ -221,13 +221,13 @@ def llm_json_for_prompt(
                     {
                         "label": "Option A",
                         "description": "Balanced itinerary",
-                        "destinations": [],
+                        "destination": None,
                         "tiles": {"stays": [], "flights": [], "activities": []},
                     },
                     {
                         "label": "Option B",
                         "description": "More relaxed pace",
-                        "destinations": [],
+                        "destination": None,
                         "tiles": {"stays": [], "flights": [], "activities": []},
                     },
                 ],

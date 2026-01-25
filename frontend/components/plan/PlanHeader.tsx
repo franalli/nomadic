@@ -51,7 +51,19 @@ export interface PlanHeaderProps {
   onOpenSheet?: (sheet: SheetType) => void;
   /** Whether streaming/generation is in progress (disables pills) */
   isStreaming?: boolean;
+  /** Callback when Setup stage is clicked (navigate back to setup/config) */
+  onSetupClick?: () => void;
+  /** Callback when Plan stage is clicked (navigate to plan view) */
+  onPlanClick?: () => void;
+  /** Callback when Book stage is clicked (navigate to booking view) */
+  onBookClick?: () => void;
+  /** Whether user has minimum selections to enable Book stage */
+  hasMinimumSelections?: boolean;
 }
+
+/** Map step index to step key for callbacks */
+const STEP_KEYS = ['setup', 'plan', 'book'] as const;
+type StepKey = (typeof STEP_KEYS)[number];
 
 /** Stage progress stepper - used in both variants */
 function StageStepper({
@@ -59,12 +71,15 @@ function StageStepper({
   completedSteps,
   isGenerating,
   variant = 'default',
+  onStepClick,
 }: {
   currentStepIndex: number;
   completedSteps: boolean[];
   isGenerating: boolean;
   /** 'hero' for on-image, 'default' for placeholder/toolbar */
   variant?: 'default' | 'hero';
+  /** Callback when a step is clicked (only for completed or active steps) */
+  onStepClick?: (step: StepKey) => void;
 }) {
   return (
     <div className="flex items-center gap-4">
@@ -73,17 +88,26 @@ function StageStepper({
         const isCompleted = completedSteps[idx] && !isActive;
         const isLocked = idx > currentStepIndex && !completedSteps[idx];
         const isCurrentGenerating = isActive && isGenerating;
+        const isClickable = !isLocked && onStepClick;
+        const stepKey = STEP_KEYS[idx];
 
         return (
-          <div
+          <button
             key={label}
+            type="button"
+            onClick={() => isClickable && onStepClick?.(stepKey)}
+            disabled={isLocked || !onStepClick}
             className={cn(
               'flex items-center gap-1.5 text-xs transition-colors',
               // Color semantics: Amber=active, Green=completed, Gray=locked
               // Variant-aware: hero uses light text, default uses foreground
               isActive && (variant === 'hero' ? 'text-white font-medium' : 'text-foreground font-medium'),
               isCompleted && 'text-emerald-500 dark:text-emerald-400',
-              isLocked && 'text-muted-foreground/70'
+              isLocked && 'text-muted-foreground/70',
+              // Clickable styles
+              isClickable && !isActive && 'cursor-pointer hover:opacity-80',
+              isClickable && isCompleted && 'hover:text-emerald-400',
+              !isClickable && 'cursor-default'
             )}
           >
             {/* Progress dot */}
@@ -99,7 +123,7 @@ function StageStepper({
             {isCurrentGenerating && (
               <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
             )}
-          </div>
+          </button>
         );
       })}
     </div>
@@ -118,6 +142,10 @@ export function PlanHeader({
   tripInputs,
   onOpenSheet,
   isStreaming = false,
+  onSetupClick,
+  onPlanClick,
+  onBookClick,
+  hasMinimumSelections = false,
 }: PlanHeaderProps) {
   // currentStage kept for backwards compatibility but planViewState is preferred
   void _currentStage;
@@ -125,6 +153,27 @@ export function PlanHeader({
   const title = destinationCard?.title || fallbackTitle || '';
   const hasDestination = Boolean(title);
   const subtitle = destinationCard?.subtitle;
+
+  // Handle step clicks - map step key to appropriate callback
+  const handleStepClick = React.useCallback(
+    (step: StepKey) => {
+      switch (step) {
+        case 'setup':
+          onSetupClick?.();
+          break;
+        case 'plan':
+          onPlanClick?.();
+          break;
+        case 'book':
+          // Only allow book click if minimum selections are met
+          if (hasMinimumSelections) {
+            onBookClick?.();
+          }
+          break;
+      }
+    },
+    [onSetupClick, onPlanClick, onBookClick, hasMinimumSelections]
+  );
 
   // Use statusCopyMap for accurate step tracking
   const currentStepIndex = getStepIndex(planViewState, hasDestination, hasDates);
@@ -141,7 +190,7 @@ export function PlanHeader({
     }
     // Always use placeholder for known destination - never fall back to grey
     if (title) {
-      const placeholders = placeholderImagesForBranch({ destinations: [title] });
+      const placeholders = placeholderImagesForBranch({ destination: title });
       return placeholders[0] || '/assets/default-destination.jpg';
     }
     return null;
@@ -162,6 +211,7 @@ export function PlanHeader({
             completedSteps={completedSteps}
             isGenerating={isGenerating}
             variant="default"
+            onStepClick={handleStepClick}
           />
           {/* In S0: show CTA chip. In S1+: show pills if available */}
           {planViewState === 'S0_BOOTSTRAP' ? (
@@ -235,6 +285,7 @@ export function PlanHeader({
             completedSteps={completedSteps}
             isGenerating={isGenerating}
             variant="default"
+            onStepClick={handleStepClick}
           />
 
           {/* Status pill - shown during generation */}

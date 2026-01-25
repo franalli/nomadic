@@ -75,9 +75,7 @@ export const BranchComparisonColumn = memo(function BranchComparisonColumn({
   className,
 }: BranchComparisonColumnProps) {
   // Resolve values from branch or trip inputs
-  const destinations = branch.destinations.length > 0
-    ? branch.destinations
-    : tripInputs?.destinations ?? [];
+  const destination = branch.destination ?? tripInputs?.destination ?? null;
   const origin = branch.origin ?? tripInputs?.origin ?? null;
   const startDate = branch.start_date ?? tripInputs?.start_date ?? null;
   const endDate = branch.end_date ?? tripInputs?.end_date ?? null;
@@ -103,7 +101,7 @@ export const BranchComparisonColumn = memo(function BranchComparisonColumn({
       {/* Header with semantic label */}
       <div className="mb-3 flex items-center justify-between">
         <span className="text-xs font-medium uppercase tracking-wide text-gray-500">
-          {destinations.length > 0 ? `${destinations[0]} Trip` : (isFirst ? 'Option A' : 'Option B')}
+          {destination ? `${destination} Trip` : (isFirst ? 'Option A' : 'Option B')}
         </span>
         <div className="flex items-center gap-2">
           {branch.is_primary && (
@@ -129,7 +127,7 @@ export const BranchComparisonColumn = memo(function BranchComparisonColumn({
           <MapPin className="mt-0.5 h-5 w-5 flex-shrink-0 text-gray-400" />
           <div>
             <h3 className="text-lg font-semibold text-gray-900">
-              {destinations.join(', ') || 'Destination TBD'}
+              {destination || 'Destination TBD'}
             </h3>
             {origin && (
               <p className="text-sm text-gray-500">From {origin}</p>

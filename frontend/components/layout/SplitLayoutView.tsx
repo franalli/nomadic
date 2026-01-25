@@ -138,7 +138,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
               aria-label="Your trip plan"
               data-testid="plan-view"
             >
-              <div className="flex-1 overflow-y-auto no-scrollbar p-6">
+              <div id="plan-panel" className="flex-1 overflow-y-auto no-scrollbar p-6">
                 {planViewContent}
               </div>
             </main>
@@ -166,6 +166,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
             ) : (
               <motion.main
                 key="mobile-plan"
+                id="plan-panel"
                 className="flex-1 overflow-y-auto p-4 lg:hidden rightCanvas"
                 initial="planEnter"
                 animate="planCenter"

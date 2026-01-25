@@ -108,8 +108,7 @@ export default function SummaryPage() {
 
   const { branch, selection } = summary;
   const mapSrc = (() => {
-    const { origin, destinations } = branch;
-    const destination = destinations?.[0] ?? null;
+    const { origin, destination } = branch;
     if (origin && destination) {
       return `https://maps.google.com/maps?output=embed&f=d&source=embed&saddr=${encodeURIComponent(
         origin
@@ -135,7 +134,7 @@ export default function SummaryPage() {
           </div>
           <div className="bg-primary/10 text-primary inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold">
             <Sparkles className="h-4 w-4" />
-            {branch.destinations.join(', ') || 'TBD'}
+            {branch.destination || 'TBD'}
           </div>
         </div>
 
@@ -206,7 +205,7 @@ export default function SummaryPage() {
             </div>
             <p className="text-muted-foreground mt-2 text-sm">
               {branch.origin ? branch.origin : 'Origin TBD'} →{' '}
-              {branch.destinations.length > 0 ? branch.destinations.join(', ') : 'Destination TBD'}
+              {branch.destination || 'Destination TBD'}
             </p>
             <div className="mt-4 flex w-full justify-center">
               <div className="overflow-hidden rounded-xl border border-white/10 shadow-md">

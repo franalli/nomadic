@@ -120,7 +120,7 @@ class TestDemoConstraintCombinations:
         """Classic demo route: Amsterdam to Lisbon in April."""
         constraints = {
             "origin": "Amsterdam",
-            "destinations": ["Lisbon"],
+            "destination": "Lisbon",
             "start_date": "2025-04-12",
             "end_date": "2025-04-18",
             "budget": 1500,
@@ -128,7 +128,7 @@ class TestDemoConstraintCombinations:
 
         # All constraints are valid
         assert constraints["origin"] in DEMO_ORIGINS
-        assert constraints["destinations"][0] in DEMO_DESTINATIONS
+        assert constraints["destination"] in DEMO_DESTINATIONS
 
         # 6-day trip is reasonable
         from datetime import datetime
@@ -143,12 +143,12 @@ class TestDemoConstraintCombinations:
         """Demo route with budget: London to Barcelona."""
         constraints = {
             "origin": "London",
-            "destinations": ["Barcelona"],
+            "destination": "Barcelona",
             "budget": 2000,
         }
 
         assert constraints["origin"] in DEMO_ORIGINS
-        assert constraints["destinations"][0] in DEMO_DESTINATIONS
+        assert constraints["destination"] in DEMO_DESTINATIONS
         assert constraints["budget"] >= 1000
 
 
@@ -158,20 +158,20 @@ class TestDemoEdgeCases:
     def test_demo_partial_constraints(self):
         """Demo works with partial constraints."""
         partial_constraints = {
-            "destinations": ["Paris"],
+            "destination": "Paris",
         }
 
         # Should still show a valid partial plan
-        assert partial_constraints["destinations"][0] in DEMO_DESTINATIONS
+        assert partial_constraints["destination"] in DEMO_DESTINATIONS
 
     def test_demo_changing_destination(self):
         """Demo handles destination changes smoothly."""
-        initial = {"destinations": ["Lisbon"]}
-        changed = {"destinations": ["Barcelona"]}
+        initial = {"destination": "Lisbon"}
+        changed = {"destination": "Barcelona"}
 
         # Both are valid demo destinations
-        assert initial["destinations"][0] in DEMO_DESTINATIONS
-        assert changed["destinations"][0] in DEMO_DESTINATIONS
+        assert initial["destination"] in DEMO_DESTINATIONS
+        assert changed["destination"] in DEMO_DESTINATIONS
 
     def test_demo_date_range_changes(self):
         """Demo handles date range changes."""

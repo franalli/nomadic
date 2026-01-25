@@ -83,7 +83,7 @@ export function placeholderImageForTile(tile: TilePlaceholderInput): string {
 
 type BranchPlaceholderInput = {
   id?: string;
-  destinations?: string[];
+  destination?: string | null;
   index?: number;
 };
 
@@ -92,7 +92,7 @@ type BranchPlaceholderInput = {
  * Same branch always gets the same images.
  */
 export function placeholderImagesForBranch(branch: BranchPlaceholderInput): string[] {
-  const seed = branch.id || branch.destinations?.join(',') || `branch-${branch.index ?? 0}`;
+  const seed = branch.id || branch.destination || `branch-${branch.index ?? 0}`;
   const hash = hashCode(seed);
   const images = PLACEHOLDER_IMAGES.destination;
 

@@ -116,11 +116,11 @@ export function useTripInputsEditor(
     if (!storeTripInputs) return;
 
     setTripInputsDraft((prev) => {
-      // Always update destinations from store (source of truth)
+      // Always update destination from store (source of truth)
       // This ensures bot-initiated changes are reflected in UI
       const newDraft: TripInputsDraft = {
         ...prev,
-        destinations: storeTripInputs.destinations ?? [],
+        destination: storeTripInputs.destination ?? null,
       };
 
       // Only update other fields if not actively editing
@@ -454,8 +454,6 @@ export function useTripInputsEditor(
       const trimmedDestination = destination.trim();
       if (!trimmedDestination) return;
 
-      const currentDestinations = tripInputs.destinations ?? [];
-
       // Clear any previous validation error for this field
       setValidationError(null);
 
@@ -479,30 +477,14 @@ export function useTripInputsEditor(
           return;
         }
 
-        // Auto-apply corrections (including multi-destination splits)
-        const correctedValues = result.corrected_values;
-        const wasSplit = correctedValues.length > 1;
+        // Use the first corrected value (single destination only)
+        const correctedValue = result.corrected_values[0] || trimmedDestination;
 
-        // Filter out duplicates and add all corrected values
-        const newDestinations = [...currentDestinations];
-        const addedDestinations: string[] = [];
-        for (const dest of correctedValues) {
-          if (!newDestinations.some((d) => d.toLowerCase() === dest.toLowerCase())) {
-            newDestinations.push(dest);
-            addedDestinations.push(dest);
-          }
-        }
-
-        if (addedDestinations.length === 0) {
-          setPendingDestination(null);
-          setValidationLoading(null);
-          return;
-        }
-        const success = await documentStore.commitTripInputs({ destinations: newDestinations });
+        const success = await documentStore.commitTripInputs({ destination: correctedValue });
 
         if (!success) {
           setPendingDestination(null);
-          onToast('Failed to add destination. Please try again.', 'error');
+          onToast('Failed to set destination. Please try again.', 'error');
           setValidationLoading(null);
           return;
         }
@@ -511,95 +493,33 @@ export function useTripInputsEditor(
         setPendingDestination(null);
         setValidationLoading(null);
 
-        // Show confirmation toast for added destinations
-        if (wasSplit) {
-          onToast(`Added ${addedDestinations.join(', ')} to your destinations! 📍`, 'confirmation');
-        } else {
-          onToast(`Added "${addedDestinations[0]}" to your destinations! 📍`, 'confirmation');
-        }
+        onToast(`Destination set to "${correctedValue}" 📍`, 'confirmation');
       } catch {
         setPendingDestination(null);
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }
     },
-    [tripInputs.destinations, documentStore, onToast]
+    [tripInputs.destination, documentStore, onToast]
   );
 
   const handleRemoveDestination = useCallback(
-    async (index: number) => {
-      const currentDestinations = tripInputs.destinations ?? [];
-      if (index < 0 || index >= currentDestinations.length) return;
+    async (_index: number) => {
+      const currentDestination = tripInputs.destination;
+      if (!currentDestination) return;
 
-      // Get the destination being removed for the chat message
-      const removedDestination = currentDestinations[index];
-
-      // Compute new destinations array
-      const newDestinations = currentDestinations.filter((_, i) => i !== index);
-
-      // If we have branches, immediately prune any that include the removed destination
-      if (branches.length > 0 && removedDestination) {
-        const removedLower = removedDestination.toLowerCase();
-        const prunedBranches = branches.filter((branch) => {
-          // Keep branches that don't include the removed destination
-          const branchDestinations = branch.destinations ?? [];
-          return !branchDestinations.some(
-            (d) => d.toLowerCase() === removedLower
-          );
-        });
-
-        // If branches were pruned, update the UI immediately
-        if (prunedBranches.length !== branches.length) {
-          const removedCount = branches.length - prunedBranches.length;
-          onBranchesChange(prunedBranches);
-
-          // If all branches were removed, readyToGenerate will be computed automatically
-          if (prunedBranches.length === 0) {
-            onSelectedBranchIdChange(null);
-            onToast(
-              `Removed ${removedDestination} — your plan was reset. Click "Build Plan" to create a new plan.`,
-              'info'
-            );
-          } else {
-            // Some branches remain - update selection if needed
-            if (selectedBranchId && !prunedBranches.find((b) => b.id === selectedBranchId)) {
-              const newSelectedId = prunedBranches.find((b) => b.is_primary)?.id ?? prunedBranches[0]?.id ?? null;
-              onSelectedBranchIdChange(newSelectedId);
-            }
-            onToast(
-              `Removed ${removedDestination} — ${removedCount} plan${removedCount > 1 ? 's were' : ' was'} updated.`,
-              'info'
-            );
-          }
-        }
-      }
-
-      // Optimistically update via documentStore.commitTripInputs
-      // This updates the UI immediately and syncs to backend in background
-      const success = await documentStore.commitTripInputs({ destinations: newDestinations });
+      // Clear the destination
+      const success = await documentStore.commitTripInputs({ destination: null });
 
       if (!success) {
-        // Show error toast on failure (store already rolled back)
-        onToast('Failed to remove destination. Please try again.', 'error');
+        onToast('Failed to clear destination. Please try again.', 'error');
         return;
       }
 
-      // Add confirmation toast to acknowledge the removal
-      if (removedDestination) {
-        onToast(`Removed "${removedDestination}" from your destinations. 📍`, 'confirmation');
-      }
-
+      onToast(`Cleared destination "${currentDestination}". 📍`, 'confirmation');
       setSelectedLocationBadge(null);
     },
-    [
-      tripInputs.destinations,
-      documentStore,
-      branches,
-      selectedBranchId,
-      onBranchesChange,
-      onSelectedBranchIdChange,
-      onToast,
-    ]
+    [tripInputs.destination, documentStore, onToast]
   );
 
   const resetDraft = useCallback(() => {

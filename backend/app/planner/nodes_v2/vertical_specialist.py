@@ -212,6 +212,191 @@ SPECIALIST_KNOWLEDGE = {
 
 
 # =============================================================================
+# Feasibility Data (Geographic/Physical Constraints)
+# =============================================================================
+
+SKIING_FEASIBILITY = {
+    # Infeasible - no natural or indoor skiing possible
+    "infeasible": [
+        "miami",
+        "florida",
+        "hawaii",
+        "caribbean",
+        "bahamas",
+        "cancun",
+        "bali",
+        "thailand",
+        "singapore",
+        "philippines",
+        "vietnam",
+        "indonesia",
+        "malaysia",
+        "cambodia",
+        "laos",
+        "myanmar",
+        "india",
+        "sri lanka",
+        "maldives",
+        "seychelles",
+        "mauritius",
+        "kenya",
+        "tanzania",
+        "south africa",
+        "egypt",
+        "morocco",
+        "brazil",
+        "argentina",
+        "mexico",
+        "costa rica",
+        "panama",
+        "cuba",
+        "jamaica",
+        "dominican republic",
+        "puerto rico",
+    ],
+    # Caveat - indoor only
+    "caveat": {
+        "amsterdam": "Indoor skiing at SnowWorld Zoetermeer (30min drive)",
+        "netherlands": "Indoor skiing at SnowWorld (Zoetermeer or Landgraaf)",
+        "london": "Indoor skiing at The Snow Centre Hemel Hempstead (45min)",
+        "uk": "Indoor skiing at The Snow Centre or Chill Factore Manchester",
+        "dubai": "Indoor skiing at Ski Dubai (Mall of the Emirates)",
+        "uae": "Indoor skiing at Ski Dubai in Dubai",
+        "madrid": "Indoor skiing at Madrid SnowZone (Xanadú)",
+        "berlin": "Indoor skiing at Alpincenter Bottrop (4h drive)",
+        "paris": "No indoor ski facilities nearby - consider Alps (3h by TGV)",
+    },
+}
+
+DIVING_FEASIBILITY = {
+    # Infeasible - landlocked, no facilities
+    "infeasible": [
+        "switzerland",
+        "austria",
+        "czech",
+        "czechia",
+        "hungary",
+        "luxembourg",
+        "liechtenstein",
+        "andorra",
+        "san marino",
+        "mongolia",
+        "nepal",
+        "bhutan",
+        "laos",
+        "paraguay",
+        "bolivia",
+        "rwanda",
+        "burundi",
+        "uganda",
+        "zambia",
+        "zimbabwe",
+        "botswana",
+        "malawi",
+        "lesotho",
+        "eswatini",
+        "ethiopia",
+        "chad",
+        "niger",
+        "mali",
+        "burkina faso",
+        "central african republic",
+        "south sudan",
+        "kazakhstan",
+        "uzbekistan",
+        "turkmenistan",
+        "kyrgyzstan",
+        "tajikistan",
+        "afghanistan",
+        "armenia",
+        "azerbaijan",
+        "belarus",
+        "slovakia",
+    ],
+    # Caveat - pool/aquarium only
+    "caveat": {
+        "london": "Pool diving at NDAC or London Aquarium experiences",
+        "amsterdam": "Pool diving at Duikvaker centers",
+        "paris": "Pool diving at Aqua 92 or Nemo 33 (Belgium, 3h)",
+        "berlin": "Pool diving at Dive4Life or aquarium experiences",
+        "madrid": "Pool diving available; nearest sea diving in Valencia (3h)",
+        "munich": "Pool diving; nearest sea diving in Croatia (5h)",
+        "vienna": "Pool diving available; landlocked country",
+    },
+}
+
+HIKING_FEASIBILITY = {
+    # Hiking is generally feasible almost everywhere, but with caveats
+    "infeasible": [],  # Very few places where hiking is truly impossible
+    "caveat": {
+        "maldives": "Flat terrain only - no mountain hiking available",
+        "bahamas": "Flat terrain - limited to coastal/nature walks",
+        "singapore": "Urban hiking only - MacRitchie Reservoir, Bukit Timah",
+        "hong kong": "Urban hiking - Dragon's Back, Lion Rock trails",
+        "dubai": "Desert hiking only - no mountain trails nearby",
+    },
+}
+
+# Map topic to feasibility data
+FEASIBILITY_DATA = {
+    "skiing": SKIING_FEASIBILITY,
+    "diving": DIVING_FEASIBILITY,
+    "hiking": HIKING_FEASIBILITY,
+}
+
+
+def check_feasibility(
+    topic: str,
+    destination: str,
+) -> tuple:
+    """
+    Check if activity is feasible at destination.
+
+    Returns:
+        (status, reason, alternative_suggestion) tuple where:
+        - status: "feasible" | "caveat" | "infeasible"
+        - reason: Human-readable explanation (or None)
+        - alternative_suggestion: Suggested alternative (or None)
+    """
+
+    dest_lower = (destination or "").lower()
+
+    data = FEASIBILITY_DATA.get(topic)
+    if not data:
+        return ("feasible", None, None)
+
+    # Check infeasible locations
+    for location in data.get("infeasible", []):
+        if location in dest_lower:
+            return (
+                "infeasible",
+                f"{topic.title()} is not available in {destination}",
+                _suggest_alternative(topic),
+            )
+
+    # Check caveat locations
+    for location, caveat_msg in data.get("caveat", {}).items():
+        if location in dest_lower:
+            return (
+                "caveat",
+                caveat_msg,
+                None,
+            )
+
+    return ("feasible", None, None)
+
+
+def _suggest_alternative(topic: str) -> str:
+    """Get alternative destination suggestion for infeasible activities."""
+    alternatives = {
+        "skiing": "Consider destinations like Chamonix, Zermatt, Niseko, or Aspen",
+        "diving": "Consider destinations like Bali, Red Sea, Maldives, or Great Barrier Reef",
+        "hiking": "Consider destinations like Patagonia, Nepal, the Alps, or Yosemite",
+    }
+    return alternatives.get(topic, "Consider a destination better suited for this activity")
+
+
+# =============================================================================
 # VerticalSpecialist Class
 # =============================================================================
 
@@ -307,17 +492,208 @@ class VerticalSpecialist:
 
         return enhancements
 
+    def generate_bookends(self, state: GraphStateV2) -> List[ItineraryBlock]:
+        """
+        Generate arrival/departure bookend blocks.
+
+        Day 1: Arrival + Check-in
+        Last Day: Check-out + Departure
+        """
+        plan = state.trip_plan
+        blocks = []
+
+        # Calculate trip duration
+        if plan.start_date and plan.end_date:
+            from datetime import datetime
+
+            try:
+                start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+                end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+                duration = (end - start).days + 1
+            except ValueError:
+                duration = 5  # Default
+        else:
+            duration = 5  # Default
+
+        destination = plan.destination or "your destination"
+
+        # Day 1: Arrival
+        blocks.append(
+            ItineraryBlock(
+                day=1,
+                title=f"Arrival in {destination}",
+                description="Airport transfer and hotel check-in. Rest and acclimatize.",
+                type="buffer",
+                is_buffer=True,
+                buffer_type="arrival",
+                buffer_reason="Travel day - airport transfer and check-in",
+                source_specialist=self.topic,
+            )
+        )
+
+        # Last day: Departure
+        blocks.append(
+            ItineraryBlock(
+                day=duration,
+                title=f"Departure from {destination}",
+                description="Hotel check-out and transfer to airport.",
+                type="buffer",
+                is_buffer=True,
+                buffer_type="departure",
+                buffer_reason="Travel day - check-out and departure",
+                source_specialist=self.topic,
+            )
+        )
+
+        return blocks
+
+    def generate_safety_buffers(self, state: GraphStateV2) -> List[ItineraryBlock]:
+        """
+        Generate safety buffer blocks based on domain constraints.
+
+        - Diving: No-fly interval (24h before departure flight)
+        - Hiking: Acclimatization days at high altitude
+        """
+        plan = state.trip_plan
+        blocks = []
+
+        # Calculate trip duration
+        if plan.start_date and plan.end_date:
+            from datetime import datetime
+
+            try:
+                start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+                end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+                duration = (end - start).days + 1
+            except ValueError:
+                duration = 5
+        else:
+            duration = 5
+
+        if self.topic == "diving" and duration >= 3:
+            # Add no-fly buffer on the day before departure
+            no_fly_day = duration - 1
+            blocks.append(
+                ItineraryBlock(
+                    day=no_fly_day,
+                    title="No-Fly Interval",
+                    description=(
+                        "Surface interval before flight. Light activities only - no diving."
+                    ),
+                    type="buffer",
+                    is_buffer=True,
+                    buffer_type="no_fly",
+                    buffer_reason=(
+                        "PADI Standard: 24h surface interval required before flying after diving"
+                    ),
+                    source_specialist="diving",
+                    safety_notes=(
+                        "Decompression sickness risk if flying within 24 hours of diving"
+                    ),
+                )
+            )
+
+        elif self.topic == "hiking":
+            # For high-altitude destinations, add acclimatization day
+            high_altitude_dests = [
+                "nepal",
+                "everest",
+                "kilimanjaro",
+                "peru",
+                "cusco",
+                "tibet",
+                "ladakh",
+            ]
+            dest_lower = (plan.destination or "").lower()
+
+            if any(h in dest_lower for h in high_altitude_dests) and duration >= 4:
+                # Add acclimatization on day 3
+                blocks.append(
+                    ItineraryBlock(
+                        day=3,
+                        title="Acclimatization Day",
+                        description=(
+                            "Rest day to adjust to altitude. Light walks only, stay hydrated."
+                        ),
+                        type="buffer",
+                        is_buffer=True,
+                        buffer_type="acclimatization",
+                        buffer_reason=(
+                            "Altitude sickness prevention: "
+                            "max 500m elevation gain per day above 3000m"
+                        ),
+                        source_specialist="hiking",
+                        safety_notes=(
+                            "Ascending too fast increases risk of AMS (Acute Mountain Sickness)"
+                        ),
+                    )
+                )
+
+        return blocks
+
     def generate_output(self, state: GraphStateV2) -> SpecialistOutput:
         """
         Generate the complete specialist output.
 
-        Returns BOTH constraints AND content.
+        Returns BOTH constraints AND content, including:
+        - Feasibility check (can return early if infeasible)
+        - Bookend blocks (arrival/departure)
+        - Safety buffer blocks (no-fly, acclimatization)
+        - Activity content blocks
         """
         destination = state.trip_plan.destination or ""
 
+        # STEP 1: Check feasibility FIRST (Constraint Engine pattern)
+        status, reason, alternative = check_feasibility(self.topic, destination)
+
+        if status == "infeasible":
+            # Return empty output with infeasible status - no content generated
+            return SpecialistOutput(
+                feasibility_status="infeasible",
+                feasibility_reason=reason,
+                alternative_suggestion=alternative,
+                constraints=[],
+                content_blocks=[],
+                critique=None,
+                enhancements=[],
+            )
+
+        # STEP 2: Collect all content blocks in order
+        all_blocks: List[ItineraryBlock] = []
+
+        # 2a. Bookends (arrival/departure)
+        all_blocks.extend(self.generate_bookends(state))
+
+        # 2b. Safety buffers (no-fly, acclimatization)
+        all_blocks.extend(self.generate_safety_buffers(state))
+
+        # 2c. Activity content
+        all_blocks.extend(self.get_content_for_destination(destination))
+
+        # Sort by day
+        all_blocks.sort(key=lambda b: b.day)
+
+        # STEP 3: Build constraints list
+        constraints = self.get_constraints()
+
+        # If caveat, inject as first constraint (warning)
+        if status == "caveat" and reason:
+            constraints.insert(
+                0,
+                SpecialistConstraint(
+                    type="safety",
+                    rule="feasibility_caveat",
+                    applies_to="activities",
+                    reason=reason,
+                ),
+            )
+
         return SpecialistOutput(
-            constraints=self.get_constraints(),
-            content_blocks=self.get_content_for_destination(destination),
+            feasibility_status=status,
+            feasibility_reason=reason if status == "caveat" else None,
+            alternative_suggestion=alternative,
+            constraints=constraints,
+            content_blocks=all_blocks,
             critique=self.critique_plan(state),
             enhancements=self.generate_enhancements(state),
         )
@@ -363,6 +739,8 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         _debug_v2("🤿 SPECIALIST skipped (no active specialist)")
         return state
 
+    from app.debug_utils import log
+
     _debug_v2_node_start(
         "specialist",
         "🤿",
@@ -370,13 +748,61 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         destination=state.trip_plan.destination,
     )
 
+    log("SPECIALIST", f"{topic.title()} Specialist activated")
+
     # Create specialist for this topic
     specialist = VerticalSpecialist(topic)
 
-    # Generate output
+    # Generate output (includes feasibility check)
     output = specialist.generate_output(state)
 
-    # Inject constraints into trip plan
+    # Store specialist output in metadata (always, for UI rendering)
+    state.metadata["specialist_output"] = output.model_dump()
+
+    # Handle INFEASIBLE case - activity not possible at destination
+    if output.feasibility_status == "infeasible":
+        log("SPECIALIST", f"⛔ {topic.title()} INFEASIBLE in {state.trip_plan.destination}")
+        log("SPECIALIST", f"   Reason: {output.feasibility_reason}")
+        if output.alternative_suggestion:
+            log("SPECIALIST", f"   Alternative: {output.alternative_suggestion}")
+
+        # Add as a constraint violation for UI display
+        state.constraints_violated.append(
+            output.feasibility_reason or f"{topic.title()} not available at this destination"
+        )
+
+        # Store infeasibility metadata for frontend
+        state.metadata["specialist_infeasible"] = True
+        state.metadata["specialist_infeasible_reason"] = output.feasibility_reason
+        state.metadata["specialist_alternative"] = output.alternative_suggestion
+
+        # Update UI state
+        state.active_agent_id = topic
+        state.ui_events.append("SPECIALIST_INFEASIBLE")
+
+        # Generate message for UI
+        state.metadata["specialist_message"] = (
+            f"{topic.title()} is not available in {state.trip_plan.destination}. "
+            f"{output.alternative_suggestion or 'Consider a different destination.'}"
+        )
+
+        _debug_v2_node_end(
+            "specialist",
+            "🤿",
+            topic=topic,
+            feasibility_status="infeasible",
+            reason=output.feasibility_reason,
+        )
+
+        return state
+
+    # Handle CAVEAT case - activity possible with limitations
+    if output.feasibility_status == "caveat":
+        log("SPECIALIST", f"⚠️ {topic.title()} CAVEAT: {output.feasibility_reason}")
+        state.metadata["specialist_caveat"] = True
+        state.metadata["specialist_caveat_reason"] = output.feasibility_reason
+
+    # FEASIBLE or CAVEAT: Inject constraints into trip plan
     for constraint in output.constraints:
         if constraint not in state.trip_plan.constraints:
             state.trip_plan.constraints.append(constraint)
@@ -386,8 +812,14 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         if block not in state.trip_plan.itinerary_blocks:
             state.trip_plan.itinerary_blocks.append(block)
 
-    # Store specialist output in metadata
-    state.metadata["specialist_output"] = output.model_dump()
+    # Log constraints and content
+    if output.constraints:
+        constraint_rules = ", ".join([c.rule for c in output.constraints])
+        log("SPECIALIST", "Constraints injected", data=constraint_rules)
+    if output.content_blocks:
+        log("SPECIALIST", f"Content blocks: {len(output.content_blocks)}")
+        for block in output.content_blocks[:3]:
+            log("SPECIALIST", f"  Day {block.day}: {block.title}", sleep=0.1)
 
     # Update UI state
     state.active_agent_id = topic
@@ -396,9 +828,12 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
     # Generate specialist message for UI
     if output.content_blocks:
         block_titles = [b.title for b in output.content_blocks[:3]]
+        caveat_note = (
+            f" Note: {output.feasibility_reason}" if output.feasibility_status == "caveat" else ""
+        )
         state.metadata["specialist_message"] = (
             f"I've added some {topic} experiences: {', '.join(block_titles)}. "
-            f"I've also noted {len(output.constraints)} safety considerations."
+            f"I've also noted {len(output.constraints)} safety considerations.{caveat_note}"
         )
 
     _debug_v2_node_end(

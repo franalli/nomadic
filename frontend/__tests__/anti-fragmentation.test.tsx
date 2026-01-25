@@ -249,14 +249,14 @@ describe('Plan object invariants', () => {
       // Having only destination set is a valid state
       // Having only budget set is a valid state
       const partialConstraints = {
-        destinations: ['Lisbon'],
+        destination: 'Lisbon',
         origin: null,
         dates: null,
         budget: null,
       };
 
       // Partial state is always valid
-      expect(partialConstraints.destinations.length).toBeGreaterThan(0);
+      expect(partialConstraints.destination).toBeTruthy();
       expect(partialConstraints.origin).toBeNull();
     });
   });

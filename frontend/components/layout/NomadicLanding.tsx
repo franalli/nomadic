@@ -26,6 +26,7 @@ import {
   TravelersSheet,
 } from '@/components/planner/sheets';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
@@ -94,11 +95,8 @@ function detectChangedFieldNames(
   if (oldInputs?.origin !== newInputs.origin && newInputs.origin) {
     changed.push('origin');
   }
-  if (
-    JSON.stringify(oldInputs?.destinations) !== JSON.stringify(newInputs.destinations) &&
-    (newInputs.destinations?.length ?? 0) > 0
-  ) {
-    changed.push('destinations');
+  if (oldInputs?.destination !== newInputs.destination && newInputs.destination) {
+    changed.push('destination');
   }
   if (oldInputs?.start_date !== newInputs.start_date && newInputs.start_date) {
     changed.push('start_date');
@@ -121,7 +119,7 @@ function detectChangedFieldNames(
 
 export function NomadicLanding() {
   // Mobile mode context - for switching between planner/plan views on mobile
-  const { isDesktop, switchToPlan } = useMobileMode();
+  const { isDesktop, switchToPlan, switchToPlanner } = useMobileMode();
 
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
@@ -217,13 +215,16 @@ export function NomadicLanding() {
   const [tripLengthSheetOpen, setTripLengthSheetOpen] = useState(false);
   const [confirmStaySheetOpen, setConfirmStaySheetOpen] = useState(false);
 
+  // Confirmation dialog for destructive Setup click (from Plan/Book mode)
+  const [setupConfirmDialogOpen, setSetupConfirmDialogOpen] = useState(false);
+
   // Destination image state - fetched from Unsplash when destination changes
   const [destinationImageUrl, setDestinationImageUrl] = useState<string | null>(null);
   const lastFetchedDestination = useRef<string | null>(null);
 
   // Fetch destination image when destination changes
   useEffect(() => {
-    const destination = tripInputs.destinations?.[0];
+    const destination = tripInputs.destination;
     if (!destination || destination === lastFetchedDestination.current) return;
 
     lastFetchedDestination.current = destination;
@@ -239,7 +240,7 @@ export function NomadicLanding() {
       .catch((err) => {
         console.warn('Failed to fetch destination image:', err);
       });
-  }, [tripInputs.destinations]);
+  }, [tripInputs.destination]);
 
   // Branch manager hook - manages branches, tiles, and generating state
   const branchManager = useBranchManager({
@@ -271,6 +272,9 @@ export function NomadicLanding() {
 
   // Wrap handleStartNewSession to also clear all local state
   const handleStartNewSession = useCallback(async () => {
+    // CRITICAL: Reset document store FIRST (synchronously) to prevent stale state
+    // from causing incorrect planViewState computation during async operations
+    documentStore.reset();
     // Clear shortlist (saved tiles)
     shortlist.clear();
     // Clear local UI generation state
@@ -281,6 +285,10 @@ export function NomadicLanding() {
     previousTripInputsRef.current = null;
     // Reset plan history flag - allows returning to S0_BOOTSTRAP
     setHasEverHadPlan(false);
+    // Reset user generation request flag - critical for returning to Setup
+    setUserRequestedGeneration(false);
+    // Clear optimistic pending topics
+    setLocalPendingTopics([]);
     // Clear destination image
     setDestinationImageUrl(null);
     lastFetchedDestination.current = null;
@@ -288,9 +296,13 @@ export function NomadicLanding() {
     setTripLengthSheetOpen(false);
     setConfirmStaySheetOpen(false);
     closeSheet(); // Close any open trip input sheet
-    // Proceed with branch manager reset (clears document store, chat, branches, etc.)
+    // Reset mobile mode to planner view (shows chat/setup)
+    if (!isDesktop) {
+      switchToPlanner();
+    }
+    // Proceed with branch manager reset (clears server session, chat, branches, etc.)
     await branchManagerStartNewSession();
-  }, [shortlist, branchManagerStartNewSession, closeSheet]);
+  }, [shortlist, branchManagerStartNewSession, closeSheet, documentStore, isDesktop, switchToPlanner]);
 
   // Wrapped handlers for receipt functionality
   // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
@@ -464,7 +476,7 @@ export function NomadicLanding() {
 
   // Check if we have origin or destination to show route
   const hasOrigin = Boolean(tripInputs.origin);
-  const hasDestination = (tripInputs.destinations ?? []).length > 0;
+  const hasDestination = Boolean(tripInputs.destination);
   const hasStartDate = Boolean(tripInputs.start_date);
   const hasEndDate = Boolean(tripInputs.end_date);
 
@@ -499,12 +511,12 @@ export function NomadicLanding() {
     storeDocument?.destination_card ??
     (hasDestination
       ? {
-          title: tripInputs.destinations?.[0] ?? '',
+          title: tripInputs.destination ?? '',
           subtitle: (() => {
             const parts: string[] = [];
             // Add origin → destination if we have origin
             if (tripInputs.origin) {
-              parts.push(`${tripInputs.origin} → ${tripInputs.destinations?.[0] ?? ''}`);
+              parts.push(`${tripInputs.origin} → ${tripInputs.destination ?? ''}`);
             }
             // Add date if available
             if (tripInputs.start_date) {
@@ -519,7 +531,7 @@ export function NomadicLanding() {
             // Return route-derived subtitle or fallback
             return parts.length > 0
               ? parts.join(' · ')
-              : `Trip to ${tripInputs.destinations?.[0] ?? ''}`;
+              : `Trip to ${tripInputs.destination ?? ''}`;
           })(),
           // Use fetched destination image URL (from Unsplash API)
           image_url: destinationImageUrl ?? undefined,
@@ -533,14 +545,21 @@ export function NomadicLanding() {
   const backendPlanViewState = storeDocument?.plan_view_state;
   const hasStrategyContent = (storeDocument?.strategy_sections?.length ?? 0) > 0;
 
-  // Update hasEverHadPlan when branches become available AND user explicitly requested generation
+  // Update hasEverHadPlan when plan content becomes available
+  // V1: branches + strategy content
+  // V2: tiles (branches are empty in V2)
   // Using state ensures useMemo re-computes when this changes
-  // Only set when userRequestedGeneration is true to prevent Plan tab showing prematurely
+  const hasTilesReady = Object.keys(storeDocument?.tiles ?? {}).length > 0;
   useEffect(() => {
+    // V1 path: branches + strategy
     if (hasBranchesReady && hasStrategyContent && !hasEverHadPlan && userRequestedGeneration) {
       setHasEverHadPlan(true);
     }
-  }, [hasBranchesReady, hasStrategyContent, hasEverHadPlan, userRequestedGeneration]);
+    // V2 path: tiles exist (even without explicit Build Plan click)
+    if (hasTilesReady && !hasEverHadPlan) {
+      setHasEverHadPlan(true);
+    }
+  }, [hasBranchesReady, hasStrategyContent, hasEverHadPlan, userRequestedGeneration, hasTilesReady]);
 
   // Clear local pending topics when backend responds with executed_strategy_topics
   // Topics that appear in executed are successfully processed
@@ -556,14 +575,18 @@ export function NomadicLanding() {
 
   const planViewState: PlanViewState = useMemo(() => {
     // =========================================================================
-    // CRITICAL: Setup → Plan transition ONLY via explicit "Build Plan" click
+    // Setup → Plan transition logic
     // =========================================================================
-    // Before user clicks "Build Plan" (userRequestedGeneration=false AND hasEverHadPlan=false),
-    // we ALWAYS stay in S0_BOOTSTRAP regardless of backend state.
-    // This prevents the Plan tab from showing prematurely.
+    // V1: Requires explicit "Build Plan" click
+    // V2: Auto-transitions when tiles are available
 
-    if (!hasEverHadPlan && !userRequestedGeneration) {
-      // User hasn't clicked "Build Plan" yet - stay in Setup mode
+    // V2 path: If tiles exist, trust backend's plan_view_state
+    if (hasTilesReady && backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
+      return backendPlanViewState;
+    }
+
+    // V1 path: Before user clicks "Build Plan", stay in Setup mode
+    if (!hasEverHadPlan && !userRequestedGeneration && !hasTilesReady) {
       return 'S0_BOOTSTRAP';
     }
 
@@ -578,7 +601,8 @@ export function NomadicLanding() {
       if (backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
         return backendPlanViewState;
       }
-      // Stay in Plan mode - show strategy content or blocked state
+      // Stay in Plan mode - show strategy content or tiles
+      if (hasTilesReady) return 'S2_STRATEGY_READY';
       return hasStrategyContent ? 'S2_STRATEGY_READY' : 'S2_BLOCKED';
     }
 
@@ -591,7 +615,7 @@ export function NomadicLanding() {
     }
 
     return 'S0_BOOTSTRAP';
-  }, [backendPlanViewState, isGenerating, hasStrategyContent, hasEverHadPlan, userRequestedGeneration]);
+  }, [backendPlanViewState, isGenerating, hasStrategyContent, hasEverHadPlan, userRequestedGeneration, hasTilesReady]);
 
   // Auto-switch to Plan Mode when generation is in progress (mobile only)
   useEffect(() => {
@@ -610,17 +634,26 @@ export function NomadicLanding() {
   }, [storeDocument?.pending_strategy_topics, localPendingTopics]);
 
   // Plan View Model - populated from backend response via storeDocument
-  const planViewModel: PlanViewModel = useMemo(() => ({
-    strategy_sections: storeDocument?.strategy_sections,
-    executed_strategy_topics: storeDocument?.executed_strategy_topics,
-    pending_strategy_topics: mergedPendingTopics,
-    open_decisions: storeDocument?.open_decisions ?? [],
-    itinerary_overview: storeDocument?.itinerary_overview ?? undefined,
-    day_cards: storeDocument?.day_cards,
-    itinerary_assumptions: storeDocument?.itinerary_assumptions ?? undefined,
-    needs_refresh: storeDocument?.needs_refresh,
-    can_expand_to_itinerary: storeDocument?.can_expand_to_itinerary,
-  }), [storeDocument, mergedPendingTopics]);
+  const planViewModel: PlanViewModel = useMemo(() => {
+    // DEBUG: Log strategy sections when building view model
+    console.log('[NomadicLanding] Building planViewModel:', {
+      strategy_sections_count: storeDocument?.strategy_sections?.length ?? 0,
+      strategy_sections: storeDocument?.strategy_sections,
+      plan_view_state: storeDocument?.plan_view_state,
+      executed_strategy_topics: storeDocument?.executed_strategy_topics,
+    });
+    return {
+      strategy_sections: storeDocument?.strategy_sections,
+      executed_strategy_topics: storeDocument?.executed_strategy_topics,
+      pending_strategy_topics: mergedPendingTopics,
+      open_decisions: storeDocument?.open_decisions ?? [],
+      itinerary_overview: storeDocument?.itinerary_overview ?? undefined,
+      day_cards: storeDocument?.day_cards,
+      itinerary_assumptions: storeDocument?.itinerary_assumptions ?? undefined,
+      needs_refresh: storeDocument?.needs_refresh,
+      can_expand_to_itinerary: storeDocument?.can_expand_to_itinerary,
+    };
+  }, [storeDocument, mergedPendingTopics]);
 
   // Merged generation state: envelope wins if present, else local UI fallback
   const envelopeGeneration = storeDocument?.generation as GenerationState | undefined;
@@ -636,7 +669,7 @@ export function NomadicLanding() {
   const tiles = storeDocument?.tiles ?? {};
 
   // Fallback title from tripInputs (used when destinationCard not yet available)
-  const fallbackTitle = tripInputs.destinations?.[0] ?? undefined;
+  const fallbackTitle = tripInputs.destination ?? undefined;
 
   // CTA gating flags per strict render contract
   // hasDates: at least start_date OR flexible dates with duration
@@ -842,6 +875,49 @@ export function NomadicLanding() {
     chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
   }, []);
 
+  // Stage navigation handlers for interactive stepper tabs
+  // Setup: scroll to configuration or open sheet
+  const handleSetupClick = useCallback(() => {
+    // If plan exists, show confirmation dialog (destructive action warning)
+    if (hasEverHadPlan) {
+      setSetupConfirmDialogOpen(true);
+    } else {
+      // No plan yet - scroll to left panel (chat)
+      document.getElementById('chat-panel')?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [hasEverHadPlan]);
+
+  // Confirmed setup action - actually navigate to setup/config
+  const handleConfirmedSetupNavigation = useCallback(() => {
+    // Open destination sheet for editing core constraints
+    openSheet('destination');
+    setSetupConfirmDialogOpen(false);
+  }, [openSheet]);
+
+  // Plan: scroll to plan view (right panel)
+  const handlePlanClick = useCallback(() => {
+    document.getElementById('plan-panel')?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  // Book: scroll to booking section (bottom of right panel)
+  const handleBookClick = useCallback(() => {
+    document.getElementById('booking-section')?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  // Compute minimum selections for Book stage gating (1 flight + 1 hotel)
+  const hasMinimumSelections = useMemo(() => {
+    const savedTiles = Array.from(shortlist.savedTileIds);
+    const hasHotel = savedTiles.some((id) => {
+      const tile = tiles[id];
+      return tile?.type === 'hotel' || tile?.type === 'stay';
+    });
+    const hasFlight = savedTiles.some((id) => {
+      const tile = tiles[id];
+      return tile?.type === 'flight';
+    });
+    return hasHotel && hasFlight;
+  }, [shortlist.savedTileIds, tiles]);
+
   // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
   const plannerContent = (
     <ChatPanel
@@ -859,7 +935,7 @@ export function NomadicLanding() {
       hasEverHadPlan={hasEverHadPlan}
       onUserMessageSubmit={handleUserMessageSubmit}
       // Onboarding chips props - click handlers are internal to ChatPanel
-      destination={tripInputs.destinations?.[0]}
+      destination={tripInputs.destination ?? undefined}
       origin={tripInputs.origin ?? undefined}
       dateRange={
         hasStartDate || hasEndDate
@@ -930,6 +1006,10 @@ export function NomadicLanding() {
       isCommitting={isCommitting}
       onOpenSheet={openSheet}
       hasEverHadPlan={hasEverHadPlan}
+      onSetupClick={handleSetupClick}
+      onPlanClick={handlePlanClick}
+      onBookClick={handleBookClick}
+      hasMinimumSelections={hasMinimumSelections}
     />
   );
 
@@ -1115,14 +1195,26 @@ export function NomadicLanding() {
         onChooseStay={handleChooseStay}
       />
 
+      {/* Destructive action confirmation - when clicking Setup from Plan/Book */}
+      <ConfirmDialog
+        isOpen={setupConfirmDialogOpen}
+        onClose={() => setSetupConfirmDialogOpen(false)}
+        onConfirm={handleConfirmedSetupNavigation}
+        title="Edit trip details?"
+        description="Changing dates or destination will reset your current itinerary. Any saved selections will need to be re-added."
+        confirmLabel="Edit Details"
+        cancelLabel="Keep Plan"
+        variant="destructive"
+      />
+
       {/* Trip input sheets - shared between header pills and chat panel */}
       {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
       <DestinationSheet
         open={activeSheet === 'destination'}
         onOpenChange={(open) => !open && closeSheet()}
-        value={tripInputs.destinations?.[0] || ''}
+        value={tripInputs.destination || ''}
         onSave={async (value) => {
-          await documentStore.commitTripInputs({ destinations: [value] });
+          await documentStore.commitTripInputs({ destination: value });
           closeSheet();
           addToast(`Destination: ${value}`, 'confirmation');
         }}

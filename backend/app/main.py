@@ -1,22 +1,33 @@
 import asyncio
 import json
 import logging
+import os
+import warnings
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
+# =============================================================================
+# EARLY WARNING SUPPRESSION (before any imports that might trigger warnings)
+# =============================================================================
+# Must happen before OpenAI/Pydantic imports to catch schema validation warnings
+_debug_mode = os.getenv("DEBUG", "off").lower().strip()
+if _debug_mode != "full":
+    warnings.filterwarnings("ignore")
+    logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
 
-import app.db_models as db_models
-import app.schemas as schemas
-from app.config import settings
-from app.crud_document import (
+from fastapi import Depends, FastAPI, HTTPException, Request, Response  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
+from sqlalchemy.orm import Session  # noqa: E402
+
+import app.db_models as db_models  # noqa: E402
+import app.schemas as schemas  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.crud_document import (  # noqa: E402
     add_tiles_to_branch,
     apply_planner_update,
     apply_user_patch,
@@ -24,7 +35,7 @@ from app.crud_document import (
     get_document_data,
     get_or_create_document,
 )
-from app.crud_trip import (
+from app.crud_trip import (  # noqa: E402
     delete_messages_from_id,
     fetch_chat_history,
     get_last_user_message,
@@ -34,8 +45,8 @@ from app.crud_trip import (
     get_session_by_token_sync,
     record_chat_message,
 )
-from app.db import get_async_db, get_db
-from app.graph_plan_utils import (
+from app.db import get_async_db, get_db  # noqa: E402
+from app.graph_plan_utils import (  # noqa: E402
     check_payload_size,
     compute_today_iso,
     ensure_thread_id,
@@ -46,13 +57,13 @@ from app.graph_plan_utils import (
     truncate_assistant_message,
     validate_suggested_responses,
 )
-from app.middleware import (
+from app.middleware import (  # noqa: E402
     CSRFMiddleware,
     SessionMiddleware,
     clear_session_cookies,
     get_session_from_request,
 )
-from app.planner import (
+from app.planner import (  # noqa: E402
     CACHE_SCHEMA_VERSION,
     PLANNER_BUILD_ID,
     PROMPT_BUNDLE_HASH,
@@ -77,7 +88,7 @@ from app.planner import (
     run_turn_streaming,
     validate_template_coverage,
 )
-from app.schemas import (
+from app.schemas import (  # noqa: E402
     AckUpdate,
     BookingStatus,
     BookingStatusItem,
@@ -105,26 +116,27 @@ from app.schemas import (
     PlanViewState,
     ReadinessItem,
     StrategySection,
+    Tile,
     TileRefreshRequest,
     TileRefreshResponse,
     TilesSearchRequest,
     TripInputValidationRequest,
     TripInputValidationResponse,
 )
-from app.services.unsplash import (
+from app.services.unsplash import (  # noqa: E402
     clear_db_cache as clear_unsplash_db_cache,
 )
-from app.services.unsplash import (
+from app.services.unsplash import (  # noqa: E402
     clear_memory_cache as clear_unsplash_memory_cache,
 )
-from app.services.unsplash import (
+from app.services.unsplash import (  # noqa: E402
     get_image_for_destination,
 )
-from app.services.unsplash import (
+from app.services.unsplash import (  # noqa: E402
     get_memory_cache_stats as get_unsplash_memory_stats,
 )
-from app.tile_service.service import search_tiles
-from app.validation import (
+from app.tile_service.service import search_tiles  # noqa: E402
+from app.validation import (  # noqa: E402
     cache_stats,
     clear_cache,
     prewarm_cache,
@@ -146,10 +158,10 @@ def _has_missing_critical_fields(trip_inputs: dict) -> bool:
     For S2_STRATEGY_READY, we only require destination and start_date.
     end_date is optional for strategy display (user can refine later).
     """
-    destinations = trip_inputs.get("destinations", [])
+    destination = trip_inputs.get("destination")
     start_date = trip_inputs.get("start_date")
     # end_date is NOT required for S2 - strategy can be shown without it
-    return not destinations or not start_date
+    return not destination or not start_date
 
 
 @dataclass
@@ -157,19 +169,19 @@ class TripReadiness:
     """Simple trip readiness checker (V2 replacement for gates.compute_trip_readiness)."""
 
     has_origin: bool
-    has_destinations: bool
+    has_destination: bool
     has_dates: bool
     core_complete: bool
 
 
 def compute_trip_readiness(trip_inputs: Dict[str, Any], errors: List[Any] = None) -> TripReadiness:
     """Compute trip readiness from trip inputs."""
-    destinations = trip_inputs.get("destinations", [])
+    destination = trip_inputs.get("destination")
     return TripReadiness(
         has_origin=bool(trip_inputs.get("origin")),
-        has_destinations=bool(destinations),
+        has_destination=bool(destination),
         has_dates=bool(trip_inputs.get("start_date")),
-        core_complete=bool(destinations and trip_inputs.get("start_date")),
+        core_complete=bool(destination and trip_inputs.get("start_date")),
     )
 
 
@@ -182,7 +194,7 @@ def _check_stage3_gate(metadata: dict, trip_inputs: dict) -> bool:
     # (e.g., empty list [] should return False, not [])
     return bool(
         blocking_count == 0
-        and trip_inputs.get("destinations")
+        and trip_inputs.get("destination")
         and trip_inputs.get("start_date")
         and trip_inputs.get("end_date")
     )
@@ -251,6 +263,10 @@ def _build_strategy_sections(metadata: dict) -> list:
                     strategy_version=s.get("strategy_version"),
                     booking_artifacts=s.get("booking_artifacts"),
                     impact_areas=s.get("impact_areas", []),
+                    # Technical log data for System Log display
+                    constraints_applied=s.get("constraints_applied", []),
+                    content_added=s.get("content_added", []),
+                    trip_summary=s.get("trip_summary"),
                     bullets=s.get("bullets", [])[:6],
                 )
             )
@@ -333,8 +349,7 @@ def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
     """
     # Map UI key to trip_inputs field(s)
     if ui_key == "destination":
-        destinations = trip_inputs.get("destinations", [])
-        return ", ".join(destinations) if destinations else None
+        return trip_inputs.get("destination")
     elif ui_key == "origin":
         return trip_inputs.get("origin")
     elif ui_key == "dates":
@@ -375,6 +390,38 @@ def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
             stars = settings.get("min_stars", 0)
             return f"{stars}+ stars" if stars else "Enabled"
         return None
+    # =========================================================================
+    # Settings keys (dotted notation from NL command extraction)
+    # =========================================================================
+    elif ui_key == "booking_types.flights":
+        toggle = trip_inputs.get("booking_types", {}).get("flights")
+        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
+    elif ui_key == "booking_types.hotels":
+        toggle = trip_inputs.get("booking_types", {}).get("hotels")
+        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
+    elif ui_key == "booking_types.activities":
+        toggle = trip_inputs.get("booking_types", {}).get("activities")
+        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
+    elif ui_key == "booking_types.ground_transport":
+        toggle = trip_inputs.get("booking_types", {}).get("ground_transport")
+        return {"off": "Disabled", "suggested": "Auto", "on": "Enabled"}.get(toggle)
+    elif ui_key == "flight_settings.direct_only":
+        direct = trip_inputs.get("flight_settings", {}).get("direct_only")
+        return "Direct flights only" if direct else "Connections OK"
+    elif ui_key == "flight_settings.cabin_class":
+        cabin = trip_inputs.get("flight_settings", {}).get("cabin_class")
+        return cabin.replace("_", " ").title() if cabin else None
+    elif ui_key == "flight_settings.round_trip":
+        round_trip = trip_inputs.get("flight_settings", {}).get("round_trip")
+        return "Round trip" if round_trip else "One way"
+    elif ui_key == "hotel_settings.min_stars":
+        stars = trip_inputs.get("hotel_settings", {}).get("min_stars")
+        if stars is not None:
+            return f"{stars}+ stars" if stars > 0 else "Any rating"
+        return None
+    elif ui_key == "activity_settings.skill_level":
+        level = trip_inputs.get("activity_settings", {}).get("skill_level")
+        return level.title() if level else None
     return None
 
 
@@ -424,6 +471,12 @@ async def lifespan(app: FastAPI):
     Pre-warms caches and compiles templates to eliminate cold-start latency.
     Validates template coverage at startup - fails fast on mismatch.
     """
+    # Configure logging for demo mode (suppress HTTP logs, warnings)
+    from app.debug_utils import configure_demo_logging, is_demo_mode
+
+    configure_demo_logging()
+    demo_mode = is_demo_mode()
+
     # Log build info for cache debugging
     logger.info(
         "[Startup] Build info: prompt_bundle_hash=%s, planner_build_id=%s, cache_schema_version=%s",
@@ -431,21 +484,24 @@ async def lifespan(app: FastAPI):
         PLANNER_BUILD_ID,
         CACHE_SCHEMA_VERSION,
     )
-    print(
-        f"[Startup] prompt_bundle_hash={PROMPT_BUNDLE_HASH}, "
-        f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
-    )
+    if not demo_mode:
+        print(
+            f"[Startup] prompt_bundle_hash={PROMPT_BUNDLE_HASH}, "
+            f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
+        )
 
     # Prewarm validation cache
     validation_count = prewarm_cache()
-    print(f"[Validation] Pre-warmed cache with {validation_count} entries")
+    if not demo_mode:
+        print(f"[Validation] Pre-warmed cache with {validation_count} entries")
 
     # Prewarm prompts and templates (Jinja2 compilation)
     warmup_stats = prewarm_prompts()
-    print(
-        f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
-        f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
-    )
+    if not demo_mode:
+        print(
+            f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
+            f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
+        )
 
     # Validate template coverage - FATAL on failure
     # This prevents deploy-time prompt/template drift that causes hard-to-debug runtime behavior
@@ -459,10 +515,11 @@ async def lifespan(app: FastAPI):
         logger.error(error_msg)
         print(error_msg)
         raise RuntimeError(error_msg)
-    print(
-        f"[Startup] Template coverage validation passed "
-        f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
-    )
+    if not demo_mode:
+        print(
+            f"[Startup] Template coverage validation passed "
+            f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
+        )
 
     yield
 
@@ -1248,7 +1305,7 @@ async def graph_plan_endpoint(
     # Build readiness array for frontend
     response_document.readiness = [
         ReadinessItem(key="origin", ok=readiness.has_origin),
-        ReadinessItem(key="destination", ok=readiness.has_destinations),
+        ReadinessItem(key="destination", ok=readiness.has_destination),
         ReadinessItem(key="start_date", ok=readiness.has_dates),
         ReadinessItem(key="end_date", ok=bool(trip_inputs.get("end_date"))),
         ReadinessItem(key="travelers", ok=trip_inputs.get("adults") is not None),
@@ -1266,9 +1323,8 @@ async def graph_plan_endpoint(
         response_document.plan_state = "STABLE"
 
     # Build destination_card if destination exists
-    destinations = trip_inputs.get("destinations", [])
-    if destinations and len(destinations) > 0:
-        dest_name = destinations[0]
+    dest_name = trip_inputs.get("destination")
+    if dest_name:
         # Use async version to actually fetch from Unsplash API (sync version only checks cache)
         # Banner image is based on location only, not activities
         dest_image_url = await get_image_for_destination(
@@ -1314,12 +1370,28 @@ async def graph_plan_endpoint(
             ),
         )
 
-    # --- Compute Plan View State Machine fields ---
-    _populate_plan_view_state_fields(
-        response_document=response_document,
-        metadata=session_metadata,
-        trip_inputs=trip_inputs,
-    )
+    # --- V2 Graph Output Processing ---
+    # V2 always computes plan_view_state based on actual state (tiles/destination/dates)
+    v2_document = result.get("document", {})
+    response_document.plan_view_state = v2_document.get("plan_view_state", "S0_BOOTSTRAP")
+
+    # Apply strategy sections if present
+    v2_strategy_sections = v2_document.get("strategy_sections", [])
+    if v2_strategy_sections:
+        response_document.strategy_sections = [
+            StrategySection(**section) if isinstance(section, dict) else section
+            for section in v2_strategy_sections
+        ]
+        response_document.executed_strategy_topics = v2_document.get("executed_strategy_topics", [])
+        response_document.pending_strategy_topics = v2_document.get("pending_strategy_topics", [])
+
+    # Apply V2 tiles if present and response doesn't have tiles
+    v2_tiles = v2_document.get("tiles", {})
+    if v2_tiles and not response_document.tiles:
+        response_document.tiles = {
+            tile_id: Tile.model_validate(tile_data) if isinstance(tile_data, dict) else tile_data
+            for tile_id, tile_data in v2_tiles.items()
+        }
 
     # --- Build and return response ---
     return GraphPlanResponse(
@@ -1433,7 +1505,7 @@ async def graph_plan_stream_endpoint(
                 if document_data and document_data.trip_inputs:
                     ti = document_data.trip_inputs
                     trip_inputs_snapshot = {
-                        "destinations": ti.destinations or [],
+                        "destination": ti.destination,
                         "origin": ti.origin,
                         "start_date": ti.start_date,
                         "end_date": ti.end_date,
@@ -1442,7 +1514,6 @@ async def graph_plan_stream_endpoint(
                         "requires_assistance": ti.requires_assistance,
                         "budget": ti.budget,
                         "currency": ti.currency,
-                        "multi_city_intent": ti.multi_city_intent,
                         "booking_types": ti.booking_types.model_dump() if ti.booking_types else {},
                         "flight_settings": (
                             ti.flight_settings.model_dump() if ti.flight_settings else {}
@@ -1637,7 +1708,7 @@ async def graph_plan_stream_endpoint(
             # Build readiness array for frontend
             response_document.readiness = [
                 ReadinessItem(key="origin", ok=readiness.has_origin),
-                ReadinessItem(key="destination", ok=readiness.has_destinations),
+                ReadinessItem(key="destination", ok=readiness.has_destination),
                 ReadinessItem(key="start_date", ok=readiness.has_dates),
                 ReadinessItem(key="end_date", ok=bool(trip_inputs.get("end_date"))),
                 ReadinessItem(key="travelers", ok=trip_inputs.get("adults") is not None),
@@ -1651,9 +1722,8 @@ async def graph_plan_stream_endpoint(
                 response_document.plan_state = "STABLE"
 
             # Build destination_card if destination exists
-            destinations = trip_inputs.get("destinations", [])
-            if destinations and len(destinations) > 0:
-                dest_name = destinations[0]
+            dest_name = trip_inputs.get("destination")
+            if dest_name:
                 # Use async version to actually fetch from Unsplash API
                 # Banner image is based on location only, not activities
                 dest_image_url = await get_image_for_destination(
@@ -1704,11 +1774,43 @@ async def graph_plan_stream_endpoint(
                     ),
                 )
 
-            # --- Compute Plan View State Machine fields ---
-            _populate_plan_view_state_fields(
-                response_document=response_document,
-                metadata=session_metadata,
-                trip_inputs=trip_inputs,
+            # --- V2 Graph Output Processing ---
+            # V2 graph generates strategy_sections, plan_view_state, and executed_topics
+            v2_document = final_result.get("document", {})
+            v2_strategy_sections = v2_document.get("strategy_sections", [])
+
+            # V2 always computes plan_view_state based on actual state (tiles/destination/dates)
+            response_document.plan_view_state = v2_document.get("plan_view_state", "S0_BOOTSTRAP")
+
+            # Apply strategy sections if present
+            if v2_strategy_sections:
+                response_document.strategy_sections = [
+                    StrategySection(**section) if isinstance(section, dict) else section
+                    for section in v2_strategy_sections
+                ]
+                response_document.executed_strategy_topics = v2_document.get(
+                    "executed_strategy_topics", []
+                )
+                response_document.pending_strategy_topics = v2_document.get(
+                    "pending_strategy_topics", []
+                )
+                response_document.needs_refresh = False
+                response_document.can_expand_to_itinerary = True
+
+            # Apply V2 tiles if present
+            v2_tiles = v2_document.get("tiles", {})
+            if v2_tiles and not response_document.tiles:
+                response_document.tiles = {
+                    tile_id: (
+                        Tile.model_validate(tile_data) if isinstance(tile_data, dict) else tile_data
+                    )
+                    for tile_id, tile_data in v2_tiles.items()
+                }
+
+            print(
+                f"[MAIN.PY] V2 output: plan_view_state={response_document.plan_view_state}, "
+                f"strategy_sections={len(response_document.strategy_sections or [])}, "
+                f"tiles={len(response_document.tiles or {})}"
             )
 
             # Build full response matching GraphPlanResponse
@@ -1730,6 +1832,17 @@ async def graph_plan_stream_endpoint(
                     "ready_to_generate_now": ready_to_generate_now,
                 },
             }
+
+            # DEBUG: Verify strategy_sections in full_response before sending
+            doc_in_response = full_response.get("document", {})
+            strategy_sections = doc_in_response.get("strategy_sections", [])
+            first_id = strategy_sections[0].get("id") if strategy_sections else "none"
+            print(
+                f"[MAIN.PY] SSE complete payload: "
+                f"strategy_sections_count={len(strategy_sections)}, "
+                f"plan_view_state={doc_in_response.get('plan_view_state')}, "
+                f"first_section_id={first_id}"
+            )
 
             complete_payload = json.dumps(
                 {"type": "complete", "data": full_response},
@@ -1999,13 +2112,12 @@ async def patch_plan_document(
         fields_set = getattr(trip_patch, "model_fields_set", set())
 
         # For each field that was set, describe the change
-        if "destinations" in fields_set:
-            dests = getattr(trip_patch, "destinations", None)
-            if dests is not None:
-                if len(dests) == 0:
-                    changes.append("cleared all destinations")
-                else:
-                    changes.append(f"set destinations to {dests}")
+        if "destination" in fields_set:
+            dest = getattr(trip_patch, "destination", None)
+            if dest:
+                changes.append(f"set destination to '{dest}'")
+            else:
+                changes.append("cleared destination")
         if "origin" in fields_set:
             val = getattr(trip_patch, "origin", None)
             if val:
@@ -2124,7 +2236,7 @@ async def fetch_tiles_for_branch(
         )
 
     # Fetch tiles for this branch
-    primary_dest = branch.destinations[0] if branch.destinations else None
+    primary_dest = branch.destination
     ti = doc_data.trip_inputs
     tiles_request = TilesSearchRequest(
         session_id=session_id,
@@ -2211,7 +2323,7 @@ async def refresh_tiles(
 
     # Get current settings from trip_inputs
     ti = doc_data.trip_inputs
-    primary_dest = branch.destinations[0] if branch.destinations else None
+    primary_dest = branch.destination
 
     # Build request with current settings
     tiles_request = TilesSearchRequest(

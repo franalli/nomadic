@@ -101,7 +101,7 @@ export function useTripPlanning({
   // Computed Values
   // ─────────────────────────────────────────────────────────────────────────
   const hasOrigin = Boolean(tripInputs.origin);
-  const hasDestination = (tripInputs.destinations ?? []).length > 0;
+  const hasDestination = Boolean(tripInputs.destination);
   const hasStartDate = Boolean(tripInputs.start_date);
   const hasEndDate = Boolean(tripInputs.end_date);
   const hasDates = hasStartDate || hasEndDate;

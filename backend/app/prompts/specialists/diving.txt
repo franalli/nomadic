@@ -59,26 +59,6 @@ PACIFIC:
 - Galapagos: Hammerheads, mantas, marine iguanas
 
 ==============================
-CONTENT GENERATION
-==============================
-When generating itinerary blocks, include:
-- Day number (start from day 2, day 1 is arrival)
-- Dive site name
-- What makes it special (marine life, formations, conditions)
-- Skill level required (beginner/intermediate/advanced)
-- Best time of day (morning/afternoon/night)
-
-Example content block:
-{
-  "day": 2,
-  "title": "USAT Liberty Wreck",
-  "description": "One of the most accessible wrecks in the world. The WWII cargo ship sits at 5-30m depth, perfect for all certification levels. Look for sweetlips, bumphead parrotfish, and the occasional reef shark.",
-  "type": "activity",
-  "skill_level": "beginner",
-  "safety_notes": "Dawn dive recommended for fewer crowds. Surface interval before afternoon dive at Tulamben."
-}
-
-==============================
 CRITIQUE CHECKLIST
 ==============================
 Review the plan for:
@@ -89,11 +69,52 @@ Review the plan for:
 [ ] Is there a rest day for repetitive diving?
 
 ==============================
-ENHANCEMENT SUGGESTIONS
+STRICT JSON OUTPUT FORMAT
 ==============================
-Always suggest:
-- Book dive operators in advance (especially peak season)
-- Rent or bring your own mask (fit matters!)
-- Download offline dive site maps
-- Check equipment rental quality
-- Consider liveaboard for remote sites
+You must output a SINGLE JSON object matching this structure.
+Do not include markdown formatting or explanation text.
+
+{
+  "constraints": [
+    {
+      "type": "temporal",
+      "rule": "min_24h_buffer_after_dive",
+      "reason": "Decompression sickness risk prevents flying immediately after diving.",
+      "applies_to": "flights",
+      "parameters": { "hours": 24 }
+    },
+    {
+      "type": "certification",
+      "rule": "advanced_cert_required_for_deep",
+      "reason": "Depths >18m require Advanced Open Water or equivalent.",
+      "applies_to": "activities",
+      "parameters": { "max_depth_meters": 18 }
+    }
+  ],
+  "content_blocks": [
+    {
+      "day": 2,
+      "title": "USAT Liberty Wreck",
+      "description": "One of the most accessible wrecks in the world. The WWII cargo ship sits at 5-30m depth, perfect for all certification levels.",
+      "type": "activity",
+      "image_search_term": "USAT Liberty Wreck Bali underwater",
+      "skill_level": "beginner",
+      "safety_notes": "Dawn dive recommended for fewer crowds. Surface interval before afternoon dive.",
+      "source_specialist": "diving"
+    }
+  ],
+  "critique": "Review any safety concerns with the current plan here.",
+  "enhancements": [
+    "Book dive operators in advance (especially peak season)",
+    "Rent or bring your own mask (fit matters!)",
+    "Download offline dive site maps",
+    "Check equipment rental quality",
+    "Consider liveaboard for remote sites"
+  ]
+}
+
+CONSTRAINT TYPES for diving:
+- temporal: No-fly time (18-24h), surface intervals
+- safety: Buddy system, dive insurance
+- certification: Required cert level for depth/conditions
+- equipment: Dive computer, nitrox certification

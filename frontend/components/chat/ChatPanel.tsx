@@ -79,7 +79,7 @@ const FALLBACK_SUGGESTIONS: Record<string, string[]> = {
   end_date: ['1 week trip', '10 days', '2 weeks'],
   budget: ['$2,000', '$5,000', '$10,000'],
   origin: ['New York', 'London', 'Dubai'],
-  destinations: ['Tokyo', 'Paris', 'Bali'],
+  destination: ['Tokyo', 'Paris', 'Bali'],
 };
 
 // Helper to generate specific error messages based on error type
@@ -154,9 +154,9 @@ const MARKDOWN_COMPONENTS = {
   p: ({ children }: { children?: React.ReactNode }) => (
     <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
   ),
-  // Bold text with emphasis
+  // Bold text with emphasis - amber color for key variables (dates, prices, locations)
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-foreground">{children}</strong>
+    <strong className="font-semibold text-amber-500">{children}</strong>
   ),
   // Italic text
   em: ({ children }: { children?: React.ReactNode }) => (
@@ -694,7 +694,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         const trimmed = messageText.trim();
         if (!trimmed || isLoading) return;
 
-        const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER;
+        // Check for generate trigger - either the explicit trigger or "Build plan" suggestion chip
+        const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
 
         // Set trigger context for action classification
         // This helps classify the node_status events that follow
@@ -710,13 +711,14 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           onGeneratePlanStart?.();
         }
 
-        // Silent regeneration mode: after first plan, suppress chat messages for GENERATE_PLAN_TRIGGER
-        // Regeneration should be communicated via UI state (AgentCard "Updating..."), not chat
-        const isSilentRegeneration = isGenerateTrigger && hasEverHadPlan;
+        // Silent plan mode: suppress assistant streaming from chat
+        // ONLY suppress when Build Plan is clicked - chat should be conversational during Setup
+        // Plan info should display on the right panel (tiles, strategy_sections), NOT in chat
+        const isSilentPlanGeneration = isGenerateTrigger;
 
         // Handle message creation based on type
         const userMsgId = `u_${Date.now()}`;
-        if (isGenerateTrigger && !isSilentRegeneration) {
+        if (isGenerateTrigger && !isSilentPlanGeneration) {
           // System event line for "Build Plan" (not a user bubble)
           const systemEventId = `sys_${Date.now()}`;
           addMessage({
@@ -727,7 +729,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             ackStatus: 'pending',
           });
           lastSystemEventIdRef.current = systemEventId;
-        } else if (!isSilentRegeneration) {
+        } else if (!isSilentPlanGeneration) {
           // Regular user message
           const userMessage: ChatMessage = {
             id: userMsgId,
@@ -746,9 +748,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
 
-        // Create a message bubble for streaming tokens into - but NOT for silent regeneration
+        // Create a message bubble for streaming tokens into - but NOT for plan generation
+        // Plan content should appear on right panel, not in chat
         const streamingMsgId = `a_stream_${Date.now()}`;
-        if (!isSilentRegeneration) {
+        if (!isSilentPlanGeneration) {
           addMessage({ id: streamingMsgId, role: 'assistant', content: '' });
           setStreamingMessageId(streamingMsgId);
           setHasReceivedFirstToken(false); // Reset for new streaming message
@@ -772,8 +775,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Dismiss delayed loader on first tangible output
               delayedLoader.onTangibleOutput();
               actionLoader.onTangibleOutput();
-              // Append token to the streaming message (skip in silent regeneration mode)
-              if (!isSilentRegeneration) {
+              // Append token to the streaming message (skip for plan generation - content goes to right panel)
+              if (!isSilentPlanGeneration) {
                 appendToMessage(streamingMsgId, token);
               }
             },
@@ -820,6 +823,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   stage: status.stage,
                   topic: status.topic,
                 });
+              } else if (status.status === 'completed') {
+                // Clear node status when completed
+                setNodeStatus(null);
+                delayedLoader.reset();
+                actionLoader.reset();
               }
             },
             onComplete: (response) => {
@@ -850,44 +858,66 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 response: data,
               });
 
-              const hasBranchesNow = (doc.branches?.length ?? 0) > 0;
+              // B2: Auto-focus right panel when tiles arrive
+              const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
+
+              // DEBUG: Log response to understand tile/state issue
+              console.log('[ChatPanel] Response received:', {
+                hasTiles,
+                tileCount: doc.tiles ? Object.keys(doc.tiles).length : 0,
+                tileIds: doc.tiles ? Object.keys(doc.tiles).slice(0, 5) : [],
+                plan_view_state: doc.plan_view_state,
+                hasDestination: Boolean(doc.trip_inputs?.destination),
+                destination: doc.trip_inputs?.destination,
+                // Strategy sections debug
+                strategy_sections_count: doc.strategy_sections?.length ?? 0,
+                strategy_sections: doc.strategy_sections,
+                executed_strategy_topics: doc.executed_strategy_topics,
+                pending_strategy_topics: doc.pending_strategy_topics,
+              });
+
+              if (hasTiles) {
+                // On mobile: scroll right panel into view
+                const rightPanel = document.getElementById('plan-panel');
+                if (rightPanel && window.innerWidth < 768) {
+                  rightPanel.scrollIntoView({ behavior: 'smooth' });
+                }
+              }
+
               const isReadyToGenerate = doc.ready_to_generate === true;
 
               // Update suggested responses from LLM (if provided)
               setSuggestedResponses(doc.suggested_responses || []);
 
-              // Handle streaming message cleanup (skip in silent regeneration mode)
-              if (!isSilentRegeneration) {
-                if (hasBranchesNow) {
-                  // Branches generated: remove empty streaming message
-                  filterMessages((msg) => msg.id !== streamingMsgId);
+              // Only filter streaming message when Build Plan was clicked (silent mode)
+              // During Setup, chat should be conversational - show all messages
+              if (isSilentPlanGeneration) {
+                // Build Plan clicked - remove streaming message, plan goes to right panel
+                filterMessages((msg) => msg.id !== streamingMsgId);
 
-                  // Update system event line for Build Plan completion
-                  if (lastSystemEventIdRef.current && isGenerateTrigger) {
-                    updateMessage(lastSystemEventIdRef.current, {
-                      ackStatus: 'applied',
-                      ackUpdates: [{ field: 'plan', to: 'Built successfully' }],
-                    });
-                    lastSystemEventIdRef.current = null;
-                  }
-
-                  // Collapse Setup assistant messages into a summary
-                  // Generate summary from trip inputs
-                  const summaryParts: string[] = [];
-                  if (tripInputs?.destinations?.[0]) {
-                    summaryParts.push(tripInputs.destinations[0]);
-                  }
-                  if (tripInputs?.start_date) {
-                    summaryParts.push(tripInputs.start_date);
-                  }
-                  if (tripInputs?.adults) {
-                    summaryParts.push(`${tripInputs.adults} adult${tripInputs.adults > 1 ? 's' : ''}`);
-                  }
-                  const summaryText = summaryParts.length > 0
-                    ? `Setup complete: ${summaryParts.join(' · ')}`
-                    : 'Setup conversation';
-                  collapseSetupMessages(summaryText);
-                } else if (isReadyToGenerate) {
+                // Collapse any existing Setup messages
+                const summaryParts: string[] = [];
+                const newTripInputs = doc.trip_inputs;
+                if (newTripInputs?.destination) {
+                  summaryParts.push(newTripInputs.destination);
+                }
+                if (newTripInputs?.start_date) {
+                  summaryParts.push(newTripInputs.start_date);
+                }
+                if (newTripInputs?.adults) {
+                  summaryParts.push(`${newTripInputs.adults} adult${newTripInputs.adults > 1 ? 's' : ''}`);
+                }
+                const summaryText = summaryParts.length > 0
+                  ? `Setup complete: ${summaryParts.join(' · ')}`
+                  : 'Setup conversation';
+                collapseSetupMessages(
+                  summaryText,
+                  doc.trip_inputs,
+                  doc.executed_strategy_topics
+                );
+              } else {
+                // No plan content yet - handle as regular chat message
+                if (isReadyToGenerate) {
                   // Update the streaming message ID to use the ready prefix
                   // so it can be removed when generation starts
                   updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
@@ -926,7 +956,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               console.error('Failed to plan trip', error);
 
               // Replace streaming message with specific error message (skip in silent mode)
-              if (!isSilentRegeneration) {
+              if (!isSilentPlanGeneration) {
                 const errorMessage = getErrorMessage(error);
                 const errorMsgId = `a_err_${Date.now()}`;
                 updateMessageId(streamingMsgId, errorMsgId);
@@ -939,7 +969,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, tripInputs?.adults, tripInputs?.destinations, tripInputs?.start_date]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -1128,6 +1158,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 const isUserMessage = m.role === 'user';
                 const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
 
+                // Setup phase messages should appear faded (past tense visual treatment)
+                const isSetupPhase = m.phase === 'setup';
+
                 // Check if this user message should be collapsed
                 const isCollapsed = isUserMessage && collapsedMessages.has(m.id) && m.ackUpdates && m.ackUpdates.length > 0;
 
@@ -1158,6 +1191,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     >
                       <CollapsedSetupSummary
                         summaryText={m.summaryText || 'Setup conversation'}
+                        tripInputsSnapshot={m.tripInputsSnapshot}
+                        executedTopicsSnapshot={m.executedTopicsSnapshot}
                       />
                     </div>
                   );
@@ -1190,7 +1225,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 return (
                   <div
                     key={m.id}
-                    className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass}`}
+                    className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass} ${isSetupPhase ? 'opacity-60' : ''}`}
                     style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
                   >
                     {/* Relative container for absolute delete button positioning */}

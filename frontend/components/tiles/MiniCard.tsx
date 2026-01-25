@@ -12,10 +12,17 @@
 
 'use client';
 
-import { ChevronDown, Heart, Star } from 'lucide-react';
+import { ChevronDown, Code2, Heart, Star } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { placeholderImageForTile } from '@/lib/placeholders';
+import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -227,7 +234,7 @@ export const MiniCard = memo(function MiniCard({
                 <Heart
                   className={cn('h-3 w-3', isSaved && 'fill-amber-400')}
                 />
-                {isSaved ? 'Saved' : 'Save'}
+                {isSaved ? 'In Trip' : 'Add to Trip'}
               </button>
             </div>
           </div>
@@ -334,12 +341,37 @@ export const MiniCard = memo(function MiniCard({
             </div>
           )}
 
-          {/* Provider */}
-          {tile.provider && (
-            <p className="text-xs text-muted-foreground">
-              via {tile.provider}
-            </p>
-          )}
+          {/* Provider + Booking Data Tooltip */}
+          <div className="flex items-center justify-between">
+            {tile.provider && (
+              <p className="text-xs text-muted-foreground">
+                via {tile.provider}
+              </p>
+            )}
+            {/* Deep Link Params Tooltip (YC Demo: proves real data) */}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-card-foreground transition-colors"
+                  >
+                    <Code2 className="h-3 w-3" />
+                    <span>API</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <p className="text-[10px] text-muted-foreground mb-1 font-medium">
+                    Booking API Payload
+                  </p>
+                  <pre className="text-[10px] font-mono bg-muted/50 rounded p-2 overflow-auto max-h-40">
+                    {JSON.stringify(getDeepLinkParams(tile), null, 2)}
+                  </pre>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
         </div>
       )}
     </div>

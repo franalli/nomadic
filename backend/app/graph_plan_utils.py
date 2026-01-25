@@ -528,9 +528,13 @@ def normalize_trip_inputs(trip_inputs: Dict[str, Any]) -> Dict[str, Any]:
 
     result: Dict[str, Any] = {}
 
-    # Destinations (with max limit)
-    if "destinations" in trip_inputs:
-        result["destinations"] = normalize_destinations(trip_inputs["destinations"])
+    # Destination (single destination only)
+    if "destination" in trip_inputs:
+        dest = trip_inputs["destination"]
+        if dest is not None:
+            result["destination"] = normalize_text(str(dest)) or None
+        else:
+            result["destination"] = None
 
     # Origin (text normalization)
     if "origin" in trip_inputs:
@@ -563,7 +567,6 @@ def normalize_trip_inputs(trip_inputs: Dict[str, Any]) -> Dict[str, Any]:
 
     # Pass through other valid fields
     passthrough_fields = {
-        "multi_city_intent",
         "requires_assistance",
         "booking_types",
         "flight_settings",

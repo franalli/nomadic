@@ -15,6 +15,7 @@
 import {
   AlertCircle,
   Bike,
+  Building,
   ChevronDown,
   ChevronRight,
   Mountain,
@@ -34,21 +35,63 @@ import {
   type PlanViewModel,
   type StrategySection,
 } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
+
+import { TripHealthBar } from '../TripHealthBar';
 
 // Topic priority for stable ordering
-const TOPIC_PRIORITY = ['skiing', 'hiking', 'diving', 'boating', 'cycling', 'general'];
+const TOPIC_PRIORITY = ['skiing', 'hiking', 'diving', 'boating', 'cycling', 'local_expert', 'general'];
 
 // Topic configuration with icons and labels
 const TOPIC_CONFIG: Record<string, {
   icon: React.ComponentType<{ className?: string }>;
   label: string;
+  // Default action log for demo visibility
+  readyAction: string;
+  updatingAction: string;
 }> = {
-  hiking: { icon: Mountain, label: 'Hiking' },
-  diving: { icon: Waves, label: 'Diving' },
-  skiing: { icon: Snowflake, label: 'Skiing' },
-  boating: { icon: Sailboat, label: 'Boating' },
-  cycling: { icon: Bike, label: 'Cycling' },
-  general: { icon: Sparkles, label: 'General' },
+  hiking: {
+    icon: Mountain,
+    label: 'Hiking',
+    readyAction: 'Verified trail conditions and permits',
+    updatingAction: 'Checking seasonal trail access...',
+  },
+  diving: {
+    icon: Waves,
+    label: 'Diving',
+    readyAction: 'Confirmed dive sites and safety intervals',
+    updatingAction: 'Checking dive site availability...',
+  },
+  skiing: {
+    icon: Snowflake,
+    label: 'Skiing',
+    readyAction: 'Verified resort conditions and lift passes',
+    updatingAction: 'Checking snow conditions...',
+  },
+  boating: {
+    icon: Sailboat,
+    label: 'Boating',
+    readyAction: 'Confirmed marina availability and weather',
+    updatingAction: 'Checking marina schedules...',
+  },
+  cycling: {
+    icon: Bike,
+    label: 'Cycling',
+    readyAction: 'Mapped routes and elevation profiles',
+    updatingAction: 'Analyzing route conditions...',
+  },
+  local_expert: {
+    icon: Building,
+    label: 'Local Expert',
+    readyAction: 'Verified local logistics and booking requirements',
+    updatingAction: 'Checking city constraints...',
+  },
+  general: {
+    icon: Sparkles,
+    label: 'General',
+    readyAction: 'Optimized itinerary and logistics',
+    updatingAction: 'Planning logistics...',
+  },
 };
 
 interface S2StrategyViewProps {
@@ -62,6 +105,8 @@ interface S2StrategyViewProps {
   pendingTopics?: string[];
   /** Topics that have been executed (from viewModel.executed_strategy_topics) */
   executedTopics?: string[];
+  /** Tiles for TripHealthBar inventory counts */
+  tiles?: Record<string, Tile>;
 }
 
 // =============================================================================
@@ -91,50 +136,121 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
   const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
   const Icon = config.icon;
 
+  // Feasibility state from Constraint Engine
+  const isInfeasible = section.feasibility_status === 'infeasible';
+  const hasCaveat = section.feasibility_status === 'caveat';
+
   return (
     // 1. data-topic attribute for CSS color system
     // 2. Left accent border (3px, strong color)
+    // 3. Infeasible/caveat border colors
     <div
       data-topic={topic}
-      className="bg-card rounded-lg border border-border overflow-hidden shadow-sm topic-border-left"
+      className={cn(
+        "bg-card rounded-lg border overflow-hidden shadow-sm topic-border-left",
+        isInfeasible && "border-red-500/50 bg-red-950/10",
+        hasCaveat && "border-amber-500/30",
+        !isInfeasible && !hasCaveat && "border-border"
+      )}
     >
       {/* 3. Header with subtle tint */}
       <button
         onClick={onToggle}
-        className="w-full px-4 py-3 text-left topic-header-tint hover:bg-muted/30 transition-colors"
+        className={cn(
+          "w-full px-4 py-3 text-left transition-colors",
+          isInfeasible ? "bg-red-950/20 hover:bg-red-950/30" : "topic-header-tint hover:bg-muted/30"
+        )}
       >
-        {/* Row 1: Agent badge + Status chip + Plan/Booking badges */}
+        {/* Row 1: Specialist badge + Status chip + Plan/Booking badges */}
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-2">
-            {/* Topic badge with icon (strong color) */}
-            <span className="topic-badge inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium">
-              <Icon className="w-3 h-3" />
-              {config.label} Agent
-            </span>
-            {/* Status chip - COMPUTED */}
+            {/* Topic badge with icon (strong color, or red if infeasible) */}
             <span className={cn(
-              "text-[10px] px-1.5 py-0.5 rounded font-medium",
-              status === 'ready' && "bg-green-500/10 text-green-600 dark:text-green-400",
-              status === 'updating' && "bg-amber-500/10 text-amber-600 dark:text-amber-400 animate-pulse",
-              status === 'needs_input' && "bg-muted text-muted-foreground"
+              "inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium",
+              isInfeasible ? "bg-red-500/20 text-red-400" : "topic-badge"
             )}>
-              {status === 'ready' ? 'Ready' : status === 'updating' ? 'Updating...' : 'Needs input'}
+              <Icon className="w-3 h-3" />
+              {config.label} Specialist
             </span>
-          </div>
-          {/* Plan + Booking mini-badges */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded">Plan</span>
-            <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded">Booking</span>
-            {isExpanded ? (
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-muted-foreground" />
+
+            {/* Infeasible badge */}
+            {isInfeasible && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-red-500/20 text-red-400 rounded font-medium uppercase tracking-wider">
+                Unavailable
+              </span>
+            )}
+
+            {/* Caveat badge */}
+            {hasCaveat && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded font-medium">
+                Limited
+              </span>
+            )}
+
+            {/* Status chip - only show if NOT infeasible */}
+            {!isInfeasible && (
+              <span className={cn(
+                "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                status === 'ready' && "bg-green-500/10 text-green-600 dark:text-green-400",
+                status === 'updating' && "bg-amber-500/10 text-amber-600 dark:text-amber-400 animate-pulse",
+                status === 'needs_input' && "bg-muted text-muted-foreground"
+              )}>
+                {status === 'ready' ? 'Ready' : status === 'updating' ? 'Updating...' : 'Needs input'}
+              </span>
             )}
           </div>
+          {/* Plan + Booking mini-badges - hide if infeasible */}
+          {!isInfeasible && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded">Plan</span>
+              <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded">Booking</span>
+              {isExpanded ? (
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Row 2 (collapsed): One-liner + principle chips */}
-        {!isExpanded && (
+        {/* Infeasible reason message */}
+        {isInfeasible && section.feasibility_reason && (
+          <div className="mt-2 text-xs text-red-400">
+            {section.feasibility_reason}
+          </div>
+        )}
+
+        {/* Alternative suggestion for infeasible */}
+        {isInfeasible && section.alternative_suggestion && (
+          <div className="mt-1 text-[10px] text-muted-foreground">
+            💡 {section.alternative_suggestion}
+          </div>
+        )}
+
+        {/* Caveat warning message */}
+        {hasCaveat && section.feasibility_reason && (
+          <div className="mt-2 text-xs text-amber-400 flex items-center gap-1">
+            <span>⚠️</span>
+            <span>{section.feasibility_reason}</span>
+          </div>
+        )}
+
+        {/* Mini-log: Last action performed by this specialist (not for infeasible) */}
+        {!isInfeasible && status !== 'needs_input' && (
+          <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+            <span className={cn(
+              status === 'ready' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'
+            )}>
+              {status === 'ready' ? '✓' : '○'}
+            </span>
+            <span className="font-mono">
+              {status === 'ready' ? config.readyAction : config.updatingAction}
+            </span>
+          </div>
+        )}
+
+        {/* Row 2 (collapsed): One-liner + principle chips (not for infeasible) */}
+        {!isExpanded && !isInfeasible && (
           <div className="mt-2 w-full">
             {oneLiner && (
               <p className="text-xs text-muted-foreground mb-2">{oneLiner}</p>
@@ -155,9 +271,71 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
         )}
       </button>
 
-      {/* Expanded content (normal bg-card, no tint) */}
-      {isExpanded && (
+      {/* Expanded content (normal bg-card, no tint) - NOT shown for infeasible */}
+      {isExpanded && !isInfeasible && (
         <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
+          {/* Trip Summary (General Agent only) */}
+          {section.trip_summary && (
+            <div className="font-mono text-xs space-y-1 py-2 border-b border-border/30">
+              <div>
+                <span className="text-muted-foreground">Trip:</span>{' '}
+                <span className="text-card-foreground">{section.trip_summary.destination}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Dates:</span>{' '}
+                <span className="text-card-foreground">{section.trip_summary.dates}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Travelers:</span>{' '}
+                <span className="text-card-foreground">{section.trip_summary.travelers}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Constraints Applied (specialist agents) */}
+          {section.constraints_applied && section.constraints_applied.length > 0 && (
+            <div>
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Constraints Applied
+              </h5>
+              <ul className="space-y-1.5">
+                {section.constraints_applied.map((c, idx) => (
+                  <li
+                    key={idx}
+                    className="text-xs font-mono flex items-start gap-2"
+                  >
+                    <span className="text-green-500 dark:text-green-400 mt-0.5">✓</span>
+                    <span className="text-card-foreground">{c.rule}</span>
+                    <span className="text-muted-foreground">({c.type})</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Content Added (specialist agents) */}
+          {section.content_added && section.content_added.length > 0 && (
+            <div>
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                Content Added
+              </h5>
+              <ul className="space-y-1.5">
+                {section.content_added.map((c, idx) => (
+                  <li
+                    key={idx}
+                    className="text-xs flex items-start gap-2"
+                  >
+                    <span className="text-blue-500 dark:text-blue-400 mt-0.5">+</span>
+                    <span className="text-card-foreground">{c.title}</span>
+                    {c.day && (
+                      <span className="text-muted-foreground">(Day {c.day})</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Booking artifacts row */}
           {section.booking_artifacts && (
             <div className="flex flex-wrap gap-2 py-2 border-b border-border/30">
@@ -283,9 +461,16 @@ interface StrategyStackProps {
   sections: StrategySection[];
   pendingTopics: string[];
   executedTopics: string[];
+  /** Tiles for TripHealthBar inventory counts */
+  tiles?: Record<string, Tile>;
 }
 
-function StrategyStack({ sections, pendingTopics, executedTopics }: StrategyStackProps) {
+function StrategyStack({
+  sections,
+  pendingTopics,
+  executedTopics,
+  tiles = {},
+}: StrategyStackProps) {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [showAll, setShowAll] = React.useState(false);
 
@@ -298,13 +483,13 @@ function StrategyStack({ sections, pendingTopics, executedTopics }: StrategyStac
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  // Filter out General when specialists exist
-  const hasSpecialists = sections.some(
-    (s) => s.specialist_type && s.specialist_type !== 'general'
-  );
-  const filtered = hasSpecialists
-    ? sections.filter((s) => s.specialist_type !== 'general')
-    : sections;
+  // Extract General agent separately for TripHealthDashboard
+  const generalSection = sections.find((s) => s.specialist_type === 'general');
+  // Filter out General from card list (it gets TripHealthDashboard instead)
+  const filtered = sections.filter((s) => s.specialist_type !== 'general');
+  // Always show TripHealthDashboard when General agent exists (replaces General AgentCard)
+  // This provides consistent UX whether specialists are active or not
+  const showTripHealth = generalSection && Object.keys(tiles).length > 0;
 
   // Sort by topic priority for stable ordering
   const sorted = [...filtered].sort((a, b) => {
@@ -321,53 +506,65 @@ function StrategyStack({ sections, pendingTopics, executedTopics }: StrategyStac
   // Reduced color mode for 3+ agents
   const useReducedColor = sorted.length > 2;
 
-  // Header semantics: don't mislabel pending as executed, never show "0" while cards visible
+  // Header semantics: Specialist Logic (N) when specialists exist
   const hasExecuted = executedTopics.length > 0;
   const hasPending = pendingTopics.length > 0;
-  const totalVisible = executedTopics.length + pendingTopics.length + sorted.length;
+  // Count only non-general specialists for the feed
+  const specialistCount = sorted.length;
 
-  // Header text: "Agents executed (N)" if executed, else "Agents (N)" to avoid "executed (0)"
-  const headerText = hasExecuted
-    ? `Agents executed (${executedTopics.length})`
-    : totalVisible > 0
-      ? `Agents (${totalVisible})`
-      : 'Agents';
+  // Count specialists (excluding general)
+  const executedSpecialistCount = executedTopics.filter(t => t !== 'general').length;
+
+  // Header text: Only show when specialists exist or are pending
+  // Don't show "Specialists (0)" - that's confusing when only General ran
+  const headerText = specialistCount > 0
+    ? `Specialist Logic (${specialistCount})`
+    : hasPending
+      ? 'Specialist Logic'
+      : executedSpecialistCount > 0
+        ? `Specialists (${executedSpecialistCount})`
+        : '';  // Empty = hide header entirely
+
+  // Should we show the specialist header? Only if there are specialists or pending
+  const showSpecialistHeader = headerText || hasPending;
 
   return (
     <div className="space-y-2" data-reduced-color={useReducedColor}>
-      {/* Agents header with color-coded topic badges */}
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-sm font-medium text-card-foreground flex items-center gap-2">
-            {headerText}
-            {/* Updating indicator when pending topics exist */}
-            {hasPending && (
-              <span className="text-xs px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded font-medium animate-pulse">
-                Updating ({pendingTopics.length})
-              </span>
+      {/* Specialist header - only show when specialists exist or are pending */}
+      {showSpecialistHeader && (
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-medium text-card-foreground flex items-center gap-2">
+              {headerText}
+              {/* Updating indicator when pending topics exist */}
+              {hasPending && (
+                <span className="text-xs px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded font-medium animate-pulse">
+                  Updating ({pendingTopics.length})
+                </span>
+              )}
+            </h3>
+            {/* Topic badges - only show specialist topics (General is in TripHealthBar) */}
+            {executedSpecialistCount > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-1">
+                {executedTopics.filter(t => t !== 'general').map(topic => {
+                  const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
+                  const TopicIcon = config.icon;
+                  return (
+                    <span
+                      key={topic}
+                      data-topic={topic}
+                      className="topic-badge inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full"
+                    >
+                      <TopicIcon className="w-2.5 h-2.5" />
+                      {config.label}
+                    </span>
+                  );
+                })}
+              </div>
             )}
-          </h3>
-          {/* Topic badges - only show executed topics here (truthful) */}
-          {hasExecuted && (
-            <div className="flex flex-wrap gap-1.5 mt-1">
-              {executedTopics.map(topic => {
-                const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
-                const TopicIcon = config.icon;
-                return (
-                  <span
-                    key={topic}
-                    data-topic={topic}
-                    className="topic-badge inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full"
-                  >
-                    <TopicIcon className="w-2.5 h-2.5" />
-                    {config.label}
-                  </span>
-                );
-              })}
-            </div>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Pending topics placeholder (updating state) */}
       {pendingTopics.map(topic => {
@@ -382,7 +579,7 @@ function StrategyStack({ sections, pendingTopics, executedTopics }: StrategyStac
             <div className="flex items-center gap-2">
               <span className="topic-badge inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium">
                 <TopicIcon className="w-3 h-3" />
-                {config.label} Agent
+                {config.label} Specialist
               </span>
               <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded font-medium animate-pulse">
                 Updating...
@@ -393,22 +590,42 @@ function StrategyStack({ sections, pendingTopics, executedTopics }: StrategyStac
         );
       })}
 
-      {/* Stacked agent cards */}
-      {visible.map((section) => {
-        const topic = section.specialist_type || 'general';
-        const status = computeAgentStatus(topic, pendingTopics, executedTopics);
-        return (
-          <AgentCard
-            key={section.id}
-            section={section}
-            isExpanded={expandedId === section.id}
-            onToggle={() =>
-              setExpandedId(expandedId === section.id ? null : section.id)
-            }
-            status={status}
-          />
-        );
-      })}
+      {/* Trip Health Bar (compact status bar from General agent - always at top) */}
+      {showTripHealth && (
+        <TripHealthBar
+          tripSummary={generalSection?.trip_summary}
+          tiles={tiles}
+        />
+      )}
+
+      {/* Stacked specialist cards */}
+      {visible.length > 0 ? (
+        visible.map((section) => {
+          const topic = section.specialist_type || 'general';
+          const status = computeAgentStatus(topic, pendingTopics, executedTopics);
+          return (
+            <AgentCard
+              key={section.id}
+              section={section}
+              isExpanded={expandedId === section.id}
+              onToggle={() =>
+                setExpandedId(expandedId === section.id ? null : section.id)
+              }
+              status={status}
+            />
+          );
+        })
+      ) : (
+        /* Clean state: No specialists yet, show subtle hint */
+        !hasPending && showTripHealth && (
+          <div className="text-center py-6 opacity-40">
+            <p className="text-xs font-mono uppercase tracking-widest">System Ready</p>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Add activities like diving or hiking to see specialist logic
+            </p>
+          </div>
+        )
+      )}
 
       {/* Overflow expander */}
       {overflow > 0 && !showAll && (
@@ -416,7 +633,7 @@ function StrategyStack({ sections, pendingTopics, executedTopics }: StrategyStac
           onClick={() => setShowAll(true)}
           className="text-xs text-primary hover:underline py-1"
         >
-          +{overflow} more agent{overflow > 1 ? 's' : ''}
+          +{overflow} more specialist{overflow > 1 ? 's' : ''}
         </button>
       )}
     </div>
@@ -474,6 +691,7 @@ export function S2StrategyView({
   canExpandToItinerary: _canExpandToItinerary,
   pendingTopics = [],
   executedTopics,
+  tiles = {},
 }: S2StrategyViewProps) {
   // Unused props - header and CTA now owned by StrategyStageRenderer
   void _destinationCard;
@@ -507,11 +725,12 @@ export function S2StrategyView({
 
   return (
     <div className="flex flex-col p-4 space-y-4">
-      {/* Strategy stack - one card per executed topic */}
+      {/* Strategy stack - TripHealthBar (General) + Specialist cards */}
       <StrategyStack
         sections={strategy_sections}
         pendingTopics={pendingTopics}
         executedTopics={resolvedExecutedTopics}
+        tiles={tiles}
       />
 
       {/* Open decisions panel */}

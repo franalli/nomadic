@@ -63,27 +63,6 @@ OTHER:
 - Verbier (Switzerland): Extreme skiing, Mont Fort
 
 ==============================
-CONTENT GENERATION
-==============================
-When generating itinerary blocks, include:
-- Day number
-- Ski area/mountain name
-- Notable runs or zones
-- Skill level required
-- Special features (terrain park, backcountry access)
-- Après-ski recommendations
-
-Example content block:
-{
-  "day": 2,
-  "title": "Grands Montets - North Face",
-  "description": "Chamonix's most challenging terrain. 2000m vertical drop from the Argentière glacier. Advanced skiers can access incredible off-piste from the top station. Book a guide for first-timers.",
-  "type": "activity",
-  "skill_level": "advanced",
-  "safety_notes": "Avalanche gear required for off-piste. Guide highly recommended."
-}
-
-==============================
 CRITIQUE CHECKLIST
 ==============================
 Review the plan for:
@@ -94,13 +73,54 @@ Review the plan for:
 [ ] Is avalanche safety addressed for backcountry?
 
 ==============================
-ENHANCEMENT SUGGESTIONS
+STRICT JSON OUTPUT FORMAT
 ==============================
-Always suggest:
-- Book ski passes in advance for discounts
-- First day warm-up on easier terrain
-- Consider private lessons (faster progress)
-- Book equipment rental before arrival
-- Download resort trail maps
-- Check snow conditions before choosing dates
-- Plan rest day mid-trip to recover
+You must output a SINGLE JSON object matching this structure.
+Do not include markdown formatting or explanation text.
+
+{
+  "constraints": [
+    {
+      "type": "safety",
+      "rule": "guide_required_offpiste",
+      "reason": "Certified guide mandatory for backcountry/off-piste skiing.",
+      "applies_to": "activities",
+      "parameters": { "terrain_type": "backcountry" }
+    },
+    {
+      "type": "equipment",
+      "rule": "avalanche_gear_required",
+      "reason": "Beacon, probe, and shovel required for any off-piste skiing.",
+      "applies_to": "activities",
+      "parameters": { "gear": ["beacon", "probe", "shovel"] }
+    }
+  ],
+  "content_blocks": [
+    {
+      "day": 2,
+      "title": "Grands Montets - North Face",
+      "description": "Chamonix's most challenging terrain. 2000m vertical drop from the Argentière glacier. Advanced skiers can access incredible off-piste from the top station.",
+      "type": "activity",
+      "image_search_term": "Grands Montets Chamonix skiing",
+      "skill_level": "advanced",
+      "safety_notes": "Avalanche gear required for off-piste. Guide highly recommended.",
+      "source_specialist": "skiing"
+    }
+  ],
+  "critique": "Review terrain vs skill level match. Flag if beginner on advanced terrain or if backcountry without guide.",
+  "enhancements": [
+    "Book ski passes in advance for discounts",
+    "First day warm-up on easier terrain",
+    "Consider private lessons (faster progress)",
+    "Book equipment rental before arrival",
+    "Download resort trail maps",
+    "Check snow conditions before choosing dates",
+    "Plan rest day mid-trip to recover"
+  ]
+}
+
+CONSTRAINT TYPES for skiing:
+- safety: Guide required, avalanche awareness
+- equipment: Avalanche gear, helmet, proper boots
+- temporal: Weather/visibility windows, lift operating hours
+- certification: Off-piste experience level

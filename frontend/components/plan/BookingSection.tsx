@@ -176,9 +176,16 @@ export function BookingSection({
         <div id="booking-section" className="border-t border-border">
           {/* Header */}
           <div className="px-4 pt-4 pb-1">
-            <h3 className="text-sm font-medium text-card-foreground">
-              Options to choose from
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-card-foreground">
+                Options to choose from
+              </h3>
+              {savedTileIds.size > 0 && (
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                  {savedTileIds.size} in trip
+                </span>
+              )}
+            </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               Compare and save favorites.
             </p>
@@ -352,6 +359,11 @@ export function BookingSection({
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-medium text-card-foreground">Booking options</h3>
             <span className="text-xs text-muted-foreground">({totalTiles})</span>
+            {savedTileIds.size > 0 && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                {savedTileIds.size} in trip
+              </span>
+            )}
           </div>
           <span className="text-xs text-muted-foreground">Prices from partners</span>
         </div>

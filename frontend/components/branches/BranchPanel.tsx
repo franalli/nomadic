@@ -165,7 +165,7 @@ export const BranchPanel = memo(function BranchPanel({
   // Use backend data - placeholder images only as fallback
   const selectedHeroImages = selected?.hero_images?.length
     ? selected.hero_images
-    : placeholderImagesForBranch({ id: selected?.id, destinations: selected?.destinations, index: selectedIndex });
+    : placeholderImagesForBranch({ id: selected?.id, destination: selected?.destination, index: selectedIndex });
   // Strategy content from backend (no mock fallback - show loading state instead)
   const selectedVibe = selected?.vibe ?? null;
   const selectedFocus = selected?.focus ?? null;
@@ -310,7 +310,7 @@ export const BranchPanel = memo(function BranchPanel({
             const isActive = selected !== null && b.id === selected.id;
             const isInComparison = isBranchInComparison(b.id);
             // Use backend images if available, fallback to deterministic placeholders
-            const placeholderImages = placeholderImagesForBranch({ id: b.id, destinations: b.destinations, index: idx });
+            const placeholderImages = placeholderImagesForBranch({ id: b.id, destination: b.destination, index: idx });
             const cardImage = b.image_url ?? b.hero_images?.[0] ?? placeholderImages[0];
             const branchBudget = resolveBudgetForBranch(b, tripInputs);
             const budgetLabel = formatBudgetDisplay(branchBudget.amount, branchBudget.currency);
@@ -344,7 +344,7 @@ export const BranchPanel = memo(function BranchPanel({
                 onClick={handleCardClick}
                 aria-selected={isComparisonMode ? isInComparison : isActive}
                 // Tier 11.10: Descriptive ARIA label for screen readers
-                aria-label={`${b.destinations[0] || 'Trip option'} - ${
+                aria-label={`${b.destination || 'Trip option'} - ${
                   isComparisonMode
                     ? isInComparison
                       ? 'Selected for comparison'
@@ -368,7 +368,7 @@ export const BranchPanel = memo(function BranchPanel({
                     type="button"
                     onClick={handleQuickCompare}
                     className="absolute top-2 right-2 z-10 touch-manipulation opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity duration-200"
-                    aria-label={`Compare with ${b.destinations[0] || 'this option'}`}
+                    aria-label={`Compare with ${b.destination || 'this option'}`}
                   >
                     <span className="inline-flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-semibold px-3 py-2 rounded-full shadow-lg cursor-pointer transition-colors min-h-[44px] min-w-[44px]">
                       <ArrowRightLeft className="h-4 w-4" />
@@ -397,7 +397,7 @@ export const BranchPanel = memo(function BranchPanel({
                       {/* Removed "Suggestion X" numbering per coherence guidelines */}
                     </div>
                     <div className="space-y-2 text-white">
-                      <p className="text-lg font-bold leading-tight">{b.destinations.join(', ') || 'TBD'}</p>
+                      <p className="text-lg font-bold leading-tight">{b.destination || 'TBD'}</p>
                       {b.description && (
                         <p className="line-clamp-2 text-sm opacity-90">{b.description}</p>
                       )}
@@ -523,7 +523,7 @@ export const BranchPanel = memo(function BranchPanel({
                 <div className="relative aspect-[3/2]">
                   <img
                     src={selectedHeroImages[0]}
-                    alt={`${selected?.destinations[0] ?? 'Destination'} overview`}
+                    alt={`${selected?.destination ?? 'Destination'} overview`}
                     loading="lazy"
                     className="h-full w-full object-cover opacity-90"
                   />
@@ -534,7 +534,7 @@ export const BranchPanel = memo(function BranchPanel({
                 <div className="relative aspect-[3/2]">
                   <img
                     src={selectedHeroImages[1]}
-                    alt={`${selected?.destinations[0] ?? 'Destination'} detail`}
+                    alt={`${selected?.destination ?? 'Destination'} detail`}
                     loading="lazy"
                     className="h-full w-full object-cover opacity-90"
                   />
@@ -545,7 +545,7 @@ export const BranchPanel = memo(function BranchPanel({
                 <div className="relative aspect-[3/2]">
                   <img
                     src={selectedHeroImages[2]}
-                    alt={`${selected?.destinations[0] ?? 'Destination'} night detail`}
+                    alt={`${selected?.destination ?? 'Destination'} night detail`}
                     loading="lazy"
                     className="h-full w-full object-cover opacity-90"
                   />
@@ -585,7 +585,7 @@ export const BranchPanel = memo(function BranchPanel({
                         <span>
                           {item.replace(
                             '{destination}',
-                            selected?.destinations[0] ?? 'your destination'
+                            selected?.destination ?? 'your destination'
                           )}
                         </span>
                       </li>

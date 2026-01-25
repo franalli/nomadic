@@ -10,12 +10,21 @@ Responsibilities:
 - Respects constraints from Vertical Specialist
 
 Key Principle: "The Architect sees the whole picture."
+
+V2 Enhancement: Uses LLM for ALL field extraction (no regex).
+GPT-4o-mini resolves relative dates, budget, travelers with current date injection.
 """
 
+import logging
 import os
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
+
+from langchain_openai import ChatOpenAI
 
 from app.planner.state import (
+    ExtractedSettingsFields,
+    ExtractedTripFields,
     GraphStateV2,
     TripPlan,
     create_missing_fields_response,
@@ -24,217 +33,338 @@ from app.planner.state import (
 )
 from app.tools.tile_service import fetch_travel_tiles
 
+logger = logging.getLogger(__name__)
+
 # =============================================================================
-# Architect Prompt Templates
+# LLM-Based Field Extraction (No Regex)
 # =============================================================================
 
-# Pre-Core Mode (S0) - Inspiration before logistics
-PRE_CORE_PROMPT = """You are the Trip Architect, a friendly travel planning assistant.
+EXTRACTION_MODEL = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
 
-## Current Mode: INSPIRATION (Pre-Core)
 
-The user hasn't provided destination or dates yet. Your job is to:
-1. Ask leading questions about their interests ("Beach or mountains?", "Adventure or relaxation?")
-2. Provide "vibe" suggestions ("Bali is perfect for divers, Patagonia for hikers")
-3. Build intent before collecting logistics
+async def _extract_fields_with_llm(
+    user_text: str,
+    current_plan: TripPlan,
+) -> tuple[ExtractedTripFields, dict]:
+    """
+    Use LLM to extract trip fields from user text.
 
-DO NOT demand dates immediately. Be conversational and helpful.
+    Injects current date for relative date resolution.
+    Uses gpt-4o-mini for speed (~200-400ms).
 
-## User Message:
-{user_text}
+    This replaces all regex-based extraction with pure LLM parsing.
+    Returns tuple of (ExtractedTripFields, token_usage_dict).
+    """
+    llm = ChatOpenAI(model=EXTRACTION_MODEL, temperature=0)
+    structured_llm = llm.with_structured_output(ExtractedTripFields, include_raw=True)
 
-## Current Trip Info:
-{trip_info}
+    # Inject current date for relative date resolution
+    today = datetime.now()
+    today_str = today.strftime("%A, %B %d, %Y")  # "Sunday, January 26, 2026"
 
-Respond naturally. If the user mentions a destination, acknowledge it warmly.
-If they're unsure, offer 2-3 destination ideas based on their interests.
+    prompt = f"""Extract trip planning fields from the user message.
+
+CURRENT DATE: {today_str}
+
+EXISTING PLAN (for context - don't overwrite unless user explicitly changes):
+- Destination: {current_plan.destination or 'Not set'}
+- Origin: {current_plan.origin or 'Not set'}
+- Dates: {current_plan.start_date or 'Not set'} to {current_plan.end_date or 'Not set'}
+- Travelers: {current_plan.adults} adults, {current_plan.children} children
+- Budget: {current_plan.budget or 'Not set'}
+
+RULES:
+1. Convert ALL relative dates to YYYY-MM-DD format based on CURRENT DATE:
+   - "tomorrow" → calculate {(today + timedelta(days=1)).strftime('%Y-%m-%d')}
+   - "next week" → Monday of next week
+   - "next Friday" → actual Friday date
+   - "in March" → 2026-03-01 (or 2027 if March has passed)
+   - "for 5 days" → set duration_days=5 (don't set end_date)
+
+2. Extract budget as numeric USD:
+   - "2k" → 2000
+   - "under $3000" → 3000
+   - "$1500 per person" → 1500
+   - "luxury" → budget_tier="luxury" (not budget amount)
+
+3. Only extract fields EXPLICITLY mentioned in this message.
+   Return null for fields not mentioned.
+
+4. Don't change existing values unless user explicitly updates them.
+   Exception: If user says "actually Paris" and destination was "London", update it.
+
+USER MESSAGE: {user_text}
 """
 
-# Planning Mode - Core fields available
-PLANNING_PROMPT = """You are the Trip Architect, a travel planning assistant.
-
-## Current Mode: PLANNING
-
-You have the core trip details. Your job is to:
-1. Build out the trip plan with flights, hotels, and activities
-2. Call the fetch_travel_tiles tool when you need real options
-3. Respect any constraints from the Diving/Hiking Specialist
-4. Keep the user informed of what you're planning
-
-## Trip Plan:
-Destination: {destination}
-Dates: {start_date} to {end_date}
-Travelers: {travelers}
-Budget: {budget}
-
-## Specialist Constraints:
-{constraints}
-
-## User Message:
-{user_text}
-
-## Available Tool:
-You can call fetch_travel_tiles to get real flight/hotel/activity options.
-Only call it when you have destination AND dates.
-
-Respond with your next action or question.
-"""
-
-# Missing Fields Prompt
-MISSING_FIELDS_PROMPT = """You are the Trip Architect.
-
-I notice we're missing some key details for your trip:
-- {missing_fields_list}
-
-Let me help you fill these in. {question}
-"""
+    try:
+        result = await structured_llm.ainvoke(prompt)
+        # Extract parsed result and token usage
+        parsed = result["parsed"]
+        raw = result["raw"]
+        token_usage = {}
+        if hasattr(raw, "response_metadata"):
+            token_usage = raw.response_metadata.get("token_usage", {})
+        logger.debug(f"LLM extracted fields: {parsed}")
+        return parsed, token_usage
+    except Exception as e:
+        logger.warning(f"LLM extraction failed: {e}")
+        return ExtractedTripFields(), {}
 
 
 # =============================================================================
-# Field Extraction
+# Settings Extraction (Booking Toggles, Flight/Hotel Preferences)
 # =============================================================================
 
+SETTINGS_EXTRACTION_PROMPT = """Extract booking settings from the user message.
 
-def _extract_origin_destination(user_text: str) -> tuple:
+RULES:
+1. BOOKING TOGGLES (output MUST be: "off", "suggested", or "on"):
+   - "No flights" / "Turn off flights" / "I don't need flights" → flights_toggle: "off"
+   - "Include flights" / "I want flights" / "Turn on flights" → flights_toggle: "on"
+   - Same pattern for hotels_toggle, activities_toggle
+
+2. FLIGHT SETTINGS:
+   - "Direct flights only" / "No layovers" → flight_direct_only: true
+   - flight_cabin_class MUST be one of: "economy", "premium_economy", "business", "first"
+     - "Business class" → "business"
+     - "First class" → "first"
+     - "Economy" / "Coach" → "economy"
+   - "One way" / "Not round trip" → flight_round_trip: false
+
+3. HOTEL SETTINGS (hotel_min_stars: 0-5):
+   - "5 star" / "Luxury" / "Five star" → hotel_min_stars: 5
+   - "4 star or better" / "Upscale" → hotel_min_stars: 4
+   - "3 star" / "Mid-range" → hotel_min_stars: 3
+   - "Budget" / "Cheap" → hotel_min_stars: 0
+   - Ambiguous terms like "nice" or "good" → DO NOT set (leave null)
+
+4. Only extract fields EXPLICITLY mentioned. Return null for anything ambiguous.
+
+USER MESSAGE: {user_text}
+"""
+
+# Keywords that indicate settings-related content
+SETTINGS_KEYWORDS = [
+    "flight",
+    "flights",
+    "hotel",
+    "hotels",
+    "stay",
+    "stays",
+    "direct",
+    "layover",
+    "class",
+    "star",
+    "activity",
+    "activities",
+    "turn off",
+    "turn on",
+    "no need",
+    "don't need",
+    "include",
+    "business",
+    "first class",
+    "economy",
+    "luxury",
+    "budget",
+    "one way",
+    "round trip",
+]
+
+
+async def _extract_settings_with_llm(user_text: str) -> tuple[ExtractedSettingsFields, dict]:
     """
-    Extract origin and destination from user text.
+    Use LLM to extract booking settings from user text.
 
-    Returns (origin, destination) tuple.
+    Only called when settings-related keywords are detected.
+    Returns tuple of (ExtractedSettingsFields, token_usage_dict).
     """
-    import re
+    llm = ChatOpenAI(model=EXTRACTION_MODEL, temperature=0)
+    structured_llm = llm.with_structured_output(ExtractedSettingsFields, include_raw=True)
 
-    # Pattern for "from X to Y" (case-insensitive)
-    from_to_pattern = r"\bfrom\s+([a-zA-Z][a-zA-Z\s]+?)\s+to\s+([a-zA-Z][a-zA-Z\s]+?)(?:\s|$|,|\.)"
-    match = re.search(from_to_pattern, user_text, re.IGNORECASE)
-    if match:
-        origin = match.group(1).strip().title()
-        destination = match.group(2).strip().title()
-        return origin, destination
+    prompt = SETTINGS_EXTRACTION_PROMPT.format(user_text=user_text)
 
-    return None, None
+    try:
+        result = await structured_llm.ainvoke(prompt)
+        parsed = result["parsed"]
+        raw = result["raw"]
+        token_usage = {}
+        if hasattr(raw, "response_metadata"):
+            token_usage = raw.response_metadata.get("token_usage", {})
+        logger.debug(f"LLM extracted settings: {parsed}")
+        return parsed, token_usage
+    except Exception as e:
+        logger.warning(f"Settings LLM extraction failed: {e}")
+        return ExtractedSettingsFields(), {}
 
 
-def _extract_destination(user_text: str, current: Optional[str]) -> Optional[str]:
+def _has_settings_keywords(text: str) -> bool:
+    """Check if user text contains settings-related keywords."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in SETTINGS_KEYWORDS)
+
+
+# =============================================================================
+# Flexible Date Resolution
+# =============================================================================
+
+FLEXIBLE_DATE_KEYWORDS = ["flexible", "whenever", "anytime", "not sure when", "don't know when"]
+
+
+def _resolve_flexible_dates(plan: TripPlan, user_text: str, metadata: dict) -> TripPlan:
     """
-    Extract destination from user text.
+    Auto-resolve 'flexible' dates to concrete dates.
 
-    Simple heuristic extraction - in production, use NLP.
-    """
-    import re
-
-    # Words that are NOT destinations (generic/abstract places)
-    NON_DESTINATION_WORDS = {
-        "somewhere",
-        "anywhere",
-        "everywhere",
-        "nowhere",
-        "go",
-        "travel",
-        "vacation",
-        "trip",
-        "holiday",
-        "beach",
-        "mountain",
-        "city",
-        "warm",
-        "cold",
-        "hot",
-        "fun",
-        "relaxation",
-        "adventure",
-        "explore",
-    }
-
-    def is_valid_destination(text: str) -> bool:
-        """Check if extracted text is likely a real destination."""
-        words = text.lower().split()
-        # Reject if all words are non-destination words
-        if all(w in NON_DESTINATION_WORDS for w in words):
-            return False
-        # Reject if starts with common non-destination words
-        if words and words[0] in NON_DESTINATION_WORDS:
-            return False
-        return True
-
-    # First check for "from X to Y" pattern
-    _, dest = _extract_origin_destination(user_text)
-    if dest and is_valid_destination(dest):
-        return dest
-
-    # If we already have a destination, don't overwrite unless explicit
-    if current:
-        return current
-
-    # Look for "to X" or "in X" patterns (case-insensitive)
-    patterns = [
-        r"\bto\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b",  # "to Paris" (capitalized)
-        r"\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b",  # "in Bali" (capitalized)
-        r"\bvisit\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b",  # "visit Tokyo" (capitalized)
-        r"\bgoing\s+to\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b",  # "going to Dubai" (capitalized)
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, user_text)  # Case-sensitive for proper nouns
-        if match:
-            candidate = match.group(1).strip()
-            if is_valid_destination(candidate):
-                return candidate.title()
-
-    return current
-
-
-def _extract_origin(user_text: str, current: Optional[str]) -> Optional[str]:
-    """
-    Extract origin from user text.
-    """
-    # Check for "from X to Y" pattern
-    origin, _ = _extract_origin_destination(user_text)
-    if origin:
-        return origin
-
-    return current
-
-
-def _extract_dates(
-    user_text: str, current_start: Optional[str], current_end: Optional[str]
-) -> tuple:
-    """
-    Extract dates from user text.
-
-    Returns (start_date, end_date) tuple.
-    """
-    # For MVP, keep existing dates if present
-    # In production, use date parsing library
-    return current_start, current_end
-
-
-def _update_trip_plan_from_text(plan: TripPlan, user_text: str) -> TripPlan:
-    """
-    Update trip plan with any new information from user text.
+    The engine cannot run on 'flexible' - we need concrete dates for API queries.
+    Defaults to: Start Date = Today + 30 days, Duration = 7 days
     """
     from app.debug_utils import _debug_v2
 
-    # Extract origin and destination
-    new_origin = _extract_origin(user_text, plan.origin)
-    if new_origin:
-        plan.origin = new_origin
-        _debug_v2(f"Extracted origin: {new_origin}")
+    text_lower = user_text.lower()
+    if not any(kw in text_lower for kw in FLEXIBLE_DATE_KEYWORDS):
+        return plan
 
-    new_dest = _extract_destination(user_text, plan.destination)
-    if new_dest:
-        plan.destination = new_dest
-        if new_dest not in plan.destinations:
-            plan.destinations.append(new_dest)
-        _debug_v2(f"Extracted destination: {new_dest}")
+    # Only resolve if dates aren't already set
+    if plan.start_date:
+        return plan
 
-    # Extract dates (placeholder - use real date parsing)
-    start, end = _extract_dates(user_text, plan.start_date, plan.end_date)
-    if start:
-        plan.start_date = start
-    if end:
-        plan.end_date = end
+    now = datetime.now()
+    default_start = (now + timedelta(days=30)).strftime("%Y-%m-%d")
+    default_end = (now + timedelta(days=37)).strftime("%Y-%m-%d")
+
+    # Validate start is in the future (guard against server time skew)
+    if datetime.fromisoformat(default_start) > now:
+        plan.start_date = default_start
+        plan.end_date = default_end
+        _debug_v2(f"Auto-resolved flexible dates: {default_start} to {default_end}")
+
+        # Flag for synthesizer to explain the default
+        metadata["flexible_date_resolved"] = True
+        metadata["resolved_start_date"] = default_start
+        metadata["resolved_end_date"] = default_end
 
     return plan
+
+
+async def _update_trip_plan_from_llm(
+    plan: TripPlan,
+    user_text: str,
+) -> TripPlan:
+    """
+    Update trip plan using LLM-extracted fields.
+
+    This replaces the old regex-based _update_trip_plan_from_text().
+    """
+    from app.debug_utils import _debug_v2
+
+    extracted, token_usage = await _extract_fields_with_llm(user_text, plan)
+
+    # Print token usage for architect extraction
+    if token_usage:
+        from app.debug_utils import log_tokens
+
+        log_tokens(
+            "ARCHITECT",
+            token_usage.get("prompt_tokens", 0),
+            token_usage.get("completion_tokens", 0),
+            token_usage.get("total_tokens", 0),
+        )
+
+    # Apply extracted fields (only non-null values)
+    if extracted.destination:
+        plan.destination = extracted.destination
+        _debug_v2(f"LLM extracted destination: {extracted.destination}")
+
+    if extracted.origin:
+        plan.origin = extracted.origin
+        _debug_v2(f"LLM extracted origin: {extracted.origin}")
+
+    if extracted.start_date:
+        plan.start_date = extracted.start_date
+        _debug_v2(f"LLM extracted start_date: {extracted.start_date}")
+
+    if extracted.end_date:
+        plan.end_date = extracted.end_date
+        _debug_v2(f"LLM extracted end_date: {extracted.end_date}")
+    elif extracted.duration_days and extracted.start_date:
+        # Calculate end date from duration
+        try:
+            start = datetime.fromisoformat(extracted.start_date)
+            plan.end_date = (start + timedelta(days=extracted.duration_days)).strftime("%Y-%m-%d")
+            _debug_v2(
+                f"LLM calculated end_date from duration: {plan.end_date} "
+                f"({extracted.duration_days} days)"
+            )
+        except ValueError:
+            pass
+
+    if extracted.adults:
+        plan.adults = extracted.adults
+        plan.travelers = extracted.adults + (extracted.children or plan.children)
+        _debug_v2(f"LLM extracted adults: {extracted.adults}")
+
+    if extracted.children is not None:
+        plan.children = extracted.children
+        plan.travelers = plan.adults + extracted.children
+        _debug_v2(f"LLM extracted children: {extracted.children}")
+
+    if extracted.budget:
+        plan.budget = extracted.budget
+        _debug_v2(f"LLM extracted budget: {extracted.budget}")
+
+    if extracted.trip_type:
+        plan.trip_type = extracted.trip_type
+        _debug_v2(f"LLM extracted trip_type: {extracted.trip_type}")
+
+    return plan
+
+
+def _detect_and_handle_pivot(state: "GraphStateV2", old_destination: str | None) -> bool:
+    """
+    Detects if destination changed and clears dependent state.
+    Returns True if pivot occurred.
+
+    Preserves: origin, dates, travelers, budget
+    Clears: itinerary_blocks, constraints, segments, tiles, strategy metadata
+    """
+    new_destination = state.trip_plan.destination
+
+    # No pivot if same destination or initial setup
+    if not old_destination or not new_destination:
+        return False
+    if old_destination.lower() == new_destination.lower():
+        return False
+
+    # PIVOT DETECTED - Clear dependent state
+    from app.debug_utils import log
+
+    log("ARCHITECT", "PIVOT DETECTED", data=f"{old_destination} -> {new_destination}")
+
+    state.trip_plan.itinerary_blocks = []
+    state.trip_plan.constraints = []
+    state.trip_plan.segments = []
+    state.tiles = {}
+
+    # Clear strategy metadata
+    state.metadata["strategy_sections"] = []
+    state.metadata["executed_strategy_topics"] = []
+    state.metadata["pending_strategy_topics"] = []
+
+    # Reset view state to discovery phase
+    state.metadata["plan_view_state"] = "S2_STRATEGY_READY"
+
+    # Signal to frontend
+    state.metadata["pivot_detected"] = {"from": old_destination, "to": new_destination}
+
+    return True
+
+
+# =============================================================================
+# Architect Prompt Templates (for reference - templates used in responses)
+# =============================================================================
+
+# These templates are used for generating responses in different modes.
+# The actual field extraction is now handled by _extract_fields_with_llm().
 
 
 # =============================================================================
@@ -281,9 +411,11 @@ class TripArchitect:
         Generate a Pre-Core (S0) inspiration response.
 
         This is conversational - no tool calls.
+        Note: Destination extraction is now handled by LLM in _update_trip_plan_from_llm()
+        before this method is called. If we're in pre_core mode, destination wasn't found.
         """
-        # Check if user mentioned a destination
-        potential_dest = _extract_destination(user_text, None)
+        # Check if LLM extraction found a destination (already in state from earlier step)
+        potential_dest = state.trip_plan.destination
 
         if potential_dest:
             # Acknowledge the destination, ask about dates/interests
@@ -338,21 +470,33 @@ class TripArchitect:
         """
         Determine if we should call fetch_travel_tiles.
 
-        Only when:
+        Fetch tiles ONLY when:
         - Plan is ready (destination + dates)
-        - User asked for options/booking
-        - We don't already have fresh tiles
+        - Intent is "booking" (user clicked Build Plan button)
+
+        Do NOT auto-fetch tiles just because plan is ready.
+        User must explicitly click "Build Plan" to trigger tile fetching.
         """
-        if not trip_plan_is_ready(state.trip_plan):
+        plan = state.trip_plan
+        is_ready = trip_plan_is_ready(plan)
+
+        logger.debug(
+            f"should_fetch_tiles: intent={intent}, plan_ready={is_ready}, "
+            f"dest={plan.destination}, start_date={plan.start_date}, "
+            f"existing_tiles={bool(state.tiles and any(state.tiles.values()))}"
+        )
+
+        if not is_ready:
+            logger.debug("should_fetch_tiles: returning False (plan not ready)")
             return False
 
+        # ONLY fetch tiles for booking intent (triggered by "Build plan" button)
+        # Do NOT auto-fetch - user must explicitly request plan generation
         if intent == "booking":
+            logger.debug("should_fetch_tiles: returning True (booking intent)")
             return True
 
-        # Check if we have tiles already
-        if state.tiles and any(state.tiles.values()):
-            return False
-
+        logger.debug("should_fetch_tiles: returning False (waiting for Build Plan click)")
         return False
 
     def fetch_tiles_for_plan(self, state: GraphStateV2) -> Dict[str, List[Dict]]:
@@ -364,6 +508,11 @@ class TripArchitect:
         plan = state.trip_plan
         tiles_result = {}
 
+        logger.info(
+            f"fetch_tiles_for_plan: dest={plan.destination}, "
+            f"origin={plan.origin}, dates={plan.start_date} to {plan.end_date}"
+        )
+
         # Build constraints dict from Specialist
         constraints = {}
         for c in plan.constraints:
@@ -373,13 +522,14 @@ class TripArchitect:
         for category in ["hotels", "flights", "activities"]:
             # Check if we need origin for flights
             if category == "flights" and not plan.origin:
+                logger.debug(f"fetch_tiles_for_plan: skipping {category} (no origin)")
                 continue
 
+            logger.debug(f"fetch_tiles_for_plan: fetching {category}...")
             result = fetch_travel_tiles.invoke(
                 {
                     "category": category,
-                    "location": plan.destination
-                    or (plan.destinations[0] if plan.destinations else ""),
+                    "location": plan.destination or "",
                     "start_date": plan.start_date,
                     "end_date": plan.end_date,
                     "origin": plan.origin,
@@ -391,8 +541,17 @@ class TripArchitect:
             )
 
             if result.get("success"):
+                tile_count = len(result.get("tiles", []))
+                logger.info(f"fetch_tiles_for_plan: {category} returned {tile_count} tiles")
                 tiles_result[category] = result.get("tiles", [])
+            else:
+                logger.warning(
+                    f"fetch_tiles_for_plan: {category} failed - {result.get('error', 'unknown')}"
+                )
 
+        logger.info(
+            "fetch_tiles_for_plan: total tiles = " "{k: len(v) for k, v in tiles_result.items()}"
+        )
         return tiles_result
 
     def generate_planning_response(self, state: GraphStateV2, user_text: str) -> str:
@@ -443,7 +602,11 @@ async def trip_architect(state: GraphStateV2) -> GraphStateV2:
 
     The "General Agent" that manages the trip plan.
     """
+    import logging
+
     from app.debug_utils import _debug_v2, _debug_v2_node_end, _debug_v2_node_start
+
+    logger = logging.getLogger(__name__)
 
     # Get user message
     user_text = ""
@@ -451,6 +614,22 @@ async def trip_architect(state: GraphStateV2) -> GraphStateV2:
         last_msg = state.messages[-1]
         if hasattr(last_msg, "content"):
             user_text = last_msg.content
+
+    # ==========================================================================
+    # Auto-Fix Loop: Handle retry from ConstraintGuard
+    # ==========================================================================
+    violations_for_retry = state.metadata.get("violations_for_retry")
+    if violations_for_retry:
+        state.guard_retry_count += 1
+        logger.debug(
+            f"Auto-fix retry {state.guard_retry_count}: "
+            f"violations={[v['code'] for v in violations_for_retry]}"
+        )
+        # Store violations for prompt injection, then clear the trigger
+        state.metadata["current_violations_to_fix"] = violations_for_retry
+        state.metadata["violations_for_retry"] = None
+        # Clear previous tiles so we can fetch new ones with corrections
+        state.tiles = {}
 
     _debug_v2_node_start(
         "architect",
@@ -463,8 +642,95 @@ async def trip_architect(state: GraphStateV2) -> GraphStateV2:
 
     architect = TripArchitect()
 
-    # Update trip plan from user text
-    state.trip_plan = _update_trip_plan_from_text(state.trip_plan, user_text)
+    # ==========================================================================
+    # Snapshot before extraction (for change tracking)
+    # ==========================================================================
+    prev_trip_values = {
+        "destination": state.trip_plan.destination,
+        "origin": state.trip_plan.origin,
+        "start_date": state.trip_plan.start_date,
+        "end_date": state.trip_plan.end_date,
+        "adults": state.trip_plan.adults,
+        "children": state.trip_plan.children,
+        "budget": state.trip_plan.budget,
+    }
+    prev_settings = state.metadata.get("extracted_settings", {})
+
+    # ==========================================================================
+    # Extract trip fields and settings from user text
+    # ==========================================================================
+
+    # Update trip plan from user text using LLM extraction
+    state.trip_plan = await _update_trip_plan_from_llm(state.trip_plan, user_text)
+
+    # Detect destination pivot and clear stale state (preserves origin, dates, travelers, budget)
+    _detect_and_handle_pivot(state, prev_trip_values.get("destination"))
+
+    # Extract settings if keywords detected (booking toggles, preferences)
+    if _has_settings_keywords(user_text):
+        settings_extracted, settings_tokens = await _extract_settings_with_llm(user_text)
+        extracted_dict = settings_extracted.model_dump(exclude_none=True)
+        if extracted_dict:
+            state.metadata["extracted_settings"] = extracted_dict
+            if settings_tokens:
+                from app.debug_utils import log_tokens
+
+                log_tokens(
+                    "ARCHITECT",
+                    settings_tokens.get("prompt_tokens", 0),
+                    settings_tokens.get("completion_tokens", 0),
+                    settings_tokens.get("total_tokens", 0),
+                )
+            _debug_v2(f"Extracted settings: {extracted_dict}")
+
+    # Resolve flexible dates to concrete dates
+    state.trip_plan = _resolve_flexible_dates(state.trip_plan, user_text, state.metadata)
+
+    # ==========================================================================
+    # Track what changed (for ack_updates)
+    # ==========================================================================
+    turn_applied_fields = []
+
+    # Track trip field changes
+    for field, prev_val in prev_trip_values.items():
+        new_val = getattr(state.trip_plan, field, None)
+        if new_val != prev_val and new_val is not None:
+            turn_applied_fields.append(field)
+
+    # Track settings changes (use dotted notation for UI)
+    new_settings = state.metadata.get("extracted_settings", {})
+    settings_field_map = {
+        "flights_toggle": "booking_types.flights",
+        "hotels_toggle": "booking_types.hotels",
+        "activities_toggle": "booking_types.activities",
+        "ground_transport_toggle": "booking_types.ground_transport",
+        "flight_direct_only": "flight_settings.direct_only",
+        "flight_cabin_class": "flight_settings.cabin_class",
+        "flight_round_trip": "flight_settings.round_trip",
+        "hotel_min_stars": "hotel_settings.min_stars",
+        "activity_skill_level": "activity_settings.skill_level",
+    }
+    for extract_key, ui_key in settings_field_map.items():
+        if new_settings.get(extract_key) is not None:
+            if new_settings.get(extract_key) != prev_settings.get(extract_key):
+                turn_applied_fields.append(ui_key)
+
+    if turn_applied_fields:
+        state.metadata["turn_applied_fields"] = turn_applied_fields
+        state.metadata["prev_trip_values_snapshot"] = prev_trip_values
+        _debug_v2(f"Fields changed this turn: {turn_applied_fields}")
+
+    # DEBUG: Print trip_plan after extraction
+    from app.debug_utils import log
+
+    log(
+        "ARCHITECT",
+        "Extracted fields",
+        data=(
+            f"dest={state.trip_plan.destination} | "
+            f"dates={state.trip_plan.start_date} to {state.trip_plan.end_date}"
+        ),
+    )
 
     # Determine mode
     mode = architect.determine_mode(state)

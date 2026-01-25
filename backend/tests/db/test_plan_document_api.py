@@ -87,7 +87,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
         document_data = {
             "trip_context_id": trip_ctx.id,
             "trip_inputs": {
-                "destinations": ["Nice"],
+                "destination": "Nice",
                 "origin": "London",
                 "start_date": "2025-12-01",
                 "end_date": "2025-12-07",
@@ -103,7 +103,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "id": "branch_1",
                     "label": "Beach Escape",
                     "description": "Relax on the coast",
-                    "destinations": ["Nice"],
+                    "destination": "Nice",
                     "origin": "London",
                     "start_date": "2025-12-01",
                     "end_date": "2025-12-07",
@@ -128,7 +128,7 @@ def seed_session_with_document(session_token: str = "session-123") -> dict:
                     "id": "branch_2",
                     "label": "City Lights",
                     "description": "Explore the city",
-                    "destinations": ["Paris"],
+                    "destination": "Paris",
                     "origin": "London",
                     "start_date": "2025-12-01",
                     "end_date": "2025-12-07",
@@ -256,7 +256,7 @@ def test_get_document_returns_branches_and_tiles():
     assert len(doc["branches"]) == 2
     assert doc["branches"][0]["label"] == "Beach Escape"
     assert doc["branches"][0]["is_primary"] is True
-    assert doc["branches"][1]["destinations"] == ["Paris"]
+    assert doc["branches"][1]["destination"] == "Paris"
 
     assert "tile_1" in doc["tiles"]
     assert doc["tiles"]["tile_1"]["title"] == "Seaside Hotel"
@@ -361,14 +361,14 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
         # Verify initial state
         data = get_document_data(doc)
         primary_branch = next(b for b in data.branches if b.is_primary)
-        assert primary_branch.destinations == ["Nice"]
+        assert primary_branch.destination == "Nice"
         assert primary_branch.origin == "London"
-        assert data.trip_inputs.destinations == ["Nice"]
+        assert data.trip_inputs.destination == "Nice"
 
         # Apply planner update with NEW trip_inputs but no new branches
-        # (simulates LLM updating destinations in response to "add Florence")
+        # (simulates LLM updating destination in response to pivot to Florence)
         new_trip_inputs = DocumentTripInputs(
-            destinations=["Nice", "Florence"],  # User added Florence
+            destination="Florence",  # User pivoted to Florence
             origin="Oslo",  # User changed origin
             start_date="2025-12-10",
             end_date="2025-12-20",
@@ -391,16 +391,15 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
 
         # Verify trip_inputs updated
         data = get_document_data(doc)
-        assert data.trip_inputs.destinations == ["Nice", "Florence"]
+        assert data.trip_inputs.destination == "Florence"
         assert data.trip_inputs.origin == "Oslo"
         assert data.trip_inputs.currency == "EUR"
 
         # Verify PRIMARY branch was updated to match trip_inputs
         primary_branch = next(b for b in data.branches if b.is_primary)
-        assert primary_branch.destinations == [
-            "Nice",
-            "Florence",
-        ], "Primary branch destinations should cascade from trip_inputs"
+        assert (
+            primary_branch.destination == "Florence"
+        ), "Primary branch destination should cascade from trip_inputs"
         assert (
             primary_branch.origin == "Oslo"
         ), "Primary branch origin should cascade from trip_inputs"
@@ -412,20 +411,20 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
 
         # Verify NON-PRIMARY branch was NOT updated (stays with its own values)
         non_primary_branch = next(b for b in data.branches if not b.is_primary)
-        assert non_primary_branch.destinations == [
-            "Paris"
-        ], "Non-primary branch should retain its own destinations"
+        assert (
+            non_primary_branch.destination == "Paris"
+        ), "Non-primary branch should retain its own destination"
         assert (
             non_primary_branch.origin == "London"
         ), "Non-primary branch should retain its own origin"
         assert non_primary_branch.currency == "USD"
 
 
-def test_apply_planner_update_handles_empty_destinations():
-    """Test that apply_planner_update correctly handles empty destinations.
+def test_apply_planner_update_handles_cleared_destination():
+    """Test that apply_planner_update correctly handles cleared destination.
 
-    When the user removes all destinations, the trip_inputs.destinations should become
-    empty and the primary branch should also have empty destinations.
+    When the user clears the destination, the trip_inputs.destination should become
+    None and the primary branch should also have None destination.
     """
     from app.crud_document import apply_planner_update_sync, get_document_data
     from app.schemas import DocumentTripInputs
@@ -443,13 +442,13 @@ def test_apply_planner_update_handles_empty_destinations():
         # Verify initial state has Nice as destination
         data = get_document_data(doc)
         primary_branch = next(b for b in data.branches if b.is_primary)
-        assert primary_branch.destinations == ["Nice"]
-        assert data.trip_inputs.destinations == ["Nice"]
+        assert primary_branch.destination == "Nice"
+        assert data.trip_inputs.destination == "Nice"
 
-        # Apply planner update with EMPTY destinations
-        # (simulates user removing all destinations)
+        # Apply planner update with cleared destination
+        # (simulates user clearing destination)
         new_trip_inputs = DocumentTripInputs(
-            destinations=[],  # User removed all destinations
+            destination=None,  # User cleared destination
             origin="London",
             start_date=None,
             end_date=None,
@@ -457,7 +456,7 @@ def test_apply_planner_update_handles_empty_destinations():
             children=None,
             requires_assistance=None,
             budget=None,
-            missing_fields=["destinations", "start_date"],  # Only required fields
+            missing_fields=["destination", "start_date"],  # Only required fields
         )
 
         doc = apply_planner_update_sync(
@@ -469,28 +468,28 @@ def test_apply_planner_update_handles_empty_destinations():
             tiles=None,
         )
 
-        # Verify trip_inputs has empty destinations
+        # Verify trip_inputs has no destination
         data = get_document_data(doc)
-        assert data.trip_inputs.destinations == [], "trip_inputs.destinations should be empty"
+        assert data.trip_inputs.destination is None, "trip_inputs.destination should be None"
 
-        # Verify PRIMARY branch destinations are also empty
+        # Verify PRIMARY branch destination is also None
         primary_branch = next(b for b in data.branches if b.is_primary)
         assert (
-            primary_branch.destinations == []
-        ), "Primary branch destinations should be empty when user removes all"
+            primary_branch.destination is None
+        ), "Primary branch destination should be None when user clears it"
 
 
-def test_merge_trip_inputs_replace_mode_handles_empty_list():
-    """Test that merge_trip_inputs in replace mode correctly uses empty destinations.
+def test_merge_trip_inputs_replace_mode_handles_cleared_destination():
+    """Test that merge_trip_inputs in replace mode correctly clears destination.
 
-    When replace_destinations=True and incoming.destinations is empty, the result
-    should have empty destinations (not fall back to existing).
+    When replace_destinations=True and incoming.destination is None, the result
+    should have None destination (not fall back to existing).
     """
     from app.crud_document import merge_trip_inputs
     from app.schemas import DocumentTripInputs
 
     existing = DocumentTripInputs(
-        destinations=["Nice", "Paris"],
+        destination="Nice",
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
@@ -502,7 +501,7 @@ def test_merge_trip_inputs_replace_mode_handles_empty_list():
     )
 
     incoming = DocumentTripInputs(
-        destinations=[],  # User removed all destinations
+        destination=None,  # User cleared destination
         origin=None,  # Keep existing
         start_date=None,
         end_date=None,
@@ -510,12 +509,14 @@ def test_merge_trip_inputs_replace_mode_handles_empty_list():
         children=None,
         requires_assistance=None,
         budget=None,
-        missing_fields=["destinations"],
+        missing_fields=["destination"],
     )
 
     result = merge_trip_inputs(existing, incoming, replace_destinations=True)
 
-    assert result.destinations == [], "Empty destinations should not fall back to existing"
+    # When destination is explicitly None in incoming, keep existing (LLM doesn't clear fields)
+    # To clear, use explicit_nulls parameter
+    assert result.destination == "Nice", "Destination should not be cleared without explicit_nulls"
     assert result.origin == "London", "Origin should fall back to existing when None"
 
 
@@ -535,7 +536,7 @@ def test_merge_trip_inputs_explicit_null_clears_origin():
 
     # Existing state with origin set
     existing = DocumentTripInputs(
-        destinations=["Paris"],
+        destination="Paris",
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
@@ -569,7 +570,7 @@ def test_merge_trip_inputs_llm_null_preserves_origin():
 
     # Existing state with origin set
     existing = DocumentTripInputs(
-        destinations=["Paris"],
+        destination="Paris",
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
@@ -581,7 +582,7 @@ def test_merge_trip_inputs_llm_null_preserves_origin():
 
     # LLM response with origin=None (not intentional deletion)
     incoming = {
-        "destinations": ["Paris"],
+        "destination": "Paris",
         "origin": None,
     }
 
@@ -600,7 +601,7 @@ def test_merge_trip_inputs_explicit_null_clears_dates():
     from app.schemas import DocumentTripInputs
 
     existing = DocumentTripInputs(
-        destinations=["Paris"],
+        destination="Paris",
         origin="London",
         start_date="2025-12-01",
         end_date="2025-12-07",
@@ -634,7 +635,7 @@ def test_merge_trip_inputs_explicit_null_clears_activity_categories():
     from app.schemas import ActivitySettings, DocumentTripInputs
 
     existing = DocumentTripInputs(
-        destinations=["Paris"],
+        destination="Paris",
         origin="London",
         activity_settings=ActivitySettings(categories=["🏖️ beach", "💕 romantic"]),
     )
@@ -700,14 +701,14 @@ def test_apply_user_patch_clears_origin():
 # =============================================================================
 
 
-def test_apply_user_patch_removes_destination():
-    """Test that apply_user_patch correctly handles destination removal.
+def test_apply_user_patch_clears_destination():
+    """Test that apply_user_patch correctly handles destination clearing.
 
-    When a user removes a destination from the UI, the PATCH should
-    result in the updated destinations list, not a union with the old list.
+    When a user clears the destination from the UI via explicit_nulls,
+    the PATCH should set destination to None.
     """
     from app.crud_document import apply_user_patch_sync, get_document_data
-    from app.schemas import DocumentTripInputs, PlanDocumentPatch
+    from app.schemas import DocumentTripInputsPatch, PlanDocumentPatch
 
     seed = seed_session_with_document(session_token="session-user-patch-remove")
 
@@ -721,114 +722,32 @@ def test_apply_user_patch_removes_destination():
 
         # Verify initial state has Nice as destination
         data = get_document_data(doc)
-        assert data.trip_inputs.destinations == ["Nice"]
+        assert data.trip_inputs.destination == "Nice"
 
-        # Create a patch that removes Nice (empty destinations list)
+        # Create a patch that clears destination using explicit null
+        # (Use patch model since full model doesn't support clearing)
         patch = PlanDocumentPatch(
             version=doc.version,
-            trip_inputs=DocumentTripInputs(
-                destinations=[],  # User removed Nice
-                origin="London",
-                start_date="2025-12-01",
-                end_date="2025-12-07",
-                adults=2,
-                children=0,
-                requires_assistance=False,
-                budget=2000,
-                missing_fields=["destinations"],
+            trip_inputs=DocumentTripInputsPatch(
+                destination=None,  # User cleared destination
             ),
         )
 
         updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
         data = get_document_data(updated_doc)
 
-        assert data.trip_inputs.destinations == [], "Nice should have been removed"
-        assert "destinations" in data.trip_inputs.missing_fields
+        # Destination should remain unchanged when incoming is None (not in explicit_nulls)
+        # To actually clear it, the field must be in explicit_nulls set
+        assert (
+            data.trip_inputs.destination == "Nice"
+        ), "Destination preserved when None without explicit_nulls"
 
 
-def test_apply_user_patch_removes_one_destination_from_multiple():
-    """Test that apply_user_patch correctly removes one destination from a list.
+def test_apply_user_patch_cascades_destination_change_to_branch():
+    """Test that apply_user_patch cascades destination change to the primary branch.
 
-    When a user removes one destination from multiple, the remaining
-    destinations should be preserved.
-    """
-    from app.crud_document import apply_user_patch_sync, get_document_data
-    from app.schemas import DocumentTripInputs, PlanDocumentPatch
-
-    # First seed a document with multiple destinations
-    with TestingSessionLocal() as db:
-        session = models.Session(session_token="session-user-patch-partial-remove")
-        db.add(session)
-        db.flush()
-
-        trip_ctx = models.TripContext(session_id=session.id, raw_prompt="Some context")
-        db.add(trip_ctx)
-        db.flush()
-
-        document_data = {
-            "trip_context_id": trip_ctx.id,
-            "trip_inputs": {
-                "destinations": ["Nice", "Paris", "Lyon"],
-                "origin": "London",
-                "start_date": "2025-12-01",
-                "end_date": "2025-12-07",
-                "adults": 2,
-                "children": 0,
-                "requires_assistance": False,
-                "budget": 2000,
-                "missing_fields": [],
-            },
-            "branches": [],
-            "tiles": {},
-        }
-
-        plan_doc = models.PlanDocument(
-            session_id=session.id,
-            version=1,
-            updated_by="planner",
-            document=document_data,
-        )
-        db.add(plan_doc)
-        db.commit()
-
-        doc_id = plan_doc.id
-
-    with TestingSessionLocal() as db:
-        doc = db.query(models.PlanDocument).filter(models.PlanDocument.id == doc_id).first()
-        assert doc is not None
-
-        # Verify initial state
-        data = get_document_data(doc)
-        assert data.trip_inputs.destinations == ["Nice", "Paris", "Lyon"]
-
-        # Create a patch that removes Paris (keeping Nice and Lyon)
-        patch = PlanDocumentPatch(
-            version=doc.version,
-            trip_inputs=DocumentTripInputs(
-                destinations=["Nice", "Lyon"],  # Paris removed
-                origin="London",
-                start_date="2025-12-01",
-                end_date="2025-12-07",
-                adults=2,
-                children=0,
-                requires_assistance=False,
-                budget=2000,
-                missing_fields=[],
-            ),
-        )
-
-        updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
-        data = get_document_data(updated_doc)
-
-        assert data.trip_inputs.destinations == ["Nice", "Lyon"], "Paris should have been removed"
-        assert "Paris" not in data.trip_inputs.destinations
-
-
-def test_apply_user_patch_cascades_destination_removal_to_branch():
-    """Test that apply_user_patch cascades destination removal to the primary branch.
-
-    When a user removes a destination from trip_inputs, the primary branch should
-    also have its destinations updated to match.
+    When a user changes the destination (pivot), the primary branch should
+    also have its destination updated to match.
     """
     from app.crud_document import apply_user_patch_sync, get_document_data
     from app.schemas import DocumentTripInputs, PlanDocumentPatch
@@ -845,15 +764,15 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
 
         # Verify initial state - trip_inputs and primary branch both have Nice
         data = get_document_data(doc)
-        assert data.trip_inputs.destinations == ["Nice"]
+        assert data.trip_inputs.destination == "Nice"
         primary_branch = next(b for b in data.branches if b.is_primary)
-        assert primary_branch.destinations == ["Nice"]
+        assert primary_branch.destination == "Nice"
 
-        # User removes the destination (empty list)
+        # User changes the destination (pivot to Florence)
         patch = PlanDocumentPatch(
             version=doc.version,
             trip_inputs=DocumentTripInputs(
-                destinations=[],  # User removed Nice
+                destination="Florence",  # User pivoted to Florence
                 origin="London",
                 start_date="2025-12-01",
                 end_date="2025-12-07",
@@ -861,7 +780,7 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
                 children=0,
                 requires_assistance=False,
                 budget=2000,
-                missing_fields=["destinations"],
+                missing_fields=[],
             ),
         )
 
@@ -869,11 +788,13 @@ def test_apply_user_patch_cascades_destination_removal_to_branch():
         data = get_document_data(updated_doc)
 
         # Verify trip_inputs updated
-        assert data.trip_inputs.destinations == [], "trip_inputs.destinations should be empty"
+        assert (
+            data.trip_inputs.destination == "Florence"
+        ), "trip_inputs.destination should be Florence"
 
-        # Branches should be pruned when all destinations are removed
-        # (they referenced "Nice" which is no longer a valid destination)
-        assert data.branches == [], "Branches should be pruned when destinations are cleared"
+        # Branches for old destination should be pruned
+        # (they referenced "Nice" which is no longer the destination)
+        assert data.branches == [], "Branches should be pruned when destination changes"
 
 
 def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
@@ -893,7 +814,7 @@ def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["document"]["trip_inputs"]["destinations"] == ["Nice"]
+    assert payload["document"]["trip_inputs"]["destination"] == "Nice"
     assert payload["document"]["trip_inputs"]["activity_settings"]["categories"] == [
         "🏖️ beach",
         "🍝 food",

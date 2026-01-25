@@ -276,7 +276,7 @@ class DocumentBranch(BaseModel):
     id: str
     label: str
     description: str
-    destinations: List[str] = Field(default_factory=list)
+    destination: Optional[str] = None
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -302,7 +302,7 @@ class DocumentBranch(BaseModel):
 class DocumentTripInputsPatch(BaseModel):
     """Partial trip-input updates coming from the UI or planner merges."""
 
-    destinations: Optional[List[str]] = None
+    destination: Optional[str] = None
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -312,7 +312,6 @@ class DocumentTripInputsPatch(BaseModel):
     budget: Optional[float] = None
     currency: Optional[str] = None
     missing_fields: Optional[List[str]] = None
-    multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
     booking_types: Optional["BookingTypes"] = None
     flight_settings: Optional["FlightSettings"] = None
     hotel_settings: Optional["HotelSettings"] = None
@@ -379,7 +378,7 @@ class TransportSettings(BaseModel):
 class DocumentTripInputs(BaseModel):
     """Trip parameters extracted/inferred from conversation."""
 
-    destinations: List[str] = Field(default_factory=list)
+    destination: Optional[str] = None
     origin: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -389,10 +388,6 @@ class DocumentTripInputs(BaseModel):
     budget: Optional[float] = None
     currency: str = "USD"
     missing_fields: List[str] = Field(default_factory=list)
-    # Multi-city intent: "multi_city" = one itinerary visiting all destinations
-    # "separate" = generate separate branch options for each destination
-    # null = not yet clarified (will be asked if 2+ destinations)
-    multi_city_intent: Optional[Literal["multi_city", "separate"]] = None
     # Booking preferences - what to search for and category-specific settings
     booking_types: BookingTypes = Field(default_factory=BookingTypes)
     flight_settings: FlightSettings = Field(default_factory=FlightSettings)
@@ -468,6 +463,17 @@ class StrategySection(BaseModel):
 
     # Impact areas - which parts of the plan this agent affects
     impact_areas: List[str] = Field(default_factory=list)  # ["Schedule", "Location", "Gear"]
+
+    # Technical log data for "System Log" display
+    constraints_applied: List[Dict[str, str]] = Field(default_factory=list)
+    # Each dict: {"rule": "min_24h_buffer_after_dive", "type": "safety", "reason": "..."}
+
+    content_added: List[Dict[str, Any]] = Field(default_factory=list)
+    # Each dict: {"title": "USAT Liberty Wreck", "day": 2, "type": "activity"}
+
+    # For General Agent: trip parameters summary (inventory counts read from tiles, not here)
+    trip_summary: Optional[Dict[str, Any]] = None
+    # {"destination": "Dubai", "dates": "Jan 26-Feb 2", "travelers": "1 adult"}
 
     # Legacy field for backward compatibility
     bullets: List[str] = Field(default_factory=list)
@@ -644,6 +650,9 @@ class PlanDocumentData(BaseModel):
     executed_strategy_topics: List[str] = Field(
         default_factory=list
     )  # Topics that ran: ["hiking", "diving"]
+    pending_strategy_topics: List[str] = Field(
+        default_factory=list
+    )  # Topics still to run: ["skiing"]
     open_decisions: List[OpenDecision] = Field(default_factory=list)
 
     # Stage 3 content (populated when plan_view_state in S3_*)

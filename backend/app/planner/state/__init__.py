@@ -14,6 +14,9 @@ Usage:
 
 # V2 State Models
 from app.planner.state.schemas_v2 import (
+    ExtractedSettingsFields,
+    # LLM Extraction
+    ExtractedTripFields,
     # State
     GraphStateV2,
     ItineraryBlock,
@@ -49,4 +52,7 @@ __all__ = [
     "trip_plan_is_ready",
     "get_missing_fields",
     "create_missing_fields_response",
+    # LLM Extraction
+    "ExtractedTripFields",
+    "ExtractedSettingsFields",
 ]

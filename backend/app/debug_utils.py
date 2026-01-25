@@ -2,14 +2,12 @@
 PR-E: Debug Utilities Module
 ============================
 
-Extracted debug logging functions from plan_graph.py.
+Consolidated debug logging for the V2 planning graph.
 
-This module provides:
-- _debug(): Conditional debug logging
-- _debug_error(): Error logging with emoji prefix
-- _debug_suggestions(): Suggestion logging for debug visibility
-- safe_debug(): Guaranteed non-throwing debug wrapper
-- safe_debug_error(): Guaranteed non-throwing error debug wrapper
+DEBUG modes (set in .env or environment):
+- DEBUG=demo  - Clean agent-level logs only (for videos)
+- DEBUG=full  - Everything (V2 DEBUG + all logs)
+- DEBUG=off   - Minimal logging (production)
 
 All functions are non-fatal - they silently catch errors to prevent
 debug code from crashing production.
@@ -17,140 +15,207 @@ debug code from crashing production.
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Any, List
 
-from app.config import settings
+from rich.console import Console
+from rich.theme import Theme
 
 # =============================================================================
-# DEBUG LOGGING
+# DEBUG MODE CONFIGURATION
 # =============================================================================
 
-# Cache the debug flag at import time for performance
-# Note: For V2, we also check env var directly for runtime flexibility
-_DEBUG_LOG = settings.debug_plan_messages
+# "Systems Engineering" color palette for demo mode
+_THEME = Theme(
+    {
+        "orchestrator": "bold blue",
+        "router": "bold cyan",
+        "architect": "bold magenta",
+        "specialist": "bold yellow",
+        "guard": "bold yellow",
+        "constraint": "bold yellow",
+        "solver": "bold orange1",
+        "synth": "bold blue",
+        "success": "bold green",
+        "error": "bold red",
+        "tokens": "dim cyan",
+        "api": "dim white",
+        "data": "cyan",
+    }
+)
+
+_console = Console(theme=_THEME)
+
+
+def get_debug_mode() -> str:
+    """Get current debug mode from environment.
+
+    Returns: 'demo', 'full', or 'off'
+    """
+    mode = os.getenv("DEBUG", "off").lower().strip()
+    if mode in ("demo", "full"):
+        return mode
+    # Legacy support
+    if os.getenv("RICH_DEMO_LOGS", "0") == "1":
+        return "demo"
+    if os.getenv("DEBUG_PLAN_MESSAGES", "").lower() in ("true", "1", "yes"):
+        return "full"
+    return "off"
+
+
+def is_demo_mode() -> bool:
+    """Check if demo mode is active (clean agent-level logs only)."""
+    return get_debug_mode() == "demo"
+
+
+def is_full_mode() -> bool:
+    """Check if full debug mode is active (all logs)."""
+    return get_debug_mode() == "full"
 
 
 def is_debug_enabled() -> bool:
-    """Check if debug logging is enabled."""
-    import os
-
-    return _DEBUG_LOG or os.getenv("DEBUG_PLAN_MESSAGES", "").lower() in ("true", "1", "yes")
+    """Check if any debug logging is enabled."""
+    return get_debug_mode() in ("demo", "full")
 
 
-def _debug(message: str, **kwargs: Any) -> None:
-    """Print debug message if DEBUG_PLAN_MESSAGES is enabled.
+def _get_demo_delay() -> float:
+    """Get demo delay in seconds. Only non-zero when DEBUG=demo."""
+    if get_debug_mode() != "demo":
+        return 0.0
+    return float(os.getenv("RICH_DEMO_DELAY_MS", "100")) / 1000.0
 
-    This function is designed to be non-fatal - any error during logging
-    is silently caught to prevent debug code from crashing production.
+
+# =============================================================================
+# AGENT-LEVEL LOGGING (shown in both demo and full modes)
+# =============================================================================
+
+
+def log(tag: str, message: str, data: str | None = None, sleep: float | None = None):
     """
-    if not _DEBUG_LOG:
-        return
-    try:
-        # Truncate message if too long
-        max_len = 2000
-        if len(message) > max_len:
-            message = message[:max_len] + "...(truncated)"
+    Agent-level log output. Shown in both demo and full modes.
 
-        # Safely format kwargs, handling any serialization errors
-        extras_parts = []
-        for k, v in kwargs.items():
-            try:
-                v_str = str(v)
-                if len(v_str) > 200:
-                    v_str = v_str[:200] + "..."
-                extras_parts.append(f"{k}={v_str}")
-            except Exception:
-                extras_parts.append(f"{k}=<unserializable>")
-        extras = " ".join(extras_parts) if extras_parts else ""
-        print(f"[PLAN_GRAPH DEBUG] {message} {extras}".strip())
-    except Exception:
-        # Never re-raise - debug logging must not crash production
-        pass
-
-
-def _debug_error(message: str, **kwargs: Any) -> None:
-    """Print ERROR message - always visible and prominent.
-
-    This function is designed to be non-fatal - any error during logging
-    is silently caught to prevent debug code from crashing production.
+    Args:
+        tag: Component name (e.g., "ARCHITECT", "GUARD", "SPECIALIST")
+        message: The action being performed
+        data: Optional extra info (e.g., "destination=Bali")
+        sleep: Override delay in seconds (default: _get_demo_delay() in demo mode)
     """
-    if not _DEBUG_LOG:
+    mode = get_debug_mode()
+
+    if mode == "off":
         return
-    try:
-        # Truncate message if too long
-        max_len = 2000
-        if len(message) > max_len:
-            message = message[:max_len] + "...(truncated)"
 
-        # Safely format kwargs, handling any serialization errors
-        extras_parts = []
-        for k, v in kwargs.items():
-            try:
-                v_str = str(v)
-                if len(v_str) > 200:
-                    v_str = v_str[:200] + "..."
-                extras_parts.append(f"{k}={v_str}")
-            except Exception:
-                extras_parts.append(f"{k}=<unserializable>")
-        extras = " ".join(extras_parts) if extras_parts else ""
-        print(f"[PLAN_GRAPH ERROR] ❌ {message} {extras}".strip())
-    except Exception:
-        # Never re-raise - debug logging must not crash production
-        pass
-
-
-def _debug_suggestions(suggestions: List[str], source: str = "") -> None:
-    """Print user prompt suggestions for debug visibility.
-
-    This function is designed to be non-fatal - any error during logging
-    is silently caught to prevent debug code from crashing production.
-    """
-    if not _DEBUG_LOG:
-        return
-    try:
-        src_tag = f" ({source})" if source else ""
-        if suggestions:
-            # Truncate each suggestion and limit count
-            truncated = [s[:100] + "..." if len(s) > 100 else s for s in suggestions[:5]]
-            suggestions_str = " | ".join(truncated)
-            print(f"[PLAN_GRAPH DEBUG] 💡 Prompt suggestions{src_tag}: [{suggestions_str}]")
+    if mode == "full":
+        # Simple print format for full mode
+        if data:
+            _safe_print(f"[{tag}] {message} | {data}")
         else:
-            print(f"[PLAN_GRAPH DEBUG] 💡 Prompt suggestions{src_tag}: (none)")
-    except Exception:
-        # Never re-raise - debug logging must not crash production
-        pass
+            _safe_print(f"[{tag}] {message}")
+        return
 
-
-# =============================================================================
-# SAFE DEBUG: Guaranteed non-throwing debug for use in safety wrappers
-# =============================================================================
-
-
-def safe_debug(message: str, **kwargs: Any) -> None:
-    """
-    Guaranteed non-throwing debug function for use inside @safe_node and recovery code.
-
-    Unlike _debug(), this function wraps EVERYTHING in try/except including
-    the initial condition check and all string formatting. Use this in places
-    where even a debug failure could break critical recovery paths.
-    """
+    # Demo mode: Rich colorized output
     try:
-        _debug(message, **kwargs)
+        formatted_tag = f"[{tag}]".ljust(16)
+
+        # Choose style based on tag content
+        style = "white"
+        tag_upper = tag.upper()
+        if "AGENT" in tag_upper or "ARCHITECT" in tag_upper:
+            style = "architect"
+        elif "SPECIALIST" in tag_upper:
+            style = "specialist"
+        elif "CONSTRAINT" in tag_upper or "GUARD" in tag_upper:
+            style = "guard"
+        elif "SOLVER" in tag_upper:
+            style = "solver"
+        elif "SYNTH" in tag_upper:
+            style = "synth"
+        elif "SUCCESS" in tag_upper:
+            style = "success"
+        elif "ERROR" in tag_upper:
+            style = "error"
+        elif "ROUTER" in tag_upper or "ORCHESTR" in tag_upper:
+            style = "router"
+        elif "TOKEN" in tag_upper:
+            style = "tokens"
+        elif "API" in tag_upper:
+            style = "api"
+
+        _console.print(f"[{style}]{formatted_tag}[/{style}] {message}")
+
+        if data:
+            _console.print(f"{' ' * 17}[data]└─ {data}[/data]")
+
+        # Demo delay
+        delay = sleep if sleep is not None else _get_demo_delay()
+        if delay > 0:
+            time.sleep(delay)
     except Exception:
-        # Absolutely never throw - this is the safety net
         pass
 
 
-def safe_debug_error(message: str, **kwargs: Any) -> None:
-    """Guaranteed non-throwing error debug for safety wrappers."""
+def log_phase(phase: str, title: str):
+    """Print a phase header box. Shown in both demo and full modes."""
+    mode = get_debug_mode()
+
+    if mode == "off":
+        return
+
+    if mode == "full":
+        _safe_print(f"\n{'='*60}\n{phase}: {title}\n{'='*60}")
+        return
+
+    # Demo mode: Rich box with extra spacing
     try:
-        _debug_error(message, **kwargs)
+        _console.print()
+        _console.print()
+        _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
+        _console.print(f"   [bold]{phase}: {title}[/bold]")
+        _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
+        time.sleep(_get_demo_delay())
+    except Exception:
+        pass
+
+
+def log_tokens(component: str, prompt: int, completion: int, total: int):
+    """Log token usage. Shown in both demo and full modes."""
+    log(
+        "TOKENS",
+        f"{component} LLM call",
+        data=f"prompt={prompt} | completion={completion} | total={total}",
+    )
+
+
+def log_complete(tiles: int, strategy_sections: int, view_state: str):
+    """Log graph completion summary. Shown in both demo and full modes."""
+    mode = get_debug_mode()
+
+    if mode == "off":
+        return
+
+    if mode == "full":
+        _safe_print(
+            f"\n[COMPLETE] Tiles: {tiles} | Strategy: {strategy_sections} | View: {view_state}"
+        )
+        return
+
+    # Demo mode: Rich prominent success box
+    try:
+        _console.print()
+        _console.print()
+        _console.print("[success]" + "=" * 50 + "[/success]")
+        _console.print("[success]       ✓ PLAN OPTIMIZED[/success]")
+        _console.print("[success]" + "=" * 50 + "[/success]")
+        _console.print(f"   Tiles: {tiles} | Strategy: {strategy_sections}")
+        _console.print(f"   View: {view_state}")
+        _console.print()
     except Exception:
         pass
 
 
 # =============================================================================
-# V2 ARCHITECTURE DEBUG: Node input/output logging
+# VERBOSE DEBUG LOGGING (only shown in full mode)
 # =============================================================================
 
 
@@ -159,52 +224,8 @@ def _safe_print(msg: str) -> None:
     try:
         print(msg)
     except UnicodeEncodeError:
-        # Fallback: replace emojis with ASCII equivalents
         ascii_msg = msg.encode("ascii", "replace").decode("ascii")
         print(ascii_msg)
-
-
-def _debug_v2_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
-    """Log V2 node start with inputs.
-
-    Example:
-        _debug_v2_node_start("router", "🧭", user_text="hello", intent=None)
-        # Output: [V2 DEBUG] 🧭 ROUTER START | user_text=hello intent=None
-    """
-    if not is_debug_enabled():
-        return
-    try:
-        inputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in inputs.items())
-        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} START | {inputs_str}")
-    except Exception:
-        pass
-
-
-def _debug_v2_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
-    """Log V2 node end with outputs.
-
-    Example:
-        _debug_v2_node_end("router", "🧭", intent="specialist", specialist="diving")
-        # Output: [V2 DEBUG] 🧭 ROUTER END | intent=specialist specialist=diving
-    """
-    if not is_debug_enabled():
-        return
-    try:
-        outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())
-        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} END | {outputs_str}")
-    except Exception:
-        pass
-
-
-def _debug_v2(message: str, **kwargs: Any) -> None:
-    """General V2 debug message."""
-    if not is_debug_enabled():
-        return
-    try:
-        extras = " ".join(f"{k}={_truncate(v)}" for k, v in kwargs.items()) if kwargs else ""
-        _safe_print(f"[V2 DEBUG] {message} {extras}".strip())
-    except Exception:
-        pass
 
 
 def _truncate(value: Any, max_len: int = 100) -> str:
@@ -216,3 +237,179 @@ def _truncate(value: Any, max_len: int = 100) -> str:
         return s
     except Exception:
         return "<unserializable>"
+
+
+def _debug_v2_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
+    """Log V2 node start with inputs. Only shown in full mode."""
+    if get_debug_mode() != "full":
+        return
+    try:
+        inputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in inputs.items())
+        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} START | {inputs_str}")
+    except Exception:
+        pass
+
+
+def _debug_v2_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
+    """Log V2 node end with outputs. Only shown in full mode."""
+    if get_debug_mode() != "full":
+        return
+    try:
+        outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())
+        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} END | {outputs_str}")
+    except Exception:
+        pass
+
+
+def _debug_v2(message: str, **kwargs: Any) -> None:
+    """General V2 debug message. Only shown in full mode."""
+    if get_debug_mode() != "full":
+        return
+    try:
+        extras = " ".join(f"{k}={_truncate(v)}" for k, v in kwargs.items()) if kwargs else ""
+        _safe_print(f"[V2 DEBUG] {message} {extras}".strip())
+    except Exception:
+        pass
+
+
+def _debug(message: str, **kwargs: Any) -> None:
+    """Print debug message. Only shown in full mode."""
+    if get_debug_mode() != "full":
+        return
+    try:
+        max_len = 2000
+        if len(message) > max_len:
+            message = message[:max_len] + "...(truncated)"
+
+        extras_parts = []
+        for k, v in kwargs.items():
+            try:
+                v_str = str(v)
+                if len(v_str) > 200:
+                    v_str = v_str[:200] + "..."
+                extras_parts.append(f"{k}={v_str}")
+            except Exception:
+                extras_parts.append(f"{k}=<unserializable>")
+        extras = " ".join(extras_parts) if extras_parts else ""
+        _safe_print(f"[DEBUG] {message} {extras}".strip())
+    except Exception:
+        pass
+
+
+def _debug_error(message: str, **kwargs: Any) -> None:
+    """Print ERROR message. Only shown in full mode."""
+    if get_debug_mode() != "full":
+        return
+    try:
+        max_len = 2000
+        if len(message) > max_len:
+            message = message[:max_len] + "...(truncated)"
+
+        extras_parts = []
+        for k, v in kwargs.items():
+            try:
+                v_str = str(v)
+                if len(v_str) > 200:
+                    v_str = v_str[:200] + "..."
+                extras_parts.append(f"{k}={v_str}")
+            except Exception:
+                extras_parts.append(f"{k}=<unserializable>")
+        extras = " ".join(extras_parts) if extras_parts else ""
+        _safe_print(f"[ERROR] {message} {extras}".strip())
+    except Exception:
+        pass
+
+
+def _debug_suggestions(suggestions: List[str], source: str = "") -> None:
+    """Print user prompt suggestions. Only shown in full mode."""
+    if get_debug_mode() != "full":
+        return
+    try:
+        src_tag = f" ({source})" if source else ""
+        if suggestions:
+            truncated = [s[:100] + "..." if len(s) > 100 else s for s in suggestions[:5]]
+            suggestions_str = " | ".join(truncated)
+            _safe_print(f"[DEBUG] Prompt suggestions{src_tag}: [{suggestions_str}]")
+        else:
+            _safe_print(f"[DEBUG] Prompt suggestions{src_tag}: (none)")
+    except Exception:
+        pass
+
+
+# =============================================================================
+# SAFE DEBUG: Guaranteed non-throwing wrappers
+# =============================================================================
+
+
+def safe_debug(message: str, **kwargs: Any) -> None:
+    """Guaranteed non-throwing debug function."""
+    try:
+        _debug(message, **kwargs)
+    except Exception:
+        pass
+
+
+def safe_debug_error(message: str, **kwargs: Any) -> None:
+    """Guaranteed non-throwing error debug."""
+    try:
+        _debug_error(message, **kwargs)
+    except Exception:
+        pass
+
+
+# =============================================================================
+# LOGGING CONFIGURATION (for demo mode cleanup)
+# =============================================================================
+
+
+def configure_demo_logging():
+    """
+    Configure logging for demo/off modes.
+
+    Suppresses:
+    - ALL Python warnings (UserWarning, RuntimeWarning, DeprecationWarning)
+    - HTTP access logs (uvicorn.access)
+    - Uvicorn error logs (uvicorn.error)
+    - OpenAI/LangChain schema warnings
+    - Other noisy loggers
+
+    Call this at app startup. Only applies when DEBUG=demo or DEBUG=off.
+    """
+    import logging
+    import warnings
+
+    mode = get_debug_mode()
+
+    # Only suppress in demo and off modes (full mode shows everything)
+    if mode == "full":
+        return
+
+    # =========================================================================
+    # NUCLEAR OPTION: Suppress ALL Python warnings
+    # =========================================================================
+    warnings.filterwarnings("ignore")
+
+    # =========================================================================
+    # Suppress noisy loggers
+    # =========================================================================
+    # Uvicorn logs
+    logging.getLogger("uvicorn.access").setLevel(logging.CRITICAL)
+    logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
+
+    # HTTP client logs
+    logging.getLogger("httpx").setLevel(logging.CRITICAL)
+    logging.getLogger("httpcore").setLevel(logging.CRITICAL)
+
+    # OpenAI/LangChain logs (including schema validation errors)
+    logging.getLogger("openai").setLevel(logging.CRITICAL)
+    logging.getLogger("langchain").setLevel(logging.CRITICAL)
+    logging.getLogger("langchain_core").setLevel(logging.CRITICAL)
+    logging.getLogger("langchain_openai").setLevel(logging.CRITICAL)
+
+    # Pydantic warnings
+    logging.getLogger("pydantic").setLevel(logging.CRITICAL)
+
+    # App-level loggers (suppress warnings/errors from our code in demo mode)
+    logging.getLogger("app").setLevel(logging.CRITICAL)
+    logging.getLogger("app.planner").setLevel(logging.CRITICAL)
+    logging.getLogger("app.planner.nodes_v2").setLevel(logging.CRITICAL)

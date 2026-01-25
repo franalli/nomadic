@@ -14,8 +14,15 @@ import { TaxesFeesTooltip } from '@/components/tiles/TaxesFeesTooltip';
 import { Button } from '@/components/ui/button';
 import { Card, CardBody } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { apiFetch } from '@/lib/api';
 import { placeholderImageForTile } from '@/lib/placeholders';
+import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -270,14 +277,31 @@ export const TileCard = memo(function TileCard({
             />
           </div>
           <div className="flex flex-col items-end">
-            <Button
-              variant="primary"
-              size="sm"
-              className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-sm"
-              onClick={handleViewDetailsClick}
-            >
-              View Details
-            </Button>
+            <TooltipProvider delayDuration={400}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-sm"
+                    onClick={handleViewDetailsClick}
+                  >
+                    View Details
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent
+                  side="top"
+                  className="max-w-xs bg-slate-900 text-slate-100 text-xs font-mono p-3 rounded-lg shadow-lg"
+                >
+                  <div className="text-slate-400 text-[10px] uppercase tracking-wider mb-1.5">
+                    API Params
+                  </div>
+                  <pre className="whitespace-pre-wrap break-all">
+                    {JSON.stringify(getDeepLinkParams(tile), null, 2)}
+                  </pre>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <span className="text-[10px] text-muted-foreground mt-1">
               Opens partner site
             </span>
