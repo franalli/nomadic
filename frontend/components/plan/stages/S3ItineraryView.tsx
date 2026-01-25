@@ -239,7 +239,6 @@ function DayCardComponent({
 }) {
   // Check if this is a buffer day (all blocks are buffers or it's arrival/departure)
   const isBufferDay = card.blocks.every((b) => b.is_buffer);
-  const hasAnyBuffer = card.blocks.some((b) => b.is_buffer);
 
   // Determine day type for special styling
   const isArrivalDay = isFirst || card.blocks.some((b) => b.buffer_type === 'arrival');

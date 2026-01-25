@@ -10,12 +10,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 # Ensure .env values are loaded once for the entire app (FastAPI, DB, and helpers).
 load_dotenv(BACKEND_DIR / ".env")
-load_dotenv(BACKEND_DIR / ".env.docker", override=False)
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", ".env.docker"),  # make sure .env and .env.docker match!
+        env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -86,6 +85,14 @@ class Settings(BaseSettings):
     openai_small_model: str = "gpt-4o-mini"  # Small model for simple tasks
     openai_medium_model: str = "gpt-4o-mini"  # Medium model for moderate tasks
     llm_specialist_model: str = "gpt-4o-mini"  # Model for strategy specialist calls
+
+    # =============================================================================
+    # V2 Model Tiering (for latency optimization)
+    # =============================================================================
+    router_model: str = os.getenv("ROUTER_MODEL", "gpt-4o-mini")  # Fast intent classification
+    extraction_model: str = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")  # Field extraction
+    architect_model: str = os.getenv("ARCHITECT_MODEL", "gpt-4o")  # Planning decisions
+    synthesizer_model: str = os.getenv("SYNTHESIZER_MODEL", "gpt-4o")  # Response generation
 
     # Debug flags
     debug_plan_messages: bool = False  # Enable verbose debug logging for planning

@@ -46,6 +46,7 @@ from app.crud_trip import (  # noqa: E402
     record_chat_message,
 )
 from app.db import get_async_db, get_db  # noqa: E402
+from app.debug_utils import _debug  # noqa: E402
 from app.graph_plan_utils import (  # noqa: E402
     check_payload_size,
     compute_today_iso,
@@ -472,10 +473,9 @@ async def lifespan(app: FastAPI):
     Validates template coverage at startup - fails fast on mismatch.
     """
     # Configure logging for demo mode (suppress HTTP logs, warnings)
-    from app.debug_utils import configure_demo_logging, is_demo_mode
+    from app.debug_utils import _debug, configure_demo_logging
 
     configure_demo_logging()
-    demo_mode = is_demo_mode()
 
     # Log build info for cache debugging
     logger.info(
@@ -484,24 +484,21 @@ async def lifespan(app: FastAPI):
         PLANNER_BUILD_ID,
         CACHE_SCHEMA_VERSION,
     )
-    if not demo_mode:
-        print(
-            f"[Startup] prompt_bundle_hash={PROMPT_BUNDLE_HASH}, "
-            f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
-        )
+    _debug(
+        f"[Startup] prompt_bundle_hash={PROMPT_BUNDLE_HASH}, "
+        f"planner_build_id={PLANNER_BUILD_ID}, cache_schema_version={CACHE_SCHEMA_VERSION}"
+    )
 
     # Prewarm validation cache
     validation_count = prewarm_cache()
-    if not demo_mode:
-        print(f"[Validation] Pre-warmed cache with {validation_count} entries")
+    _debug(f"[Validation] Pre-warmed cache with {validation_count} entries")
 
     # Prewarm prompts and templates (Jinja2 compilation)
     warmup_stats = prewarm_prompts()
-    if not demo_mode:
-        print(
-            f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
-            f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
-        )
+    _debug(
+        f"[Warmup] Pre-compiled {warmup_stats['prompts_warmed']} prompts, "
+        f"{warmup_stats['templates_loaded']} templates in {warmup_stats['warmup_ms']}ms"
+    )
 
     # Validate template coverage - FATAL on failure
     # This prevents deploy-time prompt/template drift that causes hard-to-debug runtime behavior
@@ -513,13 +510,11 @@ async def lifespan(app: FastAPI):
             f"errors={template_validation['errors'][:3]}"
         )
         logger.error(error_msg)
-        print(error_msg)
         raise RuntimeError(error_msg)
-    if not demo_mode:
-        print(
-            f"[Startup] Template coverage validation passed "
-            f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
-        )
+    _debug(
+        f"[Startup] Template coverage validation passed "
+        f"(insufficient_suggestions={template_validation.get('insufficient_suggestions', {})})"
+    )
 
     yield
 
@@ -1807,7 +1802,7 @@ async def graph_plan_stream_endpoint(
                     for tile_id, tile_data in v2_tiles.items()
                 }
 
-            print(
+            _debug(
                 f"[MAIN.PY] V2 output: plan_view_state={response_document.plan_view_state}, "
                 f"strategy_sections={len(response_document.strategy_sections or [])}, "
                 f"tiles={len(response_document.tiles or {})}"
@@ -1837,7 +1832,7 @@ async def graph_plan_stream_endpoint(
             doc_in_response = full_response.get("document", {})
             strategy_sections = doc_in_response.get("strategy_sections", [])
             first_id = strategy_sections[0].get("id") if strategy_sections else "none"
-            print(
+            _debug(
                 f"[MAIN.PY] SSE complete payload: "
                 f"strategy_sections_count={len(strategy_sections)}, "
                 f"plan_view_state={doc_in_response.get('plan_view_state')}, "
@@ -2569,4 +2564,11 @@ async def expand_itinerary_endpoint(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=settings.backend_host, port=settings.backend_port)
+    # Respect DEBUG mode for uvicorn logging (suppresses WatchFiles warnings in demo/off)
+    log_level = "info" if _debug_mode == "full" else "error"
+    uvicorn.run(
+        app,
+        host=settings.backend_host,
+        port=settings.backend_port,
+        log_level=log_level,
+    )

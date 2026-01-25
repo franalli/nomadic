@@ -22,9 +22,9 @@ export interface TruncatedDestinationListProps {
   onAddDestination: (destination: string) => void;
   hasDestination: boolean;
   pendingDestination: string | null;
-  /** Current multi-city intent: 'multi_city' = visit both, 'separate' or null = compare */
+  /** @deprecated Multi-city feature removed */
   multiCityIntent?: 'multi_city' | 'separate' | null;
-  /** Callback to toggle between visit both and compare modes */
+  /** @deprecated Multi-city feature removed */
   onToggleMultiCity?: () => void;
 }
 
@@ -43,15 +43,13 @@ function TruncatedDestinationListInner({
   onAddDestination,
   hasDestination,
   pendingDestination,
-  multiCityIntent,
-  onToggleMultiCity,
+  multiCityIntent: _multiCityIntent,
+  onToggleMultiCity: _onToggleMultiCity,
 }: TruncatedDestinationListProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Determine separator text based on multi-city intent
-  // 'multi_city' = visit both = "and", otherwise = compare = "or"
-  const separatorText = multiCityIntent === 'multi_city' ? 'and' : 'or';
-  const showSeparator = destinations.length >= 2 && onToggleMultiCity;
+  // Show simple "and" separator between destinations
+  const showSeparator = destinations.length >= 2;
 
   const visibleDestinations = destinations.slice(0, maxVisible);
   const hiddenDestinations = destinations.slice(maxVisible);
@@ -70,16 +68,11 @@ function TruncatedDestinationListInner({
             onSelect={onSelectBadge}
             onRemove={() => onRemoveDestination(idx)}
           />
-          {/* Show separator between visible destinations (not after the last visible one unless there are hidden) */}
+          {/* Show separator between visible destinations */}
           {showSeparator && idx < visibleDestinations.length - 1 && (
-            <button
-              type="button"
-              onClick={onToggleMultiCity}
-              className="text-[10px] font-medium text-orange-500 hover:text-orange-400 transition-colors cursor-pointer -mx-0.5 self-center border border-orange-500 rounded-full w-5 h-5 flex items-center justify-center hover:border-orange-400"
-              title={multiCityIntent === 'multi_city' ? 'Click to compare destinations' : 'Click to visit both'}
-            >
-              {separatorText}
-            </button>
+            <span className="text-[10px] font-medium text-muted-foreground self-center px-1">
+              and
+            </span>
           )}
         </Fragment>
       ))}

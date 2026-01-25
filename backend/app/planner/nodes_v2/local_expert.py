@@ -40,9 +40,12 @@ class LocalRecommendation(BaseModel):
     """A logistical recommendation for the destination."""
 
     title: str = Field(description="Name of pass/tip/area")
-    description: str = Field(description="Why this is logistically smart")
+    description: str = Field(description="What is it?")
     category: Literal["logistics", "attraction", "dining"] = Field(
         default="logistics", description="Category of recommendation"
+    )
+    logic_hook: str = Field(
+        default="", description="The specific logistical advantage (e.g., 'Saves 20% on transit')"
     )
 
 
@@ -82,6 +85,20 @@ async def local_expert(state: GraphStateV2) -> GraphStateV2:
 
     log("LOCAL_EXPERT", f"Activated for {plan.destination}")
 
+    try:
+        return await _run_local_expert(state, plan, log)
+    except Exception as e:
+        # Catch any unexpected errors to prevent graph crash
+        from app.debug_utils import _debug_error
+
+        _debug_error(f"LOCAL_EXPERT unexpected error: {e}")
+        log("LOCAL_EXPERT", f"Error - returning state unchanged: {type(e).__name__}")
+        return state
+
+
+async def _run_local_expert(state: GraphStateV2, plan, log) -> GraphStateV2:
+    """Inner implementation with the actual logic."""
+
     # ==========================================================================
     # Load Prompt
     # ==========================================================================
@@ -108,8 +125,10 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
     # Call LLM
     # ==========================================================================
     model = os.getenv("EXTRACTION_MODEL", "gpt-4o-mini")
-    llm = ChatOpenAI(model=model, temperature=0.3)
+    llm = ChatOpenAI(model=model, temperature=0.3, timeout=30, max_retries=1)
     structured_llm = llm.with_structured_output(LocalExpertOutput)
+
+    log("LOCAL_EXPERT", f"Calling LLM ({model})...")
 
     try:
         response = await structured_llm.ainvoke(
@@ -118,11 +137,18 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
                 HumanMessage(content=user_context),
             ]
         )
+        log("LOCAL_EXPERT", "LLM call completed")
     except Exception as e:
         # Only log errors in full mode (hide from demo videos)
         from app.debug_utils import _debug_error
 
         _debug_error(f"LOCAL_EXPERT LLM Error: {e}")
+        log("LOCAL_EXPERT", f"LLM error: {type(e).__name__}")
+        return state
+
+    # Check for None response (can happen if structured output parsing fails)
+    if response is None:
+        log("LOCAL_EXPERT", "LLM returned None response, skipping")
         return state
 
     # ==========================================================================
@@ -148,6 +174,7 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
                 "title": r.title,
                 "description": r.description,
                 "type": r.category,
+                "logic_hook": r.logic_hook,
             }
         )
 

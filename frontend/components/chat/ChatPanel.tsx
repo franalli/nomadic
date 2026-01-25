@@ -1076,9 +1076,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       });
 
     // Show typing indicator when loading and haven't received first streaming token yet
-    // Don't show when node progress is active (we show progress bar instead)
-    // Also don't show when loader is handling progress display
-    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !nodeStatus?.active && !delayedLoader.isVisible && !actionLoader.isVisible;
+    // Hide when either loader becomes visible (they show the progress bar instead)
+    // Note: We intentionally don't check nodeStatus?.active here because there's a 400ms delay
+    // before loaders become visible, and we want the typing indicator to fill that gap
+    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !delayedLoader.isVisible && !actionLoader.isVisible;
     // Show node progress only when:
     // 1. The action loader (policy-compliant) OR delayed loader (fallback) is visible
     // 2. We have active node status data to display

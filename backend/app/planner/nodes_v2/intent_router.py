@@ -534,9 +534,10 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
         state.active_specialist = specialist_hint
         state.active_agent_id = specialist_hint
         state.ui_events.append("SPECIALIST_ACTIVE")
-    elif state.trip_plan.destination and state.intent in ("booking", "general"):
-        # FALLBACK: No niche specialist detected, but we have a destination
+    elif state.trip_plan.destination and state.intent == "booking":
+        # FALLBACK: No niche specialist detected, but user triggered "Build Plan"
         # Activate Local Expert for city-specific logistics
+        # NOTE: Only trigger on "booking" intent (not "general") to avoid running during setup phase
         from app.debug_utils import log
 
         log("ROUTER", f"Auto-triggering Local Expert for {state.trip_plan.destination}")

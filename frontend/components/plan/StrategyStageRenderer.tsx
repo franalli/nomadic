@@ -130,7 +130,7 @@ function renderStageContent(
     case 'S2_STRATEGY_READY':
       return (
         <S2StrategyView
-          key={`strategy-${destinationCard?.destination}`}
+          key={`strategy-${destinationCard?.title}`}
           viewModel={viewModel}
           destinationCard={destinationCard}
           onRefineAssumptions={onRefineAssumptions}

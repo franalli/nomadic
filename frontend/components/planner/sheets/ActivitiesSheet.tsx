@@ -57,9 +57,6 @@ const GENERAL_CATEGORIES = [
   { value: 'family', label: 'Family', icon: '👨‍👩‍👧' },
 ];
 
-// Combined: Specialists first, then general
-const CATEGORY_OPTIONS = [...SPECIALIST_CATEGORIES, ...GENERAL_CATEGORIES];
-
 // Skill level options
 const SKILL_OPTIONS = [
   { value: 'beginner', label: 'Beginner', description: 'Easy activities, no experience needed' },

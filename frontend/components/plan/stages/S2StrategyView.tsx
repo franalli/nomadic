@@ -507,7 +507,6 @@ function StrategyStack({
   const useReducedColor = sorted.length > 2;
 
   // Header semantics: Specialist Logic (N) when specialists exist
-  const hasExecuted = executedTopics.length > 0;
   const hasPending = pendingTopics.length > 0;
   // Count only non-general specialists for the feed
   const specialistCount = sorted.length;

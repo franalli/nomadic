@@ -178,7 +178,6 @@ const FIELD_LABELS: Record<string, string> = {
   dates: 'Dates',
   travelers: 'Travelers',
   budget: 'Budget',
-  multi_city_intent: 'How to visit',
 };
 
 // Date presets for quick date selection
@@ -261,7 +260,7 @@ export interface TripDetailsFormProps {
   setDestinationInput: (v: string) => void;
   setDestinationInputExpanded: (v: boolean) => void;
 
-  // Multi-city
+  /** @deprecated Multi-city feature removed */
   onToggleMultiCity: () => void;
 
   // Calendar callbacks

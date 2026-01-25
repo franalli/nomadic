@@ -5,9 +5,14 @@ PR-E: Debug Utilities Module
 Consolidated debug logging for the V2 planning graph.
 
 DEBUG modes (set in .env or environment):
-- DEBUG=demo  - Clean agent-level logs only (for videos)
-- DEBUG=full  - Everything (V2 DEBUG + all logs)
-- DEBUG=off   - Minimal logging (production)
+- DEBUG=off   - Zero output (production)
+- DEBUG=demo  - Rich colorized agent-level logs only (for videos, with delay)
+- DEBUG=full  - Rich colorized logs + verbose V2 DEBUG statements (no delay)
+
+Both demo and full modes use the same colorized rich output for agent-level
+logs (log, log_phase, log_tokens, log_complete). The difference is:
+- demo: includes configurable delay (RICH_DEMO_DELAY_MS) for video recording
+- full: no delay, plus verbose _debug/_debug_v2 statements
 
 All functions are non-fatal - they silently catch errors to prevent
 debug code from crashing production.
@@ -93,28 +98,20 @@ def _get_demo_delay() -> float:
 
 def log(tag: str, message: str, data: str | None = None, sleep: float | None = None):
     """
-    Agent-level log output. Shown in both demo and full modes.
+    Agent-level log output. Shown in both demo and full modes with rich colorization.
 
     Args:
         tag: Component name (e.g., "ARCHITECT", "GUARD", "SPECIALIST")
         message: The action being performed
         data: Optional extra info (e.g., "destination=Bali")
-        sleep: Override delay in seconds (default: _get_demo_delay() in demo mode)
+        sleep: Override delay in seconds (default: _get_demo_delay() in demo mode only)
     """
     mode = get_debug_mode()
 
     if mode == "off":
         return
 
-    if mode == "full":
-        # Simple print format for full mode
-        if data:
-            _safe_print(f"[{tag}] {message} | {data}")
-        else:
-            _safe_print(f"[{tag}] {message}")
-        return
-
-    # Demo mode: Rich colorized output
+    # Both demo and full use rich colorized output
     try:
         formatted_tag = f"[{tag}]".ljust(16)
 
@@ -147,33 +144,32 @@ def log(tag: str, message: str, data: str | None = None, sleep: float | None = N
         if data:
             _console.print(f"{' ' * 17}[data]└─ {data}[/data]")
 
-        # Demo delay
-        delay = sleep if sleep is not None else _get_demo_delay()
-        if delay > 0:
-            time.sleep(delay)
+        # Demo delay (only in demo mode, not full)
+        if mode == "demo":
+            delay = sleep if sleep is not None else _get_demo_delay()
+            if delay > 0:
+                time.sleep(delay)
     except Exception:
         pass
 
 
 def log_phase(phase: str, title: str):
-    """Print a phase header box. Shown in both demo and full modes."""
+    """Print a phase header box. Shown in both demo and full modes with rich colorization."""
     mode = get_debug_mode()
 
     if mode == "off":
         return
 
-    if mode == "full":
-        _safe_print(f"\n{'='*60}\n{phase}: {title}\n{'='*60}")
-        return
-
-    # Demo mode: Rich box with extra spacing
+    # Both demo and full use rich colorized output
     try:
         _console.print()
         _console.print()
         _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
         _console.print(f"   [bold]{phase}: {title}[/bold]")
         _console.print("[bold cyan]" + "─" * 50 + "[/bold cyan]")
-        time.sleep(_get_demo_delay())
+        # Demo delay (only in demo mode, not full)
+        if mode == "demo":
+            time.sleep(_get_demo_delay())
     except Exception:
         pass
 
@@ -188,19 +184,13 @@ def log_tokens(component: str, prompt: int, completion: int, total: int):
 
 
 def log_complete(tiles: int, strategy_sections: int, view_state: str):
-    """Log graph completion summary. Shown in both demo and full modes."""
+    """Log graph completion summary. Shown in both demo and full modes with rich colorization."""
     mode = get_debug_mode()
 
     if mode == "off":
         return
 
-    if mode == "full":
-        _safe_print(
-            f"\n[COMPLETE] Tiles: {tiles} | Strategy: {strategy_sections} | View: {view_state}"
-        )
-        return
-
-    # Demo mode: Rich prominent success box
+    # Both demo and full use rich colorized output
     try:
         _console.print()
         _console.print()
@@ -396,6 +386,10 @@ def configure_demo_logging():
     logging.getLogger("uvicorn.access").setLevel(logging.CRITICAL)
     logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
 
+    # Watchfiles (uvicorn's file watcher)
+    logging.getLogger("watchfiles").setLevel(logging.CRITICAL)
+    logging.getLogger("watchfiles.main").setLevel(logging.CRITICAL)
+
     # HTTP client logs
     logging.getLogger("httpx").setLevel(logging.CRITICAL)
     logging.getLogger("httpcore").setLevel(logging.CRITICAL)
@@ -413,3 +407,6 @@ def configure_demo_logging():
     logging.getLogger("app").setLevel(logging.CRITICAL)
     logging.getLogger("app.planner").setLevel(logging.CRITICAL)
     logging.getLogger("app.planner.nodes_v2").setLevel(logging.CRITICAL)
+
+    # Telemetry trace logger (suppress structured trace events)
+    logging.getLogger("planner.trace").setLevel(logging.CRITICAL)

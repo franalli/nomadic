@@ -28,8 +28,16 @@ OUTPUT FORMAT (JSON ONLY):
   "recommendations": [
     {
       "title": "Name of pass/tip/area",
-      "description": "Why this is logistically smart (e.g., 'Skip-the-line pass saves 2 hours')",
-      "category": "logistics" | "attraction" | "dining"
+      "description": "What is it?",
+      "category": "logistics" | "attraction" | "dining",
+      "logic_hook": "The specific logistical advantage (e.g., 'Saves 20% on transit', 'Required for entry', 'Skip-the-line access')"
     }
   ]
 }
+
+CRITICAL: Every recommendation MUST have a logic_hook that provides concrete, measurable value:
+- ✅ "Saves €40 vs individual tickets"
+- ✅ "Required for entry - book 2 weeks ahead"
+- ✅ "Skip-the-line saves 90min on weekends"
+- ❌ "A popular attraction" (no logistical value)
+- ❌ "Beautiful views" (subjective, no constraint)

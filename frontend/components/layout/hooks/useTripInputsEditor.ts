@@ -65,6 +65,7 @@ export interface TripInputsEditorActions {
   handleToggleRequiresAssistance: () => Promise<void>;
   handleRemoveBudget: () => Promise<void>;
   handleUpdateCurrency: (currency: string) => Promise<void>;
+  /** @deprecated Multi-city feature removed */
   handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
   handleRemoveDestination: (index: number) => Promise<void>;
@@ -80,10 +81,10 @@ export function useTripInputsEditor(
   const {
     tripInputs,
     storeTripInputs,
-    branches,
-    selectedBranchId,
-    onBranchesChange,
-    onSelectedBranchIdChange,
+    branches: _branches,
+    selectedBranchId: _selectedBranchId,
+    onBranchesChange: _onBranchesChange,
+    onSelectedBranchIdChange: _onSelectedBranchIdChange,
     onToast,
   } = options;
 
@@ -431,23 +432,11 @@ export function useTripInputsEditor(
     }
   }, [documentStore, onToast]);
 
+  // TODO: multi_city_intent feature is not yet implemented in DocumentTripInputs type
   const handleToggleMultiCity = useCallback(async () => {
-    const currentIntent = tripInputs.multi_city_intent;
-    // Toggle: null/separate -> multi_city, multi_city -> separate
-    const newIntent = currentIntent === 'multi_city' ? 'separate' : 'multi_city';
-
-    const success = await documentStore.commitTripInputs({ multi_city_intent: newIntent });
-
-    if (!success) {
-      onToast('Failed to update trip style. Please try again.', 'error');
-      return;
-    }
-
-    const message = newIntent === 'multi_city'
-      ? 'Switched to one combined itinerary visiting all destinations! 🗺️'
-      : 'Switched to separate plans for each destination! 📍';
-    onToast(message, 'confirmation');
-  }, [tripInputs.multi_city_intent, documentStore, onToast]);
+    // Stubbed - multi_city_intent not in type yet
+    onToast('Multi-city feature coming soon!', 'confirmation');
+  }, [onToast]);
 
   const handleAddDestination = useCallback(
     async (destination: string) => {

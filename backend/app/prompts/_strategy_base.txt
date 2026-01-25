@@ -2,6 +2,24 @@
 {tone_instruction}
 
 ==============================
+STEP 1: FEASIBILITY ASSESSMENT (CRITICAL)
+==============================
+Before generating content, assess if [ACTIVITY] is logically possible in [DESTINATION].
+
+Determine STATUS:
+1. "feasible": Activity is standard for this location (e.g., Skiing in Alps).
+2. "caveat": Possible but restricted (e.g., Indoor Skiing in Dubai, Pool Diving in London).
+3. "infeasible": Impossible (e.g., Surfing in Kansas, Skiing in Miami).
+
+IF "INFEASIBLE":
+- STOP planning immediately.
+- Output ONLY the feasibility_status and a blocking constraint.
+- Suggest an ALTERNATIVE (e.g., "Try Wakeboarding" or "Nearest skiing is 500km away").
+
+IF "CAVEAT":
+- Proceed, but add a WARNING constraint explaining the limitation.
+
+==============================
 STRATEGY PLANNING
 ==============================
 Goals:
@@ -35,6 +53,10 @@ STRUCTURED OUTPUT CONTRACT (V2)
 Your JSON response MUST match the V2 SpecialistOutput schema:
 
 {
+  "feasibility_status": "feasible" | "caveat" | "infeasible",
+  "feasibility_reason": "Explanation for the status",
+  "alternative_suggestion": "If infeasible, where should they go instead? (null if feasible)",
+
   "constraints": [
     {
       "type": "temporal",
