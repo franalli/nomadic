@@ -968,10 +968,20 @@ async def graph_plan_endpoint(
     elif not session_state:
         session_state = {}
 
-    # --- Initialize trip_inputs if not present ---
+    # --- Initialize or merge trip_inputs ---
+    # CRITICAL: Always merge req.trip_inputs into session_state to ensure
+    # the latest frontend values (destination, dates, etc.) are used.
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
+    elif req.trip_inputs:
+        # Merge incoming trip_inputs into existing (incoming takes precedence)
+        existing = session_state.get("trip_inputs", {})
+        incoming = dict(req.trip_inputs)
+        for key, value in incoming.items():
+            if value is not None:
+                existing[key] = value
+        session_state["trip_inputs"] = normalize_trip_inputs(existing)
 
     # --- Ensure thread_id is set ---
     if "thread_id" not in session_state:
@@ -1457,10 +1467,21 @@ async def graph_plan_stream_endpoint(
     elif not session_state:
         session_state = {}
 
-    # --- Initialize trip_inputs if not present ---
+    # --- Initialize or merge trip_inputs ---
+    # CRITICAL: Always merge req.trip_inputs into session_state to ensure
+    # the latest frontend values (destination, dates, etc.) are used.
+    # This fixes the bug where Setup mode had stale/empty destination.
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
+    elif req.trip_inputs:
+        # Merge incoming trip_inputs into existing (incoming takes precedence)
+        existing = session_state.get("trip_inputs", {})
+        incoming = dict(req.trip_inputs)
+        for key, value in incoming.items():
+            if value is not None:
+                existing[key] = value
+        session_state["trip_inputs"] = normalize_trip_inputs(existing)
 
     # --- Ensure thread_id is set ---
     if "thread_id" not in session_state:

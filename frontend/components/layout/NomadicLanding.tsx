@@ -44,6 +44,24 @@ import { type DocumentTripInputs,isBookingEnabled } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel,PlanViewState } from '@/types/plan-envelope';
 
+/**
+ * Parse ISO date string (yyyy-MM-dd) as local midnight.
+ * Avoids timezone issues where new Date("2026-01-26") is interpreted as UTC.
+ */
+function parseISODateLocal(dateStr: string | null | undefined): Date | null {
+  if (!dateStr) return null;
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10);
+    const day = parseInt(parts[2], 10);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+      return new Date(year, month - 1, day);
+    }
+  }
+  return null;
+}
+
 // Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
 interface ChangeReceiptData {
   type: 'partial' | 'updated' | 'reverted';
@@ -133,7 +151,8 @@ export function NomadicLanding() {
 
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
-  const storeTripInputs = documentStore.document?.trip_inputs;
+  // Use direct selector for trip_inputs to ensure reactivity on updates
+  const storeTripInputs = useDocumentStore((state) => state.document?.trip_inputs);
   const llmUpdatedFields = documentStore.llmUpdatedFields;
   const acknowledgeLLMUpdate = documentStore.acknowledgeLLMUpdate;
   const restoreTripInputs = documentStore.restoreTripInputs;
@@ -470,12 +489,14 @@ export function NomadicLanding() {
             // Add date if available
             if (tripInputs.start_date) {
               // Format date nicely (e.g., "Jan 21")
-              const date = new Date(tripInputs.start_date);
-              const formatted = date.toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-              });
-              parts.push(formatted);
+              const date = parseISODateLocal(tripInputs.start_date);
+              if (date) {
+                const formatted = date.toLocaleDateString('en-US', {
+                  month: 'short',
+                  day: 'numeric',
+                });
+                parts.push(formatted);
+              }
             }
             // Return route-derived subtitle or fallback
             return parts.length > 0
@@ -1058,14 +1079,12 @@ export function NomadicLanding() {
     <div
       style={{
         position: 'fixed',
-        top: 'auto',
-        bottom: '24px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 9999,
+        top: '16px',
+        right: '16px',
+        zIndex: 9998, // Slightly below errorToasts so errors appear on top
         display: 'flex',
         flexDirection: 'column',
-        alignItems: 'center',
+        alignItems: 'flex-end',
         gap: '8px',
         pointerEvents: 'none',
       }}
@@ -1093,9 +1112,9 @@ export function NomadicLanding() {
               <motion.div
                 key={toast.id}
                 layout
-                initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                initial={{ opacity: 0, y: -50, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                exit={{ opacity: 0, scale: 0.9, y: -20 }}
                 transition={{
                   type: 'spring',
                   stiffness: 500,
@@ -1261,16 +1280,16 @@ export function NomadicLanding() {
       <DatesSheet
         open={activeSheet === 'dates'}
         onOpenChange={(open) => !open && closeSheet()}
-        startDate={tripInputs.start_date ? new Date(tripInputs.start_date) : null}
-        endDate={tripInputs.end_date ? new Date(tripInputs.end_date) : null}
+        startDate={parseISODateLocal(tripInputs.start_date)}
+        endDate={parseISODateLocal(tripInputs.end_date)}
         onSave={async (start, end) => {
-          const startStr = start.toISOString().slice(0, 10);
-          const endStr = end.toISOString().slice(0, 10);
+          // Use local date components to avoid timezone shifts
+          // toISOString() converts to UTC which can shift the date by a day
+          const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+          const endStr = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
           await documentStore.commitTripInputs({ start_date: startStr, end_date: endStr });
           closeSheet();
-          const startFormatted = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          const endFormatted = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          addToast(`Dates: ${startFormatted}–${endFormatted}`, 'confirmation');
+          // Toast is already shown by DatesSheet, no need for duplicate
         }}
       />
 

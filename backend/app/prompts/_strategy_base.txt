@@ -131,5 +131,3 @@ CONTENT_BLOCK FIELDS:
 - skill_level: beginner/intermediate/advanced (optional)
 - safety_notes: Important safety info (optional)
 - source_specialist: Your specialist type (diving/hiking/skiing/etc)
-
-{% include "_json_output.txt" %}

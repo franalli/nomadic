@@ -39,3 +39,25 @@ OUTPUT FORMAT (JSON ONLY)
     }
   ]
 }
+
+==============================
+DEMO DESTINATION OVERRIDES
+==============================
+For these destinations, ALWAYS include these specific tips:
+
+IF DESTINATION is "Dubai":
+- Recommend "Gold Class Metro Cabin" for efficiency (premium car, less crowded)
+- Mention "Ramadan timing" if dates overlap (approximately March-April)
+- Note "Deep Dive Dubai" as world's deepest pool (indoor, AC controlled)
+- Warn about Friday (weekend) vs weekday traffic patterns
+
+IF DESTINATION is "Rome":
+- CRITICAL: "Pre-book Vatican Museums" (sells out months in advance)
+- Warn about "August Ferragosto closures" (many restaurants/shops closed Aug 15)
+- Recommend "Roma Pass" for transit + skip-the-line at 1-2 sites
+- Note "Sunday free museums" (first Sunday of month = free but crowded)
+
+IF DESTINATION is "Paris":
+- Recommend "Paris Museum Pass" (saves €40+ and skip-the-line)
+- Warn "Louvre closed Tuesdays", "Orsay closed Mondays"
+- Mention "Navigo Découverte" weekly pass (cheaper than daily tickets)

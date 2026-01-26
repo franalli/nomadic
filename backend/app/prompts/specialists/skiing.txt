@@ -35,6 +35,12 @@ These constraints MUST be passed to the Architect:
    - DIN settings appropriate for level
    - Consider demo before buying new gear
 
+5. SNOW RELIABILITY (Low Altitude):
+   - Resorts below **1500m** may rely on artificial snow
+   - Late season (March/April) requires high altitude (**>2000m**) or glacier skiing
+   - Check historical snow data before booking low-altitude resorts
+   - Climate change has reduced reliable snow at lower elevations
+
 ==============================
 SKIING DESTINATION KNOWLEDGE
 ==============================

@@ -379,14 +379,30 @@ async def local_expert(state: GraphStateV2) -> GraphStateV2:
 
     Triggered by default when no niche specialist is requested.
     Returns a StrategySection with constraints and recommendations.
+
+    CRITICAL: Multi-specialist support - same pattern as vertical_specialist.
     """
     from app.debug_utils import log
+
+    # MULTI-SPECIALIST SUPPORT: Pop from pending if active_specialist is not set
+    if not state.active_specialist and state.pending_specialists:
+        next_specialist = state.pending_specialists[0]
+        state.pending_specialists = state.pending_specialists[1:]
+        state.active_specialist = next_specialist
+        state.active_agent_id = next_specialist
+        state.ui_events.append("SPECIALIST_ACTIVE")
+        log("LOCAL_EXPERT", f"Multi-specialist loop: popped '{next_specialist}' from queue")
+        # If next specialist is not local_expert, we shouldn't be here - but handle gracefully
+        if next_specialist != "local_expert":
+            log("LOCAL_EXPERT", f"WARNING: Expected local_expert but got {next_specialist}")
 
     plan = state.trip_plan
 
     # Skip if no destination
     if not plan.destination:
         log("LOCAL_EXPERT", "Skipped - no destination set")
+        state.metadata["last_executed_specialist"] = "local_expert"  # Track for downstream
+        state.active_specialist = None  # Clear for multi-specialist support
         return state
 
     log("LOCAL_EXPERT", f"Activated for {plan.destination}")
@@ -399,6 +415,8 @@ async def local_expert(state: GraphStateV2) -> GraphStateV2:
 
         _debug_error(f"LOCAL_EXPERT unexpected error: {e}")
         log("LOCAL_EXPERT", f"Error - returning state unchanged: {type(e).__name__}")
+        state.metadata["last_executed_specialist"] = "local_expert"  # Track for downstream
+        state.active_specialist = None  # Clear for multi-specialist support
         return state
 
 
@@ -491,6 +509,8 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
     # Check for empty response
     if not response.constraints and not response.recommendations:
         log("LOCAL_EXPERT", "No content available for this destination")
+        state.metadata["last_executed_specialist"] = "local_expert"  # Track for downstream
+        state.active_specialist = None  # Clear for multi-specialist support
         return state
 
     # ==========================================================================
@@ -548,6 +568,15 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
     # Update State
     # ==========================================================================
 
+    # DEBUG: Log incoming strategy_sections
+    from app.debug_utils import _debug_v2
+
+    incoming_sections = state.metadata.get("strategy_sections", [])
+    _debug_v2(
+        f"local_expert: BEFORE update - {len(incoming_sections)} sections, "
+        f"types={[s.get('specialist_type') for s in incoming_sections]}"
+    )
+
     # Initialize strategy_sections if needed
     if "strategy_sections" not in state.metadata:
         state.metadata["strategy_sections"] = []
@@ -557,6 +586,13 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
         s for s in state.metadata["strategy_sections"] if s.get("specialist_type") != "local_expert"
     ]
     state.metadata["strategy_sections"].append(section)
+
+    # DEBUG: Log outgoing strategy_sections
+    outgoing_sections = state.metadata.get("strategy_sections", [])
+    _debug_v2(
+        f"local_expert: AFTER update - {len(outgoing_sections)} sections, "
+        f"types={[s.get('specialist_type') for s in outgoing_sections]}"
+    )
 
     # Mark as executed
     executed = state.metadata.get("executed_strategy_topics", [])
@@ -570,4 +606,6 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
         f"Added {len(constraints_applied)} constraints, {len(content_added)} tips",
     )
 
+    state.metadata["last_executed_specialist"] = "local_expert"  # Track for downstream
+    state.active_specialist = None  # Clear for multi-specialist support
     return state

@@ -72,6 +72,8 @@ function DatesSheetInner({
 }: DatesSheetProps) {
   const { toast } = useToast();
   const [range, setRange] = useState<DateRange | undefined>(undefined);
+  // Track if user is starting a new selection (clicked once, waiting for second click)
+  const [isSelectingNewRange, setIsSelectingNewRange] = useState(false);
 
   // Initialize from props when opened
   useEffect(() => {
@@ -81,6 +83,7 @@ function DatesSheetInner({
       } else {
         setRange(undefined);
       }
+      setIsSelectingNewRange(false);
     }
   }, [open, startDate, endDate]);
 
@@ -110,7 +113,17 @@ function DatesSheetInner({
   }, []);
 
   // Handle calendar select
+  // react-day-picker v9 range mode behavior:
+  // - Click 1: sets 'from' (start date)
+  // - Click 2: sets 'to' (end date), completing the range
+  // - Click when range is complete: resets to new 'from'
   const handleSelect = useCallback((newRange: DateRange | undefined) => {
+    // Track selection state for UI feedback
+    if (newRange?.from && !newRange?.to) {
+      setIsSelectingNewRange(true);
+    } else {
+      setIsSelectingNewRange(false);
+    }
     setRange(newRange);
   }, []);
 
@@ -202,9 +215,17 @@ function DatesSheetInner({
         </div>
 
         {/* Selected range display */}
-        {range?.from && range?.to && (
+        {range?.from && (
           <div className="text-center text-sm text-[var(--theme-text)]">
-            {format(range.from, 'EEEE, MMM d')} – {format(range.to, 'EEEE, MMM d')}
+            {range.to ? (
+              <>
+                {format(range.from, 'EEEE, MMM d')} – {format(range.to, 'EEEE, MMM d')}
+              </>
+            ) : (
+              <span className="text-amber-500">
+                {format(range.from, 'EEEE, MMM d')} – Select end date
+              </span>
+            )}
           </div>
         )}
       </div>

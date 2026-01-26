@@ -112,3 +112,22 @@ export const STEP_DURATION_MS = 2000;
  * After this duration, show fallbackSubtext if available.
  */
 export const FALLBACK_TIMEOUT_MS = 30000;
+
+/**
+ * Compelling node labels for the "Live Logic" status bar.
+ * Keys must match NODE_STATUS_CONFIG in plan_graph_v2.py exactly.
+ */
+export const COMPELLING_NODE_LABELS: Record<string, string> = {
+  // Main graph nodes
+  router: 'Reading intent...',
+  architect: 'Understanding your request...',
+  specialist: 'Consulting domain expert...',
+  local_expert: 'Checking local tips...',
+  logistics: 'Scanning airline networks...',
+  guard: 'Validating constraints...',
+  synthesizer: 'Finalizing response...',
+  // Sub-node statuses
+  architect_extracting: 'Parsing dates and details...',
+  architect_planning: 'Planning your trip...',
+  tiles_loading: 'Searching live options...',
+};

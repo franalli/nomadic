@@ -111,7 +111,8 @@ function renderStageContent(
   onBuildPlan?: () => void,
   hasEverHadPlan?: boolean,
   tiles?: Record<string, Tile>,
-  isDesktop?: boolean
+  isDesktop?: boolean,
+  tripInputs?: { start_date?: string | null; end_date?: string | null }
 ): React.ReactNode {
   // Note: S0BootstrapView now reads from document store directly
   // Action handlers for opening sheets will be added when we wire up the full chip row integration
@@ -149,6 +150,7 @@ function renderStageContent(
           pendingTopics={viewModel.pending_strategy_topics}
           executedTopics={viewModel.executed_strategy_topics}
           tiles={tiles}
+          tripInputs={tripInputs}
         />
       );
 
@@ -326,7 +328,8 @@ export function StrategyStageRenderer({
               onBuildPlan,
               hasEverHadPlan,
               tiles,
-              isDesktop
+              isDesktop,
+              tripInputs
             )}
 
             {/* BookingSection rendered conditionally (not "always") */}

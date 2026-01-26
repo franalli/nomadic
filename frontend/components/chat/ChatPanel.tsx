@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, RotateCcw, Square } from 'lucide-react';
+import { ArrowUp, Cpu, RotateCcw, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -26,6 +26,7 @@ import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
+import { COMPELLING_NODE_LABELS } from '@/lib/loaderCopyConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
@@ -50,7 +51,7 @@ import { ChatSkeleton } from './ChatSkeleton';
 import { CollapsedMessageRow } from './CollapsedMessageRow';
 import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
-import { NodeProgress } from './NodeProgress';
+// NodeProgress removed - replaced by Live Logic Status Pill above input
 import { PlanModeHint } from './PlanModeHint';
 import { SystemAckLine } from './SystemAckLine';
 
@@ -1104,11 +1105,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // Note: We intentionally don't check nodeStatus?.active here because there's a 400ms delay
     // before loaders become visible, and we want the typing indicator to fill that gap
     const showTypingIndicator = isLoading && !hasReceivedFirstToken && !delayedLoader.isVisible && !actionLoader.isVisible;
-    // Show node progress only when:
-    // 1. The action loader (policy-compliant) OR delayed loader (fallback) is visible
-    // 2. We have active node status data to display
-    // Action loader only shows for the 5 action types: generate_plan, update_plan, refresh_deals, create_itinerary, vertical_fetch
-    const showNodeProgress = (actionLoader.isVisible || delayedLoader.isVisible) && nodeStatus?.active;
+    // Note: Old NodeProgress component removed - now using Live Logic Status Pill above input
 
     return (
       <div
@@ -1301,20 +1298,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 );
               })}
               {showTypingIndicator && <TypingIndicator />}
-              {showNodeProgress && nodeStatus && (
-                <NodeProgress
-                  node={nodeStatus.node}
-                  label={nodeStatus.label}
-                  iconKey={nodeStatus.iconKey}
-                  estimatedDurationMs={nodeStatus.estimatedDurationMs}
-                  startTime={nodeStatus.startTime}
-                  stage={nodeStatus.stage}
-                  topic={nodeStatus.topic}
-                  // Action-specific copy from actionLoader (policy-compliant)
-                  actionTitle={actionLoader.isVisible ? actionLoader.title : undefined}
-                  actionSubtext={actionLoader.isVisible ? actionLoader.subtext : undefined}
-                />
-              )}
+              {/* NodeProgress removed - replaced by Live Logic Status Pill above input */}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
               <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
             </>
@@ -1373,6 +1357,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             <p className="text-center text-xs text-muted-foreground py-2">
               Ready. Click <span className="font-medium text-foreground">{hasEverHadPlan ? 'Update plan' : 'Build plan'}</span> to continue →
             </p>
+          )}
+
+          {/* Live Logic Status Bar - shows current node being processed */}
+          {isLoading && nodeStatus?.node && (
+            <div className="flex items-center justify-center mb-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-950/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-emerald-800/50 shadow-[0_0_10px_rgba(16,185,129,0.15)] animate-pulse">
+                <Cpu className="w-3 h-3" />
+                <span className="tracking-tight">
+                  {COMPELLING_NODE_LABELS[nodeStatus.node] || nodeStatus.label || 'Processing...'}
+                </span>
+              </div>
+            </div>
           )}
 
           <form onSubmit={handleSubmit} className="relative">

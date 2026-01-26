@@ -125,15 +125,16 @@ def _build_synthesis_context(state: GraphStateV2) -> str:
     if plan.trip_type:
         parts.append(f"- Trip Type: {plan.trip_type}")
 
-    # Specialist content
+    # Specialist content - COUNTS ONLY (descriptions are in the right panel)
     if plan.itinerary_blocks:
-        parts.append("\n## Specialist Recommendations")
-        for block in plan.itinerary_blocks[:5]:
-            parts.append(f"- **{block.title}**: {block.description}")
-            if block.safety_notes:
-                parts.append(f"  - Safety: {block.safety_notes}")
-            if block.skill_level:
-                parts.append(f"  - Level: {block.skill_level}")
+        activity_blocks = [b for b in plan.itinerary_blocks if not getattr(b, "is_buffer", False)]
+        buffer_blocks = [b for b in plan.itinerary_blocks if getattr(b, "is_buffer", False)]
+        parts.append("\n## Specialist Content (counts only - details on right panel)")
+        if activity_blocks:
+            parts.append(f"- Activities added: {len(activity_blocks)}")
+        if buffer_blocks:
+            parts.append(f"- Safety buffers: {len(buffer_blocks)}")
+        parts.append("- NOTE: Do NOT describe activities in chat. Just mention counts.")
 
     # Constraints from specialist
     if plan.constraints:
@@ -147,20 +148,20 @@ def _build_synthesis_context(state: GraphStateV2) -> str:
         for v in state.constraints_violated:
             parts.append(f"- {v}")
 
-    # Tile results
+    # Tile results - COUNTS ONLY (details are in the right panel)
+    # Don't include tile names/prices - LLM should only mention counts
     if state.tiles:
-        parts.append("\n## Available Options")
+        parts.append("\n## Available Options (counts only - details on right panel)")
+        tile_counts = []
         for category, tiles in state.tiles.items():
             if tiles:
-                parts.append(f"- {len(tiles)} {category} found")
-                # Show first 2 tiles as examples
-                for tile in tiles[:2]:
-                    name = tile.get("title") or tile.get("name", "Option")
-                    price = tile.get("price_estimate") or tile.get("live_price")
-                    if price:
-                        parts.append(f"  - {name}: ${price}")
-                    else:
-                        parts.append(f"  - {name}")
+                tile_counts.append(f"{len(tiles)} {category}")
+        if tile_counts:
+            parts.append(f"- Found: {', '.join(tile_counts)}")
+            parts.append(
+                "- NOTE: Do NOT list individual options. "
+                "Just mention counts and direct to right panel."
+            )
 
     return "\n".join(parts)
 
@@ -261,8 +262,8 @@ def generate_suggested_replies(state: GraphStateV2) -> List[str]:
         suggestions = ["Beach destination", "Mountain adventure", "City break"]
     elif not plan.start_date:
         suggestions = ["Next week", "Next month", "I'm flexible"]
-    elif state.active_specialist:
-        topic = state.active_specialist
+    elif state.active_specialist or state.metadata.get("last_executed_specialist"):
+        topic = state.active_specialist or state.metadata.get("last_executed_specialist")
         if topic == "diving":
             suggestions = ["Add more dives", "Show dive shops", "Check equipment"]
         elif topic == "hiking":
@@ -334,7 +335,7 @@ class Synthesizer:
     def synthesize_inspiration(self, state: GraphStateV2) -> str:
         """Generate inspiration (pre-core) response."""
         plan = state.trip_plan
-        specialist = state.active_specialist
+        specialist = state.active_specialist or state.metadata.get("last_executed_specialist")
 
         # Get template
         template = INSPIRATION_TEMPLATES.get(specialist, INSPIRATION_TEMPLATES["default"])
@@ -358,7 +359,12 @@ class Synthesizer:
         parts = []
 
         # Opening
-        trip_type = plan.trip_type or state.active_specialist or "travel"
+        trip_type = (
+            plan.trip_type
+            or state.active_specialist
+            or state.metadata.get("last_executed_specialist")
+            or "travel"
+        )
         parts.append(f"I'm working on your {trip_type} trip to {plan.destination}!")
 
         # Specialist content
@@ -465,7 +471,9 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
         "📝",
         mode=state.metadata.get("architect_mode"),
         has_tiles=bool(state.tiles),
-        has_specialist=bool(state.active_specialist),
+        has_specialist=bool(
+            state.active_specialist or state.metadata.get("last_executed_specialist")
+        ),
     )
 
     synth = Synthesizer()

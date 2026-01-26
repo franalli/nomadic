@@ -149,6 +149,8 @@ interface S2StrategyViewProps {
   executedTopics?: string[];
   /** Tiles for TripHealthBar inventory counts */
   tiles?: Record<string, Tile>;
+  /** Trip inputs for checking if dates are set */
+  tripInputs?: { start_date?: string | null; end_date?: string | null };
 }
 
 // =============================================================================
@@ -160,9 +162,11 @@ interface AgentCardProps {
   isExpanded: boolean;
   onToggle: () => void;
   status: AgentStatus;
+  /** Whether trip dates are set (for showing "add dates" hint) */
+  hasDates?: boolean;
 }
 
-function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
+function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: AgentCardProps) {
   const cardRef = React.useRef<HTMLDivElement>(null);
 
   // Scroll card into view when expanded (prevents jumping to wrong location)
@@ -301,6 +305,14 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
           </div>
         )}
 
+        {/* Hint: Add dates to unlock full recommendations (when specialist ran without dates) */}
+        {!isInfeasible && status === 'ready' && !hasDates && (
+          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-amber-500">
+            <span>📅</span>
+            <span>Add dates to unlock day-by-day scheduling</span>
+          </div>
+        )}
+
         {/* Row 2 (collapsed): One-liner + principle chips (not for infeasible) */}
         {!isExpanded && !isInfeasible && (
           <div className="mt-2 w-full">
@@ -424,9 +436,9 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
                       )}
                       {/* Logic Hook - The "Pro Tip" that proves deep knowledge */}
                       {c.logic_hook && (
-                        <div className="text-[10px] text-emerald-400 mt-2 flex items-center gap-1.5 bg-emerald-500/5 p-1.5 rounded border border-emerald-500/10">
-                          <CheckCircle2 size={10} />
-                          <span>{c.logic_hook}</span>
+                        <div className="text-[11px] text-emerald-300 mt-2.5 inline-flex items-center gap-2 bg-emerald-950 px-2.5 py-1.5 rounded-md border border-emerald-700/60 shadow-[0_0_12px_rgba(16,185,129,0.12)]">
+                          <Sparkles size={12} className="text-emerald-400 flex-shrink-0 animate-pulse" />
+                          <span className="font-medium tracking-wide">{c.logic_hook}</span>
                         </div>
                       )}
                       {c.day && (
@@ -550,6 +562,8 @@ interface StrategyStackProps {
   executedTopics: string[];
   /** Tiles for TripHealthBar inventory counts */
   tiles?: Record<string, Tile>;
+  /** Whether trip dates are set (for showing "add dates" hint) */
+  hasDates?: boolean;
 }
 
 function StrategyStack({
@@ -557,6 +571,7 @@ function StrategyStack({
   pendingTopics,
   executedTopics,
   tiles = {},
+  hasDates = true,
 }: StrategyStackProps) {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -703,6 +718,7 @@ function StrategyStack({
                 setExpandedId(expandedId === section.id ? null : section.id)
               }
               status={status}
+              hasDates={hasDates}
             />
           );
         })
@@ -783,6 +799,7 @@ export function S2StrategyView({
   pendingTopics = [],
   executedTopics,
   tiles = {},
+  tripInputs,
 }: S2StrategyViewProps) {
   // Unused props - header and CTA now owned by StrategyStageRenderer
   void _destinationCard;
@@ -792,6 +809,9 @@ export function S2StrategyView({
 
   // Use viewModel's executed_strategy_topics if not provided via props
   const resolvedExecutedTopics = executedTopics ?? viewModel.executed_strategy_topics ?? [];
+
+  // Check if dates are set
+  const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
 
   // Skeleton state - show when strategy is being prepared (empty sections)
   if (strategy_sections.length === 0 && pendingTopics.length === 0) {
@@ -822,6 +842,7 @@ export function S2StrategyView({
         pendingTopics={pendingTopics}
         executedTopics={resolvedExecutedTopics}
         tiles={tiles}
+        hasDates={hasDates}
       />
 
       {/* Open decisions panel */}

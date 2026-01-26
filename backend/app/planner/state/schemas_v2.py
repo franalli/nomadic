@@ -332,6 +332,9 @@ class GraphStateV2(BaseModel):
     active_specialist: Optional[str] = None  # "diving", "hiking", "skiing", etc.
     active_agent_id: Optional[str] = None  # For UI display
 
+    # Multi-specialist support: queue of specialists to process
+    pending_specialists: List[str] = Field(default_factory=list)
+
     # Tile inventory (from TileService)
     tiles: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict)
     # Structure: {"flights": [...], "hotels": [...], "activities": [...]}

@@ -14,7 +14,7 @@
 import { ChevronDown, ChevronUp, Lock } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
-import { MiniCard } from '@/components/tiles/MiniCard';
+import { MiniCard, MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
 import { TilesGrid } from '@/components/tiles/TilesGrid';
@@ -322,12 +322,15 @@ export function BookingSection({
     );
   }
 
-  // S2 generating: context-aware placeholder
+  // S2 generating: skeleton loaders (YC Demo polish)
   if (state.startsWith('S2_') && isGenerating(generation)) {
     const message = totalTiles > 0 ? 'Refreshing deals…' : 'Searching deals…';
     return (
-      <div id="booking-section" className="px-4 py-2">
+      <div id="booking-section" className="px-4 py-2 space-y-3 animate-in fade-in duration-500">
         <p className="text-xs text-muted-foreground">{message}</p>
+        <MiniCardSkeleton />
+        <MiniCardSkeleton />
+        <MiniCardSkeleton />
       </div>
     );
   }

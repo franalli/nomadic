@@ -458,15 +458,44 @@ class VerticalSpecialist:
         Get suggested activities for a destination.
 
         This is the S1/S2 content generation.
+
+        Priority:
+        1. Curated content from demo_curation.py (has images for hero destinations)
+        2. Hardcoded knowledge (fallback for non-hero destinations)
         """
-        destinations = self.knowledge.get("top_destinations", {})
+        from app.debug_utils import _debug_v2
+
+        # Guard: return empty if no destination (prevents false matches)
+        if not destination:
+            _debug_v2("[SPECIALIST] get_content_for_destination: No destination, returning empty")
+            return []
 
         # Normalize destination name for lookup
-        dest_lower = destination.lower() if destination else ""
+        dest_lower = destination.lower().strip()
 
-        # Find matching destination
+        # Extra safety: return empty if destination is effectively empty
+        if not dest_lower:
+            _debug_v2("[SPECIALIST] get_content_for_destination: Empty dest_lower, returning empty")
+            return []
+
+        # PRIORITY 1: Check for curated content (includes images)
+        _debug_v2(
+            f"[SPECIALIST] get_content_for_destination: "
+            f"Looking up curated content for '{dest_lower}'"
+        )
+        curated_blocks = self._get_curated_content(dest_lower)
+        if curated_blocks:
+            _debug_v2(
+                f"[SPECIALIST] get_content_for_destination: "
+                f"Found {len(curated_blocks)} curated blocks"
+            )
+            return curated_blocks
+
+        # PRIORITY 2: Fall back to hardcoded knowledge
+        destinations = self.knowledge.get("top_destinations", {})
         for dest_key, activities in destinations.items():
-            if dest_key in dest_lower or dest_lower in dest_key:
+            # Require meaningful match (not empty string matching everything)
+            if len(dest_lower) >= 3 and (dest_key in dest_lower or dest_lower in dest_key):
                 blocks = []
                 for i, activity in enumerate(activities):
                     blocks.append(
@@ -483,6 +512,67 @@ class VerticalSpecialist:
                 return blocks
 
         return []
+
+    def _get_curated_content(self, destination: str) -> List[ItineraryBlock]:
+        """
+        Get curated content from demo_curation.py if available.
+
+        Returns ItineraryBlocks with images for hero destinations.
+        """
+        from app.debug_utils import _debug_v2
+
+        try:
+            from app.data.demo_curation import DEMO_MANIFEST, is_hero_destination
+
+            _debug_v2(
+                f"[SPECIALIST] _get_curated_content: "
+                f"destination='{destination}', topic='{self.topic}'"
+            )
+
+            is_hero = is_hero_destination(destination)
+            _debug_v2(f"[SPECIALIST] is_hero_destination('{destination}') = {is_hero}")
+
+            if not is_hero:
+                _debug_v2("[SPECIALIST] NOT a hero destination, returning empty")
+                return []
+
+            _debug_v2("[SPECIALIST] IS a hero destination, fetching curated content")
+            manifest = DEMO_MANIFEST.get(destination.lower().strip(), {})
+            specialist_content = manifest.get("specialist_content", {})
+            _debug_v2(f"[SPECIALIST] specialist_content keys: {list(specialist_content.keys())}")
+
+            # Get activities for this specialist type
+            activities = specialist_content.get(self.topic, [])
+            _debug_v2(f"[SPECIALIST] activities for topic '{self.topic}': {len(activities)}")
+
+            if not activities:
+                _debug_v2("[SPECIALIST] No activities found, returning empty")
+                return []
+
+            blocks = []
+            for i, activity in enumerate(activities):
+                _debug_v2(
+                    f"[SPECIALIST] Creating block: {activity.get('title')}, "
+                    f"image={bool(activity.get('image'))}"
+                )
+                blocks.append(
+                    ItineraryBlock(
+                        day=i + 2,  # Start from day 2 (day 1 is arrival)
+                        title=activity.get("title", ""),
+                        description=activity.get("description", ""),
+                        type=activity.get("type", "activity"),
+                        source_specialist=self.topic,
+                        skill_level=activity.get("skill_level"),
+                        logic_hook=activity.get("logic_hook"),
+                        image_url=activity.get("image"),  # Curated image URL
+                    )
+                )
+
+            _debug_v2(f"[SPECIALIST] Returning {len(blocks)} curated blocks")
+            return blocks
+
+        except ImportError:
+            return []
 
     def critique_plan(self, state: GraphStateV2) -> Optional[str]:
         """
@@ -674,10 +764,25 @@ class VerticalSpecialist:
         - Safety buffer blocks (no-fly, acclimatization)
         - Activity content blocks
         """
+        from app.debug_utils import _debug_v2
+
         destination = state.trip_plan.destination or ""
+
+        # DEBUG: Log input state
+        _debug_v2(
+            f"[SPECIALIST] generate_output called: "
+            f"topic={self.topic}, destination='{destination}'"
+        )
+        _debug_v2(
+            f"[SPECIALIST] trip_plan: start_date={state.trip_plan.start_date}, "
+            f"end_date={state.trip_plan.end_date}"
+        )
 
         # STEP 1: Check feasibility FIRST (Constraint Engine pattern)
         status, reason, alternative = check_feasibility(self.topic, destination)
+        _debug_v2(
+            f"[SPECIALIST] feasibility: status={status}, reason={reason[:50] if reason else None}"
+        )
 
         if status == "infeasible":
             # Return empty output with infeasible status - no content generated
@@ -695,16 +800,28 @@ class VerticalSpecialist:
         all_blocks: List[ItineraryBlock] = []
 
         # 2a. Bookends (arrival/departure)
-        all_blocks.extend(self.generate_bookends(state))
+        bookends = self.generate_bookends(state)
+        _debug_v2(f"[SPECIALIST] bookends: {len(bookends)} blocks")
+        all_blocks.extend(bookends)
 
         # 2b. Safety buffers (no-fly, acclimatization)
-        all_blocks.extend(self.generate_safety_buffers(state))
+        safety_buffers = self.generate_safety_buffers(state)
+        _debug_v2(f"[SPECIALIST] safety_buffers: {len(safety_buffers)} blocks")
+        all_blocks.extend(safety_buffers)
 
         # 2c. Activity content
-        all_blocks.extend(self.get_content_for_destination(destination))
+        activity_content = self.get_content_for_destination(destination)
+        _debug_v2(f"[SPECIALIST] activity_content: {len(activity_content)} blocks")
+        for block in activity_content:
+            _debug_v2(
+                f"[SPECIALIST]   - {block.title}, "
+                f"is_buffer={block.is_buffer}, image={bool(block.image_url)}"
+            )
+        all_blocks.extend(activity_content)
 
         # Sort by day
         all_blocks.sort(key=lambda b: b.day)
+        _debug_v2(f"[SPECIALIST] total all_blocks: {len(all_blocks)}")
 
         # STEP 3: Build constraints list
         constraints = self.get_constraints()
@@ -808,8 +925,26 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
     VerticalSpecialist node function for LangGraph.
 
     The "Diving Agent" / "Hiking Agent" that injects domain expertise.
+
+    CRITICAL: Multi-specialist support requires state mutations to happen HERE,
+    not in routing functions (LangGraph doesn't persist routing function mutations).
+
+    Flow:
+    1. First run: Router sets active_specialist, we use it and clear it at end
+    2. Routing sees pending_specialists not empty → routes back here
+    3. Subsequent runs: active_specialist is None, we pop from pending_specialists
     """
-    from app.debug_utils import _debug_v2, _debug_v2_node_end, _debug_v2_node_start
+    from app.debug_utils import _debug_v2, _debug_v2_node_end, _debug_v2_node_start, log
+
+    # MULTI-SPECIALIST SUPPORT: Pop from pending if active_specialist is not set
+    # On first run, router sets active_specialist. On loop iterations, we pop from pending.
+    if not state.active_specialist and state.pending_specialists:
+        next_specialist = state.pending_specialists[0]
+        state.pending_specialists = state.pending_specialists[1:]
+        state.active_specialist = next_specialist
+        state.active_agent_id = next_specialist
+        state.ui_events.append("SPECIALIST_ACTIVE")
+        log("SPECIALIST", f"Multi-specialist loop: popped '{next_specialist}' from queue")
 
     topic = state.active_specialist
 
@@ -818,8 +953,6 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         _debug_v2("🤿 SPECIALIST skipped (no active specialist)")
         return state
 
-    from app.debug_utils import log
-
     _debug_v2_node_start(
         "specialist",
         "🤿",
@@ -827,7 +960,33 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         destination=state.trip_plan.destination,
     )
 
+    # DEBUG: Log full trip plan state
+    _debug_v2(
+        f"[SPECIALIST] FULL STATE: start_date={state.trip_plan.start_date}, "
+        f"end_date={state.trip_plan.end_date}"
+    )
+    _debug_v2(
+        f"[SPECIALIST] FULL STATE: adults={state.trip_plan.adults}, "
+        f"children={state.trip_plan.children}"
+    )
+    tiles_count = sum(len(v) for v in state.tiles.values()) if state.tiles else 0
+    _debug_v2(f"[SPECIALIST] FULL STATE: tiles_count={tiles_count}")
+    existing_sections = [
+        s.get("specialist_type") for s in state.metadata.get("strategy_sections", [])
+    ]
+    _debug_v2(f"[SPECIALIST] FULL STATE: existing_strategy_sections={existing_sections}")
+
     log("SPECIALIST", f"{topic.title()} Specialist activated")
+    log("SPECIALIST", f"Destination from trip_plan: '{state.trip_plan.destination}'")
+    dest_from_inputs = state.metadata.get("trip_inputs", {}).get("destination")
+    log(
+        "SPECIALIST",
+        f"Destination from metadata.trip_inputs: '{dest_from_inputs}'",
+    )
+
+    # Verify destination is set - critical for correct content
+    if not state.trip_plan.destination:
+        log("SPECIALIST", "⚠️ WARNING: No destination set in trip_plan!")
 
     # Create specialist for this topic
     specialist = VerticalSpecialist(topic)
@@ -873,6 +1032,8 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
             reason=output.feasibility_reason,
         )
 
+        state.metadata["last_executed_specialist"] = topic  # Track for downstream nodes
+        state.active_specialist = None  # Clear for multi-specialist support
         return state
 
     # Handle CAVEAT case - activity possible with limitations
@@ -911,6 +1072,11 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         # Skip buffer blocks (arrival/departure/no-fly) - only show activities
         if block.is_buffer:
             continue
+        # Use image_url from block if already set (from curated content),
+        # otherwise fall back to lookup by title (for hardcoded knowledge)
+        image_url = block.image_url or _get_curated_image(
+            topic, state.trip_plan.destination, block.title
+        )
         content_added.append(
             {
                 "title": block.title,
@@ -918,7 +1084,7 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
                 "logic_hook": block.logic_hook,
                 "type": block.type,
                 "day": block.day,
-                "image_url": _get_curated_image(topic, state.trip_plan.destination, block.title),
+                "image_url": image_url,
             }
         )
 
@@ -952,7 +1118,24 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
     ]
     state.metadata["strategy_sections"].append(section)
 
+    # Add topic to executed_strategy_topics (for frontend status display)
+    executed = state.metadata.get("executed_strategy_topics", [])
+    if topic not in executed:
+        executed = list(executed)  # Make a copy
+        executed.append(topic)
+        state.metadata["executed_strategy_topics"] = executed
+
     _debug_v2(f"Strategy section created for {topic} with {len(content_added)} recommendations")
+    reason_preview = output.feasibility_reason[:50] if output.feasibility_reason else None
+    _debug_v2(
+        f"  feasibility_status={output.feasibility_status}, " f"feasibility_reason={reason_preview}"
+    )
+    _debug_v2(
+        f"  constraints_count={len(output.constraints)}, "
+        f"content_blocks_count={len(output.content_blocks)}"
+    )
+    _debug_v2(f"  content_added titles: {[c.get('title') for c in content_added]}")
+    _debug_v2(f"  content_added has images: {[bool(c.get('image_url')) for c in content_added]}")
 
     # Generate specialist message for UI
     if output.content_blocks:
@@ -973,5 +1156,14 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
         content_blocks_added=len(output.content_blocks),
         critique=output.critique[:50] if output.critique else None,
     )
+
+    # Track for downstream nodes (synthesizer, _v2_result_to_v1_format)
+    state.metadata["last_executed_specialist"] = topic
+
+    # CRITICAL: Clear active_specialist after processing
+    # This allows the routing function to know we're done with this one.
+    # If pending_specialists has more items, routing will send us back here,
+    # and we'll pop the next one at the start of the function.
+    state.active_specialist = None
 
     return state

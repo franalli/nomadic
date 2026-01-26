@@ -13,7 +13,7 @@ like "No, I want Paris instead."
 
 import logging
 import os
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -35,7 +35,10 @@ class IntentClassification(BaseModel):
     intent: Literal["GREETING", "RESET", "PLANNING"]
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
     reasoning: str = Field(description="Brief explanation of classification")
-    specialist_hint: Optional[Literal["diving", "hiking", "skiing", "cycling", "boating"]] = None
+    # Multiple specialist hints (e.g., "diving and hiking trip")
+    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "boating"]] = Field(
+        default_factory=list, description="List of detected specialist activities (can be multiple)"
+    )
 
 
 # =============================================================================
@@ -111,7 +114,7 @@ def _check_exact_match_greeting(text: str) -> Optional[IntentClassification]:
             intent="GREETING",
             confidence=1.0,
             reasoning="Exact match greeting - no LLM needed",
-            specialist_hint=None,
+            specialist_hints=[],
         )
 
     return None
@@ -132,7 +135,7 @@ def _check_generate_plan_trigger(text: str) -> Optional[IntentClassification]:
             intent="PLANNING",
             confidence=1.0,
             reasoning="Generate plan trigger - execute plan with tiles",
-            specialist_hint=None,
+            specialist_hints=[],
         )
 
     return None
@@ -276,11 +279,11 @@ SPECIALIST_ACTIVITY_CATEGORIES = [
 ]
 
 
-def _detect_specialist_from_activity_settings(state: GraphStateV2) -> Optional[str]:
+def _detect_specialists_from_activity_settings(state: GraphStateV2) -> List[str]:
     """
-    Detect specialist from activity_settings.categories (UI pill selection).
+    Detect specialists from activity_settings.categories (UI pill selection).
 
-    Returns the first matching specialist type, or None if no match.
+    Returns list of all matching specialist types (can be multiple).
     """
     # Get activity categories from trip_inputs in metadata
     trip_inputs = state.metadata.get("trip_inputs", {})
@@ -288,17 +291,21 @@ def _detect_specialist_from_activity_settings(state: GraphStateV2) -> Optional[s
     categories = activity_settings.get("categories", [])
 
     if not categories:
-        return None
+        return []
 
     # Check each category for a specialist match
+    detected: List[str] = []
     for category in categories:
         category_lower = category.lower().strip()
         if category_lower in ACTIVITY_CATEGORY_TO_SPECIALIST:
             specialist = ACTIVITY_CATEGORY_TO_SPECIALIST[category_lower]
-            logger.debug(f"Detected specialist '{specialist}' from activity category '{category}'")
-            return specialist
+            if specialist not in detected:
+                detected.append(specialist)
+                logger.debug(
+                    f"Detected specialist '{specialist}' from activity category '{category}'"
+                )
 
-    return None
+    return detected
 
 
 # =============================================================================
@@ -335,7 +342,8 @@ Classify the user message into ONE of:
 ## Specialist Detection
 
 If the message mentions activities like diving, hiking, skiing, cycling, or boating,
-include a specialist_hint field with the appropriate value.
+include ALL matching specialists in the specialist_hints array.
+For example, "diving and hiking trip" should return ["diving", "hiking"].
 
 ## User Message
 "{user_message}"
@@ -345,8 +353,8 @@ Respond with valid JSON matching this schema:
   "intent": "GREETING" | "RESET" | "PLANNING",
   "confidence": 0.0-1.0,
   "reasoning": "brief explanation",
-  "specialist_hint": null | "diving" | "hiking" | "skiing" | "cycling" | "boating"
-}}"""
+  "specialist_hints": ["diving", "hiking", "skiing", "cycling", "boating"]
+}}"""  # specialist_hints: array of matching activities, empty if none
 
 
 def _get_router_llm() -> ChatOpenAI:
@@ -394,28 +402,32 @@ async def _classify_intent_with_llm(
                 intent="PLANNING",
                 confidence=0.5,
                 reasoning=f"LLM classification failed: {e}",
-                specialist_hint=_detect_specialist_keyword(user_text),
+                specialist_hints=_detect_specialist_keywords(user_text),
             ),
             {},
         )
 
 
-def _detect_specialist_keyword(user_text: str) -> Optional[str]:
+def _detect_specialist_keywords(user_text: str) -> List[str]:
     """
     Fallback keyword detection for specialist hints.
 
     Used when LLM fails or for quick detection.
+    Returns all matching specialist types (can be multiple).
     """
     import re
 
     text_lower = user_text.lower()
+    detected: List[str] = []
 
     for topic, keywords in SPECIALIST_KEYWORDS.items():
         for keyword in keywords:
             if re.search(rf"\b{re.escape(keyword)}\b", text_lower):
-                return topic
+                if topic not in detected:
+                    detected.append(topic)
+                break  # Found a match for this topic, move to next
 
-    return None
+    return detected
 
 
 # =============================================================================
@@ -475,7 +487,7 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
         log(
             "ROUTER",
             f"Intent: {classification.intent}",
-            data=f"specialist_hint={classification.specialist_hint}",
+            data=f"specialist_hints={classification.specialist_hints}",
         )
 
     # Handle GREETING - return static response, skip architect
@@ -520,30 +532,41 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
     state.metadata["is_generate_trigger"] = is_generate_trigger
 
     # Set specialist if detected from text OR from UI activity settings
-    specialist_hint = classification.specialist_hint
+    # Combine detected specialists from LLM and activity settings
+    specialist_hints = list(classification.specialist_hints)  # Copy to avoid mutation
 
     # Also check activity_settings.categories for UI-selected activities
-    if not specialist_hint:
-        specialist_hint = _detect_specialist_from_activity_settings(state)
-        if specialist_hint:
-            from app.debug_utils import log
+    ui_specialists = _detect_specialists_from_activity_settings(state)
+    for s in ui_specialists:
+        if s not in specialist_hints:
+            specialist_hints.append(s)
 
-            log("ROUTER", f"Specialist '{specialist_hint}' detected from activity settings")
+    if ui_specialists:
+        from app.debug_utils import log
 
-    if specialist_hint:
-        state.active_specialist = specialist_hint
-        state.active_agent_id = specialist_hint
+        log("ROUTER", f"Specialists {ui_specialists} detected from activity settings")
+
+    # Store all specialists in the pending queue (multi-specialist support)
+    # Pop the first one to activate, rest stay in queue for sequential processing
+    if specialist_hints:
+        state.pending_specialists = specialist_hints[1:]  # Rest of the queue
+        first_specialist = specialist_hints[0]
+        state.active_specialist = first_specialist
+        state.active_agent_id = first_specialist
         state.ui_events.append("SPECIALIST_ACTIVE")
     elif state.trip_plan.destination and state.intent == "booking":
         # FALLBACK: No niche specialist detected, but user triggered "Build Plan"
         # Activate Local Expert for city-specific logistics
         # NOTE: Only trigger on "booking" intent (not "general") to avoid running during setup phase
+        state.pending_specialists = []
         from app.debug_utils import log
 
         log("ROUTER", f"Auto-triggering Local Expert for {state.trip_plan.destination}")
         state.active_specialist = "local_expert"
         state.active_agent_id = "local_expert"
         state.ui_events.append("SPECIALIST_ACTIVE")
+    else:
+        state.pending_specialists = []
 
     _debug_v2_node_end(
         "router",

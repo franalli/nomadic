@@ -136,10 +136,14 @@ export function enforceRightViewPolicy(
   state: PlanViewState,
   viewModel: PlanViewModel
 ): void {
-  // S0_BOOTSTRAP: No content allowed
+  // S0_BOOTSTRAP: Minimal content allowed
+  // - Day cards and open decisions must be empty (plan not ready yet)
+  // - Strategy sections ARE allowed when a specialist is detected (e.g., user says "diving trip")
+  //   This enables early specialist card display to show we understood the intent
   if (state === 'S0_BOOTSTRAP') {
     assertEmpty(viewModel.day_cards, 'dayCards', state);
-    assertEmpty(viewModel.strategy_sections, 'strategySections', state);
+    // Allow strategy_sections - specialist detection can happen before full setup
+    assertMaxLength(viewModel.strategy_sections, 2, 'strategySections', state);
     assertEmpty(viewModel.open_decisions, 'openDecisions', state);
     return;
   }

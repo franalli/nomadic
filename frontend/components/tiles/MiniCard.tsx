@@ -15,6 +15,7 @@
 import { ChevronDown, Code2, Heart, Star } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
   TooltipContent,
@@ -33,6 +34,31 @@ export interface MiniCardProps {
   onDetailsClick?: (tile: Tile) => void;
   onSaveClick?: (tile: Tile) => void;
 }
+
+/**
+ * MiniCardSkeleton - Shimmer placeholder during loading
+ * Shows structure hint including logic hook placeholder
+ */
+export const MiniCardSkeleton = memo(function MiniCardSkeleton() {
+  return (
+    <div className="relative rounded-lg border border-border bg-card shadow-sm p-3">
+      <div className="flex items-start gap-3">
+        <Skeleton className="h-16 w-16 flex-shrink-0 rounded-md bg-muted/50" />
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <Skeleton className="h-4 w-3/4 bg-muted/50" />
+          <Skeleton className="h-3 w-1/2 bg-muted/50" />
+          <div className="flex gap-1.5">
+            <Skeleton className="h-5 w-14 rounded bg-muted/50" />
+            <Skeleton className="h-5 w-16 rounded bg-muted/50" />
+          </div>
+          <Skeleton className="h-5 w-20 mt-1 bg-muted/50" />
+          {/* Logic hook hint - emerald tinted */}
+          <Skeleton className="h-6 w-full rounded-md bg-emerald-900/10 mt-1" />
+        </div>
+      </div>
+    </div>
+  );
+});
 
 /**
  * Extract perk chips from tile (max 3)
@@ -141,6 +167,12 @@ export const MiniCard = memo(function MiniCard({
   const perks = useMemo(() => getPerks(tile), [tile]);
   const priceDisplay = useMemo(() => formatPrice(tile), [tile]);
 
+  // Safety Shield Logic - for flight cards with diving constraints
+  const isFlight = isFlightType(tile.type || '');
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  const isUnsafe = isFlight && meta?.is_safe === false;
+  const logicHook = (meta?.logic_hook as string) || undefined;
+
   // Expanded content data
   const amenities = useMemo(() => getAmenities(tile), [tile]);
   const cancellationText = useMemo(() => getCancellationText(tile), [tile]);
@@ -183,7 +215,9 @@ export const MiniCard = memo(function MiniCard({
         }
       }}
       className={cn(
-        'relative rounded-lg border border-border bg-card shadow-sm transition-all cursor-pointer',
+        'relative rounded-lg border bg-card shadow-sm transition-all cursor-pointer',
+        // Safety Shield: Amber border for unsafe flights
+        isUnsafe ? 'border-amber-500/50 bg-amber-950/10' : 'border-border',
         'hover:border-border/80 hover:shadow-md hover:translate-y-[-1px]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         isExpanded && 'ring-1 ring-primary/20'
@@ -271,6 +305,22 @@ export const MiniCard = memo(function MiniCard({
               {priceDisplay}
             </span>
           </div>
+
+          {/* Logic Hook Chip for flights (Safety Shield) */}
+          {isFlight && logicHook && (
+            <div className="mt-2">
+              <span
+                className={cn(
+                  'rounded px-1.5 py-0.5 text-[10px] font-medium inline-flex items-center gap-1',
+                  meta?.is_safe === false
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                    : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
+                )}
+              >
+                {logicHook}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 

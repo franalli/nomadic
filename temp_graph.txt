@@ -265,10 +265,7 @@ def _session_state_to_v2_state(session_state: Optional[Dict[str, Any]]) -> Graph
     """Convert V1 session_state dict to V2 GraphStateV2."""
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from app.debug_utils import _debug_v2
-
     if not session_state:
-        _debug_v2("_session_state_to_v2_state: No session_state provided, returning empty state")
         return GraphStateV2()
 
     state = GraphStateV2()
@@ -298,20 +295,8 @@ def _session_state_to_v2_state(session_state: Optional[Dict[str, Any]]) -> Graph
     # Restore metadata
     metadata = session_state.get("metadata", {})
     state.metadata = {k: v for k, v in metadata.items() if k not in ("tiles", "active_specialist")}
-
-    # Also store trip_inputs in metadata for consistent access (router, specialist detection)
-    state.metadata["trip_inputs"] = trip_inputs
     state.tiles = metadata.get("tiles", {})
     state.active_specialist = metadata.get("active_specialist")
-
-    # DEBUG: Log what strategy_sections we're restoring
-    incoming_sections = metadata.get("strategy_sections", [])
-    restored_sections = state.metadata.get("strategy_sections", [])
-    _debug_v2(
-        f"_session_state_to_v2_state: Incoming strategy_sections={len(incoming_sections)}, "
-        f"Restored={len(restored_sections)}, "
-        f"types={[s.get('specialist_type') for s in incoming_sections]}"
-    )
 
     return state
 
@@ -340,52 +325,6 @@ def route_after_router(
         if state.active_specialist == "local_expert":
             return "local_expert"
         return "specialist"
-    return "architect"
-
-
-def route_after_specialist(
-    state: GraphStateV2,
-) -> Literal["specialist", "local_expert", "logistics", "architect"]:
-    """
-    Route after specialist completes - check for more pending specialists.
-
-    CRITICAL: Routing functions CANNOT mutate state in LangGraph!
-    State mutations must happen in NODES. The specialist node pops from
-    pending_specialists at the START of its execution.
-
-    This function only reads state and returns the routing decision.
-
-    Flow:
-    - If more pending specialists: route to next specialist
-    - If booking intent: Specialist → Logistics → Architect (fetch tiles)
-    - If general intent: Specialist → Architect (extract fields, no tiles)
-    """
-    from app.debug_utils import _debug_v2
-
-    # Check if there are more specialists to process
-    # NOTE: We just peek, we don't pop - the specialist node handles that
-    if state.pending_specialists:
-        next_specialist = state.pending_specialists[0]
-        _debug_v2(
-            f"Multi-specialist routing: next='{next_specialist}', "
-            f"queue_len={len(state.pending_specialists)}"
-        )
-
-        if next_specialist == "local_expert":
-            return "local_expert"
-        return "specialist"
-
-    # No more pending specialists
-    # Check if this is a "booking" intent (Build Plan button) or just general chat
-    is_booking_intent = state.intent == "booking"
-    is_generate_trigger = state.metadata.get("is_generate_trigger", False)
-
-    if is_booking_intent or is_generate_trigger:
-        _debug_v2("Specialist done, routing to logistics (booking intent)")
-        return "logistics"
-
-    # General intent - skip tile fetching, but still go to architect for extraction
-    _debug_v2("Specialist done, skipping logistics, routing to architect (general intent)")
     return "architect"
 
 
@@ -471,32 +410,13 @@ def create_optimized_graph() -> StateGraph:
         },
     )
 
-    # Specialist → Next specialist, Logistics, or Architect (conditional)
-    # Multi-specialist support: loop through pending_specialists queue
-    # Booking intent: go to logistics (fetch tiles), General intent: go to architect (extract only)
-    workflow.add_conditional_edges(
-        "specialist",
-        route_after_specialist,
-        {
-            "specialist": "specialist",
-            "local_expert": "local_expert",
-            "logistics": "logistics",
-            "architect": "architect",  # General intent - extract fields, skip tiles
-        },
-    )
+    # Specialist → Logistics (always)
+    # Specialist advises, then Logistics fetches flights with safety logic
+    workflow.add_edge("specialist", "logistics")
 
-    # LocalExpert → Next specialist, Logistics, or Architect (conditional)
-    # Same multi-specialist routing logic
-    workflow.add_conditional_edges(
-        "local_expert",
-        route_after_specialist,
-        {
-            "specialist": "specialist",
-            "local_expert": "local_expert",
-            "logistics": "logistics",
-            "architect": "architect",  # General intent - extract fields, skip tiles
-        },
-    )
+    # LocalExpert → Logistics (always)
+    # LocalExpert provides context, then Logistics fetches flights
+    workflow.add_edge("local_expert", "logistics")
 
     # Logistics → Architect (always)
     # Logistics sanitizes flight data, then Architect builds the plan
@@ -801,7 +721,6 @@ def _v2_result_to_v1_format(
     """Convert V2 result state to V1-compatible format for main.py."""
     from datetime import datetime
 
-    from app.debug_utils import _debug_v2
     from app.planner.state import trip_plan_is_ready
 
     trip_inputs = _trip_plan_to_trip_inputs(state.trip_plan)
@@ -868,45 +787,16 @@ def _v2_result_to_v1_format(
     strategy_sections = state.metadata.get("strategy_sections", [])
     executed_topics = state.metadata.get("executed_strategy_topics", [])
 
-    # DEBUG: Log existing sections
-    section_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_v2(
-        f"_v2_result_to_v1_format: BEFORE - {len(strategy_sections)} sections, "
-        f"types={section_types}"
-    )
-    for s in strategy_sections:
-        content_count = len(s.get("content_added", []))
-        constraint_count = len(s.get("constraints_applied", []))
-        _debug_v2(
-            f"  Section '{s.get('specialist_type')}': "
-            f"content_added={content_count}, constraints={constraint_count}"
-        )
-
     # Build strategy section for current specialist (accumulates with existing sections)
-    # Use last_executed_specialist as fallback since active_specialist is cleared after execution
-    last_specialist = state.metadata.get("last_executed_specialist")
-    specialist_type = state.active_specialist or last_specialist or "general"
-
-    _debug_v2(
-        f"_v2_result_to_v1_format: active_specialist={state.active_specialist}, "
-        f"last_specialist={last_specialist}, specialist_type={specialist_type}"
-    )
+    specialist_type = state.active_specialist or "general"
 
     # Check if we need to create/update a section for this specialist
     # NOTE: "local_expert" creates its own section in local_expert.py - don't create here
     # This prevents creating empty sections when local_expert returns early
-    # Also don't create "general" section if a specialist already ran (they have their own section)
     needs_section = (
         flattened_tiles
         and specialist_type != "local_expert"  # local_expert manages its own section
         and specialist_type not in [s.get("specialist_type") for s in strategy_sections]
-        and not (
-            specialist_type == "general" and last_specialist
-        )  # Don't create general if specialist ran
-    )
-    _debug_v2(
-        f"_v2_result_to_v1_format: needs_section={needs_section} "
-        f"(flattened_tiles={bool(flattened_tiles)})"
     )
 
     if needs_section:
@@ -983,18 +873,6 @@ def _v2_result_to_v1_format(
                     "logic_hook": getattr(block, "logic_hook", None),  # Pro tip for UI
                 }
             )
-
-        # Merge image_url from specialist sections (they have rich curated content)
-        # This ensures images are preserved even when rebuilding content_added
-        for section in strategy_sections:
-            if section.get("specialist_type") == specialist_type:
-                existing_content = section.get("content_added", [])
-                for item in existing_content:
-                    # Merge in image_url if present in specialist section
-                    # but missing from our content
-                    for ca in content_added:
-                        if ca.get("title") == item.get("title") and item.get("image_url"):
-                            ca["image_url"] = item.get("image_url")
 
         # Build must_dos from itinerary_blocks (actual specialist recommendations)
         # NOT from generic trip parameters
@@ -1087,13 +965,6 @@ def _v2_result_to_v1_format(
     # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
     # This ensures strategy_sections are persisted for the next turn
     updated_session_state = _state_to_session_state(state)
-
-    # DEBUG: Log what strategy_sections we're saving for next turn
-    saved_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_v2(
-        f"_v2_result_to_v1_format: Saving {len(strategy_sections)} "
-        f"strategy_sections to session_state, types={saved_types}"
-    )
 
     # Build document object matching PlanDocumentData type expected by frontend
     document = {

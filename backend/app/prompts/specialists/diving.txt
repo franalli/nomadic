@@ -14,6 +14,7 @@ These constraints MUST be passed to the Architect:
 1. NO-FLY TIME:
    - Minimum 18 hours after single recreational dive
    - Minimum 24 hours after multiple dives or deep diving
+   - RULE: Plan the last dive to finish by **14:00** on the day BEFORE departure
    - Block the last day for surface interval if diving activities are planned
 
 2. CERTIFICATION REQUIREMENTS:

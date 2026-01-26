@@ -148,8 +148,9 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
 
             # B. Apply Safety Math (The "Constraint Engine")
             logic_hook = None
+            is_safe = True  # Default to safe if no diving constraints
             if has_diving_safety_rule:
-                logic_hook = _calculate_diving_safety(dep_time_str)
+                logic_hook, is_safe = _calculate_diving_safety(dep_time_str)
 
             # C. Format Duration
             duration_clean = duration_iso.replace("PT", "").lower()
@@ -173,7 +174,7 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
                 "availability_status": "available",
                 "meta": {
                     "logic_hook": logic_hook,
-                    "is_safe": logic_hook is None or "Safe" in logic_hook,
+                    "is_safe": is_safe,  # CRITICAL: Frontend checks this for amber border
                     "carrier_code": carrier_info["logo"],
                     "carrier_name": carrier_info["name"],
                     "departure_time": dep_time_str,
@@ -268,9 +269,9 @@ def _has_diving_constraints(state: GraphStateV2) -> bool:
     return False
 
 
-def _calculate_diving_safety(flight_time_str: str) -> str:
+def _calculate_diving_safety(flight_time_str: str) -> tuple[str, bool]:
     """
-    Returns a 'Shield' status string based on 24h buffer.
+    Returns (status_string, is_safe_boolean) based on 24h buffer.
     Assumption for MVP: Last dive ends at 14:00 on the day BEFORE flight.
     """
     flight_dt = datetime.fromisoformat(flight_time_str.replace("Z", "+00:00"))
@@ -282,10 +283,13 @@ def _calculate_diving_safety(flight_time_str: str) -> str:
     # Calculate buffer
     buffer_hours = (flight_dt - last_dive_finish).total_seconds() / 3600
 
-    if buffer_hours < 24:
-        return f"[!] Unsafe: Only {int(buffer_hours)}h surface interval"
+    # CRITICAL: Create boolean FIRST for frontend safety shield
+    is_safe_bool = buffer_hours >= 24
+
+    if is_safe_bool:
+        return f"✅ Safe: {int(buffer_hours)}h buffer", True
     else:
-        return f"[OK] Safe: {int(buffer_hours)}h after last dive"
+        return f"⚠️ Risky: Only {int(buffer_hours)}h buffer", False
 
 
 def _offer_to_dict(offer) -> Dict[str, Any]:
