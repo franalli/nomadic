@@ -237,6 +237,8 @@ export interface StrategySection {
     title: string;
     day?: number;
     type?: string;
+    description?: string;  // Rich description of the content
+    logic_hook?: string;   // "Why this matters" tip (e.g., "Indoor - Summer safe")
   }>;
 
   // For General Agent: trip parameters summary (inventory counts from tiles, not here)

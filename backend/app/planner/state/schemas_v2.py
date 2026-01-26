@@ -53,6 +53,7 @@ class ItineraryBlock(BaseModel):
     source_specialist: Optional[str] = None  # "diving", "hiking", etc.
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
     safety_notes: Optional[str] = None
+    logic_hook: Optional[str] = None  # "Why this matters" tip for UI (e.g., "Indoor - Summer safe")
     # Tile reference if bookable
     tile_id: Optional[str] = None
     # Buffer/Safety block fields (for No-Fly intervals, acclimatization, etc.)

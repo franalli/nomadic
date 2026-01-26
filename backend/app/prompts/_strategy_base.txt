@@ -97,6 +97,18 @@ Your JSON response MUST match the V2 SpecialistOutput schema:
   ]
 }
 
+==============================
+TEXT FORMATTING (RICH OUTPUT)
+==============================
+Use **markdown bold** for key variables in ALL text fields:
+- Dates: "Arrive by **January 15** for best conditions"
+- Locations: "Best access from **Tulamben Beach**"
+- Numbers: "Requires **24 hours** surface interval"
+- Requirements: "Need **Advanced Open Water** certification"
+- Prices: "Expect to pay **$50-80** per dive"
+
+This makes the UI scannable. Key data pops visually.
+
 CONSTRAINT TYPES:
 - temporal: Time-based rules (24h surface interval, acclimatization days)
 - safety: Safety requirements (certifications, equipment, guide)

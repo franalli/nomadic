@@ -16,15 +16,20 @@ import {
   AlertCircle,
   Bike,
   Building,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Lightbulb,
   Mountain,
   Sailboat,
+  ShieldCheck,
   Snowflake,
   Sparkles,
   Waves,
 } from 'lucide-react';
 import React from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import { cn } from '@/lib/utils';
 import {
@@ -38,6 +43,41 @@ import {
 import type { Tile } from '@/types/tile';
 
 import { TripHealthBar } from '../TripHealthBar';
+
+// Markdown components for rich text rendering (amber bold for key variables)
+const MARKDOWN_COMPONENTS = {
+  p: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+  strong: ({ children }: { children?: React.ReactNode }) => (
+    <strong className="font-semibold text-amber-500">{children}</strong>
+  ),
+  em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
+};
+
+// Helper component for inline markdown text
+function RichText({ children, className }: { children: string; className?: string }) {
+  return (
+    <span className={className}>
+      <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+        {children}
+      </Markdown>
+    </span>
+  );
+}
+
+// Helper: Format constraint keys to human-readable titles
+const formatConstraintTitle = (rule: string): string => {
+  const mappings: Record<string, string> = {
+    'min_24h_buffer_after_dive': 'No-Fly Window (24h)',
+    'min_18h_surface_interval': 'Surface Interval (18h)',
+    'advanced_cert_required_for_deep': 'Depth Certification Limit',
+    'altitude_acclimatization': 'Altitude Acclimatization',
+    'proper_footwear_required': 'Footwear Required',
+    'check_snow_conditions': 'Snow Conditions Check',
+    'guide_required_offpiste': 'Guide Required (Off-Piste)',
+    'feasibility_caveat': 'Location Advisory',
+  };
+  return mappings[rule] || rule.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+};
 
 // Topic priority for stable ordering
 const TOPIC_PRIORITY = ['skiing', 'hiking', 'diving', 'boating', 'cycling', 'local_expert', 'general'];
@@ -121,16 +161,25 @@ interface AgentCardProps {
 }
 
 function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
+  const cardRef = React.useRef<HTMLDivElement>(null);
+
+  // Scroll card into view when expanded (prevents jumping to wrong location)
+  React.useEffect(() => {
+    if (isExpanded && cardRef.current) {
+      // Small delay to allow content to render
+      const timer = setTimeout(() => {
+        cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isExpanded]);
+
   // Fallback logic for backward compatibility with legacy responses
   const oneLiner = section.one_liner || section.bullets[0] || '';
   const principles =
     section.principles && section.principles.length > 0
       ? section.principles
       : section.bullets.slice(0, 3);
-  const mustDos =
-    section.must_dos && section.must_dos.length > 0
-      ? section.must_dos
-      : section.bullets;
 
   const topic = section.specialist_type || 'general';
   const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
@@ -145,6 +194,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
     // 2. Left accent border (3px, strong color)
     // 3. Infeasible/caveat border colors
     <div
+      ref={cardRef}
       data-topic={topic}
       className={cn(
         "bg-card rounded-lg border overflow-hidden shadow-sm topic-border-left",
@@ -216,14 +266,14 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
         {/* Infeasible reason message */}
         {isInfeasible && section.feasibility_reason && (
           <div className="mt-2 text-xs text-red-400">
-            {section.feasibility_reason}
+            <RichText>{section.feasibility_reason}</RichText>
           </div>
         )}
 
         {/* Alternative suggestion for infeasible */}
         {isInfeasible && section.alternative_suggestion && (
           <div className="mt-1 text-[10px] text-muted-foreground">
-            💡 {section.alternative_suggestion}
+            💡 <RichText>{section.alternative_suggestion}</RichText>
           </div>
         )}
 
@@ -231,7 +281,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
         {hasCaveat && section.feasibility_reason && (
           <div className="mt-2 text-xs text-amber-400 flex items-center gap-1">
             <span>⚠️</span>
-            <span>{section.feasibility_reason}</span>
+            <RichText>{section.feasibility_reason}</RichText>
           </div>
         )}
 
@@ -253,7 +303,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
         {!isExpanded && !isInfeasible && (
           <div className="mt-2 w-full">
             {oneLiner && (
-              <p className="text-xs text-muted-foreground mb-2">{oneLiner}</p>
+              <p className="text-xs text-muted-foreground mb-2"><RichText>{oneLiner}</RichText></p>
             )}
             {principles.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -274,8 +324,8 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
       {/* Expanded content (normal bg-card, no tint) - NOT shown for infeasible */}
       {isExpanded && !isInfeasible && (
         <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
-          {/* Trip Summary (General Agent only) */}
-          {section.trip_summary && (
+          {/* Trip Summary (General Agent only - not for specialists) */}
+          {section.trip_summary && section.specialist_type === 'general' && (
             <div className="font-mono text-xs space-y-1 py-2 border-b border-border/30">
               <div>
                 <span className="text-muted-foreground">Trip:</span>{' '}
@@ -292,52 +342,73 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
             </div>
           )}
 
-          {/* Constraints Applied (specialist agents) */}
+          {/* Specialist Constraints: The "Shields" */}
           {section.constraints_applied && section.constraints_applied.length > 0 && (
             <div>
-              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Constraints Applied
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+                <ShieldCheck size={12} /> Specialist Constraints
               </h5>
-              <ul className="space-y-1.5">
+              <div className="space-y-2">
                 {section.constraints_applied.map((c, idx) => (
-                  <li
-                    key={idx}
-                    className="text-xs font-mono flex items-start gap-2"
-                  >
-                    <span className="text-green-500 dark:text-green-400 mt-0.5">✓</span>
-                    <span className="text-card-foreground">{c.rule}</span>
-                    <span className="text-muted-foreground">({c.type})</span>
-                  </li>
+                  <div key={idx} className="text-xs flex gap-2.5 items-start">
+                    <span className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
+                    <div className="text-zinc-300">
+                      <span className="font-semibold text-zinc-200">
+                        {formatConstraintTitle(c.rule)}:
+                      </span>{' '}
+                      {c.reason || c.type}
+                    </div>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
           )}
 
-          {/* Content Added (specialist agents) */}
+          {/* Expert Recommendations: The "Gems" - Logic-backed content */}
           {section.content_added && section.content_added.length > 0 && (
             <div>
-              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Content Added
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+                <Lightbulb size={12} /> Expert Recommendations
               </h5>
-              <ul className="space-y-1.5">
+              <div className="grid gap-2">
                 {section.content_added.map((c, idx) => (
-                  <li
+                  <div
                     key={idx}
-                    className="text-xs flex items-start gap-2"
+                    className="bg-zinc-800/40 p-3 rounded-lg border border-zinc-700/50 hover:border-zinc-600 transition-colors"
                   >
-                    <span className="text-blue-500 dark:text-blue-400 mt-0.5">+</span>
-                    <span className="text-card-foreground">{c.title}</span>
-                    {c.day && (
-                      <span className="text-muted-foreground">(Day {c.day})</span>
+                    <div className="flex justify-between items-start">
+                      <span className="text-xs font-semibold text-zinc-100">{c.title}</span>
+                      {c.type && (
+                        <span className="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">
+                          {c.type}
+                        </span>
+                      )}
+                    </div>
+                    {c.description && (
+                      <p className="text-[11px] text-zinc-400 leading-relaxed mt-1">
+                        {c.description}
+                      </p>
                     )}
-                  </li>
+                    {/* Logic Hook - The "Pro Tip" that proves deep knowledge */}
+                    {c.logic_hook && (
+                      <div className="text-[10px] text-emerald-400 mt-2 flex items-center gap-1.5 bg-emerald-500/5 p-1.5 rounded border border-emerald-500/10">
+                        <CheckCircle2 size={10} />
+                        <span>{c.logic_hook}</span>
+                      </div>
+                    )}
+                    {c.day && (
+                      <div className="text-[10px] text-muted-foreground mt-1.5">
+                        Day {c.day}
+                      </div>
+                    )}
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
           )}
 
-          {/* Booking artifacts row */}
-          {section.booking_artifacts && (
+          {/* Booking artifacts row - ONLY for general agent (specialists handle domain logic only) */}
+          {section.booking_artifacts && section.specialist_type === 'general' && (
             <div className="flex flex-wrap gap-2 py-2 border-b border-border/30">
               <span className="text-xs text-muted-foreground">Booking surfaces:</span>
               {section.booking_artifacts.activities_count > 0 && (
@@ -353,25 +424,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
             </div>
           )}
 
-          {/* Must-dos with topic-colored bullets */}
-          {mustDos.length > 0 && (
-            <div>
-              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                Must-dos
-              </h5>
-              <ul className="space-y-1.5">
-                {mustDos.slice(0, 5).map((item, idx) => (
-                  <li
-                    key={idx}
-                    className="text-xs text-card-foreground flex items-start gap-2"
-                  >
-                    <span className="topic-bullet mt-0.5">•</span>
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
+          {/* REMOVED: Must-dos section - content now shown in Expert Recommendations */}
 
           {/* Optional upgrades */}
           {section.optional_upgrades && section.optional_upgrades.length > 0 && (
@@ -386,7 +439,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
                     className="text-xs text-muted-foreground flex items-start gap-2"
                   >
                     <span className="text-muted-foreground/70 mt-0.5">+</span>
-                    <span>{item}</span>
+                    <RichText>{item}</RichText>
                   </li>
                 ))}
               </ul>
@@ -406,7 +459,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
                     className="text-xs text-muted-foreground flex items-start gap-2"
                   >
                     <span className="text-muted-foreground/50 mt-0.5">-</span>
-                    <span>{item}</span>
+                    <RichText>{item}</RichText>
                   </li>
                 ))}
               </ul>
@@ -420,7 +473,7 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
                 Why this approach
               </h5>
               <p className="text-xs text-muted-foreground">
-                {section.tradeoffs_summary}
+                <RichText>{section.tradeoffs_summary}</RichText>
               </p>
             </div>
           )}

@@ -332,6 +332,302 @@ class TestV2Integration:
             word in suggestions_text for word in ["beach", "mountain", "city", "destination"]
         )
 
+    @pytest.mark.asyncio
+    async def test_dubai_diving_flow_with_caveat(self):
+        """
+        Test Dubai diving flow returns caveat status and Deep Dive Dubai.
+        (YC Demo: Verify specialist knowledge for indoor diving)
+        """
+        from langchain_core.messages import HumanMessage
+
+        from app.planner.nodes_v2.intent_router import intent_router
+        from app.planner.nodes_v2.vertical_specialist import vertical_specialist
+
+        state = GraphStateV2()
+        state.messages.append(HumanMessage(content="I want to go diving in Dubai"))
+        state.trip_plan.destination = "Dubai"
+
+        # Router should detect diving
+        state = await intent_router(state)
+        assert state.active_specialist == "diving"
+
+        # Specialist should return caveat status
+        state = await vertical_specialist(state)
+
+        # Verify caveat status in metadata
+        specialist_output = state.metadata.get("specialist_output", {})
+        assert (
+            specialist_output.get("feasibility_status") == "caveat"
+        ), f"Expected 'caveat', got: {specialist_output.get('feasibility_status')}"
+        assert "Deep Dive Dubai" in (
+            specialist_output.get("feasibility_reason") or ""
+        ), f"Should mention Deep Dive Dubai: {specialist_output.get('feasibility_reason')}"
+
+        # Verify content blocks include Dubai recommendations
+        block_titles = [b.title for b in state.trip_plan.itinerary_blocks]
+        assert any(
+            "Deep Dive Dubai" in t for t in block_titles
+        ), f"Should include Deep Dive Dubai in content: {block_titles}"
+
+    @pytest.mark.asyncio
+    async def test_infeasible_skiing_in_miami(self):
+        """
+        Test skiing in Miami returns infeasible status.
+        (YC Demo: Red card state for impossible activities)
+        """
+        from langchain_core.messages import HumanMessage
+
+        from app.planner.nodes_v2.intent_router import intent_router
+        from app.planner.nodes_v2.vertical_specialist import vertical_specialist
+
+        state = GraphStateV2()
+        state.messages.append(HumanMessage(content="I want to go skiing in Miami"))
+        state.trip_plan.destination = "Miami"
+
+        # Router should detect skiing
+        state = await intent_router(state)
+        assert state.active_specialist == "skiing"
+
+        # Specialist should return infeasible status
+        state = await vertical_specialist(state)
+
+        specialist_output = state.metadata.get("specialist_output", {})
+        assert (
+            specialist_output.get("feasibility_status") == "infeasible"
+        ), f"Expected 'infeasible', got: {specialist_output.get('feasibility_status')}"
+
+        # Should have alternative suggestion
+        assert specialist_output.get("alternative_suggestion") is not None
+
+
+# =============================================================================
+# Feasibility & Specialist Knowledge Tests (YC Demo Verification)
+# =============================================================================
+
+
+class TestFeasibilityChecks:
+    """Test feasibility checking for specialists (Red/Amber/Green card states)."""
+
+    def test_dubai_diving_caveat(self):
+        """Dubai should return CAVEAT status for diving (indoor pool recommended)."""
+        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+
+        status, reason, alternative = check_feasibility("diving", "Dubai")
+
+        assert status == "caveat", f"Expected 'caveat', got '{status}'"
+        assert reason is not None
+        assert "Deep Dive Dubai" in reason, f"Should mention Deep Dive Dubai: {reason}"
+
+    def test_landlocked_diving_infeasible(self):
+        """Landlocked countries should return INFEASIBLE for diving."""
+        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+
+        status, reason, alternative = check_feasibility("diving", "Switzerland")
+
+        assert status == "infeasible", f"Expected 'infeasible', got '{status}'"
+        assert alternative is not None  # Should suggest alternative destinations
+
+    def test_bali_diving_feasible(self):
+        """Bali should return FEASIBLE for diving (prime destination)."""
+        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+
+        status, reason, alternative = check_feasibility("diving", "Bali")
+
+        assert status == "feasible", f"Expected 'feasible', got '{status}'"
+
+    def test_miami_skiing_infeasible(self):
+        """Miami should return INFEASIBLE for skiing."""
+        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+
+        status, reason, alternative = check_feasibility("skiing", "Miami")
+
+        assert status == "infeasible", f"Expected 'infeasible', got '{status}'"
+
+    def test_unknown_destination_feasible(self):
+        """Unknown destinations should default to FEASIBLE."""
+        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+
+        status, reason, alternative = check_feasibility("diving", "Some Random Place")
+
+        assert status == "feasible", f"Expected 'feasible', got '{status}'"
+
+
+class TestDubaiDiving:
+    """Test Dubai diving knowledge (YC Demo: Deep Dive Dubai)."""
+
+    def test_dubai_diving_content_exists(self):
+        """Should have Dubai in diving knowledge base."""
+        from app.planner.nodes_v2.vertical_specialist import DIVING_KNOWLEDGE
+
+        destinations = DIVING_KNOWLEDGE.get("top_destinations", {})
+        assert "dubai" in destinations, "Dubai should be in diving destinations"
+
+    def test_deep_dive_dubai_in_content(self):
+        """Should include Deep Dive Dubai recommendation."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        blocks = specialist.get_content_for_destination("Dubai")
+
+        assert len(blocks) > 0, "Should have content blocks for Dubai"
+
+        titles = [b.title for b in blocks]
+        assert any(
+            "Deep Dive Dubai" in t for t in titles
+        ), f"Should include Deep Dive Dubai: {titles}"
+
+    def test_dubai_content_has_logic_hook(self):
+        """Dubai diving content should include logic_hook for UI."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        blocks = specialist.get_content_for_destination("Dubai")
+
+        # Find Deep Dive Dubai block
+        deep_dive_block = next((b for b in blocks if "Deep Dive Dubai" in b.title), None)
+        assert deep_dive_block is not None, "Should have Deep Dive Dubai block"
+        assert deep_dive_block.logic_hook is not None, "Should have logic_hook"
+        assert "Indoor" in deep_dive_block.logic_hook or "Summer safe" in deep_dive_block.logic_hook
+
+    def test_specialist_output_includes_feasibility(self):
+        """Specialist output should include feasibility status for Dubai."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        state = GraphStateV2()
+        state.trip_plan.destination = "Dubai"
+
+        output = specialist.generate_output(state)
+
+        assert (
+            output.feasibility_status == "caveat"
+        ), f"Expected 'caveat', got '{output.feasibility_status}'"
+        assert output.feasibility_reason is not None
+
+
+class TestLogicHooks:
+    """Test logic_hook field propagation (YC Demo: Expert Recommendations)."""
+
+    def test_bali_diving_has_logic_hooks(self):
+        """Bali diving content should have logic_hooks."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        blocks = specialist.get_content_for_destination("Bali")
+
+        # At least some blocks should have logic_hooks
+        hooks = [b.logic_hook for b in blocks if b.logic_hook]
+        assert (
+            len(hooks) > 0
+        ), f"Should have logic_hooks in Bali content: {[b.title for b in blocks]}"
+
+    def test_egypt_diving_has_logic_hooks(self):
+        """Egypt diving content should have logic_hooks."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        blocks = specialist.get_content_for_destination("Egypt")
+
+        hooks = [b.logic_hook for b in blocks if b.logic_hook]
+        assert len(hooks) > 0, "Egypt diving should have logic_hooks"
+
+    def test_itinerary_block_schema_has_logic_hook(self):
+        """ItineraryBlock schema should include logic_hook field."""
+        from app.planner.state.schemas_v2 import ItineraryBlock
+
+        block = ItineraryBlock(
+            day=1,
+            title="Test Activity",
+            description="Test description",
+            type="activity",
+            logic_hook="Test tip - best visited early morning",
+        )
+
+        assert block.logic_hook == "Test tip - best visited early morning"
+
+
+class TestConstraintFormatting:
+    """Test constraint display formatting."""
+
+    def test_diving_constraint_rule_format(self):
+        """Diving constraints should use snake_case rules that map to readable titles."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        constraints = specialist.get_constraints()
+
+        rules = [c.rule for c in constraints]
+        assert "min_24h_buffer_after_dive" in rules, "Should have no-fly constraint"
+
+        # This rule should map to "No-Fly Window (24h)" in frontend
+        # The mapping is in frontend/components/plan/stages/S2StrategyView.tsx
+
+    def test_caveat_constraint_injected(self):
+        """Caveat status should inject a feasibility_caveat constraint."""
+        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+
+        specialist = VerticalSpecialist("diving")
+        state = GraphStateV2()
+        state.trip_plan.destination = "Dubai"  # Caveat destination
+
+        output = specialist.generate_output(state)
+
+        rules = [c.rule for c in output.constraints]
+        assert (
+            "feasibility_caveat" in rules
+        ), f"Caveat should inject feasibility_caveat constraint: {rules}"
+
+
+class TestLocalExpert:
+    """Test Local Expert static knowledge and fallback behavior."""
+
+    def test_dubai_local_expert_knowledge(self):
+        """Dubai should have static local expert knowledge."""
+        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+
+        knowledge = _get_static_local_knowledge("Dubai")
+
+        assert len(knowledge.constraints) > 0, "Dubai should have constraints"
+        assert len(knowledge.recommendations) > 0, "Dubai should have recommendations"
+
+        # Check for specific Dubai content
+        rec_titles = [r.title for r in knowledge.recommendations]
+        assert any("Metro" in t for t in rec_titles), f"Should include Dubai Metro: {rec_titles}"
+
+    def test_paris_local_expert_knowledge(self):
+        """Paris should have static local expert knowledge."""
+        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+
+        knowledge = _get_static_local_knowledge("Paris")
+
+        assert len(knowledge.constraints) > 0, "Paris should have constraints"
+        assert len(knowledge.recommendations) > 0, "Paris should have recommendations"
+
+        # Check for Louvre closed Tuesday constraint
+        constraint_descs = [c.description for c in knowledge.constraints]
+        assert any(
+            "Louvre" in d and "Tuesday" in d for d in constraint_descs
+        ), f"Should mention Louvre closed Tuesday: {constraint_descs}"
+
+    def test_unknown_destination_empty_knowledge(self):
+        """Unknown destinations should return empty knowledge."""
+        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+
+        knowledge = _get_static_local_knowledge("Random Unknown Place XYZ")
+
+        assert len(knowledge.constraints) == 0, "Unknown place should have no constraints"
+        assert len(knowledge.recommendations) == 0, "Unknown place should have no recommendations"
+
+    def test_local_expert_logic_hooks(self):
+        """Local Expert recommendations should have logic_hooks."""
+        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+
+        knowledge = _get_static_local_knowledge("Tokyo")
+
+        # All recommendations should have logic_hooks
+        for rec in knowledge.recommendations:
+            assert rec.logic_hook, f"Recommendation '{rec.title}' missing logic_hook"
+
 
 # =============================================================================
 # Graph Tests

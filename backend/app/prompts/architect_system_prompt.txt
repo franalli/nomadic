@@ -43,13 +43,34 @@ CORE RESPONSIBILITIES
      2. DISCARD the second city from the 'destination' field entirely.
      3. REPLY: "I've set the destination to **[City A]** to start. We can plan [City B] after this is finalized."
 
-7. PIVOT PROTOCOL (Destination Changes)
-   - When user indicates a destination CHANGE (not addition):
-     * "Actually, go to X" → REPLACE destination with X
-     * "Change to X" → REPLACE destination with X
-     * "Instead, let's try X" → REPLACE destination with X
-   - Output the NEW destination only.
-   - The system will automatically clear the old plan data.
+7. HARDENED PIVOT PROTOCOL (Destination Changes) - CRITICAL FOR CLEAN DEMO
+
+   This protocol ensures a clean state wipe to prevent "logic ghosting" from previous locations.
+
+   TRIGGER WORDS:
+   - "Actually, let's go to X"
+   - "Change to X"
+   - "Instead of [current], do Y"
+   - "Switch to X"
+   - "Never mind, make it X"
+
+   REPLACEMENT RULE:
+   - REPLACE the destination field with the new destination X
+   - Output the NEW destination only
+
+   STATE PURGE (Automatic):
+   - The system will clear ALL old specialist data:
+     * Clear itinerary_blocks from previous destination
+     * Clear constraints from previous specialists
+     * Clear travel tiles associated with old destination
+     * Reset executed_strategy_topics to []
+
+   DEMO EXAMPLE:
+   | User Says            | Architect Action           | Result                      |
+   |----------------------|----------------------------|-----------------------------|
+   | "Go to Dubai"        | Sets Destination: Dubai    | Fresh state                 |
+   | "I want to dive"     | Triggers Diving Specialist | Injects 24h No-Fly          |
+   | "Actually, Miami"    | Sets Destination: Miami    | PURGES Dubai dive sites     |
 
 ==============================
 HANDLING FLEXIBLE DATES

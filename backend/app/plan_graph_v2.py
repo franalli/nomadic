@@ -780,9 +780,13 @@ def _v2_result_to_v1_format(
     specialist_type = state.active_specialist or "general"
 
     # Check if we need to create/update a section for this specialist
-    needs_section = flattened_tiles and specialist_type not in [
-        s.get("specialist_type") for s in strategy_sections
-    ]
+    # NOTE: "local_expert" creates its own section in local_expert.py - don't create here
+    # This prevents creating empty sections when local_expert returns early
+    needs_section = (
+        flattened_tiles
+        and specialist_type != "local_expert"  # local_expert manages its own section
+        and specialist_type not in [s.get("specialist_type") for s in strategy_sections]
+    )
 
     if needs_section:
         # Build bullets from available data
@@ -846,7 +850,7 @@ def _v2_result_to_v1_format(
                 }
             )
 
-        # Extract content added from itinerary_blocks
+        # Extract content added from itinerary_blocks (PRESERVE RICH DATA)
         content_added = []
         for block in plan.itinerary_blocks:
             content_added.append(
@@ -854,7 +858,30 @@ def _v2_result_to_v1_format(
                     "title": block.title,
                     "day": block.day,
                     "type": block.type,
+                    "description": block.description,  # Rich description for UI
+                    "logic_hook": getattr(block, "logic_hook", None),  # Pro tip for UI
                 }
+            )
+
+        # Build must_dos from itinerary_blocks (actual specialist recommendations)
+        # NOT from generic trip parameters
+        must_dos = []
+        for block in plan.itinerary_blocks:
+            if block.title and block.title not in must_dos:
+                must_dos.append(block.title)
+        must_dos = must_dos[:5]  # Limit to 5
+
+        # Build one-liner based on specialist type
+        if specialist_type == "general":
+            one_liner = (
+                f"Your trip to {plan.destination or 'your destination'} is ready to customize"
+            )
+        elif specialist_type == "local_expert":
+            one_liner = f"Local logistics and tips for {plan.destination or 'your destination'}"
+        else:
+            one_liner = (
+                f"{specialist_type.title()} recommendations for "
+                f"{plan.destination or 'your destination'}"
             )
 
         new_section = {
@@ -866,12 +893,10 @@ def _v2_result_to_v1_format(
             ),
             "subtitle": plan.destination,
             "specialist_type": specialist_type,
-            "one_liner": (
-                f"Your trip to {plan.destination or 'your destination'} is ready to customize"
-            ),
-            "bullets": bullets,
+            "one_liner": one_liner,
+            "bullets": [],  # No longer show generic trip params
             "principles": [],
-            "must_dos": bullets[:5],
+            "must_dos": must_dos,  # Actual specialist recommendations
             "optional_upgrades": [],
             "logistics_notes": [],
             "booking_artifacts": {
@@ -886,6 +911,16 @@ def _v2_result_to_v1_format(
             "trip_summary": trip_summary if specialist_type == "general" else None,
             "constraints_applied": constraints_applied,
             "content_added": content_added,
+            # Feasibility state from specialist output (for Red/Amber/Green card states)
+            "feasibility_status": state.metadata.get("specialist_output", {}).get(
+                "feasibility_status", "feasible"
+            ),
+            "feasibility_reason": state.metadata.get("specialist_output", {}).get(
+                "feasibility_reason"
+            ),
+            "alternative_suggestion": state.metadata.get("specialist_output", {}).get(
+                "alternative_suggestion"
+            ),
         }
 
         # SINGLETON vs HISTORY LOGIC:

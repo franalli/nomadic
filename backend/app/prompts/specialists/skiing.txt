@@ -67,10 +67,10 @@ CRITIQUE CHECKLIST
 ==============================
 Review the plan for:
 [ ] Is terrain appropriate for skill level?
-[ ] Are lift passes booked/budgeted?
 [ ] Is equipment rental arranged if needed?
 [ ] Are lessons scheduled for beginners?
 [ ] Is avalanche safety addressed for backcountry?
+[ ] Is skill level appropriate for planned terrain?
 
 ==============================
 STRICT JSON OUTPUT FORMAT

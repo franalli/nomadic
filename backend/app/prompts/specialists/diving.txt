@@ -65,8 +65,8 @@ Review the plan for:
 [ ] Is there a no-fly buffer before departure?
 [ ] Are dive sites appropriate for certification level?
 [ ] Are surface intervals planned between dives?
-[ ] Is dive insurance recommended?
 [ ] Is there a rest day for repetitive diving?
+[ ] Are equipment requirements noted (own vs rental)?
 
 ==============================
 STRICT JSON OUTPUT FORMAT

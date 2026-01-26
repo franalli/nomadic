@@ -61,18 +61,21 @@ DIVING_KNOWLEDGE = {
                 ),
                 "type": "activity",
                 "skill_level": "beginner",
+                "logic_hook": "Shore entry - no boat needed, 5am for best visibility",
             },
             {
                 "title": "Manta Point Nusa Penida",
                 "description": "High chance of manta ray encounters year-round",
                 "type": "activity",
                 "skill_level": "intermediate",
+                "logic_hook": "Currents can be strong - intermediate+ recommended",
             },
             {
                 "title": "Crystal Bay",
                 "description": "Famous for Mola Mola (sunfish) sightings July-October",
                 "type": "activity",
                 "skill_level": "advanced",
+                "logic_hook": "Mola season Jul-Oct only - plan timing accordingly",
             },
         ],
         "maldives": [
@@ -81,12 +84,14 @@ DIVING_KNOWLEDGE = {
                 "description": "UNESCO biosphere for manta feeding aggregations",
                 "type": "activity",
                 "skill_level": "intermediate",
+                "logic_hook": "Best Jun-Nov during SW monsoon plankton bloom",
             },
             {
                 "title": "Maaya Thila",
                 "description": "Night diving with white-tip reef sharks",
                 "type": "activity",
                 "skill_level": "advanced",
+                "logic_hook": "Night dive - bring torch, sharks active after sunset",
             },
         ],
         "egypt": [
@@ -95,12 +100,35 @@ DIVING_KNOWLEDGE = {
                 "description": "World-famous WWII wreck with trucks and motorcycles",
                 "type": "activity",
                 "skill_level": "intermediate",
+                "logic_hook": "Best visited at dawn - fewer divers",
             },
             {
                 "title": "Ras Mohammed",
                 "description": "Pristine coral walls and big fish action",
                 "type": "activity",
                 "skill_level": "beginner",
+                "logic_hook": "Morning dives best for calm conditions",
+            },
+        ],
+        "dubai": [
+            {
+                "title": "Deep Dive Dubai",
+                "description": (
+                    "World's deepest pool at 60m with a sunken city theme. "
+                    "Perfect for year-round diving regardless of weather."
+                ),
+                "type": "activity",
+                "skill_level": "intermediate",
+                "logic_hook": "Indoor facility - Summer safe, AC controlled",
+            },
+            {
+                "title": "Jumeirah Scuba Diving",
+                "description": (
+                    "Shore diving at Jumeirah Beach with artificial reefs and marine life."
+                ),
+                "type": "activity",
+                "skill_level": "beginner",
+                "logic_hook": "No boat needed - shore entry",
             },
         ],
     },
@@ -269,6 +297,20 @@ SKIING_FEASIBILITY = {
 }
 
 DIVING_FEASIBILITY = {
+    # Caveat - pool/aquarium only, or limited ocean access
+    "caveat": {
+        "london": "Pool diving at NDAC or London Aquarium experiences",
+        "amsterdam": "Pool diving at Duikvaker centers",
+        "paris": "Pool diving at Aqua 92 or Nemo 33 (Belgium, 3h)",
+        "berlin": "Pool diving at Dive4Life or aquarium experiences",
+        "madrid": "Pool diving available; nearest sea diving in Valencia (3h)",
+        "munich": "Pool diving; nearest sea diving in Croatia (5h)",
+        "vienna": "Pool diving available; landlocked country",
+        "dubai": (
+            "Ocean diving is limited. Try **Deep Dive Dubai** - "
+            "world's deepest pool (60m), sunken city theme, indoor facility."
+        ),
+    },
     # Infeasible - landlocked, no facilities
     "infeasible": [
         "switzerland",
@@ -313,16 +355,6 @@ DIVING_FEASIBILITY = {
         "belarus",
         "slovakia",
     ],
-    # Caveat - pool/aquarium only
-    "caveat": {
-        "london": "Pool diving at NDAC or London Aquarium experiences",
-        "amsterdam": "Pool diving at Duikvaker centers",
-        "paris": "Pool diving at Aqua 92 or Nemo 33 (Belgium, 3h)",
-        "berlin": "Pool diving at Dive4Life or aquarium experiences",
-        "madrid": "Pool diving available; nearest sea diving in Valencia (3h)",
-        "munich": "Pool diving; nearest sea diving in Croatia (5h)",
-        "vienna": "Pool diving available; landlocked country",
-    },
 }
 
 HIKING_FEASIBILITY = {
@@ -445,6 +477,7 @@ class VerticalSpecialist:
                             type=activity.get("type", "activity"),
                             source_specialist=self.topic,
                             skill_level=activity.get("skill_level"),
+                            logic_hook=activity.get("logic_hook"),  # Pro tip for UI
                         )
                     )
                 return blocks
