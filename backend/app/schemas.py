@@ -203,23 +203,6 @@ class SuggestionClickEvent(BaseModel):
     request_id: Optional[str] = None
 
 
-class PlanRequest(BaseModel):
-    """Request to send a chat message to the planner.
-
-    Note: Trip inputs are read from the PlanDocument (single source of truth).
-    The frontend should NOT send trip_inputs directly - all state flows through
-    the document.
-
-    Note: session_id is no longer in the request body - it comes from the
-    HttpOnly session cookie, injected by SessionMiddleware.
-    """
-
-    message: str  # The user's chat message
-    timezone: Optional[str] = None  # IANA timezone (e.g., "Europe/Rome") for "today" calculation
-    ui_phase: Optional[Literal["bootstrap", "expanded"]] = None  # "chips-only" vs "full planner"
-    suggestion_clicked: Optional[str] = None  # Text of clicked suggestion chip (enables LQA echo)
-
-
 class GraphPlanRequest(BaseModel):
     """Request schema for graph-based planning entrypoint."""
 
@@ -470,6 +453,10 @@ class StrategySection(BaseModel):
 
     content_added: List[Dict[str, Any]] = Field(default_factory=list)
     # Each dict: {"title": "USAT Liberty Wreck", "day": 2, "type": "activity"}
+
+    # Destination gallery - "Vibe Trio" images for Local Expert card (hero destinations only)
+    destination_gallery: List[Dict[str, str]] = Field(default_factory=list)
+    # Each dict: {"url": "https://...", "alt": "Dubai Marina"}
 
     # For General Agent: trip parameters summary (inventory counts read from tiles, not here)
     trip_summary: Optional[Dict[str, Any]] = None

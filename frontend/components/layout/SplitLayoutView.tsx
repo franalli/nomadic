@@ -4,8 +4,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
 import React, { memo } from 'react';
 
-import { MinimizedChatInput } from '@/components/chat/MinimizedChatInput';
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
+import { MobilePlanFooter } from '@/components/layout/MobilePlanFooter';
 import { MobileTabBar } from '@/components/layout/MobileTabBar';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
@@ -57,6 +57,16 @@ export interface SplitLayoutViewProps {
   onSendMessage?: (message: string) => void;
   /** Whether message is being processed (for minimized input) */
   isProcessing?: boolean;
+  /** Whether the Book tab has content and should be enabled */
+  bookTabEnabled?: boolean;
+  /** Whether dates have been set (determines CTA button type) */
+  hasDates?: boolean;
+  /** Whether to show the CTA button in the footer */
+  showCta?: boolean;
+  /** Handler for "Create Itinerary" CTA button */
+  onBuildItinerary?: () => void;
+  /** Handler for "Select Dates" CTA button */
+  onSelectDates?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,12 +96,17 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   onReset,
   onSendMessage,
   isProcessing = false,
+  bookTabEnabled = true,
+  hasDates = false,
+  showCta = false,
+  onBuildItinerary,
+  onSelectDates,
 }: SplitLayoutViewProps) {
   void _hasDestination; // Silence unused variable warning - reserved for future topo background control
   const { activeTab, isDesktop } = useMobileMode();
 
   return (
-    <div className="flex flex-col min-h-screen pt-[calc(48px+env(safe-area-inset-top))] lg:pt-0">
+    <div className="flex flex-col min-h-[100dvh] lg:min-h-screen lg:pt-0">
       {/* Compact Header (branding) - always visible on desktop, mode-aware on mobile */}
       {headerContent && (
         <header className="hidden lg:flex items-center h-12 px-6 border-b border-[var(--theme-hairline)] bg-[var(--theme-panel)]">
@@ -179,7 +194,8 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                   key="mobile-chat"
                   className={cn(
                     'flex-1 overflow-y-auto p-4 lg:hidden bg-[var(--theme-panel)]',
-                    'pb-[calc(56px+env(safe-area-inset-bottom))]' // Space for tab bar
+                    'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
+                    'pb-[calc(var(--mobile-tab-bar-height,68px)+env(safe-area-inset-bottom))]' // Space for tab bar
                   )}
                   initial="chatEnter"
                   animate="chatCenter"
@@ -198,7 +214,8 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                   id="plan-panel"
                   className={cn(
                     'flex-1 overflow-y-auto p-4 lg:hidden rightCanvas',
-                    'pb-[calc(120px+env(safe-area-inset-bottom))]' // Space for tab bar + minimized input
+                    'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
+                    'pb-[200px]' // Space for MobilePlanFooter (CTA + input + tab bar)
                   )}
                   initial="planEnter"
                   animate="planCenter"
@@ -217,7 +234,8 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                   key="mobile-book"
                   className={cn(
                     'flex-1 overflow-y-auto p-4 lg:hidden rightCanvas',
-                    'pb-[calc(120px+env(safe-area-inset-bottom))]' // Space for tab bar + minimized input
+                    'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
+                    'pb-[200px]' // Space for MobilePlanFooter (input + tab bar)
                   )}
                   initial="bookEnter"
                   animate="bookCenter"
@@ -231,17 +249,20 @@ export const SplitLayoutView = memo(function SplitLayoutView({
               )}
             </AnimatePresence>
 
-            {/* Minimized Chat Input - visible on Plan/Book tabs */}
+            {/* Mobile Plan Footer - CTA + Input, visible on Plan/Book tabs */}
             {onSendMessage && (
-              <MinimizedChatInput
+              <MobilePlanFooter
+                hasDates={hasDates}
+                showCta={showCta}
+                onBuildItinerary={onBuildItinerary ?? (() => {})}
+                onSelectDates={onSelectDates ?? (() => {})}
                 onSendMessage={onSendMessage}
                 isProcessing={isProcessing}
-                placeholder="Type changes..."
               />
             )}
 
             {/* Mobile Tab Bar */}
-            <MobileTabBar />
+            <MobileTabBar bookTabEnabled={bookTabEnabled} />
           </>
         )}
       </div>

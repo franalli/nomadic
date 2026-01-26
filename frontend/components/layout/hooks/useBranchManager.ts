@@ -204,7 +204,6 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const {
     tripInputs,
     chatPanelContainerRef,
-    chatPanelRef: _chatPanelRef, // Unused after removing auto-trigger, kept for future use
     hasEverHadPlan,
     onToast,
     onChatKeyIncrement,
@@ -282,7 +281,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
   const { planStatus, isRegenerating, markRegenerationComplete } = usePlanRegeneration({
     tripInputs,
     hasBranches: branchState.branches.length > 0,
-    onRegenerate: async (_cause) => {
+    onRegenerate: async () => {
       // IMPORTANT: Do NOT clear branches - keep existing plan visible during regen
       // branchState.setBranches([]); // REMOVED - causes regression
 
@@ -765,6 +764,110 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
     documentStore.document?.trip_inputs?.activity_settings,
     branchState.selectedBranchId,
     branchState.setTilesMap,
+    isGenerating,
+  ]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Auto-fetch missing flights
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Ref to track if we've already attempted to fetch missing flights for this branch.
+   * Prevents infinite fetch loops.
+   */
+  const fetchedMissingFlightsRef = useRef<Set<string>>(new Set());
+
+  /**
+   * Auto-fetch missing flights when tiles are loaded but flights are empty.
+   * This handles the case where curated content (hotels/activities) is loaded
+   * but live flights need to be fetched from Amadeus.
+   */
+  useEffect(() => {
+    const selectedBranchId = branchState.selectedBranchId;
+    const tilesBranchId = branchState.tilesBranchId;
+    const selectedBranch = branchState.selectedBranch;
+
+    // Skip if no branch selected or tiles not loaded for this branch
+    if (!selectedBranchId || !selectedBranch) {
+      return;
+    }
+
+    // Skip if tiles aren't loaded yet for this branch
+    if (tilesBranchId !== selectedBranchId) {
+      return;
+    }
+
+    // Skip if currently generating or refreshing
+    if (isGenerating || isRefreshingRef.current) {
+      return;
+    }
+
+    // Skip if we already attempted to fetch flights for this branch
+    if (fetchedMissingFlightsRef.current.has(selectedBranchId)) {
+      return;
+    }
+
+    // Check if flights are missing (with null safety)
+    const flightIds = selectedBranch.tiles?.flights ?? [];
+    const hasFlights = flightIds.length > 0;
+    if (hasFlights) {
+      return;
+    }
+
+    // Check if we have origin (required for flight search)
+    const origin = selectedBranch.origin || documentStore.document?.trip_inputs?.origin;
+    if (!origin) {
+      console.log('[useBranchManager] No origin available for flight fetch');
+      return;
+    }
+
+    // Mark this branch as attempted
+    fetchedMissingFlightsRef.current.add(selectedBranchId);
+
+    // Fetch missing flights
+    console.log('[useBranchManager] Auto-fetching missing flights for branch:', selectedBranchId);
+    isRefreshingRef.current = true;
+
+    refreshTiles(selectedBranchId, ['flight'])
+      .then((response) => {
+        if (response.tiles.length > 0) {
+          // Update tiles map with fetched flights
+          const newTilesMap: Record<string, typeof branchState.tilesMap[string]> = {};
+          for (const tile of response.tiles) {
+            newTilesMap[tile.id] = tile;
+          }
+          branchState.setTilesMap((prev) => ({ ...prev, ...newTilesMap }));
+
+          // Update branch tile IDs
+          branchState.setBranches((prevBranches) =>
+            prevBranches.map((b) => {
+              if (b.id !== selectedBranchId) return b;
+              return {
+                ...b,
+                tiles: {
+                  ...b.tiles,
+                  flights: response.tiles.filter((t) => t.type === 'flight').map((t) => t.id),
+                },
+              };
+            })
+          );
+
+          console.log('[useBranchManager] Fetched', response.tiles.length, 'flight tiles');
+        }
+      })
+      .catch((error) => {
+        console.error('[useBranchManager] Failed to fetch missing flights:', error);
+      })
+      .finally(() => {
+        isRefreshingRef.current = false;
+      });
+  }, [
+    branchState.selectedBranchId,
+    branchState.tilesBranchId,
+    branchState.selectedBranch,
+    branchState.setTilesMap,
+    branchState.setBranches,
+    documentStore.document?.trip_inputs?.origin,
     isGenerating,
   ]);
 

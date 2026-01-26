@@ -2218,10 +2218,21 @@ async def fetch_tiles_for_branch(
     if not branch:
         raise HTTPException(status_code=404, detail="Branch not found in document")
 
-    # Check if branch already has tiles
-    has_tiles = bool(branch.tiles.stays or branch.tiles.flights or branch.tiles.activities)
-    if has_tiles:
-        # Return current document without refetching
+    # Check which tile categories are missing
+    has_stays = bool(branch.tiles.stays)
+    has_flights = bool(branch.tiles.flights)
+    has_activities = bool(branch.tiles.activities)
+    has_all_tiles = has_stays and has_flights and has_activities
+
+    print(
+        f"[TILES] Branch {branch_id}: stays={len(branch.tiles.stays)}, "
+        f"flights={len(branch.tiles.flights)}, activities={len(branch.tiles.activities)}"
+    )
+    print(f"[TILES] has_all_tiles={has_all_tiles}")
+
+    if has_all_tiles:
+        # All categories present, return current document
+        print("[TILES] All categories present, returning cached")
         return PlanDocumentResponse(
             version=doc.version,
             updated_by=doc.updated_by,
@@ -2230,19 +2241,33 @@ async def fetch_tiles_for_branch(
             changes_made=False,
         )
 
+    # Determine which verticals to fetch (only missing ones)
+    verticals_to_fetch = []
+    if not has_stays:
+        verticals_to_fetch.append("hotel")
+    if not has_flights:
+        verticals_to_fetch.append("flight")
+    if not has_activities:
+        verticals_to_fetch.append("activity")
+
     # Fetch tiles for this branch
     primary_dest = branch.destination
     ti = doc_data.trip_inputs
+
+    print(f"[TILES] Fetching missing verticals: {verticals_to_fetch}")
+    print(f"[TILES] origin: branch={branch.origin}, trip_inputs={ti.origin}")
     tiles_request = TilesSearchRequest(
         session_id=session_id,
         destination=primary_dest,
         destination_hint=primary_dest,
-        origin=branch.origin,
-        start_date=branch.start_date,
-        end_date=branch.end_date,
-        adults=branch.adults,
-        children=branch.children,
-        requires_assistance=branch.requires_assistance,
+        # Fall back to trip_inputs for missing branch fields (needed for flights)
+        origin=branch.origin or ti.origin,
+        start_date=branch.start_date or ti.start_date,
+        end_date=branch.end_date or ti.end_date,
+        adults=branch.adults or ti.adults,
+        children=branch.children or ti.children,
+        requires_assistance=branch.requires_assistance or ti.requires_assistance,
+        verticals=verticals_to_fetch,  # Only fetch missing categories
         # Pass user preference settings for filtering
         flight_settings=ti.flight_settings,
         hotel_settings=ti.hotel_settings,
@@ -2250,6 +2275,10 @@ async def fetch_tiles_for_branch(
     )
 
     tiles_response = search_tiles(tiles_request)
+
+    print(f"[TILES] search_tiles returned {len(tiles_response.tiles)} tiles")
+    for t in tiles_response.tiles:
+        print(f"[TILES]   - {t.type}: {t.title}")
 
     if tiles_response.tiles:
         # Add tiles to the document
@@ -2325,12 +2354,13 @@ async def refresh_tiles(
         session_id=session_id,
         destination=primary_dest,
         destination_hint=primary_dest,
-        origin=branch.origin,
-        start_date=branch.start_date,
-        end_date=branch.end_date,
-        adults=branch.adults,
-        children=branch.children,
-        requires_assistance=branch.requires_assistance,
+        # Fall back to trip_inputs for missing branch fields (needed for flights)
+        origin=branch.origin or ti.origin,
+        start_date=branch.start_date or ti.start_date,
+        end_date=branch.end_date or ti.end_date,
+        adults=branch.adults or ti.adults,
+        children=branch.children or ti.children,
+        requires_assistance=branch.requires_assistance or ti.requires_assistance,
         verticals=verticals,  # type: ignore
         # Pass current settings - cache key includes settings hash
         # so changed settings will cause cache miss and fresh fetch
@@ -2565,7 +2595,7 @@ if __name__ == "__main__":
     import uvicorn
 
     # Respect DEBUG mode for uvicorn logging (suppresses WatchFiles warnings in demo/off)
-    log_level = "info" if _debug_mode == "full" else "error"
+    log_level = "debug" if _debug_mode == "full" else "error"
     uvicorn.run(
         app,
         host=settings.backend_host,

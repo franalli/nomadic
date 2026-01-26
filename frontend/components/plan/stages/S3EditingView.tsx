@@ -19,7 +19,6 @@ interface S3EditingViewProps {
 
 export function S3EditingView({
   viewModel,
-  destinationCard: _destinationCard,
   onRefresh,
 }: S3EditingViewProps) {
   const { day_cards = [], itinerary_overview } = viewModel;

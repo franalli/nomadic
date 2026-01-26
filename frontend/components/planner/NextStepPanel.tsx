@@ -17,7 +17,8 @@
 
 'use client';
 
-import { ArrowRight, Check, Loader2, MapPin, Calendar, Users, DollarSign, Plane, Clock } from 'lucide-react';
+import { ArrowRight, Calendar, Check, Clock,DollarSign, Loader2, MapPin, Plane, Users } from 'lucide-react';
+
 import { cn, formatDateForDisplay } from '@/lib/utils';
 import { useDocumentTripInputs } from '@/state/documentStore';
 import { isBookingEnabled } from '@/types/document';

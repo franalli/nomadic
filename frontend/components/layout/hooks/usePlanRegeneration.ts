@@ -96,9 +96,9 @@ export function usePlanRegeneration(
   const { tripInputs, hasBranches, onRegenerate } = options;
 
   const [planStatus, setPlanStatus] = useState<PlanStatus>('ready');
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const lastHashRef = useRef<string | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isRegeneratingRef = useRef(false);
 
   // Memoize the constraint hash
   const currentHash = useMemo(() => computeConstraintHash(tripInputs), [tripInputs]);
@@ -107,9 +107,9 @@ export function usePlanRegeneration(
   // NOTE: Does NOT auto-reset to 'ready' - caller must call markRegenerationComplete()
   // when plan data actually arrives. This ensures status stays 'updating' until UI updates.
   const triggerRegenerate = useCallback(async (cause: RegenCause) => {
-    if (isRegeneratingRef.current) return;
+    if (isRegenerating) return;
 
-    isRegeneratingRef.current = true;
+    setIsRegenerating(true);
     setPlanStatus('updating');
 
     try {
@@ -119,15 +119,15 @@ export function usePlanRegeneration(
       // when the actual branch data arrives, ensuring UI stays in loading state until data is ready.
     } catch (error) {
       // On error, reset status to ready since regeneration failed
-      isRegeneratingRef.current = false;
+      setIsRegenerating(false);
       setPlanStatus('ready');
       throw error;
     }
-  }, [onRegenerate]);
+  }, [isRegenerating, onRegenerate]);
 
   // Signal that regeneration is complete (data has arrived)
   const markRegenerationComplete = useCallback(() => {
-    isRegeneratingRef.current = false;
+    setIsRegenerating(false);
     setPlanStatus('ready');
   }, []);
 
@@ -181,7 +181,7 @@ export function usePlanRegeneration(
 
   return {
     planStatus,
-    isRegenerating: isRegeneratingRef.current,
+    isRegenerating,
     resetStatus,
     markRegenerationComplete,
   };

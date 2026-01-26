@@ -12,7 +12,6 @@ import {
   useDocumentStore,
 } from '@/state/documentStore';
 import {
-  isBookingEnabled,
   type ActivitySettings,
   type BookingTypes,
   type BookingTypeState,
@@ -20,6 +19,7 @@ import {
   type DocumentTripInputsPatch,
   type FlightSettings,
   type HotelSettings,
+  isBookingEnabled,
   type TransportSettings,
 } from '@/types/document';
 import type { ToastType } from '@/types/hooks';

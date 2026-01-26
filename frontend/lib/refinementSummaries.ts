@@ -1,9 +1,9 @@
 import {
-  isBookingEnabled,
   type ActivitySettings,
   type BookingTypeState,
   type FlightSettings,
   type HotelSettings,
+  isBookingEnabled,
   type TransportSettings,
 } from '@/types/document';
 

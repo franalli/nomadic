@@ -8,7 +8,7 @@ import {
 } from '@/components/layout/TripDetailsForm';
 import { validateTripInput } from '@/lib/api';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
-import type { DocumentBranch, DocumentTripInputs } from '@/types/document';
+import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 
 const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'JPY'] as const;
@@ -17,10 +17,6 @@ type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 export interface TripInputsEditorOptions {
   tripInputs: DocumentTripInputs;
   storeTripInputs: DocumentTripInputs | null | undefined;
-  branches: DocumentBranch[];
-  selectedBranchId: string | null;
-  onBranchesChange: (branches: DocumentBranch[]) => void;
-  onSelectedBranchIdChange: (branchId: string | null) => void;
   onToast: (message: string, type?: ToastType) => void;
 }
 
@@ -68,7 +64,7 @@ export interface TripInputsEditorActions {
   /** @deprecated Multi-city feature removed */
   handleToggleMultiCity: () => Promise<void>;
   handleAddDestination: (destination: string) => Promise<void>;
-  handleRemoveDestination: (index: number) => Promise<void>;
+  handleRemoveDestination: () => Promise<void>;
   clearValidationError: () => void;
   resetDraft: () => void;
 }
@@ -78,15 +74,7 @@ export type UseTripInputsEditorReturn = TripInputsEditorState & TripInputsEditor
 export function useTripInputsEditor(
   options: TripInputsEditorOptions
 ): UseTripInputsEditorReturn {
-  const {
-    tripInputs,
-    storeTripInputs,
-    branches: _branches,
-    selectedBranchId: _selectedBranchId,
-    onBranchesChange: _onBranchesChange,
-    onSelectedBranchIdChange: _onSelectedBranchIdChange,
-    onToast,
-  } = options;
+  const { tripInputs, storeTripInputs, onToast } = options;
 
   const documentStore = useDocumentStore();
 
@@ -493,7 +481,7 @@ export function useTripInputsEditor(
   );
 
   const handleRemoveDestination = useCallback(
-    async (_index: number) => {
+    async () => {
       const currentDestination = tripInputs.destination;
       if (!currentDestination) return;
 

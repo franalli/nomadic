@@ -90,8 +90,8 @@ function MobileModeHeaderInner({
     <header
       className={cn(
         'fixed top-0 left-0 right-0 z-[1100]',
-        'h-12 px-3',
-        'pt-[env(safe-area-inset-top)]',
+        'h-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]',
+        'px-3 pt-[env(safe-area-inset-top)]',
         'flex items-center justify-between',
         'backdrop-blur',
         'border-b',

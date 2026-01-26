@@ -3,6 +3,11 @@
 @tailwind utilities;
 
 :root {
+  /* Mobile layout dimensions */
+  --mobile-header-height: 48px;
+  --mobile-tab-bar-height: 68px;  /* pt-2 (8px) + content (44px) + pb-2 (8px) + buffer (8px) */
+  --mobile-minimized-input-height: 56px;
+
   /* Earthy Nomadic palette */
   --bg: 35 30% 96%;
   --bg-soft: 160 20% 92%;

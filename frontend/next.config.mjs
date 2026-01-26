@@ -10,7 +10,15 @@ const nextConfig = {
       },
       {
         protocol: 'https',
+        hostname: 'plus.unsplash.com',
+      },
+      {
+        protocol: 'https',
         hostname: '*.unsplash.com',
+      },
+      {
+        protocol: 'https',
+        hostname: 'pics.avs.io',  // Airline logos
       },
     ],
     // Cache optimized images for 1 year (browser + CDN)

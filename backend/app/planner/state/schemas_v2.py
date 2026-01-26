@@ -1,7 +1,7 @@
 """
 V2 State Schemas - Simplified "Core + Specialist" Architecture.
 
-This module defines the state models for the 6-node architecture:
+This module defines the state models for the 7-node architecture:
 - TripPlan: Single Source of Truth for the trip
 - TripSegment: Individual booking segment (flight/hotel/activity)
 - ItineraryBlock: Specialist-generated content (activities, experiences)
@@ -310,7 +310,7 @@ class ExtractedSettingsFields(BaseModel):
 
 class GraphStateV2(BaseModel):
     """
-    Unified state for the 6-node architecture.
+    Unified state for the 7-node architecture.
 
     Key differences from V1:
     - TripPlan is the SSoT (not fragmented trip_inputs)

@@ -14,6 +14,7 @@
 
 'use client';
 
+import { AnimatePresence, motion } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import React from 'react';
 
@@ -21,8 +22,8 @@ import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import {
   getCompletedSteps,
-  getStepIndex,
   getStatusPillText,
+  getStepIndex,
   getSubStatusText,
   STATUS_COPY,
 } from '@/lib/statusCopyMap';
@@ -59,6 +60,8 @@ export interface PlanHeaderProps {
   onBookClick?: () => void;
   /** Whether user has minimum selections to enable Book stage */
   hasMinimumSelections?: boolean;
+  /** Whether header is collapsed (mobile scroll state) */
+  isCollapsed?: boolean;
 }
 
 /** Map step index to step key for callbacks */
@@ -146,6 +149,7 @@ export function PlanHeader({
   onPlanClick,
   onBookClick,
   hasMinimumSelections = false,
+  isCollapsed = false,
 }: PlanHeaderProps) {
   // currentStage kept for backwards compatibility but planViewState is preferred
   void _currentStage;
@@ -200,6 +204,27 @@ export function PlanHeader({
   const showPills =
     planViewState !== 'S0_BOOTSTRAP' && tripInputs && onOpenSheet;
 
+  // Format date range for collapsed view (must be before early return to maintain hook order)
+  const startDate = tripInputs?.start_date;
+  const endDate = tripInputs?.end_date;
+  const dateRangeText = React.useMemo(() => {
+    if (!startDate) return null;
+    const start = new Date(startDate);
+    const startFormatted = start.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+    if (endDate) {
+      const end = new Date(endDate);
+      const endFormatted = end.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+      });
+      return `${startFormatted} - ${endFormatted}`;
+    }
+    return startFormatted;
+  }, [startDate, endDate]);
+
   // PLACEHOLDER VARIANT: Compact bar when no destination
   // Uses secondary surface with visible border for light mode readability
   if (!hasDestination) {
@@ -213,12 +238,12 @@ export function PlanHeader({
             variant="default"
             onStepClick={handleStepClick}
           />
-          {/* In S0: show CTA chip. In S1+: show pills if available */}
+          {/* In S0: show CTA chip (desktop only - mobile uses SetupDrawer). In S1+: show pills if available */}
           {planViewState === 'S0_BOOTSTRAP' ? (
             <button
               type="button"
               onClick={() => onOpenSheet?.('destination')}
-              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors bg-amber-500/15 text-amber-900 border-amber-500/40 hover:bg-amber-500/25 dark:text-amber-300 dark:bg-amber-500/10 dark:hover:bg-amber-500/20"
+              className="hidden lg:inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors bg-amber-500/15 text-amber-900 border-amber-500/40 hover:bg-amber-500/25 dark:text-amber-300 dark:bg-amber-500/10 dark:hover:bg-amber-500/20"
             >
               Add destination + dates
             </button>
@@ -236,57 +261,79 @@ export function PlanHeader({
     );
   }
 
-  // HERO VARIANT: Full image header with destination
+  // HERO VARIANT: Full image header with destination (supports collapse)
   return (
     <div className="relative flex-shrink-0">
-      {/* Hero image - always has image when destination exists */}
-      <div className="relative h-40 overflow-hidden">
-        {imageUrl ? (
-          <img
-            src={imageUrl}
-            alt={title}
-            className="absolute inset-0 h-full w-full object-cover"
-          />
-        ) : (
-          // Fallback gradient only if somehow no image (should not happen)
-          <div className="absolute inset-0 bg-gradient-to-br from-secondary to-background" />
-        )}
-
-        {/* Scrim overlay for guaranteed text readability on any photo */}
-        {/* Reduced darkness so image reads as intentional banner */}
-        <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-black/25 to-black/10" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-
-        {/* Content overlay */}
-        <div className="absolute inset-0 flex flex-col justify-end p-4">
-          <h2 className="text-xl font-semibold text-white">{title}</h2>
-          {subtitle && (
-            <p className="mt-0.5 text-sm text-white/85">{subtitle}</p>
-          )}
-          {/* Trip summary pills - only in S1+ (use onImage variant for hero) */}
-          {showPills && (
-            <div className="mt-3">
-              <TripSummaryPills
-                tripInputs={tripInputs}
-                onOpenSheet={onOpenSheet}
-                disabled={isStreaming}
-                variant="onImage"
+      {/* Hero image - collapsible on scroll */}
+      <AnimatePresence>
+        {!isCollapsed && (
+          <motion.div
+            className="relative h-40 overflow-hidden"
+            initial={{ height: 160, opacity: 1 }}
+            animate={{ height: 160, opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+          >
+            {imageUrl ? (
+              <img
+                src={imageUrl}
+                alt={title}
+                className="absolute inset-0 h-full w-full object-cover"
               />
+            ) : (
+              // Fallback gradient only if somehow no image (should not happen)
+              <div className="absolute inset-0 bg-gradient-to-br from-secondary to-background" />
+            )}
+
+            {/* Scrim overlay for guaranteed text readability on any photo */}
+            {/* Reduced darkness so image reads as intentional banner */}
+            <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-black/25 to-black/10" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+
+            {/* Content overlay */}
+            <div className="absolute inset-0 flex flex-col justify-end p-4">
+              <h2 className="text-xl font-semibold text-white">{title}</h2>
+              {subtitle && (
+                <p className="mt-0.5 text-sm text-white/85">{subtitle}</p>
+              )}
+              {/* Trip summary pills - only in S1+ (use onImage variant for hero) */}
+              {showPills && (
+                <div className="mt-3">
+                  <TripSummaryPills
+                    tripInputs={tripInputs}
+                    onOpenSheet={onOpenSheet}
+                    disabled={isStreaming}
+                    variant="onImage"
+                  />
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Stage progress indicator with status pill */}
       <div className="border-b border-border bg-secondary dark:bg-card dark:border-border/60">
         <div className="flex items-center justify-between px-4 py-2">
-          <StageStepper
-            currentStepIndex={currentStepIndex}
-            completedSteps={completedSteps}
-            isGenerating={isGenerating}
-            variant="default"
-            onStepClick={handleStepClick}
-          />
+          {/* Collapsed: show destination + date range instead of stepper */}
+          {isCollapsed ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-foreground">{title}</span>
+              {dateRangeText && (
+                <span className="text-xs text-muted-foreground">
+                  ({dateRangeText})
+                </span>
+              )}
+            </div>
+          ) : (
+            <StageStepper
+              currentStepIndex={currentStepIndex}
+              completedSteps={completedSteps}
+              isGenerating={isGenerating}
+              variant="default"
+              onStepClick={handleStepClick}
+            />
+          )}
 
           {/* Status pill - shown during generation */}
           {statusPillText && (
@@ -297,8 +344,8 @@ export function PlanHeader({
           )}
         </div>
 
-        {/* Sub-status line - shown during generation */}
-        {subStatusText && (
+        {/* Sub-status line - shown during generation (only when not collapsed) */}
+        {subStatusText && !isCollapsed && (
           <div className="px-4 pb-2">
             <p className="text-xs text-muted-foreground">{subStatusText}</p>
           </div>

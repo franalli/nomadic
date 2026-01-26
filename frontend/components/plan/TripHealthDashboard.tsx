@@ -21,7 +21,6 @@ import {
 import React from 'react';
 
 import { Button } from '@/components/ui/button';
-
 import { cn } from '@/lib/utils';
 import type { OpenDecision, ReadinessItem, TripHealth } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';

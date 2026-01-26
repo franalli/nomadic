@@ -6,18 +6,15 @@ import { Compass, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
+import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
 import {
   type PlanResultPayload,
   useBranchManager,
 } from '@/components/layout/hooks/useBranchManager';
-import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
-import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
 import { SetupDrawer } from '@/components/layout/SetupDrawer';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
-import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
-import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { BookingSection } from '@/components/plan/BookingSection';
 import { ConfirmStaySheet } from '@/components/plan/ConfirmStaySheet';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
@@ -35,13 +32,15 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
+import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
+import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { filterTilesByType } from '@/lib/tileSelectors';
 import { formatDateForDisplay } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
-import { isBookingEnabled, type DocumentTripInputs } from '@/types/document';
+import { type DocumentTripInputs,isBookingEnabled } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel,PlanViewState } from '@/types/plan-envelope';
 
@@ -69,7 +68,7 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
 function detectTopicsFromMessage(message: string): string[] {
   const lower = message.toLowerCase();
   return Object.entries(TOPIC_KEYWORDS)
-    .filter(([_, keywords]) => keywords.some(k => lower.includes(k)))
+    .filter(([, keywords]) => keywords.some(k => lower.includes(k)))
     .map(([topic]) => topic);
 }
 
@@ -146,7 +145,7 @@ export function NomadicLanding() {
 
   // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
   // Kept for future receipt UI implementation
-  const [_receiptData, setReceiptData] = useState<ChangeReceiptData | null>(null);
+  const [, setReceiptData] = useState<ChangeReceiptData | null>(null);
   const previousTripInputsRef = useRef<DocumentTripInputs | null>(null);
 
   // Track if we've ever had a plan to prevent regression to Setup mode
@@ -214,7 +213,6 @@ export function NomadicLanding() {
     handleUpdateFlightSettings,
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
-    handleUpdateActivitySettings: _handleUpdateActivitySettings,
     handleAddActivity,
     handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
@@ -269,13 +267,10 @@ export function NomadicLanding() {
 
   // Destructure commonly used values from the branch manager hook
   const {
-    branches,
     selectedBranchId,
     isGenerating,
     readyToGenerate,
     hasBranchesReady,
-    setBranches,
-    setSelectedBranchId,
     handleStartNewSession: branchManagerStartNewSession,
     handlePlanResult,
     handleGeneratePlanStart,
@@ -378,10 +373,6 @@ export function NomadicLanding() {
   const tripInputsEditor = useTripInputsEditor({
     tripInputs,
     storeTripInputs,
-    branches,
-    selectedBranchId,
-    onBranchesChange: setBranches,
-    onSelectedBranchIdChange: setSelectedBranchId,
     onToast: addToast,
   });
 
@@ -393,63 +384,10 @@ export function NomadicLanding() {
   // Destructure commonly used values from the hook
   // Note: resetDraft is accessed via tripInputsEditorRef.current in branchManager callback
   const {
-    tripInputsDraft,
-    setTripInputsDraft,
-    handleFieldChange: _handleFieldChange,
-    handleCommitField: _handleCommitField,
     handleUpdateAdults,
     handleUpdateChildren,
     handleToggleRequiresAssistance,
-    handleUpdateCurrency: _handleUpdateCurrency,
-    // Unused after TripDetailsForm removal - kept for potential future use
-    editingField: _editingField,
-    selectedLocationBadge: _selectedLocationBadge,
-    destinationInput: _destinationInput,
-    destinationInputExpanded: _destinationInputExpanded,
-    originInput: _originInput,
-    originInputExpanded: _originInputExpanded,
-    pendingOrigin: _pendingOrigin,
-    pendingDestination: _pendingDestination,
-    validationError: _validationError,
-    clearValidationError: _clearValidationError,
-    setEditingField: _setEditingField,
-    setSelectedLocationBadge: _setSelectedLocationBadge,
-    setDestinationInput: _setDestinationInput,
-    setDestinationInputExpanded: _setDestinationInputExpanded,
-    setOriginInput: _setOriginInput,
-    setOriginInputExpanded: _setOriginInputExpanded,
-    handleStartEditingField: _handleStartEditingField,
-    handleSetOrigin: _handleSetOrigin,
-    handleRemoveOrigin: _handleRemoveOrigin,
-    handleRemoveTravelers: _handleRemoveTravelers,
-    handleRemoveBudget: _handleRemoveBudget,
-    handleToggleMultiCity: _handleToggleMultiCity,
-    handleAddDestination: _handleAddDestination,
-    handleRemoveDestination: _handleRemoveDestination,
   } = tripInputsEditor;
-
-  // Date range selector hook - manages calendar state and date selection
-  const dateRangeSelector = useDateRangeSelector({
-    tripInputs,
-    tripInputsDraft,
-    setTripInputsDraft,
-    onToast: addToast,
-  });
-
-  // Destructure commonly used values from the date range hook
-  // Note: Currently unused after TripDetailsForm removal, kept for potential future use
-  const {
-    calendarOpen: _calendarOpen,
-    selectedDateRange: _selectedDateRange,
-    previewDays: _previewDays,
-    hasDateValidationWarning: _hasDateValidationWarning,
-    handleCalendarDayClick: _handleCalendarDayClick,
-    handleCalendarDayMouseEnter: _handleCalendarDayMouseEnter,
-    handleCalendarMouseLeave: _handleCalendarMouseLeave,
-    handleCalendarOpenChange: _handleCalendarOpenChange,
-    handleDatePresetClick: _handleDatePresetClick,
-    handleResetDates: _handleResetDates,
-  } = dateRangeSelector;
 
   // Toast auto-dismiss effect - handles multiple toasts with different timings
   useEffect(() => {
@@ -707,6 +645,13 @@ export function NomadicLanding() {
 
   // Tiles from document store
   const tiles = storeDocument?.tiles ?? {};
+
+  // Book tab enabled when we have tiles or in a state that can show booking content
+  const bookTabEnabled = useMemo(() => {
+    const hasTiles = Object.keys(tiles).length > 0;
+    const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(planViewState);
+    return hasTiles || inBookableState;
+  }, [tiles, planViewState]);
 
   // Fallback title from tripInputs (used when destinationCard not yet available)
   const fallbackTitle = tripInputs.destination ?? undefined;
@@ -1205,6 +1150,12 @@ export function NomadicLanding() {
           onReset={handleStartNewSession}
           onSendMessage={handleMinimizedSendMessage}
           isProcessing={isGenerating}
+          bookTabEnabled={bookTabEnabled}
+          // Mobile Plan Footer CTA props
+          hasDates={hasDates}
+          showCta={planViewState === 'S2_STRATEGY_READY'}
+          onBuildItinerary={handleExpandToItinerary}
+          onSelectDates={() => openSheet('dates')}
           headerContent={
             <div className="flex w-full items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1342,7 +1293,7 @@ export function NomadicLanding() {
         amount={tripInputs.budget ?? null}
         currency={tripInputs.currency || 'USD'}
         budgetType="total"
-        onSave={async (amount, currency, _budgetType) => {
+        onSave={async (amount, currency) => {
           await documentStore.commitTripInputs({ budget: amount, currency });
           closeSheet();
           const formatted = new Intl.NumberFormat('en-US', {

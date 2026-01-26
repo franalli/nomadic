@@ -61,7 +61,7 @@ export function getTotalTileCount(tilesByType: TilesByType): number {
  * Check if a tile is a stay/hotel tile.
  * Matches 'hotel', 'stay', 'accommodation' in type field.
  */
-export function isStayTile(tile: Tile): boolean {
+function isStayTile(tile: Tile): boolean {
   const type = tile.type?.toLowerCase() ?? '';
   return type.includes('hotel') || type.includes('stay') || type === 'accommodation';
 }
@@ -69,7 +69,7 @@ export function isStayTile(tile: Tile): boolean {
 /**
  * Check if a tile is a flight tile.
  */
-export function isFlightTile(tile: Tile): boolean {
+function isFlightTile(tile: Tile): boolean {
   const type = tile.type?.toLowerCase() || '';
   return type.includes('flight');
 }
@@ -77,7 +77,7 @@ export function isFlightTile(tile: Tile): boolean {
 /**
  * Check if a tile is an activity tile.
  */
-export function isActivityTile(tile: Tile): boolean {
+function isActivityTile(tile: Tile): boolean {
   const type = tile.type?.toLowerCase() || '';
   return (
     type.includes('activity') ||

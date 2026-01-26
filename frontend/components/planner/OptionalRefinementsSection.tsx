@@ -28,12 +28,12 @@ import {
 import { cn } from '@/lib/utils';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import {
-  isBookingEnabled,
   type ActivitySettings,
   type BookingTypes,
   type DocumentTripInputs,
   type FlightSettings,
   type HotelSettings,
+  isBookingEnabled,
   type TransportSettings,
 } from '@/types/document';
 

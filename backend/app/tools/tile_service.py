@@ -71,6 +71,9 @@ class TileSearchOutput(BaseModel):
     location_validated: Optional[str] = None
     tile_count: int = 0
     summary: Optional[Dict[str, Any]] = None
+    # Constraint engine results - blocked tiles for UI display
+    blocked_tiles: List[Dict[str, Any]] = Field(default_factory=list)
+    blocked_summary: Optional[Dict[str, Any]] = None
 
 
 def _map_category_to_vertical(category: str) -> TileType:
@@ -109,36 +112,85 @@ def _apply_specialist_constraints(
     tiles: List[Tile],
     constraints: Optional[Dict[str, Any]],
     category: str,
-) -> List[Tile]:
+) -> tuple[List[Tile], List[Tile], Optional[Dict[str, Any]]]:
     """
     Apply constraints from Vertical Specialist to filter tiles.
 
+    Uses the ConstraintEngine for DETERMINISTIC filtering (no LLM).
+
     Example constraints:
-    - {"min_24h_buffer_after_dive": True} -> Filter flights departing too early
+    - {"min_24h_buffer_after_dive": True, "last_dive_time": "..."} -> Filter flights
     - {"advanced_cert_required": True} -> Filter activities needing certification
+
+    Returns:
+        Tuple of (safe_tiles, blocked_tiles, blocked_summary)
     """
     if not constraints:
-        return tiles
+        return tiles, [], None
 
-    filtered = []
-    for tile in tiles:
-        # Example: Diving constraint - filter flights on last day
-        if constraints.get("min_24h_buffer_after_dive") and category == "flights":
-            # In real implementation, check tile departure time vs dive end
-            # For now, just tag the tile
-            if tile.meta is None:
-                tile.meta = {}
-            tile.meta["specialist_constraint"] = "24h_surface_interval_required"
+    from datetime import datetime
 
-        # Example: Advanced certification constraint
-        if constraints.get("advanced_cert_required") and category == "activities":
+    from app.tools.constraint_engine import ConstraintEngine
+
+    engine = ConstraintEngine()
+    safe_tiles = list(tiles)
+    blocked_tiles: List[Tile] = []
+    blocked_summary = None
+
+    # Diving constraint: 24h no-fly rule
+    if constraints.get("min_24h_buffer_after_dive") and category == "flights":
+        last_dive_time = constraints.get("last_dive_time")
+        if last_dive_time:
+            # Parse datetime if string
+            if isinstance(last_dive_time, str):
+                try:
+                    last_dive_time = datetime.fromisoformat(last_dive_time.replace("Z", "+00:00"))
+                except ValueError:
+                    last_dive_time = None
+
+            if last_dive_time:
+                # Convert tiles to dicts for constraint engine
+                tile_dicts = [t.model_dump() for t in safe_tiles]
+
+                safe_dicts, blocked_dicts = engine.filter_flights_by_diving_constraint(
+                    flights=tile_dicts,
+                    last_dive_time=last_dive_time,
+                    multi_dive_day=constraints.get("multi_dive_day", True),
+                )
+
+                # Convert back to Tile objects
+                safe_tiles = [Tile(**d) for d in safe_dicts]
+                blocked_tiles = [Tile(**d) for d in blocked_dicts]
+
+                if blocked_tiles:
+                    suffix = "s" if len(blocked_tiles) != 1 else ""
+                    blocked_summary = {
+                        "count": len(blocked_tiles),
+                        "reason": "Departure within 24h of last dive",
+                        "constraint": "min_24h_buffer_after_dive",
+                        "icon": "",
+                        "message": f"{len(blocked_tiles)} flight option{suffix} removed",
+                    }
+
+    # Advanced certification constraint for activities
+    if constraints.get("advanced_cert_required") and category == "activities":
+        filtered = []
+        for tile in safe_tiles:
             skill_level = tile.meta.get("skill_level") if tile.meta else None
             if skill_level and skill_level != "advanced":
-                continue  # Skip non-advanced activities
+                blocked_tiles.append(tile)
+                continue
+            filtered.append(tile)
+        safe_tiles = filtered
 
-        filtered.append(tile)
+        if blocked_tiles and not blocked_summary:
+            blocked_summary = {
+                "count": len(blocked_tiles),
+                "reason": "Requires advanced certification",
+                "constraint": "advanced_cert_required",
+            }
 
-    return filtered
+    return safe_tiles, blocked_tiles, blocked_summary
 
 
 @tool("fetch_travel_tiles", args_schema=TileSearchInput)
@@ -239,15 +291,16 @@ def fetch_travel_tiles(
             location_validated=validated_location,
         ).model_dump()
 
-    # 5. Apply specialist constraints
-    filtered_tiles = _apply_specialist_constraints(
+    # 5. Apply specialist constraints (DETERMINISTIC - no LLM)
+    safe_tiles, blocked_tiles, blocked_summary = _apply_specialist_constraints(
         response.tiles,
         constraints,
         category,
     )
 
     # 6. Convert tiles to dicts for JSON serialization
-    tiles_data = [tile.model_dump() for tile in filtered_tiles]
+    tiles_data = [tile.model_dump() for tile in safe_tiles]
+    blocked_data = [tile.model_dump() for tile in blocked_tiles]
 
     return TileSearchOutput(
         success=True,
@@ -255,50 +308,6 @@ def fetch_travel_tiles(
         location_validated=validated_location,
         tile_count=len(tiles_data),
         summary=response.summary,
+        blocked_tiles=blocked_data,
+        blocked_summary=blocked_summary,
     ).model_dump()
-
-
-# Convenience functions for programmatic access (not as LLM tools)
-
-
-async def fetch_tiles_for_architect(
-    category: Literal["flights", "hotels", "activities"],
-    location: str,
-    start_date: str,
-    end_date: Optional[str] = None,
-    origin: Optional[str] = None,
-    adults: int = 1,
-    children: int = 0,
-    budget: Optional[float] = None,
-    constraints: Optional[Dict[str, Any]] = None,
-    settings: Optional[Dict[str, Any]] = None,
-) -> TileSearchOutput:
-    """
-    Async wrapper for programmatic access by Trip Architect node.
-
-    This allows the Architect to call tile search without going through
-    the LLM tool interface.
-    """
-    # Map settings to category-specific params
-    flight_settings = settings if category == "flights" else None
-    hotel_settings = settings if category == "hotels" else None
-    activity_settings = settings if category == "activities" else None
-
-    result = fetch_travel_tiles.invoke(
-        {
-            "category": category,
-            "location": location,
-            "start_date": start_date,
-            "end_date": end_date,
-            "origin": origin,
-            "adults": adults,
-            "children": children,
-            "budget": budget,
-            "constraints": constraints,
-            "flight_settings": flight_settings,
-            "hotel_settings": hotel_settings,
-            "activity_settings": activity_settings,
-        }
-    )
-
-    return TileSearchOutput(**result)

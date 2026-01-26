@@ -19,6 +19,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from app.data.demo_curation import DEMO_MANIFEST
 from app.planner.state import GraphStateV2
 
 # =============================================================================
@@ -519,6 +520,12 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
             }
         )
 
+    # Fetch destination gallery ("Vibe Trio") if available
+    dest_key = plan.destination.lower().strip()
+    gallery_images = []
+    if dest_key in DEMO_MANIFEST:
+        gallery_images = DEMO_MANIFEST[dest_key].get("destination_gallery", [])
+
     # Build the strategy section
     # NOTE: booking_artifacts intentionally omitted - Local Expert does not handle logistics counts
     section = {
@@ -534,6 +541,7 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
         "constraints_applied": constraints_applied,
         "content_added": content_added,
         "impact_areas": ["Logistics", "Timing", "Culture"],
+        "destination_gallery": gallery_images,  # "Vibe Trio" images for hero destinations
     }
 
     # ==========================================================================

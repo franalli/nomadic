@@ -20,7 +20,7 @@ import {
 } from '@/lib/format-utils';
 import { cn } from '@/lib/utils';
 import { DEFAULT_BOOKING_TYPES } from '@/state/documentStore';
-import { isBookingEnabled, type DocumentTripInputs } from '@/types/document';
+import { type DocumentTripInputs,isBookingEnabled } from '@/types/document';
 import type { SheetType } from '@/types/sheets';
 
 interface TripSummaryPillsProps {

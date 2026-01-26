@@ -16,10 +16,7 @@ interface S2BlockedViewProps {
   destinationCard?: DestinationCard;
 }
 
-export function S2BlockedView({
-  viewModel,
-  destinationCard: _destinationCard,
-}: S2BlockedViewProps) {
+export function S2BlockedView({ viewModel }: S2BlockedViewProps) {
   const { open_decisions = [] } = viewModel;
   const blockingDecisions = open_decisions.filter(d => d.is_blocking);
 

@@ -239,6 +239,7 @@ export interface StrategySection {
     type?: string;
     description?: string;  // Rich description of the content
     logic_hook?: string;   // "Why this matters" tip (e.g., "Indoor - Summer safe")
+    image_url?: string;    // Curated thumbnail image for demo destinations
   }>;
 
   // For General Agent: trip parameters summary (inventory counts from tiles, not here)
@@ -247,6 +248,12 @@ export interface StrategySection {
     dates: string;
     travelers: string;
   };
+
+  // Destination gallery - "Vibe Trio" images for Local Expert card (hero destinations only)
+  destination_gallery?: Array<{
+    url: string;
+    alt: string;
+  }>;
 
   // Provenance (debug only, not shown in UI)
   strategy_node_id?: string;

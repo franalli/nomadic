@@ -89,38 +89,3 @@ export function createStreamParser(onEvent: (event: StreamEvent) => void) {
     },
   };
 }
-
-/**
- * Helper to read a streaming response with the parser.
- * Returns a cleanup function to abort the stream.
- */
-export async function readStreamingResponse(
-  response: Response,
-  onEvent: (event: StreamEvent) => void,
-  signal?: AbortSignal
-): Promise<void> {
-  if (!response.body) {
-    throw new Error('Response body is null');
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  const parser = createStreamParser(onEvent);
-
-  try {
-    while (true) {
-      if (signal?.aborted) {
-        reader.cancel();
-        break;
-      }
-
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      parser.feed(decoder.decode(value, { stream: true }));
-    }
-    parser.flush();
-  } finally {
-    reader.releaseLock();
-  }
-}

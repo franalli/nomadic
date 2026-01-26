@@ -27,6 +27,7 @@ import {
   Sparkles,
   Waves,
 } from 'lucide-react';
+import Image from 'next/image';
 import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -80,7 +81,8 @@ const formatConstraintTitle = (rule: string): string => {
 };
 
 // Topic priority for stable ordering
-const TOPIC_PRIORITY = ['skiing', 'hiking', 'diving', 'boating', 'cycling', 'local_expert', 'general'];
+// Topic priority: Local Expert first (foundation/logistics), then niche specialists, general last
+const TOPIC_PRIORITY = ['local_expert', 'skiing', 'hiking', 'diving', 'boating', 'cycling', 'general'];
 
 // Topic configuration with icons and labels
 const TOPIC_CONFIG: Record<string, {
@@ -342,29 +344,45 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
             </div>
           )}
 
-          {/* Specialist Constraints: The "Shields" */}
+          {/* Destination Gallery - "Vibe Trio" for Local Expert card */}
+          {section.specialist_type === 'local_expert' && section.destination_gallery && section.destination_gallery.length > 0 && (
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {section.destination_gallery.map((img, idx) => (
+                <div key={idx} className="relative aspect-video rounded-lg overflow-hidden border border-zinc-700/50 group">
+                  <Image
+                    src={img.url}
+                    alt={img.alt}
+                    fill
+                    className="object-cover transition-transform duration-500 group-hover:scale-105"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Specialist Constraints: Lightweight metadata rows */}
           {section.constraints_applied && section.constraints_applied.length > 0 && (
             <div>
-              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
-                <ShieldCheck size={12} /> Specialist Constraints
+              <h5 className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <ShieldCheck size={10} className="text-emerald-500/70" /> Applied Constraints
               </h5>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {section.constraints_applied.map((c, idx) => (
-                  <div key={idx} className="text-xs flex gap-2.5 items-start">
-                    <span className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
-                    <div className="text-zinc-300">
-                      <span className="font-semibold text-zinc-200">
+                  <div key={idx} className="text-[11px] flex items-start gap-1.5 text-muted-foreground">
+                    <span className="mt-1 w-1 h-1 rounded-full bg-emerald-500/60 flex-shrink-0" />
+                    <span>
+                      <span className="text-muted-foreground/80">
                         {formatConstraintTitle(c.rule)}:
                       </span>{' '}
-                      {c.reason || c.type}
-                    </div>
+                      <span className="text-muted-foreground/60">{c.reason || c.type}</span>
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Expert Recommendations: The "Gems" - Logic-backed content */}
+          {/* Expert Recommendations: The "Gems" - Logic-backed content with thumbnails */}
           {section.content_added && section.content_added.length > 0 && (
             <div>
               <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
@@ -374,33 +392,49 @@ function AgentCard({ section, isExpanded, onToggle, status }: AgentCardProps) {
                 {section.content_added.map((c, idx) => (
                   <div
                     key={idx}
-                    className="bg-zinc-800/40 p-3 rounded-lg border border-zinc-700/50 hover:border-zinc-600 transition-colors"
+                    className="bg-zinc-800/40 rounded-lg border border-zinc-700/50 hover:border-zinc-600 transition-colors p-3 flex gap-3"
                   >
-                    <div className="flex justify-between items-start">
-                      <span className="text-xs font-semibold text-zinc-100">{c.title}</span>
-                      {c.type && (
-                        <span className="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">
-                          {c.type}
-                        </span>
+                    {/* Thumbnail - Only render if image_url exists */}
+                    {c.image_url && (
+                      <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-900">
+                        <Image
+                          src={c.image_url}
+                          alt={c.title}
+                          width={64}
+                          height={64}
+                          className="object-cover w-full h-full"
+                        />
+                      </div>
+                    )}
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-start">
+                        <span className="text-xs font-semibold text-zinc-100">{c.title}</span>
+                        {c.type && (
+                          <span className="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">
+                            {c.type}
+                          </span>
+                        )}
+                      </div>
+                      {c.description && (
+                        <p className="text-[11px] text-zinc-400 leading-relaxed mt-1 line-clamp-2">
+                          {c.description}
+                        </p>
+                      )}
+                      {/* Logic Hook - The "Pro Tip" that proves deep knowledge */}
+                      {c.logic_hook && (
+                        <div className="text-[10px] text-emerald-400 mt-2 flex items-center gap-1.5 bg-emerald-500/5 p-1.5 rounded border border-emerald-500/10">
+                          <CheckCircle2 size={10} />
+                          <span>{c.logic_hook}</span>
+                        </div>
+                      )}
+                      {c.day && (
+                        <div className="text-[10px] text-muted-foreground mt-1.5">
+                          Day {c.day}
+                        </div>
                       )}
                     </div>
-                    {c.description && (
-                      <p className="text-[11px] text-zinc-400 leading-relaxed mt-1">
-                        {c.description}
-                      </p>
-                    )}
-                    {/* Logic Hook - The "Pro Tip" that proves deep knowledge */}
-                    {c.logic_hook && (
-                      <div className="text-[10px] text-emerald-400 mt-2 flex items-center gap-1.5 bg-emerald-500/5 p-1.5 rounded border border-emerald-500/10">
-                        <CheckCircle2 size={10} />
-                        <span>{c.logic_hook}</span>
-                      </div>
-                    )}
-                    {c.day && (
-                      <div className="text-[10px] text-muted-foreground mt-1.5">
-                        Day {c.day}
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -551,6 +585,11 @@ function StrategyStack({
     return aIdx - bIdx;
   });
 
+  // Filter out pending topics that already have sections (avoid duplicate cards)
+  const filteredPendingTopics = pendingTopics.filter(
+    topic => !sorted.some(section => section.specialist_type === topic)
+  );
+
   // Apply visible limit
   const visibleLimit = isMobile ? 1 : 2;
   const visible = showAll ? sorted : sorted.slice(0, visibleLimit);
@@ -560,7 +599,7 @@ function StrategyStack({
   const useReducedColor = sorted.length > 2;
 
   // Header semantics: Specialist Logic (N) when specialists exist
-  const hasPending = pendingTopics.length > 0;
+  const hasPending = filteredPendingTopics.length > 0;
   // Count only non-general specialists for the feed
   const specialistCount = sorted.length;
 
@@ -591,7 +630,7 @@ function StrategyStack({
               {/* Updating indicator when pending topics exist */}
               {hasPending && (
                 <span className="text-xs px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded font-medium animate-pulse">
-                  Updating ({pendingTopics.length})
+                  Updating ({filteredPendingTopics.length})
                 </span>
               )}
             </h3>
@@ -619,7 +658,7 @@ function StrategyStack({
       )}
 
       {/* Pending topics placeholder (updating state) */}
-      {pendingTopics.map(topic => {
+      {filteredPendingTopics.map(topic => {
         const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
         const TopicIcon = config.icon;
         return (

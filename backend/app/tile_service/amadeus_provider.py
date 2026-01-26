@@ -1,0 +1,313 @@
+"""
+Amadeus Providers - Flight and Hotel providers using Amadeus API.
+
+These providers implement the Provider interface and use the AmadeusClient
+to fetch real inventory data.
+
+Usage:
+    provider = AmadeusFlightProvider()
+    tiles = provider.search(context)
+"""
+
+import asyncio
+import logging
+import uuid
+from typing import List, Optional
+
+from app.schemas import Tile
+from app.tools.amadeus_client import (
+    AmadeusClient,
+    FlightOffer,
+    HotelOffer,
+    city_to_airport_code,
+)
+
+from .models import SearchContext
+from .provider_base import Provider
+
+logger = logging.getLogger(__name__)
+
+
+class AmadeusFlightProvider(Provider):
+    """
+    Flight provider using Amadeus Flight Offers Search API.
+
+    Returns real-time flight offers with pricing.
+    """
+
+    name = "amadeus_flight"
+
+    def __init__(self):
+        """Initialize the provider."""
+        self._client: Optional[AmadeusClient] = None
+
+    def _get_client(self) -> AmadeusClient:
+        """Get or create the Amadeus client."""
+        if self._client is None:
+            self._client = AmadeusClient()
+        return self._client
+
+    def search(self, ctx: SearchContext) -> List[Tile]:
+        """
+        Search for flights using Amadeus API.
+
+        Note: This is a sync wrapper around the async API.
+        Handles the case where we're called from within an existing event loop
+        (e.g., LangGraph streaming) by running in a separate thread.
+        """
+        import concurrent.futures
+
+        try:
+            # Check if we're already in an event loop
+            try:
+                asyncio.get_running_loop()  # Check if loop exists
+                # We're in an event loop - run in a thread pool
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_async_in_new_loop, ctx)
+                    return future.result(timeout=30)
+            except RuntimeError:
+                # No running event loop - create one
+                return asyncio.run(self._search_async(ctx))
+        except Exception as e:
+            logger.warning(f"Amadeus flight search failed: {e}")
+            return []
+
+    def _run_async_in_new_loop(self, ctx: SearchContext) -> List[Tile]:
+        """Run the async search in a new event loop (for thread execution)."""
+        return asyncio.run(self._search_async(ctx))
+
+    async def _search_async(self, ctx: SearchContext) -> List[Tile]:
+        """Async implementation of flight search."""
+        client = self._get_client()
+
+        if not client.is_configured():
+            logger.warning("Amadeus API not configured, skipping flight search")
+            return []
+
+        # Convert city names to airport codes
+        origin_code = self._resolve_airport_code(ctx.origin)
+        dest_code = self._resolve_airport_code(ctx.destination)
+
+        if not origin_code or not dest_code:
+            logger.warning(f"Could not resolve airport codes: {ctx.origin} -> {ctx.destination}")
+            return []
+
+        # Get flight settings
+        flight_settings = ctx.flight_settings or {}
+        cabin_class = flight_settings.get("cabin_class", "economy").upper()
+        direct_only = flight_settings.get("direct_only", False)
+        round_trip = flight_settings.get("round_trip", True)
+
+        # Search flights
+        offers = await client.search_flights(
+            origin=origin_code,
+            destination=dest_code,
+            departure_date=ctx.start_date,
+            return_date=ctx.end_date if round_trip else None,
+            adults=ctx.adults or 1,
+            cabin_class=cabin_class,
+            direct_only=direct_only,
+            max_results=ctx.max_results_per_vertical or 5,
+        )
+
+        # Convert to tiles
+        return [self._offer_to_tile(offer, ctx) for offer in offers]
+
+    def _resolve_airport_code(self, location: Optional[str]) -> Optional[str]:
+        """Resolve a location to an airport code."""
+        if not location:
+            return None
+
+        # Check if already an airport code (3 letters)
+        if len(location) == 3 and location.isalpha():
+            return location.upper()
+
+        # Try city-to-airport mapping
+        return city_to_airport_code(location)
+
+    def _offer_to_tile(self, offer: FlightOffer, ctx: SearchContext) -> Tile:
+        """Convert a FlightOffer to a Tile."""
+        # Build title
+        stops_text = (
+            "Direct" if offer.stops == 0 else f"{offer.stops} stop{'s' if offer.stops > 1 else ''}"
+        )
+        title = f"{offer.carrier_name or offer.carrier_code} - {stops_text}"
+
+        # Build subtitle with times
+        dep_time = offer.departure_time.strftime("%H:%M")
+        arr_time = offer.arrival_time.strftime("%H:%M")
+        subtitle = f"{dep_time} - {arr_time} ({offer.duration})"
+
+        # Parse duration for tags
+        tags = [offer.cabin_class.lower(), stops_text.lower()]
+        if offer.baggage_included:
+            tags.append("baggage included")
+
+        return Tile(
+            id=f"amadeus_flight_{offer.id}_{uuid.uuid4().hex[:6]}",
+            type="flight",
+            partner="amadeus",
+            partner_product_id=offer.id,
+            title=title,
+            subtitle=subtitle,
+            image_url=offer.carrier_logo,
+            price_estimate=offer.price,
+            live_price=offer.price,
+            currency=offer.currency,
+            price_basis="per_person",
+            is_estimate_only=False,
+            deeplink_url="#",  # Amadeus doesn't provide direct booking links in test env
+            tags=tags,
+            availability_status="available",
+            meta={
+                "carrier_code": offer.carrier_code,
+                "carrier_name": offer.carrier_name,
+                "carrier_logo": offer.carrier_logo,
+                "departure_time": offer.departure_time.isoformat(),
+                "arrival_time": offer.arrival_time.isoformat(),
+                "duration": offer.duration,
+                "stops": offer.stops,
+                "cabin_class": offer.cabin_class,
+                "baggage_included": offer.baggage_included,
+                "segments": [
+                    {
+                        "carrier": seg.carrier_code,
+                        "flight_number": seg.flight_number,
+                        "departure": seg.departure_airport,
+                        "arrival": seg.arrival_airport,
+                        "departure_time": seg.departure_time.isoformat(),
+                        "arrival_time": seg.arrival_time.isoformat(),
+                    }
+                    for seg in offer.segments
+                ],
+                "amadeus": True,
+            },
+            source="live",
+            source_agent="amadeus_flight_provider",
+        )
+
+
+class AmadeusHotelProvider(Provider):
+    """
+    Hotel provider using Amadeus Hotel Search API.
+
+    Note: This returns hotel listings, not real-time pricing.
+    For pricing, a separate Hotel Offers API call would be needed.
+    """
+
+    name = "amadeus_hotel"
+
+    def __init__(self):
+        """Initialize the provider."""
+        self._client: Optional[AmadeusClient] = None
+
+    def _get_client(self) -> AmadeusClient:
+        """Get or create the Amadeus client."""
+        if self._client is None:
+            self._client = AmadeusClient()
+        return self._client
+
+    def search(self, ctx: SearchContext) -> List[Tile]:
+        """
+        Search for hotels using Amadeus API.
+
+        Note: This is a sync wrapper around the async API.
+        Handles the case where we're called from within an existing event loop.
+        """
+        import concurrent.futures
+
+        try:
+            # Check if we're already in an event loop
+            try:
+                asyncio.get_running_loop()  # Check if loop exists
+                # We're in an event loop - run in a thread pool
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self._run_async_in_new_loop, ctx)
+                    return future.result(timeout=30)
+            except RuntimeError:
+                # No running event loop - create one
+                return asyncio.run(self._search_async(ctx))
+        except Exception as e:
+            logger.warning(f"Amadeus hotel search failed: {e}")
+            return []
+
+    def _run_async_in_new_loop(self, ctx: SearchContext) -> List[Tile]:
+        """Run the async search in a new event loop (for thread execution)."""
+        return asyncio.run(self._search_async(ctx))
+
+    async def _search_async(self, ctx: SearchContext) -> List[Tile]:
+        """Async implementation of hotel search."""
+        client = self._get_client()
+
+        if not client.is_configured():
+            logger.warning("Amadeus API not configured, skipping hotel search")
+            return []
+
+        # Get city code
+        city_code = self._resolve_city_code(ctx.destination)
+        if not city_code:
+            logger.warning(f"Could not resolve city code for: {ctx.destination}")
+            return []
+
+        # Get hotel settings
+        hotel_settings = ctx.hotel_settings or {}
+        ratings = None
+        min_stars = hotel_settings.get("min_stars")
+        if min_stars and min_stars > 0:
+            ratings = list(range(min_stars, 6))  # e.g., [4, 5] for min_stars=4
+
+        # Search hotels
+        hotels = await client.search_hotels_by_city(
+            city_code=city_code,
+            ratings=ratings,
+            max_results=ctx.max_results_per_vertical or 5,
+        )
+
+        # Convert to tiles
+        return [self._hotel_to_tile(hotel, ctx) for hotel in hotels]
+
+    def _resolve_city_code(self, destination: Optional[str]) -> Optional[str]:
+        """Resolve a destination to a city IATA code."""
+        if not destination:
+            return None
+
+        # Check if already a code (3 letters)
+        if len(destination) == 3 and destination.isalpha():
+            return destination.upper()
+
+        # Use airport code as city code (often the same)
+        return city_to_airport_code(destination)
+
+    def _hotel_to_tile(self, hotel: HotelOffer, ctx: SearchContext) -> Tile:
+        """Convert a HotelOffer to a Tile."""
+        # Build rating text
+        rating_text = f"{hotel.rating}★" if hotel.rating else ""
+
+        return Tile(
+            id=f"amadeus_hotel_{hotel.id}_{uuid.uuid4().hex[:6]}",
+            type="hotel",
+            partner="amadeus",
+            partner_product_id=hotel.hotel_id,
+            title=hotel.name,
+            subtitle=hotel.address or hotel.city_code,
+            image_url=hotel.photo_url,  # May be None - frontend should use fallback
+            price_estimate=hotel.price_per_night,
+            currency=hotel.currency,
+            price_basis="per_night",
+            is_estimate_only=True,  # Hotel list API doesn't include prices
+            deeplink_url="#",
+            rating=float(hotel.rating) if hotel.rating else None,
+            location_label=hotel.address,
+            geo={"lat": hotel.latitude, "lon": hotel.longitude} if hotel.latitude else None,
+            tags=[rating_text] if rating_text else [],
+            availability_status="unknown",  # Need separate API call for availability
+            meta={
+                "hotel_id": hotel.hotel_id,
+                "chain_code": hotel.chain_code,
+                "star_rating": hotel.rating,
+                "amenities": hotel.amenities,
+                "amadeus": True,
+            },
+            source="live",
+            source_agent="amadeus_hotel_provider",
+        )

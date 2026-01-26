@@ -20,7 +20,6 @@ interface S1FramingViewProps {
 
 export function S1FramingView({
   viewModel,
-  destinationCard: _destinationCard,
   isGenerating = false,
   onGenerateStrategy,
 }: S1FramingViewProps) {

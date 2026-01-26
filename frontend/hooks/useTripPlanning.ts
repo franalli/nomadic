@@ -75,10 +75,6 @@ export function useTripPlanning({
   const tripInputsEditor = useTripInputsEditor({
     tripInputs,
     storeTripInputs,
-    branches: branchManager.branches,
-    selectedBranchId: branchManager.selectedBranchId,
-    onBranchesChange: branchManager.setBranches,
-    onSelectedBranchIdChange: branchManager.setSelectedBranchId,
     onToast,
   });
 

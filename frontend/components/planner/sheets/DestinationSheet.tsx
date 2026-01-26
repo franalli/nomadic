@@ -10,9 +10,10 @@
 import { MapPin, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
-import { BaseSheet } from './BaseSheet';
-import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
+
+import { BaseSheet } from './BaseSheet';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

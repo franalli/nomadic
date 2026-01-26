@@ -11,8 +11,8 @@
 
 'use client';
 
-import { Check } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { memo } from 'react';
 
 import { cn } from '@/lib/utils';

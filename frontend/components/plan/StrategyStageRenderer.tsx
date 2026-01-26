@@ -19,8 +19,10 @@
 
 'use client';
 
-import React from 'react';
+import React, { useRef } from 'react';
 
+import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { cn } from '@/lib/utils';
 import type { DocumentTripInputs } from '@/types/document';
@@ -108,7 +110,8 @@ function renderStageContent(
   onExpandToItinerary?: () => void,
   onBuildPlan?: () => void,
   hasEverHadPlan?: boolean,
-  tiles?: Record<string, Tile>
+  tiles?: Record<string, Tile>,
+  isDesktop?: boolean
 ): React.ReactNode {
   // Note: S0BootstrapView now reads from document store directly
   // Action handlers for opening sheets will be added when we wire up the full chip row integration
@@ -117,6 +120,14 @@ function renderStageContent(
 
   switch (state) {
     case 'S0_BOOTSTRAP':
+      // On mobile, setup is handled by SetupDrawer - show minimal placeholder
+      if (!isDesktop) {
+        return (
+          <div className="p-6 text-center text-muted-foreground text-sm">
+            <p>Use the setup menu above to configure your trip</p>
+          </div>
+        );
+      }
       return <S0BootstrapView onBuildPlan={onBuildPlan} hasEverHadPlan={hasEverHadPlan} />;
 
     case 'S1_FRAMING':
@@ -175,6 +186,14 @@ function renderStageContent(
       );
 
     default:
+      // On mobile, setup is handled by SetupDrawer - show minimal placeholder
+      if (!isDesktop) {
+        return (
+          <div className="p-6 text-center text-muted-foreground text-sm">
+            <p>Use the setup menu above to configure your trip</p>
+          </div>
+        );
+      }
       return <S0BootstrapView onBuildPlan={onBuildPlan} hasEverHadPlan={hasEverHadPlan} />;
   }
 }
@@ -211,6 +230,13 @@ export function StrategyStageRenderer({
   // onReset reserved for future use (E_RESET event)
   void _onReset;
 
+  // Get desktop state for mobile-specific rendering
+  const { isDesktop } = useMobileMode();
+
+  // Scroll collapse tracking for mobile header optimization
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isCollapsed = useScrollCollapse(scrollContainerRef, { threshold: 60, hysteresis: 15 });
+
   // Enforce content policy in development
   React.useEffect(() => {
     guardedEnforcePolicy(state, viewModel);
@@ -241,6 +267,7 @@ export function StrategyStageRenderer({
           onPlanClick={onPlanClick}
           onBookClick={onBookClick}
           hasMinimumSelections={hasMinimumSelections}
+          isCollapsed={!isDesktop && isCollapsed}
         />
         <div className="flex flex-1 items-center justify-center p-4">
           <div className="rounded-lg border border-border bg-card p-6 text-center shadow-sm">
@@ -272,10 +299,12 @@ export function StrategyStageRenderer({
         onPlanClick={onPlanClick}
         onBookClick={onBookClick}
         hasMinimumSelections={hasMinimumSelections}
+        isCollapsed={!isDesktop && isCollapsed}
       />
 
       {/* Stage content - scrollable with bottom padding for footer */}
       <div
+        ref={scrollContainerRef}
         className={cn(
           'flex-1 overflow-y-auto',
           nextAction && 'pb-20' // Reserve space for sticky footer
@@ -296,7 +325,8 @@ export function StrategyStageRenderer({
               onExpandToItinerary,
               onBuildPlan,
               hasEverHadPlan,
-              tiles
+              tiles,
+              isDesktop
             )}
 
             {/* BookingSection rendered conditionally (not "always") */}

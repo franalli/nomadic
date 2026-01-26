@@ -35,12 +35,12 @@ import { ExpandablePill } from '@/components/pill/ExpandablePill';
 import { Switch } from '@/components/ui/switch';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import {
-  isBookingEnabled,
   type ActivitySettings,
   type BookingTypes,
   type DocumentTripInputs,
   type FlightSettings,
   type HotelSettings,
+  isBookingEnabled,
   type TransportSettings,
 } from '@/types/document';
 
@@ -256,7 +256,7 @@ export interface TripDetailsFormProps {
 
   // Destination callbacks
   onAddDestination: (destination: string) => void;
-  onRemoveDestination: (index: number) => void;
+  onRemoveDestination: () => void;
   setDestinationInput: (v: string) => void;
   setDestinationInputExpanded: (v: boolean) => void;
 
@@ -312,44 +312,12 @@ export interface TripDetailsFormProps {
 function TripDetailsFormInner({
   tripInputs,
   tripInputsDraft,
-  // Row 1 fields - unused after Row 1 removal, kept for interface compatibility
-  hasOrigin: _hasOrigin,
-  hasDestination: _hasDestination,
-  hasDates: _hasDates,
-  hasStartDate: _hasStartDate,
-  hasEndDate: _hasEndDate,
-  calendarOpen: _calendarOpen,
-  selectedDateRange: _selectedDateRange,
-  previewDays: _previewDays,
-  hasDateValidationWarning: _hasDateValidationWarning,
-  selectedLocationBadge: _selectedLocationBadge,
-  datePresets: _datePresets,
-  originInput: _originInput,
-  destinationInput: _destinationInput,
-  pendingOrigin: _pendingOrigin,
-  pendingDestination: _pendingDestination,
-  validationError: _validationError,
-  onClearValidationError: _onClearValidationError,
   onFieldChange,
   onCommitField,
-  onSetOrigin: _onSetOrigin,
-  onRemoveOrigin: _onRemoveOrigin,
-  setOriginInput: _setOriginInput,
-  onAddDestination: _onAddDestination,
-  onRemoveDestination: _onRemoveDestination,
-  setDestinationInput: _setDestinationInput,
-  onToggleMultiCity: _onToggleMultiCity,
-  onCalendarOpenChange: _onCalendarOpenChange,
-  onCalendarDayClick: _onCalendarDayClick,
-  onCalendarDayMouseEnter: _onCalendarDayMouseEnter,
-  onCalendarMouseLeave: _onCalendarMouseLeave,
-  onDatePresetClick: _onDatePresetClick,
-  onResetDates: _onResetDates,
   onUpdateAdults,
   onUpdateChildren,
   onToggleRequiresAssistance,
   onUpdateCurrency,
-  onSelectLocationBadge: _onSelectLocationBadge,
   bookingTypes,
   flightSettings,
   hotelSettings,
@@ -358,7 +326,6 @@ function TripDetailsFormInner({
   onUpdateBookingTypes,
   onUpdateFlightSettings,
   onUpdateHotelSettings,
-  // onUpdateActivitySettings - intentionally unused, kept for interface compatibility
   onUpdateTransportSettings,
   onAddActivity,
   onRemoveActivity,

@@ -504,10 +504,15 @@ class TripArchitect:
         Fetch tiles for the current plan.
 
         Respects constraints from Specialist.
+        Preserves flights from logistics_node if already set.
         """
         plan = state.trip_plan
         tiles_result = {}
 
+        print(
+            f"[FETCH_TILES] dest={plan.destination}, origin={plan.origin}, "
+            f"dates={plan.start_date} to {plan.end_date}"
+        )
         logger.info(
             f"fetch_tiles_for_plan: dest={plan.destination}, "
             f"origin={plan.origin}, dates={plan.start_date} to {plan.end_date}"
@@ -520,11 +525,23 @@ class TripArchitect:
 
         # Fetch each category
         for category in ["hotels", "flights", "activities"]:
+            # PRESERVE flights from logistics_node if already set
+            # (curated/sanitized flights with proper airline names and safety logic)
+            if category == "flights" and state.tiles.get("flights"):
+                print(
+                    f"[FETCH_TILES] PRESERVING {len(state.tiles['flights'])} "
+                    "flights from logistics_node"
+                )
+                tiles_result["flights"] = state.tiles["flights"]
+                continue
+
             # Check if we need origin for flights
             if category == "flights" and not plan.origin:
+                print("[FETCH_TILES] SKIPPING flights - plan.origin is empty!")
                 logger.debug(f"fetch_tiles_for_plan: skipping {category} (no origin)")
                 continue
 
+            print(f"[FETCH_TILES] Fetching {category}...")
             logger.debug(f"fetch_tiles_for_plan: fetching {category}...")
             result = fetch_travel_tiles.invoke(
                 {
@@ -542,9 +559,11 @@ class TripArchitect:
 
             if result.get("success"):
                 tile_count = len(result.get("tiles", []))
+                print(f"[FETCH_TILES] {category} returned {tile_count} tiles")
                 logger.info(f"fetch_tiles_for_plan: {category} returned {tile_count} tiles")
                 tiles_result[category] = result.get("tiles", [])
             else:
+                print(f"[FETCH_TILES] {category} FAILED: {result.get('error', 'unknown')}")
                 logger.warning(
                     f"fetch_tiles_for_plan: {category} failed - {result.get('error', 'unknown')}"
                 )

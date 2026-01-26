@@ -13,7 +13,7 @@
 'use client';
 
 import { Check, ChevronDown, SlidersHorizontal } from 'lucide-react';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   chipActive,
@@ -75,10 +75,10 @@ export const TileFilterBar = memo(function TileFilterBar({
   }, []);
 
   // Add/remove click listener
-  useState(() => {
+  useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  });
+  }, [handleClickOutside]);
 
   const handleSortChange = useCallback(
     (sort: SortOption) => {

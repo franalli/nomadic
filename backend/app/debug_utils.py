@@ -43,6 +43,8 @@ _THEME = Theme(
         "solver": "bold orange1",
         "synth": "bold blue",
         "success": "bold green",
+        "safe": "bold green",
+        "blocked": "bold red",
         "error": "bold red",
         "tokens": "dim cyan",
         "api": "dim white",
@@ -128,10 +130,10 @@ def log(tag: str, message: str, data: str | None = None, sleep: float | None = N
             style = "solver"
         elif "SYNTH" in tag_upper:
             style = "synth"
-        elif "SUCCESS" in tag_upper:
-            style = "success"
-        elif "ERROR" in tag_upper:
-            style = "error"
+        elif "SAFE" in tag_upper or "SUCCESS" in tag_upper:
+            style = "safe"
+        elif "BLOCKED" in tag_upper or "ERROR" in tag_upper:
+            style = "blocked"
         elif "ROUTER" in tag_upper or "ORCHESTR" in tag_upper:
             style = "router"
         elif "TOKEN" in tag_upper:

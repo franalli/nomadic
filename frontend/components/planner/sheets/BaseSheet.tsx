@@ -17,8 +17,8 @@ import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { cn } from '@/lib/utils';
 import { useMobileMode } from '@/contexts/MobileModeContext';
+import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

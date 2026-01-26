@@ -58,7 +58,7 @@ export const formatDateForDisplay = (value?: string | null): string => {
 /**
  * Parse a budget value to a number. Returns null if invalid or non-positive.
  */
-export const parseBudgetNumber = (budget?: string | number | null): number | null => {
+const parseBudgetNumber = (budget?: string | number | null): number | null => {
   if (budget === null || budget === undefined) return null;
   const text = typeof budget === 'number' ? budget.toString() : budget;
   const cleaned = text.replace(/[^0-9.]/g, '');
@@ -70,7 +70,7 @@ export const parseBudgetNumber = (budget?: string | number | null): number | nul
 /**
  * Normalize a budget input to a trimmed string or null.
  */
-export const normalizeBudgetInput = (budget?: string | number | null): string | null => {
+const normalizeBudgetInput = (budget?: string | number | null): string | null => {
   if (budget === null || budget === undefined) return null;
   const text = typeof budget === 'number' ? budget.toString() : budget;
   const trimmed = text.trim();

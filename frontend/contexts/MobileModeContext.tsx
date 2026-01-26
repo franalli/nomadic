@@ -163,8 +163,12 @@ export function MobileModeProvider({
 
   // Setup Drawer Controls
   const toggleSetupDrawer = useCallback(() => {
-    setIsSetupDrawerOpen((prev) => !prev);
-  }, []);
+    console.log('[MobileModeContext] toggleSetupDrawer called, current state:', isSetupDrawerOpen);
+    setIsSetupDrawerOpen((prev) => {
+      console.log('[MobileModeContext] Setting isSetupDrawerOpen from', prev, 'to', !prev);
+      return !prev;
+    });
+  }, [isSetupDrawerOpen]);
 
   const closeSetupDrawer = useCallback(() => {
     setIsSetupDrawerOpen(false);

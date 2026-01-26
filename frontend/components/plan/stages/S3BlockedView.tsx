@@ -16,10 +16,7 @@ interface S3BlockedViewProps {
   destinationCard?: DestinationCard;
 }
 
-export function S3BlockedView({
-  viewModel,
-  destinationCard: _destinationCard,
-}: S3BlockedViewProps) {
+export function S3BlockedView({ viewModel }: S3BlockedViewProps) {
   const { open_decisions = [] } = viewModel;
   const blockingDecisions = open_decisions.filter(d => d.is_blocking);
 

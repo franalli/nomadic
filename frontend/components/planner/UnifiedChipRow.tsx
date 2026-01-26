@@ -30,7 +30,7 @@ import {
 import { memo } from 'react';
 
 import { cn } from '@/lib/utils';
-import { isBookingEnabled, type BookingTypes, type FlightSettings, type HotelSettings, type ActivitySettings } from '@/types/document';
+import { type ActivitySettings,type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

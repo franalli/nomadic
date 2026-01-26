@@ -16,16 +16,12 @@ export interface TruncatedDestinationListProps {
   maxVisible?: number;
   selectedBadge: 'origin' | number | null;
   onSelectBadge: (key: 'origin' | number | null) => void;
-  onRemoveDestination: (index: number) => void;
+  onRemoveDestination: () => void;
   destinationInput: string;
   setDestinationInput: (v: string) => void;
   onAddDestination: (destination: string) => void;
   hasDestination: boolean;
   pendingDestination: string | null;
-  /** @deprecated Multi-city feature removed */
-  multiCityIntent?: 'multi_city' | 'separate' | null;
-  /** @deprecated Multi-city feature removed */
-  onToggleMultiCity?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,8 +39,6 @@ function TruncatedDestinationListInner({
   onAddDestination,
   hasDestination,
   pendingDestination,
-  multiCityIntent: _multiCityIntent,
-  onToggleMultiCity: _onToggleMultiCity,
 }: TruncatedDestinationListProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -66,7 +60,7 @@ function TruncatedDestinationListInner({
             value={dest}
             isSelected={selectedBadge === idx}
             onSelect={onSelectBadge}
-            onRemove={() => onRemoveDestination(idx)}
+            onRemove={onRemoveDestination}
           />
           {/* Show separator between visible destinations */}
           {showSeparator && idx < visibleDestinations.length - 1 && (
@@ -104,7 +98,7 @@ function TruncatedDestinationListInner({
                     value={dest}
                     isSelected={selectedBadge === actualIndex}
                     onSelect={onSelectBadge}
-                    onRemove={() => onRemoveDestination(actualIndex)}
+                    onRemove={onRemoveDestination}
                   />
                 );
               })}

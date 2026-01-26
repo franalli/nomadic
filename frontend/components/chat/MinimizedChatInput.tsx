@@ -130,9 +130,9 @@ function MinimizedChatInputInner({
       {/* Input Bar */}
       <motion.div
         className={cn(
-          'fixed left-0 right-0 z-[999]',
-          // Position above tab bar (tab bar is ~56px + safe area)
-          'bottom-[calc(56px+env(safe-area-inset-bottom))]',
+          'fixed left-0 right-0 z-[1001]',
+          // Position above tab bar using CSS variable
+          'bottom-[calc(var(--mobile-tab-bar-height,68px)+env(safe-area-inset-bottom))]',
           'px-4 pb-2',
           'lg:hidden',
           className
@@ -197,9 +197,9 @@ function MinimizedChatInputInner({
         {showSentToast && (
           <motion.div
             className={cn(
-              'fixed left-1/2 -translate-x-1/2 z-[1001]',
-              // Position above the input bar
-              'bottom-[calc(120px+env(safe-area-inset-bottom))]',
+              'fixed left-1/2 -translate-x-1/2 z-[1002]',
+              // Position above the input bar using CSS variables
+              'bottom-[calc(var(--mobile-tab-bar-height,68px)+var(--mobile-minimized-input-height,56px)+env(safe-area-inset-bottom))]',
               'px-4 py-2 rounded-full',
               'bg-emerald-500 text-white',
               'text-sm font-medium',

@@ -35,6 +35,7 @@ from app.planner.nodes_v2.constraint_guard import constraint_guard
 # Import V2 nodes
 from app.planner.nodes_v2.intent_router import intent_router
 from app.planner.nodes_v2.local_expert import local_expert
+from app.planner.nodes_v2.logistics_node import logistics_node
 from app.planner.nodes_v2.synthesizer import synthesizer
 from app.planner.nodes_v2.trip_architect import trip_architect
 from app.planner.nodes_v2.vertical_specialist import vertical_specialist
@@ -106,6 +107,11 @@ NODE_STATUS_CONFIG = {
         "label": "Consulting local expert...",
         "icon_key": "building",
         "estimated_duration_ms": 800,
+    },
+    "logistics": {
+        "label": "Fetching flight options...",
+        "icon_key": "plane",
+        "estimated_duration_ms": 2000,
     },
     "guard": {
         "label": "Checking constraints...",
@@ -380,6 +386,7 @@ def create_optimized_graph() -> StateGraph:
     workflow.add_node("architect", trip_architect)
     workflow.add_node("specialist", vertical_specialist)
     workflow.add_node("local_expert", local_expert)
+    workflow.add_node("logistics", logistics_node)
     workflow.add_node("guard", constraint_guard)
     workflow.add_node("synthesizer", synthesizer)
 
@@ -403,13 +410,17 @@ def create_optimized_graph() -> StateGraph:
         },
     )
 
-    # Specialist → Architect (always)
-    # Specialist advises, then Architect acts on advice
-    workflow.add_edge("specialist", "architect")
+    # Specialist → Logistics (always)
+    # Specialist advises, then Logistics fetches flights with safety logic
+    workflow.add_edge("specialist", "logistics")
 
-    # LocalExpert → Architect (always)
-    # LocalExpert provides logistics, then Architect continues
-    workflow.add_edge("local_expert", "architect")
+    # LocalExpert → Logistics (always)
+    # LocalExpert provides context, then Logistics fetches flights
+    workflow.add_edge("local_expert", "logistics")
+
+    # Logistics → Architect (always)
+    # Logistics sanitizes flight data, then Architect builds the plan
+    workflow.add_edge("logistics", "architect")
 
     # Architect → Guard or Synthesizer (conditional)
     workflow.add_conditional_edges(

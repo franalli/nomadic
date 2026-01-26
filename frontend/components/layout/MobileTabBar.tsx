@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { Briefcase, Map, MessageSquare } from 'lucide-react';
 import { memo } from 'react';
 
-import { useMobileMode, type MobileTab } from '@/contexts/MobileModeContext';
+import { type MobileTab,useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,6 +19,8 @@ interface TabConfig {
 
 interface MobileTabBarProps {
   className?: string;
+  /** Whether the Book tab has content and should be enabled */
+  bookTabEnabled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,7 +45,7 @@ const TABS: TabConfig[] = [
  * - Red dot badge on Plan tab for unread updates
  * - Fixed at bottom of screen
  */
-function MobileTabBarInner({ className }: MobileTabBarProps) {
+function MobileTabBarInner({ className, bookTabEnabled = true }: MobileTabBarProps) {
   const { activeTab, setActiveTab, planTabHasUpdate, isDesktop } = useMobileMode();
 
   // Don't render on desktop
@@ -57,8 +59,8 @@ function MobileTabBarInner({ className }: MobileTabBarProps) {
     <nav
       className={cn(
         'fixed bottom-0 left-0 right-0 z-[1000]',
-        'pb-[env(safe-area-inset-bottom)]',
-        'px-4 pt-2 pb-2',
+        'px-4 pt-2',
+        'pb-[calc(8px+env(safe-area-inset-bottom))]', // pt-2 (8px) + safe area
         'bg-background/80 backdrop-blur-lg',
         'border-t border-border/50',
         'lg:hidden',
@@ -97,12 +99,14 @@ function MobileTabBarInner({ className }: MobileTabBarProps) {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           const showBadge = tab.id === 'plan' && planTabHasUpdate && !isActive;
+          const isBookDisabled = tab.id === 'book' && !bookTabEnabled;
 
           return (
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => !isBookDisabled && setActiveTab(tab.id)}
+              disabled={isBookDisabled}
               className={cn(
                 'relative flex-1 flex items-center justify-center gap-1.5',
                 'py-2.5 rounded-lg',
@@ -110,9 +114,11 @@ function MobileTabBarInner({ className }: MobileTabBarProps) {
                 'transition-colors duration-150',
                 isActive
                   ? 'text-foreground'
-                  : 'text-muted-foreground hover:text-foreground/80'
+                  : 'text-muted-foreground hover:text-foreground/80',
+                isBookDisabled && 'opacity-40 cursor-not-allowed'
               )}
               aria-selected={isActive}
+              aria-disabled={isBookDisabled}
               role="tab"
             >
               <Icon className="h-4 w-4" />

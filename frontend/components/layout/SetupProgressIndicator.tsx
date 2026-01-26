@@ -107,10 +107,16 @@ function SetupProgressIndicatorInner({ className }: SetupProgressIndicatorProps)
   const totalCount = visibleItems.length;
   const progress = totalCount > 0 ? completedCount / totalCount : 0;
 
+  const handleClick = () => {
+    console.log('[SetupProgressIndicator] Button clicked! Calling toggleSetupDrawer...');
+    toggleSetupDrawer();
+    console.log('[SetupProgressIndicator] toggleSetupDrawer called');
+  };
+
   return (
     <button
       type="button"
-      onClick={toggleSetupDrawer}
+      onClick={handleClick}
       className={cn(
         'flex items-center gap-2',
         'text-sm font-medium text-foreground',

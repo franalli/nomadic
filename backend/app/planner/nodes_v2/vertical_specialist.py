@@ -16,7 +16,7 @@ The Specialist runs BEFORE the Architect calls tools.
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.planner.state import (
     GraphStateV2,
@@ -753,6 +753,52 @@ def load_specialist_prompt(topic: str) -> Optional[str]:
 
 
 # =============================================================================
+# Curated Image Lookup
+# =============================================================================
+
+
+def _get_curated_image(topic: str, destination: str, title: str) -> Optional[str]:
+    """
+    Get image URL from curated content if available.
+
+    Looks up the demo_curation.py DEMO_MANIFEST for matching activity images.
+    Returns None if no match found (graceful fallback for non-demo destinations).
+    """
+    from app.data.demo_curation import DEMO_MANIFEST
+
+    dest_key = destination.lower().strip() if destination else ""
+    manifest = DEMO_MANIFEST.get(dest_key, {})
+    specialist_content = manifest.get("specialist_content", {})
+
+    # Check specialist-specific content first
+    activities = specialist_content.get(topic, [])
+    for activity in activities:
+        # Fuzzy match on title (case-insensitive, contains)
+        activity_title = activity.get("title", "").lower()
+        search_title = title.lower()
+        if (
+            activity_title == search_title
+            or search_title in activity_title
+            or activity_title in search_title
+        ):
+            return activity.get("image")
+
+    # Check general content as fallback
+    general = specialist_content.get("general", [])
+    for activity in general:
+        activity_title = activity.get("title", "").lower()
+        search_title = title.lower()
+        if (
+            activity_title == search_title
+            or search_title in activity_title
+            or activity_title in search_title
+        ):
+            return activity.get("image")
+
+    return None
+
+
+# =============================================================================
 # Node Function (for graph registration)
 # =============================================================================
 
@@ -857,6 +903,56 @@ async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
     # Update UI state
     state.active_agent_id = topic
     state.ui_events.append("SPECIALIST_DONE")
+
+    # Build strategy_section for UI display (with images from curated content)
+    # This enables the frontend to render specialist cards with thumbnails
+    content_added = []
+    for block in output.content_blocks:
+        # Skip buffer blocks (arrival/departure/no-fly) - only show activities
+        if block.is_buffer:
+            continue
+        content_added.append(
+            {
+                "title": block.title,
+                "description": block.description,
+                "logic_hook": block.logic_hook,
+                "type": block.type,
+                "day": block.day,
+                "image_url": _get_curated_image(topic, state.trip_plan.destination, block.title),
+            }
+        )
+
+    section: Dict[str, Any] = {
+        "id": f"specialist_{topic}",
+        "title": f"{topic.title()} Specialist",
+        "specialist_type": topic,
+        "feasibility_status": output.feasibility_status,
+        "feasibility_reason": output.feasibility_reason,
+        "alternative_suggestion": output.alternative_suggestion,
+        "constraints_applied": [
+            {"rule": c.rule, "reason": c.reason, "type": c.type} for c in output.constraints
+        ],
+        "content_added": content_added,
+        "impact_areas": [topic.title(), "Safety", "Activities"],
+        # Required fields for StrategySection
+        "principles": [],
+        "must_dos": [],
+        "optional_upgrades": output.enhancements[:3] if output.enhancements else [],
+        "logistics_notes": [],
+        "bullets": [],
+    }
+
+    # Initialize strategy_sections if needed
+    if "strategy_sections" not in state.metadata:
+        state.metadata["strategy_sections"] = []
+
+    # Remove existing section for this specialist (avoid duplicates on re-run)
+    state.metadata["strategy_sections"] = [
+        s for s in state.metadata["strategy_sections"] if s.get("specialist_type") != topic
+    ]
+    state.metadata["strategy_sections"].append(section)
+
+    _debug_v2(f"Strategy section created for {topic} with {len(content_added)} recommendations")
 
     # Generate specialist message for UI
     if output.content_blocks:

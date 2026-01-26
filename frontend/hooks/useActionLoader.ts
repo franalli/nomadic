@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import type {
-  ActionLoaderState,
-  LoaderActionType,
-  VerticalFetchType,
-} from '@/types/loader';
 import {
   FALLBACK_TIMEOUT_MS,
   getLoaderCopy,
   STEP_DURATION_MS,
 } from '@/lib/loaderCopyConfig';
+import type {
+  ActionLoaderState,
+  LoaderActionType,
+  VerticalFetchType,
+} from '@/types/loader';
 
 interface UseActionLoaderOptions {
   /** Delay before showing loader (ms). Default: 400ms */

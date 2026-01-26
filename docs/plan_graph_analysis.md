@@ -25,35 +25,39 @@
 
 ## Architecture Overview
 
-LangGraph-based conversational trip planning system with **6 nodes** (optimized from 19).
+LangGraph-based conversational trip planning system with **7 nodes**.
 
 | Category              | Count | Description                             |
 | --------------------- | ----- | --------------------------------------- |
-| LLM-Powered Nodes     | 3     | IntentRouter, TripArchitect, Synthesizer |
-| Domain Specialists    | 1     | VerticalSpecialist (diving/hiking/skiing) |
+| LLM-Powered Nodes     | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer |
+| Domain Specialists    | 1     | LocalExpert (city logistics and tips) |
+| Data Fetchers         | 1     | LogisticsNode (flight fetching + safety logic) |
 | Deterministic Nodes   | 1     | ConstraintGuard (pure Python validation) |
-| Total Nodes           | 5     | Core graph nodes + entry routing        |
+| **Total Nodes**       | **7** | Core graph nodes                        |
 
 ### Design Principles (V2)
 
-1. **"Flights/Hotels are NOT Agents"** - They are data fetchers (TileService tool)
+1. **"Flights/Hotels are NOT Agents"** - They are data fetchers (LogisticsNode + TileService)
 2. **"Diving IS an Agent"** - It requires domain logic (VerticalSpecialist)
 3. **"Architect sees the whole picture"** - Avoids context fracture
 4. **TripPlan is the SSoT** - Single Source of Truth for trip state
 5. **LLM-Based Intent Classification** - No regex minefield, GPT-4o-mini classifies
 6. **Panic Button** - Hard-coded reset commands bypass LLM entirely
 7. **Constraint Injector Pattern** - Specialist runs BEFORE Architect calls tools
+8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
+9. **Auto-Fix Loop** - ConstraintGuard can loop back to Architect once to self-correct
 
 ### Migration Summary
 
 | Aspect | V1 | V2 |
 |--------|----|----|
-| Nodes | 19 | 6 |
-| Prompts | 27 | ~10 |
+| Nodes | 19 | 7 |
+| Prompts | 27 | 12 |
 | Intent Detection | Regex gates + precedence | LLM classification |
 | Routing | GateEvaluator (13 gates) | Simple conditional edges |
 | State | Fragmented trip_inputs | Unified TripPlan SSoT |
-| Specialists | LLM nodes per domain | Single VerticalSpecialist |
+| Specialists | LLM nodes per domain | VerticalSpecialist + LocalExpert |
+| Flight Fetching | Scattered | Centralized LogisticsNode |
 
 ---
 
@@ -75,6 +79,8 @@ backend/app/planner/
 │   ├── intent_router.py     # LLM-based intent classification
 │   ├── trip_architect.py    # Core planning node (The Boss)
 │   ├── vertical_specialist.py # Domain specialist (diving/hiking/skiing)
+│   ├── local_expert.py      # City logistics concierge (NEW)
+│   ├── logistics_node.py    # Flight fetching + safety logic (NEW)
 │   ├── constraint_guard.py  # Pure Python validation
 │   └── synthesizer.py       # Unified response generation
 ├── state/
@@ -107,27 +113,28 @@ backend/app/planner/
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
 │  • Detects: specialist_hint (diving/hiking/skiing/cycling/boating)          │
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
-│  • PLANNING → Pass to Architect (with optional specialist)                  │
+│  • PLANNING + no specialist → LocalExpert (city logistics)                  │
+│  • PLANNING + specialist → VerticalSpecialist                               │
 │  ~150 tokens, ~300ms                                                        │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
-         ┌─────────────────────────┼─────────────────────────┐
-         │ GREETING/RESET          │ PLANNING                │ PLANNING
-         │ (short_circuit)         │ (specialist detected)   │ (general)
-         ▼                         ▼                         ▼
-┌────────────────────┐  ┌─────────────────────────┐  ┌────────────────────────┐
-│  → Synthesizer     │  │  VerticalSpecialist     │  │  → TripArchitect       │
-│    (skip architect)│  │  (LLM - Expert)         │  │                        │
-│                    │  │  ─────────────────────  │  │                        │
-│  Returns static    │  │  Domain expert node     │  │                        │
-│  response with     │  │  Topics: diving, hiking │  │                        │
-│  suggested_replies │  │  skiing, cycling,       │  │                        │
-│                    │  │  boating                │  │                        │
+         ┌─────────────────────────┼──────────────────────────┬───────────────┐
+         │ GREETING/RESET          │ PLANNING                 │ PLANNING      │
+         │ (short_circuit)         │ (specialist detected)    │ (generic)     │
+         ▼                         ▼                          ▼               │
+┌────────────────────┐  ┌─────────────────────────┐  ┌────────────────────────┤
+│  → Synthesizer     │  │  VerticalSpecialist     │  │  LocalExpert           │
+│    (skip architect)│  │  (LLM - Expert)         │  │  (City Concierge)      │
+│                    │  │  ─────────────────────  │  │  ────────────────────  │
+│  Returns static    │  │  Domain expert node     │  │  • Opening hours       │
+│  response with     │  │  Topics: diving, hiking │  │  • Booking windows     │
+│  suggested_replies │  │  skiing, cycling,       │  │  • Transit passes      │
+│                    │  │  boating                │  │  • Cultural tips       │
 │                    │  │                         │  │                        │
-│                    │  │  Returns:               │  │                        │
-│                    │  │  • Constraints          │  │                        │
-│                    │  │  • Content blocks       │  │                        │
-│                    │  │  • Critique             │  │                        │
+│                    │  │  Returns:               │  │  Returns:              │
+│                    │  │  • Constraints          │  │  • Constraints         │
+│                    │  │  • Content blocks       │  │  • Recommendations     │
+│                    │  │  • Critique             │  │  • Strategy section    │
 │                    │  │  • Enhancements         │  │                        │
 └────────────────────┘  └───────────┬─────────────┘  └───────────┬────────────┘
                                     │                            │
@@ -136,13 +143,27 @@ backend/app/planner/
                                                   │
                                                   ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
+│  LogisticsNode (Data Fetcher - No LLM)                                      │
+│  ─────────────────────────────────────                                      │
+│  Fetches and sanitizes flight data                                          │
+│  1. Check for curated flights (hero destinations: Dubai, Rome, Chamonix)    │
+│  2. Fetch from Amadeus API if not curated                                   │
+│  3. Fallback to demo backup if API fails                                    │
+│  4. Sanitize carrier names (XX → Emirates)                                  │
+│  5. Apply 24h no-fly safety logic if diving constraints exist               │
+│                                                                             │
+│  Outputs to: state.tiles["flights"], state.metadata["flight_options"]       │
+└──────────────────────────────────┬──────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
 │  TripArchitect (LLM - Smart)                                                │
 │  ────────────────────────────                                               │
 │  "The Boss" - General Agent in UI                                           │
 │  • Manages TripPlan (SSoT)                                                  │
 │  • Modes: pre_core (inspiration), missing_fields, planning                  │
 │  • Calls fetch_travel_tiles tool when needed                                │
-│  • Respects constraints from Specialist                                     │
+│  • Respects constraints from Specialist/LocalExpert                         │
 │  • Extracts: destination, origin, dates from user text                      │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
@@ -159,6 +180,11 @@ backend/app/planner/
 │  • Specialist: 24h surface interval│            │
 │                                    │            │
 │  Returns: violations[], has_blocking│           │
+│                                    │            │
+│  AUTO-FIX LOOP (NEW):              │            │
+│  If blocking + retry_count < 1     │            │
+│    → Route back to Architect       │            │
+│    → Self-correct before user sees │            │
 └───────────────┬────────────────────┘            │
                 │                                 │
                 └────────────────┬────────────────┘
@@ -190,11 +216,27 @@ backend/app/planner/
 
 | Node | Type | Purpose | LLM Model | Max Tokens | Streaming |
 |------|------|---------|-----------|------------|-----------|
-| `intent_router` | LLM (Fast) | Intent classification | GPT-4o-mini | 150 | None |
-| `trip_architect` | LLM (Smart) | Core planning, SSoT management | GPT-4 | Variable | Simulated |
-| `vertical_specialist` | LLM (Expert) | Domain constraints + content | GPT-4 | Variable | Simulated |
-| `constraint_guard` | Python | Validation (NO LLM) | N/A | N/A | None |
-| `synthesizer` | LLM (Writer) | Response generation | GPT-4 | Variable | Simulated |
+| `router` (IntentRouter) | LLM (Fast) | Intent classification | GPT-4o-mini | 150 | None |
+| `architect` (TripArchitect) | LLM (Smart) | Core planning, SSoT management | gpt-4o | Variable | Simulated |
+| `specialist` (VerticalSpecialist) | LLM (Expert) | Domain constraints + content | gpt-4o | Variable | Simulated |
+| `local_expert` (LocalExpert) | LLM/Static | City logistics concierge | GPT-4o-mini* | Variable | None |
+| `logistics` (LogisticsNode) | Data Fetcher | Flight fetching + safety | N/A | N/A | None |
+| `guard` (ConstraintGuard) | Python | Validation (NO LLM) | N/A | N/A | None |
+| `synthesizer` (Synthesizer) | LLM (Writer) | Response generation | gpt-4o | Variable | True (astream_events) |
+
+*LocalExpert uses static knowledge by default; LLM mode controlled by `LOCAL_EXPERT_USE_LLM` env var.
+
+### NODE_STATUS_CONFIG (UI Progress Labels)
+
+| Node | Label | Icon | Estimated Duration |
+|------|-------|------|-------------------|
+| `router` | "Reading your message..." | brain | 300ms |
+| `architect` | "Understanding your request..." | building | 800ms |
+| `specialist` | "Consulting expert..." | star | 1000ms |
+| `local_expert` | "Consulting local expert..." | building | 800ms |
+| `logistics` | "Fetching flight options..." | plane | 2000ms |
+| `guard` | "Checking constraints..." | shield | 100ms |
+| `synthesizer` | "Writing response..." | pen | 1500ms |
 
 ### Streaming Legend
 
@@ -202,7 +244,7 @@ backend/app/planner/
 |--------|------|-------------|
 | None | `buffered:internal` | Internal node, no user-facing output |
 | Simulated | `simulate_streaming` | Token-by-token delivery with 15-35ms delays |
-| Real | `true_stream` | Real-time tokens from LLM API |
+| True | `astream_events` | Real-time tokens from LLM API via LangGraph |
 
 ---
 
@@ -216,7 +258,7 @@ LLM-based intent classification using GPT-4o-mini.
 |----------------|---------|--------|
 | `GREETING` | "Hi", "Hello", "Thanks!" (no planning content) | Static response, skip architect |
 | `RESET` | "Start over", "Reset", "Begin again" | Clear state, static response |
-| `PLANNING` | Everything else (trip-related) | Pass to Architect |
+| `PLANNING` | Everything else (trip-related) | Pass to Specialist or LocalExpert |
 
 **Critical Rules:**
 - "Hi, I want to go to Paris" → PLANNING (has content!)
@@ -234,6 +276,10 @@ SPECIALIST_KEYWORDS = {
     "boating": ["sail", "boat", "yacht", "charter", "catamaran", ...],
 }
 ```
+
+**Routing Decision:**
+- Specialist detected → `state.active_specialist = "diving"` → VerticalSpecialist
+- No specialist → `state.active_specialist = "local_expert"` → LocalExpert
 
 ### TripArchitect
 
@@ -276,6 +322,56 @@ Domain expert that runs BEFORE Architect calls tools.
 - Hiking: Altitude acclimatization, proper footwear, trek recommendations
 - Skiing: Snow conditions, guide requirements, resort suggestions
 
+### LocalExpert (NEW)
+
+The "Concierge" agent for city trips - ensures the Agent Feed is never empty.
+
+**Activation:** Default when no niche specialist (diving/hiking/skiing) is detected.
+
+**Provides:**
+- Opening hours and closed days (e.g., "Louvre closed on Tuesdays")
+- Booking lead times for popular attractions
+- Transit passes and efficiency tips (e.g., "Paris Museum Pass saves €40+")
+- Cultural considerations (dining hours, tipping, dress codes)
+
+**Static Knowledge Destinations:**
+- Dubai, Paris, Rome, London, Amsterdam, Tokyo, New York
+
+**Output Format:**
+```python
+{
+    "constraints": [
+        {"type": "opening_hours", "description": "...", "severity": "warning"},
+        {"type": "booking_window", "description": "...", "severity": "info"},
+    ],
+    "recommendations": [
+        {"title": "Paris Museum Pass", "description": "...", "logic_hook": "Saves €40+..."},
+    ]
+}
+```
+
+### LogisticsNode (NEW)
+
+Centralized flight fetching with safety logic. Runs AFTER Specialist/LocalExpert, BEFORE Architect.
+
+**Data Sources (Priority Order):**
+1. **Curated Flights**: Hero destinations (Dubai, Rome, Chamonix) with hand-picked carriers
+2. **Amadeus API**: Live flight search for non-curated destinations
+3. **Demo Backup**: Guaranteed fallback data if API fails
+
+**Safety Logic (Diving Integration):**
+- Detects diving constraints from VerticalSpecialist
+- Applies 24h no-fly surface interval calculation
+- Tags flights as safe/unsafe with `logic_hook` explanation
+
+**Carrier Sanitization:**
+- Maps test carrier codes to real airlines (XX → Emirates)
+- Uses `CARRIER_MAP` from `demo_curation.py`
+
+**Output:**
+- `state.tiles["flights"]` - Flight tiles for frontend display
+- `state.metadata["flight_options"]` - Backwards compatibility
+
 ### ConstraintGuard
 
 Pure Python deterministic validation. **NO LLM calls.**
@@ -288,6 +384,19 @@ Pure Python deterministic validation. **NO LLM calls.**
 | Temporal | Duration < 30 days | info |
 | Geographic | Diving in landlocked country | blocking |
 | Specialist | 24h surface interval | info |
+
+**Auto-Fix Loop (NEW):**
+```python
+def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
+    has_blocking = state.metadata.get("has_blocking_violations", False)
+    retry_count = state.guard_retry_count
+
+    # Allow one self-correction attempt
+    if has_blocking and retry_count < 1:
+        return "architect"  # Loop back for auto-fix
+
+    return "synthesizer"
+```
 
 **Budget Allocation:**
 ```python
@@ -312,13 +421,24 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - Image enrichment via Unsplash
 - Graceful constraint warnings
 
+**True Streaming:**
+Uses LangGraph's `astream_events` to tap into the LLM token stream:
+```python
+async for event in graph.astream_events(state, version="v2"):
+    if event.get("event") == "on_chat_model_stream":
+        node = event.get("metadata", {}).get("langgraph_node")
+        if node == "synthesizer":
+            chunk = event.get("data", {}).get("chunk")
+            yield {"type": "token", "data": chunk.content}
+```
+
 ---
 
 ## State Models
 
 ### GraphStateV2
 
-Unified state for the 6-node architecture.
+Unified state for the 7-node architecture.
 
 ```python
 class GraphStateV2(BaseModel):
@@ -332,7 +452,7 @@ class GraphStateV2(BaseModel):
     intent: Optional[Literal["general", "booking", "specialist"]]
 
     # Specialist activation
-    active_specialist: Optional[str]  # "diving", "hiking", etc.
+    active_specialist: Optional[str]  # "diving", "hiking", "local_expert", etc.
     active_agent_id: Optional[str]    # For UI display
 
     # Tile inventory
@@ -340,6 +460,9 @@ class GraphStateV2(BaseModel):
 
     # Constraint violations
     constraints_violated: List[str]
+
+    # Auto-fix loop counter
+    guard_retry_count: int = 0
 
     # UI events
     ui_events: List[str]
@@ -360,7 +483,6 @@ Single Source of Truth for the trip.
 class TripPlan(BaseModel):
     # Core fields
     destination: Optional[str]
-    destinations: List[str]      # For multi-city
     origin: Optional[str]
     start_date: Optional[str]
     end_date: Optional[str]
@@ -413,7 +535,7 @@ class ItineraryBlock(BaseModel):
     day: int
     title: str
     description: str
-    type: Literal["activity", "meal", "transport", "rest", "experience"]
+    type: Literal["activity", "meal", "transport", "rest", "experience", "buffer"]
     image_url: Optional[str]
     duration_hours: Optional[float]
     location: Optional[str]
@@ -421,6 +543,11 @@ class ItineraryBlock(BaseModel):
     skill_level: Optional[str]        # "beginner", "intermediate", "advanced"
     safety_notes: Optional[str]
     tile_id: Optional[str]            # If bookable
+    logic_hook: Optional[str]         # Pro tip for UI display
+    # Buffer/Safety block fields
+    is_buffer: bool = False
+    buffer_type: Optional[Literal["no_fly", "rest_day", "acclimatization", "arrival", "departure"]]
+    buffer_reason: Optional[str]
 ```
 
 ---
@@ -442,17 +569,33 @@ if user_message.strip().lower() in PANIC_COMMANDS:
 ### Route After Router
 
 ```python
-def route_after_router(state: GraphStateV2) -> Literal["specialist", "architect", "synthesizer"]:
+def route_after_router(state: GraphStateV2) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
     # GREETING/RESET short-circuits skip to synthesizer
     if state.metadata.get("short_circuit_response"):
         return "synthesizer"
 
     # Specialist detected → run specialist first
     if state.active_specialist:
+        if state.active_specialist == "local_expert":
+            return "local_expert"
         return "specialist"
 
-    # Default → architect
+    # Default → architect (shouldn't happen if router sets local_expert)
     return "architect"
+```
+
+### Graph Edge Flow
+
+```
+Entry: router
+
+router → specialist/local_expert/architect/synthesizer (conditional)
+specialist → logistics (always)
+local_expert → logistics (always)
+logistics → architect (always)
+architect → guard/synthesizer (conditional)
+guard → architect/synthesizer (conditional - auto-fix loop)
+synthesizer → END
 ```
 
 ### Should Run Guard
@@ -462,6 +605,20 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
     # Run guard if we have tiles or constraints to validate
     if state.tiles or state.trip_plan.constraints:
         return "guard"
+    return "synthesizer"
+```
+
+### Route After Guard (Auto-Fix Loop)
+
+```python
+def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
+    has_blocking = state.metadata.get("has_blocking_violations", False)
+    retry_count = state.guard_retry_count
+
+    # Allow one self-correction attempt before showing errors to user
+    if has_blocking and retry_count < 1:
+        return "architect"
+
     return "synthesizer"
 ```
 
@@ -482,6 +639,7 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
 - Bali: USAT Liberty Wreck, Manta Point Nusa Penida, Crystal Bay
 - Maldives: Hanifaru Bay, Maaya Thila
 - Egypt: SS Thistlegorm, Ras Mohammed
+- Dubai: Deep Dive Dubai, Jumeirah Artificial Reef, MV Dara Wreck
 
 ### Hiking
 
@@ -520,6 +678,8 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
 | Temporal | `end_date < start_date` | blocking |
 | Temporal | `duration > 30 days` | info |
 | Temporal | `duration < 1 day` | warning |
+| Seasonal | Hiking in Swiss Alps in winter | warning |
+| Seasonal | Skiing in summer months | warning |
 | Geographic | Diving in landlocked country | blocking |
 | Geographic | Beach in landlocked country | blocking |
 | Specialist | 24h surface interval (diving) | info |
@@ -594,18 +754,40 @@ Two-tier cache for destination images.
 
 ### V2 Prompts
 
+```
+backend/app/prompts/
+├── architect_system_prompt.txt    # TripArchitect - core planning instructions
+├── synthesizer.txt                # Synthesizer - response generation
+├── local_expert.txt               # LocalExpert - city logistics prompt
+├── specialists/
+│   ├── diving.txt                 # VerticalSpecialist - diving domain
+│   ├── hiking.txt                 # VerticalSpecialist - hiking domain
+│   ├── skiing.txt                 # VerticalSpecialist - skiing domain
+│   └── local_expert.txt           # Alternative local expert prompt
+├── _strategy_base.txt             # Shared strategy generation base
+├── _scope_specialist.txt          # Specialist scope boundaries
+├── _json_output.txt               # JSON output format rules
+├── _never_invent.txt              # Never invent data rule
+└── _markdown_rules.txt            # Markdown formatting rules
+```
+
+### Prompt Purpose Summary
+
 | File | Used By | Purpose |
 |------|---------|---------|
-| `architect_system_prompt.txt` | TripArchitect | Core planning instructions |
+| `architect_system_prompt.txt` | TripArchitect | Core planning instructions, SSoT management |
+| `synthesizer.txt` | Synthesizer | Response generation, voice consistency |
+| `local_expert.txt` | LocalExpert | City logistics prompt (if LLM enabled) |
 | `specialists/diving.txt` | VerticalSpecialist | Diving domain knowledge |
 | `specialists/hiking.txt` | VerticalSpecialist | Hiking domain knowledge |
 | `specialists/skiing.txt` | VerticalSpecialist | Skiing domain knowledge |
-| `synthesizer.txt` | Synthesizer | Response generation |
 
 ### Shared Includes
 
 | File | Purpose |
 |------|---------|
+| `_strategy_base.txt` | Base template for strategy section generation |
+| `_scope_specialist.txt` | Defines specialist responsibility boundaries |
 | `_json_output.txt` | JSON output format rules |
 | `_never_invent.txt` | Never invent data rule |
 | `_markdown_rules.txt` | Markdown formatting rules |
@@ -614,9 +796,9 @@ Two-tier cache for destination images.
 
 ## Streaming Architecture
 
-### Current Implementation: Simulated Streaming
+### Current Implementation: True Streaming via astream_events
 
-V2 uses simulated streaming for consistent UX. True LLM streaming planned for future iteration.
+V2 uses LangGraph's `astream_events` for real-time token streaming from the Synthesizer.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -624,12 +806,13 @@ V2 uses simulated streaming for consistent UX. True LLM streaming planned for fu
 │  ──────────────────────────────────────────────────────────────────────────│
 │                                                                              │
 │  1. User sends message                                                       │
-│  2. run_turn_streaming() runs full graph                                     │
-│  3. Result captured in result_state.last_summary                             │
-│  4. Response emitted as single "token" event                                 │
-│  5. "complete" event with full result                                        │
+│  2. run_turn_streaming() creates state, invokes graph.astream_events()      │
+│  3. Events emitted:                                                          │
+│     - on_chain_start: Node transitions → node_status events                  │
+│     - on_chat_model_stream: LLM tokens → token events (Synthesizer only)     │
+│     - on_chain_end: Capture final state                                      │
+│  4. "complete" event with full V1-compatible result                          │
 │                                                                              │
-│  Future: True LLM streaming via StreamingContext                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -637,14 +820,36 @@ V2 uses simulated streaming for consistent UX. True LLM streaming planned for fu
 
 | Event Type | Data | Description |
 |------------|------|-------------|
-| `node_status` | `{node, status}` | Node progress tracking |
-| `token` | `string` | Response text |
+| `node_status` | `{node, status, label, icon_key}` | Node progress tracking |
+| `token` | `string` | Response text (from Synthesizer LLM) |
 | `complete` | `{...result}` | Full V1-compatible result |
 | `error` | `{message}` | Error information |
+
+### Streaming Implementation
+
+```python
+async for event in graph.astream_events(state, version="v2"):
+    event_type = event.get("event")
+
+    # Track node transitions
+    if event_type == "on_chain_start":
+        node_name = event.get("metadata", {}).get("langgraph_node")
+        if node_name:
+            yield {"type": "node_status", "data": {"node": node_name, "status": "started"}}
+
+    # Stream tokens from Synthesizer's LLM
+    elif event_type == "on_chat_model_stream":
+        node = event.get("metadata", {}).get("langgraph_node")
+        if node == "synthesizer":  # Only stream from synthesizer
+            chunk = event.get("data", {}).get("chunk")
+            if chunk and chunk.content:
+                yield {"type": "token", "data": chunk.content}
+```
 
 ### Streaming Parameters
 
 ```python
+# Simulated streaming (fallback) parameters
 STREAMING_PARAMS = {
     "base_delay_ms": 15,   # Minimum delay between tokens
     "max_delay_ms": 35,    # Maximum delay between tokens
@@ -663,6 +868,7 @@ STREAMING_PARAMS = {
 | Specialist caching | ~500-1000 | ~30% of turns |
 | Template responses | ~500-1500 | ~40% of turns |
 | Panic button bypass | ~1000-2000 | ~5% of turns |
+| LocalExpert static knowledge | ~300-800 | ~50% of turns |
 
 ---
 
@@ -674,7 +880,7 @@ STREAMING_PARAMS = {
 | `planner.state` | `GraphStateV2`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
 | `planner.hashing` | `stable_hash`, `stable_hash_int`, `stable_hash_index`, `make_cache_key` |
 | `planner.telemetry` | `TraceEnvelope`, `create_envelope`, `emit_event`, `emit_node_start`, `emit_node_end` |
-| `planner.nodes_v2` | `intent_router`, `trip_architect`, `vertical_specialist`, `constraint_guard`, `synthesizer` |
+| `planner.nodes_v2` | `intent_router`, `trip_architect`, `vertical_specialist`, `local_expert`, `logistics_node`, `constraint_guard`, `synthesizer` |
 
 ---
 
@@ -710,7 +916,9 @@ tile_service/
 ├── models.py             # SearchContext, TileSearchRequest
 ├── service.py            # search_tiles() orchestrator
 ├── provider_base.py      # Provider ABC + BookableProvider ABC
-└── mock_provider.py      # Mock providers for development
+├── mock_provider.py      # Mock providers for development
+├── amadeus_provider.py   # Amadeus API integration
+└── curated_provider.py   # Curated content provider
 ```
 
 ### Settings-Aware Tile Filtering
@@ -827,5 +1035,53 @@ from app.planner import (
     "trip_inputs": {...},
     "ready_to_generate": bool,
     "errors": [...],
+    "document": {
+        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY",
+        "tiles": {...},           # Flattened ID-based map
+        "strategy_sections": [...], # Agent cards data
+    },
 }
 ```
+
+### Plan View States
+
+| State | Description |
+|-------|-------------|
+| `S0_BOOTSTRAP` | Show "Finish setup" checklist. CTA enabled when dest+dates set. |
+| `S2_STRATEGY_READY` | Tiles loaded. Show strategy/tiles. |
+| `S3_*` | Itinerary states (handled by expand-itinerary endpoint) |
+
+---
+
+## Curated Content (Hero Destinations)
+
+Demo-ready content for showcase destinations stored in `backend/app/data/demo_curation.py`.
+
+### DEMO_MANIFEST Structure
+
+```python
+DEMO_MANIFEST = {
+    "dubai": {
+        "destination_gallery": [...],     # "Vibe Trio" images
+        "curated_flights": [...],         # Pre-defined flight options
+        "specialist_content": {
+            "diving": [...],              # Diving activities with images
+            "general": [...],             # General attractions
+        },
+    },
+    "rome": {...},
+    "chamonix": {...},
+}
+```
+
+### CARRIER_MAP (Flight Sanitization)
+
+```python
+CARRIER_MAP = {
+    "XX": {"name": "Emirates", "logo": "EK"},
+    "BA": {"name": "British Airways", "logo": "BA"},
+    # ...
+}
+```
+
+Used by LogisticsNode to convert test carriers to real airline branding.

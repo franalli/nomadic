@@ -1,6 +1,6 @@
 'use client';
 
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   Calendar,
   Check,
@@ -10,7 +10,8 @@ import {
   Plane,
   Users,
 } from 'lucide-react';
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn, formatDateForDisplay } from '@/lib/utils';
@@ -43,41 +44,6 @@ interface SetupDrawerProps {
   className?: string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Animation Variants
-// ─────────────────────────────────────────────────────────────────────────────
-
-const drawerVariants = {
-  hidden: {
-    opacity: 0,
-    y: -8,
-    height: 0,
-  },
-  visible: {
-    opacity: 1,
-    y: 0,
-    height: 'auto',
-    transition: {
-      duration: 0.25,
-      ease: [0.4, 0, 0.2, 1],
-    },
-  },
-  exit: {
-    opacity: 0,
-    y: -8,
-    height: 0,
-    transition: {
-      duration: 0.2,
-      ease: [0.4, 0, 1, 1],
-    },
-  },
-};
-
-const backdropVariants = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 },
-  exit: { opacity: 0 },
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Checklist Row Component
@@ -184,6 +150,12 @@ function SetupDrawerInner({
 }: SetupDrawerProps) {
   const { isSetupDrawerOpen, closeSetupDrawer, isDesktop } = useMobileMode();
   const tripInputs = useDocumentTripInputs();
+
+  // Client-side portal mount state (must be before any early returns)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Don't render on desktop
   if (isDesktop) {
@@ -343,40 +315,47 @@ function SetupDrawerInner({
     },
   ];
 
-  return (
-    <AnimatePresence>
-      {isSetupDrawerOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            key="setup-drawer-backdrop"
-            className={cn(
-              'fixed inset-0 z-[1050]',
-              'bg-black/20 backdrop-blur-sm',
-              'lg:hidden'
-            )}
-            variants={backdropVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-            onClick={closeSetupDrawer}
-          />
+  // Debug: log state changes
+  console.log('[SetupDrawer] isSetupDrawerOpen:', isSetupDrawerOpen, 'isDesktop:', isDesktop, 'mounted:', mounted);
 
-          {/* Drawer */}
-          <motion.div
-            key="setup-drawer"
-            className={cn(
-              'fixed left-0 right-0 z-[1051]',
-              'top-[calc(48px+env(safe-area-inset-top))]', // Below header
-              'px-4 pb-4',
-              'lg:hidden',
-              className
-            )}
-            variants={drawerVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-          >
+  if (!isSetupDrawerOpen || !mounted) {
+    return null;
+  }
+
+  // Use portal to render at document.body level to avoid stacking context issues
+  const drawerContent = (
+    <>
+      {/* Backdrop */}
+      <motion.div
+        key="setup-drawer-backdrop"
+        className={cn(
+          'fixed inset-0 z-[1050]',
+          'bg-black/30 backdrop-blur-sm',
+          'lg:hidden'
+        )}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        onClick={closeSetupDrawer}
+      />
+
+      {/* Drawer */}
+      <motion.div
+        key="setup-drawer"
+        className={cn(
+          'fixed left-0 right-0 z-[1051]',
+          'top-[60px]', // Position below header
+          'px-4 pt-2 pb-4',
+          'lg:hidden',
+          className
+        )}
+        style={{ transformOrigin: 'top center' }}
+        initial={{ opacity: 0, y: -16, scale: 0.95 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -8, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+      >
             <div
               className={cn(
                 'rounded-xl overflow-hidden',
@@ -402,10 +381,11 @@ function SetupDrawerInner({
               </div>
             </div>
           </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+    </>
   );
+
+  // Render via portal to document.body to escape any stacking context issues
+  return createPortal(drawerContent, document.body);
 }
 
 export const SetupDrawer = memo(SetupDrawerInner);

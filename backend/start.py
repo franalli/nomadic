@@ -5,7 +5,7 @@ Nomadic Backend Startup Script
 Respects DEBUG mode from .env for uvicorn logging:
 - DEBUG=off   - Minimal logging (--log-level error)
 - DEBUG=demo  - Minimal logging (--log-level error)
-- DEBUG=full  - Full logging (--log-level info)
+- DEBUG=full  - Full logging (--log-level debug)
 
 Usage:
     python start.py          # Development with hot reload
@@ -28,7 +28,7 @@ def get_log_level() -> str:
     """Get uvicorn log level based on DEBUG mode."""
     debug_mode = os.getenv("DEBUG", "off").lower().strip()
     if debug_mode == "full":
-        return "info"
+        return "debug"
     # For demo and off modes, suppress uvicorn's warnings (including WatchFiles)
     return "error"
 

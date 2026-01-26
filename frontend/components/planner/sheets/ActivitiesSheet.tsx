@@ -11,11 +11,12 @@
 import { AlertCircle, Ticket } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
-import { BaseSheet } from './BaseSheet';
 import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 import type { ActivitySettings } from '@/types/document';
+
+import { BaseSheet } from './BaseSheet';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
