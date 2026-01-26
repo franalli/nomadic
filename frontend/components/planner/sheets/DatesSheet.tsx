@@ -73,7 +73,7 @@ function DatesSheetInner({
   const { toast } = useToast();
   const [range, setRange] = useState<DateRange | undefined>(undefined);
   // Track if user is starting a new selection (clicked once, waiting for second click)
-  const [isSelectingNewRange, setIsSelectingNewRange] = useState(false);
+  const [_isSelectingNewRange, setIsSelectingNewRange] = useState(false);
 
   // Initialize from props when opened
   useEffect(() => {

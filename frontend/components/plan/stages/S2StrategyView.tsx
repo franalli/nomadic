@@ -16,7 +16,6 @@ import {
   AlertCircle,
   Bike,
   Building,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   Lightbulb,
