@@ -13,7 +13,12 @@ import {
 import { useDateRangeSelector } from '@/components/layout/hooks/useDateRangeSelector';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
+import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
+import { SetupDrawer } from '@/components/layout/SetupDrawer';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
+import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
+import type { SpecialistType } from '@/lib/specialistLinkParser';
+import { BookingSection } from '@/components/plan/BookingSection';
 import { ConfirmStaySheet } from '@/components/plan/ConfirmStaySheet';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
@@ -119,7 +124,13 @@ function detectChangedFieldNames(
 
 export function NomadicLanding() {
   // Mobile mode context - for switching between planner/plan views on mobile
-  const { isDesktop, switchToPlan, switchToPlanner } = useMobileMode();
+  const {
+    isDesktop,
+    switchToPlan,
+    switchToPlanner,
+    activeTab,
+    setPlanTabHasUpdate,
+  } = useMobileMode();
 
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
@@ -573,6 +584,22 @@ export function NomadicLanding() {
     }
   }, [executedTopics]);
 
+  // Badge notification: Track when specialists update (for Plan tab badge on mobile)
+  const lastSeenTopicsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const executed = new Set(executedTopics);
+    const hasNew = [...executed].some(t => !lastSeenTopicsRef.current.has(t));
+    // Show badge when new topics executed AND user is not on Plan tab
+    if (hasNew && activeTab !== 'plan') {
+      setPlanTabHasUpdate(true);
+    }
+    // Update last seen when viewing Plan tab
+    if (activeTab === 'plan') {
+      lastSeenTopicsRef.current = executed;
+      setPlanTabHasUpdate(false);
+    }
+  }, [executedTopics, activeTab, setPlanTabHasUpdate]);
+
   const planViewState: PlanViewState = useMemo(() => {
     // =========================================================================
     // Setup → Plan transition logic
@@ -623,6 +650,19 @@ export function NomadicLanding() {
       switchToPlan();
     }
   }, [isDesktop, planViewState, switchToPlan]);
+
+  // Specialist deep link navigation - handles clicks on specialist mentions in chat
+  const { navigateToSpecialist } = useSpecialistDeepLink();
+  useEffect(() => {
+    const handleSpecialistNavigate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ specialistType: string }>;
+      navigateToSpecialist(customEvent.detail.specialistType as SpecialistType);
+    };
+    window.addEventListener('specialist-navigate', handleSpecialistNavigate);
+    return () => {
+      window.removeEventListener('specialist-navigate', handleSpecialistNavigate);
+    };
+  }, [navigateToSpecialist]);
 
   // Merge pending topics: backend + local optimistic (stable ordering via Map)
   const mergedPendingTopics = useMemo(() => {
@@ -873,6 +913,11 @@ export function NomadicLanding() {
   // Triggers plan generation via ChatPanel
   const handleBuildPlan = useCallback(() => {
     chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
+  }, []);
+
+  // Handler for minimized chat input (Plan/Book tabs) - sends message via ChatPanel
+  const handleMinimizedSendMessage = useCallback((message: string) => {
+    chatPanelRef.current?.sendMessage?.(message);
   }, []);
 
   // Stage navigation handlers for interactive stepper tabs
@@ -1141,34 +1186,65 @@ export function NomadicLanding() {
       <div className="appTopo text-foreground">
         {/* Unified Split Layout - always visible from the start */}
         <SplitLayoutView
-        plannerContent={plannerContent}
-        planViewContent={planViewContent}
-        planState={planState}
-        hasDestination={hasDestination}
-        onReset={handleStartNewSession}
-        headerContent={
-          <div className="flex w-full items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Compass className="text-primary h-5 w-5" />
-                <span className="text-foreground text-lg font-semibold">Nomadic</span>
+          plannerContent={plannerContent}
+          planViewContent={planViewContent}
+          bookContent={
+            <BookingSection
+              state={planViewState}
+              tiles={tiles}
+              generation={generation}
+              hasStrategyContent={hasStrategyContent}
+              savedTileIds={shortlist.savedTileIds}
+              onSaveTile={shortlist.toggleItem}
+              onOpenSheet={openSheet}
+            />
+          }
+          planState={planState}
+          isSetupPhase={planViewState === 'S0_BOOTSTRAP'}
+          hasDestination={hasDestination}
+          onReset={handleStartNewSession}
+          onSendMessage={handleMinimizedSendMessage}
+          isProcessing={isGenerating}
+          headerContent={
+            <div className="flex w-full items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Compass className="text-primary h-5 w-5" />
+                  <span className="text-foreground text-lg font-semibold">Nomadic</span>
+                </div>
+                <span className="text-muted-foreground hidden text-sm sm:inline">
+                  Change constraints. Keep the plan.
+                </span>
               </div>
-              <span className="text-muted-foreground hidden text-sm sm:inline">
-                Change constraints. Keep the plan.
-              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleStartNewSession}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <RotateCcw className="mr-1.5 h-4 w-4" />
+                Reset
+              </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleStartNewSession}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <RotateCcw className="mr-1.5 h-4 w-4" />
-              Reset
-            </Button>
-          </div>
-        }
-      />
+          }
+        />
+
+        {/* Setup Drawer - mobile accordion for setup checklist */}
+        <SetupDrawer
+          onSetDestination={() => openSheet('destination')}
+          onSetOrigin={() => openSheet('origin')}
+          onSetDates={() => openSheet('dates')}
+          onSetTravelers={() => openSheet('travelers')}
+          onSetBudget={() => openSheet('budget')}
+        />
+
+        {/* Floating Build Button - mobile FAB for plan generation */}
+        <FloatingBuildButton
+          visible={readyToGenerate && planViewState === 'S0_BOOTSTRAP'}
+          onClick={handleBuildPlan}
+          isGenerating={isGenerating}
+          hasEverHadPlan={hasEverHadPlan}
+        />
       </div>
 
       {/* Toast containers - rendered outside .appTopo to avoid CSS conflicts */}

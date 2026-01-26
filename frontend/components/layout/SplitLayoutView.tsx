@@ -4,7 +4,9 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Link from 'next/link';
 import React, { memo } from 'react';
 
+import { MinimizedChatInput } from '@/components/chat/MinimizedChatInput';
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
+import { MobileTabBar } from '@/components/layout/MobileTabBar';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
@@ -14,15 +16,20 @@ import type { PlanState } from '@/types/plan-envelope';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mobileSlideVariants = {
-  // Planner Mode (slide in from left)
-  plannerEnter: { x: -12, opacity: 0.96 },
-  plannerCenter: { x: 0, opacity: 1 },
-  plannerExit: { x: -12, opacity: 0.96 },
+  // Chat tab (leftmost - slide in from left)
+  chatEnter: { x: -12, opacity: 0.96 },
+  chatCenter: { x: 0, opacity: 1 },
+  chatExit: { x: -12, opacity: 0.96 },
 
-  // Plan Mode (slide in from right)
+  // Plan tab (center - slide in from right for chat, left for book)
   planEnter: { x: 12, opacity: 0.96 },
   planCenter: { x: 0, opacity: 1 },
   planExit: { x: 12, opacity: 0.96 },
+
+  // Book tab (rightmost - slide in from right)
+  bookEnter: { x: 12, opacity: 0.96 },
+  bookCenter: { x: 0, opacity: 1 },
+  bookExit: { x: 12, opacity: 0.96 },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,14 +41,22 @@ export interface SplitLayoutViewProps {
   plannerContent: React.ReactNode;
   /** Content for the right panel (Plan View: StrategyStageRenderer) */
   planViewContent: React.ReactNode;
+  /** Content for the Book tab (BookingSection) */
+  bookContent?: React.ReactNode;
   /** Current plan state for status display */
   planState?: PlanState;
+  /** Whether we're in the setup phase (S0_BOOTSTRAP) */
+  isSetupPhase?: boolean;
   /** Optional compact header content (branding) */
   headerContent?: React.ReactNode;
   /** Whether a destination has been set (controls topography background opacity) */
   hasDestination?: boolean;
   /** Callback to reset/clear the session */
   onReset?: () => void;
+  /** Callback when user sends message from minimized input */
+  onSendMessage?: (message: string) => void;
+  /** Whether message is being processed (for minimized input) */
+  isProcessing?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,13 +78,17 @@ export interface SplitLayoutViewProps {
 export const SplitLayoutView = memo(function SplitLayoutView({
   plannerContent,
   planViewContent,
+  bookContent,
   planState = 'INCOMPLETE',
+  isSetupPhase = false,
   headerContent,
   hasDestination: _hasDestination = false, // Reserved for future topo background control
   onReset,
+  onSendMessage,
+  isProcessing = false,
 }: SplitLayoutViewProps) {
   void _hasDestination; // Silence unused variable warning - reserved for future topo background control
-  const { mode, isDesktop } = useMobileMode();
+  const { activeTab, isDesktop } = useMobileMode();
 
   return (
     <div className="flex flex-col min-h-screen pt-[calc(48px+env(safe-area-inset-top))] lg:pt-0">
@@ -81,7 +100,11 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       )}
 
       {/* Mobile Mode Header - replaces header on mobile */}
-      <MobileModeHeader planState={planState} onReset={onReset} />
+      <MobileModeHeader
+        planState={planState}
+        isSetupPhase={isSetupPhase}
+        onReset={onReset}
+      />
 
       {/* Main Layout Container */}
       {/* Desktop: Grid 40/60 split | Mobile: Single column with mode switching */}
@@ -146,40 +169,80 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         )}
 
         {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Mobile Layout: Mode Switching (<lg) */}
+        {/* Mobile Layout: 3-Tab Switching (<lg) */}
         {/* ─────────────────────────────────────────────────────────────────── */}
         {!isDesktop && (
-          <AnimatePresence mode="wait">
-            {mode === 'planner' ? (
-              <motion.main
-                key="mobile-planner"
-                className="flex-1 overflow-y-auto p-4 lg:hidden bg-[var(--theme-panel)]"
-                initial="plannerEnter"
-                animate="plannerCenter"
-                exit="plannerExit"
-                variants={mobileSlideVariants}
-                transition={{ duration: 0.24, ease: 'easeOut' }}
-                aria-label="Trip planner"
-              >
-                {plannerContent}
-              </motion.main>
-            ) : (
-              <motion.main
-                key="mobile-plan"
-                id="plan-panel"
-                className="flex-1 overflow-y-auto p-4 lg:hidden rightCanvas"
-                initial="planEnter"
-                animate="planCenter"
-                exit="planExit"
-                variants={mobileSlideVariants}
-                transition={{ duration: 0.26, ease: 'easeOut' }}
-                aria-label="Your trip plan"
-                data-testid="plan-view"
-              >
-                {planViewContent}
-              </motion.main>
+          <>
+            <AnimatePresence mode="wait">
+              {activeTab === 'chat' && (
+                <motion.main
+                  key="mobile-chat"
+                  className={cn(
+                    'flex-1 overflow-y-auto p-4 lg:hidden bg-[var(--theme-panel)]',
+                    'pb-[calc(56px+env(safe-area-inset-bottom))]' // Space for tab bar
+                  )}
+                  initial="chatEnter"
+                  animate="chatCenter"
+                  exit="chatExit"
+                  variants={mobileSlideVariants}
+                  transition={{ duration: 0.24, ease: 'easeOut' }}
+                  aria-label="Trip planner"
+                >
+                  {plannerContent}
+                </motion.main>
+              )}
+
+              {activeTab === 'plan' && (
+                <motion.main
+                  key="mobile-plan"
+                  id="plan-panel"
+                  className={cn(
+                    'flex-1 overflow-y-auto p-4 lg:hidden rightCanvas',
+                    'pb-[calc(120px+env(safe-area-inset-bottom))]' // Space for tab bar + minimized input
+                  )}
+                  initial="planEnter"
+                  animate="planCenter"
+                  exit="planExit"
+                  variants={mobileSlideVariants}
+                  transition={{ duration: 0.26, ease: 'easeOut' }}
+                  aria-label="Your trip plan"
+                  data-testid="plan-view"
+                >
+                  {planViewContent}
+                </motion.main>
+              )}
+
+              {activeTab === 'book' && (
+                <motion.main
+                  key="mobile-book"
+                  className={cn(
+                    'flex-1 overflow-y-auto p-4 lg:hidden rightCanvas',
+                    'pb-[calc(120px+env(safe-area-inset-bottom))]' // Space for tab bar + minimized input
+                  )}
+                  initial="bookEnter"
+                  animate="bookCenter"
+                  exit="bookExit"
+                  variants={mobileSlideVariants}
+                  transition={{ duration: 0.26, ease: 'easeOut' }}
+                  aria-label="Booking options"
+                >
+                  {bookContent}
+                </motion.main>
+              )}
+            </AnimatePresence>
+
+            {/* Minimized Chat Input - visible on Plan/Book tabs */}
+            {onSendMessage && (
+              <MinimizedChatInput
+                onSendMessage={onSendMessage}
+                isProcessing={isProcessing}
+                placeholder="Type changes..."
+              />
             )}
-          </AnimatePresence>
+
+            {/* Mobile Tab Bar */}
+            <MobileTabBar />
+          </>
         )}
       </div>
     </div>

@@ -26,6 +26,7 @@ import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
+import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
@@ -195,17 +196,40 @@ const MARKDOWN_COMPONENTS = {
   code: ({ children }: { children?: React.ReactNode }) => (
     <code className="rounded bg-muted/50 px-1 py-0.5 font-mono text-sm">{children}</code>
   ),
-  // Links with proper styling
-  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-primary underline decoration-primary/50 underline-offset-2 hover:decoration-primary transition-colors"
-    >
-      {children}
-    </a>
-  ),
+  // Links with proper styling - includes specialist deep link support
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    // Handle specialist: protocol links (deep links to specialist cards)
+    if (href?.startsWith('specialist:')) {
+      const specialistType = href.replace('specialist:', '');
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            // Dispatch custom event for specialist navigation
+            window.dispatchEvent(
+              new CustomEvent('specialist-navigate', {
+                detail: { specialistType },
+              })
+            );
+          }}
+          className="text-amber-500 font-semibold hover:underline cursor-pointer inline"
+        >
+          {children}
+        </button>
+      );
+    }
+    // Regular external links
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary underline decoration-primary/50 underline-offset-2 hover:decoration-primary transition-colors"
+      >
+        {children}
+      </a>
+    );
+  },
   // Blockquotes for emphasis or quotes
   blockquote: ({ children }: { children?: React.ReactNode }) => (
     <blockquote className="my-2 border-l-2 border-primary/40 pl-3 italic text-muted-foreground first:mt-0 last:mb-0">
@@ -1241,7 +1265,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         {m.role === 'assistant' ? (
                           <>
                             <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                              {m.content}
+                              {preprocessSpecialistLinks(m.content)}
                             </Markdown>
                             {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
                             {originalId.startsWith('a_err_') &&

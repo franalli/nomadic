@@ -4,6 +4,7 @@ import { ArrowLeft, Check, Compass, Loader2, MoreVertical, RotateCcw } from 'luc
 import Link from 'next/link';
 import { memo, useState } from 'react';
 
+import { SetupProgressIndicator } from '@/components/layout/SetupProgressIndicator';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,8 @@ import type { PlanState } from '@/types/plan-envelope';
 interface MobileModeHeaderProps {
   /** Current plan state for status display in Plan Mode */
   planState?: PlanState;
+  /** Whether we're in the setup phase (S0_BOOTSTRAP) - shows progress indicator */
+  isSetupPhase?: boolean;
   /** Callback to reset/clear the session */
   onReset?: () => void;
   className?: string;
@@ -64,7 +67,12 @@ const STATUS_CONFIG: Record<
  * - Left: "← Edit" back button
  * - Right: Status text ("Planning…" or "Up to date")
  */
-function MobileModeHeaderInner({ planState = 'INCOMPLETE', onReset, className }: MobileModeHeaderProps) {
+function MobileModeHeaderInner({
+  planState = 'INCOMPLETE',
+  isSetupPhase = false,
+  onReset,
+  className,
+}: MobileModeHeaderProps) {
   const { mode, isDesktop, switchToPlanner } = useMobileMode();
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -75,6 +83,8 @@ function MobileModeHeaderInner({ planState = 'INCOMPLETE', onReset, className }:
 
   const isPlanMode = mode === 'plan';
   const status = STATUS_CONFIG[planState];
+  // Show progress indicator when in planner mode AND in setup phase
+  const showSetupProgress = !isPlanMode && isSetupPhase;
 
   return (
     <header
@@ -108,6 +118,9 @@ function MobileModeHeaderInner({ planState = 'INCOMPLETE', onReset, className }:
           <ArrowLeft className="h-4 w-4" />
           <span>Edit</span>
         </button>
+      ) : showSetupProgress ? (
+        // Planner Mode + Setup Phase: Progress indicator
+        <SetupProgressIndicator />
       ) : (
         // Planner Mode: Nomadic branding
         <div className="flex items-center gap-2">
