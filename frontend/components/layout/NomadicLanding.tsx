@@ -33,6 +33,7 @@ import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext'
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
 import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
+import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
@@ -161,6 +162,9 @@ export function NomadicLanding() {
   // Sheet manager - shared between header pills and chat panel
   // In S1+, header pills are the only interactive surface for trip inputs
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
+
+  // View navigation - decoupled from plan_view_state
+  const { navigateTo, hasLeftSetup } = useViewNavigation();
 
   // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
   // Kept for future receipt UI implementation
@@ -336,11 +340,13 @@ export function NomadicLanding() {
     previousTripInputsRef.current = storeTripInputs ? { ...storeTripInputs } : null;
     setUserRequestedGeneration(true); // Track explicit user request for Plan tab
     handleGeneratePlanStart();
+    // Navigate to Plan view when generation starts
+    navigateTo('plan');
     // Switch to Plan Mode on mobile when generation starts
     if (!isDesktop) {
       switchToPlan();
     }
-  }, [storeTripInputs, handleGeneratePlanStart, isDesktop, switchToPlan]);
+  }, [storeTripInputs, handleGeneratePlanStart, navigateTo, isDesktop, switchToPlan]);
 
   // Compare inputs after plan result and show receipt
   const handlePlanResultWithReceipt = useCallback(
@@ -888,33 +894,44 @@ export function NomadicLanding() {
   }, []);
 
   // Stage navigation handlers for interactive stepper tabs
-  // Setup: scroll to configuration or open sheet
+  // Setup: Navigate to Setup view (only allowed before planning)
   const handleSetupClick = useCallback(() => {
-    // If plan exists, show confirmation dialog (destructive action warning)
-    if (hasEverHadPlan) {
+    // If plan exists, Setup is locked - show confirmation dialog as fallback
+    if (hasLeftSetup) {
       setSetupConfirmDialogOpen(true);
     } else {
-      // No plan yet - scroll to left panel (chat)
-      document.getElementById('chat-panel')?.scrollIntoView({ behavior: 'smooth' });
+      // No plan yet - navigate to Setup view
+      navigateTo('setup');
+      if (!isDesktop) {
+        switchToPlanner();
+      }
     }
-  }, [hasEverHadPlan]);
+  }, [hasLeftSetup, navigateTo, isDesktop, switchToPlanner]);
 
-  // Confirmed setup action - actually navigate to setup/config
+  // Confirmed setup action - open sheet for editing (Setup is locked after planning)
   const handleConfirmedSetupNavigation = useCallback(() => {
     // Open destination sheet for editing core constraints
     openSheet('destination');
     setSetupConfirmDialogOpen(false);
   }, [openSheet]);
 
-  // Plan: scroll to plan view (right panel)
+  // Plan: Navigate to Plan view
   const handlePlanClick = useCallback(() => {
-    document.getElementById('plan-panel')?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+    if (navigateTo('plan')) {
+      if (!isDesktop) {
+        switchToPlan();
+      }
+    }
+  }, [navigateTo, isDesktop, switchToPlan]);
 
-  // Book: scroll to booking section (bottom of right panel)
+  // Book: Navigate to Book view
   const handleBookClick = useCallback(() => {
-    document.getElementById('booking-section')?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+    if (navigateTo('book')) {
+      if (!isDesktop) {
+        // Mobile: switch to book tab (handled by MobileModeContext sync)
+      }
+    }
+  }, [navigateTo, isDesktop]);
 
   // Compute minimum selections for Book stage gating (1 flight + 1 hotel)
   const hasMinimumSelections = useMemo(() => {

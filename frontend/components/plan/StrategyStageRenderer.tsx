@@ -19,11 +19,12 @@
 
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
+import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
@@ -263,39 +264,110 @@ export function StrategyStageRenderer({
   // Compute streaming state for disabling pills
   const isStreaming = generating || isCommitting || isExpandingItinerary;
 
-  // Default fallback for unknown/empty states
-  if (!state) {
-    return (
-      <div className="relative flex h-full flex-col overflow-hidden">
-        <PlanHeader
-          destinationCard={undefined}
-          currentStage="bootstrap"
-          fallbackTitle={fallbackTitle}
-          planViewState="S0_BOOTSTRAP"
-          hasDates={hasDates}
-          tripInputs={effectiveTripInputs}
-          onOpenSheet={onOpenSheet}
-          isStreaming={isStreaming}
-          onSetupClick={onSetupClick}
-          onPlanClick={onPlanClick}
-          onBookClick={onBookClick}
-          hasMinimumSelections={hasMinimumSelections}
-          isCollapsed={!isDesktop && isCollapsed}
-        />
-        <div className="flex flex-1 items-center justify-center p-4">
-          <div className="rounded-lg border border-border bg-card p-6 text-center shadow-sm">
-            <p className="text-sm text-muted-foreground">
-              Set destination and dates to begin
-            </p>
-          </div>
+  // View navigation - decoupled from plan_view_state
+  const { activeView, canViewSetup, canViewPlan, canViewBook } = useViewNavigation();
+
+  // Setup content - lightweight, can unmount
+  const setupContent = useMemo(() => {
+    if (!isDesktop) {
+      return (
+        <div className="p-6 text-center text-muted-foreground text-sm">
+          <p>Use the setup menu above to configure your trip</p>
         </div>
-      </div>
+      );
+    }
+    return <S0BootstrapView onBuildPlan={onBuildPlan} hasEverHadPlan={hasEverHadPlan} />;
+  }, [isDesktop, onBuildPlan, hasEverHadPlan]);
+
+  // Plan content - heavy, needs persistence
+  // Guard: Show placeholder if S0_BOOTSTRAP to avoid duplicating Setup
+  const planContent = useMemo(() => {
+    if (state === 'S0_BOOTSTRAP') {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center p-6">
+          <p className="text-muted-foreground">
+            Ready to plan your trip to{' '}
+            <span className="font-medium">{effectiveTripInputs?.destination || 'your destination'}</span>
+          </p>
+          <p className="text-sm text-muted-foreground/70 mt-1">
+            Click &ldquo;Build Plan&rdquo; in Setup to get started
+          </p>
+        </div>
+      );
+    }
+    return (
+      <>
+        {/* Stage content with regeneration overlay */}
+        <div className="relative">
+          {renderStageContent(
+            state,
+            viewModel,
+            destinationCard,
+            canGeneratePlan,
+            onRefineAssumptions,
+            onExpandToItinerary,
+            onBuildPlan,
+            hasEverHadPlan,
+            effectiveTiles,
+            isDesktop,
+            effectiveTripInputs
+          )}
+
+          {/* Regeneration overlay - shows when constraints changed and plan is refreshing */}
+          {isRegenerating && (
+            <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
+              <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
+                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                <p className="text-sm font-medium text-muted-foreground">Updating plan...</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* BookingSection tiles preview in Plan view */}
+        <BookingSection
+          state={state}
+          tiles={effectiveTiles}
+          generation={generation}
+          hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+          savedTileIds={savedTileIds}
+          onSaveTile={onSaveTile}
+        />
+      </>
     );
-  }
+  }, [
+    state,
+    viewModel,
+    destinationCard,
+    canGeneratePlan,
+    onRefineAssumptions,
+    onExpandToItinerary,
+    onBuildPlan,
+    hasEverHadPlan,
+    effectiveTiles,
+    isDesktop,
+    effectiveTripInputs,
+    isRegenerating,
+    generation,
+    savedTileIds,
+    onSaveTile,
+  ]);
+
+  // Book content - full booking section view
+  const bookContent = useMemo(() => (
+    <BookingSection
+      state={state}
+      tiles={effectiveTiles}
+      generation={generation}
+      hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+      savedTileIds={savedTileIds}
+      onSaveTile={onSaveTile}
+    />
+  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile]);
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      {/* Renderer owns header - single stepper + status pill + trip pills (S1+) */}
+      {/* Header - always visible, controls view navigation */}
       <PlanHeader
         destinationCard={destinationCard}
         currentStage={currentStage}
@@ -313,64 +385,64 @@ export function StrategyStageRenderer({
         onBookClick={onBookClick}
         hasMinimumSelections={hasMinimumSelections}
         isCollapsed={!isDesktop && isCollapsed}
+        activeView={activeView}
+        canViewSetup={canViewSetup}
+        canViewPlan={canViewPlan}
+        canViewBook={canViewBook}
       />
 
-      {/* Stage content - scrollable with bottom padding for footer */}
-      <div
-        ref={scrollContainerRef}
-        className={cn(
-          'flex-1 overflow-y-auto',
-          nextAction && 'pb-20' // Reserve space for sticky footer
-        )}
-      >
-        {/* Content scrim - preserves topo visibility while ensuring content readability */}
-        <div className="relative">
-          {/* Scrim layer - stronger in light mode, subtle in dark */}
-          <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
-          {/* Content layer - above scrim */}
-          <div className="relative z-[2]">
-            {/* Stage content with regeneration overlay */}
-            <div className="relative">
-              {renderStageContent(
-                state,
-                viewModel,
-                destinationCard,
-                canGeneratePlan,
-                onRefineAssumptions,
-                onExpandToItinerary,
-                onBuildPlan,
-                hasEverHadPlan,
-                effectiveTiles,
-                isDesktop,
-                effectiveTripInputs
-              )}
-
-              {/* Regeneration overlay - shows when constraints changed and plan is refreshing */}
-              {isRegenerating && (
-                <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
-                  <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
-                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                    <p className="text-sm font-medium text-muted-foreground">Updating plan...</p>
-                  </div>
-                </div>
-              )}
+      {/* View container - relative positioning for absolute views */}
+      <div className="flex-1 relative overflow-hidden">
+        {/* VIEW: SETUP (Absolute Overlay, unmounts) */}
+        {activeView === 'setup' && (
+          <div className="absolute inset-0 z-20 animate-in fade-in slide-in-from-left-4 duration-200">
+            <div className="h-full overflow-y-auto custom-scrollbar p-4">
+              {setupContent}
             </div>
+          </div>
+        )}
 
-            {/* BookingSection rendered conditionally (not "always") */}
-            <BookingSection
-              state={state}
-              tiles={effectiveTiles}
-              generation={generation}
-              hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
-              savedTileIds={savedTileIds}
-              onSaveTile={onSaveTile}
-            />
+        {/* VIEW: PLAN (Persistent Layer - ALWAYS MOUNTED) */}
+        {/* Uses opacity/pointer-events to preserve Scroll Position & Accordion State */}
+        <div
+          className={cn(
+            'absolute inset-0 flex flex-col transition-all duration-300',
+            activeView === 'plan'
+              ? 'opacity-100 z-10 translate-x-0'
+              : 'opacity-0 pointer-events-none z-0 -translate-x-4'
+          )}
+          aria-hidden={activeView !== 'plan'}
+        >
+          {/* ISOLATED SCROLL CONTEXT - scrollbar lives HERE, not parent */}
+          <div
+            ref={scrollContainerRef}
+            className={cn(
+              'flex-1 overflow-y-auto custom-scrollbar',
+              nextAction && activeView === 'plan' && 'pb-20' // Reserve space for sticky footer
+            )}
+          >
+            {/* Content scrim - preserves topo visibility while ensuring content readability */}
+            <div className="relative">
+              {/* Scrim layer - stronger in light mode, subtle in dark */}
+              <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+              {/* Content layer - above scrim */}
+              <div className="relative z-[2]">{planContent}</div>
+            </div>
           </div>
         </div>
+
+        {/* VIEW: BOOK (Absolute Overlay, unmounts) */}
+        {activeView === 'book' && (
+          <div className="absolute inset-0 z-20 animate-in fade-in slide-in-from-right-4 duration-200">
+            <div className="h-full overflow-y-auto custom-scrollbar">
+              {bookContent}
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Sticky footer - inside container, not global */}
-      {nextAction && (
+      {/* Sticky footer - only shown in Plan view, hidden on mobile (MobilePlanFooter handles mobile CTA) */}
+      {nextAction && activeView === 'plan' && (
         <NextStepBar
           state={state}
           generation={generation}
@@ -379,6 +451,7 @@ export function StrategyStageRenderer({
           onViewBookingOptions={onViewBookingOptions}
           lastError={lastError}
           onRetry={onRetry}
+          className="hidden lg:block"
         />
       )}
     </div>

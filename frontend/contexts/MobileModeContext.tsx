@@ -10,6 +10,9 @@ import React, {
   useState,
 } from 'react';
 
+import { useDocumentStore } from '@/state/documentStore';
+import type { ViewName } from '@/hooks/useViewNavigation';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,6 +62,18 @@ const MobileModeContext = createContext<MobileModeContextValue | null>(null);
 const DESKTOP_BREAKPOINT = 1024; // lg breakpoint in Tailwind
 const MEDIA_QUERY = `(min-width: ${DESKTOP_BREAKPOINT}px)`;
 
+// Mapping between mobile tabs and document views (for bi-directional sync)
+const TAB_TO_VIEW: Record<MobileTab, ViewName> = {
+  chat: 'setup',
+  plan: 'plan',
+  book: 'book',
+};
+const VIEW_TO_TAB: Record<ViewName, MobileTab> = {
+  setup: 'chat',
+  plan: 'plan',
+  book: 'book',
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +102,10 @@ export function MobileModeProvider({
   // Setup Drawer State
   const [isSetupDrawerOpen, setIsSetupDrawerOpen] = useState(false);
 
+  // Document store - for bi-directional view sync
+  const documentActiveView = useDocumentStore((s) => s.activeView);
+  const setDocumentActiveView = useDocumentStore((s) => s.setActiveView);
+
   // Store Plan View scroll position for restoration
   const planScrollPositionRef = useRef(0);
 
@@ -108,6 +127,17 @@ export function MobileModeProvider({
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
+
+  // Bi-directional sync: documentStore.activeView → mobile activeTab
+  useEffect(() => {
+    const targetTab = VIEW_TO_TAB[documentActiveView];
+    // SAFETY GUARD: Only update if strictly different to prevent feedback loop
+    if (targetTab && targetTab !== activeTab) {
+      setActiveTabState(targetTab);
+      // Also sync legacy mode
+      setMode(targetTab === 'chat' ? 'planner' : 'plan');
+    }
+  }, [documentActiveView, activeTab]);
 
   // Switch to Plan Mode (legacy - also sets activeTab)
   const switchToPlan = useCallback(() => {
@@ -135,7 +165,7 @@ export function MobileModeProvider({
     setActiveTabState('chat');
   }, []);
 
-  // Set active tab (3-tab system) - also syncs legacy mode
+  // Set active tab (3-tab system) - also syncs legacy mode and document store
   const setActiveTab = useCallback((tab: MobileTab) => {
     // Capture scroll position when leaving plan/book
     if (activeTab === 'plan' || activeTab === 'book') {
@@ -146,6 +176,9 @@ export function MobileModeProvider({
     }
 
     setActiveTabState(tab);
+
+    // Sync to document store (bi-directional sync)
+    setDocumentActiveView(TAB_TO_VIEW[tab]);
 
     // Sync legacy mode: chat -> planner, plan/book -> plan
     setMode(tab === 'chat' ? 'planner' : 'plan');
@@ -159,7 +192,7 @@ export function MobileModeProvider({
         }
       });
     }
-  }, [activeTab]);
+  }, [activeTab, setDocumentActiveView]);
 
   // Setup Drawer Controls
   const toggleSetupDrawer = useCallback(() => {

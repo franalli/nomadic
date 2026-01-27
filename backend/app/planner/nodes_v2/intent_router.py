@@ -146,6 +146,9 @@ EXACT_MATCH_GREETINGS = frozenset(
 # Generate plan trigger from frontend "Build plan" button
 GENERATE_PLAN_TRIGGER = "GENERATE_PLAN_NOW"
 
+# Speculative execution trigger from frontend (preload specialists in Setup)
+SPECULATE_TRIGGER = "SPECULATE_SPECIALISTS"
+
 
 def _check_exact_match_greeting(text: str) -> Optional[IntentClassification]:
     """
@@ -183,6 +186,31 @@ def _check_generate_plan_trigger(text: str) -> Optional[IntentClassification]:
             intent="PLANNING",
             confidence=1.0,
             reasoning="Generate plan trigger - execute plan with tiles",
+            specialist_hints=[],
+        )
+
+    return None
+
+
+def _check_speculate_trigger(text: str) -> Optional[IntentClassification]:
+    """
+    Check if input is the speculative execution trigger from frontend.
+
+    The frontend sends "SPECULATE_SPECIALISTS" when user pauses typing a destination
+    and has specialist activity categories selected. This pre-loads specialist content
+    (diving feasibility, constraints, etc.) during Setup before they click "Build Plan".
+
+    Returns IntentClassification with PLANNING intent - the speculative handling
+    happens in the router by setting state.intent = "speculative".
+    """
+    normalized = text.strip().upper()
+
+    if normalized == SPECULATE_TRIGGER:
+        logger.debug("Speculate trigger detected - preloading specialists")
+        return IntentClassification(
+            intent="PLANNING",
+            confidence=1.0,
+            reasoning="Speculative trigger - preload specialist content",
             specialist_hints=[],
         )
 
@@ -518,6 +546,17 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
     if classification is None:
         classification = _check_generate_plan_trigger(user_text)
 
+    # Check for speculative execution trigger from frontend (preload specialists in Setup)
+    is_speculate_trigger = False
+    if classification is None:
+        speculate_classification = _check_speculate_trigger(user_text)
+        if speculate_classification is not None:
+            classification = speculate_classification
+            is_speculate_trigger = True
+            from app.debug_utils import log
+
+            log("ROUTER", f"🔮 Speculative Trigger Detected for {state.trip_plan.destination}")
+
     # Fall back to LLM classification if no exact match
     if classification is None:
         from app.debug_utils import log, log_tokens
@@ -573,11 +612,18 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
     # PLANNING intent - pass to architect
     # Check if this is the generate plan trigger (user clicked "Build plan")
     # Use "booking" intent to trigger tile fetching in the Architect
+    # Use "speculative" intent to preload specialists without tiles (Setup phase)
     is_generate_trigger = user_text.strip().upper() == GENERATE_PLAN_TRIGGER
-    state.intent = "booking" if is_generate_trigger else "general"
+    if is_speculate_trigger:
+        state.intent = "speculative"
+    elif is_generate_trigger:
+        state.intent = "booking"
+    else:
+        state.intent = "general"
     state.metadata["short_circuit_response"] = False
     state.metadata["router_output"] = classification.model_dump()
     state.metadata["is_generate_trigger"] = is_generate_trigger
+    state.metadata["is_speculative"] = is_speculate_trigger
 
     # Set specialist if detected from text OR from UI activity settings
     # Combine detected specialists from LLM and activity settings

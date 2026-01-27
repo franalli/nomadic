@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
@@ -282,7 +283,8 @@ export const TileDetailsModal = memo(function TileDetailsModal({
 
   const isFlight = isFlightType(tile.type || '');
 
-  return (
+  // Use portal to render at document root, escaping stacking contexts
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
@@ -462,7 +464,8 @@ export const TileDetailsModal = memo(function TileDetailsModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 });
 

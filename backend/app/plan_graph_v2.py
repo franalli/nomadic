@@ -350,7 +350,7 @@ def route_after_router(
 
 def route_after_specialist(
     state: GraphStateV2,
-) -> Literal["specialist", "local_expert", "logistics", "architect"]:
+) -> Literal["specialist", "local_expert", "logistics", "architect", "synthesizer"]:
     """
     Route after specialist completes - check for more pending specialists.
 
@@ -362,6 +362,7 @@ def route_after_specialist(
 
     Flow:
     - If more pending specialists: route to next specialist
+    - If speculative intent: Specialist → Synthesizer (preload content, no tiles)
     - If booking intent: Specialist → Logistics → Architect (fetch tiles)
     - If general intent: Specialist → Architect (extract fields, no tiles)
     """
@@ -381,6 +382,13 @@ def route_after_specialist(
         return "specialist"
 
     # No more pending specialists
+
+    # SPECULATIVE: Skip logistics (fetching prices) and architect (planning)
+    # Go straight to synthesizer to emit the preview cards.
+    if state.intent == "speculative":
+        _debug_v2("Specialist done, routing to synthesizer (speculative intent - preload only)")
+        return "synthesizer"
+
     # Check if this is a "booking" intent (Build Plan button) or just general chat
     is_booking_intent = state.intent == "booking"
     is_generate_trigger = state.metadata.get("is_generate_trigger", False)
@@ -476,8 +484,9 @@ def create_optimized_graph() -> StateGraph:
         },
     )
 
-    # Specialist → Next specialist, Logistics, or Architect (conditional)
+    # Specialist → Next specialist, Logistics, Architect, or Synthesizer (conditional)
     # Multi-specialist support: loop through pending_specialists queue
+    # Speculative intent: go to synthesizer (preload content, no tiles)
     # Booking intent: go to logistics (fetch tiles), General intent: go to architect (extract only)
     workflow.add_conditional_edges(
         "specialist",
@@ -487,10 +496,11 @@ def create_optimized_graph() -> StateGraph:
             "local_expert": "local_expert",
             "logistics": "logistics",
             "architect": "architect",  # General intent - extract fields, skip tiles
+            "synthesizer": "synthesizer",  # Speculative intent - preload only
         },
     )
 
-    # LocalExpert → Next specialist, Logistics, or Architect (conditional)
+    # LocalExpert → Next specialist, Logistics, Architect, or Synthesizer (conditional)
     # Same multi-specialist routing logic
     workflow.add_conditional_edges(
         "local_expert",
@@ -500,6 +510,7 @@ def create_optimized_graph() -> StateGraph:
             "local_expert": "local_expert",
             "logistics": "logistics",
             "architect": "architect",  # General intent - extract fields, skip tiles
+            "synthesizer": "synthesizer",  # Speculative intent - preload only
         },
     )
 

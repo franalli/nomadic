@@ -476,6 +476,25 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
         ),
     )
 
+    # SPECULATIVE MODE: Silent Execution
+    # Don't generate a chat message - just emit UI event for frontend to pick up
+    # This prevents random chat bubbles appearing while user is typing in Setup
+    if state.intent == "speculative":
+        from app.debug_utils import log
+
+        log("SYNTH", "🔮 Speculative mode - silent execution, no chat message")
+        state.last_summary = ""  # No chat bubble
+        state.ui_events.append("SPECIALIST_PREVIEW_READY")
+        # Keep suggested_replies unchanged
+
+        _debug_v2_node_end(
+            "synthesizer",
+            "📝",
+            speculative=True,
+            message_len=0,
+        )
+        return state
+
     synth = Synthesizer()
 
     # Start image fetch in parallel with LLM synthesis (latency masking)

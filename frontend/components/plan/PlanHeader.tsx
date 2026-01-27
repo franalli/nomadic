@@ -15,7 +15,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 import React from 'react';
 
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
@@ -63,6 +63,14 @@ export interface PlanHeaderProps {
   hasMinimumSelections?: boolean;
   /** Whether header is collapsed (mobile scroll state) */
   isCollapsed?: boolean;
+  /** Currently active view (for view-based navigation) */
+  activeView?: 'setup' | 'plan' | 'book';
+  /** Whether Setup view is accessible (not locked after planning starts) */
+  canViewSetup?: boolean;
+  /** Whether Plan view is unlocked (destination exists) */
+  canViewPlan?: boolean;
+  /** Whether Book view is unlocked (tiles exist) */
+  canViewBook?: boolean;
 }
 
 /** Map step index to step key for callbacks */
@@ -76,6 +84,11 @@ function StageStepper({
   isGenerating,
   variant = 'default',
   onStepClick,
+  // View-based navigation props (optional)
+  activeView,
+  canViewSetup,
+  canViewPlan,
+  canViewBook,
 }: {
   currentStepIndex: number;
   completedSteps: boolean[];
@@ -84,45 +97,100 @@ function StageStepper({
   variant?: 'default' | 'hero';
   /** Callback when a step is clicked (only for completed or active steps) */
   onStepClick?: (step: StepKey) => void;
+  /** Currently active view (for view-based navigation) */
+  activeView?: 'setup' | 'plan' | 'book';
+  /** Whether Setup view is accessible */
+  canViewSetup?: boolean;
+  /** Whether Plan view is unlocked */
+  canViewPlan?: boolean;
+  /** Whether Book view is unlocked */
+  canViewBook?: boolean;
 }) {
+  // Determine if we're in view-based navigation mode
+  const useViewMode = activeView !== undefined;
+
+  // DEBUG: Trace stepper unlock state
+  console.log('[StageStepper] Props:', { activeView, canViewSetup, canViewPlan, canViewBook, useViewMode });
+
+  // View-based unlock logic
+  const canNavigate = (stepKey: StepKey): boolean => {
+    if (!useViewMode) return true; // Fall back to legacy logic
+    if (stepKey === 'setup') return canViewSetup ?? true;
+    if (stepKey === 'plan') return canViewPlan ?? false;
+    if (stepKey === 'book') return canViewBook ?? false;
+    return false;
+  };
+
+  // Get unlock message for tooltip
+  const getUnlockMessage = (stepKey: StepKey): string | undefined => {
+    if (!useViewMode || canNavigate(stepKey)) return undefined;
+    if (stepKey === 'setup') return 'Cannot go back to Setup after planning';
+    if (stepKey === 'plan') return 'Set a destination to view your plan';
+    if (stepKey === 'book') return 'Build a plan to see booking options';
+    return undefined;
+  };
+
   return (
     <div className="flex items-center gap-4">
       {STATUS_COPY.steps.map((label, idx) => {
-        const isActive = idx === currentStepIndex;
-        const isCompleted = completedSteps[idx] && !isActive;
-        const isLocked = idx > currentStepIndex && !completedSteps[idx];
-        const isCurrentGenerating = isActive && isGenerating;
-        const isClickable = !isLocked && onStepClick;
         const stepKey = STEP_KEYS[idx];
+
+        // View-based mode: use activeView for highlighting
+        const isActiveView = useViewMode && stepKey === activeView;
+        // Legacy mode: use currentStepIndex
+        const isActiveLegacy = !useViewMode && idx === currentStepIndex;
+        const isActive = isActiveView || isActiveLegacy;
+
+        // View-based mode: Setup becomes "completed" once locked (user progressed past it)
+        // This is the "Wizard Pattern" - Setup is a one-time entry point
+        const isSetupCompletedView = useViewMode && stepKey === 'setup' && !canNavigate('setup');
+        // View-based mode: use canNavigate for lock state (except Setup which is "completed")
+        const isLockedView = useViewMode && !canNavigate(stepKey) && stepKey !== 'setup';
+        // Legacy mode: use completedSteps
+        const isLockedLegacy = !useViewMode && idx > currentStepIndex && !completedSteps[idx];
+        const isLocked = isLockedView || isLockedLegacy;
+
+        // Completed state
+        const isCompletedLegacy = !useViewMode && completedSteps[idx] && !isActive;
+        const isCompleted = isSetupCompletedView || isCompletedLegacy;
+
+        const isCurrentGenerating = isActive && isGenerating;
+        const isClickable = !isLocked && !isCompleted && onStepClick;
+        const unlockMessage = getUnlockMessage(stepKey);
 
         return (
           <button
             key={label}
             type="button"
             onClick={() => isClickable && onStepClick?.(stepKey)}
-            disabled={isLocked || !onStepClick}
+            disabled={isLocked || isCompleted || !onStepClick}
+            title={unlockMessage}
             className={cn(
               'flex items-center gap-1.5 text-xs transition-colors',
               // Color semantics: Amber=active, Green=completed, Gray=locked
               // Variant-aware: hero uses light text, default uses foreground
               isActive && (variant === 'hero' ? 'text-white font-medium' : 'text-foreground font-medium'),
-              isCompleted && 'text-emerald-500 dark:text-emerald-400',
-              isLocked && 'text-muted-foreground/70',
+              isCompleted && 'text-emerald-500 dark:text-emerald-400 cursor-default',
+              isLocked && 'text-muted-foreground/50 cursor-not-allowed',
+              !isActive && !isCompleted && !isLocked && 'text-muted-foreground',
               // Clickable styles
-              isClickable && !isActive && 'cursor-pointer hover:opacity-80',
-              isClickable && isCompleted && 'hover:text-emerald-400',
-              !isClickable && 'cursor-default'
+              isClickable && !isActive && 'cursor-pointer hover:text-foreground',
+              !isClickable && !isLocked && !isCompleted && 'cursor-default'
             )}
           >
-            {/* Progress dot */}
-            <div
-              className={cn(
-                'h-1.5 w-1.5 rounded-full transition-colors',
-                isActive && 'bg-amber-500 ring-2 ring-amber-500/30',
-                isCompleted && 'bg-emerald-500',
-                isLocked && 'bg-muted-foreground/30'
-              )}
-            />
+            {/* Progress indicator: Checkmark for completed, dot for others */}
+            {isCompleted ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <div
+                className={cn(
+                  'h-1.5 w-1.5 rounded-full transition-colors',
+                  isActive && 'bg-amber-500 ring-2 ring-amber-500/30',
+                  isLocked && 'bg-muted-foreground/30',
+                  !isActive && !isLocked && 'bg-muted-foreground/50'
+                )}
+              />
+            )}
             <span>{label}</span>
             {isCurrentGenerating && (
               <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
@@ -151,12 +219,18 @@ export function PlanHeader({
   onBookClick,
   hasMinimumSelections = false,
   isCollapsed = false,
+  activeView,
+  canViewSetup = true,
+  canViewPlan = false,
+  canViewBook = false,
 }: PlanHeaderProps) {
   // FIX: Header needs to update immediately when dates change in store
   const tripInputs = useTripInputsWithFallback(propTripInputs);
 
   // currentStage kept for backwards compatibility but planViewState is preferred
   void _currentStage;
+  // hasMinimumSelections reserved for future Book view gating
+  void hasMinimumSelections;
   // Determine variant based on whether we have a destination
   const title = destinationCard?.title || fallbackTitle || '';
   const hasDestination = Boolean(title);
@@ -173,14 +247,12 @@ export function PlanHeader({
           onPlanClick?.();
           break;
         case 'book':
-          // Only allow book click if minimum selections are met
-          if (hasMinimumSelections) {
-            onBookClick?.();
-          }
+          // Navigation to Book view - canViewBook already gates this in StageStepper
+          onBookClick?.();
           break;
       }
     },
-    [onSetupClick, onPlanClick, onBookClick, hasMinimumSelections]
+    [onSetupClick, onPlanClick, onBookClick]
   );
 
   // Use statusCopyMap for accurate step tracking
@@ -241,6 +313,10 @@ export function PlanHeader({
             isGenerating={isGenerating}
             variant="default"
             onStepClick={handleStepClick}
+            activeView={activeView}
+            canViewSetup={canViewSetup}
+            canViewPlan={canViewPlan}
+            canViewBook={canViewBook}
           />
           {/* In S0: show CTA chip (desktop only - mobile uses SetupDrawer). In S1+: show pills if available */}
           {planViewState === 'S0_BOOTSTRAP' ? (
@@ -336,6 +412,10 @@ export function PlanHeader({
               isGenerating={isGenerating}
               variant="default"
               onStepClick={handleStepClick}
+              activeView={activeView}
+              canViewSetup={canViewSetup}
+              canViewPlan={canViewPlan}
+              canViewBook={canViewBook}
             />
           )}
 

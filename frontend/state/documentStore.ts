@@ -20,6 +20,7 @@ import type {
   TransportSettings,
   UpdatedBy,
 } from '@/types/document';
+import type { StrategySection } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Settings
@@ -140,6 +141,10 @@ type DocumentState = {
   isCommitting: boolean;
   error: string | null;
 
+  // View navigation (decoupled from plan_view_state)
+  activeView: 'setup' | 'plan' | 'book';
+  setActiveView: (view: 'setup' | 'plan' | 'book') => void;
+
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields: Set<LLMUpdatableField>;
 
@@ -181,6 +186,12 @@ type DocumentState = {
   // Clear sparkle for a field when user interacts with it
   acknowledgeLLMUpdate: (field: LLMUpdatableField) => void;
 
+  // Speculative execution actions (preload specialist content during Setup)
+  /** Merge specialist sections from speculative execution (upsert by specialist_type) */
+  mergeSpeculativeContent: (sections: StrategySection[]) => void;
+  /** Clear all speculative content (when destination changes) */
+  clearSpeculativeContent: () => void;
+
   // Streaming robustness actions
   /** Start a new generation run - returns AbortController for the caller */
   startGeneration: (runId: string) => AbortController;
@@ -206,6 +217,8 @@ const initialState = {
   // Streaming robustness
   currentRunId: null as string | null,
   abortController: null as AbortController | null,
+  // View navigation
+  activeView: 'setup' as const,
 };
 
 /**
@@ -580,6 +593,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         throw new Error(`${res.status}`);
       }
       const response: PlanDocumentResponse = await res.json();
+      // DEBUG: Log tiles from fetchDocument
+      console.log('[documentStore.fetchDocument] Response tiles:', {
+        tilesCount: Object.keys(response.document.tiles ?? {}).length,
+        tilesKeys: Object.keys(response.document.tiles ?? {}),
+      });
       set({
         version: response.version,
         updatedBy: response.updated_by,
@@ -612,11 +630,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         throw new Error(`${res.status}`);
       }
       const response: PlanDocumentResponse = await res.json();
+      const { document: currentDoc } = get();
+
+      // MERGE: Preserve frontend-only fields not stored in DB
+      // Backend PATCH only updates trip_inputs, branches, selections
+      // Frontend-only: plan_view_state, strategy_sections, tiles, generation, etc.
+      const mergedDocument = {
+        ...currentDoc,        // Keep existing frontend state
+        ...response.document, // Apply PATCH updates (trip_inputs, branches, etc.)
+        // Explicitly preserve fields that SSE sets but DB doesn't store:
+        plan_view_state: currentDoc?.plan_view_state ?? response.document.plan_view_state,
+        strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
+        executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
+        tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
+          ? currentDoc.tiles
+          : response.document.tiles,
+        generation: currentDoc?.generation,
+        open_decisions: currentDoc?.open_decisions ?? response.document.open_decisions,
+      };
+
       set({
         version: response.version,
         updatedBy: response.updated_by,
         updatedAt: response.updated_at,
-        document: response.document,
+        document: mergedDocument,
         isLoading: false,
       });
     } catch (err) {
@@ -693,12 +730,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc, llmUpdatedFields } = get();
     const primaryBranch = response.document.branches.find((b) => b.is_primary);
 
-    // DEBUG: Log strategy sections when setting document
+    // DEBUG: Log document state when setting
     console.log('[documentStore] setFromPlanResponse:', {
       strategy_sections_count: response.document.strategy_sections?.length ?? 0,
       strategy_sections: response.document.strategy_sections,
       plan_view_state: response.document.plan_view_state,
       executed_strategy_topics: response.document.executed_strategy_topics,
+      tiles_count: Object.keys(response.document.tiles ?? {}).length,
+      tiles_keys: Object.keys(response.document.tiles ?? {}),
     });
 
     // If update is from planner, detect which fields changed
@@ -738,6 +777,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
+    // DEBUG: Log what's in the envelope
+    console.log('[documentStore.mergeEnvelope] Received envelope:', {
+      hasTiles: envelope.tiles !== undefined,
+      tilesKeys: envelope.tiles ? Object.keys(envelope.tiles) : [],
+      tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
+      plan_view_state: envelope.plan_view_state,
+      envelopeKeys: Object.keys(envelope),
+    });
+
     // Merge envelope fields into current document
     // Only update fields that are present in the envelope
     const updatedDoc: PlanDocumentData = {
@@ -756,6 +804,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Tiles (if included in envelope)
       ...(envelope.tiles !== undefined && { tiles: envelope.tiles }),
     };
+
+    // DEBUG: Log what ended up in document.tiles after merge
+    console.log('[documentStore.mergeEnvelope] After merge - document.tiles:', {
+      tilesKeys: Object.keys(updatedDoc.tiles ?? {}),
+      tilesCount: Object.keys(updatedDoc.tiles ?? {}).length,
+    });
 
     set({
       document: updatedDoc,
@@ -785,6 +839,50 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       newSet.delete(field);
       set({ llmUpdatedFields: newSet });
     }
+  },
+
+  // Speculative execution actions (preload specialist content during Setup)
+  mergeSpeculativeContent: (newSections: StrategySection[]) => {
+    const { document } = get();
+    // Only allow merging in Bootstrap mode (Setup phase)
+    if (!document || document.plan_view_state !== 'S0_BOOTSTRAP') return;
+
+    const existing = document.strategy_sections ?? [];
+
+    // UPSERT LOGIC: Map by specialist_type to replace old cards
+    // e.g. "Diving (Bali)" replaced by "Diving (Maldives)"
+    const sectionMap = new Map(existing.map((s) => [s.specialist_type, s]));
+
+    newSections.forEach((s) => {
+      // Only merge specialists, ignore general/logistics
+      if (s.specialist_type !== 'general') {
+        sectionMap.set(s.specialist_type, s);
+      }
+    });
+
+    set({
+      document: {
+        ...document,
+        strategy_sections: Array.from(sectionMap.values()),
+      },
+    });
+  },
+
+  clearSpeculativeContent: () => {
+    const { document } = get();
+    if (!document || document.plan_view_state !== 'S0_BOOTSTRAP') return;
+
+    // Keep 'general' (if any), remove all specialists
+    const filtered = (document.strategy_sections ?? []).filter(
+      (s) => s.specialist_type === 'general'
+    );
+
+    set({
+      document: {
+        ...document,
+        strategy_sections: filtered,
+      },
+    });
   },
 
   // Streaming robustness actions
@@ -820,13 +918,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return get().currentRunId === runId;
   },
 
+  // View navigation action
+  setActiveView: (view: 'setup' | 'plan' | 'book') => {
+    set({ activeView: view });
+  },
+
   reset: () => {
     // Abort any in-flight generation on reset
     const { abortController } = get();
     if (abortController) {
       abortController.abort();
     }
-    set({ ...initialState, llmUpdatedFields: new Set() });
+    set({ ...initialState, llmUpdatedFields: new Set(), activeView: 'setup' });
   },
 }));
 
@@ -864,3 +967,15 @@ export const useSelectedBranchId = () =>
  */
 export const useLLMUpdatedFields = () =>
   useDocumentStore((state) => state.llmUpdatedFields);
+
+/**
+ * Subscribe to active view only. Used for view navigation.
+ */
+export const useActiveView = () =>
+  useDocumentStore((state) => state.activeView);
+
+/**
+ * Get the setActiveView action. Used for view navigation.
+ */
+export const useSetActiveView = () =>
+  useDocumentStore((state) => state.setActiveView);

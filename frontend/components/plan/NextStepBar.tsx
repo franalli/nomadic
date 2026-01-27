@@ -68,7 +68,7 @@ export function NextStepBar({
     return (
       <div
         className={cn(
-          'sticky bottom-0 left-0 right-0 border-t border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
+          'sticky bottom-0 rounded-lg border border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
           className
         )}
       >
@@ -87,7 +87,7 @@ export function NextStepBar({
     return (
       <div
         className={cn(
-          'sticky bottom-0 left-0 right-0 border-t border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
+          'sticky bottom-0 rounded-lg border border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
           className
         )}
       >
@@ -145,7 +145,7 @@ export function NextStepBar({
   return (
     <div
       className={cn(
-        'sticky bottom-0 left-0 right-0 border-t border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
+        'sticky bottom-0 rounded-lg border border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
         className
       )}
     >
