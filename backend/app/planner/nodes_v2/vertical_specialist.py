@@ -450,14 +450,88 @@ class VerticalSpecialist:
         self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
     def get_constraints(self) -> List[SpecialistConstraint]:
-        """Get domain-specific constraints."""
-        return self.knowledge.get("constraints", [])
+        """Get domain-specific constraints.
 
-    def get_content_for_destination(self, destination: str) -> List[ItineraryBlock]:
+        Returns a COPY of the constraints list to avoid mutating
+        the original SPECIALIST_KNOWLEDGE when caveats are inserted.
+        """
+        return list(self.knowledge.get("constraints", []))
+
+    def _calculate_activity_days(self, state: GraphStateV2) -> int:
+        """
+        Calculate how many days are available for activities.
+
+        For a trip:
+        - Day 1 = Arrival (no activities)
+        - Day N = Departure (no activities)
+        - Diving: Day N-1 = No-fly buffer (no diving)
+        - Hiking at high altitude: Day 3 = Acclimatization (no strenuous activity)
+
+        Returns the number of days available for specialist activities.
+        For very short trips (1-2 days), returns 0 (no activity days).
+        """
+        plan = state.trip_plan
+
+        # DEBUG: Always print to console to trace dates
+        print("[SPECIALIST DEBUG] _calculate_activity_days called")
+        print(f"[SPECIALIST DEBUG]   topic={self.topic}")
+        print(f"[SPECIALIST DEBUG]   start_date={plan.start_date}")
+        print(f"[SPECIALIST DEBUG]   end_date={plan.end_date}")
+
+        if not plan.start_date or not plan.end_date:
+            print("[SPECIALIST DEBUG]   -> No dates, returning 3 (default)")
+            return 3  # Default to 3 activity days if dates unknown
+
+        from datetime import datetime
+
+        try:
+            start = datetime.strptime(plan.start_date, "%Y-%m-%d")
+            end = datetime.strptime(plan.end_date, "%Y-%m-%d")
+            total_days = (end - start).days + 1
+            print(f"[SPECIALIST DEBUG]   total_days={total_days}")
+        except ValueError as e:
+            print(f"[SPECIALIST DEBUG]   -> Date parse error: {e}, returning 3")
+            return 3  # Default if date parsing fails
+
+        # Subtract arrival (day 1) and departure (last day)
+        available = total_days - 2
+        print(f"[SPECIALIST DEBUG]   after arrival/departure: available={available}")
+
+        # Specialist-specific buffers
+        if self.topic == "diving":
+            # No-fly buffer day before departure
+            available -= 1
+            print(f"[SPECIALIST DEBUG]   after diving no-fly buffer: available={available}")
+        elif self.topic == "hiking":
+            # Acclimatization day for high-altitude destinations
+            high_altitude_dests = [
+                "nepal",
+                "everest",
+                "kilimanjaro",
+                "peru",
+                "cusco",
+                "tibet",
+                "ladakh",
+                "bolivia",
+                "la paz",
+            ]
+            dest_lower = (plan.destination or "").lower()
+            if any(h in dest_lower for h in high_altitude_dests):
+                available -= 1
+                print(f"[SPECIALIST DEBUG]   after hiking altitude buffer: available={available}")
+
+        result = max(0, available)
+        print(f"[SPECIALIST DEBUG]   -> FINAL: max_activities={result}")
+        return result
+
+    def get_content_for_destination(
+        self, destination: str, state: Optional[GraphStateV2] = None
+    ) -> List[ItineraryBlock]:
         """
         Get suggested activities for a destination.
 
         This is the S1/S2 content generation.
+        Respects trip duration - only generates activities that fit.
 
         Priority:
         1. Curated content from demo_curation.py (has images for hero destinations)
@@ -478,16 +552,34 @@ class VerticalSpecialist:
             _debug_v2("[SPECIALIST] get_content_for_destination: Empty dest_lower, returning empty")
             return []
 
+        # Calculate available activity days from trip dates
+        max_activities = self._calculate_activity_days(state) if state else 3
+        print(f"[SPECIALIST DEBUG] get_content_for_destination: max_activities={max_activities}")
+        _debug_v2(f"[SPECIALIST] get_content_for_destination: max_activities={max_activities}")
+
+        # For very short trips (no activity days), return empty
+        if max_activities <= 0:
+            print(
+                "[SPECIALIST DEBUG] get_content_for_destination: "
+                "TRIP TOO SHORT - returning empty list!"
+            )
+            _debug_v2("[SPECIALIST] get_content_for_destination: " "Trip too short for activities")
+            return []
+
         # PRIORITY 1: Check for curated content (includes images)
         _debug_v2(
             f"[SPECIALIST] get_content_for_destination: "
             f"Looking up curated content for '{dest_lower}'"
         )
-        curated_blocks = self._get_curated_content(dest_lower)
+        curated_blocks = self._get_curated_content(dest_lower, max_activities)
         if curated_blocks:
+            print(
+                f"[SPECIALIST DEBUG] Returning {len(curated_blocks)} "
+                f"curated blocks (max was {max_activities})"
+            )
             _debug_v2(
                 f"[SPECIALIST] get_content_for_destination: "
-                f"Found {len(curated_blocks)} curated blocks"
+                f"Found {len(curated_blocks)} curated blocks (limited to {max_activities})"
             )
             return curated_blocks
 
@@ -497,7 +589,8 @@ class VerticalSpecialist:
             # Require meaningful match (not empty string matching everything)
             if len(dest_lower) >= 3 and (dest_key in dest_lower or dest_lower in dest_key):
                 blocks = []
-                for i, activity in enumerate(activities):
+                # Limit to available activity days
+                for i, activity in enumerate(activities[:max_activities]):
                     blocks.append(
                         ItineraryBlock(
                             day=i + 2,  # Start from day 2 (day 1 is arrival)
@@ -513,11 +606,14 @@ class VerticalSpecialist:
 
         return []
 
-    def _get_curated_content(self, destination: str) -> List[ItineraryBlock]:
+    def _get_curated_content(
+        self, destination: str, max_activities: int = 3
+    ) -> List[ItineraryBlock]:
         """
         Get curated content from demo_curation.py if available.
 
         Returns ItineraryBlocks with images for hero destinations.
+        Limited to max_activities based on trip duration.
         """
         from app.debug_utils import _debug_v2
 
@@ -526,7 +622,7 @@ class VerticalSpecialist:
 
             _debug_v2(
                 f"[SPECIALIST] _get_curated_content: "
-                f"destination='{destination}', topic='{self.topic}'"
+                f"destination='{destination}', topic='{self.topic}', max={max_activities}"
             )
 
             is_hero = is_hero_destination(destination)
@@ -550,7 +646,8 @@ class VerticalSpecialist:
                 return []
 
             blocks = []
-            for i, activity in enumerate(activities):
+            # Limit to max_activities based on trip duration
+            for i, activity in enumerate(activities[:max_activities]):
                 _debug_v2(
                     f"[SPECIALIST] Creating block: {activity.get('title')}, "
                     f"image={bool(activity.get('image'))}"
@@ -568,7 +665,9 @@ class VerticalSpecialist:
                     )
                 )
 
-            _debug_v2(f"[SPECIALIST] Returning {len(blocks)} curated blocks")
+            _debug_v2(
+                f"[SPECIALIST] Returning {len(blocks)} curated blocks (max was {max_activities})"
+            )
             return blocks
 
         except ImportError:
@@ -809,8 +908,8 @@ class VerticalSpecialist:
         _debug_v2(f"[SPECIALIST] safety_buffers: {len(safety_buffers)} blocks")
         all_blocks.extend(safety_buffers)
 
-        # 2c. Activity content
-        activity_content = self.get_content_for_destination(destination)
+        # 2c. Activity content (respects trip duration)
+        activity_content = self.get_content_for_destination(destination, state)
         _debug_v2(f"[SPECIALIST] activity_content: {len(activity_content)} blocks")
         for block in activity_content:
             _debug_v2(

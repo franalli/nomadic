@@ -257,6 +257,8 @@ def _state_to_session_state(state: GraphStateV2) -> Dict[str, Any]:
             "tiles": state.tiles,  # Keep in category format for V2 restoration
             "active_specialist": state.active_specialist,
             "constraints_violated": state.constraints_violated,
+            # Persist for constraint change detection
+            "last_constraint_hash": state.last_constraint_hash,
         },
     }
 
@@ -303,6 +305,9 @@ def _session_state_to_v2_state(session_state: Optional[Dict[str, Any]]) -> Graph
     state.metadata["trip_inputs"] = trip_inputs
     state.tiles = metadata.get("tiles", {})
     state.active_specialist = metadata.get("active_specialist")
+    state.last_constraint_hash = metadata.get(
+        "last_constraint_hash"
+    )  # Restore for constraint change detection
 
     # DEBUG: Log what strategy_sections we're restoring
     incoming_sections = metadata.get("strategy_sections", [])

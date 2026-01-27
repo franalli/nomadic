@@ -280,7 +280,8 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const { planStatus, isRegenerating, markRegenerationComplete } = usePlanRegeneration({
     tripInputs,
-    hasBranches: branchState.branches.length > 0,
+    // V2 doesn't use branches - use hasEverHadPlan to detect if plan exists
+    hasBranches: hasEverHadPlan ?? false,
     onRegenerate: async () => {
       // IMPORTANT: Do NOT clear branches - keep existing plan visible during regen
       // branchState.setBranches([]); // REMOVED - causes regression
@@ -299,11 +300,16 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
       const sessionState = useChatStore.getState().sessionState;
       const setSessionState = useChatStore.getState().setSessionState;
 
+      // CRITICAL: Get current tripInputs from documentStore (not stale sessionState)
+      // This ensures the backend receives the updated dates/destination/etc.
+      const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
+
       await new Promise<void>((resolve) => {
         streamGraphPlan(
           {
-            message: '__REGEN__', // Internal trigger, not shown in chat
+            message: 'GENERATE_PLAN_NOW', // Trigger recognized by backend router
             session_state: sessionState ?? undefined,
+            trip_inputs: currentTripInputs ?? undefined,  // Pass LIVE values
           },
           {
             onToken: () => {
@@ -566,7 +572,9 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
       // Signal that regeneration is complete (data has arrived)
       // This ensures planStatus transitions from 'updating' to 'ready'
-      if (hasBranchesInResult) {
+      // NOTE: V2 doesn't use branches, so we check for tiles or always complete
+      const hasTilesInResult = Object.keys(result.tiles).length > 0;
+      if (hasBranchesInResult || hasTilesInResult) {
         markRegenerationComplete();
       }
     },

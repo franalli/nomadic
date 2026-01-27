@@ -199,20 +199,6 @@ input[type="number"]::-webkit-outer-spin-button {
   animation: typing-pulse 1.2s ease-in-out infinite;
 }
 
-/* Typing indicator dots */
-@keyframes typing-bounce {
-  0%, 60%, 100% {
-    transform: translateY(0);
-  }
-  30% {
-    transform: translateY(-4px);
-  }
-}
-
-.typing-dot {
-  animation: typing-bounce 1s ease-in-out infinite;
-}
-
 /* Generate button glow animation - subtle and professional */
 @keyframes generate-glow {
   0%, 100% {
@@ -669,11 +655,6 @@ input[type="number"]::-webkit-outer-spin-button {
   /* Keep functional loading indicators but simplify them */
   .compass-spin {
     animation-duration: 2s !important;
-  }
-
-  .typing-dot {
-    animation: none !important;
-    opacity: 0.6;
   }
 }
 

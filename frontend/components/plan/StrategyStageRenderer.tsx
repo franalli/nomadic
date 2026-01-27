@@ -23,8 +23,10 @@ import React, { useRef } from 'react';
 
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
+import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type {
   DestinationCard,
@@ -99,6 +101,8 @@ interface StrategyStageRendererProps {
   onBookClick?: () => void;
   /** Whether user has minimum selections to enable Book stage */
   hasMinimumSelections?: boolean;
+  /** Whether plan is currently regenerating due to constraint changes */
+  isRegenerating?: boolean;
 }
 
 function renderStageContent(
@@ -112,7 +116,7 @@ function renderStageContent(
   hasEverHadPlan?: boolean,
   tiles?: Record<string, Tile>,
   isDesktop?: boolean,
-  tripInputs?: { start_date?: string | null; end_date?: string | null }
+  tripInputs?: DocumentTripInputs
 ): React.ReactNode {
   // Note: S0BootstrapView now reads from document store directly
   // Action handlers for opening sheets will be added when we wire up the full chip row integration
@@ -228,9 +232,16 @@ export function StrategyStageRenderer({
   onPlanClick,
   onBookClick,
   hasMinimumSelections = false,
+  isRegenerating = false,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
+
+  // FIX: Subscribe to store to catch updates even if parent doesn't re-render
+  // Priority: Store (Live) > Props (Parent passed)
+  const effectiveTripInputs = useTripInputsWithFallback(tripInputs);
+  const storeTiles = useDocumentStore((s) => s.document?.tiles);
+  const effectiveTiles = storeTiles ?? tiles;
 
   // Get desktop state for mobile-specific rendering
   const { isDesktop } = useMobileMode();
@@ -262,7 +273,7 @@ export function StrategyStageRenderer({
           fallbackTitle={fallbackTitle}
           planViewState="S0_BOOTSTRAP"
           hasDates={hasDates}
-          tripInputs={tripInputs}
+          tripInputs={effectiveTripInputs}
           onOpenSheet={onOpenSheet}
           isStreaming={isStreaming}
           onSetupClick={onSetupClick}
@@ -294,7 +305,7 @@ export function StrategyStageRenderer({
         hasDates={hasDates}
         isExpandingItinerary={isExpandingItinerary}
         currentSubStage={currentSubStage}
-        tripInputs={tripInputs}
+        tripInputs={effectiveTripInputs}
         onOpenSheet={onOpenSheet}
         isStreaming={isStreaming}
         onSetupClick={onSetupClick}
@@ -318,24 +329,37 @@ export function StrategyStageRenderer({
           <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
           {/* Content layer - above scrim */}
           <div className="relative z-[2]">
-            {renderStageContent(
-              state,
-              viewModel,
-              destinationCard,
-              canGeneratePlan,
-              onRefineAssumptions,
-              onExpandToItinerary,
-              onBuildPlan,
-              hasEverHadPlan,
-              tiles,
-              isDesktop,
-              tripInputs
-            )}
+            {/* Stage content with regeneration overlay */}
+            <div className="relative">
+              {renderStageContent(
+                state,
+                viewModel,
+                destinationCard,
+                canGeneratePlan,
+                onRefineAssumptions,
+                onExpandToItinerary,
+                onBuildPlan,
+                hasEverHadPlan,
+                effectiveTiles,
+                isDesktop,
+                effectiveTripInputs
+              )}
+
+              {/* Regeneration overlay - shows when constraints changed and plan is refreshing */}
+              {isRegenerating && (
+                <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
+                  <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <p className="text-sm font-medium text-muted-foreground">Updating plan...</p>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* BookingSection rendered conditionally (not "always") */}
             <BookingSection
               state={state}
-              tiles={tiles}
+              tiles={effectiveTiles}
               generation={generation}
               hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
               savedTileIds={savedTileIds}

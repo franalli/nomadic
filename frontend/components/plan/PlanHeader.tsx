@@ -19,6 +19,7 @@ import { Loader2 } from 'lucide-react';
 import React from 'react';
 
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
+import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import {
   getCompletedSteps,
@@ -142,7 +143,7 @@ export function PlanHeader({
   hasDates = false,
   isExpandingItinerary = false,
   currentSubStage,
-  tripInputs,
+  tripInputs: propTripInputs,
   onOpenSheet,
   isStreaming = false,
   onSetupClick,
@@ -151,6 +152,9 @@ export function PlanHeader({
   hasMinimumSelections = false,
   isCollapsed = false,
 }: PlanHeaderProps) {
+  // FIX: Header needs to update immediately when dates change in store
+  const tripInputs = useTripInputsWithFallback(propTripInputs);
+
   // currentStage kept for backwards compatibility but planViewState is preferred
   void _currentStage;
   // Determine variant based on whether we have a destination
@@ -268,9 +272,9 @@ export function PlanHeader({
       <AnimatePresence>
         {!isCollapsed && (
           <motion.div
-            className="relative h-40 overflow-hidden"
-            initial={{ height: 160, opacity: 1 }}
-            animate={{ height: 160, opacity: 1 }}
+            className="relative h-40 lg:h-56 overflow-hidden"
+            initial={{ opacity: 1 }}
+            animate={{ opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
           >

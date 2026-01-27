@@ -137,18 +137,6 @@ function isRetryableError(content: string): boolean {
   const lowerContent = content.toLowerCase();
   return retryablePatterns.some((pattern) => lowerContent.includes(pattern));
 }
-
-// Typing indicator component - extracted to module level to prevent recreation
-const TypingIndicator = () => (
-  <div className="text-left message-enter">
-    <div className="border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md px-4 py-3 shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)]">
-      <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '0ms' }} />
-      <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '150ms' }} />
-      <span className="typing-dot h-2 w-2 rounded-full bg-primary/60" style={{ animationDelay: '300ms' }} />
-    </div>
-  </div>
-);
-
 // Markdown components config - extracted to module level to prevent recreation on each render
 // Full GFM support with professional styling for chat bubbles
 const MARKDOWN_COMPONENTS = {
@@ -1100,12 +1088,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         return m;
       });
 
-    // Show typing indicator when loading and haven't received first streaming token yet
-    // Hide when either loader becomes visible (they show the progress bar instead)
-    // Note: We intentionally don't check nodeStatus?.active here because there's a 400ms delay
-    // before loaders become visible, and we want the typing indicator to fill that gap
-    const showTypingIndicator = isLoading && !hasReceivedFirstToken && !delayedLoader.isVisible && !actionLoader.isVisible;
-    // Note: Old NodeProgress component removed - now using Live Logic Status Pill above input
+    // Note: Three-dot typing indicator removed - Live Logic Status Pill above input is the only loading indicator
 
     return (
       <div
@@ -1297,8 +1280,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   </div>
                 );
               })}
-              {showTypingIndicator && <TypingIndicator />}
-              {/* NodeProgress removed - replaced by Live Logic Status Pill above input */}
+              {/* Three-dot typing indicator removed - Live Logic Status Pill is the only loading indicator */}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
               <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
             </>

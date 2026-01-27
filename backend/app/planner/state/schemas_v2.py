@@ -355,6 +355,9 @@ class GraphStateV2(BaseModel):
     # Metadata for debugging/tracking
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+    # TRACKING: Detect input changes to trigger re-planning
+    last_constraint_hash: Optional[str] = None
+
     model_config = {"arbitrary_types_allowed": True}
 
 

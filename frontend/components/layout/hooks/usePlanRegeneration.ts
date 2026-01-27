@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { useDocumentTripInputs } from '@/state/documentStore';
 import type { DocumentTripInputs, PlanStatus } from '@/types/document';
 
 /**
@@ -93,15 +94,24 @@ function computeConstraintHash(inputs: DocumentTripInputs): string {
 export function usePlanRegeneration(
   options: UsePlanRegenerationOptions
 ): UsePlanRegenerationReturn {
-  const { tripInputs, hasBranches, onRegenerate } = options;
+  const { tripInputs: propTripInputs, hasBranches, onRegenerate } = options;
+
+  // CRITICAL: Subscribe directly to store for live updates
+  // Props may be stale due to prop-drilling, but store is always fresh after PATCH
+  const storeTripInputs = useDocumentTripInputs();
+  const tripInputs = storeTripInputs ?? propTripInputs;
 
   const [planStatus, setPlanStatus] = useState<PlanStatus>('ready');
   const [isRegenerating, setIsRegenerating] = useState(false);
   const lastHashRef = useRef<string | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Memoize the constraint hash
-  const currentHash = useMemo(() => computeConstraintHash(tripInputs), [tripInputs]);
+  // Memoize the constraint hash - now uses store-based tripInputs
+  // Returns empty string if no inputs yet (prevents regeneration before plan exists)
+  const currentHash = useMemo(
+    () => (tripInputs ? computeConstraintHash(tripInputs) : ''),
+    [tripInputs]
+  );
 
   // Stable regenerate callback
   // NOTE: Does NOT auto-reset to 'ready' - caller must call markRegenerationComplete()
@@ -133,6 +143,11 @@ export function usePlanRegeneration(
 
   // Watch for constraint changes
   useEffect(() => {
+    // Skip if no hash yet (no inputs)
+    if (!currentHash) {
+      return;
+    }
+
     // Skip if no branches yet (first generate hasn't happened)
     if (!hasBranches) {
       lastHashRef.current = currentHash;
@@ -147,6 +162,12 @@ export function usePlanRegeneration(
 
     // Check if hard constraints changed
     if (currentHash !== lastHashRef.current) {
+      // DEBUG: Log hash change detection
+      console.log('[usePlanRegeneration] Constraint hash changed!');
+      console.log('[usePlanRegeneration]   old:', lastHashRef.current?.slice(0, 50) + '...');
+      console.log('[usePlanRegeneration]   new:', currentHash.slice(0, 50) + '...');
+      console.log('[usePlanRegeneration]   dates:', tripInputs?.start_date, 'to', tripInputs?.end_date);
+
       // Mark plan as stale immediately
       setPlanStatus('stale');
 
@@ -157,6 +178,7 @@ export function usePlanRegeneration(
 
       // Schedule debounced regeneration (auto_on_change - constraint UI changes)
       debounceTimerRef.current = setTimeout(() => {
+        console.log('[usePlanRegeneration] Triggering regeneration after debounce');
         lastHashRef.current = currentHash;
         triggerRegenerate('auto_on_change');
       }, REGENERATION_DEBOUNCE_MS);
@@ -167,7 +189,7 @@ export function usePlanRegeneration(
         clearTimeout(debounceTimerRef.current);
       }
     };
-  }, [currentHash, hasBranches, triggerRegenerate]);
+  }, [currentHash, hasBranches, triggerRegenerate, tripInputs?.start_date, tripInputs?.end_date]);
 
   // Reset status (e.g., when manually refreshing)
   const resetStatus = useCallback(() => {

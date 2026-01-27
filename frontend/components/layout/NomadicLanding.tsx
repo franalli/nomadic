@@ -288,6 +288,7 @@ export function NomadicLanding() {
   const {
     selectedBranchId,
     isGenerating,
+    isRegenerating,
     readyToGenerate,
     hasBranchesReady,
     handleStartNewSession: branchManagerStartNewSession,
@@ -1021,6 +1022,7 @@ export function NomadicLanding() {
       onPlanClick={handlePlanClick}
       onBookClick={handleBookClick}
       hasMinimumSelections={hasMinimumSelections}
+      isRegenerating={isRegenerating}
     />
   );
 

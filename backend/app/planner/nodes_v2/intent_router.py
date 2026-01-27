@@ -11,6 +11,8 @@ The LLM approach solves the "regex minefield" problem where patterns like
 like "No, I want Paris instead."
 """
 
+import hashlib
+import json
 import logging
 import os
 from typing import List, Literal, Optional
@@ -22,6 +24,52 @@ from pydantic import BaseModel, Field
 from app.planner.state import GraphStateV2, TripPlan
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Constraint Hash Utilities (for detecting input changes)
+# =============================================================================
+
+
+def _compute_constraint_hash(trip_plan: TripPlan, trip_inputs: dict) -> str:
+    """
+    Generate a stable hash of inputs that affect feasibility/pricing.
+
+    Used to detect when constraints have changed and specialists need to re-run.
+
+    Hash includes: destination, origin, dates, travelers, budget, activity categories.
+    This matches the frontend hash in usePlanRegeneration.ts.
+    """
+    # Sort categories to ensure ["a", "b"] == ["b", "a"]
+    activity_cats = sorted(trip_inputs.get("activity_settings", {}).get("categories", []))
+
+    hash_payload = {
+        "dest": (trip_plan.destination or "").lower().strip(),
+        "origin": (trip_plan.origin or "").lower().strip(),  # Match frontend hash
+        "dates": f"{trip_plan.start_date}|{trip_plan.end_date}",
+        "pax": f"{trip_plan.adults}|{trip_plan.children}",
+        "budget": str(trip_plan.budget),
+        "activities": activity_cats,
+    }
+    return hashlib.md5(json.dumps(hash_payload, sort_keys=True).encode()).hexdigest()
+
+
+def _clear_stale_specialist_content(state: GraphStateV2) -> None:
+    """
+    Wipe old specialist data so we don't merge 'Aspen Skiing' into 'Hawaii'.
+
+    Clears: itinerary_blocks, constraints, tiles, strategy_sections
+    Preserves: trip_plan core fields (destination, dates, travelers, budget)
+    """
+    state.trip_plan.itinerary_blocks = []
+    state.trip_plan.constraints = []
+    state.tiles = {}  # Force fresh fetch
+
+    # Clear UI sections but keep structure ready
+    if "strategy_sections" in state.metadata:
+        state.metadata["strategy_sections"] = []
+
+    logger.info("[Router] Cleared stale specialist content for constraint change")
 
 
 # =============================================================================
@@ -534,6 +582,74 @@ async def intent_router(state: GraphStateV2) -> GraphStateV2:
     # Set specialist if detected from text OR from UI activity settings
     # Combine detected specialists from LLM and activity settings
     specialist_hints = list(classification.specialist_hints)  # Copy to avoid mutation
+
+    # =========================================================================
+    # CONSTRAINT CHANGE DETECTION: Re-run specialists when inputs change
+    # =========================================================================
+    # Check if critical inputs changed since the last run
+    # NOTE: Hash is computed from trip_inputs (from frontend) which has latest values
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    current_hash = _compute_constraint_hash(state.trip_plan, trip_inputs)
+    previous_hash = state.last_constraint_hash
+    executed = state.metadata.get("executed_strategy_topics", [])
+
+    # Debug logging - CRITICAL for debugging reactivity
+    from app.debug_utils import log
+
+    prev_hash_str = previous_hash[:8] if previous_hash else "None"
+    log(
+        "ROUTER",
+        f"[REACTIVITY] Hash: prev={prev_hash_str} → curr={current_hash[:8]}",
+    )
+    log("ROUTER", f"[REACTIVITY] executed_strategy_topics={executed}")
+    dest = trip_inputs.get("destination")
+    start = trip_inputs.get("start_date")
+    end = trip_inputs.get("end_date")
+    log(
+        "ROUTER",
+        f"[REACTIVITY] trip_inputs: dest={dest}, dates={start} to {end}",
+    )
+    log("ROUTER", f"[REACTIVITY] is_generate_trigger={is_generate_trigger}")
+
+    # Detect constraint changes (only if we have a previous hash to compare)
+    constraints_changed = previous_hash is not None and current_hash != previous_hash
+
+    # Re-run specialists in two cases:
+    # 1. Constraints changed (destination, dates, budget, etc. modified)
+    # 2. GENERATE_PLAN_NOW + specialists were executed before (ensures fresh run with complete data)
+    should_rerun_specialists = (constraints_changed or is_generate_trigger) and executed
+
+    log(
+        "ROUTER",
+        f"[REACTIVITY] constraints_changed={constraints_changed}, "
+        f"should_rerun={should_rerun_specialists}",
+    )
+
+    if should_rerun_specialists:
+        # Filter to niche specialists only (not local_expert/general which run automatically)
+        niche_specialists = [t for t in executed if t not in ("general", "local_expert")]
+
+        if niche_specialists:
+            if constraints_changed:
+                log("ROUTER", f"Constraints changed! Re-running specialists: {niche_specialists}")
+            else:
+                log(
+                    "ROUTER",
+                    f"GENERATE_PLAN_NOW: Re-running specialists "
+                    f"with fresh data: {niche_specialists}",
+                )
+
+            _clear_stale_specialist_content(state)
+
+            # Re-inject niche specialists into hints so they run again
+            for topic in niche_specialists:
+                if topic not in specialist_hints:
+                    specialist_hints.append(topic)
+                    log("ROUTER", f"Re-queued specialist: {topic}")
+
+    # ALWAYS update the hash for future comparisons
+    state.last_constraint_hash = current_hash
+    # =========================================================================
 
     # Also check activity_settings.categories for UI-selected activities
     ui_specialists = _detect_specialists_from_activity_settings(state)

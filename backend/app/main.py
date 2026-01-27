@@ -971,6 +971,8 @@ async def graph_plan_endpoint(
     # --- Initialize or merge trip_inputs ---
     # CRITICAL: Always merge req.trip_inputs into session_state to ensure
     # the latest frontend values (destination, dates, etc.) are used.
+    # Track if request provided trip_inputs (used later to skip document hydration)
+    has_request_trip_inputs = bool(req.trip_inputs)
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
@@ -1044,8 +1046,10 @@ async def graph_plan_endpoint(
         if document_data:
             if document_data.branches:
                 session_state["branches"] = [b.model_dump() for b in document_data.branches]
-            if document_data.trip_inputs:
-                # Document trip_inputs override session trip_inputs (document is source of truth)
+            # CRITICAL: Only hydrate trip_inputs from document if request didn't provide them
+            # Otherwise, the stale document values would overwrite the fresh request values
+            # This is needed for regeneration when user changes dates/destination in UI
+            if document_data.trip_inputs and not has_request_trip_inputs:
                 session_state["trip_inputs"] = document_data.trip_inputs.model_dump()
     except HTTPException:
         raise  # Re-raise HTTP exceptions (like version conflict)
@@ -1471,6 +1475,8 @@ async def graph_plan_stream_endpoint(
     # CRITICAL: Always merge req.trip_inputs into session_state to ensure
     # the latest frontend values (destination, dates, etc.) are used.
     # This fixes the bug where Setup mode had stale/empty destination.
+    # Track if request provided trip_inputs (used later to skip document hydration)
+    has_request_trip_inputs = bool(req.trip_inputs)
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
@@ -1559,7 +1565,11 @@ async def graph_plan_stream_endpoint(
                 if document_data:
                     if document_data.branches:
                         session_state["branches"] = [b.model_dump() for b in document_data.branches]
-                    if document_data.trip_inputs:
+                    # CRITICAL: Only hydrate trip_inputs from document if request
+                    # didn't provide them. Otherwise, stale document values would
+                    # overwrite the fresh request values
+                    # This is needed for regeneration when user changes dates/destination in UI
+                    if document_data.trip_inputs and not has_request_trip_inputs:
                         session_state["trip_inputs"] = document_data.trip_inputs.model_dump()
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to load document for session: {e}")

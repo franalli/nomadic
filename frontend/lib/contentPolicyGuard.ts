@@ -21,12 +21,18 @@ import type {
 /**
  * Strings that must NOT appear in Stage 1 or Stage 2 content.
  * These indicate premature disclosure of booking/pricing information.
+ *
+ * NOTE: Simple currency symbols (€, $) are NOT forbidden because:
+ * - Local Expert tips may mention savings like "Saves €50+"
+ * - Specialist constraints may reference budgets
+ * Only booking-specific patterns are blocked.
  */
 const FORBIDDEN_STAGE_1_2 = [
   '$/night',
-  '€',
-  'AED',
+  '€/night',
+  'AED/night',
   'from $',
+  'from €',
   'per person',
   'Book now',
   'Reserve',
@@ -202,9 +208,9 @@ export function enforceRightViewPolicy(
       }
     }
 
-    // No prices or booking CTAs in S3 itinerary
+    // No booking-specific prices or CTAs in S3 itinerary
     const content = JSON.stringify(viewModel);
-    const forbiddenS3 = ['$/night', '€', 'AED', 'Book now', 'Reserve'];
+    const forbiddenS3 = ['$/night', '€/night', 'AED/night', 'Book now', 'Reserve'];
     for (const forbidden of forbiddenS3) {
       if (content.includes(forbidden)) {
         throw new ContentPolicyError(

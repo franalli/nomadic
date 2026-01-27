@@ -509,6 +509,49 @@ def clamp_budget(value: Any) -> Optional[int]:
 
 
 # =============================================================================
+# Date Normalization
+# =============================================================================
+
+
+def normalize_date(date_value: Any) -> Optional[str]:
+    """
+    Normalize date to YYYY-MM-DD format.
+
+    Handles various input formats:
+    - Already correct: "2026-02-01" -> "2026-02-01"
+    - ISO with time: "2026-02-01T00:00:00.000Z" -> "2026-02-01"
+    - ISO with timezone: "2026-02-01T12:00:00+00:00" -> "2026-02-01"
+
+    Returns:
+        Date string in YYYY-MM-DD format, or None if invalid.
+    """
+    if date_value is None:
+        return None
+    if not isinstance(date_value, str):
+        return None
+
+    date_str = date_value.strip()
+    if not date_str:
+        return None
+
+    # Handle ISO format with time (2026-02-01T00:00:00.000Z)
+    if "T" in date_str:
+        date_str = date_str.split("T")[0]
+
+    # Validate the format is YYYY-MM-DD
+    if len(date_str) == 10 and date_str[4] == "-" and date_str[7] == "-":
+        try:
+            # Validate it's a real date
+            year, month, day = date_str.split("-")
+            if 1 <= int(month) <= 12 and 1 <= int(day) <= 31:
+                return date_str
+        except (ValueError, IndexError):
+            pass
+
+    return None
+
+
+# =============================================================================
 # Trip Inputs Normalization
 # =============================================================================
 
@@ -544,10 +587,10 @@ def normalize_trip_inputs(trip_inputs: Dict[str, Any]) -> Dict[str, Any]:
         else:
             result["origin"] = None
 
-    # Dates (pass through, validation happens elsewhere)
+    # Dates (normalize to YYYY-MM-DD format)
     for date_field in ("start_date", "end_date"):
         if date_field in trip_inputs:
-            result[date_field] = trip_inputs[date_field]
+            result[date_field] = normalize_date(trip_inputs[date_field])
 
     # Numeric fields with clamping
     if "adults" in trip_inputs:

@@ -31,7 +31,9 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { cn } from '@/lib/utils';
+import type { DocumentTripInputs } from '@/types/document';
 import {
   type AgentStatus,
   computeAgentStatus,
@@ -148,8 +150,8 @@ interface S2StrategyViewProps {
   executedTopics?: string[];
   /** Tiles for TripHealthBar inventory counts */
   tiles?: Record<string, Tile>;
-  /** Trip inputs for checking if dates are set */
-  tripInputs?: { start_date?: string | null; end_date?: string | null };
+  /** Trip inputs for reactivity (store subscription provides live updates) */
+  tripInputs?: DocumentTripInputs;
 }
 
 // =============================================================================
@@ -798,8 +800,11 @@ export function S2StrategyView({
   pendingTopics = [],
   executedTopics,
   tiles = {},
-  tripInputs,
+  tripInputs: propTripInputs,
 }: S2StrategyViewProps) {
+  // FIX: Use store values with prop fallback for reactivity
+  const tripInputs = useTripInputsWithFallback(propTripInputs);
+
   // Unused props - header and CTA now owned by StrategyStageRenderer
   void _destinationCard;
   void _canExpandToItinerary;

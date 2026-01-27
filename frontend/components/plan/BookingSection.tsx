@@ -21,6 +21,7 @@ import { TilesGrid } from '@/components/tiles/TilesGrid';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
@@ -45,13 +46,17 @@ export interface BookingSectionProps {
 
 export function BookingSection({
   state,
-  tiles,
+  tiles: propTiles,
   generation,
   hasStrategyContent,
   savedTileIds = new Set(),
   onSaveTile,
   onOpenSheet,
 }: BookingSectionProps) {
+  // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
+  const storeTiles = useDocumentStore((s) => s.document?.tiles);
+  const tiles = storeTiles ?? propTiles;
+
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
