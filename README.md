@@ -1,107 +1,288 @@
 # Nomadic Monorepo
 
-- `frontend/` – Next.js + Tailwind UI for travel planner
-- `backend/` – FastAPI service exposing `/v1/tiles/search`
+A travel planning application with an AI-powered itinerary generator.
 
-## Session APIs
+## Tech Stack
 
-- `GET /v1/session/snapshot?session_id=<uuid>` – Restore the latest trip context, branches, and tiles for an existing browser session.
-- `DELETE /v1/session?session_id=<uuid>` – Archive all persisted data for that session (trip contexts, branches, tiles, tile clicks) and allow the UI to start a fresh planning session. The frontend “Start new session” control calls this endpoint before clearing `localStorage`.
+**Frontend:**
+- Next.js 16 (App Router)
+- React 19
+- TypeScript
+- Tailwind CSS
+- Zustand (state management)
+- Framer Motion (animations)
+- Mapbox GL (maps)
 
-# DB Setup
+**Backend:**
+- Python 3.12
+- FastAPI
+- SQLAlchemy + asyncpg (async PostgreSQL)
+- Alembic (migrations)
+- LangGraph + LangChain (AI orchestration)
+- SpaCy (NLP)
+- Pydantic (validation)
 
-- `backend/.env` # for local uvicorn dev
-- `backend/.env.docker` # for docker-compose
+**Infrastructure:**
+- PostgreSQL 16
+- Docker Compose
 
-## Local dev
+## Project Structure
+
+```
+nomadic/
+├── frontend/           # Next.js app
+│   ├── app/            # App Router pages
+│   ├── components/     # React components (by feature)
+│   ├── hooks/          # Custom React hooks
+│   ├── lib/            # Utilities
+│   ├── state/          # Zustand stores
+│   └── types/          # TypeScript types
+├── backend/            # Python API
+│   ├── app/            # Main application
+│   │   ├── planner/    # Planning logic
+│   │   ├── services/   # Business services
+│   │   ├── tools/      # External tool integrations
+│   │   └── prompts/    # AI prompt templates
+│   ├── migrations/     # Alembic DB migrations
+│   └── tests/          # Test files
+├── docs/               # Documentation
+└── scripts/            # Utility scripts
+```
+
+## Local Development
+
+### Prerequisites
+- Node.js 20-22
+- Python 3.12
+- Docker (for PostgreSQL)
+
+### Quick Start
 
 ```bash
-docker compose up db --build #postgres only
-docker compose --profile backend up --build db backend # backend + Postgres on :8000 and :5432
-uvicorn app.main:app --reload # run fastAPI locally (without Docker)
+# Start PostgreSQL
+docker compose up db --build
 
+# Backend (in separate terminal)
+cd backend
+pip install -r requirements.txt
+python start.py  # or: uvicorn app.main:app --reload
+
+# Frontend (in separate terminal)
 cd frontend
 npm install
 npm run dev  # http://localhost:3000
+```
 
+### Docker Options
+
+```bash
+# PostgreSQL only
+docker compose up db --build
+
+# Backend + PostgreSQL
+docker compose --profile backend up --build db backend
+```
+
+## API Reference
+
+### Core Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/v1/graph_plan` | POST | Generate travel plan |
+| `/v1/graph_plan/stream` | POST | Stream travel plan |
+| `/v1/document` | GET | Get plan document |
+| `/v1/document` | PATCH | Update plan document |
+| `/v1/chat` | GET | Get chat history |
+| `/v1/chat/last` | DELETE | Delete last message |
+
+### Session Management
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/session` | DELETE | Archive session data |
+
+### Tiles & Suggestions
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/tiles/click` | POST | Record tile click |
+| `/v1/tiles/refresh` | POST | Refresh tiles |
+| `/v1/suggestions/click` | POST | Record suggestion click |
+| `/v1/document/tiles/{branch_id}` | POST | Add tiles to document |
+
+### Validation & Utilities
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/validate-trip-input` | POST | Validate trip input |
+| `/v1/destination-image` | POST | Get destination image |
+| `/v1/expand-itinerary` | POST | Expand itinerary details |
+
+### Admin Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/admin/clear-validation-cache` | POST | Clear validation caches |
+| `/v1/admin/fresh-start` | POST | Reset planner state |
+| `/v1/admin/graph-stats` | GET | Get graph statistics |
+| `/v1/admin/planner` | GET | Get planner state |
+| `/v1/admin/clear-all-checkpoints` | POST | Clear all checkpoints |
+| `/v1/admin/clear-all-caches` | POST | Clear all caches |
+
+## Environment Setup
+
+### Backend (`backend/.env`)
+
+```bash
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/nomadic
+OPENAI_API_KEY=sk-...
+# See backend/.env.example for full list
+```
+
+### Frontend (`frontend/.env.local`)
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_MAPBOX_TOKEN=pk...
+# See frontend/.env.example for full list
 ```
 
 ## Type Generation
 
-Frontend TypeScript types can be auto-generated from backend Pydantic schemas via FastAPI's OpenAPI spec for reference.
+Frontend TypeScript types can be auto-generated from backend Pydantic schemas:
 
 ```bash
-# 1. Start backend first (must be running on localhost:8000)
+# 1. Start backend first
 cd backend && uvicorn app.main:app --reload
 
-# 2. Generate types from OpenAPI schema
+# 2. Generate types
 cd frontend && npm run types:generate
 ```
 
-- Generated types are saved to `frontend/types/generated.ts`
-- Manual types in `types/document.ts` and `types/tile.ts` remain the source of truth (they include stricter non-optional fields the frontend expects)
-- Use generated types as a reference when adding new backend schemas
+Generated types: `frontend/types/generated.ts`
 
-## Alembic migrations
-
-- Alembic reads the `DATABASE_URL` value from `backend/.env` (local) or `backend/.env.docker` (compose). Make sure it points at the Postgres instance you want to migrate.
-- Run all commands from `backend/` with the virtualenv activated (`pip install -r requirements.txt`).
+## Database Migrations (Alembic)
 
 ```bash
-# bring your database to the latest schema
 cd backend
+
+# Apply all migrations
 alembic upgrade head
 
-# create a new autogenerated revision based on app/db_models.py changes
-alembic revision --autogenerate -m "add branch indexes"
+# Create new migration
+alembic revision --autogenerate -m "description"
 
-# inspect or roll back history when needed
-alembic history
+# Rollback one migration
 alembic downgrade -1
 
-# run inside docker if Postgres only lives there
+# View history
+alembic history
+
+# Run in Docker
 docker compose run --rm backend alembic upgrade head
 ```
 
-- Autogeneration compares the models in `app/db_models.py` against the live database, so keep that module up to date before creating a revision.
-- When developing locally, rerun `alembic upgrade head` after pulling new migrations to sync your database.
+## Testing
 
-## Tooling
+### Frontend
 
-- **Black** – configured in `backend/pyproject.toml` (`[tool.black]`, line length 88, py312) and enforced by the pre-commit `black` hook; run `python -m black app` inside `backend/` for manual formatting.
-- **Ruff** – `[tool.ruff]` in the same file (E/F/I/B, py312) powers linting; VS Code’s `source.fixAll.ruff` and the `ruff --fix` pre-commit hook keep files clean, matching the manual `python -m ruff check app --fix` command.
-- **Pre-commit hooks** – install once with `pre-commit install`; the configured `black` and `ruff --fix` hooks (see `.pre-commit-config.yaml`) automatically format/lint staged backend files or can be run explicitly via `pre-commit run --all-files`.
-- **Frontend linting** – run `npm run lint` inside `frontend/` (runs `next lint` and full `eslint .`) or `npm run lint:fix` to auto-fix what ESLint safely can.
+```bash
+cd frontend
+npm run test        # Run once
+npm run test:watch  # Watch mode
+```
 
-## Trip input validation caching
+### Backend
 
-- FastAPI endpoint `/v1/validate-trip-input` now reuses several TTL caches (case-insensitive keys): positive validation results, short-TTL negatives, destination split parsing, prompt renderings, last-known-good fallback, and per-session rate counters.
-- Defaults live in `backend/app/config.py` (e.g., `validation_cache_ttl`, `validation_negative_cache_ttl`, `validation_rate_limit_window` and `validation_rate_limit_max_requests`). Negative caching is enabled by default with a short TTL; rate limiting is per session token and uses a rolling window.
-- Admin helper `/v1/admin/clear-validation-cache` clears all caches, prewarms common destinations, and reports before/after stats.
+```bash
+cd backend
+pytest                           # All tests
+pytest -m "not slow"             # Skip slow tests
+pytest -m "e2e"                  # E2E tests only
+pytest --benchmark-only          # Benchmarks
+```
 
-## Prompts
+Test markers: `nightly`, `slow`, `golden`, `e2e`, `llm_smoke`
 
-Go through every file in /frontend. Do you see any unused logic, variables or functions? Any unnecessary re-renders? Any older legacy logic that is no longer relevant? Any over-engineered logic that should be simplified? Maintain all current functionality. Only suggest a refactor if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Evaluate impact on /backend.
+## Linting & Formatting
 
-Go through every file in /backend. Do you see any unused logic, variables or functions? Any older legacy logic that is no longer relevant? Any unnecessary repetitions? Any over-engineered logic that should be simplified? Maintain all current functionality. Only suggest a refactor if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Evaluate impact on /frontend.
+### Frontend
 
-Go through every file in /backend and /frontend. Do you see any unused logic, variables or functions? Any older legacy logic that is no longer relevant? Any unnecessary re-renders? Any over-engineered logic that should be simplified? Maintain all current functionality. Only suggest a refactor if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Evaluate impact on /frontend and /backend.
+```bash
+cd frontend
+npm run lint        # Check
+npm run lint:fix    # Auto-fix
+npm run format      # Prettier
+```
 
-Start implementation following plan recommendations. Only apply a step if necessary to avoid over-engineering and for best and smooth performance. Make sure you do not add complexity without clear benefit. Afterwards, run pre-commit hooks in .venv, and ensure they pass.
+### Backend
 
-Update the trip input field [FIELD_NAME] ([FIELD_TYPE]): [DESCRIPTION]
+```bash
+cd backend
+ruff check .        # Lint
+ruff check . --fix  # Auto-fix
+ruff format .       # Format (or: black app)
+```
 
-Follow the trip inputs update checklist - update all locations:
+### Pre-commit Hooks
 
-Backend schemas (schemas.py): DocumentTripInputs, DocumentTripInputsPatch, DocumentBranch
-LLM integration (plan_graph.py): \_TRIP_INPUT_FIELDS, system prompt, validation, normalization, dict building, branch construction
-CRUD (crud_document.py): mergeable_fields, cascade logic in apply_user_patch and apply_planner_update
-Tile service if needed (tile_service/models.py, service.py, mock_provider.py)
-Frontend types (types/document.ts): DocumentTripInputs, DocumentBranch
-Store defaults (documentStore.ts)
-UI component (TripDetailsForm.tsx): input control and draft type
-Hook (useTripInputsEditor.ts): handler function
-Props passing (NomadicLanding.tsx)
-Display (BranchPanel.tsx) if shown in summary
-Tests (test_plan_document.py): all fixtures and test data
-Regenerate frontend types from OpenAPI
+```bash
+pre-commit install              # Install hooks
+pre-commit run --all-files      # Run manually
+```
+
+Configured hooks: `black`, `ruff`, `detect-secrets`, `trailing-whitespace`, `end-of-file-fixer`
+
+## Coding Standards
+
+### TypeScript/React
+- 2-space indentation
+- Named exports (avoid default exports)
+- Define types at file top
+- Use `cn()` for className merging
+- Tailwind CSS for all styling
+
+### Python
+- Line length: 100 chars
+- Use type hints
+- Async functions for I/O operations
+- Follow ruff/black formatting
+
+## Claude Code Setup
+
+For developers using Claude Code, this repo includes optimizations for 16GB RAM systems.
+
+### Files
+
+- **`CLAUDE.md`** - Lightweight project reference (use `@CLAUDE.md` to load context)
+- **`.claudeignore`** - Excludes `node_modules`, `.venv`, build artifacts from indexing
+
+### Recommended Settings
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "cleanupPeriodDays": 3
+}
+```
+
+This reduces history retention from 30 days to 3 days, preventing memory bloat.
+
+### Memory Management
+
+If VS Code becomes sluggish or Extension Host usage climbs:
+
+1. Run `/clear` to wipe conversation history
+2. Type `Refer to @CLAUDE.md for my project rules.`
+
+This reloads context from the lightweight markdown file instead of heavy JSONL history.
+
+### Clearing Stale History (Manual)
+
+```bash
+# Delete old conversation logs (if needed)
+rm -rf ~/.claude/projects/*/conversations/*.jsonl
+```

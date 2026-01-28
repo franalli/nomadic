@@ -1,45 +1,76 @@
 'use client';
 
+import { cn } from '@/lib/utils';
+
 /**
  * TimelineSkeleton
  *
- * Pulsing placeholder shown while the Architect generates the itinerary.
- * Mimics the TimelineThread layout to provide visual continuity.
+ * Premium loading state shown while itinerary is being generated.
+ * Uses shimmer animation for a more polished feel.
  */
 export function TimelineSkeleton() {
   return (
-    <div className="pl-4 pr-2 py-6 space-y-12 relative">
-      {/* Thread Line */}
-      <div className="absolute left-[31px] top-6 bottom-6 w-0.5 bg-border/50" />
+    <div className="pl-4 pr-2 py-6 space-y-10 relative">
+      {/* Thread Line - dotted while loading */}
+      <div className="absolute left-[31px] top-6 bottom-6 w-0.5 border-l-2 border-dotted border-zinc-300 dark:border-zinc-700" />
 
       {[1, 2, 3].map((i) => (
-        <div key={i} className="relative z-10 pl-10">
-          {/* Day Header Bead */}
-          <div className="absolute -left-[1px] top-1 w-9 h-9 rounded-full bg-muted animate-pulse" />
-
-          {/* Day Label */}
-          <div className="mb-3 space-y-2">
-            <div className="h-5 w-24 bg-muted rounded animate-pulse" />
-            <div className="h-3 w-40 bg-muted/60 rounded animate-pulse" />
+        <div
+          key={i}
+          className="relative z-10 pl-10"
+          style={{ animationDelay: `${i * 150}ms` }}
+        >
+          {/* Day Header Bead - pulsing ring */}
+          <div className="absolute -left-[1px] top-1">
+            <div className="w-9 h-9 rounded-full bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
+            <div className="absolute inset-0 w-9 h-9 rounded-full ring-2 ring-emerald-500/20 animate-ping" style={{ animationDuration: '2s' }} />
           </div>
 
-          {/* Content Card */}
-          <div className="h-28 w-full bg-muted/30 rounded-xl border border-dashed border-border/50 animate-pulse flex items-center justify-center">
-            <div className="text-xs text-muted-foreground/50">
-              Building day {i}...
+          {/* Day Label with shimmer */}
+          <div className="mb-3 space-y-2">
+            <div className={cn('h-5 w-24 rounded', shimmerClasses)} />
+            <div className={cn('h-3 w-36 rounded', shimmerClasses)} style={{ animationDelay: '100ms' }} />
+          </div>
+
+          {/* Content Card with shimmer stripes */}
+          <div className="relative h-32 w-full rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 overflow-hidden bg-zinc-100/50 dark:bg-zinc-800/30">
+            {/* Shimmer overlay */}
+            <div className="absolute inset-0 -translate-x-full animate-[shimmer_2s_infinite] bg-gradient-to-r from-transparent via-white/20 dark:via-white/5 to-transparent" />
+
+            {/* Skeleton content */}
+            <div className="p-4 space-y-3">
+              <div className={cn('h-4 w-3/4 rounded', shimmerClasses)} />
+              <div className={cn('h-3 w-1/2 rounded', shimmerClasses)} style={{ animationDelay: '150ms' }} />
+              <div className={cn('h-3 w-2/3 rounded', shimmerClasses)} style={{ animationDelay: '300ms' }} />
+            </div>
+
+            {/* Building indicator */}
+            <div className="absolute bottom-3 right-3 flex items-center gap-1.5 text-[10px] text-zinc-400">
+              <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+              Building day {i}
             </div>
           </div>
         </div>
       ))}
 
       {/* Loading indicator at bottom */}
-      <div className="text-center pt-4">
-        <p className="text-sm text-muted-foreground animate-pulse">
-          Creating your personalized itinerary...
-        </p>
+      <div className="text-center pt-4 pb-2">
+        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-100 dark:bg-zinc-800/50">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+          </div>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">
+            Creating your personalized itinerary
+          </span>
+        </div>
       </div>
     </div>
   );
 }
+
+// Shimmer base classes
+const shimmerClasses = 'bg-zinc-200 dark:bg-zinc-700/50 animate-pulse';
 
 export default TimelineSkeleton;

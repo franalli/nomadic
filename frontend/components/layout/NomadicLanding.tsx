@@ -775,10 +775,16 @@ export function NomadicLanding() {
     resetTimeout();
 
     try {
+      // Get current document state for context
+      const currentDoc = documentStore.document;
       const response = await apiFetch('/v1/expand-itinerary', {
         method: 'POST',
         body: JSON.stringify({
           idempotency_key: runId,
+          // Pass document context so backend can generate itinerary
+          trip_inputs: currentDoc?.trip_inputs,
+          strategy_sections: currentDoc?.strategy_sections,
+          tiles: currentDoc?.tiles,
         }),
         signal: abortController.signal,
       });

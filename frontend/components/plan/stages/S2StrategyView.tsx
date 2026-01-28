@@ -44,6 +44,8 @@ import {
 import type { Tile } from '@/types/tile';
 
 import { TripHealthBar } from '../TripHealthBar';
+import { BookingAnchorCard } from './BookingAnchorCard';
+import { PriorityBookingsSection } from './PriorityBookingsSection';
 
 // Markdown components for rich text rendering (amber bold for key variables)
 const MARKDOWN_COMPONENTS = {
@@ -164,9 +166,11 @@ interface AgentCardProps {
   status: AgentStatus;
   /** Whether trip dates are set (for showing "add dates" hint) */
   hasDates?: boolean;
+  /** Trip inputs for booking anchor cards */
+  tripInputs?: DocumentTripInputs;
 }
 
-function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: AgentCardProps) {
+function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, tripInputs }: AgentCardProps) {
   const cardRef = React.useRef<HTMLDivElement>(null);
 
   // Scroll card into view when expanded (prevents jumping to wrong location)
@@ -206,13 +210,13 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
         "rounded-2xl border overflow-hidden topic-border-left transition-all duration-200",
         // Light: Pure white card with premium soft shadow
         "bg-white shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)]",
-        // Dark: Glass panel
-        "dark:bg-zinc-900/50 dark:shadow-none",
+        // Dark: Solid panel with clear boundary
+        "dark:bg-zinc-900 dark:shadow-none",
         // State-based borders
         isInfeasible && "border-red-500/50 bg-red-950/10",
         hasCaveat && "border-amber-500/30",
         // Default: Crisp border with hover enhancement
-        !isInfeasible && !hasCaveat && "border-zinc-200 hover:border-emerald-500/30 hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:border-white/10"
+        !isInfeasible && !hasCaveat && "border-zinc-200 hover:border-emerald-500/30 hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:border-zinc-800"
       )}
     >
       {/* 3. Header with subtle tint - group for hover effects */}
@@ -251,29 +255,28 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
               </span>
             )}
 
-            {/* Status chip - only show if NOT infeasible */}
-            {!isInfeasible && (
+            {/* Status chip - only show when updating or needs input (presence of content implies ready) */}
+            {!isInfeasible && status !== 'ready' && (
               <span className={cn(
                 "text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wide",
-                // Ready: Clean emerald badge
-                status === 'ready' && "bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-transparent",
                 // Updating: Amber pulse
                 status === 'updating' && "bg-amber-50 text-amber-700 border border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-transparent animate-pulse",
                 // Needs input: Subtle muted
                 status === 'needs_input' && "bg-zinc-100 text-zinc-500 dark:bg-muted dark:text-muted-foreground"
               )}>
-                {status === 'ready' ? 'Ready' : status === 'updating' ? 'Updating...' : 'Needs input'}
+                {status === 'updating' ? 'Updating...' : 'Needs input'}
               </span>
             )}
           </div>
-          {/* Plan + Booking mini-badges + Chevron - hide if infeasible */}
+          {/* Chevron with circular touch target - hide if infeasible */}
           {!isInfeasible && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 dark:bg-muted rounded text-zinc-600 dark:text-muted-foreground">Plan</span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 dark:bg-muted rounded text-zinc-600 dark:text-muted-foreground">Booking</span>
-              {/* Chevron - lights up on hover for affordance */}
+            <div className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
+              "bg-zinc-50 hover:bg-zinc-100 dark:bg-white/5 dark:hover:bg-white/10",
+              "transition-all duration-200"
+            )}>
               <ChevronDown className={cn(
-                "w-5 h-5 transition-all duration-200",
+                "w-4 h-4 transition-transform duration-200",
                 "text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
                 isExpanded && "rotate-180"
               )} />
@@ -311,7 +314,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
             )}>
               {status === 'ready' ? '✓' : '○'}
             </span>
-            <span className="font-mono">
+            <span className="text-sm text-zinc-500 dark:text-zinc-400">
               {status === 'ready' ? config.readyAction : config.updatingAction}
             </span>
           </div>
@@ -370,7 +373,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
         <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
           {/* Trip Summary (General Agent only - not for specialists) */}
           {section.trip_summary && section.specialist_type === 'general' && (
-            <div className="font-mono text-xs space-y-1 py-2 border-b border-border/30">
+            <div className="text-xs space-y-1 py-2 border-b border-border/30 tabular-nums">
               <div>
                 <span className="text-muted-foreground">Trip:</span>{' '}
                 <span className="text-card-foreground">{section.trip_summary.destination}</span>
@@ -388,36 +391,93 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
 
           {/* Destination Gallery - "Vibe Trio" for Local Expert card */}
           {section.specialist_type === 'local_expert' && section.destination_gallery && section.destination_gallery.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mb-2">
-              {section.destination_gallery.map((img, idx) => (
-                <div key={idx} className="relative aspect-video rounded-lg overflow-hidden border border-zinc-700/50 group">
-                  <Image
-                    src={img.url}
-                    alt={img.alt}
-                    fill
-                    className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  />
-                </div>
-              ))}
+            <div className="mb-2">
+              {/* MOBILE: Horizontal swipe carousel - larger, more prominent images */}
+              <div className="flex gap-3 overflow-x-auto pb-3 snap-x no-scrollbar md:hidden">
+                {section.destination_gallery.map((img, idx) => (
+                  <div
+                    key={idx}
+                    className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-sm border border-zinc-200 dark:border-zinc-700/50"
+                  >
+                    <Image
+                      src={img.url}
+                      alt={img.alt}
+                      fill
+                      className="object-cover"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* DESKTOP: 3-column grid */}
+              <div className="hidden md:grid grid-cols-3 gap-4">
+                {section.destination_gallery.map((img, idx) => (
+                  <div key={idx} className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-zinc-100 dark:border-zinc-700/50 group">
+                    <Image
+                      src={img.url}
+                      alt={img.alt}
+                      fill
+                      className="object-cover transition-transform duration-500 group-hover:scale-105"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Specialist Constraints: Lightweight metadata rows */}
+          {/* Booking Anchors: Flights & Hotels (Local Expert only) */}
+          {section.specialist_type === 'local_expert' && tripInputs && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <BookingAnchorCard
+                type="flights"
+                tripInputs={tripInputs}
+                status="pending"
+              />
+              <BookingAnchorCard
+                type="hotels"
+                tripInputs={tripInputs}
+                status="pending"
+              />
+            </div>
+          )}
+
+          {/* Priority Bookings: Items that require advance booking */}
+          {section.content_added && section.content_added.some(c => c.logic_hook?.includes('BOOK')) && (
+            <PriorityBookingsSection
+              items={section.content_added.filter(c => c.logic_hook?.includes('BOOK')).map(c => ({
+                title: c.title,
+                reason: c.description || c.logic_hook || '',
+                advance_notice: c.logic_hook?.match(/(\d+\s*(?:days?|weeks?|hours?))/i)?.[1],
+                booking_url: undefined,
+                logic_hook: c.logic_hook,
+              }))}
+            />
+          )}
+
+          {/* Specialist Constraints: Readable metadata with icon bubbles */}
           {section.constraints_applied && section.constraints_applied.length > 0 && (
             <div>
-              <h5 className="text-[11px] font-medium text-muted-foreground/70 uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                <ShieldCheck size={10} className="text-emerald-500/70" /> Applied Constraints
+              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
+                <ShieldCheck size={12} className="text-emerald-600 dark:text-emerald-400" /> Applied Constraints
               </h5>
-              <div className="space-y-1">
+              <div className="space-y-3">
                 {section.constraints_applied.map((c, idx) => (
-                  <div key={idx} className="text-[11px] flex items-start gap-1.5 text-muted-foreground">
-                    <span className="mt-1 w-1 h-1 rounded-full bg-emerald-500/60 flex-shrink-0" />
-                    <span>
-                      <span className="text-muted-foreground/80">
-                        {formatConstraintTitle(c.rule)}:
-                      </span>{' '}
-                      <span className="text-muted-foreground/60">{c.reason || c.type}</span>
-                    </span>
+                  <div key={idx} className="flex items-start gap-3">
+                    {/* Icon bubble - aligned to top */}
+                    <div className="shrink-0 mt-0.5 w-5 h-5 rounded-full bg-emerald-50 dark:bg-emerald-500/20 flex items-center justify-center">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                    </div>
+                    {/* Text content - darker for readability */}
+                    <div className="space-y-0.5">
+                      <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed font-medium">
+                        {formatConstraintTitle(c.rule)}
+                      </p>
+                      {(c.reason || c.type) && (
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                          {c.reason || c.type}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -430,16 +490,16 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
               <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
                 <Lightbulb size={12} className="text-emerald-600 dark:text-emerald-400" /> Expert Recommendations
               </h5>
-              <div className="grid gap-2">
+              <div className="grid gap-3">
                 {section.content_added.map((c, idx) => (
                   <div
                     key={idx}
                     className={cn(
-                      "rounded-lg border transition-colors p-3 flex gap-3",
-                      // Light: White card with soft shadow
+                      "rounded-xl border transition-colors p-4 flex gap-3",
+                      // Light: Clean white card with subtle shadow
                       "bg-white border-zinc-200 hover:border-emerald-500/30 shadow-sm",
                       // Dark: Glass panel
-                      "dark:bg-zinc-800/40 dark:border-zinc-700/50 dark:hover:border-zinc-600 dark:shadow-none"
+                      "dark:bg-zinc-900 dark:border-zinc-700 dark:hover:border-zinc-600 dark:shadow-none"
                     )}
                   >
                     {/* Thumbnail - Only render if image_url exists */}
@@ -457,16 +517,16 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">{c.title}</span>
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-sm font-bold text-zinc-900 dark:text-white">{c.title}</span>
                         {c.type && (
-                          <span className="text-[9px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">
+                          <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded uppercase">
                             {c.type}
                           </span>
                         )}
                       </div>
                       {c.description && (
-                        <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed mt-1 line-clamp-2">
+                        <p className="text-xs text-zinc-600 dark:text-zinc-400 leading-relaxed line-clamp-2">
                           {c.description}
                         </p>
                       )}
@@ -606,6 +666,8 @@ interface StrategyStackProps {
   tiles?: Record<string, Tile>;
   /** Whether trip dates are set (for showing "add dates" hint) */
   hasDates?: boolean;
+  /** Trip inputs for booking anchor cards */
+  tripInputs?: DocumentTripInputs;
 }
 
 function StrategyStack({
@@ -614,6 +676,7 @@ function StrategyStack({
   executedTopics,
   tiles = {},
   hasDates = true,
+  tripInputs,
 }: StrategyStackProps) {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -708,6 +771,7 @@ function StrategyStack({
               }
               status={status}
               hasDates={hasDates}
+              tripInputs={tripInputs}
             />
           );
         })
@@ -715,7 +779,7 @@ function StrategyStack({
         /* Clean state: No specialists yet, show subtle hint */
         !hasPending && showTripHealth && (
           <div className="text-center py-6 opacity-40">
-            <p className="text-xs font-mono uppercase tracking-widest">System Ready</p>
+            <p className="text-xs uppercase tracking-widest text-zinc-500 dark:text-zinc-400">System Ready</p>
             <p className="text-[10px] text-muted-foreground mt-1">
               Add activities like diving or hiking to see specialist logic
             </p>
@@ -835,6 +899,7 @@ export function S2StrategyView({
         executedTopics={resolvedExecutedTopics}
         tiles={tiles}
         hasDates={hasDates}
+        tripInputs={tripInputs}
       />
 
       {/* Open decisions panel */}

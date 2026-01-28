@@ -285,11 +285,11 @@ export function PlanHeader({
               />
             )}
 
-            {/* Subtle scrim for text readability - lighter than before */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
+            {/* Subtle scrim for text readability - z-10 so pills can be above */}
+            <div className="absolute inset-0 z-10 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
 
             {/* Destination content overlay - title/subtitle only */}
-            <div className="absolute inset-0 flex flex-col justify-end p-5 pb-14">
+            <div className="absolute inset-0 z-10 flex flex-col justify-end p-5 pb-14">
               <h2 className="text-xl font-semibold text-white drop-shadow-md">{title}</h2>
               {subtitle && (
                 <p className="mt-0.5 text-sm text-white/90 drop-shadow-sm flex items-center gap-1.5">
@@ -305,20 +305,20 @@ export function PlanHeader({
                 </p>
               )}
             </div>
+
+            {/* Pills - INSIDE the postcard, above gradient overlay */}
+            {showPills && (
+              <div className="absolute bottom-3 left-4 right-4 z-20">
+                <TripSummaryPills
+                  tripInputs={tripInputs}
+                  onOpenSheet={onOpenSheet}
+                  disabled={isStreaming}
+                  variant="onImage"
+                />
+              </div>
+            )}
           </div>
         </div>
-
-        {/* LAYER 3: Pills - positioned at bottom of postcard area */}
-        {hasDestination && showPills && (
-          <div className="absolute bottom-2 left-5 right-5 z-30">
-            <TripSummaryPills
-              tripInputs={tripInputs}
-              onOpenSheet={onOpenSheet}
-              disabled={isStreaming}
-              variant="onImage"
-            />
-          </div>
-        )}
       </div>
 
       {/* Floating Glass Command Bar - Desktop only (mobile uses bottom nav) */}

@@ -86,7 +86,7 @@ export function NextStepBar({
   // Don't render if no action
   if (!nextAction) return null;
 
-  // Show hint when duration is missing - CTA still clickable to open TripLengthSheet
+  // Show hint when duration is missing - CTA opens date picker directly
   if (needsDuration) {
     return (
       <div
@@ -99,17 +99,17 @@ export function NextStepBar({
           onClick={onExpandToItinerary}
           className={cn(
             "flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-sm font-bold transition-all",
-            "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white",
+            "bg-gradient-to-br from-amber-500 to-amber-600 text-white",
             "border-t border-white/20",
-            "shadow-xl shadow-emerald-900/10",
-            "hover:from-emerald-400 hover:to-emerald-500 hover:shadow-emerald-900/20 active:scale-[0.98]"
+            "shadow-xl shadow-amber-900/10",
+            "hover:from-amber-400 hover:to-amber-500 hover:shadow-amber-900/20 active:scale-[0.98]"
           )}
         >
           <ArrowRight className="h-4 w-4" />
-          Build Itinerary
+          Select Dates to Build
         </button>
-        <p className="mt-2 text-center text-xs text-emerald-600 dark:text-emerald-400">
-          Set trip length to create itinerary
+        <p className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">
+          Trip dates required for day-by-day itinerary
         </p>
       </div>
     );

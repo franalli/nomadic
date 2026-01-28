@@ -679,6 +679,12 @@ input[type="number"]::-webkit-outer-spin-button {
   border: 1px solid rgb(var(--topic-color) / 0.3);
 }
 
+/* Dark mode: stronger opacity for better visibility */
+.dark .topic-badge {
+  background: rgb(var(--topic-color) / 0.25);
+  border: 1px solid rgb(var(--topic-color) / 0.4);
+}
+
 /* Topic left accent border - 3px strong color */
 .topic-border-left {
   border-left: 3px solid rgb(var(--topic-color));
@@ -1068,6 +1074,12 @@ input[type="number"]::-webkit-outer-spin-button {
   );
   background-size: 200% 100%;
   animation: scan-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Skeleton shimmer animation */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 /* ===== Timeline Thread Styles ===== */

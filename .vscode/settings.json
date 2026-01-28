@@ -43,5 +43,26 @@
 
   // Optional: Auto organize imports for TS/TSX
   "typescript.preferences.importModuleSpecifier": "relative",
-  "typescript.updateImportsOnFileMove.enabled": "always"
+  "typescript.updateImportsOnFileMove.enabled": "always",
+
+  // PERFORMANCE: Process isolation for Claude extension
+  "extensions.experimental.affinity": {
+    "anthropic.claude-code": 1
+  },
+
+  // PERFORMANCE: Exclude heavy folders from VS Code indexing
+  "files.exclude": {
+    "**/.git": true,
+    "**/.next": true,
+    "**/__pycache__": true,
+    "**/node_modules": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/build": true,
+    "**/.next": true
+  }
 }

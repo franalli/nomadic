@@ -51,20 +51,25 @@ export const CoreChip = memo(function CoreChip({
       className={cn(
         // Flexible sizing
         'snap-start min-w-0',
-        // Base styling (h-6 = 24px on mobile for compact fit)
-        'inline-flex items-center gap-1 h-6 px-2 rounded-full border text-[11px]',
+        // Base transition
         'transition-all duration-[120ms] ease-out active:scale-[0.98]',
         // Disabled state
         disabled && 'opacity-50 pointer-events-none',
 
         // === ON-IMAGE VARIANT (for hero/photo backgrounds) ===
-        // FROSTED GLASS: Dark semi-transparent base with blur - lets photo colors bleed through
-        isOnImage && hasValue && 'border-white/20 bg-black/20 backdrop-blur-md text-white font-semibold shadow-sm',
-        isOnImage && !hasValue && tone === 'missing' && 'border-amber-400/40 border-dashed bg-black/15 backdrop-blur-md text-white/90 shadow-sm',
-        isOnImage && !hasValue && tone === 'optional' && 'border-white/15 bg-black/10 backdrop-blur-md text-white/70 shadow-sm',
-        isOnImage && !hasValue && tone === 'default' && 'border-white/20 bg-black/15 backdrop-blur-md text-white/85 shadow-sm',
-        // Hover for onImage - subtle brightening
-        isOnImage && !disabled && 'hover:bg-black/30 hover:border-white/30',
+        // Larger, touch-friendly sizing for hero pills
+        isOnImage && 'inline-flex items-center gap-2 h-8 px-3.5 rounded-full border text-xs',
+        // HIGH-CONTRAST GLASS: Darker backing for better readability on busy images
+        isOnImage && hasValue && 'border-white/30 bg-black/60 backdrop-blur-md text-white font-semibold shadow-lg',
+        isOnImage && !hasValue && tone === 'missing' && 'border-amber-400/50 border-dashed bg-black/50 backdrop-blur-md text-white/95 shadow-lg',
+        isOnImage && !hasValue && tone === 'optional' && 'border-white/25 bg-black/45 backdrop-blur-md text-white/80 shadow-lg',
+        isOnImage && !hasValue && tone === 'default' && 'border-white/30 bg-black/50 backdrop-blur-md text-white/90 shadow-lg',
+        // Hover/active for onImage - subtle brightening with tap feedback
+        isOnImage && !disabled && 'hover:bg-black/70 hover:border-white/40 active:bg-black/75',
+
+        // === DEFAULT VARIANT (for normal page backgrounds) ===
+        // Compact sizing for non-hero contexts
+        !isOnImage && 'inline-flex items-center gap-1 h-6 px-2 rounded-full border text-[11px]',
 
         // === DEFAULT VARIANT (for normal page backgrounds) ===
         !isOnImage && hasValue && 'border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold',
@@ -81,7 +86,9 @@ export const CoreChip = memo(function CoreChip({
     >
       <Icon
         className={cn(
-          'h-3.5 w-3.5 flex-shrink-0',
+          'flex-shrink-0',
+          // Size varies by variant
+          isOnImage ? 'h-4 w-4' : 'h-3.5 w-3.5',
           // Icon color based on variant and state
           // On-image: All icons are white/light for frosted glass look
           isOnImage && hasValue && 'text-emerald-400',
@@ -90,7 +97,12 @@ export const CoreChip = memo(function CoreChip({
           !isOnImage && hasValue && 'text-[var(--chip-active-icon)]'
         )}
       />
-      <span className="text-xs truncate max-w-[120px]">{displayText}</span>
+      <span className={cn(
+        'truncate',
+        isOnImage ? 'max-w-[140px]' : 'max-w-[120px]'
+      )}>
+        {displayText}
+      </span>
       {hasValue && isOnImage && (
         // Glowing status dot for frosted glass pills
         <div className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />

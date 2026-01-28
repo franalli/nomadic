@@ -2483,25 +2483,55 @@ async def expand_itinerary_endpoint(
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
+            # Use frontend-provided context if available, else fall back to database
+            # This ensures we have the latest strategy_sections from the client
+            trip_inputs_data = (
+                req.trip_inputs
+                if req.trip_inputs
+                else (doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {})
+            )
+            strategy_sections_data = (
+                req.strategy_sections
+                if req.strategy_sections
+                else (
+                    [s.model_dump() for s in doc_data.strategy_sections]
+                    if doc_data.strategy_sections
+                    else []
+                )
+            )
+
+            # Extract executed topics from strategy sections
+            executed_topics = (
+                list(
+                    set(
+                        s.get("specialist_type") or "general"
+                        for s in strategy_sections_data
+                        if s.get("specialist_type")
+                    )
+                )
+                if strategy_sections_data
+                else (doc_data.executed_strategy_topics or [])
+            )
+
+            tiles_count = len(req.tiles) if req.tiles else 0
+            logger.debug(
+                f"[expand-itinerary] Using strategy_sections={len(strategy_sections_data)}, "
+                f"trip_inputs={trip_inputs_data.get('destination')}, tiles={tiles_count}"
+            )
+
             # Build session state from document for planner
             # CRITICAL: Include strategy_sections so the graph has specialist context
             session_state = {
-                "trip_inputs": doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {},
+                "trip_inputs": trip_inputs_data,
                 "branches": (
                     [b.model_dump() for b in doc_data.branches] if doc_data.branches else []
                 ),
                 "metadata": {
                     "strategy_stage": 3,  # Force Stage 3
-                    "strategy_sections": (
-                        [s.model_dump() for s in doc_data.strategy_sections]
-                        if doc_data.strategy_sections
-                        else []
-                    ),
-                    "executed_strategy_topics": (
-                        doc_data.executed_strategy_topics
-                        if doc_data.executed_strategy_topics
-                        else []
-                    ),
+                    "strategy_sections": strategy_sections_data,
+                    "executed_strategy_topics": executed_topics,
+                    # Pass tiles if provided
+                    "tiles": req.tiles if req.tiles else None,
                 },
                 "today_iso": compute_today_iso(),
             }

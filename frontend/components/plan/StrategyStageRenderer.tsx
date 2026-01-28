@@ -25,7 +25,7 @@
 
 'use client';
 
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
@@ -132,7 +132,8 @@ function renderStageContent(
   isDesktop?: boolean,
   tripInputs?: DocumentTripInputs,
   onFinalizePlan?: () => void,
-  isFinalizing?: boolean
+  isFinalizing?: boolean,
+  isExpandingItinerary?: boolean
 ): React.ReactNode {
   // Zero-UI: S0 controls live in sidebar, not center card
   // These params were for S0BootstrapView, now unused
@@ -185,6 +186,7 @@ function renderStageContent(
           destinationCard={destinationCard}
           onFinalize={onFinalizePlan}
           isFinalizing={isFinalizing}
+          isGenerating={isExpandingItinerary}
         />
       );
 
@@ -275,6 +277,22 @@ export function StrategyStageRenderer({
   // View navigation - decoupled from plan_view_state
   const { activeView, canViewSetup, canViewPlan, canViewBook } = useViewNavigation();
 
+  // Sub-view toggle: Overview (S2) vs Itinerary (S3) within Plan mode
+  // Smart initialization: show itinerary if already generated, otherwise overview
+  const [subView, setSubView] = useState<'overview' | 'itinerary'>(
+    state === 'S3_ITINERARY_READY' ? 'itinerary' : 'overview'
+  );
+
+  // Auto-switch to itinerary when generation completes
+  useEffect(() => {
+    if (state === 'S3_ITINERARY_READY') {
+      setSubView('itinerary');
+    }
+  }, [state]);
+
+  // Check if itinerary has been generated (for showing toggle)
+  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+
   // Setup content - Zero-UI: no form, just hero
   // The sidebar (ChatPanel) has all controls - no need for duplicate checklist
   const setupContent = useMemo(() => {
@@ -324,12 +342,48 @@ export function StrategyStageRenderer({
       // Ghost timeline will appear here when specialist content is available
       return null;
     }
+    // Determine which view to show based on subView toggle
+    // When in S3_ITINERARY_READY and subView is 'overview', show S2StrategyView
+    const effectiveState = (hasItinerary && subView === 'overview')
+      ? 'S2_STRATEGY_READY'
+      : state;
+
     return (
       <>
+        {/* Sub-view toggle - visible only after itinerary is generated */}
+        {hasItinerary && (
+          <div className="flex justify-center py-4 sticky top-0 z-30 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm border-b border-zinc-200/50 dark:border-zinc-800/50">
+            <div className="bg-zinc-200 dark:bg-zinc-800 p-1 rounded-full flex">
+              <button
+                onClick={() => setSubView('overview')}
+                className={cn(
+                  "px-6 py-2 rounded-full text-xs font-bold transition-all duration-200",
+                  subView === 'overview'
+                    ? "bg-white dark:bg-zinc-700 shadow-sm text-zinc-900 dark:text-white"
+                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                )}
+              >
+                Overview
+              </button>
+              <button
+                onClick={() => setSubView('itinerary')}
+                className={cn(
+                  "px-6 py-2 rounded-full text-xs font-bold transition-all duration-200",
+                  subView === 'itinerary'
+                    ? "bg-white dark:bg-zinc-700 shadow-sm text-zinc-900 dark:text-white"
+                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                )}
+              >
+                Itinerary
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Stage content with regeneration overlay */}
         <div className="relative">
           {renderStageContent(
-            state,
+            effectiveState,
             viewModel,
             destinationCard,
             canGeneratePlan,
@@ -341,7 +395,8 @@ export function StrategyStageRenderer({
             isDesktop,
             effectiveTripInputs,
             onFinalizePlan,
-            isFinalizing
+            isFinalizing,
+            isExpandingItinerary
           )}
 
           {/* Regeneration overlay - shows when constraints changed and plan is refreshing */}
@@ -371,8 +426,11 @@ export function StrategyStageRenderer({
     isRegenerating,
     onFinalizePlan,
     isFinalizing,
+    isExpandingItinerary,
     onSelectNights,
     onOpenSheet,
+    hasItinerary,
+    subView,
   ]);
 
   // Book content - full booking section view

@@ -10,8 +10,8 @@ import React, {
   useState,
 } from 'react';
 
-import { useDocumentStore } from '@/state/documentStore';
 import type { ViewName } from '@/hooks/useViewNavigation';
+import { useDocumentStore } from '@/state/documentStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

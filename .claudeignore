@@ -57,3 +57,38 @@ db-data/
 
 # Secrets (for safety)
 .secrets.baseline
+
+# IDE settings
+.vscode/
+.idea/
+*.code-workspace
+
+# Database dumps
+**/*.sql
+**/*.dump
+**/*.sqlite
+**/*.db
+
+# Large assets (images/media)
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.svg
+**/*.mp4
+**/*.mov
+**/*.pdf
+
+# Data files (can be massive)
+**/*.csv
+**/*.jsonl
+
+# System files
+.DS_Store
+**/.DS_Store
+
+# Python tooling caches
+.mypy_cache/
+.tox/
+.nox/

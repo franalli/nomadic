@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react';
+
 import { useDocumentStore } from '@/state/documentStore';
 
 export type ViewName = 'setup' | 'plan' | 'book';

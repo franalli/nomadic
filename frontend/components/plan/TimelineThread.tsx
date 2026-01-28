@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Bed,
   Camera,
@@ -13,10 +13,11 @@ import {
   Utensils,
   Waves,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { useMemo } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
+
 import { InlineDatePrompt } from './timeline/InlineDatePrompt';
 
 interface TimelineThreadProps {

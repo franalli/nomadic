@@ -173,6 +173,16 @@ class ExpandItineraryRequest(BaseModel):
     idempotency_key: str = Field(
         description="Client-generated UUID to prevent duplicate generation"
     )
+    # Optional document context - if provided, used to restore session state
+    trip_inputs: Optional[Dict[str, Any]] = Field(
+        default=None, description="Trip inputs from frontend document"
+    )
+    strategy_sections: Optional[List[Dict[str, Any]]] = Field(
+        default=None, description="Strategy sections from frontend document"
+    )
+    tiles: Optional[Dict[str, Any]] = Field(
+        default=None, description="Tiles from frontend document"
+    )
 
 
 class ExpandItineraryStreamEvent(BaseModel):

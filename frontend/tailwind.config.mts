@@ -62,6 +62,7 @@ const config: Config = {
         body: ['Inter', ...defaultTheme.fontFamily.sans],
         heading: ['"Playfair Display"', 'ui-serif', 'Georgia', 'serif'],
         display: ['"Space Grotesk"', 'Inter', ...defaultTheme.fontFamily.sans],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       fontSize: {
         display: ['3.5rem', { lineHeight: '1.05', letterSpacing: '-0.04em' }],

@@ -59,7 +59,12 @@ export function TripSummaryPills({
   return (
     <div
       className={cn(
-        'flex gap-1.5 flex-wrap'
+        'flex items-center gap-1.5 overflow-x-auto no-scrollbar',
+        // Premium scroll: snap + fade mask on right edge
+        'snap-x snap-mandatory',
+        '[mask-image:linear-gradient(to_right,black_85%,transparent_100%)]',
+        // Prevent pills from shrinking
+        '[&>*]:shrink-0 [&>*]:snap-start'
       )}
     >
       <CoreChip
@@ -118,6 +123,9 @@ export function TripSummaryPills({
         disabled={disabled}
         variant={variant}
       />
+
+      {/* Spacer to prevent last pill from being cut off by fade */}
+      <div className="w-4 shrink-0" aria-hidden="true" />
     </div>
   );
 }

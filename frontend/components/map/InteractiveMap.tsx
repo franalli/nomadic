@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
-import Map, { Marker, NavigationControl, type MapRef } from 'react-map-gl/mapbox';
-import { MapPin, Plane, Bed, Waves, Mountain, Camera } from 'lucide-react';
 import 'mapbox-gl/dist/mapbox-gl.css';
+
+import { Bed, Camera,MapPin, Mountain, Plane, Waves } from 'lucide-react';
+import { useCallback,useEffect, useRef } from 'react';
+import Map, { type MapRef,Marker, NavigationControl } from 'react-map-gl/mapbox';
 
 import { cn } from '@/lib/utils';
 
