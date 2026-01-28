@@ -180,35 +180,34 @@ const CoreChip = memo(function CoreChip({
         // Premium Standard: h-9 (36px) - tactile & readable
         'inline-flex items-center gap-2 h-9 px-3.5 rounded-lg',
         'transition-all duration-200 ease-out active:scale-[0.98]',
-        // Light mode: "Paper & Ink" - solid fills, high contrast
-        // Dark mode: "Holographic Console" - glass glow
         'border',
-        // Base state (unfilled) - Light: Solid grey tag
+        // Base state (unfilled) - Light: White card with grey border
         !isHighlighted && [
-          'bg-zinc-100 text-zinc-600 border-transparent',
-          'hover:bg-zinc-200 hover:text-zinc-900',
+          'bg-white text-zinc-500 border-zinc-200',
+          'hover:border-emerald-500/50 hover:text-emerald-600',
           // Dark: glass with subtle border
           'dark:bg-white/[0.05] dark:text-zinc-400 dark:border-white/[0.10]',
           'dark:hover:bg-white/[0.10] dark:hover:border-white/20 dark:hover:text-white',
         ],
-        // Highlighted state (filled) - Light: Jet black ink
+        // Highlighted state (filled) - Light: Monochrome "Printed Label"
+        // Data is neutral - facts don't need color emphasis
         isHighlighted && [
-          'bg-zinc-900 text-white border-transparent shadow-md',
-          'hover:bg-zinc-800',
+          'bg-zinc-100 text-zinc-900 border-zinc-300 shadow-sm',
+          'hover:bg-zinc-200 hover:border-zinc-400',
           // Dark: brighter glass with white text
           'dark:bg-white/[0.10] dark:text-white dark:border-white/20',
           'dark:hover:bg-white/[0.15] dark:hover:border-white/30',
         ],
         // Focus ring
         'focus-visible:outline-none focus-visible:ring-2',
-        'focus-visible:ring-zinc-400/50 dark:focus-visible:ring-white/20'
+        'focus-visible:ring-emerald-500/40 dark:focus-visible:ring-white/20'
       )}
     >
       <Icon
         className={cn(
           'h-4 w-4 flex-shrink-0',
-          // Light: contrast icons based on state
-          isHighlighted ? 'text-white dark:text-white' : 'text-zinc-500 dark:text-zinc-500'
+          // Light: dark grey when filled (monochrome), grey when empty
+          isHighlighted ? 'text-zinc-700 dark:text-white' : 'text-zinc-400 dark:text-zinc-500'
         )}
       />
       <span className="text-xs font-semibold uppercase tracking-wide truncate max-w-[100px]">
@@ -256,40 +255,41 @@ const ModuleChip = memo(function ModuleChip({
         'inline-flex items-center gap-2 h-10 px-5 rounded-full',
         'transition-all duration-200 ease-out active:scale-[0.95]',
         'border',
-        // Off: dim ghost - Light: solid grey, Dark: outline
+        // Off: Light: white card, Dark: ghost outline
         isOff && [
-          'bg-zinc-100 text-zinc-500 border-transparent',
-          'hover:bg-zinc-200 hover:text-zinc-600',
+          'bg-white text-zinc-500 border-zinc-200',
+          'hover:bg-zinc-50 hover:text-zinc-900',
           // Dark: ghost outline
           'dark:bg-transparent dark:text-zinc-500 dark:border-zinc-800',
           'dark:hover:border-zinc-700 dark:hover:text-zinc-400',
         ],
-        // On Default: teal accent - Light: solid teal, Dark: glow
+        // On Default: Pastel emerald "Highlighter" - tinted, not solid
+        // Actions are colored but subtle - like a highlighter mark
         isOnDefault && [
-          'bg-teal-600 text-white border-transparent shadow-md',
-          'hover:bg-teal-500',
-          // Dark: teal glow
-          'dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-500/50',
-          'dark:shadow-[0_0_15px_-3px_rgba(45,212,191,0.2)]',
-          'dark:hover:border-teal-500/70 dark:hover:shadow-[0_0_20px_-3px_rgba(45,212,191,0.3)]',
+          'bg-emerald-50 text-emerald-800 border-emerald-200 shadow-sm',
+          'hover:bg-emerald-100 hover:border-emerald-300',
+          // Dark: emerald glow
+          'dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/50',
+          'dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.2)]',
+          'dark:hover:border-emerald-500/70 dark:hover:shadow-[0_0_20px_-3px_rgba(16,185,129,0.3)]',
         ],
-        // On Custom: stronger teal - Light: darker solid, Dark: stronger glow
+        // On Custom: Slightly stronger pastel with indicator dot
         isOnCustom && [
-          'bg-teal-700 text-white border-transparent shadow-lg font-semibold',
-          'hover:bg-teal-600',
-          // Dark: stronger teal glow
-          'dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/70',
-          'dark:shadow-[0_0_20px_-3px_rgba(45,212,191,0.3)]',
-          'dark:hover:border-teal-400 dark:hover:shadow-[0_0_25px_-3px_rgba(45,212,191,0.4)]',
+          'bg-emerald-100 text-emerald-900 border-emerald-300 shadow-sm font-semibold',
+          'hover:bg-emerald-200 hover:border-emerald-400',
+          // Dark: stronger emerald glow
+          'dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/70',
+          'dark:shadow-[0_0_20px_-3px_rgba(16,185,129,0.3)]',
+          'dark:hover:border-emerald-400 dark:hover:shadow-[0_0_25px_-3px_rgba(16,185,129,0.4)]',
         ],
         // Focus ring
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40'
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40'
       )}
     >
       <Icon className={cn(
         'h-5 w-5 flex-shrink-0',
-        // Light: white when active, grey when off
-        isOff ? 'text-zinc-400 dark:text-zinc-600' : 'text-white dark:text-teal-400'
+        // Light: emerald when active (pastel bg), grey when off
+        isOff ? 'text-zinc-400 dark:text-zinc-600' : 'text-emerald-700 dark:text-emerald-400'
       )} />
       <span className="text-sm font-medium">
         {label}
@@ -299,7 +299,7 @@ const ModuleChip = memo(function ModuleChip({
       </span>
       {/* Custom dot indicator */}
       {isOnCustom && (
-        <span className="h-2 w-2 rounded-full bg-white/80 dark:bg-teal-400" />
+        <span className="h-2 w-2 rounded-full bg-emerald-600 dark:bg-emerald-400" />
       )}
     </button>
   );

@@ -426,44 +426,6 @@ def _get_trip_input_display_value(ui_key: str, trip_inputs: dict) -> str | None:
     return None
 
 
-def _populate_plan_view_state_fields(
-    response_document: PlanDocumentData,
-    metadata: dict,
-    trip_inputs: dict,
-) -> None:
-    """
-    Populate plan view state machine fields on the response document.
-
-    This is called at the end of request processing to set:
-    - plan_view_state
-    - strategy_sections (S2)
-    - open_decisions (S2)
-    - itinerary_overview (S3)
-    - day_cards (S3)
-    - itinerary_assumptions (S3)
-    - needs_refresh
-    - can_expand_to_itinerary
-    """
-    # Compute plan view state
-    plan_view_state = _compute_plan_view_state(metadata, trip_inputs)
-    response_document.plan_view_state = plan_view_state
-
-    # Populate S2 fields
-    if plan_view_state in ("S2_STRATEGY_READY", "S2_BLOCKED"):
-        response_document.strategy_sections = _build_strategy_sections(metadata)
-        response_document.open_decisions = _build_open_decisions(metadata)
-
-    # Populate S3 fields
-    if plan_view_state in ("S3_ITINERARY_READY", "S3_EDITING", "S3_BLOCKED"):
-        response_document.itinerary_overview = _build_itinerary_overview(metadata)
-        response_document.day_cards = _build_day_cards(metadata)
-        response_document.itinerary_assumptions = _build_itinerary_assumptions(metadata)
-
-    # Set flags
-    response_document.needs_refresh = metadata.get("needs_refresh", False)
-    response_document.can_expand_to_itinerary = _check_stage3_gate(metadata, trip_inputs)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan hooks.

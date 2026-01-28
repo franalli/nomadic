@@ -981,8 +981,3 @@ def extract_message_from_malformed_json(raw: str) -> Optional[str]:
                 return message.strip()
 
     return None
-
-
-# Backwards compatibility aliases (private names used in plan_graph.py)
-_truncate_to_balanced_json = truncate_to_balanced_json
-_extract_message_from_malformed_json = extract_message_from_malformed_json

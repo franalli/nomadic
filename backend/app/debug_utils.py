@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any, List
+from typing import Any
 
 from rich.console import Console
 from rich.theme import Theme
@@ -69,21 +69,6 @@ def get_debug_mode() -> str:
     if os.getenv("DEBUG_PLAN_MESSAGES", "").lower() in ("true", "1", "yes"):
         return "full"
     return "off"
-
-
-def is_demo_mode() -> bool:
-    """Check if demo mode is active (clean agent-level logs only)."""
-    return get_debug_mode() == "demo"
-
-
-def is_full_mode() -> bool:
-    """Check if full debug mode is active (all logs)."""
-    return get_debug_mode() == "full"
-
-
-def is_debug_enabled() -> bool:
-    """Check if any debug logging is enabled."""
-    return get_debug_mode() in ("demo", "full")
 
 
 def _get_demo_delay() -> float:
@@ -362,43 +347,6 @@ def _debug_error(message: str, **kwargs: Any) -> None:
                 extras_parts.append(f"{k}=<unserializable>")
         extras = " ".join(extras_parts) if extras_parts else ""
         _safe_print(f"[ERROR] {message} {extras}".strip())
-    except Exception:
-        pass
-
-
-def _debug_suggestions(suggestions: List[str], source: str = "") -> None:
-    """Print user prompt suggestions. Only shown in full mode."""
-    if get_debug_mode() != "full":
-        return
-    try:
-        src_tag = f" ({source})" if source else ""
-        if suggestions:
-            truncated = [s[:100] + "..." if len(s) > 100 else s for s in suggestions[:5]]
-            suggestions_str = " | ".join(truncated)
-            _safe_print(f"[DEBUG] Prompt suggestions{src_tag}: [{suggestions_str}]")
-        else:
-            _safe_print(f"[DEBUG] Prompt suggestions{src_tag}: (none)")
-    except Exception:
-        pass
-
-
-# =============================================================================
-# SAFE DEBUG: Guaranteed non-throwing wrappers
-# =============================================================================
-
-
-def safe_debug(message: str, **kwargs: Any) -> None:
-    """Guaranteed non-throwing debug function."""
-    try:
-        _debug(message, **kwargs)
-    except Exception:
-        pass
-
-
-def safe_debug_error(message: str, **kwargs: Any) -> None:
-    """Guaranteed non-throwing error debug."""
-    try:
-        _debug_error(message, **kwargs)
     except Exception:
         pass
 

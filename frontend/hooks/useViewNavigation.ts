@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
+import { useDocumentStore } from '@/state/documentStore';
 
 export type ViewName = 'setup' | 'plan' | 'book';
 
@@ -46,7 +46,6 @@ export interface UseViewNavigationReturn {
 export function useViewNavigation(): UseViewNavigationReturn {
   const activeView = useDocumentStore((s) => s.activeView ?? 'setup');
   const setActiveView = useDocumentStore((s) => s.setActiveView);
-  const tripInputs = useDocumentTripInputs();
   const tiles = useDocumentStore((s) => s.document?.tiles);
   const generation = useDocumentStore((s) => s.document?.generation);
   const strategySections = useDocumentStore((s) => s.document?.strategy_sections);

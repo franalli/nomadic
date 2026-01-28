@@ -264,41 +264,43 @@ export function PlanHeader({
           </div>
         </div>
 
-        {/* LAYER 2: Destination Image Overlay - fades in when destination exists */}
+        {/* LAYER 2: Destination Image - "Glossy Postcard" style */}
+        {/* Physical photo sitting on the architect's desk - rounded, shadowed, crisp */}
         <div
-          className={`absolute inset-0 z-10 transition-opacity duration-700 ${
-            hasDestination ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          className={`absolute inset-4 z-20 transition-all duration-700 ${
+            hasDestination ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
           }`}
         >
-          {imageUrl && (
-            <img
-              src={imageUrl}
-              alt={title}
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          )}
-
-          {/* Scrim overlay for guaranteed text readability on any photo */}
-          <div className="absolute inset-0 bg-gradient-to-r from-black/55 via-black/25 to-black/10" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
-
-          {/* Destination content overlay */}
-          <div className="absolute inset-0 flex flex-col justify-end p-4 pb-10">
-            <h2 className="text-xl font-semibold text-white">{title}</h2>
-            {subtitle && (
-              <p className="mt-0.5 text-sm text-white/85">{subtitle}</p>
+          <div className="relative h-full w-full rounded-2xl overflow-hidden shadow-2xl ring-1 ring-black/10 dark:ring-white/10">
+            {imageUrl && (
+              <img
+                src={imageUrl}
+                alt={title}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
             )}
-            {/* Trip summary pills - only in S1+ (use onImage variant for hero) */}
-            {showPills && (
-              <div className="mt-3">
-                <TripSummaryPills
-                  tripInputs={tripInputs}
-                  onOpenSheet={onOpenSheet}
-                  disabled={isStreaming}
-                  variant="onImage"
-                />
-              </div>
-            )}
+
+            {/* Subtle scrim for text readability - lighter than before */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
+
+            {/* Destination content overlay */}
+            <div className="absolute inset-0 flex flex-col justify-end p-5">
+              <h2 className="text-xl font-semibold text-white drop-shadow-md">{title}</h2>
+              {subtitle && (
+                <p className="mt-0.5 text-sm text-white/90 drop-shadow-sm">{subtitle}</p>
+              )}
+              {/* Trip summary pills - only in S1+ (use onImage variant for hero) */}
+              {showPills && (
+                <div className="mt-3">
+                  <TripSummaryPills
+                    tripInputs={tripInputs}
+                    onOpenSheet={onOpenSheet}
+                    disabled={isStreaming}
+                    variant="onImage"
+                  />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -322,16 +324,16 @@ export function PlanHeader({
         <div className="mt-8 flex flex-col items-center justify-center space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-700 delay-500">
           <div className="flex items-center gap-3 group cursor-default">
             {/* The Pointer (Animated '<<') */}
-            <div className="flex text-emerald-700 dark:text-emerald-400 animate-pulse">
+            <div className="flex text-zinc-900 dark:text-emerald-400 animate-pulse">
               <ChevronLeft className="w-3 h-3 -mr-1.5" />
               <ChevronLeft className="w-3 h-3" />
             </div>
-            {/* The System Text - Deep Forest Green (Light) / Neon Terminal (Dark) */}
-            <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-semibold text-emerald-900 dark:text-emerald-400">
+            {/* The System Text - Jet Black (Light) / Neon Terminal (Dark) */}
+            <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-semibold text-zinc-900 dark:text-emerald-400">
               {!hasDestination ? 'Awaiting Input_' : 'Parameters Updated_'}
             </p>
             {/* The Blinking Cursor */}
-            <div className="w-1.5 h-2.5 bg-emerald-900 dark:bg-emerald-400 animate-blink" />
+            <div className="w-1.5 h-2.5 bg-zinc-900 dark:bg-emerald-400 animate-blink" />
           </div>
         </div>
       )}

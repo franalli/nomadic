@@ -1238,7 +1238,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                       <div
                         className={
                           isUserMessage
-                            ? 'border border-zinc-700/50 bg-zinc-800 text-zinc-100 rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-sm hover:shadow-md hover:-translate-y-0.5 hover:border-zinc-600/60'
+                            ? 'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 bg-zinc-900 text-white border border-zinc-900 hover:bg-zinc-800 hover:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700/50 dark:hover:border-zinc-600/60'
                             : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${isStreaming ? 'typing-pulse' : ''}`
                         }
                       >
@@ -1288,7 +1288,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         </div>
 
         {/* Input area with suggestions - grouped together at bottom */}
-        <div className="mt-auto space-y-2 pb-0">
+        <div className="mt-auto space-y-3 pb-0">
           {/* Constraint chips - conversation primers that insert starter text */}
           {showSuggestions && (
             <div className="flex flex-wrap justify-center gap-2 py-1">
