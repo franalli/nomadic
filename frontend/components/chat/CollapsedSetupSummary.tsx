@@ -8,7 +8,7 @@
 
 'use client';
 
-import { ChevronDown, MessageSquare } from 'lucide-react';
+import { ChevronDown, MessageSquare, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -16,133 +16,107 @@ import type { ChatMessage } from '@/types/chat';
 import type { DocumentTripInputs } from '@/types/document';
 
 // =============================================================================
-// ConfigurationSnapshot - Displays trip inputs as key-value pairs
+// TripBrief - Shows soft constraints as pills (replaces ConfigurationSnapshot)
 // =============================================================================
 
-interface ConfigurationSnapshotProps {
+interface TripBriefProps {
   tripInputs: DocumentTripInputs;
   executedTopics?: string[];
 }
 
 /**
- * Format ISO date string to human-readable format (e.g., "Jan 26, 2026")
+ * TripBrief
+ *
+ * Shows the "Why & How" of the trip - soft constraints the AI is using:
+ * - Activity interests (diving, hiking, etc.)
+ * - Flight preferences (cabin class, direct only)
+ * - Hotel preferences (min stars, amenities)
+ * - Executed strategy topics (what specialists ran)
+ *
+ * Does NOT show redundant hard constraints (destination, dates, travelers)
+ * since those are already visible in the Hero Header.
  */
-function formatDate(isoDate: string | null | undefined): string | null {
-  if (!isoDate) return null;
-  try {
-    const date = new Date(isoDate);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  } catch {
-    return isoDate; // Fallback to raw string if parsing fails
-  }
-}
+function TripBrief({ tripInputs, executedTopics }: TripBriefProps) {
+  // Extract soft constraints (preferences, not hard facts)
+  const activities = tripInputs.activity_settings?.categories || [];
+  const flightSettings = tripInputs.flight_settings;
+  const hotelSettings = tripInputs.hotel_settings;
+  const transportSettings = tripInputs.transport_settings;
 
-/**
- * Format budget with currency symbol
- */
-function formatBudget(budget: number | null | undefined, currency?: string): string | null {
-  if (!budget) return null;
-  const currencySymbol = currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : '$';
-  return `${currencySymbol}${budget.toLocaleString()}`;
-}
+  // Build preference pills
+  const preferences: Array<{ label: string; variant: 'activity' | 'setting' | 'topic' }> = [];
 
-/**
- * Format travelers count
- */
-function formatTravelers(adults: number | null | undefined, children: number | null | undefined): string {
-  const parts: string[] = [];
-  if (adults) {
-    parts.push(`${adults} Adult${adults > 1 ? 's' : ''}`);
-  }
-  if (children) {
-    parts.push(`${children} Child${children > 1 ? 'ren' : ''}`);
-  }
-  return parts.length > 0 ? parts.join(', ') : '1 Adult';
-}
-
-function ConfigurationSnapshot({ tripInputs, executedTopics }: ConfigurationSnapshotProps) {
-  // Build key-value entries
-  const entries: Array<{ label: string; value: string }> = [];
-
-  // Destination
-  if (tripInputs.destination) {
-    entries.push({
-      label: 'Destination',
-      value: tripInputs.destination,
-    });
-  }
-
-  // Origin (if set)
-  if (tripInputs.origin) {
-    entries.push({
-      label: 'Origin',
-      value: tripInputs.origin,
-    });
-  }
-
-  // Dates
-  const startDate = formatDate(tripInputs.start_date);
-  const endDate = formatDate(tripInputs.end_date);
-  if (startDate && endDate) {
-    entries.push({
-      label: 'Dates',
-      value: `${startDate} – ${endDate}`,
-    });
-  } else if (startDate) {
-    entries.push({
-      label: 'Start',
-      value: startDate,
-    });
-  } else if (tripInputs.date_flex && tripInputs.trip_duration) {
-    entries.push({
-      label: 'Dates',
-      value: `Flexible, ${tripInputs.trip_duration} days`,
-    });
-  }
-
-  // Budget (if set)
-  const budgetStr = formatBudget(tripInputs.budget, tripInputs.currency || 'USD');
-  if (budgetStr) {
-    entries.push({
-      label: 'Budget',
-      value: budgetStr,
-    });
-  }
-
-  // Travelers
-  entries.push({
-    label: 'Travelers',
-    value: formatTravelers(tripInputs.adults, tripInputs.children),
+  // Activity interests (with emoji - they already have emoji in the data)
+  activities.forEach((cat) => {
+    preferences.push({ label: cat, variant: 'activity' });
   });
 
-  // Active Topics/Agents
-  if (executedTopics?.length) {
-    entries.push({
-      label: 'Topics',
-      value: executedTopics.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(', '),
+  // Flight preferences (only non-default values)
+  if (flightSettings?.cabin_class && flightSettings.cabin_class !== 'economy') {
+    const label =
+      flightSettings.cabin_class === 'business'
+        ? '✈️ Business Class'
+        : flightSettings.cabin_class === 'first'
+          ? '✈️ First Class'
+          : '✈️ Premium Economy';
+    preferences.push({ label, variant: 'setting' });
+  }
+  if (flightSettings?.direct_only) {
+    preferences.push({ label: '✈️ Direct flights only', variant: 'setting' });
+  }
+
+  // Hotel preferences
+  if (hotelSettings?.min_stars && hotelSettings.min_stars >= 3) {
+    preferences.push({ label: `⭐ ${hotelSettings.min_stars}+ star hotels`, variant: 'setting' });
+  }
+  if (hotelSettings?.amenities?.length) {
+    hotelSettings.amenities.slice(0, 2).forEach((a) => {
+      preferences.push({ label: `🏨 ${a}`, variant: 'setting' });
     });
+  }
+
+  // Transport preferences
+  if (transportSettings?.car) preferences.push({ label: '🚗 Rental car', variant: 'setting' });
+  if (transportSettings?.train) preferences.push({ label: '🚆 Train', variant: 'setting' });
+
+  // Strategy topics (what AI is "thinking about")
+  executedTopics?.forEach((topic) => {
+    const formatted = topic.charAt(0).toUpperCase() + topic.slice(1).replace(/_/g, ' ');
+    preferences.push({ label: `🤖 ${formatted}`, variant: 'topic' });
+  });
+
+  // Empty state
+  if (preferences.length === 0) {
+    return (
+      <div className="mt-2 ml-4 pl-3 border-l-2 border-zinc-800/50 animate-in slide-in-from-top-2 duration-200">
+        <p className="text-xs text-zinc-500 italic">No specific preferences set</p>
+      </div>
+    );
   }
 
   return (
-    <div
-      className={cn(
-        'mt-2 ml-4 pl-3 border-l-2 border-zinc-800/50',
-        'space-y-1.5 animate-in slide-in-from-top-2 duration-200'
-      )}
-    >
-      <div className="text-[10px] text-zinc-600 uppercase tracking-wider mb-2">
-        Configuration Snapshot
+    <div className="mt-2 ml-4 pl-3 border-l-2 border-zinc-800/50 animate-in slide-in-from-top-2 duration-200">
+      <div className="text-[10px] text-zinc-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+        <Sparkles className="w-3 h-3" />
+        Trip Brief & Preferences
       </div>
-      {entries.map((entry) => (
-        <div key={entry.label} className="flex items-baseline gap-2 text-xs">
-          <span className="text-zinc-500 min-w-[80px]">{entry.label}</span>
-          <span className="text-zinc-300">{entry.value}</span>
-        </div>
-      ))}
+      <div className="flex flex-wrap gap-1.5">
+        {preferences.map((pref, i) => (
+          <span
+            key={i}
+            className={cn(
+              'text-xs px-2 py-0.5 rounded-full transition-colors',
+              pref.variant === 'activity' &&
+                'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
+              pref.variant === 'setting' &&
+                'bg-blue-500/10 text-blue-400 border border-blue-500/20',
+              pref.variant === 'topic' && 'bg-zinc-700/50 text-zinc-400 border border-zinc-600/30'
+            )}
+          >
+            {pref.label}
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -198,7 +172,9 @@ export function CollapsedSetupSummary({
         )}
       >
         <MessageSquare className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
-        <span className="flex-1 text-zinc-400 truncate">{summaryText}</span>
+        <span className="flex-1 text-zinc-400 truncate">
+          {summaryText.replace('Setup complete:', 'Trip configured:')}
+        </span>
         <ChevronDown
           className={cn(
             'h-3.5 w-3.5 text-zinc-600 transition-transform duration-200',
@@ -208,12 +184,9 @@ export function CollapsedSetupSummary({
         />
       </button>
 
-      {/* Expanded content - prioritize Configuration Snapshot over original messages */}
+      {/* Expanded content - prioritize Trip Brief over original messages */}
       {isExpanded && tripInputsSnapshot && (
-        <ConfigurationSnapshot
-          tripInputs={tripInputsSnapshot}
-          executedTopics={executedTopicsSnapshot}
-        />
+        <TripBrief tripInputs={tripInputsSnapshot} executedTopics={executedTopicsSnapshot} />
       )}
 
       {/* Fallback to original messages if no snapshot (backward compatibility) */}

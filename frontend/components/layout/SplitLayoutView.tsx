@@ -139,14 +139,20 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         {isDesktop && (
           <>
             {/* Left Panel: Planner (40% or max 480px) */}
+            {/* Light Mode: Solid white cardstock with prominent shadow */}
+            {/* Dark Mode: Subtle tinted glass */}
             <aside
               className={cn(
                 'hidden lg:flex lg:flex-col',
                 'h-[calc(100vh-48px)]', // Full height minus header
-                'border-r border-[var(--theme-hairline)]',
-                'bg-[var(--theme-panel)]',
-                // Enhanced multi-layer shadow for better panel separation
-                'shadow-[4px_0_12px_rgba(0,0,0,0.06),8px_0_24px_rgba(0,0,0,0.04)]'
+                'border-r',
+                // Light: white cardstock with sharp border
+                'bg-white border-zinc-200',
+                // Light: prominent shadow for "floating paper" effect
+                'shadow-[4px_0_24px_-12px_rgba(0,0,0,0.12),8px_0_40px_-20px_rgba(0,0,0,0.08)]',
+                // Dark: tinted glass with subtle border
+                'dark:bg-black/40 dark:backdrop-blur-xl dark:border-white/5',
+                'dark:shadow-[4px_0_12px_rgba(0,0,0,0.3)]'
               )}
               style={{ position: 'relative', zIndex: 1 }}
               aria-label="Trip planner"

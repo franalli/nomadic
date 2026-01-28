@@ -2509,12 +2509,25 @@ async def expand_itinerary_endpoint(
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
             # Build session state from document for planner
+            # CRITICAL: Include strategy_sections so the graph has specialist context
             session_state = {
                 "trip_inputs": doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {},
                 "branches": (
                     [b.model_dump() for b in doc_data.branches] if doc_data.branches else []
                 ),
-                "metadata": {"strategy_stage": 3},  # Force Stage 3
+                "metadata": {
+                    "strategy_stage": 3,  # Force Stage 3
+                    "strategy_sections": (
+                        [s.model_dump() for s in doc_data.strategy_sections]
+                        if doc_data.strategy_sections
+                        else []
+                    ),
+                    "executed_strategy_topics": (
+                        doc_data.executed_strategy_topics
+                        if doc_data.executed_strategy_topics
+                        else []
+                    ),
+                },
                 "today_iso": compute_today_iso(),
             }
 

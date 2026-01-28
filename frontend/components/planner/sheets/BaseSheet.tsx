@@ -40,7 +40,7 @@ export interface BaseSheetProps {
   /** Additional className for the content container */
   className?: string;
   /** Max width for desktop dialog */
-  maxWidth?: 'sm' | 'md' | 'lg';
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +105,8 @@ function DesktopDialog({
     sm: 'max-w-sm',
     md: 'max-w-md',
     lg: 'max-w-lg',
+    xl: 'max-w-xl',
+    '2xl': 'max-w-2xl',
   }[maxWidth];
 
   // Don't render portal until mounted (SSR safety)

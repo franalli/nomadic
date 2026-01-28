@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowUp, Cpu, RotateCcw, Square } from 'lucide-react';
+import { ArrowRight, ArrowUp, Cpu, Lock, RotateCcw, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -1353,71 +1353,97 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="relative">
-            {/* Static placeholder - only when input is empty and no user message */}
-            {/* Calculation: 52px height - 4px border = 48px inner. (48px - 20px line-height) / 2 = 14px padding each side */}
-            {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
-              <div className="absolute top-0 left-0 right-0 px-4 py-[14px] pr-14 text-sm leading-5 text-muted-foreground/70 pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis" aria-hidden="true">
-                {isInputDisabledByPlanState
-                  ? 'Updating...'
-                  : !hasDestination
-                    ? 'Enter destination'
-                    : 'Add constraint, e.g. budget, dates...'}
-              </div>
+          {/* Action Bar: Input + Build Button side by side */}
+          <div className="flex gap-2 items-stretch">
+            {/* Input Container */}
+            <form onSubmit={handleSubmit} className="relative flex-1">
+              {/* Static placeholder - only when input is empty and no user message */}
+              {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
+                <div className="absolute top-0 left-0 right-0 px-4 py-3.5 pr-12 text-sm leading-5 text-muted-foreground/70 pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis" aria-hidden="true">
+                  {isInputDisabledByPlanState
+                    ? 'Updating...'
+                    : !hasDestination
+                      ? 'Where do you want to go?'
+                      : 'Tell me more...'}
+                </div>
+              )}
+              <textarea
+                ref={inputRef}
+                disabled={isInputDisabledByPlanState}
+                className={`w-full h-12 rounded-xl border-2 text-foreground px-4 py-3 pr-12 text-sm leading-5 focus:outline-none transition-colors resize-none overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed
+                  bg-white border-zinc-200 shadow-sm hover:shadow-md hover:border-zinc-300 focus:border-emerald-500/50 focus:shadow-md
+                  dark:bg-white/[0.05] dark:border-white/[0.10] dark:shadow-none dark:hover:bg-white/[0.08] dark:hover:border-white/[0.15] dark:focus:border-emerald-500/30 dark:focus:bg-white/[0.08]
+                  ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-zinc-400 dark:placeholder:text-zinc-500'}`}
+                placeholder={
+                  isInputDisabledByPlanState
+                    ? 'Updating...'
+                    : !hasDestination
+                      ? 'Where do you want to go?'
+                      : 'Tell me more...'
+                }
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                }}
+                onKeyDown={(e) => {
+                  // Submit on Enter without Shift
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
+                }}
+                rows={1}
+              />
+              {isLoading && hasReceivedFirstToken ? (
+                // Stop streaming button - orange square
+                <button
+                  type="button"
+                  onClick={handleStopStreaming}
+                  className="absolute right-2 top-1.5 flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all bg-orange-500 text-white hover:bg-orange-600 hover:scale-105 shadow-md"
+                  title="Stop streaming"
+                >
+                  <Square className="h-5 w-5 fill-current" />
+                </button>
+              ) : (
+                // Send button
+                <button
+                  type="submit"
+                  className={`absolute right-2 top-1.5 flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
+                    input.trim() && !isLoading
+                      ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
+                      : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-white/[0.05] dark:text-zinc-500 dark:hover:bg-white/[0.10]'
+                  }`}
+                  disabled={isLoading || !input.trim()}
+                  title="Send message (Enter)"
+                >
+                  <ArrowUp className="h-5 w-5" />
+                </button>
+              )}
+            </form>
+
+            {/* Build/Update Plan Button - Always visible in S0, morphs ghost → emerald */}
+            {planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches && (
+              <button
+                type="button"
+                disabled={!readyToGenerate}
+                onClick={() => readyToGenerate && sendMessageCore(GENERATE_PLAN_TRIGGER)}
+                className={`h-12 px-4 rounded-xl font-medium text-sm flex items-center gap-2 transition-all duration-500 shrink-0 ${
+                  readyToGenerate
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_20px_-5px_rgba(16,185,129,0.5)] dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.5)] hover:scale-105 active:scale-95'
+                    : 'bg-zinc-100 text-zinc-400 border border-zinc-200 dark:bg-white/[0.03] dark:text-zinc-600 dark:border-white/[0.05] cursor-not-allowed opacity-70 grayscale'
+                }`}
+              >
+                <span className={`hidden sm:inline ${readyToGenerate ? 'opacity-100' : 'opacity-50'}`}>
+                  {hasEverHadPlan ? 'Update' : 'Build'}
+                </span>
+                {readyToGenerate ? (
+                  <ArrowRight className="w-4 h-4" />
+                ) : (
+                  <Lock className="w-3 h-3 opacity-50" />
+                )}
+              </button>
             )}
-            <textarea
-            ref={inputRef}
-            disabled={isInputDisabledByPlanState}
-            className={`border-input bg-muted/50 hover:bg-muted/60 text-foreground focus-visible:ring-primary/70 focus-visible:ring-offset-card w-full rounded-xl border-2 px-4 py-[14px] pr-14 text-sm leading-5 focus:outline-none focus:bg-muted/50 focus-visible:ring-2 focus-visible:ring-offset-1 transition-colors resize-none overflow-y-auto no-scrollbar min-h-[52px] max-h-[200px] scroll-mb-4 disabled:opacity-50 disabled:cursor-not-allowed ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-muted-foreground/70'}`}
-            placeholder={
-              isInputDisabledByPlanState
-                ? 'Updating...'
-                : !hasDestination
-                  ? 'Enter destination'
-                  : 'Add constraint, e.g. budget, dates...'
-            }
-            value={input}
-            onChange={(e) => {
-              setInput(e.target.value);
-              // Auto-resize textarea
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-            }}
-            onKeyDown={(e) => {
-              // Submit on Enter without Shift
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit(e);
-              }
-            }}
-            rows={1}
-          />
-          {isLoading && hasReceivedFirstToken ? (
-            // Stop streaming button - orange square
-            <button
-              type="button"
-              onClick={handleStopStreaming}
-              className="absolute right-2 top-[6px] flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all bg-orange-500 text-white hover:bg-orange-600 hover:scale-105 shadow-md"
-              title="Stop streaming"
-            >
-              <Square className="h-5 w-5 fill-current" />
-            </button>
-          ) : (
-            // Send button
-            <button
-              type="submit"
-              className={`absolute right-2 top-[6px] flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
-                input.trim() && !isLoading
-                  ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
-                  : 'bg-muted/80 text-muted-foreground hover:bg-muted'
-              }`}
-              disabled={isLoading || !input.trim()}
-              title="Send message (Enter)"
-            >
-              <ArrowUp className="h-5 w-5" />
-            </button>
-          )}
-          </form>
+          </div>
         </div>
 
         {/* Module sheets (flights/stays/activities) - control booking types */}

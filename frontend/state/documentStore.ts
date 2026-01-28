@@ -145,6 +145,10 @@ type DocumentState = {
   activeView: 'setup' | 'plan' | 'book';
   setActiveView: (view: 'setup' | 'plan' | 'book') => void;
 
+  // Plan finalization (gates Book view access)
+  isPlanFinalized: boolean;
+  setFinalized: (finalized: boolean) => void;
+
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields: Set<LLMUpdatableField>;
 
@@ -219,6 +223,8 @@ const initialState = {
   abortController: null as AbortController | null,
   // View navigation
   activeView: 'setup' as const,
+  // Plan finalization
+  isPlanFinalized: false,
 };
 
 /**
@@ -425,20 +431,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // Trip input actions
   commitTripInputs: async (updates: DocumentTripInputsPatch): Promise<boolean> => {
-    const { document, version, isCommitting } = get();
+    let { document, version, isCommitting } = get();
 
     // Prevent concurrent commits - if already committing, skip this request
     if (isCommitting) {
       return false;
     }
 
-    // If no document exists yet, we can't commit trip inputs
-    // The document is created by the backend when the first chat message is sent
+    // If no document exists yet, create a minimal document structure
+    // This allows users to set trip inputs via sheets before sending a chat message
     if (!document) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('commitTripInputs called but no document exists yet');
-      }
-      return false;
+      document = {
+        trip_context_id: null,
+        trip_inputs: { ...DEFAULT_TRIP_INPUTS },
+        branches: [],
+        tiles: {},
+        plan_view_state: 'S0_BOOTSTRAP',
+      };
+      version = 0; // New document starts at version 0
+      // Initialize the store with the minimal document
+      set({ document, version });
     }
 
     // Mark as committing to prevent concurrent requests
@@ -566,7 +578,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         }
       }
 
-      // Non-409 error - rollback
+      // Handle 404 (document doesn't exist on backend yet) - keep local state
+      // The document will be created when user sends first chat message via graph_plan
+      // We don't rollback because the user should see their changes in the UI
+      if (errorMessage.includes('404')) {
+        set({ isCommitting: false, error: null });
+        // Return true because the local state was updated successfully
+        // Backend sync will happen when document is created
+        return true;
+      }
+
+      // Other non-409 errors - rollback
       set({
         document: {
           ...document,
@@ -740,6 +762,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       tiles_keys: Object.keys(response.document.tiles ?? {}),
     });
 
+    // Merge locally-set trip_inputs with response
+    // This preserves values the user set via sheets before the first chat message
+    // Strategy: For each field, use response value if it's set, otherwise keep local value
+    const responseTripInputs = response.document.trip_inputs;
+    const localTripInputs = currentDoc?.trip_inputs;
+    const mergedTripInputs: DocumentTripInputs = {
+      ...DEFAULT_TRIP_INPUTS,
+      ...responseTripInputs,
+      // Preserve locally-set values that backend returned as null
+      destination: responseTripInputs.destination ?? localTripInputs?.destination ?? null,
+      origin: responseTripInputs.origin ?? localTripInputs?.origin ?? null,
+      start_date: responseTripInputs.start_date ?? localTripInputs?.start_date ?? null,
+      end_date: responseTripInputs.end_date ?? localTripInputs?.end_date ?? null,
+      adults: responseTripInputs.adults ?? localTripInputs?.adults ?? null,
+      children: responseTripInputs.children ?? localTripInputs?.children ?? null,
+      budget: responseTripInputs.budget ?? localTripInputs?.budget ?? null,
+      currency: responseTripInputs.currency ?? localTripInputs?.currency ?? 'USD',
+      trip_duration: responseTripInputs.trip_duration ?? localTripInputs?.trip_duration ?? null,
+      date_flex: responseTripInputs.date_flex ?? localTripInputs?.date_flex ?? false,
+    };
+
     // If update is from planner, detect which fields changed
     let newLLMUpdatedFields = llmUpdatedFields;
     if (response.updated_by === 'planner') {
@@ -763,7 +806,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       version: response.version,
       updatedBy: response.updated_by,
       updatedAt: response.updated_at,
-      document: response.document,
+      document: {
+        ...response.document,
+        trip_inputs: mergedTripInputs,
+      },
       selectedBranchId:
         get().selectedBranchId ||
         primaryBranch?.id ||
@@ -923,13 +969,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ activeView: view });
   },
 
+  setFinalized: (finalized: boolean) => {
+    set({ isPlanFinalized: finalized });
+  },
+
   reset: () => {
     // Abort any in-flight generation on reset
     const { abortController } = get();
     if (abortController) {
       abortController.abort();
     }
-    set({ ...initialState, llmUpdatedFields: new Set(), activeView: 'setup' });
+    set({ ...initialState, llmUpdatedFields: new Set(), activeView: 'setup', isPlanFinalized: false });
   },
 }));
 

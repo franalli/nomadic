@@ -25,8 +25,9 @@
   --sky: 160 45% 25%;
 
   /* Core theme tokens - Light mode surface ladder */
-  --background: 0 0% 99%;           /* page background - near white */
-  --foreground: 222 22% 12%;        /* primary text - near black */
+  /* "Architectural Sketch" metaphor: ink on high-quality vellum paper */
+  --background: 240 5% 96%;         /* zinc-50: warm paper tone, not clinical white */
+  --foreground: 240 6% 10%;         /* near black ink for sharp contrast */
 
   --card: 0 0% 100%;                /* cards/panels - pure white */
   --card-foreground: 222 22% 12%;
@@ -389,6 +390,49 @@ input[type="number"]::-webkit-outer-spin-button {
   animation: float-particle 2s ease-in-out infinite;
 }
 
+/* ===== Living Topography Animation ===== */
+/* Slow drift animation for the hero topographic pattern */
+@keyframes topo-drift {
+  0%, 100% {
+    mask-position: 0% 0%;
+    -webkit-mask-position: 0% 0%;
+  }
+  50% {
+    mask-position: 5% 3%;
+    -webkit-mask-position: 5% 3%;
+  }
+}
+
+.animate-topo-drift {
+  animation: topo-drift 20s ease-in-out infinite;
+  will-change: mask-position, -webkit-mask-position;
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  .animate-topo-drift {
+    animation: none;
+  }
+}
+
+/* ===== Architect Instruction Layer - Blinking Cursor ===== */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
+
+/* Respect reduced motion preference for blink */
+@media (prefers-reduced-motion: reduce) {
+  .animate-blink {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
 /* ===== Premium Pill Shadows ===== */
 
 .shadow-pill {
@@ -420,15 +464,15 @@ input[type="number"]::-webkit-outer-spin-button {
 /* These tokens automatically adapt to light/dark mode */
 
 :root {
-  /* Light mode semantic tokens - "ink on paper" approach, improved contrast */
-  --theme-bg: #F3F5F7;        /* paper tint, not pure white */
-  --theme-panel: #FFFFFF;      /* cards/surfaces are white */
+  /* Light mode semantic tokens - "Architectural Sketch" (ink on vellum) */
+  --theme-bg: #FAFAFA;        /* zinc-50: warm paper, premium vellum feel */
+  --theme-panel: #FFFFFF;      /* cards/surfaces are crisp white */
   --theme-surface-2: rgba(0, 0, 0, 0.055);  /* was 0.045 - chips more visible */
   --theme-overlay: rgba(0, 0, 0, 0.07);     /* was 0.06 - better hover states */
-  --theme-border: rgba(0, 0, 0, 0.12);      /* card/chip outlines */
-  --theme-hairline: rgba(0, 0, 0, 0.06);    /* subtle dividers, footer borders */
-  --theme-text: rgba(0, 0, 0, 0.90);
-  --theme-text-muted: rgba(0, 0, 0, 0.72);  /* was 0.66 - improved contrast */
+  --theme-border: rgba(0, 0, 0, 0.15);      /* stronger borders for ink-on-paper feel */
+  --theme-hairline: rgba(0, 0, 0, 0.08);    /* subtle dividers, footer borders */
+  --theme-text: rgba(0, 0, 0, 0.92);        /* near-black ink for readability */
+  --theme-text-muted: rgba(0, 0, 0, 0.65);  /* softer ink for secondary text */
   --theme-link-muted: rgba(0, 0, 0, 0.50);  /* footer links */
   --theme-link-muted-hover: rgba(0, 0, 0, 0.70);
   --theme-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
@@ -477,17 +521,18 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* Support explicit theme classes (for manual theme switching) */
 .light {
-  --theme-bg: #F3F5F7;
+  /* "Architectural Sketch" - ink on vellum */
+  --theme-bg: #FAFAFA;         /* zinc-50: warm paper */
   --theme-panel: #FFFFFF;
   --theme-surface-2: rgba(0, 0, 0, 0.055);  /* was 0.045 - chips more visible */
   --theme-overlay: rgba(0, 0, 0, 0.07);     /* was 0.06 - better hover states */
-  --theme-border: rgba(0, 0, 0, 0.12);      /* card/chip outlines */
-  --theme-hairline: rgba(0, 0, 0, 0.06);    /* subtle dividers, footer borders */
-  --theme-text: rgba(0, 0, 0, 0.90);
-  --theme-text-muted: rgba(0, 0, 0, 0.72);  /* was 0.66 - improved contrast */
+  --theme-border: rgba(0, 0, 0, 0.15);      /* stronger borders for ink feel */
+  --theme-hairline: rgba(0, 0, 0, 0.08);    /* subtle dividers */
+  --theme-text: rgba(0, 0, 0, 0.92);        /* near-black ink */
+  --theme-text-muted: rgba(0, 0, 0, 0.65);  /* softer ink for secondary */
   --theme-link-muted: rgba(0, 0, 0, 0.50);  /* footer links */
   --theme-link-muted-hover: rgba(0, 0, 0, 0.70);
-  --theme-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+  --theme-shadow: 0 2px 8px rgba(0, 0, 0, 0.06), 0 4px 16px rgba(0, 0, 0, 0.04);
 
   /* Chip state tokens - light mode */
   --chip-bg: rgba(255, 255, 255, 0.85);
@@ -742,10 +787,11 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ===== Topography Variables (Single Source of Truth) ===== */
 /* SVG used as mask-image; background-color controls stroke color */
+/* Subtlety = Luxury: pattern should be felt, not seen */
 /* Light mode: multiply blend for natural integration */
 /* Dark mode: normal blend (multiply would darken too much) */
 :root {
-  --topo-opacity: 0.08;
+  --topo-opacity: 0.03;
   --topo-color: rgba(0, 0, 0, 0.22);
   --topo-scale: 1400px;
 }
@@ -753,7 +799,7 @@ input[type="number"]::-webkit-outer-spin-button {
 /* Dark mode via OS preference */
 @media (prefers-color-scheme: dark) {
   :root {
-    --topo-opacity: 0.095;
+    --topo-opacity: 0.035;
     --topo-color: rgba(255, 255, 255, 0.50);
     --elevated: 222 20% 11%;
   }
@@ -761,25 +807,25 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* Also support .dark class for manual toggle (if added later) */
 .dark {
-  --topo-opacity: 0.095;
+  --topo-opacity: 0.035;
   --topo-color: rgba(255, 255, 255, 0.50);
   --elevated: 222 20% 11%;
 }
 
-/* Mobile: boost visibility */
+/* Mobile: slight boost for visibility on smaller screens */
 @media (max-width: 768px) {
   :root {
-    --topo-opacity: 0.10;
+    --topo-opacity: 0.04;
   }
 }
 @media (max-width: 768px) and (prefers-color-scheme: dark) {
   :root {
-    --topo-opacity: 0.12;
+    --topo-opacity: 0.045;
   }
 }
 @media (max-width: 768px) {
   .dark {
-    --topo-opacity: 0.12;
+    --topo-opacity: 0.045;
   }
 }
 
@@ -796,6 +842,7 @@ input[type="number"]::-webkit-outer-spin-button {
   z-index: 0;
   pointer-events: none;
   /* Simple SVG mask - uniform topo across entire viewport */
+  /* Hero banner blocks this with its own solid background */
   -webkit-mask-image: url("/assets/contours.svg");
   mask-image: url("/assets/contours.svg");
   -webkit-mask-repeat: repeat;
@@ -940,5 +987,96 @@ input[type="number"]::-webkit-outer-spin-button {
   .specialist-highlight {
     animation: none !important;
     box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.5);
+  }
+}
+
+/* ===== Glass Command Bar (Premium Navigation) ===== */
+/* Now handled via Tailwind classes in component for better light/dark mode control */
+/* Keeping minimal CSS for potential overrides */
+
+/* High-end frosted glass effect - fallback for any edge cases */
+.glass-command-bar {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Light mode: Frosted Ice - handled via Tailwind in component */
+/* Dark mode: Smoked Glass - handled via Tailwind in component */
+
+/* Generating pulse animation - text glow */
+.generating-pulse {
+  animation: text-glow 2s ease-in-out infinite;
+}
+
+@keyframes text-glow {
+  0%, 100% { text-shadow: 0 0 10px rgba(251, 191, 36, 0); }
+  50% { text-shadow: 0 0 10px rgba(251, 191, 36, 0.5); }
+}
+
+/* ===== Finalization Ceremony Animations ===== */
+
+/* Book tab unlock pop animation */
+@keyframes unlock-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.unlock-animation {
+  animation: unlock-pop 300ms ease-out;
+}
+
+/* Scanning shimmer overlay */
+@keyframes scan-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.scan-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(245, 158, 11, 0.3),
+    transparent
+  );
+  background-size: 200% 100%;
+  animation: scan-shimmer 1.5s ease-in-out infinite;
+}
+
+/* ===== Timeline Thread Styles ===== */
+
+/* Vertical connecting line for timeline */
+.timeline-thread {
+  position: relative;
+}
+
+.timeline-thread::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 24px;
+  bottom: 24px;
+  width: 2px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    hsl(var(--border)) 5%,
+    hsl(var(--border)) 95%,
+    transparent
+  );
+}
+
+/* Timeline node (icon container) */
+.timeline-node {
+  position: relative;
+  z-index: 1;
+}
+
+/* Respect user's reduced motion preference for command bar */
+@media (prefers-reduced-motion: reduce) {
+  .generating-pulse,
+  .unlock-animation,
+  .scan-shimmer {
+    animation: none !important;
   }
 }

@@ -136,7 +136,7 @@ function DatesSheetInner({
       onOpenChange={onOpenChange}
       title="Dates"
       hint="When are you traveling?"
-      maxWidth="md"
+      maxWidth="2xl"
       footer={
         <div className="flex items-center justify-between">
           <div className="text-sm text-[var(--theme-text-muted)]">
@@ -202,15 +202,15 @@ function DatesSheetInner({
           ))}
         </div>
 
-        {/* Calendar */}
+        {/* Calendar - Booking.com style with 2 months */}
         <div className="flex justify-center">
           <CalendarComponent
             mode="range"
             selected={range}
             onSelect={handleSelect}
-            numberOfMonths={1}
+            numberOfMonths={2}
             disabled={(date) => isBefore(date, today)}
-            className="rounded-lg border border-[var(--theme-border)]"
+            className="rounded-lg border border-[var(--theme-border)] p-4"
           />
         </div>
 

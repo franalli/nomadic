@@ -70,16 +70,19 @@ export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structur
  * Get next action for NextStepBar (null = no CTA).
  * hasTripContext gates 'expand_itinerary' action.
  * Compute ONCE in parent and pass to NextStepBar to avoid flicker.
+ *
+ * Note: S3_ITINERARY_READY returns null because "The Bridge" CTA
+ * is rendered inline at the bottom of the timeline, not in NextStepBar.
  */
 export function getNextAction(
   state: PlanViewState,
   generation?: GenerationState | null,
   hasTripContext?: boolean
-): 'expand_itinerary' | 'view_booking' | null {
+): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;
   // Gate expand_itinerary on hasTripContext
   if (state === 'S2_STRATEGY_READY' && hasTripContext) return 'expand_itinerary';
-  if (state === 'S3_ITINERARY_READY') return 'view_booking';
+  // S3 uses inline "The Bridge" CTA, not NextStepBar
   return null;
 }
 

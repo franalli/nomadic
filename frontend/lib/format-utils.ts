@@ -35,12 +35,14 @@ function parseDate(dateStr: string | null | undefined): Date | null {
 
 /**
  * Format date range for pill display.
- * Returns null if EITHER date is missing (triggers "missing" tone).
- * This is stricter than plan-transform.ts formatDateRange which returns a value if only start is present.
+ * Returns null only if BOTH dates are missing (triggers "Add dates" placeholder).
+ * Shows just the date if only one is set (no question mark).
  *
  * @example formatDateRangeForPills("2024-12-15", "2024-12-22") → "Dec 15 – 22"
  * @example formatDateRangeForPills("2024-12-28", "2025-01-05") → "Dec 28 – Jan 5"
- * @example formatDateRangeForPills(null, "2024-12-22") → null
+ * @example formatDateRangeForPills("2024-12-15", null) → "Dec 15"
+ * @example formatDateRangeForPills(null, "2024-12-22") → "Dec 22"
+ * @example formatDateRangeForPills(null, null) → null
  */
 export function formatDateRangeForPills(
   startDate: string | null | undefined,
@@ -49,24 +51,33 @@ export function formatDateRangeForPills(
   const start = parseDate(startDate);
   const end = parseDate(endDate);
 
-  // Both dates required for pills display
-  if (!start || !end) return null;
+  // No dates at all - return null for "Add dates" placeholder
+  if (!start && !end) return null;
 
   const formatter = new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
   });
 
+  // Only one date set - show just that date (treat any single date as start)
+  if (start && !end) {
+    return formatter.format(start);
+  }
+  if (!start && end) {
+    return formatter.format(end);
+  }
+
+  // Both dates present
   // Check if same month for compact format
-  if (start.getMonth() === end.getMonth() && start.getFullYear() === end.getFullYear()) {
+  if (start!.getMonth() === end!.getMonth() && start!.getFullYear() === end!.getFullYear()) {
     // Same month: "Dec 15 – 22"
-    const monthDay = formatter.format(start); // "Dec 15"
-    const endDay = end.getDate().toString();
+    const monthDay = formatter.format(start!); // "Dec 15"
+    const endDay = end!.getDate().toString();
     return `${monthDay} – ${endDay}`;
   }
 
   // Different months: "Dec 28 – Jan 5"
-  return `${formatter.format(start)} – ${formatter.format(end)}`;
+  return `${formatter.format(start!)} – ${formatter.format(end!)}`;
 }
 
 /**

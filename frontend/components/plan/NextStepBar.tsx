@@ -12,7 +12,7 @@
 
 'use client';
 
-import { ArrowRight, Loader2, ShoppingBag } from 'lucide-react';
+import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -25,9 +25,12 @@ export interface NextStepBarProps {
   state: PlanViewState;
   generation?: GenerationState | null;
   /** Pre-computed next action from getNextAction() - avoids flicker */
-  nextAction: 'expand_itinerary' | 'view_booking' | null;
+  nextAction: 'expand_itinerary' | 'finalize_plan' | null;
   onExpandToItinerary?: () => void;
-  onViewBookingOptions?: () => void;
+  /** Callback to finalize plan and navigate to Book view */
+  onFinalizePlan?: () => void;
+  /** Whether plan finalization is in progress */
+  isFinalizing?: boolean;
   /** Last error for inline retry (itinerary generation only) */
   lastError?: string | null;
   onRetry?: () => void;
@@ -39,7 +42,8 @@ export function NextStepBar({
   generation,
   nextAction,
   onExpandToItinerary,
-  onViewBookingOptions,
+  onFinalizePlan,
+  isFinalizing = false,
   lastError,
   onRetry,
   className,
@@ -112,8 +116,8 @@ export function NextStepBar({
 
     if (nextAction === 'expand_itinerary') {
       onExpandToItinerary?.();
-    } else if (nextAction === 'view_booking') {
-      onViewBookingOptions?.();
+    } else if (nextAction === 'finalize_plan') {
+      onFinalizePlan?.();
     }
 
     // Backup unlock after 2s (normally cleared by generation state change)
@@ -127,15 +131,13 @@ export function NextStepBar({
       subtext: 'Unlocks a bookable plan (stays, flights, activities).',
       icon: isGeneratingItinerary ? Loader2 : ArrowRight,
       disabled: isGeneratingItinerary || isClickLocked,
-      variant: 'primary' as const,
     },
-    view_booking: {
-      leftLabel: null,
-      buttonText: 'View booking options',
-      subtext: null,
-      icon: ShoppingBag,
-      disabled: false,
-      variant: 'secondary' as const,
+    finalize_plan: {
+      leftLabel: 'Plan complete',
+      buttonText: isFinalizing ? 'Scanning best rates...' : 'Finalize & Book',
+      subtext: 'Lock your plan and view booking options.',
+      icon: isFinalizing ? Loader2 : CheckCircle2,
+      disabled: isFinalizing || isClickLocked,
     },
   };
 
@@ -159,18 +161,12 @@ export function NextStepBar({
         disabled={config.disabled}
         className={cn(
           'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-colors',
-          config.variant === 'primary' && [
-            'bg-amber-600 text-white',
-            !config.disabled && 'hover:bg-amber-500',
-            config.disabled && 'cursor-not-allowed opacity-70',
-          ],
-          config.variant === 'secondary' && [
-            'bg-muted text-card-foreground',
-            'hover:bg-muted/80',
-          ]
+          'bg-amber-600 text-white',
+          !config.disabled && 'hover:bg-amber-500',
+          config.disabled && 'cursor-not-allowed opacity-70'
         )}
       >
-        <Icon className={cn('h-4 w-4', isGeneratingItinerary && 'animate-spin')} />
+        <Icon className={cn('h-4 w-4', (isGeneratingItinerary || isFinalizing) && 'animate-spin')} />
         {config.buttonText}
       </button>
 

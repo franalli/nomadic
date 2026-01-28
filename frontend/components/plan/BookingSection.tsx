@@ -1,23 +1,27 @@
 /**
  * BookingSection
  *
- * Conditional tiles section for the plan view.
- * - S3: Full "Booking options" grid with tabs
- * - S2 with tiles + strategy content: "Options to choose from" with MiniCards
- * - S2 generating: "Searching deals…" or "Refreshing deals…" placeholder
+ * The "Itinerary Manifest" - a categorized shopping experience for trip bookables.
+ *
+ * Layout:
+ * - Desktop: 8-column manifest (CategorySections) + 4-column sticky checkout sidebar
+ * - Mobile: Stacked layout with floating checkout bar
+ *
+ * States:
+ * - S3 (Book view): Full manifest layout with all categories
+ * - S2 with tiles: Preview mode with MiniCards (Plan view)
+ * - S2 generating: Skeleton loaders
  * - S2 without tiles: Minimal placeholder
- * - Other states: Not rendered
  */
 
 'use client';
 
-import { ChevronDown, ChevronUp, Lock } from 'lucide-react';
+import { ChevronDown, ChevronUp, Lock, Package } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { MiniCard, MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
-import { TilesGrid } from '@/components/tiles/TilesGrid';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
@@ -26,10 +30,19 @@ import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
+import { CategorySection } from './booking/CategorySection';
+import { CheckoutSidebar } from './booking/CheckoutSidebar';
 import { canShowBookingTiles, canShowTilesPreview, isGenerating } from './planStateHelpers';
 
 // Category types for S2 preview
 type TileCategory = 'stays' | 'flights' | 'activities';
+
+// Category configuration for manifest layout
+const CATEGORY_CONFIG = [
+  { key: 'flights', emoji: '✈️', label: 'Flights', types: ['flight'] },
+  { key: 'stays', emoji: '🏨', label: 'Stays', types: ['hotel', 'stay', 'accommodation'] },
+  { key: 'activities', emoji: '🤿', label: 'Activities', types: ['activity', 'experience', 'tour', 'attraction'] },
+] as const;
 
 export interface BookingSectionProps {
   state: PlanViewState;
@@ -40,8 +53,14 @@ export interface BookingSectionProps {
   savedTileIds?: Set<string>;
   /** Callback when user clicks Save on a tile */
   onSaveTile?: (tile: Tile) => void;
+  /** Callback when user wants to remove a tile from trip */
+  onRemoveTile?: (tileId: string) => void;
   /** Callback to open a sheet (for "set trip length" link) */
   onOpenSheet?: (sheet: SheetType) => void;
+  /** Callback for checkout action */
+  onCheckout?: () => void;
+  /** Whether we're in the full Book view (manifest layout) */
+  isBookView?: boolean;
 }
 
 export function BookingSection({
@@ -51,7 +70,10 @@ export function BookingSection({
   hasStrategyContent,
   savedTileIds = new Set(),
   onSaveTile,
+  onRemoveTile,
   onOpenSheet,
+  onCheckout,
+  isBookView = false,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
@@ -75,6 +97,22 @@ export function BookingSection({
   const stayTiles = tileArray.filter(t => t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation');
   const flightTiles = tileArray.filter(t => t.type === 'flight');
   const activityTiles = tileArray.filter(t => t.type === 'activity' || t.type === 'experience' || t.type === 'tour' || t.type === 'attraction');
+
+  // Get saved tiles for checkout sidebar
+  const savedTiles = useMemo(() => {
+    return tileArray.filter(t => savedTileIds.has(t.id));
+  }, [tileArray, savedTileIds]);
+
+  // Calculate total from saved tiles
+  const checkoutTotal = useMemo(() => {
+    return savedTiles.reduce((sum, t) => sum + (t.total_inclusive ?? t.price_estimate ?? 0), 0);
+  }, [savedTiles]);
+
+  // Get currency from first saved tile or first tile
+  const checkoutCurrency = useMemo(() => {
+    const tile = savedTiles[0] || tileArray[0];
+    return tile?.currency || 'USD';
+  }, [savedTiles, tileArray]);
 
   const categoryCounts = {
     stays: stayTiles.length,
@@ -173,6 +211,25 @@ export function BookingSection({
   const handleCloseModal = useCallback(() => {
     setSelectedTile(null);
   }, []);
+
+  // Handler for tile click in CategorySection
+  const handleTileClick = useCallback((tile: Tile) => {
+    setSelectedTile(tile);
+  }, []);
+
+  // Handler for removing tile from trip
+  const handleRemoveTile = useCallback((tileId: string) => {
+    onRemoveTile?.(tileId);
+  }, [onRemoveTile]);
+
+  // Group tiles by category for manifest layout
+  const tilesByCategory = useMemo(() => {
+    const grouped: Record<string, Tile[]> = {};
+    for (const cat of CATEGORY_CONFIG) {
+      grouped[cat.key] = tileArray.filter(t => (cat.types as readonly string[]).includes(t.type || ''));
+    }
+    return grouped;
+  }, [tileArray]);
 
   // S2 with tiles + strategy content: "Options to choose from" with MiniCards
   if (canShowTilesPreview(state, totalTiles, generation, hasStrategyContent) && totalTiles > 0) {
@@ -351,32 +408,106 @@ export function BookingSection({
     );
   }
 
-  // S3: Full "Booking options" section with tabs
-  if (canShowBookingTiles(state)) {
+  // S3/Book View: Full "Itinerary Manifest" layout
+  if (canShowBookingTiles(state) || isBookView) {
     if (totalTiles === 0) {
       return (
-        <div id="booking-section" className="border-t border-border p-4">
-          <p className="text-sm text-muted-foreground">No booking options available yet.</p>
+        <div id="booking-section" className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <Package className="w-12 h-12 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-muted-foreground">No booking options available yet.</p>
+            <p className="text-sm text-muted-foreground/70 mt-1">
+              Generate an itinerary to see bookable options.
+            </p>
+          </div>
         </div>
       );
     }
 
+    // Manifest layout: Categories + Checkout Sidebar
     return (
-      <div id="booking-section" className="border-t border-border p-4">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-medium text-card-foreground">Booking options</h3>
-            <span className="text-xs text-muted-foreground">({totalTiles})</span>
-            {savedTileIds.size > 0 && (
-              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
-                {savedTileIds.size} in trip
-              </span>
-            )}
+      <>
+        <div id="booking-section" className="h-full">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-full p-4 lg:p-6">
+            {/* LEFT: Category Manifest (Scrollable) - pb-24 reserves space for mobile checkout footer */}
+            <div className="lg:col-span-8 space-y-6 overflow-y-auto custom-scrollbar pb-24 lg:pb-0">
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-foreground">Your Trip Options</h2>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {totalTiles} options found • Add items to your trip
+                  </p>
+                </div>
+                {savedTileIds.size > 0 && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                    {savedTileIds.size} in trip
+                  </span>
+                )}
+              </div>
+
+              {/* Category Sections */}
+              {CATEGORY_CONFIG.map((cat) => (
+                <CategorySection
+                  key={cat.key}
+                  emoji={cat.emoji}
+                  label={cat.label}
+                  items={tilesByCategory[cat.key] || []}
+                  savedTileIds={savedTileIds}
+                  onSaveTile={onSaveTile}
+                  onTileClick={handleTileClick}
+                  defaultExpanded={cat.key === 'flights'} // Expand flights by default
+                />
+              ))}
+            </div>
+
+            {/* RIGHT: Checkout Sidebar (Sticky on desktop) */}
+            <div className="hidden lg:block lg:col-span-4">
+              <CheckoutSidebar
+                selectedTiles={savedTiles}
+                total={checkoutTotal}
+                currency={checkoutCurrency}
+                onRemoveTile={handleRemoveTile}
+                onCheckout={onCheckout}
+                checkoutDisabled={savedTiles.length === 0}
+                checkoutDisabledReason={savedTiles.length === 0 ? 'Add items to your trip first' : undefined}
+              />
+            </div>
           </div>
-          <span className="text-xs text-muted-foreground">Prices from partners</span>
+
+          {/* Mobile: Fixed Checkout Footer */}
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-background/95 backdrop-blur-sm border-t border-border p-4 pb-[env(safe-area-inset-bottom)] flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-xs text-muted-foreground">Est. Total</span>
+              <span className="font-bold text-lg">
+                {checkoutCurrency === 'USD' ? '$' : checkoutCurrency === 'EUR' ? '€' : checkoutCurrency === 'GBP' ? '£' : checkoutCurrency}
+                {checkoutTotal.toLocaleString()}
+              </span>
+            </div>
+            <button
+              onClick={onCheckout}
+              disabled={savedTiles.length === 0}
+              className={cn(
+                'px-6 py-3 rounded-lg font-semibold text-sm transition-colors',
+                savedTiles.length > 0
+                  ? 'bg-amber-600 text-white hover:bg-amber-500 shadow-lg shadow-amber-600/20'
+                  : 'bg-muted text-muted-foreground cursor-not-allowed'
+              )}
+            >
+              Checkout
+            </button>
+          </div>
         </div>
-        <TilesGrid tiles={tileArray} hideTabSwitcher={false} savedTileIds={savedTileIds} />
-      </div>
+
+        {/* Details modal */}
+        <TileDetailsModal
+          tile={selectedTile}
+          isOpen={selectedTile !== null}
+          isSaved={selectedTile ? savedTileIds.has(selectedTile.id) : false}
+          onClose={handleCloseModal}
+          onSaveClick={handleSaveClick}
+        />
+      </>
     );
   }
 

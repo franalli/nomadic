@@ -19,6 +19,12 @@ export interface UseViewNavigationReturn {
   isGenerating: boolean;
   /** Whether user has progressed past Setup (plan generation has started) */
   hasLeftSetup: boolean;
+  /** Whether the plan has been finalized (gates Book view) */
+  isPlanFinalized: boolean;
+  /** Finalize the plan (unlock Book view) */
+  finalizePlan: () => void;
+  /** Unfinalize the plan (re-enable editing, requires re-finalization) */
+  unfinalizePlan: () => void;
 }
 
 /**
@@ -47,6 +53,10 @@ export function useViewNavigation(): UseViewNavigationReturn {
   const planViewState = useDocumentStore((s) => s.document?.plan_view_state);
   const isGenerating = generation?.active === true;
 
+  // Plan finalization state
+  const isPlanFinalized = useDocumentStore((s) => s.isPlanFinalized);
+  const setFinalized = useDocumentStore((s) => s.setFinalized);
+
   // Check tile availability
   const hasTiles = Object.keys(tiles ?? {}).length > 0;
   const hasStrategyContent = (strategySections?.length ?? 0) > 0;
@@ -71,8 +81,8 @@ export function useViewNavigation(): UseViewNavigationReturn {
   const canViewPlan = Boolean(
     tripInputs?.destination && tripInputs.destination.length > 2
   );
-  // Book: Unlocked when tiles exist OR in a bookable state (S2+)
-  const canViewBook = hasTiles || inBookableState;
+  // Book: Unlocked when plan is finalized AND (tiles exist OR in bookable state)
+  const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 
   // Compute unlock state with reasons for UI feedback
   const unlockState = useMemo<ViewUnlockState>(
@@ -87,7 +97,11 @@ export function useViewNavigation(): UseViewNavigationReturn {
       },
       book: {
         unlocked: canViewBook,
-        reason: canViewBook ? null : 'Generate a plan to see booking options',
+        reason: canViewBook
+          ? null
+          : !isPlanFinalized
+            ? 'Finalize your plan to unlock booking'
+            : 'Generate a plan to see booking options',
       },
     }),
     [canViewSetup, canViewPlan, canViewBook]
@@ -99,7 +113,7 @@ export function useViewNavigation(): UseViewNavigationReturn {
       if (view === 'setup' && hasLeftSetup) return false;
       // Guard: Don't allow jumping to Plan without destination
       if (view === 'plan' && !canViewPlan) return false;
-      // Guard: Don't allow jumping to Book without tiles
+      // Guard: Don't allow jumping to Book without finalization
       if (view === 'book' && !canViewBook) return false;
       // Guard: Lock Book during active generation to prevent stale data display
       if (view === 'book' && isGenerating) return false;
@@ -110,6 +124,15 @@ export function useViewNavigation(): UseViewNavigationReturn {
     [hasLeftSetup, canViewPlan, canViewBook, isGenerating, setActiveView]
   );
 
+  // Finalization actions
+  const finalizePlan = useCallback(() => {
+    setFinalized(true);
+  }, [setFinalized]);
+
+  const unfinalizePlan = useCallback(() => {
+    setFinalized(false);
+  }, [setFinalized]);
+
   return {
     activeView,
     navigateTo,
@@ -119,5 +142,8 @@ export function useViewNavigation(): UseViewNavigationReturn {
     unlockState,
     isGenerating,
     hasLeftSetup,
+    isPlanFinalized,
+    finalizePlan,
+    unfinalizePlan,
   };
 }

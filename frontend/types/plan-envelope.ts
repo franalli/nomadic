@@ -296,6 +296,7 @@ export interface OpenDecision {
  * A single activity block within a day (Stage 3).
  */
 export interface DayBlock {
+  id?: string; // Unique block identifier for scroll spy
   period: 'morning' | 'afternoon' | 'evening';
   activity_type: string; // e.g., "moderate hike", "city stroll"
   intensity?: 'light' | 'moderate' | 'challenging';
@@ -304,6 +305,16 @@ export interface DayBlock {
   is_buffer?: boolean;
   buffer_type?: 'no_fly' | 'rest_day' | 'acclimatization' | 'arrival' | 'departure';
   buffer_reason?: string; // e.g., "PADI Standard - 24h surface interval before flying"
+  // Specialist constraints (e.g., "24h No-Fly Buffer", "Altitude limit")
+  constraints?: string[];
+  // Price estimate for Plan mode display (~$150)
+  price_estimate?: number;
+  // Coordinates for map integration
+  coordinates?: { lat: number; lng: number };
+  // Ghost timeline: skeleton placeholder for unplanned days
+  is_skeleton?: boolean;
+  // Specialist type for ghost blocks (e.g., "diving", "hiking")
+  specialist_type?: string;
 }
 
 /**

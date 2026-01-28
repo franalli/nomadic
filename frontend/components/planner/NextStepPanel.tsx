@@ -220,21 +220,21 @@ export function NextStepPanel({
       <div className="flex flex-col h-full p-6 justify-center items-center">
         <div
           className={cn(
-            'w-full max-w-xs mx-auto text-center',
-            'px-6 py-7 rounded-2xl',
-            'bg-[rgba(255,255,255,0.62)] border border-[rgba(0,0,0,0.06)]',
-            'shadow-[0_14px_50px_rgba(0,0,0,0.08)]',
-            'dark:bg-[rgba(10,12,12,0.58)] dark:border-[rgba(255,255,255,0.08)]',
-            'dark:shadow-[0_18px_60px_rgba(0,0,0,0.45)]',
-            'backdrop-blur-[10px]'
+            'w-full max-w-sm mx-auto text-center',
+            'px-7 py-10 rounded-3xl',
+            'bg-white/65 border border-black/[0.06]',
+            'shadow-[0_20px_60px_-15px_rgba(0,0,0,0.15)]',
+            'dark:bg-black/50 dark:border-white/[0.10] dark:border-t-white/20',
+            'dark:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.6)]',
+            'backdrop-blur-2xl'
           )}
         >
-          <Loader2 className="h-8 w-8 animate-spin text-amber-500 mx-auto mb-3" />
-          <h2 className="text-lg font-medium text-[var(--theme-text)]">
-            Building your plan
+          <Loader2 className="h-10 w-10 animate-spin text-emerald-500 mx-auto mb-4" />
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground/70">
+            Building Your Plan
           </h2>
           {generatingSubtitle && (
-            <p className="text-sm text-[var(--theme-text-muted)] mt-1">
+            <p className="text-sm text-foreground/70 mt-3 font-medium">
               {generatingSubtitle}
             </p>
           )}
@@ -248,22 +248,22 @@ export function NextStepPanel({
     <div className="flex flex-col h-full p-6 justify-center items-center">
       <div
         className={cn(
-          'w-full max-w-xs mx-auto',
-          'px-6 py-7 rounded-2xl',
-          'bg-[rgba(255,255,255,0.62)] border border-[rgba(0,0,0,0.06)]',
-          'shadow-[0_14px_50px_rgba(0,0,0,0.08)]',
-          'dark:bg-[rgba(10,12,12,0.58)] dark:border-[rgba(255,255,255,0.08)]',
-          'dark:shadow-[0_18px_60px_rgba(0,0,0,0.45)]',
-          'backdrop-blur-[10px]'
+          'w-full max-w-sm mx-auto',
+          'px-7 py-8 rounded-3xl',
+          'bg-white/65 border border-black/[0.06]',
+          'shadow-[0_20px_60px_-15px_rgba(0,0,0,0.15)]',
+          'dark:bg-black/50 dark:border-white/[0.10] dark:border-t-white/20',
+          'dark:shadow-[0_20px_60px_-15px_rgba(0,0,0,0.6)]',
+          'backdrop-blur-2xl'
         )}
       >
-        {/* Title */}
-        <h2 className="text-lg font-medium text-[var(--theme-text)] text-center">
-          Finish setup
+        {/* Title - Micro typography */}
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground/70 text-center mb-1">
+          Trip Parameters
         </h2>
 
         {/* Checklist */}
-        <div className="space-y-2 mt-5">
+        <div className="space-y-2.5 mt-6">
           {items.map((item) => (
             <ChecklistRow
               key={item.id}
@@ -272,27 +272,27 @@ export function NextStepPanel({
           ))}
         </div>
 
-        {/* Build plan CTA */}
-        <div className="mt-6">
+        {/* Build plan CTA - Emerald Glow */}
+        <div className="mt-8">
           <button
             onClick={onBuildPlan}
             disabled={!canBuildPlan}
             className={cn(
               'w-full flex items-center justify-center gap-2',
-              'px-4 py-2.5 rounded-lg font-medium text-sm',
+              'px-5 py-3 rounded-xl font-semibold text-sm tracking-wide',
               'transition-all duration-200',
               canBuildPlan
-                ? 'bg-amber-500 text-white hover:bg-amber-600 active:scale-[0.98]'
-                : 'bg-muted text-muted-foreground/60 cursor-not-allowed'
+                ? 'bg-emerald-600 text-white hover:bg-emerald-500 hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_30px_-5px_rgba(16,185,129,0.6)] border-t border-white/20'
+                : 'bg-muted/50 text-muted-foreground/50 cursor-not-allowed'
             )}
           >
-            {hasEverHadPlan ? 'Update plan' : 'Build plan'}
+            {hasEverHadPlan ? 'Update Plan' : 'Build Plan'}
             <ArrowRight className="h-4 w-4" />
           </button>
 
           {/* Helper text for disabled state */}
           {!canBuildPlan && (
-            <p className="text-xs text-[var(--theme-text-muted)] text-center mt-2">
+            <p className="text-[11px] text-muted-foreground/60 text-center mt-3 tracking-wide">
               {getHelperText()}
             </p>
           )}
@@ -308,65 +308,68 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
   return (
     <div
       className={cn(
-        'flex items-center gap-3 px-3 py-2.5 rounded-md transition-all',
-        'bg-[rgba(0,0,0,0.02)] border border-[rgba(0,0,0,0.08)]',
-        'dark:bg-[rgba(255,255,255,0.03)] dark:border-[rgba(255,255,255,0.08)]',
-        !item.isSet && item.onSet && 'cursor-pointer hover:bg-[rgba(0,0,0,0.04)] dark:hover:bg-[rgba(255,255,255,0.05)]'
+        'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200',
+        // Subtle filled background - premium minimal style
+        'bg-black/[0.04] dark:bg-white/[0.06]',
+        // Hover state only for actionable items
+        !item.isSet && item.onSet && 'cursor-pointer hover:bg-black/[0.07] dark:hover:bg-white/[0.10]',
+        // Focus ring on interaction
+        'focus-within:ring-1 focus-within:ring-emerald-500/30'
       )}
       onClick={!item.isSet ? item.onSet : undefined}
     >
       {/* Status indicator */}
       <div className={cn(
-        'w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0',
+        'w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-colors',
         item.isSet
           ? 'bg-emerald-500/20 text-emerald-500'
-          : 'bg-muted/50 text-muted-foreground'
+          : 'bg-black/[0.05] dark:bg-white/[0.08] text-muted-foreground/70'
       )}>
         {item.isSet ? (
-          <Check className="w-3 h-3" />
+          <Check className="w-3.5 h-3.5" />
         ) : (
-          <Icon className="w-3 h-3" />
+          <Icon className="w-3.5 h-3.5" />
         )}
       </div>
 
       {/* Label and value */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <span className={cn(
-            'text-sm',
-            item.isSet ? 'text-[var(--theme-text)]' : 'text-[var(--theme-text-muted)]'
+            'text-[13px] font-medium',
+            item.isSet ? 'text-foreground' : 'text-muted-foreground'
           )}>
             {item.label}
           </span>
           {item.isOptional && !item.isSet && (
-            <span className="text-xs text-muted-foreground">(optional)</span>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground/50">optional</span>
           )}
         </div>
         {item.isSet && item.value && (
-          <p className="text-xs text-emerald-600 dark:text-emerald-400 truncate">
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 truncate mt-0.5">
             {item.value}
             {/* Show date range helper inline for Nights */}
             {item.valueHelper && (
-              <span className="text-muted-foreground ml-1">({item.valueHelper})</span>
+              <span className="text-muted-foreground/70 ml-1.5">({item.valueHelper})</span>
             )}
           </p>
         )}
         {/* Helper text for optional items when not set */}
         {!item.isSet && item.helperText && (
-          <p className="text-xs text-muted-foreground mt-0.5">
+          <p className="text-[11px] text-muted-foreground/60 mt-0.5">
             {item.helperText}
           </p>
         )}
       </div>
 
-      {/* Set button for unset items */}
+      {/* Set button for unset items - ghost style */}
       {!item.isSet && item.onSet && (
         <button
           onClick={(e) => {
             e.stopPropagation();
             item.onSet?.();
           }}
-          className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex-shrink-0"
+          className="text-[11px] font-medium text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 transition-colors flex-shrink-0 uppercase tracking-wide"
         >
           Set
         </button>

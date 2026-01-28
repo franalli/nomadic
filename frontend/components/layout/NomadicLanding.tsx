@@ -16,7 +16,6 @@ import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEdit
 import { SetupDrawer } from '@/components/layout/SetupDrawer';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { BookingSection } from '@/components/plan/BookingSection';
-import { ConfirmStaySheet } from '@/components/plan/ConfirmStaySheet';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { TripLengthSheet } from '@/components/plan/TripLengthSheet';
@@ -37,13 +36,12 @@ import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
-import { filterTilesByType } from '@/lib/tileSelectors';
 import { formatDateForDisplay } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER } from '@/state/chatStore';
 import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
-import { type DocumentTripInputs,isBookingEnabled } from '@/types/document';
+import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
-import type { PlanState, PlanViewModel,PlanViewState } from '@/types/plan-envelope';
+import type { PlanState, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
 
 /**
  * Parse ISO date string (yyyy-MM-dd) as local midnight.
@@ -87,7 +85,7 @@ const TOPIC_KEYWORDS: Record<string, string[]> = {
 function detectTopicsFromMessage(message: string): string[] {
   const lower = message.toLowerCase();
   return Object.entries(TOPIC_KEYWORDS)
-    .filter(([, keywords]) => keywords.some(k => lower.includes(k)))
+    .filter(([, keywords]) => keywords.some((k) => lower.includes(k)))
     .map(([topic]) => topic);
 }
 
@@ -142,13 +140,8 @@ function detectChangedFieldNames(
 
 export function NomadicLanding() {
   // Mobile mode context - for switching between planner/plan views on mobile
-  const {
-    isDesktop,
-    switchToPlan,
-    switchToPlanner,
-    activeTab,
-    setPlanTabHasUpdate,
-  } = useMobileMode();
+  const { isDesktop, switchToPlan, switchToPlanner, activeTab, setPlanTabHasUpdate } =
+    useMobileMode();
 
   // Document store - single source of truth for trip inputs
   const documentStore = useDocumentStore();
@@ -164,7 +157,7 @@ export function NomadicLanding() {
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
 
   // View navigation - decoupled from plan_view_state
-  const { navigateTo, hasLeftSetup } = useViewNavigation();
+  const { navigateTo, hasLeftSetup, finalizePlan } = useViewNavigation();
 
   // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
   // Kept for future receipt UI implementation
@@ -179,6 +172,9 @@ export function NomadicLanding() {
   // Track if user explicitly requested plan generation (clicked "Build Plan")
   // This prevents Plan tab from showing prematurely when backend sends data
   const [userRequestedGeneration, setUserRequestedGeneration] = useState(false);
+
+  // Track if plan finalization is in progress (for "Scanning best rates..." UI)
+  const [isFinalizing, setIsFinalizing] = useState(false);
 
   // Optimistic pending topics - detected from user messages before backend responds
   // Used to show placeholder AgentCards immediately while backend processes
@@ -245,7 +241,6 @@ export function NomadicLanding() {
 
   // Sheet states for itinerary validation flow
   const [tripLengthSheetOpen, setTripLengthSheetOpen] = useState(false);
-  const [confirmStaySheetOpen, setConfirmStaySheetOpen] = useState(false);
 
   // Confirmation dialog for destructive Setup click (from Plan/Book mode)
   const [setupConfirmDialogOpen, setSetupConfirmDialogOpen] = useState(false);
@@ -324,7 +319,6 @@ export function NomadicLanding() {
     lastFetchedDestination.current = null;
     // Close any open sheets (validation + trip input sheets)
     setTripLengthSheetOpen(false);
-    setConfirmStaySheetOpen(false);
     closeSheet(); // Close any open trip input sheet
     // Reset mobile mode to planner view (shows chat/setup)
     if (!isDesktop) {
@@ -332,7 +326,14 @@ export function NomadicLanding() {
     }
     // Proceed with branch manager reset (clears server session, chat, branches, etc.)
     await branchManagerStartNewSession();
-  }, [shortlist, branchManagerStartNewSession, closeSheet, documentStore, isDesktop, switchToPlanner]);
+  }, [
+    shortlist,
+    branchManagerStartNewSession,
+    closeSheet,
+    documentStore,
+    isDesktop,
+    switchToPlanner,
+  ]);
 
   // Wrapped handlers for receipt functionality
   // Snapshot trip inputs before generation starts + switch to Plan Mode on mobile
@@ -373,23 +374,28 @@ export function NomadicLanding() {
 
   // Handle user message submission for optimistic topic detection
   // Detects specialist topics from message and adds placeholder AgentCards immediately
-  const handleUserMessageSubmit = useCallback((message: string) => {
-    if (!hasEverHadPlan) return; // Only do optimistic UI after first plan
+  const handleUserMessageSubmit = useCallback(
+    (message: string) => {
+      if (!hasEverHadPlan) return; // Only do optimistic UI after first plan
 
-    const detectedTopics = detectTopicsFromMessage(message);
-    // Use documentStore.document directly to avoid variable scope issues
-    const existingTopics = new Set(documentStore.document?.executed_strategy_topics ?? []);
-    const newTopics = detectedTopics.filter(t => !existingTopics.has(t));
+      const detectedTopics = detectTopicsFromMessage(message);
+      // Use documentStore.document directly to avoid variable scope issues
+      const existingTopics = new Set(
+        documentStore.document?.executed_strategy_topics ?? []
+      );
+      const newTopics = detectedTopics.filter((t) => !existingTopics.has(t));
 
-    if (newTopics.length > 0) {
-      setLocalPendingTopics(prev => {
-        // Stable deduplication using Map
-        return Array.from(
-          new Map([...prev, ...newTopics].map(t => [t, true])).keys()
-        );
-      });
-    }
-  }, [hasEverHadPlan, documentStore.document?.executed_strategy_topics]);
+      if (newTopics.length > 0) {
+        setLocalPendingTopics((prev) => {
+          // Stable deduplication using Map
+          return Array.from(
+            new Map([...prev, ...newTopics].map((t) => [t, true])).keys()
+          );
+        });
+      }
+    },
+    [hasEverHadPlan, documentStore.document?.executed_strategy_topics]
+  );
 
   // Receipt undo/dismiss handlers removed - re-add when receipt UI is implemented
   // Uses: previousTripInputsRef, storeTripInputs, restoreTripInputs, setReceiptData, detectChangedFieldNames
@@ -409,11 +415,8 @@ export function NomadicLanding() {
 
   // Destructure commonly used values from the hook
   // Note: resetDraft is accessed via tripInputsEditorRef.current in branchManager callback
-  const {
-    handleUpdateAdults,
-    handleUpdateChildren,
-    handleToggleRequiresAssistance,
-  } = tripInputsEditor;
+  const { handleUpdateAdults, handleUpdateChildren, handleToggleRequiresAssistance } =
+    tripInputsEditor;
 
   // Toast auto-dismiss effect - handles multiple toasts with different timings
   useEffect(() => {
@@ -529,14 +532,25 @@ export function NomadicLanding() {
   const hasTilesReady = Object.keys(storeDocument?.tiles ?? {}).length > 0;
   useEffect(() => {
     // V1 path: branches + strategy
-    if (hasBranchesReady && hasStrategyContent && !hasEverHadPlan && userRequestedGeneration) {
+    if (
+      hasBranchesReady &&
+      hasStrategyContent &&
+      !hasEverHadPlan &&
+      userRequestedGeneration
+    ) {
       setHasEverHadPlan(true);
     }
     // V2 path: tiles exist (even without explicit Build Plan click)
     if (hasTilesReady && !hasEverHadPlan) {
       setHasEverHadPlan(true);
     }
-  }, [hasBranchesReady, hasStrategyContent, hasEverHadPlan, userRequestedGeneration, hasTilesReady]);
+  }, [
+    hasBranchesReady,
+    hasStrategyContent,
+    hasEverHadPlan,
+    userRequestedGeneration,
+    hasTilesReady,
+  ]);
 
   // Clear local pending topics when backend responds with executed_strategy_topics
   // Topics that appear in executed are successfully processed
@@ -544,8 +558,8 @@ export function NomadicLanding() {
   const executedTopics = storeDocument?.executed_strategy_topics ?? [];
   useEffect(() => {
     if (executedTopics.length > 0) {
-      setLocalPendingTopics(prev =>
-        prev.filter(topic => !executedTopics.includes(topic))
+      setLocalPendingTopics((prev) =>
+        prev.filter((topic) => !executedTopics.includes(topic))
       );
     }
   }, [executedTopics]);
@@ -554,7 +568,7 @@ export function NomadicLanding() {
   const lastSeenTopicsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const executed = new Set(executedTopics);
-    const hasNew = [...executed].some(t => !lastSeenTopicsRef.current.has(t));
+    const hasNew = [...executed].some((t) => !lastSeenTopicsRef.current.has(t));
     // Show badge when new topics executed AND user is not on Plan tab
     if (hasNew && activeTab !== 'plan') {
       setPlanTabHasUpdate(true);
@@ -574,7 +588,11 @@ export function NomadicLanding() {
     // V2: Auto-transitions when tiles are available
 
     // V2 path: If tiles exist, trust backend's plan_view_state
-    if (hasTilesReady && backendPlanViewState && backendPlanViewState !== 'S0_BOOTSTRAP') {
+    if (
+      hasTilesReady &&
+      backendPlanViewState &&
+      backendPlanViewState !== 'S0_BOOTSTRAP'
+    ) {
       return backendPlanViewState;
     }
 
@@ -608,7 +626,14 @@ export function NomadicLanding() {
     }
 
     return 'S0_BOOTSTRAP';
-  }, [backendPlanViewState, isGenerating, hasStrategyContent, hasEverHadPlan, userRequestedGeneration, hasTilesReady]);
+  }, [
+    backendPlanViewState,
+    isGenerating,
+    hasStrategyContent,
+    hasEverHadPlan,
+    userRequestedGeneration,
+    hasTilesReady,
+  ]);
 
   // Auto-switch to Plan Mode when generation is in progress (mobile only)
   useEffect(() => {
@@ -635,7 +660,7 @@ export function NomadicLanding() {
     const backendPending = storeDocument?.pending_strategy_topics ?? [];
     // Use Map for stable deduplication (like Python's dict.fromkeys)
     return Array.from(
-      new Map([...backendPending, ...localPendingTopics].map(t => [t, true])).keys()
+      new Map([...backendPending, ...localPendingTopics].map((t) => [t, true])).keys()
     );
   }, [storeDocument?.pending_strategy_topics, localPendingTopics]);
 
@@ -677,7 +702,11 @@ export function NomadicLanding() {
   // Book tab enabled when we have tiles or in a state that can show booking content
   const bookTabEnabled = useMemo(() => {
     const hasTiles = Object.keys(tiles).length > 0;
-    const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(planViewState);
+    const inBookableState = [
+      'S2_STRATEGY_READY',
+      'S3_ITINERARY_READY',
+      'S3_EDITING',
+    ].includes(planViewState);
     return hasTiles || inBookableState;
   }, [tiles, planViewState]);
 
@@ -723,7 +752,11 @@ export function NomadicLanding() {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         if (documentStore.isCurrentRun(runId)) {
-          setUiGeneration({ active: true, stage: 'itinerary', message: 'Still working...' });
+          setUiGeneration({
+            active: true,
+            stage: 'itinerary',
+            message: 'Still working...',
+          });
         }
       }, STREAM_TIMEOUT_MS);
     };
@@ -784,7 +817,6 @@ export function NomadicLanding() {
         parser.feed(decoder.decode(value, { stream: true }));
       }
       parser.flush();
-
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         console.debug('Itinerary generation aborted');
@@ -801,13 +833,19 @@ export function NomadicLanding() {
   }, [storeDocument, shortlist.savedTileIds, documentStore]);
 
   // Handler for expanding to itinerary - validation gates before generation
+  // "Assume & Refine" philosophy: Backend auto-selects recommended stay if none saved
   const handleExpandToItinerary = useCallback(async () => {
+    // GATE 0: Don't expand if plan is currently regenerating (race condition prevention)
+    if (isRegenerating) {
+      addToast('Plan is updating, please wait...', 'info');
+      return;
+    }
+
     const currentTripInputs = storeDocument?.trip_inputs;
-    const currentTiles = storeDocument?.tiles ?? {};
-    const currentBookingTypes = currentTripInputs?.booking_types;
 
     // GATE 1: Check for duration (end_date OR trip_duration - no date_flex requirement)
-    const hasDuration = !!currentTripInputs?.end_date || currentTripInputs?.trip_duration != null;
+    const hasDuration =
+      !!currentTripInputs?.end_date || currentTripInputs?.trip_duration != null;
     if (!hasDuration) {
       // Only open TripLengthSheet if we have a start date
       if (!currentTripInputs?.start_date) {
@@ -818,75 +856,58 @@ export function NomadicLanding() {
       return;
     }
 
-    // GATE 2: If Stays ON, check for stay selection (tri-state: suggested or on = enabled)
-    const staysEnabled = isBookingEnabled(currentBookingTypes?.hotels);
-    const stayTiles = filterTilesByType(currentTiles, 'stay');
-    const hasSavedStay = stayTiles.some(t => shortlist.savedTileIds.has(t.id));
-
-    if (staysEnabled) {
-      // No stay tiles exist - need to generate plan first
-      if (stayTiles.length === 0) {
-        addToast('Build a plan first to see stay options', 'info');
-        return;
-      }
-      // Need selection - open ConfirmStaySheet
-      if (!hasSavedStay) {
-        setConfirmStaySheetOpen(true);
-        return;
-      }
-    }
-
-    // All gates passed - proceed with itinerary generation (no override needed)
+    // All gates passed - proceed with itinerary generation
+    // Backend auto-selects recommended stay if none saved (no modal needed)
     await proceedWithItineraryGeneration();
-  }, [storeDocument, shortlist.savedTileIds, addToast, proceedWithItineraryGeneration]);
+  }, [storeDocument, addToast, proceedWithItineraryGeneration, isRegenerating]);
 
-  // Handle quick pick from TripLengthSheet
-  const handleSelectNights = useCallback(async (nights: number) => {
-    const startDate = storeDocument?.trip_inputs?.start_date;
-    if (!startDate) return;
+  // Handle quick pick from TripLengthSheet or InlineDatePrompt
+  const handleSelectNights = useCallback(
+    async (nights: number) => {
+      const startDate = storeDocument?.trip_inputs?.start_date;
+      if (!startDate) return;
 
-    // Calculate end date (timezone-safe)
-    const endDateStr = addDaysUTC(startDate, nights);
+      // Calculate end date (timezone-safe)
+      const endDateStr = addDaysUTC(startDate, nights);
 
-    // Update trip inputs and await confirmation
-    const success = await documentStore.commitTripInputs({ end_date: endDateStr });
+      // Update trip inputs and await confirmation
+      const success = await documentStore.commitTripInputs({ end_date: endDateStr });
 
-    // Close sheet
-    setTripLengthSheetOpen(false);
+      // Close sheet (if open)
+      setTripLengthSheetOpen(false);
 
-    // Only proceed if store update succeeded
-    if (success) {
-      // Call directly - store is already updated
-      handleExpandToItinerary();
-    }
-  }, [storeDocument?.trip_inputs?.start_date, addDaysUTC, documentStore, handleExpandToItinerary]);
-
-  // Handle "Use recommended" from ConfirmStaySheet
-  const handleUseRecommendedStay = useCallback(async () => {
-    // Close sheet first
-    setConfirmStaySheetOpen(false);
-
-    // Proceed with itinerary generation
-    await proceedWithItineraryGeneration();
-  }, [proceedWithItineraryGeneration]);
-
-  // Handle "Choose a stay" from ConfirmStaySheet
-  const handleChooseStay = useCallback(() => {
-    setConfirmStaySheetOpen(false);
-    // Switch to stays tab if on mobile, or scroll to stays section
-    // TODO: Implement navigation to stays section
-  }, []);
-
-  // Handler for viewing booking options (scroll to section)
-  const handleViewBookingOptions = useCallback(() => {
-    document.getElementById('booking-section')?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
+      // Just confirm the date was set - DON'T auto-trigger expand-itinerary
+      // User clicks "Create day-by-day itinerary" button to continue
+      // This prevents race conditions where expand-itinerary runs before plan regenerates
+      if (success) {
+        addToast('Trip length set', 'confirmation');
+      }
+    },
+    [storeDocument?.trip_inputs?.start_date, addDaysUTC, documentStore, addToast]
+  );
 
   // Handler for "Build plan" CTA in right panel (S0BootstrapView)
   // Triggers plan generation via ChatPanel
   const handleBuildPlan = useCallback(() => {
     chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
   }, []);
+
+  // Handler for "Finalize & Unlock Booking" CTA (The Bridge)
+  // Sets plan as finalized and navigates to Book view
+  const handleFinalizePlan = useCallback(async () => {
+    setIsFinalizing(true);
+
+    // Simulate "Scanning best rates..." delay for UX polish
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+
+    // Mark plan as finalized (unlocks Book view)
+    finalizePlan();
+
+    // Navigate to Book view
+    navigateTo('book');
+
+    setIsFinalizing(false);
+  }, [finalizePlan, navigateTo]);
 
   // Handler for minimized chat input (Plan/Book tabs) - sends message via ChatPanel
   const handleMinimizedSendMessage = useCallback((message: string) => {
@@ -1025,7 +1046,8 @@ export function NomadicLanding() {
       currentSubStage={currentSubStage}
       onBuildPlan={handleBuildPlan}
       onExpandToItinerary={handleExpandToItinerary}
-      onViewBookingOptions={handleViewBookingOptions}
+      onFinalizePlan={handleFinalizePlan}
+      isFinalizing={isFinalizing}
       onReset={handleStartNewSession}
       lastError={lastGenerationError}
       onRetry={handleExpandToItinerary}
@@ -1040,6 +1062,7 @@ export function NomadicLanding() {
       onBookClick={handleBookClick}
       hasMinimumSelections={hasMinimumSelections}
       isRegenerating={isRegenerating}
+      onSelectNights={handleSelectNights}
     />
   );
 
@@ -1202,7 +1225,7 @@ export function NomadicLanding() {
                   <span className="text-foreground text-lg font-semibold">Nomadic</span>
                 </div>
                 <span className="text-muted-foreground hidden text-sm sm:inline">
-                  Change constraints. Keep the plan.
+                  Change your mind. Keep the plan.
                 </span>
               </div>
               <Button
@@ -1253,13 +1276,6 @@ export function NomadicLanding() {
         }}
       />
 
-      <ConfirmStaySheet
-        open={confirmStaySheetOpen}
-        onOpenChange={setConfirmStaySheetOpen}
-        onUseRecommended={handleUseRecommendedStay}
-        onChooseStay={handleChooseStay}
-      />
-
       {/* Destructive action confirmation - when clicking Setup from Plan/Book */}
       <ConfirmDialog
         isOpen={setupConfirmDialogOpen}
@@ -1306,7 +1322,10 @@ export function NomadicLanding() {
           // toISOString() converts to UTC which can shift the date by a day
           const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
           const endStr = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}-${String(end.getDate()).padStart(2, '0')}`;
-          await documentStore.commitTripInputs({ start_date: startStr, end_date: endStr });
+          await documentStore.commitTripInputs({
+            start_date: startStr,
+            end_date: endStr,
+          });
           closeSheet();
           // Toast is already shown by DatesSheet, no need for duplicate
         }}

@@ -1,25 +1,25 @@
 /**
- * UnifiedChipRow
+ * UnifiedChipRow - "Cockpit" Layout
  *
- * Two-row chip layout for all trip constraints.
- * Single entry point for all inputs - replaces OnboardingChips + OptionalRefinementsSection.
+ * Two-deck vertical layout for trip inputs. All controls above chat input.
  *
  * Layout:
- * Row A (core):    [ Destination ] [ Origin* ] [ Dates ] [ Travelers ] [ Budget ]
- * Row B (modules): [ Flights ] [ Stays ] [ Activities ]
+ * ┌─────────────────────────────────────────────────────────────┐
+ * │ DECK 1: [ Destination ] [ Origin ] [ Dates ] [ Travelers ] │  ← Context Pills (h-9, 36px)
+ * │ DECK 2: [ Flights ] [ Stays ] [ Activities ]               │  ← Module Pills (h-10, 40px)
+ * └─────────────────────────────────────────────────────────────┘
  *
- * * Origin only visible when Flights module is ON
- *
- * Chip states:
- * - Core chips: unset (muted) → set (highlighted with value)
- * - Module chips: off (muted) → on-default (subtle) → on-custom (highlight + dot)
+ * Design Rules:
+ * - Deck 1: h-9 tactile buttons, monochrome glass (grey → white when filled)
+ * - Deck 2: h-10 primary touch targets, teal glow when active
+ * - Vertical stack reads top-down: Context → Scope → Chat
+ * - "Cockpit" aesthetic - all instruments large and readable
  */
 
 'use client';
 
 import {
   Calendar,
-  Check,
   DollarSign,
   Hotel,
   MapPin,
@@ -156,6 +156,8 @@ interface CoreChipProps {
   value?: string | null;
   onClick?: () => void;
   isOptional?: boolean;
+  /** If true, treat as "default value" - don't highlight even if has value */
+  isDefault?: boolean;
 }
 
 const CoreChip = memo(function CoreChip({
@@ -164,41 +166,57 @@ const CoreChip = memo(function CoreChip({
   value,
   onClick,
   isOptional,
+  isDefault = false,
 }: CoreChipProps) {
   const hasValue = !!value;
+  // Only highlight if has user-set value (not default)
+  const isHighlighted = hasValue && !isDefault;
 
   return (
     <button
       type="button"
       onClick={onClick}
       className={cn(
-        // Base chip styling (h-7 = 28px)
-        'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full',
-        'transition-all duration-[120ms] ease-out active:scale-[0.98]',
-        // State-based styling
-        hasValue
-          ? 'border border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold'
-          : 'border border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
-        // Hover states
-        !hasValue && 'hover:border-[var(--chip-border-hover)]',
-        hasValue && 'hover:border-[var(--chip-active-border)]',
+        // Premium Standard: h-9 (36px) - tactile & readable
+        'inline-flex items-center gap-2 h-9 px-3.5 rounded-lg',
+        'transition-all duration-200 ease-out active:scale-[0.98]',
+        // Light mode: "Paper & Ink" - solid fills, high contrast
+        // Dark mode: "Holographic Console" - glass glow
+        'border',
+        // Base state (unfilled) - Light: Solid grey tag
+        !isHighlighted && [
+          'bg-zinc-100 text-zinc-600 border-transparent',
+          'hover:bg-zinc-200 hover:text-zinc-900',
+          // Dark: glass with subtle border
+          'dark:bg-white/[0.05] dark:text-zinc-400 dark:border-white/[0.10]',
+          'dark:hover:bg-white/[0.10] dark:hover:border-white/20 dark:hover:text-white',
+        ],
+        // Highlighted state (filled) - Light: Jet black ink
+        isHighlighted && [
+          'bg-zinc-900 text-white border-transparent shadow-md',
+          'hover:bg-zinc-800',
+          // Dark: brighter glass with white text
+          'dark:bg-white/[0.10] dark:text-white dark:border-white/20',
+          'dark:hover:bg-white/[0.15] dark:hover:border-white/30',
+        ],
         // Focus ring
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50'
+        'focus-visible:outline-none focus-visible:ring-2',
+        'focus-visible:ring-zinc-400/50 dark:focus-visible:ring-white/20'
       )}
     >
       <Icon
         className={cn(
-          'h-3.5 w-3.5 flex-shrink-0',
-          hasValue ? 'text-[var(--chip-active-icon)]' : ''
+          'h-4 w-4 flex-shrink-0',
+          // Light: contrast icons based on state
+          isHighlighted ? 'text-white dark:text-white' : 'text-zinc-500 dark:text-zinc-500'
         )}
       />
-      <span className="text-xs truncate max-w-[120px]">
+      <span className="text-xs font-semibold uppercase tracking-wide truncate max-w-[100px]">
         {value || label}
         {!value && isOptional && (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-600 ml-1">(opt)</span>
+          <span className="text-[10px] opacity-50 ml-1 normal-case tracking-normal">(opt)</span>
         )}
       </span>
-      {hasValue && <Check className="h-2.5 w-2.5 text-[var(--chip-active-icon)]" />}
     </button>
   );
 });
@@ -234,36 +252,54 @@ const ModuleChip = memo(function ModuleChip({
       type="button"
       onClick={onClick}
       className={cn(
-        // Base chip styling
-        'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full',
-        'transition-all duration-[120ms] ease-out active:scale-[0.98]',
-        // 3-state styling
+        // Premium Standard: h-10 (40px) - primary touch target
+        'inline-flex items-center gap-2 h-10 px-5 rounded-full',
+        'transition-all duration-200 ease-out active:scale-[0.95]',
+        'border',
+        // Off: dim ghost - Light: solid grey, Dark: outline
         isOff && [
-          'border border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
-          'opacity-70 hover:opacity-100 hover:border-[var(--chip-border-hover)]',
+          'bg-zinc-100 text-zinc-500 border-transparent',
+          'hover:bg-zinc-200 hover:text-zinc-600',
+          // Dark: ghost outline
+          'dark:bg-transparent dark:text-zinc-500 dark:border-zinc-800',
+          'dark:hover:border-zinc-700 dark:hover:text-zinc-400',
         ],
+        // On Default: teal accent - Light: solid teal, Dark: glow
         isOnDefault && [
-          'border border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-400',
-          'hover:border-teal-500/50',
+          'bg-teal-600 text-white border-transparent shadow-md',
+          'hover:bg-teal-500',
+          // Dark: teal glow
+          'dark:bg-teal-500/10 dark:text-teal-400 dark:border-teal-500/50',
+          'dark:shadow-[0_0_15px_-3px_rgba(45,212,191,0.2)]',
+          'dark:hover:border-teal-500/70 dark:hover:shadow-[0_0_20px_-3px_rgba(45,212,191,0.3)]',
         ],
+        // On Custom: stronger teal - Light: darker solid, Dark: stronger glow
         isOnCustom && [
-          'border border-teal-500/50 bg-teal-500/15 text-teal-600 dark:text-teal-400 font-semibold',
-          'hover:border-teal-500/70',
+          'bg-teal-700 text-white border-transparent shadow-lg font-semibold',
+          'hover:bg-teal-600',
+          // Dark: stronger teal glow
+          'dark:bg-teal-500/15 dark:text-teal-300 dark:border-teal-500/70',
+          'dark:shadow-[0_0_20px_-3px_rgba(45,212,191,0.3)]',
+          'dark:hover:border-teal-400 dark:hover:shadow-[0_0_25px_-3px_rgba(45,212,191,0.4)]',
         ],
         // Focus ring
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-teal-500/50'
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500/40'
       )}
     >
-      <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-      <span className="text-xs truncate max-w-[120px]">
+      <Icon className={cn(
+        'h-5 w-5 flex-shrink-0',
+        // Light: white when active, grey when off
+        isOff ? 'text-zinc-400 dark:text-zinc-600' : 'text-white dark:text-teal-400'
+      )} />
+      <span className="text-sm font-medium">
         {label}
         {isOn && summary && (
-          <span className="ml-1 text-[10px] opacity-80">· {summary}</span>
+          <span className="ml-1.5 text-xs opacity-75">· {summary}</span>
         )}
       </span>
       {/* Custom dot indicator */}
       {isOnCustom && (
-        <span className="h-1.5 w-1.5 rounded-full bg-teal-500" />
+        <span className="h-2 w-2 rounded-full bg-white/80 dark:bg-teal-400" />
       )}
     </button>
   );
@@ -296,9 +332,6 @@ function UnifiedChipRowInner({
   onOpenStays,
   onOpenActivities,
 }: UnifiedChipRowProps) {
-  // Determine if Origin should be visible (only when Flights ON - tri-state check)
-  const showOrigin = isBookingEnabled(bookingTypes.flights);
-
   // Determine module chip states (tri-state: suggested or on = enabled)
   const getFlightState = (): ModuleState => {
     if (!isBookingEnabled(bookingTypes.flights)) return 'off';
@@ -315,10 +348,14 @@ function UnifiedChipRowInner({
     return isActivityCustom(activitySettings) ? 'on-custom' : 'on-default';
   };
 
+  // Check if travelers has been modified from default
+  const isTravelersDefault = travelers === '1 adult';
+
   return (
-    <div className="flex flex-col gap-2">
-      {/* Row A: Core constraints */}
-      <div className="flex flex-wrap gap-2">
+    <div className="flex flex-col gap-4 w-full">
+      {/* DECK 1: TRIP CONTEXT (The Facts) */}
+      {/* Premium tactile buttons, monochrome, wraps naturally */}
+      <div className="flex flex-wrap items-center gap-2">
         <CoreChip
           icon={MapPin}
           label="Destination"
@@ -326,15 +363,12 @@ function UnifiedChipRowInner({
           onClick={onOpenDestination}
         />
 
-        {/* Origin: Only visible when Flights ON */}
-        {showOrigin && (
-          <CoreChip
-            icon={Plane}
-            label="Origin"
-            value={origin}
-            onClick={onOpenOrigin}
-          />
-        )}
+        <CoreChip
+          icon={Plane}
+          label="Origin"
+          value={origin}
+          onClick={onOpenOrigin}
+        />
 
         <CoreChip
           icon={Calendar}
@@ -348,6 +382,7 @@ function UnifiedChipRowInner({
           label="Travelers"
           value={travelers}
           onClick={onOpenTravelers}
+          isDefault={isTravelersDefault}
         />
 
         <CoreChip
@@ -359,8 +394,9 @@ function UnifiedChipRowInner({
         />
       </div>
 
-      {/* Row B: Module toggles */}
-      <div className="flex flex-wrap gap-2">
+      {/* DECK 2: SCOPE TOGGLES (The Tools) */}
+      {/* Premium touch targets, teal accents, highly clickable */}
+      <div className="flex flex-wrap items-center gap-2.5">
         <ModuleChip
           icon={Plane}
           label="Flights"
