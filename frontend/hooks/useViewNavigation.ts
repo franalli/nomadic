@@ -40,7 +40,7 @@ export interface UseViewNavigationReturn {
  *
  * Unlock Rules:
  * - Setup: Only accessible before plan generation starts
- * - Plan: Unlocked when destination exists (min 3 chars)
+ * - Plan: Unlocked when Build is clicked (generation starts or content exists)
  * - Book: Unlocked when tiles exist OR in bookable state (S2+)
  */
 export function useViewNavigation(): UseViewNavigationReturn {
@@ -77,10 +77,8 @@ export function useViewNavigation(): UseViewNavigationReturn {
   // Unlock Rules
   // Setup: Only accessible if we haven't left it yet
   const canViewSetup = !hasLeftSetup;
-  // Plan: Unlocked when destination exists (min 3 chars)
-  const canViewPlan = Boolean(
-    tripInputs?.destination && tripInputs.destination.length > 2
-  );
+  // Plan: Unlocked when Build is clicked (generation starts or content exists)
+  const canViewPlan = hasLeftSetup || isGenerating;
   // Book: Unlocked when plan is finalized AND (tiles exist OR in bookable state)
   const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 
@@ -93,7 +91,7 @@ export function useViewNavigation(): UseViewNavigationReturn {
       },
       plan: {
         unlocked: canViewPlan,
-        reason: canViewPlan ? null : 'Set a destination to view your plan',
+        reason: canViewPlan ? null : 'Click Build to generate your plan',
       },
       book: {
         unlocked: canViewBook,
@@ -111,7 +109,7 @@ export function useViewNavigation(): UseViewNavigationReturn {
     (view: ViewName): boolean => {
       // Guard: Don't allow going back to Setup after plan generation
       if (view === 'setup' && hasLeftSetup) return false;
-      // Guard: Don't allow jumping to Plan without destination
+      // Guard: Don't allow jumping to Plan until Build is clicked
       if (view === 'plan' && !canViewPlan) return false;
       // Guard: Don't allow jumping to Book without finalization
       if (view === 'book' && !canViewBook) return false;
