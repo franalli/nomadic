@@ -1097,8 +1097,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       >
         {/* Section header - minimal, no icon (per spec: brand once in global header) */}
         <div className="border-b border-border/40 pb-3">
-          <span className="text-muted-foreground text-sm font-medium">
-            Travel planner
+          <span className="text-muted-foreground text-sm font-medium uppercase tracking-wider">
+            TRIP CONTROLS
           </span>
         </div>
 
@@ -1363,7 +1363,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   {isInputDisabledByPlanState
                     ? 'Updating...'
                     : !hasDestination
-                      ? 'Where do you want to go?'
+                      ? 'Enter destination or constraints...'
                       : 'Tell me more...'}
                 </div>
               )}
@@ -1378,7 +1378,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   isInputDisabledByPlanState
                     ? 'Updating...'
                     : !hasDestination
-                      ? 'Where do you want to go?'
+                      ? 'Enter destination or constraints...'
                       : 'Tell me more...'
                 }
                 value={input}

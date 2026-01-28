@@ -256,10 +256,10 @@ export function PlanHeader({
             }`}
           >
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight drop-shadow-sm text-black dark:text-white dark:drop-shadow-lg">
-              Where to next?
+              Build Your Itinerary
             </h1>
             <p className="mt-2 text-xs uppercase tracking-[0.25em] font-medium text-emerald-700 dark:text-emerald-400/80">
-              AI-Powered Trip Architect
+              Intelligent Trip Architect
             </p>
           </div>
         </div>
