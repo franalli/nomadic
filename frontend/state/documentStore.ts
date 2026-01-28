@@ -406,27 +406,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   ...initialState,
 
   // Trip input selectors
-  // Note: Per YC demo spec, only destination is required to generate a plan
+  // Per YC demo spec: only destination is required to generate a plan
   // Other fields (origin, dates) are optional accelerators, not blockers
   hasAllRequiredFields: () => {
     const { document } = get();
     const tripInputs = document?.trip_inputs;
 
-    // Require destination
+    // Only require destination - everything else is optional
     const hasDestination = Boolean(tripInputs?.destination);
 
-    // Dates are "set" if either:
-    // 1. Explicit start_date && end_date
-    // 2. OR date_flex with a planning window (duration or date range)
-    const hasExplicitDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
-    const hasFlexibleDates = Boolean(
-      tripInputs?.date_flex &&
-      (tripInputs?.trip_duration || tripInputs?.date_window_start)
-    );
-    const hasDates = hasExplicitDates || hasFlexibleDates;
-
-    // Per YC demo spec: destination + dates (or flexible dates) required
-    return hasDestination && hasDates;
+    return hasDestination;
   },
 
   // Trip input actions

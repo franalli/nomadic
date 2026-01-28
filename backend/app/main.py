@@ -46,7 +46,7 @@ from app.crud_trip import (  # noqa: E402
     record_chat_message,
 )
 from app.db import get_async_db, get_db  # noqa: E402
-from app.debug_utils import _debug  # noqa: E402
+from app.debug_utils import _debug, log_llm_output, log_user_input  # noqa: E402
 from app.graph_plan_utils import (  # noqa: E402
     check_payload_size,
     compute_today_iso,
@@ -1063,6 +1063,9 @@ async def graph_plan_endpoint(
     # --- Emit telemetry request start ---
     request_start_ns = emit_request_start(trace_envelope, req.message)
 
+    # --- Log user input for DEBUG=full mode ---
+    log_user_input(req.message, request_id)
+
     # --- Call run_turn with route-level timeout ---
     route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
     try:
@@ -1148,6 +1151,9 @@ async def graph_plan_endpoint(
     # Validate suggested responses
     suggested_responses = result.get("suggested_responses", [])
     suggested_responses = validate_suggested_responses(suggested_responses)
+
+    # --- Log LLM output for DEBUG=full mode ---
+    log_llm_output(assistant_message, request_id)
 
     # Extract updated session state
     updated_session_state = result.get("session_state", session_state)
@@ -1574,6 +1580,9 @@ async def graph_plan_stream_endpoint(
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to load document for session: {e}")
 
+            # --- Log user input for DEBUG=full mode ---
+            log_user_input(req.message, request_id)
+
             # Stream tokens from run_turn_streaming with per-event timeout
             # Use route timeout for total stream duration protection
             route_timeout_seconds = settings.graph_plan_route_timeout_ms / 1000.0
@@ -1630,6 +1639,10 @@ async def graph_plan_stream_endpoint(
             suggested_responses = validate_suggested_responses(
                 final_result.get("suggested_responses", [])
             )
+
+            # --- Log LLM output for DEBUG=full mode ---
+            log_llm_output(assistant_message, request_id)
+
             updated_session_state = final_result.get("session_state", session_state)
             branches = final_result.get("branches", [])
             trip_inputs = final_result.get(

@@ -315,23 +315,26 @@ export function PlanHeader({
         />
       </div>
 
-      {/* THE ARCHITECT INSTRUCTION LAYER */}
-      {/* Subtle system status indicator - guides user to sidebar controls */}
-      <div className="mt-8 flex flex-col items-center justify-center space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-700 delay-500">
-        <div className="flex items-center gap-3 group cursor-default">
-          {/* The Pointer (Animated '<<') */}
-          <div className="flex text-emerald-700 dark:text-emerald-400 animate-pulse">
-            <ChevronLeft className="w-3 h-3 -mr-1.5" />
-            <ChevronLeft className="w-3 h-3" />
+      {/* THE ARCHITECT INSTRUCTION LAYER - Setup mode only */}
+      {/* Console-style status indicator for the empty/setup state */}
+      {/* Hidden in Plan/Book modes - the Hero Image IS the confirmation */}
+      {activeView === 'setup' && (
+        <div className="mt-8 flex flex-col items-center justify-center space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-700 delay-500">
+          <div className="flex items-center gap-3 group cursor-default">
+            {/* The Pointer (Animated '<<') */}
+            <div className="flex text-emerald-700 dark:text-emerald-400 animate-pulse">
+              <ChevronLeft className="w-3 h-3 -mr-1.5" />
+              <ChevronLeft className="w-3 h-3" />
+            </div>
+            {/* The System Text - Deep Forest Green (Light) / Neon Terminal (Dark) */}
+            <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-semibold text-emerald-900 dark:text-emerald-400">
+              {!hasDestination ? 'Awaiting Input_' : 'Parameters Updated_'}
+            </p>
+            {/* The Blinking Cursor */}
+            <div className="w-1.5 h-2.5 bg-emerald-900 dark:bg-emerald-400 animate-blink" />
           </div>
-          {/* The System Text - Deep Forest Green (Light) / Neon Terminal (Dark) */}
-          <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-semibold text-emerald-900 dark:text-emerald-400">
-            {!hasDestination ? 'Awaiting Input_' : 'Parameters Updated_'}
-          </p>
-          {/* The Blinking Cursor */}
-          <div className="w-1.5 h-2.5 bg-emerald-900 dark:bg-emerald-400 animate-blink" />
         </div>
-      </div>
+      )}
 
       {/* Spacer to accommodate floating command bar */}
       <div className="h-8" />

@@ -207,6 +207,60 @@ def log_complete(tiles: int, strategy_sections: int, view_state: str):
 
 
 # =============================================================================
+# CONVERSATION TURN LOGGING (shown in full mode - clear delimiters)
+# =============================================================================
+
+
+def log_user_input(message: str, request_id: str = "") -> None:
+    """
+    Log user input with clear visual delimiters.
+    Only shown in full mode. Makes conversation starts easy to find in logs.
+    """
+    if get_debug_mode() != "full":
+        return
+    try:
+        req_tag = f" [{request_id}]" if request_id else ""
+        _console.print()
+        _console.print("[bold green]" + "=" * 70 + "[/bold green]")
+        _console.print(f"[bold green]>>> USER INPUT{req_tag}[/bold green]")
+        _console.print("[bold green]" + "=" * 70 + "[/bold green]")
+        # Show full message (don't truncate user input - it's important)
+        _console.print(f"[white]{message}[/white]")
+        _console.print("[bold green]" + "-" * 70 + "[/bold green]")
+        _console.print()
+    except Exception:
+        pass
+
+
+def log_llm_output(message: str, request_id: str = "", truncate_at: int = 2000) -> None:
+    """
+    Log LLM output with clear visual delimiters.
+    Only shown in full mode. Makes conversation ends easy to find in logs.
+    """
+    if get_debug_mode() != "full":
+        return
+    try:
+        req_tag = f" [{request_id}]" if request_id else ""
+        display_msg = message
+        truncated = False
+        if len(message) > truncate_at:
+            display_msg = message[:truncate_at]
+            truncated = True
+
+        _console.print()
+        _console.print("[bold cyan]" + "=" * 70 + "[/bold cyan]")
+        _console.print(f"[bold cyan]<<< LLM OUTPUT{req_tag}[/bold cyan]")
+        _console.print("[bold cyan]" + "=" * 70 + "[/bold cyan]")
+        _console.print(f"[white]{display_msg}[/white]")
+        if truncated:
+            _console.print(f"[dim]... (truncated, {len(message)} chars total)[/dim]")
+        _console.print("[bold cyan]" + "-" * 70 + "[/bold cyan]")
+        _console.print()
+    except Exception:
+        pass
+
+
+# =============================================================================
 # VERBOSE DEBUG LOGGING (only shown in full mode)
 # =============================================================================
 
