@@ -147,6 +147,8 @@ export function NomadicLanding() {
   const documentStore = useDocumentStore();
   // Use direct selector for trip_inputs to ensure reactivity on updates
   const storeTripInputs = useDocumentStore((state) => state.document?.trip_inputs);
+  // Stable selector for setActiveView (avoids infinite loops in useEffect)
+  const setActiveView = useDocumentStore((state) => state.setActiveView);
   const llmUpdatedFields = documentStore.llmUpdatedFields;
   const acknowledgeLLMUpdate = documentStore.acknowledgeLLMUpdate;
   const restoreTripInputs = documentStore.restoreTripInputs;
@@ -635,12 +637,16 @@ export function NomadicLanding() {
     hasTilesReady,
   ]);
 
-  // Auto-switch to Plan Mode when generation is in progress (mobile only)
+  // Auto-switch to Plan Mode when generation is in progress
   useEffect(() => {
-    if (!isDesktop && planViewState === 'S1_FRAMING') {
-      switchToPlan();
+    if (planViewState === 'S1_FRAMING') {
+      if (!isDesktop) {
+        switchToPlan(); // Mobile uses tab switching
+      }
+      // Desktop: Update activeView in store (drives GlassCommandBar)
+      setActiveView('plan');
     }
-  }, [isDesktop, planViewState, switchToPlan]);
+  }, [isDesktop, planViewState, switchToPlan, setActiveView]);
 
   // Specialist deep link navigation - handles clicks on specialist mentions in chat
   const { navigateToSpecialist } = useSpecialistDeepLink();
