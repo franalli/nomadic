@@ -13,7 +13,6 @@ import {
 } from '@/components/layout/hooks/useBranchManager';
 import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBookingSettings';
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
-import { SetupDrawer } from '@/components/layout/SetupDrawer';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { BookingSection } from '@/components/plan/BookingSection';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
@@ -705,6 +704,12 @@ export function NomadicLanding() {
   // Tiles from document store
   const tiles = storeDocument?.tiles ?? {};
 
+  // Plan tab enabled when we have branches/plan content (unlocked after Build)
+  const planTabEnabled = useMemo(() => {
+    // Plan is available if we have branches or are past S0
+    return hasBranchesReady || planViewState !== 'S0_BOOTSTRAP';
+  }, [hasBranchesReady, planViewState]);
+
   // Book tab enabled when we have tiles or in a state that can show booking content
   const bookTabEnabled = useMemo(() => {
     const hasTiles = Object.keys(tiles).length > 0;
@@ -1212,11 +1217,11 @@ export function NomadicLanding() {
             />
           }
           planState={planState}
-          isSetupPhase={planViewState === 'S0_BOOTSTRAP'}
           hasDestination={hasDestination}
           onReset={handleStartNewSession}
           onSendMessage={handleMinimizedSendMessage}
           isProcessing={isGenerating}
+          planTabEnabled={planTabEnabled}
           bookTabEnabled={bookTabEnabled}
           // Mobile Plan Footer CTA props
           hasDates={hasDates}
@@ -1248,18 +1253,10 @@ export function NomadicLanding() {
           }
         />
 
-        {/* Setup Drawer - mobile accordion for setup checklist */}
-        <SetupDrawer
-          onSetDestination={() => openSheet('destination')}
-          onSetOrigin={() => openSheet('origin')}
-          onSetDates={() => openSheet('dates')}
-          onSetTravelers={() => openSheet('travelers')}
-          onSetBudget={() => openSheet('budget')}
-        />
-
-        {/* Floating Build Button - mobile FAB for plan generation */}
+        {/* Floating Build Button - HIDDEN: Using morphing input button instead */}
+        {/* The send button in ChatPanel now morphs into Build when ready */}
         <FloatingBuildButton
-          visible={readyToGenerate && planViewState === 'S0_BOOTSTRAP'}
+          visible={false}
           onClick={handleBuildPlan}
           isGenerating={isGenerating}
           hasEverHadPlan={hasEverHadPlan}

@@ -88,9 +88,12 @@ function MobilePlanFooterInner({
               disabled={isProcessing}
               className={cn(
                 'w-full flex items-center justify-center gap-2',
-                'bg-orange-500 hover:bg-orange-600 text-white',
-                'font-medium py-3 rounded-xl',
-                'shadow-lg shadow-orange-900/20',
+                // Gradient background with glass top highlight
+                'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white',
+                'border-t border-white/20',
+                'font-bold py-4 rounded-2xl',
+                'shadow-xl shadow-emerald-900/10',
+                'hover:from-emerald-400 hover:to-emerald-500 hover:shadow-emerald-900/20',
                 'active:scale-[0.98] transition-all',
                 'disabled:opacity-50 disabled:cursor-not-allowed'
               )}
@@ -100,7 +103,7 @@ function MobilePlanFooterInner({
               ) : (
                 <Sparkles className="w-4 h-4" />
               )}
-              <span>Create day-by-day itinerary</span>
+              <span>Build Itinerary</span>
             </button>
           ) : (
             <button

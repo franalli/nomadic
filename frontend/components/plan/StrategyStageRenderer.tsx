@@ -387,8 +387,57 @@ export function StrategyStageRenderer({
     />
   ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile]);
 
+  // MOBILE: Simplified layout - no absolute positioning layer system
+  // Desktop uses layers to preserve scroll position across view switches
+  // Mobile uses SplitLayoutView tab switching instead
+  if (!isDesktop) {
+    return (
+      <div className="flex flex-col h-full">
+        {/* Header - always visible */}
+        <PlanHeader
+          destinationCard={destinationCard}
+          currentStage={currentStage}
+          isGenerating={generating}
+          fallbackTitle={fallbackTitle}
+          planViewState={state}
+          hasDates={hasDates}
+          isExpandingItinerary={isExpandingItinerary}
+          currentSubStage={currentSubStage}
+          tripInputs={effectiveTripInputs}
+          onOpenSheet={onOpenSheet}
+          isStreaming={isStreaming}
+          onSetupClick={onSetupClick}
+          onPlanClick={onPlanClick}
+          onBookClick={onBookClick}
+          hasMinimumSelections={hasMinimumSelections}
+          isCollapsed={isCollapsed}
+          activeView={activeView}
+          canViewSetup={canViewSetup}
+          canViewPlan={canViewPlan}
+          canViewBook={canViewBook}
+        />
+
+        {/* Content - direct render, scrollable */}
+        <div
+          ref={scrollContainerRef}
+          className={cn(
+            'flex-1 overflow-y-auto',
+            nextAction && 'pb-24' // Space for MobilePlanFooter
+          )}
+        >
+          {/* Content scrim for topo visibility */}
+          <div className="relative min-h-full">
+            <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+            <div className="relative z-[2]">{planContent}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // DESKTOP: Layer system for view switching with scroll preservation
   return (
-    <div className="relative flex h-full flex-col overflow-hidden">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
       {/* Header - always visible, controls view navigation */}
       <PlanHeader
         destinationCard={destinationCard}
@@ -414,7 +463,7 @@ export function StrategyStageRenderer({
       />
 
       {/* View container - relative positioning for absolute views */}
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 min-h-0 relative overflow-hidden">
         {/* VIEW: SETUP - Zero-UI: No content overlay, just hero */}
         {/* The hero (PlanHeader) shows "Where to next?" - controls live in sidebar */}
         {/* When setupContent is null, we don't render an overlay - hero is the view */}
@@ -442,7 +491,7 @@ export function StrategyStageRenderer({
           <div
             ref={scrollContainerRef}
             className={cn(
-              'flex-1 overflow-y-auto custom-scrollbar',
+              'flex-1 overflow-y-auto custom-scrollbar min-h-0', // min-h-0 fixes flexbox content collapse on mobile
               nextAction && activeView === 'plan' && 'pb-20' // Reserve space for sticky footer
             )}
           >

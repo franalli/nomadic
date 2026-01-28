@@ -45,8 +45,6 @@ export interface SplitLayoutViewProps {
   bookContent?: React.ReactNode;
   /** Current plan state for status display */
   planState?: PlanState;
-  /** Whether we're in the setup phase (S0_BOOTSTRAP) */
-  isSetupPhase?: boolean;
   /** Optional compact header content (branding) */
   headerContent?: React.ReactNode;
   /** Whether a destination has been set (controls topography background opacity) */
@@ -57,6 +55,8 @@ export interface SplitLayoutViewProps {
   onSendMessage?: (message: string) => void;
   /** Whether message is being processed (for minimized input) */
   isProcessing?: boolean;
+  /** Whether Plan tab is unlocked (plan has been generated) */
+  planTabEnabled?: boolean;
   /** Whether the Book tab has content and should be enabled */
   bookTabEnabled?: boolean;
   /** Whether dates have been set (determines CTA button type) */
@@ -90,13 +90,13 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   planViewContent,
   bookContent,
   planState = 'INCOMPLETE',
-  isSetupPhase = false,
   headerContent,
   hasDestination: _hasDestination = false, // Reserved for future topo background control
   onReset,
   onSendMessage,
   isProcessing = false,
-  bookTabEnabled = true,
+  planTabEnabled = false,
+  bookTabEnabled = false,
   hasDates = false,
   showCta = false,
   onBuildItinerary,
@@ -117,7 +117,6 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       {/* Mobile Mode Header - replaces header on mobile */}
       <MobileModeHeader
         planState={planState}
-        isSetupPhase={isSetupPhase}
         onReset={onReset}
       />
 
@@ -125,7 +124,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
       {/* Desktop: Grid 40/60 split | Mobile: Single column with mode switching */}
       <div
         className={cn(
-          'flex-1 overflow-hidden',
+          'flex-1 overflow-hidden min-h-0', // min-h-0 fixes flexbox height collapse on mobile
           // Mobile: flex column for mode switching
           'flex flex-col',
           // Desktop: Grid with 40/60 split (min 360px, max 480px on ultrawide)
@@ -219,9 +218,10 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                   key="mobile-plan"
                   id="plan-panel"
                   className={cn(
-                    'flex-1 overflow-y-auto p-4 lg:hidden rightCanvas',
+                    // Use h-full + min-h-0 to let inner StrategyStageRenderer handle its own scroll
+                    'flex-1 h-full min-h-0 lg:hidden rightCanvas',
                     'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
-                    'pb-[200px]' // Space for MobilePlanFooter (CTA + input + tab bar)
+                    'pb-[calc(var(--mobile-tab-bar-height,68px)+env(safe-area-inset-bottom)+120px)]' // Space for MobilePlanFooter + tab bar
                   )}
                   initial="planEnter"
                   animate="planCenter"
@@ -268,7 +268,7 @@ export const SplitLayoutView = memo(function SplitLayoutView({
             )}
 
             {/* Mobile Tab Bar */}
-            <MobileTabBar bookTabEnabled={bookTabEnabled} />
+            <MobileTabBar planTabEnabled={planTabEnabled} bookTabEnabled={bookTabEnabled} />
           </>
         )}
       </div>

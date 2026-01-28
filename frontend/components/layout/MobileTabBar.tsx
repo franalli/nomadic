@@ -19,6 +19,8 @@ interface TabConfig {
 
 interface MobileTabBarProps {
   className?: string;
+  /** Whether Plan tab is unlocked (plan has been generated) */
+  planTabEnabled?: boolean;
   /** Whether the Book tab has content and should be enabled */
   bookTabEnabled?: boolean;
 }
@@ -45,13 +47,20 @@ const TABS: TabConfig[] = [
  * - Red dot badge on Plan tab for unread updates
  * - Fixed at bottom of screen
  */
-function MobileTabBarInner({ className, bookTabEnabled = true }: MobileTabBarProps) {
+function MobileTabBarInner({ className, planTabEnabled = false, bookTabEnabled = false }: MobileTabBarProps) {
   const { activeTab, setActiveTab, planTabHasUpdate, isDesktop } = useMobileMode();
 
   // Don't render on desktop
   if (isDesktop) {
     return null;
   }
+
+  // Check if a tab is locked (Plan/Book locked until plan generated)
+  const isTabLocked = (tabId: MobileTab): boolean => {
+    if (tabId === 'plan') return !planTabEnabled;
+    if (tabId === 'book') return !bookTabEnabled;
+    return false;
+  };
 
   const activeIndex = TABS.findIndex((tab) => tab.id === activeTab);
 
@@ -99,14 +108,14 @@ function MobileTabBarInner({ className, bookTabEnabled = true }: MobileTabBarPro
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
           const showBadge = tab.id === 'plan' && planTabHasUpdate && !isActive;
-          const isBookDisabled = tab.id === 'book' && !bookTabEnabled;
+          const isLocked = isTabLocked(tab.id);
 
           return (
             <button
               key={tab.id}
               type="button"
-              onClick={() => !isBookDisabled && setActiveTab(tab.id)}
-              disabled={isBookDisabled}
+              onClick={() => !isLocked && setActiveTab(tab.id)}
+              disabled={isLocked}
               className={cn(
                 'relative flex-1 flex items-center justify-center gap-1.5',
                 'py-2.5 rounded-lg',
@@ -114,14 +123,15 @@ function MobileTabBarInner({ className, bookTabEnabled = true }: MobileTabBarPro
                 'transition-colors duration-150',
                 isActive
                   ? 'text-foreground'
-                  : 'text-muted-foreground hover:text-foreground/80',
-                isBookDisabled && 'opacity-40 cursor-not-allowed'
+                  : isLocked
+                    ? 'text-muted-foreground/40 cursor-not-allowed' // Locked: ghosted
+                    : 'text-muted-foreground hover:text-foreground/80'
               )}
               aria-selected={isActive}
-              aria-disabled={isBookDisabled}
+              aria-disabled={isLocked}
               role="tab"
             >
-              <Icon className="h-4 w-4" />
+              <Icon className={cn('h-4 w-4', isLocked && 'opacity-50')} />
               <span>{tab.label}</span>
 
               {/* Notification Badge */}

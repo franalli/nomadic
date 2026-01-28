@@ -49,22 +49,22 @@ export const CoreChip = memo(function CoreChip({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        // Mobile scrolling support
-        'snap-start shrink-0',
-        // Base styling (h-7 = 28px)
-        'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border',
+        // Flexible sizing
+        'snap-start min-w-0',
+        // Base styling (h-6 = 24px on mobile for compact fit)
+        'inline-flex items-center gap-1 h-6 px-2 rounded-full border text-[11px]',
         'transition-all duration-[120ms] ease-out active:scale-[0.98]',
         // Disabled state
         disabled && 'opacity-50 pointer-events-none',
 
         // === ON-IMAGE VARIANT (for hero/photo backgrounds) ===
-        // Use WHITE backgrounds for visibility on any photo - colored borders/text indicate state
-        isOnImage && hasValue && 'border-emerald-600/60 bg-white/90 text-emerald-800 backdrop-blur-md shadow-sm font-semibold dark:border-emerald-400/50 dark:bg-black/50 dark:text-emerald-300',
-        isOnImage && !hasValue && tone === 'missing' && 'border-amber-600/60 border-dashed bg-white/85 text-amber-800 backdrop-blur-md shadow-sm dark:border-amber-400/50 dark:bg-black/40 dark:text-amber-300',
-        isOnImage && !hasValue && tone === 'optional' && 'border-slate-400/40 bg-white/75 text-slate-600 backdrop-blur-md shadow-sm dark:border-white/20 dark:bg-black/35 dark:text-white/70',
-        isOnImage && !hasValue && tone === 'default' && 'border-slate-400/50 bg-white/85 text-slate-700 backdrop-blur-md shadow-sm dark:border-white/25 dark:bg-black/40 dark:text-white/85',
-        // Hover for onImage
-        isOnImage && !disabled && 'hover:bg-white/95 dark:hover:bg-black/55',
+        // FROSTED GLASS: Dark semi-transparent base with blur - lets photo colors bleed through
+        isOnImage && hasValue && 'border-white/20 bg-black/20 backdrop-blur-md text-white font-semibold shadow-sm',
+        isOnImage && !hasValue && tone === 'missing' && 'border-amber-400/40 border-dashed bg-black/15 backdrop-blur-md text-white/90 shadow-sm',
+        isOnImage && !hasValue && tone === 'optional' && 'border-white/15 bg-black/10 backdrop-blur-md text-white/70 shadow-sm',
+        isOnImage && !hasValue && tone === 'default' && 'border-white/20 bg-black/15 backdrop-blur-md text-white/85 shadow-sm',
+        // Hover for onImage - subtle brightening
+        isOnImage && !disabled && 'hover:bg-black/30 hover:border-white/30',
 
         // === DEFAULT VARIANT (for normal page backgrounds) ===
         !isOnImage && hasValue && 'border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold',
@@ -83,20 +83,20 @@ export const CoreChip = memo(function CoreChip({
         className={cn(
           'h-3.5 w-3.5 flex-shrink-0',
           // Icon color based on variant and state
-          isOnImage && hasValue && 'text-emerald-600 dark:text-emerald-400',
-          isOnImage && !hasValue && tone === 'missing' && 'text-amber-600 dark:text-amber-400',
-          isOnImage && !hasValue && tone !== 'missing' && 'text-slate-500 dark:text-white/60',
+          // On-image: All icons are white/light for frosted glass look
+          isOnImage && hasValue && 'text-emerald-400',
+          isOnImage && !hasValue && tone === 'missing' && 'text-amber-400',
+          isOnImage && !hasValue && tone !== 'missing' && 'text-white/60',
           !isOnImage && hasValue && 'text-[var(--chip-active-icon)]'
         )}
       />
       <span className="text-xs truncate max-w-[120px]">{displayText}</span>
-      {hasValue && (
-        <Check
-          className={cn(
-            'h-2.5 w-2.5',
-            isOnImage ? 'text-emerald-700 dark:text-emerald-400' : 'text-[var(--chip-active-icon)]'
-          )}
-        />
+      {hasValue && isOnImage && (
+        // Glowing status dot for frosted glass pills
+        <div className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+      )}
+      {hasValue && !isOnImage && (
+        <Check className="h-2.5 w-2.5 text-[var(--chip-active-icon)]" />
       )}
     </button>
   );

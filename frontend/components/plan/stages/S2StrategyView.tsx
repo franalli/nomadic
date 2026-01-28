@@ -17,7 +17,6 @@ import {
   Bike,
   Building,
   ChevronDown,
-  ChevronRight,
   Lightbulb,
   Mountain,
   Sailboat,
@@ -204,18 +203,26 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
       ref={cardRef}
       data-topic={topic}
       className={cn(
-        "bg-card rounded-lg border overflow-hidden shadow-sm topic-border-left",
+        "rounded-2xl border overflow-hidden topic-border-left transition-all duration-200",
+        // Light: Pure white card with premium soft shadow
+        "bg-white shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)]",
+        // Dark: Glass panel
+        "dark:bg-zinc-900/50 dark:shadow-none",
+        // State-based borders
         isInfeasible && "border-red-500/50 bg-red-950/10",
         hasCaveat && "border-amber-500/30",
-        !isInfeasible && !hasCaveat && "border-border"
+        // Default: Crisp border with hover enhancement
+        !isInfeasible && !hasCaveat && "border-zinc-200 hover:border-emerald-500/30 hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:border-white/10"
       )}
     >
-      {/* 3. Header with subtle tint */}
+      {/* 3. Header with subtle tint - group for hover effects */}
       <button
         onClick={onToggle}
         className={cn(
-          "w-full px-4 py-3 text-left transition-colors",
-          isInfeasible ? "bg-red-950/20 hover:bg-red-950/30" : "topic-header-tint hover:bg-muted/30"
+          "w-full px-5 py-4 text-left transition-all duration-200 group",
+          isInfeasible ? "bg-red-950/20 hover:bg-red-950/30" : "topic-header-tint hover:bg-zinc-50 dark:hover:bg-muted/30",
+          // Active/tap feedback
+          "active:scale-[0.995]"
         )}
       >
         {/* Row 1: Specialist badge + Status chip + Plan/Booking badges */}
@@ -247,25 +254,29 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
             {/* Status chip - only show if NOT infeasible */}
             {!isInfeasible && (
               <span className={cn(
-                "text-[10px] px-1.5 py-0.5 rounded font-medium",
-                status === 'ready' && "bg-green-500/10 text-green-600 dark:text-green-400",
-                status === 'updating' && "bg-amber-500/10 text-amber-600 dark:text-amber-400 animate-pulse",
-                status === 'needs_input' && "bg-muted text-muted-foreground"
+                "text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wide",
+                // Ready: Clean emerald badge
+                status === 'ready' && "bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-transparent",
+                // Updating: Amber pulse
+                status === 'updating' && "bg-amber-50 text-amber-700 border border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-transparent animate-pulse",
+                // Needs input: Subtle muted
+                status === 'needs_input' && "bg-zinc-100 text-zinc-500 dark:bg-muted dark:text-muted-foreground"
               )}>
                 {status === 'ready' ? 'Ready' : status === 'updating' ? 'Updating...' : 'Needs input'}
               </span>
             )}
           </div>
-          {/* Plan + Booking mini-badges - hide if infeasible */}
+          {/* Plan + Booking mini-badges + Chevron - hide if infeasible */}
           {!isInfeasible && (
             <div className="flex items-center gap-1.5">
-              <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded">Plan</span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-muted rounded">Booking</span>
-              {isExpanded ? (
-                <ChevronDown className="w-4 h-4 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="w-4 h-4 text-muted-foreground" />
-              )}
+              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 dark:bg-muted rounded text-zinc-600 dark:text-muted-foreground">Plan</span>
+              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 dark:bg-muted rounded text-zinc-600 dark:text-muted-foreground">Booking</span>
+              {/* Chevron - lights up on hover for affordance */}
+              <ChevronDown className={cn(
+                "w-5 h-5 transition-all duration-200",
+                "text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
+                isExpanded && "rotate-180"
+              )} />
             </div>
           )}
         </div>
@@ -314,6 +325,13 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
           </div>
         )}
 
+        {/* Expand hint - shows when collapsed to signal interactivity */}
+        {!isExpanded && !isInfeasible && (
+          <p className="mt-2 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity">
+            Tap to see expert details →
+          </p>
+        )}
+
         {/* Row 2 (collapsed): One-liner + principle chips (not for infeasible) */}
         {!isExpanded && !isInfeasible && (
           <div className="mt-2 w-full">
@@ -321,14 +339,25 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
               <p className="text-xs text-muted-foreground mb-2"><RichText>{oneLiner}</RichText></p>
             )}
             {principles.length > 0 && (
-              <div className="flex flex-wrap gap-1">
+              <div className="mt-3 space-y-2">
                 {principles.slice(0, 4).map((p, i) => (
-                  <span
+                  <div
                     key={i}
-                    className="text-xs px-2 py-0.5 bg-muted rounded-full"
+                    className={cn(
+                      "flex items-start gap-3 p-2 rounded-lg transition-colors",
+                      // Light: Clean hover state
+                      "hover:bg-zinc-50",
+                      // Dark: Subtle hover
+                      "dark:hover:bg-zinc-800/30"
+                    )}
                   >
-                    {p}
-                  </span>
+                    {/* Bullet icon */}
+                    <Lightbulb className="w-3.5 h-3.5 mt-0.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    {/* Text - clean serif-like appearance */}
+                    <p className="text-xs leading-relaxed text-zinc-600 dark:text-zinc-400 font-medium">
+                      {p}
+                    </p>
+                  </div>
                 ))}
               </div>
             )}
@@ -399,17 +428,23 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
           {section.content_added && section.content_added.length > 0 && (
             <div>
               <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
-                <Lightbulb size={12} /> Expert Recommendations
+                <Lightbulb size={12} className="text-emerald-600 dark:text-emerald-400" /> Expert Recommendations
               </h5>
               <div className="grid gap-2">
                 {section.content_added.map((c, idx) => (
                   <div
                     key={idx}
-                    className="bg-zinc-800/40 rounded-lg border border-zinc-700/50 hover:border-zinc-600 transition-colors p-3 flex gap-3"
+                    className={cn(
+                      "rounded-lg border transition-colors p-3 flex gap-3",
+                      // Light: White card with soft shadow
+                      "bg-white border-zinc-200 hover:border-emerald-500/30 shadow-sm",
+                      // Dark: Glass panel
+                      "dark:bg-zinc-800/40 dark:border-zinc-700/50 dark:hover:border-zinc-600 dark:shadow-none"
+                    )}
                   >
                     {/* Thumbnail - Only render if image_url exists */}
                     {c.image_url && (
-                      <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-900">
+                      <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-100 dark:bg-zinc-900">
                         <Image
                           src={c.image_url}
                           alt={c.title}
@@ -423,22 +458,28 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
                     {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start">
-                        <span className="text-xs font-semibold text-zinc-100">{c.title}</span>
+                        <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-100">{c.title}</span>
                         {c.type && (
-                          <span className="text-[9px] bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">
+                          <span className="text-[9px] bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-1.5 py-0.5 rounded uppercase">
                             {c.type}
                           </span>
                         )}
                       </div>
                       {c.description && (
-                        <p className="text-[11px] text-zinc-400 leading-relaxed mt-1 line-clamp-2">
+                        <p className="text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed mt-1 line-clamp-2">
                           {c.description}
                         </p>
                       )}
                       {/* Logic Hook - The "Pro Tip" that proves deep knowledge */}
                       {c.logic_hook && (
-                        <div className="text-[11px] text-emerald-300 mt-2.5 inline-flex items-center gap-2 bg-emerald-950 px-2.5 py-1.5 rounded-md border border-emerald-700/60 shadow-[0_0_12px_rgba(16,185,129,0.12)]">
-                          <Sparkles size={12} className="text-emerald-400 flex-shrink-0 animate-pulse" />
+                        <div className={cn(
+                          "text-[11px] mt-2.5 inline-flex items-center gap-2 px-2.5 py-1.5 rounded-md border",
+                          // Light: Subtle emerald tint
+                          "text-emerald-700 bg-emerald-50 border-emerald-200",
+                          // Dark: Deep emerald glow
+                          "dark:text-emerald-300 dark:bg-emerald-950 dark:border-emerald-700/60 dark:shadow-[0_0_12px_rgba(16,185,129,0.12)]"
+                        )}>
+                          <Sparkles size={12} className="text-emerald-600 dark:text-emerald-400 flex-shrink-0 animate-pulse" />
                           <span className="font-medium tracking-wide">{c.logic_hook}</span>
                         </div>
                       )}
@@ -614,64 +655,11 @@ function StrategyStack({
   // Reduced color mode for 3+ agents
   const useReducedColor = sorted.length > 2;
 
-  // Header semantics: Specialist Logic (N) when specialists exist
+  // Check for pending topics
   const hasPending = filteredPendingTopics.length > 0;
-  // Count only non-general specialists for the feed
-  const specialistCount = sorted.length;
-
-  // Count specialists (excluding general)
-  const executedSpecialistCount = executedTopics.filter(t => t !== 'general').length;
-
-  // Header text: Only show when specialists exist or are pending
-  // Don't show "Specialists (0)" - that's confusing when only General ran
-  const headerText = specialistCount > 0
-    ? `Specialist Logic (${specialistCount})`
-    : hasPending
-      ? 'Specialist Logic'
-      : executedSpecialistCount > 0
-        ? `Specialists (${executedSpecialistCount})`
-        : '';  // Empty = hide header entirely
-
-  // Should we show the specialist header? Only if there are specialists or pending
-  const showSpecialistHeader = headerText || hasPending;
 
   return (
     <div className="space-y-2" data-reduced-color={useReducedColor}>
-      {/* Specialist header - only show when specialists exist or are pending */}
-      {showSpecialistHeader && (
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-medium text-card-foreground flex items-center gap-2">
-              {headerText}
-              {/* Updating indicator when pending topics exist */}
-              {hasPending && (
-                <span className="text-xs px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded font-medium animate-pulse">
-                  Updating ({filteredPendingTopics.length})
-                </span>
-              )}
-            </h3>
-            {/* Topic badges - only show specialist topics (General is in TripHealthBar) */}
-            {executedSpecialistCount > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-1">
-                {executedTopics.filter(t => t !== 'general').map(topic => {
-                  const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
-                  const TopicIcon = config.icon;
-                  return (
-                    <span
-                      key={topic}
-                      data-topic={topic}
-                      className="topic-badge inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full"
-                    >
-                      <TopicIcon className="w-2.5 h-2.5" />
-                      {config.label}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Pending topics placeholder (updating state) */}
       {filteredPendingTopics.map(topic => {

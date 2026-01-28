@@ -88,34 +88,64 @@ function TripBrief({ tripInputs, executedTopics }: TripBriefProps) {
   // Empty state
   if (preferences.length === 0) {
     return (
-      <div className="mt-2 ml-4 pl-3 border-l-2 border-zinc-800/50 animate-in slide-in-from-top-2 duration-200">
+      <div className="mt-2 ml-4 pl-3 border-l-2 border-zinc-200 dark:border-zinc-800/50 animate-in slide-in-from-top-2 duration-200">
         <p className="text-xs text-zinc-500 italic">No specific preferences set</p>
       </div>
     );
   }
 
   return (
-    <div className="mt-2 ml-4 pl-3 border-l-2 border-zinc-800/50 animate-in slide-in-from-top-2 duration-200">
-      <div className="text-[10px] text-zinc-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-        <Sparkles className="w-3 h-3" />
-        Trip Brief & Preferences
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {preferences.map((pref, i) => (
-          <span
-            key={i}
-            className={cn(
-              'text-xs px-2 py-0.5 rounded-full transition-colors',
-              pref.variant === 'activity' &&
-                'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20',
-              pref.variant === 'setting' &&
-                'bg-blue-500/10 text-blue-400 border border-blue-500/20',
-              pref.variant === 'topic' && 'bg-zinc-700/50 text-zinc-400 border border-zinc-600/30'
-            )}
-          >
-            {pref.label}
+    <div className="mt-3 animate-in slide-in-from-top-2 duration-200">
+      {/* Container card for visual grouping */}
+      <div className={cn(
+        'rounded-xl overflow-hidden',
+        // Light: Subtle off-white card with crisp border
+        'bg-zinc-50 border border-zinc-200',
+        // Dark: Subtle dark panel
+        'dark:bg-black/20 dark:border-white/10'
+      )}>
+        {/* Header */}
+        <div className="px-3 pt-3 pb-2 flex items-center gap-1.5">
+          <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+          <span className={cn(
+            'text-[10px] font-bold uppercase tracking-wider',
+            // Light: Dark grey for readability
+            'text-zinc-600',
+            // Dark: Softer grey
+            'dark:text-zinc-400'
+          )}>
+            Trip Brief & Preferences
           </span>
-        ))}
+        </div>
+
+        {/* Preference pills */}
+        <div className="px-3 pb-3 flex flex-wrap gap-1.5">
+          {preferences.map((pref, i) => (
+            <span
+              key={i}
+              className={cn(
+                'text-xs px-2 py-0.5 rounded-full font-medium transition-colors',
+                // Activity pills: Emerald theme
+                pref.variant === 'activity' && cn(
+                  'bg-emerald-100 text-emerald-700 border border-emerald-200',
+                  'dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
+                ),
+                // Setting pills: Blue theme
+                pref.variant === 'setting' && cn(
+                  'bg-blue-100 text-blue-700 border border-blue-200',
+                  'dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20'
+                ),
+                // Topic pills: Neutral theme
+                pref.variant === 'topic' && cn(
+                  'bg-zinc-200 text-zinc-700 border border-zinc-300',
+                  'dark:bg-zinc-700/50 dark:text-zinc-400 dark:border-zinc-600/30'
+                )
+              )}
+            >
+              {pref.label}
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -131,6 +161,12 @@ interface CollapsedSetupSummaryProps {
   // Configuration snapshot for audit trail (prioritized over originalMessages)
   tripInputsSnapshot?: DocumentTripInputs;
   executedTopicsSnapshot?: string[];
+  /**
+   * Display variant:
+   * - 'card': Full card with shadow (default, for desktop)
+   * - 'compact': Thin divider style (for mobile post-plan)
+   */
+  variant?: 'card' | 'compact';
 }
 
 export function CollapsedSetupSummary({
@@ -138,6 +174,7 @@ export function CollapsedSetupSummary({
   originalMessages = [],
   tripInputsSnapshot,
   executedTopicsSnapshot,
+  variant = 'card',
 }: CollapsedSetupSummaryProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -152,11 +189,77 @@ export function CollapsedSetupSummary({
     }
   };
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // COMPACT VARIANT: Thin divider style for mobile post-plan
+  // ─────────────────────────────────────────────────────────────────────────────
+  if (variant === 'compact') {
+    return (
+      <div className="my-3">
+        {/* Thin divider with centered "Setup complete" text */}
+        <button
+          type="button"
+          onClick={handleClick}
+          className="w-full flex items-center gap-3 py-2 text-xs text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-400 transition-colors group"
+        >
+          {/* Left line */}
+          <div className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+
+          {/* Center content */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            <span className="font-medium">Setup complete</span>
+            <ChevronDown
+              className={cn(
+                'h-3 w-3 transition-transform duration-200',
+                isExpanded && 'rotate-180'
+              )}
+            />
+          </div>
+
+          {/* Right line */}
+          <div className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800" />
+        </button>
+
+        {/* Expanded content - same as card variant */}
+        {isExpanded && tripInputsSnapshot && (
+          <TripBrief tripInputs={tripInputsSnapshot} executedTopics={executedTopicsSnapshot} />
+        )}
+
+        {isExpanded && !tripInputsSnapshot && originalMessages.length > 0 && (
+          <div
+            className={cn(
+              'mt-2 ml-4 pl-3 border-l-2 border-zinc-200 dark:border-zinc-800/50',
+              'space-y-2 animate-in slide-in-from-top-2 duration-200'
+            )}
+          >
+            {originalMessages.map((msg) => (
+              <div
+                key={msg.id}
+                className={cn(
+                  'text-xs',
+                  msg.role === 'user' ? 'text-zinc-700 dark:text-zinc-300' : 'text-zinc-500'
+                )}
+              >
+                <span className="text-zinc-500 dark:text-zinc-600 font-medium">
+                  {msg.role === 'user' ? 'You: ' : 'Assistant: '}
+                </span>
+                {msg.content}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // CARD VARIANT: Full card with shadow (default, for desktop)
+  // ─────────────────────────────────────────────────────────────────────────────
   return (
     <div className="my-4 relative">
       {/* Visual divider line above - "chapter break" between Setup and Plan */}
       <div className="absolute -top-2 left-0 right-0 flex items-center gap-2">
-        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-zinc-700/60 to-transparent" />
+        <div className="flex-1 h-px bg-gradient-to-r from-transparent via-zinc-300 dark:via-zinc-700/60 to-transparent" />
       </div>
 
       {/* Collapsed header */}
@@ -164,21 +267,25 @@ export function CollapsedSetupSummary({
         type="button"
         onClick={handleClick}
         className={cn(
-          'w-full flex items-center gap-2 px-3 py-2 rounded-lg',
-          'text-left text-xs transition-all duration-200',
-          'bg-zinc-800/40 hover:bg-zinc-800/60',
-          'border border-zinc-700/40',
+          'w-full flex items-center gap-2 px-4 py-3 rounded-xl',
+          'text-left text-xs font-medium transition-all duration-200',
+          // Light: Pure white card that pops against grey background
+          'bg-white border border-zinc-200 shadow-sm hover:shadow-md hover:border-zinc-300',
+          // Dark: Glass panel
+          'dark:bg-zinc-800/40 dark:hover:bg-zinc-800/60 dark:border-zinc-700/40 dark:shadow-none',
           'group'
         )}
       >
-        <MessageSquare className="h-3.5 w-3.5 text-zinc-500 flex-shrink-0" />
-        <span className="flex-1 text-zinc-400 truncate">
+        {/* Status dot indicator */}
+        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
+        <MessageSquare className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500 flex-shrink-0" />
+        <span className="flex-1 text-zinc-900 dark:text-zinc-300 truncate">
           {summaryText.replace('Setup complete:', 'Trip configured:')}
         </span>
         <ChevronDown
           className={cn(
-            'h-3.5 w-3.5 text-zinc-600 transition-transform duration-200',
-            'group-hover:text-zinc-400',
+            'h-4 w-4 text-zinc-400 dark:text-zinc-600 transition-transform duration-200',
+            'group-hover:text-zinc-600 dark:group-hover:text-zinc-400',
             isExpanded && 'rotate-180'
           )}
         />
@@ -193,7 +300,7 @@ export function CollapsedSetupSummary({
       {isExpanded && !tripInputsSnapshot && originalMessages.length > 0 && (
         <div
           className={cn(
-            'mt-2 ml-4 pl-3 border-l-2 border-zinc-800/50',
+            'mt-2 ml-4 pl-3 border-l-2 border-zinc-200 dark:border-zinc-800/50',
             'space-y-2 animate-in slide-in-from-top-2 duration-200'
           )}
         >
@@ -202,10 +309,10 @@ export function CollapsedSetupSummary({
               key={msg.id}
               className={cn(
                 'text-xs',
-                msg.role === 'user' ? 'text-zinc-300' : 'text-zinc-500'
+                msg.role === 'user' ? 'text-zinc-700 dark:text-zinc-300' : 'text-zinc-500'
               )}
             >
-              <span className="text-zinc-600 font-medium">
+              <span className="text-zinc-500 dark:text-zinc-600 font-medium">
                 {msg.role === 'user' ? 'You: ' : 'Assistant: '}
               </span>
               {msg.content}

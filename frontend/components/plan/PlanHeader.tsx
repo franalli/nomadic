@@ -14,7 +14,7 @@
 
 'use client';
 
-import { ChevronLeft, Loader2 } from 'lucide-react';
+import { ArrowRight, ChevronLeft, Loader2 } from 'lucide-react';
 import React from 'react';
 
 import { GlassCommandBar } from '@/components/plan/GlassCommandBar';
@@ -204,7 +204,8 @@ export function PlanHeader({
   return (
     <div className="relative flex-shrink-0">
       {/* Hero container - shared height for both states */}
-      <div className={`relative ${HERO_HEIGHT} overflow-hidden`}>
+      {/* overflow-x-visible allows pills to scroll, overflow-y-clip contains topo animation */}
+      <div className={`relative ${HERO_HEIGHT} overflow-y-clip overflow-x-visible`}>
         {/* LAYER 1: Living Topography Base with Full Edge Feathering */}
         {/* Radial mask dissolves ALL edges (top/bottom/left/right) into global bg */}
         <div
@@ -238,6 +239,10 @@ export function PlanHeader({
                 WebkitMaskSize: '600px',
                 maskRepeat: 'repeat',
                 WebkitMaskRepeat: 'repeat',
+                // Initial position + will-change for iOS Safari animation support
+                maskPosition: '0% 0%',
+                WebkitMaskPosition: '0% 0%',
+                willChange: '-webkit-mask-position, mask-position',
               }}
             >
               {/* Solid color layer - different for light/dark */}
@@ -283,26 +288,37 @@ export function PlanHeader({
             {/* Subtle scrim for text readability - lighter than before */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
 
-            {/* Destination content overlay */}
-            <div className="absolute inset-0 flex flex-col justify-end p-5">
+            {/* Destination content overlay - title/subtitle only */}
+            <div className="absolute inset-0 flex flex-col justify-end p-5 pb-14">
               <h2 className="text-xl font-semibold text-white drop-shadow-md">{title}</h2>
               {subtitle && (
-                <p className="mt-0.5 text-sm text-white/90 drop-shadow-sm">{subtitle}</p>
-              )}
-              {/* Trip summary pills - only in S1+ (use onImage variant for hero) */}
-              {showPills && (
-                <div className="mt-3">
-                  <TripSummaryPills
-                    tripInputs={tripInputs}
-                    onOpenSheet={onOpenSheet}
-                    disabled={isStreaming}
-                    variant="onImage"
-                  />
-                </div>
+                <p className="mt-0.5 text-sm text-white/90 drop-shadow-sm flex items-center gap-1.5">
+                  {/* Parse subtitle and replace arrow characters with icon */}
+                  {subtitle.split(/[→\->]+/).map((part, i, arr) => (
+                    <span key={i} className="flex items-center gap-1.5">
+                      {part.trim()}
+                      {i < arr.length - 1 && (
+                        <ArrowRight className="w-3 h-3 text-white/70" />
+                      )}
+                    </span>
+                  ))}
+                </p>
               )}
             </div>
           </div>
         </div>
+
+        {/* LAYER 3: Pills - positioned at bottom of postcard area */}
+        {hasDestination && showPills && (
+          <div className="absolute bottom-2 left-5 right-5 z-30">
+            <TripSummaryPills
+              tripInputs={tripInputs}
+              onOpenSheet={onOpenSheet}
+              disabled={isStreaming}
+              variant="onImage"
+            />
+          </div>
+        )}
       </div>
 
       {/* Floating Glass Command Bar - Desktop only (mobile uses bottom nav) */}

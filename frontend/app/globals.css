@@ -392,44 +392,71 @@ input[type="number"]::-webkit-outer-spin-button {
 
 /* ===== Living Topography Animation ===== */
 /* Slow drift animation for the hero topographic pattern */
-@keyframes topo-drift {
+/* iOS Safari requires -webkit- prefixed keyframes for mask-position */
+
+@-webkit-keyframes topo-drift {
   0%, 100% {
-    mask-position: 0% 0%;
     -webkit-mask-position: 0% 0%;
+    mask-position: 0% 0%;
   }
   50% {
-    mask-position: 5% 3%;
     -webkit-mask-position: 5% 3%;
+    mask-position: 5% 3%;
+  }
+}
+
+@keyframes topo-drift {
+  0%, 100% {
+    -webkit-mask-position: 0% 0%;
+    mask-position: 0% 0%;
+  }
+  50% {
+    -webkit-mask-position: 5% 3%;
+    mask-position: 5% 3%;
   }
 }
 
 .animate-topo-drift {
+  -webkit-animation: topo-drift 20s ease-in-out infinite;
   animation: topo-drift 20s ease-in-out infinite;
-  will-change: mask-position, -webkit-mask-position;
+  will-change: -webkit-mask-position, mask-position;
+  /* Force GPU layer for mobile performance */
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+
+/* Mobile: slower animation (subliminal rule - barely perceptible drift) */
+@media (max-width: 768px) {
+  .animate-topo-drift {
+    -webkit-animation-duration: 40s;
+    animation-duration: 40s;
+  }
 }
 
 /* Respect reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   .animate-topo-drift {
-    animation: none;
+    -webkit-animation: none !important;
+    animation: none !important;
   }
 }
 
 /* ===== Architect Instruction Layer - Blinking Cursor ===== */
-@keyframes blink {
+/* "Breathing" blink - soft fade (luxury) vs hard on/off (retro) */
+@keyframes soft-blink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  50% { opacity: 0.3; } /* Don't go to 0 - keep faintly visible */
 }
 
 .animate-blink {
-  animation: blink 1s step-end infinite;
+  animation: soft-blink 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 /* Respect reduced motion preference for blink */
 @media (prefers-reduced-motion: reduce) {
   .animate-blink {
-    animation: none;
-    opacity: 0.7;
+    animation: none !important;
+    opacity: 1; /* Solid cursor so they can still see it */
   }
 }
 

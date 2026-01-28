@@ -27,15 +27,17 @@ export function PlanModeHint({ hasSetupHistory = false, onViewSetup }: PlanModeH
       className={cn(
         'sticky top-0 z-10',
         'flex items-center justify-between gap-2',
-        'px-3 py-2 mb-3',
-        'bg-zinc-900/90 backdrop-blur-sm rounded-lg',
-        'border border-zinc-800/50',
-        'text-xs text-zinc-400'
+        'px-4 py-2 mb-3',
+        'rounded-full shadow-sm',
+        // Light mode: Glass pill with subtle hint appearance
+        'bg-white/80 backdrop-blur-md border border-zinc-200 text-zinc-500',
+        // Dark mode: Keep existing dark glass panel
+        'dark:bg-zinc-900/90 dark:backdrop-blur-sm dark:border-zinc-800/50 dark:text-zinc-400'
       )}
     >
       <div className="flex items-center gap-2">
-        <Info className="h-3.5 w-3.5 text-zinc-500" />
-        <span>Type changes here. Updates appear in the plan.</span>
+        <Info className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500" />
+        <span className="font-medium">Tap below to refine the plan.</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -52,7 +54,7 @@ export function PlanModeHint({ hasSetupHistory = false, onViewSetup }: PlanModeH
         <button
           type="button"
           onClick={() => setDismissed(true)}
-          className="text-zinc-600 hover:text-zinc-400 transition-colors"
+          className="text-zinc-400 hover:text-zinc-600 dark:text-zinc-600 dark:hover:text-zinc-400 transition-colors"
           aria-label="Dismiss hint"
         >
           <X className="h-3.5 w-3.5" />

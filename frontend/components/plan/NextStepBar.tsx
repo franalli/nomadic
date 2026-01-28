@@ -97,12 +97,18 @@ export function NextStepBar({
       >
         <button
           onClick={onExpandToItinerary}
-          className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-600 text-white px-4 py-3 text-sm font-medium hover:bg-amber-500 transition-colors"
+          className={cn(
+            "flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-sm font-bold transition-all",
+            "bg-gradient-to-br from-emerald-500 to-emerald-600 text-white",
+            "border-t border-white/20",
+            "shadow-xl shadow-emerald-900/10",
+            "hover:from-emerald-400 hover:to-emerald-500 hover:shadow-emerald-900/20 active:scale-[0.98]"
+          )}
         >
           <ArrowRight className="h-4 w-4" />
-          Create day-by-day itinerary
+          Build Itinerary
         </button>
-        <p className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">
+        <p className="mt-2 text-center text-xs text-emerald-600 dark:text-emerald-400">
           Set trip length to create itinerary
         </p>
       </div>
@@ -127,7 +133,7 @@ export function NextStepBar({
   const buttonConfig = {
     expand_itinerary: {
       leftLabel: 'Next: Itinerary',
-      buttonText: isGeneratingItinerary ? 'Creating itinerary...' : 'Create day-by-day itinerary',
+      buttonText: isGeneratingItinerary ? 'Building...' : 'Build Itinerary',
       subtext: 'Unlocks a bookable plan (stays, flights, activities).',
       icon: isGeneratingItinerary ? Loader2 : ArrowRight,
       disabled: isGeneratingItinerary || isClickLocked,
@@ -160,9 +166,12 @@ export function NextStepBar({
         onClick={handleClick}
         disabled={config.disabled}
         className={cn(
-          'flex w-full items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-colors',
-          'bg-amber-600 text-white',
-          !config.disabled && 'hover:bg-amber-500',
+          'flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-sm font-bold transition-all',
+          // Gradient background with glass top highlight
+          'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white',
+          'border-t border-white/20',
+          'shadow-xl shadow-emerald-900/10',
+          !config.disabled && 'hover:from-emerald-400 hover:to-emerald-500 hover:shadow-emerald-900/20 active:scale-[0.98]',
           config.disabled && 'cursor-not-allowed opacity-70'
         )}
       >
@@ -180,7 +189,7 @@ export function NextStepBar({
         <div className="mt-2 flex items-center justify-center gap-2">
           <span className="text-xs text-red-400">{lastError}</span>
           {onRetry && (
-            <button onClick={onRetry} className="text-xs text-amber-500 underline hover:text-amber-400">
+            <button onClick={onRetry} className="text-xs text-emerald-500 underline hover:text-emerald-400">
               Retry
             </button>
           )}

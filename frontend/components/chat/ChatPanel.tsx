@@ -1,7 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
-import { ArrowRight, ArrowUp, Cpu, Lock, RotateCcw, Square } from 'lucide-react';
+import { ArrowUp, Cpu, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -28,6 +28,7 @@ import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
 import { COMPELLING_NODE_LABELS } from '@/lib/loaderCopyConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
+import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
 import type { LLMUpdatableField } from '@/state/documentStore';
 import { DEFAULT_BOOKING_TYPES, useDocumentStore } from '@/state/documentStore';
@@ -51,6 +52,7 @@ import { ChatSkeleton } from './ChatSkeleton';
 import { CollapsedMessageRow } from './CollapsedMessageRow';
 import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
+import { MobileChatCompactHeader } from './MobileChatCompactHeader';
 // NodeProgress removed - replaced by Live Logic Status Pill above input
 import { PlanModeHint } from './PlanModeHint';
 import { SystemAckLine } from './SystemAckLine';
@@ -493,7 +495,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const isUserScrolledUpRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
-    const hasUserMessage = messages.some((msg) => msg.role === 'user');
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     // Note: missingFields now derived from planState instead of tripDetails
@@ -1095,12 +1096,53 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ref={panelRef}
         className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4`}
       >
-        {/* Section header - minimal, no icon (per spec: brand once in global header) */}
-        <div className="border-b border-border/40 pb-3">
-          <span className="text-muted-foreground text-sm font-medium uppercase tracking-wider">
-            TRIP CONTROLS
-          </span>
-        </div>
+        {/* Mobile Hero Banner - Compact topo with branding (Setup phase only) */}
+        {!isDesktop && planViewState === 'S0_BOOTSTRAP' && (
+          <div className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30">
+            {/* Topo pattern layer - boosted opacity for retina mobile visibility */}
+            <div
+              className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
+              style={{
+                maskImage: 'url("/assets/contours.svg")',
+                WebkitMaskImage: 'url("/assets/contours.svg")',
+                maskSize: '350px',
+                WebkitMaskSize: '350px',
+                maskRepeat: 'repeat',
+                WebkitMaskRepeat: 'repeat',
+                maskPosition: '0% 0%',
+                WebkitMaskPosition: '0% 0%',
+                willChange: '-webkit-mask-position, mask-position',
+              }}
+            >
+              {/* Black background for max contrast in light mode */}
+              <div className="absolute inset-0 bg-black dark:bg-white" />
+            </div>
+
+            {/* Content - padding-based height for tighter fit */}
+            <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
+              <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
+                Where to next?
+              </h1>
+              {/* Breathing cursor indicator - tight spacing */}
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400 dark:text-emerald-400/60">
+                  Awaiting Input
+                </span>
+                <div className="w-1 h-1.5 bg-zinc-400 dark:bg-emerald-400 animate-blink rounded-sm" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Mobile Compact Header - shown after plan generation (replaces hero) */}
+        {/* This is the "morphing tab" - Chat tab transforms from Setup to Chat mode */}
+        {!isDesktop && hasEverHadPlan && planViewState !== 'S0_BOOTSTRAP' && (
+          <MobileChatCompactHeader
+            tripInputs={tripInputs}
+            planState={planState}
+            onOpenSheet={onOpenSheet}
+          />
+        )}
 
         {/* Unified Chip Row - two-row layout: core constraints + module toggles */}
         {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
@@ -1187,6 +1229,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 }
 
                 // Render collapsed Setup summary
+                // On mobile post-plan, use compact variant (thin divider style)
                 if (m.displayMode === 'collapsed_summary') {
                   return (
                     <div
@@ -1198,6 +1241,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         summaryText={m.summaryText || 'Setup conversation'}
                         tripInputsSnapshot={m.tripInputsSnapshot}
                         executedTopicsSnapshot={m.executedTopicsSnapshot}
+                        variant={!isDesktop && hasEverHadPlan ? 'compact' : 'card'}
                       />
                     </div>
                   );
@@ -1239,7 +1283,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                         className={
                           isUserMessage
                             ? 'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 bg-zinc-900 text-white border border-zinc-900 hover:bg-zinc-800 hover:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700/50 dark:hover:border-zinc-600/60'
-                            : `border border-border/40 bg-gradient-to-br from-muted via-muted to-muted/70 text-foreground rounded-2xl rounded-bl-md px-4 py-2.5 transition-all shadow-[0_2px_6px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.6)] dark:shadow-[0_2px_6px_rgba(0,0,0,0.2),0_4px_12px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.08)] hover:shadow-[0_4px_10px_rgba(0,0,0,0.08),0_6px_16px_rgba(0,0,0,0.06),inset_0_1px_0_rgba(255,255,255,0.6)] dark:hover:shadow-[0_4px_10px_rgba(0,0,0,0.25),0_6px_16px_rgba(0,0,0,0.2),inset_0_1px_0_rgba(255,255,255,0.1)] hover:-translate-y-0.5 hover:border-border/60 ${isStreaming ? 'typing-pulse' : ''}`
+                            : cn(
+                                // Shape: Speech bubble with sharp bottom-left corner
+                                'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
+                                // Light Mode: Pure white card that POPS off the page
+                                'bg-white border border-zinc-100 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)]',
+                                'hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] hover:-translate-y-0.5',
+                                // Dark Mode: Deep glass panel
+                                'dark:bg-zinc-800/70 dark:backdrop-blur-sm dark:border-white/10 dark:shadow-none',
+                                // Text: High contrast
+                                'text-zinc-800 dark:text-zinc-200',
+                                isStreaming && 'typing-pulse'
+                              )
                         }
                       >
                         {m.role === 'assistant' ? (
@@ -1353,33 +1408,33 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
-          {/* Action Bar: Input + Build Button side by side */}
-          <div className="flex gap-2 items-stretch">
-            {/* Input Container */}
-            <form onSubmit={handleSubmit} className="relative flex-1">
-              {/* Static placeholder - only when input is empty and no user message */}
-              {!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory && (
-                <div className="absolute top-0 left-0 right-0 px-4 py-3.5 pr-12 text-sm leading-5 text-muted-foreground/70 pointer-events-none whitespace-nowrap overflow-hidden text-ellipsis" aria-hidden="true">
-                  {isInputDisabledByPlanState
-                    ? 'Updating...'
-                    : !hasDestination
-                      ? 'Enter destination or constraints...'
-                      : 'Tell me more...'}
-                </div>
-              )}
+          {/* Action Bar: Unified Capsule Design */}
+          {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
+          <div
+            className={`
+              relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300
+              border bg-white dark:bg-zinc-900
+              shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]
+              ${readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
+                ? 'border-emerald-500/50 ring-1 ring-emerald-500/30'
+                : 'border-zinc-200 dark:border-zinc-800'
+              }
+            `}
+          >
+            {/* Input Field - takes remaining space */}
+            <form onSubmit={handleSubmit} className="flex-1 h-full">
               <textarea
                 ref={inputRef}
                 disabled={isInputDisabledByPlanState}
-                className={`w-full h-12 rounded-xl border-2 text-foreground px-4 py-3 pr-12 text-sm leading-5 focus:outline-none transition-colors resize-none overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed
-                  bg-white border-zinc-200 shadow-sm hover:shadow-md hover:border-zinc-300 focus:border-emerald-500/50 focus:shadow-md
-                  dark:bg-white/[0.05] dark:border-white/[0.10] dark:shadow-none dark:hover:bg-white/[0.08] dark:hover:border-white/[0.15] dark:focus:border-emerald-500/30 dark:focus:bg-white/[0.08]
-                  ${!input.trim() && !hasUserMessage && !isLoading && !isLoadingHistory ? 'placeholder:text-transparent' : 'placeholder:text-zinc-400 dark:placeholder:text-zinc-500'}`}
+                className="w-full h-full bg-transparent text-zinc-900 dark:text-zinc-100 pl-6 pr-2 py-4 text-sm leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
                 placeholder={
                   isInputDisabledByPlanState
                     ? 'Updating...'
-                    : !hasDestination
-                      ? 'Enter destination or constraints...'
-                      : 'Tell me more...'
+                    : readyToGenerate
+                      ? 'Type to refine...'
+                      : !hasDestination
+                        ? (isDesktop ? 'Where to?' : 'Where to?')
+                        : 'Tell me more...'
                 }
                 value={input}
                 onChange={(e) => {
@@ -1394,55 +1449,50 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 }}
                 rows={1}
               />
+            </form>
+
+            {/* Button - inside the capsule */}
+            <div className="pr-1.5 py-1.5 flex-shrink-0">
               {isLoading && hasReceivedFirstToken ? (
-                // Stop streaming button - orange square
+                // Stop streaming button
                 <button
                   type="button"
                   onClick={handleStopStreaming}
-                  className="absolute right-2 top-1.5 flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all bg-orange-500 text-white hover:bg-orange-600 hover:scale-105 shadow-md"
+                  className="h-11 w-11 flex items-center justify-center rounded-[22px] transition-all bg-orange-500 text-white hover:bg-orange-600"
                   title="Stop streaming"
                 >
                   <Square className="h-5 w-5 fill-current" />
                 </button>
-              ) : (
-                // Send button
+              ) : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches ? (
+                // BUILD STATE: Emerald pill inside capsule
                 <button
-                  type="submit"
-                  className={`absolute right-2 top-1.5 flex items-center justify-center rounded-lg p-2 text-sm font-semibold transition-all disabled:opacity-50 ${
-                    input.trim() && !isLoading
-                      ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-105 shadow-md'
-                      : 'bg-zinc-100 text-zinc-400 hover:bg-zinc-200 dark:bg-white/[0.05] dark:text-zinc-500 dark:hover:bg-white/[0.10]'
-                  }`}
+                  type="button"
+                  onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
+                  className="relative h-11 px-5 rounded-[22px] font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-300 overflow-hidden
+                    bg-emerald-600 text-white shadow-md shadow-emerald-900/10
+                    hover:bg-emerald-500 active:scale-95"
+                  title="Build your trip plan"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Build</span>
+                </button>
+              ) : (
+                // SEND STATE: Arrow button inside capsule
+                <button
+                  type="button"
+                  onClick={(e) => input.trim() && handleSubmit(e as unknown as React.FormEvent)}
                   disabled={isLoading || !input.trim()}
+                  className={`h-11 w-11 flex items-center justify-center rounded-[22px] transition-all duration-300 ${
+                    input.trim() && !isLoading
+                      ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:scale-105 active:scale-95'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
+                  }`}
                   title="Send message (Enter)"
                 >
                   <ArrowUp className="h-5 w-5" />
                 </button>
               )}
-            </form>
-
-            {/* Build/Update Plan Button - Always visible in S0, morphs ghost → emerald */}
-            {planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches && (
-              <button
-                type="button"
-                disabled={!readyToGenerate}
-                onClick={() => readyToGenerate && sendMessageCore(GENERATE_PLAN_TRIGGER)}
-                className={`h-12 px-4 rounded-xl font-medium text-sm flex items-center gap-2 transition-all duration-500 shrink-0 ${
-                  readyToGenerate
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_20px_-5px_rgba(16,185,129,0.5)] dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.5)] hover:scale-105 active:scale-95'
-                    : 'bg-zinc-100 text-zinc-400 border border-zinc-200 dark:bg-white/[0.03] dark:text-zinc-600 dark:border-white/[0.05] cursor-not-allowed opacity-70 grayscale'
-                }`}
-              >
-                <span className={`hidden sm:inline ${readyToGenerate ? 'opacity-100' : 'opacity-50'}`}>
-                  {hasEverHadPlan ? 'Update' : 'Build'}
-                </span>
-                {readyToGenerate ? (
-                  <ArrowRight className="w-4 h-4" />
-                ) : (
-                  <Lock className="w-3 h-3 opacity-50" />
-                )}
-              </button>
-            )}
+            </div>
           </div>
         </div>
 

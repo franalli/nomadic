@@ -59,9 +59,7 @@ export function TripSummaryPills({
   return (
     <div
       className={cn(
-        'flex gap-2',
-        // Horizontal scroll on all breakpoints for layout stability
-        'overflow-x-auto scrollbar-hide snap-x snap-mandatory'
+        'flex gap-1.5 flex-wrap'
       )}
     >
       <CoreChip

@@ -1,0 +1,59 @@
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.venv/
+backend/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+*.egg-info/
+.prof_plan_graph.out
+
+# Node / Frontend
+**/node_modules/
+frontend/.next/
+frontend/.turbo/
+**/*.tsbuildinfo
+**/tsconfig.tsbuildinfo
+package-lock.json
+**/package-lock.json
+
+# Build outputs
+**/dist/
+**/build/
+**/out/
+**/coverage/
+
+# Logs
+**/*.log
+**/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test artifacts
+backend/tests/e2e/generated_results/
+backend/tests/e2e/nightly_results/
+backend/test_artifacts/
+e2e_results/
+
+# Cache and temp files
+**/.cache/
+**/*.tmp
+**/tmp/
+tmpclaude-*-cwd
+**/tmpclaude-*-cwd
+
+# Git
+.git/
+
+# Benchmarks
+.benchmarks/
+backend/.benchmarks/
+
+# Database
+db-data/
+
+# Secrets (for safety)
+.secrets.baseline
