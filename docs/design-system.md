@@ -1090,3 +1090,270 @@ isActive && [
 ### Implementation Reference
 
 The primary navigation is implemented in `frontend/components/plan/GlassCommandBar.tsx`.
+
+---
+
+## 15. Stop Button (Streaming Interrupt)
+
+When the AI is generating a response, the user can interrupt the stream with a "Stop" button. This button must NOT use red styling, as red is reserved exclusively for errors in the design system.
+
+### Design Philosophy
+
+**Problem:** A red stop button (`bg-red-500`) looks like an error state or danger warning. In our "Travel Architect" aesthetic, red = error only.
+
+**Solution:** The stop button should be **minimal and monochromatic**—a subtle control that doesn't scream "DANGER" but clearly communicates "you can click me to stop."
+
+### Visual Specifications
+
+| Element | Light Mode | Dark Mode |
+|---------|------------|-----------|
+| **Background** | `bg-zinc-200` | `bg-white/10` |
+| **Border** | `border-zinc-300` | `border-white/10` |
+| **Hover** | `bg-zinc-300` | `bg-white/20` |
+| **Icon** | Solid `bg-zinc-900` square | Solid `bg-white` square |
+
+### Code Example
+
+```tsx
+// Stop Streaming Button (Inside Input Capsule)
+<button
+  type="button"
+  onClick={handleStopStreaming}
+  className={cn(
+    'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all hover:scale-105 active:scale-95',
+    // Light: Subtle grey
+    'bg-zinc-200 hover:bg-zinc-300 border border-zinc-300',
+    // Dark: Glass button
+    'dark:bg-white/10 dark:hover:bg-white/20 dark:border-white/10'
+  )}
+  title="Stop"
+>
+  {/* Minimal square icon - matches theme */}
+  <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
+</button>
+```
+
+### Why This Works
+
+1. **No False Alarms:** The button doesn't look like an error, just a neutral control.
+2. **Consistency:** Uses the same monochromatic palette as the rest of the input area.
+3. **Minimal:** The small square icon is universally understood as "stop" without being aggressive.
+
+### Implementation Reference
+
+The stop button is implemented in `frontend/components/chat/ChatPanel.tsx`.
+
+---
+
+## 16. The Living Void (AI Processing State)
+
+When the AI is processing, the input field transforms into an active status indicator—we call this "The Living Void." Instead of a separate floating pill showing status, the input itself becomes the status.
+
+### Design Philosophy
+
+**Problem:** A floating green pill above the input looks like a generic notification badge. It's disconnected from the action (the input where user submitted their message).
+
+**Solution:** The input field becomes the status indicator. During AI processing:
+1. The input glows with emerald border/shadow
+2. Status text appears inside the input (replacing placeholder)
+3. The whole capsule pulses subtly
+
+This creates a direct visual link: "What I typed → is being processed."
+
+### Visual Specifications
+
+| State | Light Mode | Dark Mode |
+|-------|------------|-----------|
+| **Border** | `border-emerald-500/50` | `border-emerald-500/40` |
+| **Shadow** | `shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]` | `shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]` |
+| **Animation** | `animate-pulse` (subtle) | Same |
+| **Status Text** | `text-emerald-600 font-mono text-xs` | `text-emerald-400` |
+| **Status Icon** | `<Cpu />` | Same |
+
+### Code Example
+
+```tsx
+// Input Capsule with Living Void State
+<div
+  className={cn(
+    'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
+    'bg-zinc-50 dark:bg-black/40',
+
+    // Priority 1: "Living Void" - AI Processing
+    isLoading && nodeStatus?.node
+      ? [
+          'border border-emerald-500/50 dark:border-emerald-500/40',
+          'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
+          'animate-pulse',
+        ]
+      // Default state
+      : 'border border-zinc-200 dark:border-white/10'
+  )}
+>
+  {/* Status indicator overlay - inside the capsule during processing */}
+  {isLoading && nodeStatus?.node && (
+    <div className="absolute left-6 flex items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400 pointer-events-none z-10">
+      <Cpu className="w-3 h-3" />
+      <span className="tracking-tight opacity-80">
+        {nodeLabel || 'Processing...'}
+      </span>
+    </div>
+  )}
+
+  {/* Input field - placeholder hidden when status is showing */}
+  <input
+    placeholder={isLoading && nodeStatus?.node ? '' : 'Type a message...'}
+    ...
+  />
+</div>
+```
+
+### Why This Works
+
+1. **Direct Feedback:** The input that received the message now shows it's being processed.
+2. **Spatial Logic:** Status appears where the action happened, not in a disconnected floating element.
+3. **Premium Feel:** The emerald glow matches the "Bioluminescent" dark mode aesthetic.
+4. **Subtle Animation:** The pulse is noticeable but not distracting.
+
+### Implementation Reference
+
+The Living Void is implemented in `frontend/components/chat/ChatPanel.tsx`.
+
+---
+
+## 17. System Status Text ("Awaiting Input" Pattern)
+
+The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. It must follow the **Bifurcated Aesthetic**—distinct styling for Light and Dark modes.
+
+### Design Philosophy
+
+**Problem:** Using the same color in both modes creates visual inconsistency. Grey text (`text-zinc-400`) in Light Mode looks weak; emerald on white looks cheap.
+
+**Solution:**
+- **Light Mode:** "Typewriter Ink" — Jet Black (`text-zinc-950`), solid and permanent like an architectural label.
+- **Dark Mode:** "System Pulse" — Emerald (`text-emerald-500`) with a glow, like a retro terminal or flight computer.
+
+### Visual Specifications
+
+| Element | Light Mode ("Typewriter Ink") | Dark Mode ("System Pulse") |
+|---------|-------------------------------|----------------------------|
+| **Text Color** | `text-zinc-950` | `text-emerald-500` |
+| **Glow** | None | `drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]` |
+| **Font** | `font-mono text-xs uppercase tracking-[0.2em] font-bold` | Same |
+| **Cursor Color** | `bg-zinc-950` | `bg-emerald-500` |
+| **Cursor Glow** | None | `shadow-[0_0_6px_rgba(16,185,129,0.6)]` |
+
+### Code Example
+
+```tsx
+// System Status Text (Awaiting Input, Parameters Updated, etc.)
+<div className="flex items-center gap-1.5">
+  {/* The Text */}
+  <span className={cn(
+    // Base Typography: Technical Monospace
+    "font-mono text-xs uppercase tracking-[0.2em] font-bold",
+    // Light Mode: "Typewriter Ink" (Solid, Dark, Permanent)
+    "text-zinc-950",
+    // Dark Mode: "System Pulse" (Glowing, Emerald, Digital)
+    "dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]"
+  )}>
+    Awaiting Input
+  </span>
+
+  {/* The Blinking Cursor */}
+  <div className={cn(
+    "w-1.5 h-2.5 animate-blink rounded-sm",
+    // Light: Solid black ink
+    "bg-zinc-950",
+    // Dark: Emerald with glow
+    "dark:bg-emerald-500 dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]"
+  )} />
+</div>
+```
+
+### Why This Works
+
+1. **Light Mode:** The jet black text looks like a typewriter label or architectural blueprint annotation—professional and permanent.
+2. **Dark Mode:** The emerald glow creates a "heartbeat" effect, reinforcing the AI/system persona. It matches the bioluminescent design language.
+3. **Consistency:** The cursor shares the same color as the text, creating a unified visual element.
+
+### Implementation Reference
+
+- Desktop: `frontend/components/plan/PlanHeader.tsx` (line ~348)
+- Mobile: `frontend/components/chat/ChatPanel.tsx` (line ~1160)
+
+---
+
+## 18. Reset Button ("Fresh Sheet" Pattern)
+
+The Reset button allows users to start over with a fresh planning session. It must NOT use red styling, as red is reserved for critical errors in the design system.
+
+### Design Philosophy
+
+**Problem:** A red "Reset Trip" button (`text-red-600`) looks like a "Self-Destruct" warning. In our "Travel Architect" aesthetic, an architect crumpling up a draft doesn't set off alarms—they just grab a fresh sheet of paper.
+
+**Solution:** Use **monochrome styling** to make Reset feel like a professional utility, not a danger warning.
+
+### Visual Specifications
+
+| Element | Light Mode | Dark Mode |
+|---------|------------|-----------|
+| **Text** | `text-zinc-500 → zinc-900` on hover | `text-zinc-500 → white` on hover |
+| **Background** | `hover:bg-zinc-100` | `hover:bg-white/5` |
+| **Font** | `text-[10px] font-bold uppercase tracking-widest` | Same |
+| **Icon** | `RotateCcw` from Lucide, `w-3 h-3` | Same |
+
+### Code Example (Web)
+
+```tsx
+// Desktop Reset Button (Top-Right Header)
+<button className={cn(
+  "flex items-center gap-2 px-3 py-2 rounded-lg transition-colors",
+  // Typography: Technical Uppercase
+  "text-[10px] font-bold uppercase tracking-widest",
+  // Light: Zinc-500 → Black
+  "text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100",
+  // Dark: Zinc-500 → White
+  "dark:text-zinc-500 dark:hover:text-white dark:hover:bg-white/5"
+)}>
+  <RotateCcw className="w-3 h-3" />
+  Reset
+</button>
+```
+
+### Code Example (Mobile)
+
+```tsx
+// Mobile Dropdown Menu Item
+<button className={cn(
+  "flex items-center gap-2 px-2 py-2.5 rounded-md transition-colors text-left",
+  // Typography: Technical Uppercase
+  "text-[10px] font-bold uppercase tracking-widest",
+  // Light: Solid Black (High Intent)
+  "text-zinc-900 hover:bg-zinc-100",
+  // Dark: Solid White (High Intent)
+  "dark:text-white dark:hover:bg-white/10"
+)}>
+  <RotateCcw className="h-3.5 w-3.5" />
+  Reset Trip
+</button>
+```
+
+### Why This Works
+
+1. **No False Alarms:** The button doesn't look like an error—it's just a neutral utility control.
+2. **Architect Metaphor:** Grabbing a fresh sheet of paper is a calm, professional action—not an emergency.
+3. **Typography Consistency:** The `tracking-widest uppercase` style links it to other technical UI elements like "Awaiting Input."
+
+### BANNED Patterns
+
+| Pattern | Why It's Wrong |
+|---------|----------------|
+| `text-red-600 dark:text-red-400` | Red = Error only. Reset is not an error state. |
+| Large button size | Reset should be subtle, not prominent. It's a utility, not a primary action. |
+| Confirmation modal | An architect doesn't need a "Are you sure?" popup to crumple paper. Trust the user. |
+
+### Implementation Reference
+
+- Web: `frontend/components/layout/NomadicLanding.tsx` (line ~1056)
+- Mobile: `frontend/components/layout/MobileModeHeader.tsx` (line ~136)

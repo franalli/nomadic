@@ -139,9 +139,9 @@ function MobileModeHeaderInner({
                       setMenuOpen(false);
                       onReset();
                     }}
-                    className="flex items-center gap-2 px-2 py-2 text-sm rounded-md hover:bg-muted transition-colors text-left text-red-600 dark:text-red-400"
+                    className="flex items-center gap-2 px-2 py-2.5 rounded-md hover:bg-zinc-100 dark:hover:bg-white/10 transition-colors text-left text-[10px] font-bold uppercase tracking-widest text-zinc-900 dark:text-white"
                   >
-                    <RotateCcw className="h-4 w-4" />
+                    <RotateCcw className="h-3.5 w-3.5" />
                     <span>Reset Trip</span>
                   </button>
                   <div className="h-px bg-border my-1" />

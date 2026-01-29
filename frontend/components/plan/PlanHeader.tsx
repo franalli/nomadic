@@ -344,12 +344,12 @@ export function PlanHeader({
               <ChevronLeft className="w-3 h-3 -mr-1.5" />
               <ChevronLeft className="w-3 h-3" />
             </div>
-            {/* The System Text - Jet Black (Light) / Neon Terminal (Dark) */}
-            <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-semibold text-zinc-900 dark:text-emerald-400">
+            {/* The System Text - "Typewriter Ink" (Light) / "System Pulse" (Dark) */}
+            <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
               {!hasDestination ? 'Awaiting Input_' : 'Parameters Updated_'}
             </p>
             {/* The Blinking Cursor */}
-            <div className="w-1.5 h-2.5 bg-zinc-900 dark:bg-emerald-400 animate-blink" />
+            <div className="w-1.5 h-2.5 bg-zinc-950 dark:bg-emerald-500 animate-blink dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
           </div>
         </div>
       )}

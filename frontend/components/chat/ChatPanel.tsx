@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Cpu, RotateCcw, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, Cpu, RotateCcw, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -1156,11 +1156,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     Where to next?
                   </h1>
                   {/* Breathing cursor indicator - tight spacing */}
+                  {/* Light: "Typewriter Ink" (Jet Black) | Dark: "System Pulse" (Emerald Glow) */}
                   <div className="mt-1.5 flex items-center gap-1.5">
-                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400 dark:text-emerald-400/60">
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
                       Awaiting Input
                     </span>
-                    <div className="w-1 h-1.5 bg-zinc-400 dark:bg-emerald-400 animate-blink rounded-sm" />
+                    <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
                   </div>
                 </div>
               </motion.div>
@@ -1455,30 +1456,39 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </p>
           )}
 
-          {/* Live Logic Status Bar - shows current node being processed */}
-          {isLoading && nodeStatus?.node && (
-            <div className="flex items-center justify-center mb-2 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-950/80 backdrop-blur-sm px-3 py-1.5 rounded-full border border-emerald-800/50 shadow-[0_0_10px_rgba(16,185,129,0.15)] animate-pulse">
-                <Cpu className="w-3 h-3" />
-                <span className="tracking-tight">
-                  {COMPELLING_NODE_LABELS[nodeStatus.node] || nodeStatus.label || 'Processing...'}
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Action Bar: Unified Capsule Design */}
+          {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
           {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
+          {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
           <div
             className={cn(
               'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
               'bg-zinc-50 dark:bg-black/40',
-              'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
-              readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
-                ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
-                : 'border border-zinc-200 dark:border-white/10'
+              // Priority 1: "Living Void" - AI Processing state
+              isLoading && nodeStatus?.node
+                ? [
+                    'border border-emerald-500/50 dark:border-emerald-500/40',
+                    'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)] dark:shadow-[0_0_25px_-5px_rgba(16,185,129,0.3)]',
+                    'animate-pulse',
+                  ]
+                // Priority 2: Ready to Generate highlight
+                : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
+                  ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
+                  // Default state
+                  : [
+                      'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
+                      'border border-zinc-200 dark:border-white/10',
+                    ]
             )}
           >
+            {/* Status indicator overlay - inside the capsule during processing */}
+            {isLoading && nodeStatus?.node && (
+              <div className="absolute left-6 flex items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400 pointer-events-none z-10">
+                <Cpu className="w-3 h-3" />
+                <span className="tracking-tight opacity-80">
+                  {COMPELLING_NODE_LABELS[nodeStatus.node] || nodeStatus.label || 'Processing...'}
+                </span>
+              </div>
+            )}
             {/* Input Field - takes remaining space */}
             <form onSubmit={handleSubmit} className="flex-1 h-full">
               <textarea
@@ -1486,13 +1496,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 disabled={isInputDisabledByPlanState}
                 className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
                 placeholder={
-                  isInputDisabledByPlanState
-                    ? 'Updating...'
-                    : readyToGenerate
-                      ? 'Type to refine...'
-                      : !hasDestination
-                        ? (isDesktop ? 'Where to?' : 'Where to?')
-                        : 'Tell me more...'
+                  // Hide placeholder when Living Void status is showing
+                  isLoading && nodeStatus?.node
+                    ? ''
+                    : isInputDisabledByPlanState
+                      ? 'Updating...'
+                      : readyToGenerate
+                        ? 'Type to refine...'
+                        : !hasDestination
+                          ? (isDesktop ? 'Where to?' : 'Where to?')
+                          : 'Tell me more...'
                 }
                 value={input}
                 onChange={(e) => {
@@ -1512,14 +1525,20 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             {/* Button - inside the capsule */}
             <div className="pr-1.5 py-1.5 flex-shrink-0">
               {isLoading && hasReceivedFirstToken ? (
-                // Stop streaming button
+                // Stop streaming button - minimal monochrome (not red - that's for errors)
                 <button
                   type="button"
                   onClick={handleStopStreaming}
-                  className="h-11 w-11 flex items-center justify-center rounded-[22px] transition-all bg-red-500 text-white hover:bg-red-600"
-                  title="Stop streaming"
+                  className={cn(
+                    'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all hover:scale-105 active:scale-95',
+                    'bg-zinc-200 dark:bg-white/10',
+                    'hover:bg-zinc-300 dark:hover:bg-white/20',
+                    'border border-zinc-300 dark:border-white/10'
+                  )}
+                  title="Stop"
                 >
-                  <Square className="h-5 w-5 fill-current" />
+                  {/* Minimal square icon - matches theme */}
+                  <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
                 </button>
               ) : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches ? (
                 // BUILD STATE: Emerald pill inside capsule

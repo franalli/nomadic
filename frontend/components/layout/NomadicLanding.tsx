@@ -4,6 +4,7 @@
 import { Compass, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
 import {
@@ -1056,10 +1057,10 @@ export function NomadicLanding() {
                 variant="ghost"
                 size="sm"
                 onClick={handleStartNewSession}
-                className="text-muted-foreground hover:text-foreground uppercase tracking-wider text-xs font-medium"
+                className="text-[10px] font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 dark:text-zinc-500 dark:hover:text-white dark:hover:bg-white/5"
               >
-                <RotateCcw className="mr-1.5 h-4 w-4" />
-                RESET
+                <RotateCcw className="mr-1.5 h-3 w-3" />
+                Reset
               </Button>
             </div>
           }
@@ -1164,11 +1165,31 @@ export function NomadicLanding() {
   );
 }
 
+// Inner component that uses MobileModeContext (for StartupSequence)
+function AppWithStartup() {
+  const [hasBooted, setHasBooted] = useState(false);
+
+  return (
+    <>
+      {!hasBooted && <StartupSequence onComplete={() => setHasBooted(true)} />}
+      <div
+        className={
+          hasBooted
+            ? 'opacity-100 transition-opacity duration-300'
+            : 'opacity-0'
+        }
+      >
+        <NomadicLanding />
+      </div>
+    </>
+  );
+}
+
 // Wrap the component with MobileModeProvider
 export default function NomadicLandingWithProvider() {
   return (
     <MobileModeProvider>
-      <NomadicLanding />
+      <AppWithStartup />
     </MobileModeProvider>
   );
 }
