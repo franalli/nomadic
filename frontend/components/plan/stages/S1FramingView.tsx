@@ -29,7 +29,7 @@ export function S1FramingView({
 
       {/* Status indicator */}
       <div className="flex items-center gap-2 text-zinc-400">
-        <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
         <span className="text-sm">
           {isGenerating ? 'Building your plan...' : 'Structure ready'}
         </span>
@@ -69,7 +69,7 @@ export function S1FramingView({
           <button
             type="button"
             onClick={onGenerateStrategy}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors shadow-lg shadow-amber-500/20"
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors shadow-lg shadow-emerald-500/20"
           >
             <Sparkles className="h-4 w-4" />
             Generate strategy

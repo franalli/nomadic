@@ -37,7 +37,7 @@ const typeConfig: Record<
 > = {
   transport: { icon: Car, color: 'text-blue-500 bg-blue-500/10' },
   visa: { icon: FileCheck, color: 'text-emerald-500 bg-emerald-500/10' },
-  weather: { icon: CloudSun, color: 'text-amber-500 bg-amber-500/10' },
+  weather: { icon: CloudSun, color: 'text-sky-500 bg-sky-500/10' },
   packing: { icon: Shirt, color: 'text-violet-500 bg-violet-500/10' },
   payment: { icon: CreditCard, color: 'text-pink-500 bg-pink-500/10' },
   general: { icon: Info, color: 'text-zinc-500 bg-zinc-500/10' },

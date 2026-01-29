@@ -216,8 +216,8 @@ export const MiniCard = memo(function MiniCard({
       }}
       className={cn(
         'relative rounded-lg border bg-card shadow-sm transition-all cursor-pointer',
-        // Safety Shield: Amber border for unsafe flights
-        isUnsafe ? 'border-amber-500/50 bg-amber-950/10' : 'border-border',
+        // Safety Shield: Zinc border for unsafe flights (warning)
+        isUnsafe ? 'border-zinc-500/50 bg-zinc-950/10' : 'border-border',
         'hover:border-border/80 hover:shadow-md hover:translate-y-[-1px]',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         isExpanded && 'ring-1 ring-primary/20'
@@ -250,7 +250,7 @@ export const MiniCard = memo(function MiniCard({
             <div className="flex shrink-0 items-center gap-2">
               {tile.rating != null && (
                 <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
-                  <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                  <Star className="h-3 w-3 fill-emerald-400 text-emerald-400" />
                   <span>{tile.rating.toFixed(1)}</span>
                 </div>
               )}
@@ -261,12 +261,12 @@ export const MiniCard = memo(function MiniCard({
                 className={cn(
                   'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
                   isSaved
-                    ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
+                    ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
                     : 'text-muted-foreground hover:bg-muted hover:text-card-foreground'
                 )}
               >
                 <Heart
-                  className={cn('h-3 w-3', isSaved && 'fill-amber-400')}
+                  className={cn('h-3 w-3', isSaved && 'fill-emerald-400')}
                 />
                 {isSaved ? 'In Trip' : 'Add to Trip'}
               </button>
@@ -313,7 +313,7 @@ export const MiniCard = memo(function MiniCard({
                 className={cn(
                   'rounded px-1.5 py-0.5 text-[10px] font-medium inline-flex items-center gap-1',
                   meta?.is_safe === false
-                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
+                    ? 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/20'
                     : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
                 )}
               >

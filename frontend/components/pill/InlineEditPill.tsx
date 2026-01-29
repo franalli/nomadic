@@ -137,7 +137,7 @@ function InlineEditPillInner({
           className={cn(
             'text-xs transition-colors duration-150',
             hasValue ? 'font-semibold' : 'font-medium',
-            hasConflict ? 'text-[#C88A1E]' : hasValue ? 'text-[#E2A23A]' : ''
+            hasConflict ? 'text-[#C88A1E]' : ''
           )}
         >
           {label}

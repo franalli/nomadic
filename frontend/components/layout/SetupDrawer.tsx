@@ -121,7 +121,7 @@ function ChecklistRow({ item }: { item: ChecklistItem }) {
             e.stopPropagation();
             item.onSet?.();
           }}
-          className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex-shrink-0"
+          className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline flex-shrink-0"
         >
           Set
         </button>

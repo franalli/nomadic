@@ -152,7 +152,7 @@ function GatingMessage({ show, hasDestination, hasDates }: GatingMessageProps) {
   if (!hasDates) missing.push('dates');
 
   return (
-    <p className="text-[10px] text-amber-600 mt-1">
+    <p className="text-[10px] text-zinc-600 mt-1">
       Set {missing.join(' + ')} to fetch options
     </p>
   );

@@ -187,7 +187,7 @@ export function PlanHeader({
 
             {/* Status pill - shown during generation */}
             {statusPillText && (
-              <div className="flex items-center gap-1.5 rounded-full bg-amber-500/15 px-2.5 py-1 text-xs text-amber-600 dark:text-amber-400 dark:bg-amber-500/10">
+              <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs text-emerald-600 dark:text-emerald-400 dark:bg-emerald-500/10">
                 <Loader2 className="h-3 w-3 animate-spin" />
                 <span>{statusPillText}</span>
               </div>

@@ -45,7 +45,7 @@ function StatusIcon({ status }: { status: AckStatus }) {
     case 'applied':
       return <Check className="h-3.5 w-3.5 text-emerald-500/80" />;
     case 'partial':
-      return <AlertCircle className="h-3.5 w-3.5 text-amber-500/80" />;
+      return <AlertCircle className="h-3.5 w-3.5 text-zinc-500/80" />;
     case 'no_change':
       return <Minus className="h-3.5 w-3.5 text-zinc-500" />;
     default:

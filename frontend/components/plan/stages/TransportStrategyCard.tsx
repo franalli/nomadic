@@ -68,7 +68,7 @@ export function TransportStrategyCard({ arrivalInfo, tips, className }: Transpor
                   {tip.description}
                 </span>
                 {tip.tip && (
-                  <span className="text-xs text-amber-600 dark:text-amber-400 ml-1">
+                  <span className="text-xs text-zinc-500 dark:text-zinc-400 ml-1">
                     ({tip.tip})
                   </span>
                 )}

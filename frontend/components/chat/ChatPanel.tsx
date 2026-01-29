@@ -1516,7 +1516,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 <button
                   type="button"
                   onClick={handleStopStreaming}
-                  className="h-11 w-11 flex items-center justify-center rounded-[22px] transition-all bg-orange-500 text-white hover:bg-orange-600"
+                  className="h-11 w-11 flex items-center justify-center rounded-[22px] transition-all bg-red-500 text-white hover:bg-red-600"
                   title="Stop streaming"
                 >
                   <Square className="h-5 w-5 fill-current" />

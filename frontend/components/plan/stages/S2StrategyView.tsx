@@ -54,11 +54,11 @@ import type { Tile } from '@/types/tile';
 
 import { TripHealthBar } from '../TripHealthBar';
 
-// Markdown components for rich text rendering (amber bold for key variables)
+// Markdown components for rich text rendering (emerald bold for key variables)
 const MARKDOWN_COMPONENTS = {
   p: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-amber-500">{children}</strong>
+    <strong className="font-semibold text-zinc-900 dark:text-emerald-400">{children}</strong>
   ),
   em: ({ children }: { children?: React.ReactNode }) => <em className="italic">{children}</em>,
 };
@@ -178,7 +178,7 @@ function IntelBadge({ type, label }: { type: BadgeType; label: string }) {
   const styles: Record<BadgeType, string> = {
     logistics: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
     essential: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-    sells_out: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
+    sells_out: 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300',
     attraction: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
   };
 
@@ -206,7 +206,7 @@ function IntelCard({ icon: Icon, iconColor, title, badge, description, isHighPri
       className={cn(
         'p-3 rounded-xl border transition-colors',
         isHighPriority
-          ? 'border-amber-200 bg-amber-50 dark:border-amber-800/40 dark:bg-amber-900/10'
+          ? 'border-red-200 bg-red-50 dark:border-red-800/40 dark:bg-red-900/10'
           : 'border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-900'
       )}
     >
@@ -283,7 +283,7 @@ function getAttractionIcon(item: { title: string; type?: string }) {
   const text = `${item.title} ${item.type || ''}`.toLowerCase();
   if (text.includes('museum')) return { icon: Building, color: 'text-purple-500' };
   if (text.includes('restaurant') || text.includes('food')) return { icon: Sparkles, color: 'text-purple-500' };
-  return { icon: Ticket, color: 'text-amber-600' };
+  return { icon: Ticket, color: 'text-red-500' };
 }
 
 /**
@@ -373,7 +373,7 @@ function LocalIntelSection({ section }: LocalIntelSectionProps) {
           {/* Render attraction items */}
           {attractionItems.slice(0, 4).map((item, idx) => {
             const sellsOut = item.logic_hook?.toLowerCase().includes('sells out') || item.logic_hook?.includes('BOOK');
-            const { icon, color } = sellsOut ? { icon: Ticket, color: 'text-amber-600' } : getAttractionIcon(item);
+            const { icon, color } = sellsOut ? { icon: Ticket, color: 'text-red-500' } : getAttractionIcon(item);
 
             // Extract booking lead time if present
             const leadTimeMatch = item.logic_hook?.match(/(\d+\s*(?:days?|weeks?|hours?)\s*(?:ahead|prior)?)/i);
@@ -468,7 +468,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
         "dark:bg-zinc-900 dark:shadow-none",
         // State-based borders
         isInfeasible && "border-red-500/50 bg-red-950/10",
-        hasCaveat && "border-amber-500/30",
+        hasCaveat && "border-zinc-400/30",
         // Default: Crisp border with hover enhancement
         !isInfeasible && !hasCaveat && "border-zinc-200 hover:border-emerald-500/30 hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:border-zinc-800"
       )}
@@ -504,7 +504,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
 
             {/* Caveat badge */}
             {hasCaveat && (
-              <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded font-medium">
+              <span className="text-[10px] px-1.5 py-0.5 bg-zinc-500/20 text-zinc-400 rounded font-medium">
                 Limited
               </span>
             )}
@@ -513,8 +513,8 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
             {!isInfeasible && status !== 'ready' && (
               <span className={cn(
                 "text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wide",
-                // Updating: Amber pulse
-                status === 'updating' && "bg-amber-50 text-amber-700 border border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-transparent animate-pulse",
+                // Updating: Emerald pulse (per design system)
+                status === 'updating' && "bg-emerald-50 text-emerald-700 border border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-transparent animate-pulse",
                 // Needs input: Subtle muted
                 status === 'needs_input' && "bg-zinc-100 text-zinc-500 dark:bg-muted dark:text-muted-foreground"
               )}>
@@ -554,7 +554,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
 
         {/* Caveat warning message */}
         {hasCaveat && section.feasibility_reason && (
-          <div className="mt-2 text-xs text-amber-400 flex items-center gap-1">
+          <div className="mt-2 text-xs text-zinc-500 flex items-center gap-1">
             <span>⚠️</span>
             <RichText>{section.feasibility_reason}</RichText>
           </div>
@@ -564,7 +564,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
         {!isInfeasible && status !== 'needs_input' && (
           <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
             <span className={cn(
-              status === 'ready' ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'
+              status === 'ready' ? 'text-green-600 dark:text-green-400' : 'text-emerald-600 dark:text-emerald-400'
             )}>
               {status === 'ready' ? '✓' : '○'}
             </span>
@@ -576,7 +576,7 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
 
         {/* Hint: Add dates to unlock full recommendations (when specialist ran without dates) */}
         {!isInfeasible && status === 'ready' && !hasDates && (
-          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-amber-500">
+          <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-500">
             <span>📅</span>
             <span>Add dates to unlock day-by-day scheduling</span>
           </div>
@@ -967,7 +967,7 @@ function StrategyStack({
                 <TopicIcon className="w-3 h-3" />
                 {config.label} Specialist
               </span>
-              <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded font-medium animate-pulse">
+              <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded font-medium animate-pulse">
                 Updating...
               </span>
             </div>
@@ -1037,13 +1037,13 @@ function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] }) {
   const blockingCount = decisions.filter((d) => d.is_blocking).length;
 
   return (
-    <div className="bg-amber-500/10 rounded-lg border border-amber-500/30 p-4 dark:bg-amber-900/20 dark:border-amber-700/30">
+    <div className="bg-zinc-100 rounded-lg border border-zinc-200 p-4 dark:bg-zinc-900/50 dark:border-zinc-700/30">
       <div className="flex items-center gap-2 mb-3">
-        <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-500" />
-        <h3 className="text-sm font-medium text-amber-900 dark:text-amber-200">
+        <AlertCircle className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+        <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-200">
           Open decisions
           {blockingCount > 0 && (
-            <span className="text-amber-700 dark:text-amber-400 ml-1">
+            <span className="text-zinc-600 dark:text-zinc-400 ml-1">
               ({blockingCount} blocking)
             </span>
           )}
@@ -1054,7 +1054,7 @@ function OpenDecisionsPanel({ decisions }: { decisions: OpenDecision[] }) {
           <li key={decision.id} className="flex items-start gap-2">
             <span
               className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                decision.is_blocking ? 'bg-amber-500' : 'bg-muted-foreground/50'
+                decision.is_blocking ? 'bg-zinc-900 dark:bg-white' : 'bg-muted-foreground/50'
               }`}
             />
             <span className="text-xs text-card-foreground">

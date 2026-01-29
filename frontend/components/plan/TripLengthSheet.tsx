@@ -62,8 +62,8 @@ export const TripLengthSheet = memo(function TripLengthSheet({
             onClick={onOpenDatePicker}
             className={cn(
               'w-full flex items-center justify-center gap-2 p-3 rounded-lg',
-              'bg-amber-600 text-white font-medium',
-              'hover:bg-amber-500 transition-colors'
+              'bg-emerald-600 text-white font-medium',
+              'hover:bg-emerald-500 transition-colors'
             )}
           >
             <CalendarDays className="h-4 w-4" />
@@ -97,7 +97,7 @@ export const TripLengthSheet = memo(function TripLengthSheet({
                 'flex flex-col items-start p-3 rounded-lg',
                 'border border-zinc-700 bg-zinc-800/50',
                 'text-left transition-colors',
-                'hover:border-amber-500/50 hover:bg-amber-500/5'
+                'hover:border-emerald-500/50 hover:bg-emerald-500/5'
               )}
             >
               <div className="font-medium text-zinc-200">{label}</div>

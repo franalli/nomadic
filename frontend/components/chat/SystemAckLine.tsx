@@ -32,14 +32,14 @@ function formatUpdates(updates: AckUpdate[]): string {
 
 function StatusIcon({ status, isPending }: { status: AckStatus; isPending?: boolean }) {
   if (isPending) {
-    return <Loader2 className="h-3 w-3 animate-spin text-amber-500/80" />;
+    return <Loader2 className="h-3 w-3 animate-spin text-emerald-500/80" />;
   }
 
   switch (status) {
     case 'applied':
       return <Check className="h-3 w-3 text-emerald-500/80" />;
     case 'partial':
-      return <AlertCircle className="h-3 w-3 text-amber-500/80" />;
+      return <AlertCircle className="h-3 w-3 text-zinc-500/80" />;
     case 'failed':
     case 'needs_clarification':
       return <AlertCircle className="h-3 w-3 text-red-500/80" />;
@@ -79,10 +79,10 @@ export function SystemAckLine({ status, updates = [], isPending }: SystemAckLine
         'text-xs text-zinc-400',
         'border-l-2',
         status === 'applied' && !isPending && 'border-emerald-500/50',
-        status === 'partial' && 'border-amber-500/50',
+        status === 'partial' && 'border-zinc-500/50',
         status === 'failed' && 'border-red-500/50',
         status === 'needs_clarification' && 'border-red-500/50',
-        isPending && 'border-amber-500/50',
+        isPending && 'border-emerald-500/50',
         status === 'no_change' && 'border-zinc-600'
       )}
     >

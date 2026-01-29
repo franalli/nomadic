@@ -16,9 +16,9 @@ export const chipBase =
 export const chipInactive =
   'border-input bg-muted/40 text-muted-foreground hover:bg-muted';
 
-/** Active/selected chip - Amber-900 for light mode readability */
+/** Active/selected chip - Solid black/white for maximum contrast (Tactile Rule) */
 export const chipActive =
-  'bg-amber-500/15 text-amber-900 border-amber-500/40 dark:text-amber-300 dark:bg-amber-500/10';
+  'bg-zinc-900 text-white border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white';
 
 /** For pills on hero/banner/photo backgrounds - use WHITE bg for visibility on any photo */
 export const chipOnImage =
@@ -28,9 +28,9 @@ export const chipOnImage =
 export const chipOnImageActive =
   'border-emerald-600/60 bg-white/90 text-emerald-800 backdrop-blur-md shadow-sm hover:bg-white/95 dark:border-emerald-400/50 dark:bg-black/50 dark:text-emerald-300 dark:hover:bg-black/55';
 
-/** Missing state for on-image pills (amber dashed on white bg) */
+/** Missing state for on-image pills (zinc dashed for subtle indication) */
 export const chipOnImageMissing =
-  'border-amber-600/60 border-dashed bg-white/85 text-amber-800 backdrop-blur-md shadow-sm hover:bg-white/95 dark:border-amber-400/50 dark:bg-black/40 dark:text-amber-300 dark:hover:bg-black/55';
+  'border-zinc-500/60 border-dashed bg-white/85 text-zinc-700 backdrop-blur-md shadow-sm hover:bg-white/95 dark:border-zinc-400/50 dark:bg-black/40 dark:text-zinc-300 dark:hover:bg-black/55';
 
 /** Optional state for on-image pills (subtle on white bg) */
 export const chipOnImageOptional =
@@ -45,7 +45,7 @@ export const dropdownItem = 'text-popover-foreground hover:bg-muted';
 
 /** Dropdown item - active/selected state */
 export const dropdownItemActive =
-  'bg-amber-500/10 text-amber-600 dark:text-amber-400';
+  'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400';
 
 /** Emerald active state (for free cancellation, etc.) */
 export const chipActiveEmerald =

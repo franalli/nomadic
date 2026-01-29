@@ -35,7 +35,7 @@ function getStatusConfig(planState: PlanState): {
     case 'RESOLVING':
       return {
         text: 'Updating plan...',
-        dotColor: 'bg-amber-500',
+        dotColor: 'bg-emerald-500',
         icon: <Loader2 className="h-2.5 w-2.5 animate-spin" />,
       };
     case 'STABLE':

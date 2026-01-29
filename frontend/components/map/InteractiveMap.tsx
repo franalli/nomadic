@@ -154,7 +154,7 @@ export function InteractiveMap({
                   className={cn(
                     'flex items-center justify-center rounded-full shadow-xl border-2',
                     isActive
-                      ? 'w-10 h-10 bg-orange-500 border-white'
+                      ? 'w-10 h-10 bg-emerald-500 border-white'
                       : 'w-8 h-8 bg-white border-slate-200'
                   )}
                 >

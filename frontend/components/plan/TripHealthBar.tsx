@@ -65,7 +65,7 @@ export function TripHealthBar({ tripSummary, tiles, className }: TripHealthBarPr
         <div
           className={cn(
             'w-2 h-2 rounded-full flex-shrink-0',
-            hasInventory ? 'bg-emerald-500' : 'bg-amber-500'
+            hasInventory ? 'bg-emerald-500' : 'bg-emerald-500'
           )}
         />
 

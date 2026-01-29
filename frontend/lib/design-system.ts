@@ -157,16 +157,16 @@ export const DS = {
     `,
 
     /**
-     * UNSELECTED STATE
-     * Light: White paper with border.
-     * Dark: Ghost button (transparent).
+     * UNSELECTED STATE (Tactile Rule + Glass Fill Rule)
+     * Light: White paper with crisp border-2 that snaps to black on hover.
+     * Dark: Glass fill (bg-white/5) with visible substance, not ghost outline.
      */
     inactive: `
-      bg-white border border-zinc-200 text-zinc-600
-      dark:bg-transparent dark:border-white/10 dark:text-zinc-400
-      hover:border-zinc-400 hover:text-zinc-900
-      dark:hover:border-white/30 dark:hover:text-white
-      transition-all duration-200
+      bg-white border-2 border-zinc-200 text-zinc-600
+      dark:bg-white/5 dark:border-2 dark:border-white/15 dark:text-zinc-400
+      hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900
+      dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white
+      transition-all duration-150
     `,
 
     /**
@@ -215,23 +215,31 @@ export const DS = {
   // 5. STEPPER (Traveler count +/- buttons)
   // ---------------------------------------------------------------------------
   stepper: {
+    /**
+     * STEPPER BUTTON (Tactile Rule for mobile touch targets)
+     * w-10 h-10 for comfortable 40px touch target
+     * Glass fill in dark mode, snap-to-black/white on hover
+     */
     button: `
-      w-8 h-8 rounded-full
+      w-10 h-10 rounded-full
       flex items-center justify-center
-      border border-zinc-200 dark:border-zinc-700
-      text-zinc-600 dark:text-zinc-400
-      hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900
-      dark:hover:border-white/30 dark:hover:bg-white/5 dark:hover:text-white
-      transition-all
+      bg-white dark:bg-white/5
+      border-2 border-zinc-300 dark:border-white/15
+      text-zinc-700 dark:text-zinc-400
+      hover:border-zinc-900 hover:bg-zinc-900 hover:text-white
+      dark:hover:bg-white dark:hover:border-white dark:hover:text-black
+      transition-all duration-150
+      active:scale-95
     `,
     buttonDisabled: `
-      w-8 h-8 rounded-full
+      w-10 h-10 rounded-full
       flex items-center justify-center
-      border border-zinc-200 dark:border-zinc-800
-      text-zinc-300 dark:text-zinc-600
-      cursor-not-allowed opacity-50
+      bg-zinc-50 dark:bg-white/[0.02]
+      border-2 border-zinc-200 dark:border-white/5
+      text-zinc-300 dark:text-zinc-700
+      cursor-not-allowed
     `,
-    value: 'w-8 text-center text-lg font-bold text-zinc-900 dark:text-white',
+    value: 'w-10 text-center text-lg font-bold text-zinc-900 dark:text-white',
   },
 
   // ---------------------------------------------------------------------------

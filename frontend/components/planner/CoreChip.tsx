@@ -61,7 +61,7 @@ export const CoreChip = memo(function CoreChip({
         isOnImage && 'inline-flex items-center gap-2 h-8 px-3.5 rounded-full border text-xs',
         // HIGH-CONTRAST GLASS: Darker backing for better readability on busy images
         isOnImage && hasValue && 'border-white/30 bg-black/60 backdrop-blur-md text-white font-semibold shadow-lg',
-        isOnImage && !hasValue && tone === 'missing' && 'border-amber-400/50 border-dashed bg-black/50 backdrop-blur-md text-white/95 shadow-lg',
+        isOnImage && !hasValue && tone === 'missing' && 'border-zinc-400/50 border-dashed bg-black/50 backdrop-blur-md text-white/95 shadow-lg',
         isOnImage && !hasValue && tone === 'optional' && 'border-white/25 bg-black/45 backdrop-blur-md text-white/80 shadow-lg',
         isOnImage && !hasValue && tone === 'default' && 'border-white/30 bg-black/50 backdrop-blur-md text-white/90 shadow-lg',
         // Hover/active for onImage - subtle brightening with tap feedback
@@ -73,7 +73,7 @@ export const CoreChip = memo(function CoreChip({
 
         // === DEFAULT VARIANT (for normal page backgrounds) ===
         !isOnImage && hasValue && 'border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold',
-        !isOnImage && !hasValue && tone === 'missing' && 'border-dashed border-amber-500/50 bg-amber-500/5 text-amber-400',
+        !isOnImage && !hasValue && tone === 'missing' && 'border-dashed border-zinc-400/50 bg-zinc-500/5 text-zinc-400',
         !isOnImage && !hasValue && tone === 'optional' && 'border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)] opacity-70',
         !isOnImage && !hasValue && tone === 'default' && 'border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
         // Hover for default
@@ -92,7 +92,7 @@ export const CoreChip = memo(function CoreChip({
           // Icon color based on variant and state
           // On-image: All icons are white/light for frosted glass look
           isOnImage && hasValue && 'text-emerald-400',
-          isOnImage && !hasValue && tone === 'missing' && 'text-amber-400',
+          isOnImage && !hasValue && tone === 'missing' && 'text-zinc-400',
           isOnImage && !hasValue && tone !== 'missing' && 'text-white/60',
           !isOnImage && hasValue && 'text-[var(--chip-active-icon)]'
         )}

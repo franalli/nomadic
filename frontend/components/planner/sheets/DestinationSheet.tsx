@@ -11,6 +11,7 @@ import { MapPin, Search } from 'lucide-react';
 import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
+import { DS } from '@/lib/design-system';
 import { cn } from '@/lib/utils';
 
 import { BaseSheet } from './BaseSheet';
@@ -166,7 +167,7 @@ function DestinationSheetInner({
         {/* Recent destinations */}
         {recentDestinations.length > 0 && (
           <div>
-            <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
+            <h3 className={DS.text.label + ' mb-3'}>
               Recent
             </h3>
             <div className="flex flex-wrap gap-2">
@@ -177,14 +178,14 @@ function DestinationSheetInner({
                   onClick={() => handleQuickSelect(dest)}
                   className={cn(
                     'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
-                    // Light: White card with border
-                    'bg-white border border-zinc-200',
+                    // Tactile Rule: border-2 for visibility, snap-to-black on hover
+                    'bg-white border-2 border-zinc-200',
                     'text-xs font-semibold text-zinc-600',
-                    'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-sm',
-                    // Dark: Glass Fill - substance, not just outline
-                    'dark:bg-white/5 dark:border-white/5',
+                    'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 hover:shadow-sm',
+                    // Dark: Glass Fill with border-2
+                    'dark:bg-white/5 dark:border-2 dark:border-white/15',
                     'dark:text-zinc-400',
-                    'dark:hover:bg-white/10 dark:hover:text-white',
+                    'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
                     'transition-all duration-150'
                   )}
                 >
@@ -198,7 +199,7 @@ function DestinationSheetInner({
 
         {/* Popular destinations */}
         <div>
-          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
+          <h3 className={DS.text.label + ' mb-3'}>
             Popular
           </h3>
           <div className="flex flex-wrap gap-2">
@@ -209,14 +210,14 @@ function DestinationSheetInner({
                 onClick={() => handleQuickSelect(dest)}
                 className={cn(
                   'inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg',
-                  // Light: White card with border
-                  'bg-white border border-zinc-200',
+                  // Tactile Rule: border-2 for visibility, snap-to-black on hover
+                  'bg-white border-2 border-zinc-200',
                   'text-xs font-semibold text-zinc-600',
-                  'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-sm',
-                  // Dark: Glass Fill - substance, not just outline
-                  'dark:bg-white/5 dark:border-white/5',
+                  'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900 hover:shadow-sm',
+                  // Dark: Glass Fill with border-2
+                  'dark:bg-white/5 dark:border-2 dark:border-white/15',
                   'dark:text-zinc-400',
-                  'dark:hover:bg-white/10 dark:hover:text-white',
+                  'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
                   'transition-all duration-150'
                 )}
               >

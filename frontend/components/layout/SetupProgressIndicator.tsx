@@ -61,7 +61,7 @@ function ProgressRing({
         strokeDasharray={circumference}
         strokeDashoffset={strokeDashoffset}
         strokeLinecap="round"
-        className="text-amber-500 transition-all duration-300"
+        className="text-emerald-500 transition-all duration-300"
       />
     </svg>
   );

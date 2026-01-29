@@ -105,11 +105,11 @@ function FloatingBuildButtonInner({
               'font-semibold text-base',
               'transition-all duration-200',
               // Gradient background
-              'bg-gradient-to-r from-amber-500 to-orange-500',
+              'bg-gradient-to-r from-emerald-500 to-emerald-600',
               'text-white',
-              'shadow-[0_4px_20px_rgba(245,158,11,0.35)]',
+              'shadow-[0_4px_20px_rgba(16,185,129,0.35)]',
               // Hover/active states
-              'hover:shadow-[0_6px_24px_rgba(245,158,11,0.45)]',
+              'hover:shadow-[0_6px_24px_rgba(16,185,129,0.45)]',
               'hover:brightness-105',
               'active:scale-[0.98]',
               // Disabled state

@@ -28,9 +28,9 @@ export function S3EditingView({
       {/* Note: Destination card removed - PlanHeader owns destination display */}
 
       {/* Stale indicator */}
-      <div className="bg-amber-900/20 rounded-lg border border-amber-700/30 p-3 flex items-center gap-2">
-        <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-        <p className="text-xs text-amber-200">
+      <div className="bg-zinc-900/20 rounded-lg border border-zinc-700/30 p-3 flex items-center gap-2">
+        <AlertCircle className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+        <p className="text-xs text-zinc-200">
           Constraints changed - itinerary needs refresh
         </p>
       </div>
@@ -69,7 +69,7 @@ export function S3EditingView({
       <div className="pt-2">
         <button
           onClick={onRefresh}
-          className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-amber-600 hover:bg-amber-500 text-white transition-colors flex items-center justify-center gap-2"
+          className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-2"
         >
           <RefreshCw className="w-4 h-4" />
           Refresh itinerary

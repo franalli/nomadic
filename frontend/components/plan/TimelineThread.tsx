@@ -159,7 +159,7 @@ export function TimelineThread({
                 className={cn(
                   'timeline-node flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center transition-colors shadow-sm',
                   isSafety
-                    ? 'bg-amber-500/10 border-amber-500/50 text-amber-500'
+                    ? 'bg-zinc-500/10 border-zinc-500/50 text-zinc-500'
                     : 'bg-background border-muted-foreground/30 text-muted-foreground group-hover:border-primary group-hover:text-primary'
                 )}
               >
@@ -171,7 +171,7 @@ export function TimelineThread({
                 <h3
                   className={cn(
                     'text-lg font-semibold tracking-tight',
-                    isSafety ? 'text-amber-500' : 'text-foreground'
+                    isSafety ? 'text-zinc-500' : 'text-foreground'
                   )}
                 >
                   Day {card.day_number}
@@ -218,9 +218,9 @@ export function TimelineThread({
                     className={cn(
                       'rounded-xl border p-4 transition-all',
                       isBlockSafety
-                        ? 'bg-amber-500/5 border-amber-500/20'
+                        ? 'bg-zinc-500/5 border-zinc-500/20'
                         : isActiveBlock
-                          ? 'scale-[1.02] border-orange-500/50 shadow-lg bg-card'
+                          ? 'scale-[1.02] border-emerald-500/50 shadow-lg bg-card'
                           : 'bg-card border-border hover:border-primary/50 hover:shadow-md'
                     )}
                   >
@@ -229,7 +229,7 @@ export function TimelineThread({
                         className={cn(
                           'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
                           isBlockSafety
-                            ? 'bg-amber-500/10 text-amber-500'
+                            ? 'bg-zinc-500/10 text-zinc-500'
                             : 'bg-muted text-muted-foreground'
                         )}
                       >
@@ -240,7 +240,7 @@ export function TimelineThread({
                           <span
                             className={cn(
                               'text-xs font-medium uppercase tracking-wide',
-                              isBlockSafety ? 'text-amber-500' : 'text-muted-foreground'
+                              isBlockSafety ? 'text-zinc-500' : 'text-muted-foreground'
                             )}
                           >
                             {block.period}
@@ -260,7 +260,7 @@ export function TimelineThread({
                         <p
                           className={cn(
                             'mt-1 font-medium',
-                            isBlockSafety ? 'text-amber-600 dark:text-amber-400' : 'text-foreground'
+                            isBlockSafety ? 'text-zinc-600 dark:text-zinc-400' : 'text-foreground'
                           )}
                         >
                           {block.activity_type || block.summary}
@@ -275,7 +275,7 @@ export function TimelineThread({
                             {block.constraints.map((constraint, i) => (
                               <span
                                 key={i}
-                                className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 font-medium"
+                                className="text-xs px-2 py-0.5 rounded-full bg-zinc-500/10 text-zinc-500 font-medium"
                               >
                                 💡 {constraint}
                               </span>
@@ -292,7 +292,7 @@ export function TimelineThread({
 
                         {/* Buffer reason */}
                         {block.buffer_reason && (
-                          <div className="mt-2 text-xs font-medium px-2 py-1 rounded bg-amber-500/10 inline-block text-amber-600 dark:text-amber-400">
+                          <div className="mt-2 text-xs font-medium px-2 py-1 rounded bg-zinc-500/10 inline-block text-zinc-600 dark:text-zinc-400">
                             {block.buffer_reason}
                           </div>
                         )}

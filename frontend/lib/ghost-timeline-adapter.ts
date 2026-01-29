@@ -19,7 +19,7 @@ export const TOPIC_COLORS: Record<string, string> = {
   skiing: 'bg-blue-500/20 text-blue-500',
   boating: 'bg-indigo-500/20 text-indigo-500',
   cycling: 'bg-lime-500/20 text-lime-500',
-  local_expert: 'bg-amber-500/20 text-amber-500',
+  local_expert: 'bg-zinc-500/20 text-zinc-500',
 };
 
 /**

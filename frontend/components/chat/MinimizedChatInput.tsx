@@ -178,7 +178,7 @@ function MinimizedChatInputInner({
               'w-8 h-8 rounded-lg',
               'transition-all duration-150',
               canSend
-                ? 'bg-amber-500 text-white hover:bg-amber-600 active:scale-95'
+                ? 'bg-emerald-500 text-white hover:bg-emerald-600 active:scale-95'
                 : 'bg-muted text-muted-foreground cursor-not-allowed'
             )}
             aria-label="Send message"

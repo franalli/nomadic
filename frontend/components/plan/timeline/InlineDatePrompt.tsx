@@ -40,9 +40,9 @@ export function InlineDatePrompt({
   // If no start date, prompt for dates first
   if (!startDate) {
     return (
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-6 mb-6">
+      <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-6 mb-6">
         <div className="flex items-center gap-3 mb-4">
-          <CalendarDays className="h-5 w-5 text-amber-500" />
+          <CalendarDays className="h-5 w-5 text-emerald-500" />
           <h3 className="font-medium text-foreground">When are you traveling?</h3>
         </div>
         <button
@@ -50,8 +50,8 @@ export function InlineDatePrompt({
           onClick={onOpenDatePicker}
           className={cn(
             'w-full flex items-center justify-center gap-2 p-3 rounded-lg',
-            'bg-amber-500 text-white font-medium',
-            'hover:bg-amber-600 transition-colors'
+            'bg-emerald-500 text-white font-medium',
+            'hover:bg-emerald-600 transition-colors'
           )}
         >
           <CalendarDays className="h-4 w-4" />
@@ -82,7 +82,7 @@ export function InlineDatePrompt({
             className={cn(
               'py-2 px-3 rounded-lg text-sm font-medium',
               'bg-card border border-border',
-              'hover:border-amber-500/50 hover:bg-amber-500/5',
+              'hover:border-emerald-500/50 hover:bg-emerald-500/5',
               'transition-colors'
             )}
           >

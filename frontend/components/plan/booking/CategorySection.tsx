@@ -34,8 +34,8 @@ function StatusBadge({ status }: { status: 'available' | 'hold' | 'booked' }) {
       label: 'Available',
     },
     hold: {
-      dot: 'bg-amber-500',
-      text: 'text-amber-500',
+      dot: 'bg-emerald-500',
+      text: 'text-emerald-500',
       label: 'In Cart',
     },
     booked: {
@@ -155,7 +155,7 @@ export function CategorySection({
                     {/* Rating */}
                     {tile.rating && (
                       <div className="mt-1 flex items-center gap-1 text-sm">
-                        <span className="text-amber-500">★</span>
+                        <span className="text-emerald-500">★</span>
                         <span className="font-medium">{tile.rating.toFixed(1)}</span>
                       </div>
                     )}
@@ -172,7 +172,7 @@ export function CategorySection({
                   className={cn(
                     'mt-3 w-full py-2 rounded-lg text-sm font-medium transition-colors',
                     isSaved
-                      ? 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+                      ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/30'
                       : 'bg-muted hover:bg-muted/80 text-foreground'
                   )}
                 >

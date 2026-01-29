@@ -45,7 +45,7 @@ export function PlanModeHint({ hasSetupHistory = false, onViewSetup }: PlanModeH
           <button
             type="button"
             onClick={onViewSetup}
-            className="text-amber-500/80 hover:text-amber-400 flex items-center gap-1 transition-colors"
+            className="text-emerald-500/80 hover:text-emerald-400 flex items-center gap-1 transition-colors"
           >
             View setup
             <ChevronDown className="h-3 w-3" />

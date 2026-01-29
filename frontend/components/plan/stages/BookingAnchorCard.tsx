@@ -65,7 +65,7 @@ export const BookingAnchorCard = memo(function BookingAnchorCard({
 
   // Status badge
   const statusBadge = {
-    pending: { text: 'PENDING', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
+    pending: { text: 'PENDING', color: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20' },
     loading: { text: 'SEARCHING', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
     complete: { text: 'FOUND', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
   }[status];
@@ -153,7 +153,7 @@ export const BookingAnchorCard = memo(function BookingAnchorCard({
 
       {/* Missing data hint */}
       {status === 'pending' && !canSearch && (
-        <p className="text-[10px] text-amber-500 mt-2 text-center">
+        <p className="text-[10px] text-zinc-500 mt-2 text-center">
           {isFlights && !origin && 'Add origin • '}
           {!destination && 'Add destination • '}
           {(!startDate || !endDate) && 'Add dates'}

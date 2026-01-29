@@ -243,7 +243,7 @@ export function BookingSection({
                 Options to choose from
               </h3>
               {savedTileIds.size > 0 && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
                   {savedTileIds.size} in trip
                 </span>
               )}
@@ -260,7 +260,7 @@ export function BookingSection({
                   <button
                     type="button"
                     onClick={() => onOpenSheet('dates')}
-                    className="text-amber-600 hover:text-amber-500 dark:text-amber-500 dark:hover:text-amber-400 underline underline-offset-2"
+                    className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400 underline underline-offset-2"
                   >
                     set trip dates
                   </button>
@@ -358,7 +358,7 @@ export function BookingSection({
                   <button
                     type="button"
                     onClick={() => setFilters({ sort: 'recommended', freeCancel: false, maxPrice: null })}
-                    className="text-amber-600 hover:text-amber-500 dark:text-amber-500 dark:hover:text-amber-400 mt-1"
+                    className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400 mt-1"
                   >
                     Clear filters
                   </button>
@@ -440,7 +440,7 @@ export function BookingSection({
                   </p>
                 </div>
                 {savedTileIds.size > 0 && (
-                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
                     {savedTileIds.size} in trip
                   </span>
                 )}
@@ -490,7 +490,7 @@ export function BookingSection({
               className={cn(
                 'px-6 py-3 rounded-lg font-semibold text-sm transition-colors',
                 savedTiles.length > 0
-                  ? 'bg-amber-600 text-white hover:bg-amber-500 shadow-lg shadow-amber-600/20'
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/20'
                   : 'bg-muted text-muted-foreground cursor-not-allowed'
               )}
             >

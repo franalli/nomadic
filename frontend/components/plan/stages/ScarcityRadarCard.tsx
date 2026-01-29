@@ -42,16 +42,16 @@ export function ScarcityRadarCard({ items, className }: ScarcityRadarCardProps) 
     <div
       className={cn(
         'p-3 rounded-lg border',
-        // Amber warning style
-        'bg-amber-50 border-amber-200',
-        'dark:bg-amber-900/10 dark:border-amber-800/30',
+        // Warning style
+        'bg-zinc-50 border-zinc-200',
+        'dark:bg-zinc-900/10 dark:border-zinc-800/30',
         className
       )}
     >
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        <Clock className="w-4 h-4 text-amber-600 dark:text-amber-500" />
-        <span className="text-xs font-bold text-amber-800 dark:text-amber-200 uppercase tracking-wide">
+        <Clock className="w-4 h-4 text-zinc-600 dark:text-zinc-500" />
+        <span className="text-xs font-bold text-zinc-800 dark:text-zinc-200 uppercase tracking-wide">
           Advance Booking Required
         </span>
       </div>
@@ -68,7 +68,7 @@ export function ScarcityRadarCard({ items, className }: ScarcityRadarCardProps) 
 
       {/* Walk-in hint if any exist */}
       {walkinItems.length > 0 && (
-        <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-2 pt-2 border-t border-amber-200/50 dark:border-amber-800/30">
+        <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-2 pt-2 border-t border-zinc-200/50 dark:border-zinc-800/30">
           Walk-in OK: {walkinItems.map((i) => i.title).join(', ')}
         </p>
       )}

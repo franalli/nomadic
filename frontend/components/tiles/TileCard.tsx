@@ -202,13 +202,13 @@ export const TileCard = memo(function TileCard({
 
         {/* Saved badge (from shortlist) */}
         {isSaved && (
-          <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
+          <div className="absolute left-2 top-2 rounded bg-emerald-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
             Saved
           </div>
         )}
         {/* Refundable/Non-refundable badge - Expedia compliance */}
         {!isSaved && tile.is_refundable === false && (
-          <div className="absolute left-2 top-2 rounded bg-amber-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
+          <div className="absolute left-2 top-2 rounded bg-zinc-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
             Non-refundable
           </div>
         )}
@@ -226,7 +226,7 @@ export const TileCard = memo(function TileCard({
           </div>
           {tile.rating != null && (
             <div className="text-foreground flex shrink-0 items-center gap-1 text-sm font-medium">
-              <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+              <Star className="h-4 w-4 fill-emerald-400 text-emerald-400" />
               <span>{tile.rating.toFixed(1)}</span>
             </div>
           )}

@@ -129,8 +129,8 @@ export function GlassCommandBar({
                 ],
                 // Completed state - green checkmark
                 isCompleted && !isActive && 'text-emerald-600 dark:text-emerald-400',
-                // Generating state - amber pulse
-                isGeneratingStep && 'generating-pulse text-amber-600 dark:text-amber-400',
+                // Generating state - emerald pulse (no amber per design system)
+                isGeneratingStep && 'generating-pulse text-emerald-600 dark:text-emerald-400',
                 // Default state - Pencil Grey (Light) / Ghost (Dark)
                 !isActive && !isCompleted && !isLocked && [
                   'text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100/80',
@@ -147,8 +147,8 @@ export function GlassCommandBar({
               {/* Custom circular spinner for generating state */}
               {isGeneratingStep && (
                 <span className="relative w-3.5 h-3.5">
-                  <span className="absolute inset-0 rounded-full border-2 border-amber-500/30 dark:border-amber-400/30" />
-                  <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-amber-500 dark:border-t-amber-400 animate-spin" />
+                  <span className="absolute inset-0 rounded-full border-2 border-emerald-500/30 dark:border-emerald-400/30" />
+                  <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-emerald-500 dark:border-t-emerald-400 animate-spin" />
                 </span>
               )}
               {/* Status icons for other states */}

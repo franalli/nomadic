@@ -319,7 +319,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
             <div className="flex items-center justify-between text-sm">
               {tile.rating != null && (
                 <div className="flex items-center gap-1.5 text-zinc-300">
-                  <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                  <Star className="h-4 w-4 fill-emerald-400 text-emerald-400" />
                   <span className="font-medium">{tile.rating.toFixed(1)}</span>
                   {reviewCount != null && (
                     <span className="text-zinc-500">
@@ -415,11 +415,11 @@ export const TileDetailsModal = memo(function TileDetailsModal({
               className={cn(
                 'flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 font-medium transition-colors',
                 isSaved
-                  ? 'bg-amber-500/20 text-amber-400'
+                  ? 'bg-emerald-500/20 text-emerald-400'
                   : 'bg-zinc-800 text-zinc-200 hover:bg-zinc-700'
               )}
             >
-              <Heart className={cn('h-4 w-4', isSaved && 'fill-amber-400')} />
+              <Heart className={cn('h-4 w-4', isSaved && 'fill-emerald-400')} />
               {isSaved ? 'Saved to shortlist' : 'Add to shortlist'}
             </button>
           </div>
@@ -431,7 +431,7 @@ export const TileDetailsModal = memo(function TileDetailsModal({
               <button
                 type="button"
                 onClick={() => window.open(tile.deeplink_url, '_blank', 'noopener,noreferrer')}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 py-2.5 font-medium text-white transition-colors hover:bg-amber-600"
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-2.5 font-medium text-white transition-colors hover:bg-emerald-600"
               >
                 View deal
               </button>

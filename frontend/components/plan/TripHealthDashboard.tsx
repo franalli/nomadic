@@ -133,8 +133,8 @@ function ConstraintRow({
     },
     warning: {
       icon: CircleDot,
-      color: 'text-amber-500',
-      bg: 'bg-amber-500/10',
+      color: 'text-zinc-500',
+      bg: 'bg-zinc-500/10',
     },
     error: {
       icon: XCircle,
@@ -235,8 +235,8 @@ export function TripHealthDashboard({
     <div
       className={cn(
         'rounded-lg border border-border bg-card overflow-hidden transition-all',
-        shouldPulse && 'animate-pulse ring-2 ring-amber-500/50',
-        hasViolations && 'border-amber-500/30',
+        shouldPulse && 'animate-pulse ring-2 ring-zinc-500/50',
+        hasViolations && 'border-zinc-500/30',
         className
       )}
     >
@@ -249,8 +249,8 @@ export function TripHealthDashboard({
               allValid
                 ? 'bg-emerald-500'
                 : hasViolations
-                  ? 'bg-amber-500'
-                  : 'bg-amber-500'
+                  ? 'bg-zinc-500'
+                  : 'bg-zinc-500'
             )}
           />
           <h4 className="text-sm font-medium text-card-foreground">Trip Health</h4>
@@ -260,7 +260,7 @@ export function TripHealthDashboard({
             </span>
           )}
           {hasViolations && (
-            <span className="ml-auto text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+            <span className="ml-auto text-[10px] text-zinc-600 dark:text-zinc-400 font-medium">
               Needs review
             </span>
           )}
@@ -271,16 +271,16 @@ export function TripHealthDashboard({
         {/* Seasonal Violations with Action Buttons */}
         {seasonalViolations.length > 0 && (
           <div>
-            <h5 className="text-[10px] uppercase tracking-wider text-amber-500 font-semibold mb-2">
+            <h5 className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold mb-2">
               Seasonal Conflict
             </h5>
             <div className="space-y-2">
               {seasonalViolations.map((violation, idx) => (
                 <div
                   key={idx}
-                  className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 space-y-2"
+                  className="bg-zinc-500/10 border border-zinc-500/20 rounded-lg p-3 space-y-2"
                 >
-                  <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400">
+                  <div className="flex items-start gap-2 text-xs text-zinc-700 dark:text-zinc-400">
                     <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
                     <span>{violation.message}</span>
                   </div>
@@ -288,7 +288,7 @@ export function TripHealthDashboard({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full text-xs h-7 border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+                      className="w-full text-xs h-7 border-zinc-500/30 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-500/10"
                       onClick={() => onSwitchSpecialist(violation.suggested_specialist!)}
                     >
                       <span>Try {violation.suggested_specialist} instead</span>
@@ -341,7 +341,7 @@ export function TripHealthDashboard({
                     'flex items-start gap-2 p-2 rounded text-xs',
                     alert.level === 'error'
                       ? 'bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/20'
-                      : 'bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20'
+                      : 'bg-zinc-500/10 text-zinc-700 dark:text-zinc-400 border border-zinc-500/20'
                   )}
                 >
                   <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
