@@ -55,32 +55,38 @@ const Chip = memo(function Chip({ icon: Icon, label, value, onClick, disabled = 
       className={cn(
         // Base chip styling per spec (h-7 = 28px)
         'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full',
-        'transition-all duration-[120ms] ease-out active:scale-[0.98]',
-        // State-based styling using chip tokens
+        'transition-all duration-200 ease-out active:scale-[0.98]',
+        // State-based styling - monochromatic design
         hasValue
-          // Active/Filled state: accent tint, stronger presence
-          ? 'border border-[var(--chip-active-border)] bg-[var(--chip-active-bg)] text-[var(--chip-active-text)] font-semibold'
+          // Active/Filled state: zinc border with filled look
+          ? cn(
+              'border border-zinc-900 bg-zinc-100 text-zinc-900 font-semibold',
+              'dark:border-white/30 dark:bg-white/10 dark:text-white'
+            )
           // Inactive/Default state: subtle, clickable appearance
-          : 'border border-[var(--chip-border)] bg-[var(--chip-bg)] text-[var(--chip-text)]',
+          : cn(
+              'border border-zinc-200 bg-white text-zinc-500',
+              'dark:border-white/10 dark:bg-transparent dark:text-zinc-400'
+            ),
         // Hover states
-        !hasValue && !disabled && 'hover:border-[var(--chip-border-hover)]',
-        hasValue && !disabled && 'hover:border-[var(--chip-active-border)]',
+        !hasValue && !disabled && 'hover:border-zinc-400 dark:hover:border-white/30',
+        hasValue && !disabled && 'hover:bg-zinc-200 dark:hover:bg-white/15',
         // Disabled state
         disabled && 'opacity-40 cursor-not-allowed',
         // Focus visible ring
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50'
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-white/20'
       )}
     >
       <Icon
         className={cn(
           'h-3.5 w-3.5 flex-shrink-0',
-          hasValue ? 'text-[var(--chip-active-icon)]' : '' // Teal accent when filled
+          hasValue ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-500'
         )}
       />
       <span className="text-xs truncate max-w-[120px]">
         {value || label}
       </span>
-      {hasValue && <Check className="h-2.5 w-2.5 text-[var(--chip-active-icon)]" />}
+      {hasValue && <Check className="h-2.5 w-2.5 text-zinc-900 dark:text-white" />}
     </button>
   );
 });

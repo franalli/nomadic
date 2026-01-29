@@ -1,18 +1,14 @@
 /**
  * NextStepBar
  *
- * Sticky bottom CTA bar for the right-side plan panel.
- * Only renders when there's a meaningful next action.
- * Must be placed INSIDE the right-pane container, not global.
- *
- * Key props:
- * - nextAction: Pre-computed from getNextAction() in parent to avoid flicker
- * - lastError + onRetry: Inline retry for itinerary generation errors
+ * "Command Island" - Sticky footer that centers inside the scroll container.
+ * Uses sticky positioning to naturally respect the panel layout.
+ * Place this at the bottom of your scrollable content area.
  */
 
 'use client';
 
-import { ArrowRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -56,9 +52,33 @@ export function NextStepBar({
 
   const isGeneratingItinerary = generation?.active && generation?.stage === 'itinerary';
 
-  // Check if duration is set (end_date OR trip_duration - no date_flex requirement)
-  const hasDuration = !!tripInputs?.end_date || tripInputs?.trip_duration != null;
-  const needsDuration = nextAction === 'expand_itinerary' && !hasDuration;
+  // Format date range for display (handles single-day trips)
+  // Note: Users can't reach Plan tab without dates, so tripInputs.start_date always exists
+  const dateDisplay = (() => {
+    if (!tripInputs?.start_date) return null;
+    const start = new Date(tripInputs.start_date);
+    const startStr = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    if (tripInputs.end_date) {
+      const end = new Date(tripInputs.end_date);
+      const isSameDay = start.toDateString() === end.toDateString();
+      const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+      if (isSameDay) {
+        // Single day trip: just show "Jan 29"
+        return { range: startStr, days: 1 };
+      }
+
+      const endStr = end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return { range: `${startStr} — ${endStr}`, days };
+    }
+
+    if (tripInputs.trip_duration) {
+      return { range: startStr, days: tripInputs.trip_duration };
+    }
+
+    return { range: startStr, days: null };
+  })();
 
   // Reset click lock when generation completes
   useEffect(() => {
@@ -67,53 +87,12 @@ export function NextStepBar({
     }
   }, [generation?.active]);
 
-  // Show hint when S2_STRATEGY_READY but no nextAction (missing trip context)
-  if (state === 'S2_STRATEGY_READY' && !nextAction) {
-    return (
-      <div
-        className={cn(
-          'sticky bottom-0 rounded-lg border border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
-          className
-        )}
-      >
-        <p className="text-xs text-muted-foreground text-center">
-          Create a plan first (destination + dates).
-        </p>
-      </div>
-    );
-  }
-
   // Don't render if no action
-  if (!nextAction) return null;
-
-  // Show hint when duration is missing - CTA opens date picker directly
-  if (needsDuration) {
-    return (
-      <div
-        className={cn(
-          'sticky bottom-0 rounded-lg border border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
-          className
-        )}
-      >
-        <button
-          onClick={onExpandToItinerary}
-          className={cn(
-            "flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-sm font-bold transition-all",
-            "bg-gradient-to-br from-amber-500 to-amber-600 text-white",
-            "border-t border-white/20",
-            "shadow-xl shadow-amber-900/10",
-            "hover:from-amber-400 hover:to-amber-500 hover:shadow-amber-900/20 active:scale-[0.98]"
-          )}
-        >
-          <ArrowRight className="h-4 w-4" />
-          Select Dates to Build
-        </button>
-        <p className="mt-2 text-center text-xs text-amber-600 dark:text-amber-400">
-          Trip dates required for day-by-day itinerary
-        </p>
-      </div>
-    );
+  if (state === 'S2_STRATEGY_READY' && !nextAction) {
+    return null;
   }
+
+  if (!nextAction) return null;
 
   const handleClick = () => {
     if (isClickLocked) return;
@@ -132,16 +111,12 @@ export function NextStepBar({
 
   const buttonConfig = {
     expand_itinerary: {
-      leftLabel: 'Next: Itinerary',
       buttonText: isGeneratingItinerary ? 'Building...' : 'Build Itinerary',
-      subtext: 'Unlocks a bookable plan (stays, flights, activities).',
-      icon: isGeneratingItinerary ? Loader2 : ArrowRight,
+      icon: isGeneratingItinerary ? Loader2 : Sparkles,
       disabled: isGeneratingItinerary || isClickLocked,
     },
     finalize_plan: {
-      leftLabel: 'Plan complete',
-      buttonText: isFinalizing ? 'Scanning best rates...' : 'Finalize & Book',
-      subtext: 'Lock your plan and view booking options.',
+      buttonText: isFinalizing ? 'Scanning...' : 'Finalize & Book',
       icon: isFinalizing ? Loader2 : CheckCircle2,
       disabled: isFinalizing || isClickLocked,
     },
@@ -149,50 +124,96 @@ export function NextStepBar({
 
   const config = buttonConfig[nextAction];
   const Icon = config.icon;
+  const isActionReady = !isGeneratingItinerary && !isFinalizing;
 
   return (
     <div
       className={cn(
-        'sticky bottom-0 rounded-lg border border-border bg-card/95 p-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm shadow-lg',
+        // Sticky: Centers inside scroll container, respects panel layout
+        'sticky bottom-6 z-40',
+        'w-full flex justify-center',
+        'pointer-events-none',
+        'mt-8', // Space above the island
         className
       )}
     >
-      {/* Left label for S2 */}
-      {config.leftLabel && (
-        <div className="text-xs text-muted-foreground mb-2">{config.leftLabel}</div>
-      )}
-
-      <button
-        onClick={handleClick}
-        disabled={config.disabled}
+      {/* THE COMMAND ISLAND - w-fit forces shrink-wrap */}
+      <div
         className={cn(
-          'flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-4 text-sm font-bold transition-all',
-          // Gradient background with glass top highlight
-          'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white',
-          'border-t border-white/20',
-          'shadow-xl shadow-emerald-900/10',
-          !config.disabled && 'hover:from-emerald-400 hover:to-emerald-500 hover:shadow-emerald-900/20 active:scale-[0.98]',
-          config.disabled && 'cursor-not-allowed opacity-70'
+          'pointer-events-auto',
+          'w-fit mx-auto', // KEY: w-fit snaps tight around content
+          'flex items-center p-1.5',
+          'rounded-full',
+          // Material: Deep Glass
+          'bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl',
+          'border border-zinc-200 dark:border-white/10',
+          'shadow-2xl shadow-black/20 dark:shadow-black/50'
         )}
       >
-        <Icon className={cn('h-4 w-4', (isGeneratingItinerary || isFinalizing) && 'animate-spin')} />
-        {config.buttonText}
-      </button>
+        {/* LEFT: Context (Tight) */}
+        <div className="px-4 flex flex-col justify-center">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest">
+              Timeline
+            </span>
+            {dateDisplay?.days && (
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-400/10 px-1.5 py-0.5 rounded">
+                {dateDisplay.days} {dateDisplay.days === 1 ? 'day' : 'days'}
+              </span>
+            )}
+          </div>
+          <div className="text-sm font-bold text-zinc-800 dark:text-white tracking-wide whitespace-nowrap mt-0.5">
+            {dateDisplay?.range ?? 'Dates set'}
+          </div>
+        </div>
 
-      {/* Subtext for S2 */}
-      {config.subtext && (
-        <p className="text-xs text-muted-foreground mt-2 text-center">{config.subtext}</p>
-      )}
+        {/* VERTICAL DIVIDER */}
+        <div className="w-px h-8 bg-zinc-200 dark:bg-white/10 mx-2" />
 
-      {/* Inline retry for itinerary generation errors only */}
-      {nextAction === 'expand_itinerary' && lastError && (
-        <div className="mt-2 flex items-center justify-center gap-2">
-          <span className="text-xs text-red-400">{lastError}</span>
-          {onRetry && (
-            <button onClick={onRetry} className="text-xs text-emerald-500 underline hover:text-emerald-400">
-              Retry
-            </button>
+        {/* RIGHT: Action Button */}
+        <button
+          onClick={handleClick}
+          disabled={config.disabled}
+          className={cn(
+            'h-10 px-5 rounded-full',
+            'flex items-center gap-2',
+            'font-bold text-xs tracking-wide uppercase whitespace-nowrap',
+            'transition-all duration-300 active:scale-95',
+            // Ready state: Green with localized glow
+            isActionReady &&
+              'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]',
+            // Processing states
+            (isGeneratingItinerary || isFinalizing) &&
+              'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400',
+            // Disabled
+            config.disabled && 'cursor-not-allowed'
           )}
+        >
+          <span>{config.buttonText}</span>
+          <Icon
+            className={cn(
+              'w-3.5 h-3.5',
+              (isGeneratingItinerary || isFinalizing) && 'animate-spin',
+              isActionReady && 'animate-pulse'
+            )}
+          />
+        </button>
+      </div>
+
+      {/* Error retry - floats below */}
+      {nextAction === 'expand_itinerary' && lastError && (
+        <div className="absolute top-full mt-2 left-0 right-0 flex justify-center pointer-events-auto">
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20">
+            <span className="text-xs text-red-400">{lastError}</span>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="text-xs text-red-400 underline hover:text-red-300"
+              >
+                Retry
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

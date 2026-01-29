@@ -117,12 +117,15 @@ export function GlassCommandBar({
               disabled={isLocked}
               className={cn(
                 'relative flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all duration-200',
-                // Active state - Pure White Cutout (Light) / Bright Glow (Dark)
+                // Active state - "The Beacon" - Solid White (Maximum Contrast)
+                // Light: Pure white cutout from grey track
+                // Dark: Glowing white beacon (matches user chat bubbles & active pills)
                 isActive && [
                   'bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.1),0_1px_2px_-1px_rgba(0,0,0,0.1)] ring-1 ring-black/5',
-                  'text-black font-semibold',
-                  'dark:bg-zinc-800 dark:shadow-[0_0_20px_rgba(255,255,255,0.15)] dark:ring-0',
-                  'dark:text-white',
+                  'text-zinc-950 font-bold',
+                  // Dark: SOLID WHITE with white glow (The Beacon Rule)
+                  'dark:bg-white dark:text-zinc-950 dark:ring-0',
+                  'dark:shadow-[0_0_15px_-3px_rgba(255,255,255,0.4)]',
                 ],
                 // Completed state - green checkmark
                 isCompleted && !isActive && 'text-emerald-600 dark:text-emerald-400',

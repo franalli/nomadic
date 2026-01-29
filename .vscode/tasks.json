@@ -84,6 +84,24 @@
                 "Frontend: Next Dev"
             ],
             "problemMatcher": []
+        },
+        {
+            "label": "Claude: Cleanup History",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                "${workspaceFolder}/scripts/cleanup-claude-history.ps1"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
         }
     ]
 }

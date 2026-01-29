@@ -15,15 +15,24 @@
 import {
   AlertCircle,
   Bike,
+  Briefcase,
   Building,
   ChevronDown,
+  CreditCard,
+  Globe,
   Lightbulb,
   Mountain,
+  Plug,
   Sailboat,
   ShieldCheck,
   Snowflake,
   Sparkles,
+  Thermometer,
+  Ticket,
+  Train,
+  Wallet,
   Waves,
+  Wifi,
 } from 'lucide-react';
 import Image from 'next/image';
 import React from 'react';
@@ -44,8 +53,6 @@ import {
 import type { Tile } from '@/types/tile';
 
 import { TripHealthBar } from '../TripHealthBar';
-import { BookingAnchorCard } from './BookingAnchorCard';
-import { PriorityBookingsSection } from './PriorityBookingsSection';
 
 // Markdown components for rich text rendering (amber bold for key variables)
 const MARKDOWN_COMPONENTS = {
@@ -156,6 +163,255 @@ interface S2StrategyViewProps {
 }
 
 // =============================================================================
+// LocalIntelSection - 2-Column "War Room" Layout for Local Expert
+// =============================================================================
+
+interface LocalIntelSectionProps {
+  section: StrategySection;
+}
+
+/** Badge types for color-coding */
+type BadgeType = 'logistics' | 'essential' | 'sells_out' | 'attraction';
+
+/** Badge component with high-contrast dark mode colors */
+function IntelBadge({ type, label }: { type: BadgeType; label: string }) {
+  const styles: Record<BadgeType, string> = {
+    logistics: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300',
+    essential: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+    sells_out: 'bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
+    attraction: 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+  };
+
+  return (
+    <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide', styles[type])}>
+      {label}
+    </span>
+  );
+}
+
+/** Intel card with icon, title, badge, and description */
+interface IntelCardProps {
+  icon: React.ComponentType<{ className?: string }>;
+  iconColor: string;
+  title: string;
+  badge: { type: BadgeType; label: string };
+  description: string;
+  /** Amber border for high-priority items */
+  isHighPriority?: boolean;
+}
+
+function IntelCard({ icon: Icon, iconColor, title, badge, description, isHighPriority }: IntelCardProps) {
+  return (
+    <div
+      className={cn(
+        'p-3 rounded-xl border transition-colors',
+        isHighPriority
+          ? 'border-amber-200 bg-amber-50 dark:border-amber-800/40 dark:bg-amber-900/10'
+          : 'border-zinc-200 bg-white dark:border-white/10 dark:bg-zinc-900'
+      )}
+    >
+      <div className="flex justify-between items-start mb-2">
+        <div className="flex items-center gap-2">
+          <Icon className={cn('w-4 h-4', iconColor)} />
+          <span className="font-bold text-zinc-900 dark:text-zinc-100 text-sm">{title}</span>
+        </div>
+        <IntelBadge type={badge.type} label={badge.label} />
+      </div>
+      <p
+        className={cn(
+          'text-xs leading-relaxed',
+          isHighPriority ? 'text-zinc-600 dark:text-zinc-300' : 'text-zinc-500 dark:text-zinc-400'
+        )}
+        dangerouslySetInnerHTML={{ __html: description }}
+      />
+    </div>
+  );
+}
+
+/**
+ * Extracts logistics items from section content.
+ * These are "survival" items: transport, connectivity, payments, power, visa.
+ */
+function extractLogisticsItems(section: StrategySection) {
+  const logisticsTypes = ['transport', 'logistics', 'metro', 'connectivity', 'sim', 'wifi', 'payment', 'currency', 'plug', 'power', 'visa'];
+
+  const items = section.content_added?.filter((c) => {
+    const typeMatch = logisticsTypes.some((t) => c.type?.toLowerCase().includes(t));
+    const titleMatch = logisticsTypes.some((t) => c.title?.toLowerCase().includes(t));
+    return typeMatch || titleMatch;
+  });
+
+  return items || [];
+}
+
+/**
+ * Extracts attraction/booking items from section content.
+ * These are "experience" items that may need advance booking.
+ */
+function extractAttractionItems(section: StrategySection) {
+  const attractionTypes = ['attraction', 'activity', 'experience', 'museum', 'landmark', 'restaurant'];
+
+  const items = section.content_added?.filter((c) => {
+    const typeMatch = attractionTypes.some((t) => c.type?.toLowerCase().includes(t));
+    const hasBookHook = c.logic_hook?.includes('BOOK');
+    // Include if it's an attraction type OR has a booking requirement
+    return typeMatch || hasBookHook;
+  });
+
+  return items || [];
+}
+
+/**
+ * Gets appropriate icon for a logistics item based on keywords.
+ */
+function getLogisticsIcon(item: { title: string; type?: string }) {
+  const text = `${item.title} ${item.type || ''}`.toLowerCase();
+  if (text.includes('metro') || text.includes('transport') || text.includes('train')) return { icon: Train, color: 'text-blue-500' };
+  if (text.includes('sim') || text.includes('wifi') || text.includes('connect')) return { icon: Wifi, color: 'text-blue-500' };
+  if (text.includes('payment') || text.includes('card') || text.includes('cash')) return { icon: CreditCard, color: 'text-blue-500' };
+  if (text.includes('plug') || text.includes('power') || text.includes('electric')) return { icon: Plug, color: 'text-blue-500' };
+  if (text.includes('visa') || text.includes('passport')) return { icon: Globe, color: 'text-blue-500' };
+  if (text.includes('weather') || text.includes('climate')) return { icon: Thermometer, color: 'text-blue-500' };
+  if (text.includes('currency') || text.includes('money')) return { icon: Wallet, color: 'text-blue-500' };
+  return { icon: Lightbulb, color: 'text-blue-500' };
+}
+
+/**
+ * Gets appropriate icon for an attraction item based on keywords.
+ */
+function getAttractionIcon(item: { title: string; type?: string }) {
+  const text = `${item.title} ${item.type || ''}`.toLowerCase();
+  if (text.includes('museum')) return { icon: Building, color: 'text-purple-500' };
+  if (text.includes('restaurant') || text.includes('food')) return { icon: Sparkles, color: 'text-purple-500' };
+  return { icon: Ticket, color: 'text-amber-600' };
+}
+
+/**
+ * LocalIntelSection - Renders the 2-column "War Room" layout for Local Expert cards.
+ *
+ * Layout:
+ * - Left Column: "Logistics & Survival" (transport, connectivity, payments, power)
+ * - Right Column: "Booking Radar" (attractions that sell out)
+ *
+ * Color-coded badges for dark mode visibility:
+ * - Blue: Logistics/Essential
+ * - Amber: Sells Out warnings
+ * - Purple: Standard attractions
+ */
+function LocalIntelSection({ section }: LocalIntelSectionProps) {
+  const logisticsItems = extractLogisticsItems(section);
+  const attractionItems = extractAttractionItems(section);
+
+  // Also include logistics_notes as fallback logistics items
+  const hasLogisticsNotes = section.logistics_notes && section.logistics_notes.length > 0;
+
+  // Check if we have any content to show
+  const hasContent = logisticsItems.length > 0 || attractionItems.length > 0 || hasLogisticsNotes;
+
+  if (!hasContent) return null;
+
+  return (
+    <div className="space-y-4">
+      {/* HEADER */}
+      <div className="flex items-center gap-2">
+        <Briefcase className="w-5 h-5 text-emerald-500" />
+        <h3 className="text-base font-bold text-zinc-900 dark:text-white">Trip Operations Center</h3>
+      </div>
+
+      {/* 2-COLUMN WAR ROOM GRID */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* COLUMN 1: LOGISTICS TOOLKIT (The "How") */}
+        <div className="space-y-3">
+          <h4 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">
+            Logistics & Survival
+          </h4>
+
+          {/* Render logistics items from content_added */}
+          {logisticsItems.slice(0, 4).map((item, idx) => {
+            const { icon, color } = getLogisticsIcon(item);
+            const isEssential = item.logic_hook?.toLowerCase().includes('essential');
+            return (
+              <IntelCard
+                key={`logistics-${idx}`}
+                icon={icon}
+                iconColor={color}
+                title={item.title}
+                badge={{ type: isEssential ? 'essential' : 'logistics', label: isEssential ? 'ESSENTIAL' : 'LOGISTICS' }}
+                description={item.description || ''}
+              />
+            );
+          })}
+
+          {/* Fallback: Render logistics_notes if no structured logistics items */}
+          {logisticsItems.length === 0 && hasLogisticsNotes && (
+            <>
+              {section.logistics_notes?.slice(0, 4).map((note, idx) => {
+                const icons = [Globe, Thermometer, Plug, Wallet];
+                const colors = ['text-blue-500', 'text-blue-500', 'text-blue-500', 'text-blue-500'];
+                const titles = ['Visa', 'Weather', 'Power', 'Currency'];
+                return (
+                  <IntelCard
+                    key={`note-${idx}`}
+                    icon={icons[idx % icons.length]}
+                    iconColor={colors[idx % colors.length]}
+                    title={titles[idx % titles.length]}
+                    badge={{ type: 'logistics', label: 'LOGISTICS' }}
+                    description={note}
+                  />
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        {/* COLUMN 2: BOOKING RADAR (The "What") */}
+        <div className="space-y-3">
+          <h4 className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-2">
+            Booking Radar
+          </h4>
+
+          {/* Render attraction items */}
+          {attractionItems.slice(0, 4).map((item, idx) => {
+            const sellsOut = item.logic_hook?.toLowerCase().includes('sells out') || item.logic_hook?.includes('BOOK');
+            const { icon, color } = sellsOut ? { icon: Ticket, color: 'text-amber-600' } : getAttractionIcon(item);
+
+            // Extract booking lead time if present
+            const leadTimeMatch = item.logic_hook?.match(/(\d+\s*(?:days?|weeks?|hours?)\s*(?:ahead|prior)?)/i);
+            const leadTime = leadTimeMatch?.[1];
+
+            let description = item.description || '';
+            if (leadTime && sellsOut) {
+              description = `<strong>Action:</strong> Book ${leadTime}. ${description}`;
+            }
+
+            return (
+              <IntelCard
+                key={`attraction-${idx}`}
+                icon={icon}
+                iconColor={color}
+                title={item.title}
+                badge={{ type: sellsOut ? 'sells_out' : 'attraction', label: sellsOut ? 'SELLS OUT' : 'ATTRACTION' }}
+                description={description}
+                isHighPriority={sellsOut}
+              />
+            );
+          })}
+
+          {/* Empty state for booking radar */}
+          {attractionItems.length === 0 && (
+            <div className="p-4 rounded-xl border border-dashed border-zinc-200 dark:border-white/10 text-center">
+              <p className="text-xs text-zinc-400 dark:text-zinc-500">
+                No advance booking items detected
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // AgentCard - Single agent card with topic color system
 // =============================================================================
 
@@ -166,11 +422,9 @@ interface AgentCardProps {
   status: AgentStatus;
   /** Whether trip dates are set (for showing "add dates" hint) */
   hasDates?: boolean;
-  /** Trip inputs for booking anchor cards */
-  tripInputs?: DocumentTripInputs;
 }
 
-function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, tripInputs }: AgentCardProps) {
+function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: AgentCardProps) {
   const cardRef = React.useRef<HTMLDivElement>(null);
 
   // Scroll card into view when expanded (prevents jumping to wrong location)
@@ -425,33 +679,9 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, tri
             </div>
           )}
 
-          {/* Booking Anchors: Flights & Hotels (Local Expert only) */}
-          {section.specialist_type === 'local_expert' && tripInputs && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <BookingAnchorCard
-                type="flights"
-                tripInputs={tripInputs}
-                status="pending"
-              />
-              <BookingAnchorCard
-                type="hotels"
-                tripInputs={tripInputs}
-                status="pending"
-              />
-            </div>
-          )}
-
-          {/* Priority Bookings: Items that require advance booking */}
-          {section.content_added && section.content_added.some(c => c.logic_hook?.includes('BOOK')) && (
-            <PriorityBookingsSection
-              items={section.content_added.filter(c => c.logic_hook?.includes('BOOK')).map(c => ({
-                title: c.title,
-                reason: c.description || c.logic_hook || '',
-                advance_notice: c.logic_hook?.match(/(\d+\s*(?:days?|weeks?|hours?))/i)?.[1],
-                booking_url: undefined,
-                logic_hook: c.logic_hook,
-              }))}
-            />
+          {/* LOCAL EXPERT: 4-Pillar Strategic Intel Section */}
+          {section.specialist_type === 'local_expert' && (
+            <LocalIntelSection section={section} />
           )}
 
           {/* Specialist Constraints: Readable metadata with icon bubbles */}
@@ -485,7 +715,8 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, tri
           )}
 
           {/* Expert Recommendations: The "Gems" - Logic-backed content with thumbnails */}
-          {section.content_added && section.content_added.length > 0 && (
+          {/* NOTE: Skip for local_expert since LocalIntelSection handles this content */}
+          {section.content_added && section.content_added.length > 0 && section.specialist_type !== 'local_expert' && (
             <div>
               <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 flex items-center gap-2">
                 <Lightbulb size={12} className="text-emerald-600 dark:text-emerald-400" /> Expert Recommendations
@@ -666,8 +897,6 @@ interface StrategyStackProps {
   tiles?: Record<string, Tile>;
   /** Whether trip dates are set (for showing "add dates" hint) */
   hasDates?: boolean;
-  /** Trip inputs for booking anchor cards */
-  tripInputs?: DocumentTripInputs;
 }
 
 function StrategyStack({
@@ -676,7 +905,6 @@ function StrategyStack({
   executedTopics,
   tiles = {},
   hasDates = true,
-  tripInputs,
 }: StrategyStackProps) {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -771,7 +999,6 @@ function StrategyStack({
               }
               status={status}
               hasDates={hasDates}
-              tripInputs={tripInputs}
             />
           );
         })
@@ -899,7 +1126,6 @@ export function S2StrategyView({
         executedTopics={resolvedExecutedTopics}
         tiles={tiles}
         hasDates={hasDates}
-        tripInputs={tripInputs}
       />
 
       {/* Open decisions panel */}

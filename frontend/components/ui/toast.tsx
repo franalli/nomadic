@@ -1,11 +1,13 @@
 /**
- * Toast System
+ * Toast System - "System Signals"
  *
- * Simple toast notifications for constraint updates.
+ * Toasts follow the **Inversion Rule** for maximum visibility:
+ * - Light Mode: "The Black Chip" - Solid zinc-900 background
+ * - Dark Mode: "The Emerald Signal" - Deep glass with emerald glow
  *
  * Placement:
- * - Desktop: Top-right, fixed position
- * - Mobile: Top-center, safe-area aware
+ * - Desktop: Bottom-right (system notification tray area)
+ * - Mobile: Top-center, safe-area aware (avoids keyboard/chat input)
  *
  * Behavior:
  * - Auto-dismiss after 2s
@@ -17,7 +19,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import {
   createContext,
   memo,
@@ -35,7 +37,7 @@ import { cn } from '@/lib/utils';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ToastType = 'success' | 'info' | 'warning';
+export type ToastType = 'success' | 'info' | 'warning' | 'error';
 
 export interface Toast {
   id: string;
@@ -96,29 +98,31 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
         damping: 30,
       }}
       className={cn(
-        'flex items-center gap-2 px-3.5 py-2.5 rounded-lg',
-        'shadow-lg backdrop-blur-md',
-        'text-sm font-medium',
-        // Type-based styling
-        type === 'success' && [
-          'bg-emerald-500/90 text-white',
-          'border border-emerald-400/30',
-        ],
-        type === 'info' && [
-          'bg-zinc-800/90 text-white dark:bg-zinc-700/90',
-          'border border-zinc-600/30',
-        ],
-        type === 'warning' && [
-          'bg-amber-500/90 text-white',
-          'border border-amber-400/30',
-        ]
+        // Base shape
+        'flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl',
+        'font-medium text-sm tracking-wide',
+        // Light Mode: "The Black Chip" - Solid zinc-900
+        'bg-zinc-900 text-white border border-zinc-800',
+        // Dark Mode: "The Emerald Signal" - Deep glass with glow
+        'dark:bg-zinc-950/90 dark:backdrop-blur-md dark:text-white',
+        'dark:border dark:border-emerald-500/20',
+        'dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.3)]'
       )}
     >
-      {/* Icon */}
+      {/* Icon - colored by type */}
       <div className="flex-shrink-0">
-        {type === 'success' && <Check className="h-4 w-4" />}
-        {type === 'info' && <Check className="h-4 w-4" />}
-        {type === 'warning' && <span className="text-sm">⚠</span>}
+        {type === 'success' && (
+          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+        )}
+        {type === 'info' && (
+          <Info className="h-4 w-4 text-zinc-400" />
+        )}
+        {type === 'warning' && (
+          <AlertCircle className="h-4 w-4 text-amber-400" />
+        )}
+        {type === 'error' && (
+          <AlertCircle className="h-4 w-4 text-red-400" />
+        )}
       </div>
 
       {/* Message */}
@@ -163,10 +167,10 @@ const ToastContainer = memo(function ToastContainer({
     <div
       className={cn(
         'fixed z-[9999] pointer-events-none',
-        // Desktop: top-right
-        'md:top-4 md:right-4',
-        // Mobile: top-center, safe-area aware
-        'top-[calc(env(safe-area-inset-top)+12px)] left-1/2 -translate-x-1/2 md:left-auto md:translate-x-0'
+        // Desktop: bottom-right (system notification tray area)
+        'md:bottom-8 md:right-8 md:top-auto md:left-auto md:translate-x-0',
+        // Mobile: top-center, safe-area aware (avoids keyboard/chat input)
+        'top-[calc(env(safe-area-inset-top)+16px)] left-1/2 -translate-x-1/2'
       )}
     >
       <div className="flex flex-col gap-2 items-end pointer-events-auto">

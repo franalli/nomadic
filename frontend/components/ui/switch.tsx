@@ -15,8 +15,9 @@ export const Switch = React.forwardRef<
       'peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors',
       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
       'disabled:cursor-not-allowed disabled:opacity-50',
-      'data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500',
-      'data-[state=unchecked]:bg-muted data-[state=unchecked]:border-border',
+      'data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500',
+      'data-[state=unchecked]:bg-zinc-200 data-[state=unchecked]:border-zinc-300',
+      'dark:data-[state=unchecked]:bg-zinc-800 dark:data-[state=unchecked]:border-zinc-700',
       className
     )}
     {...props}

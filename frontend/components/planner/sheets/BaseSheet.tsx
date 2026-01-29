@@ -142,9 +142,11 @@ function DesktopDialog({
                 stiffness: 400,
               }}
               className={cn(
-                'w-full rounded-xl',
-                'bg-[var(--theme-panel)] border border-[var(--theme-border)]',
-                'shadow-[0_8px_32px_rgba(0,0,0,0.12)]',
+                'w-full rounded-2xl',
+                'bg-white/90 dark:bg-zinc-950/95',
+                'backdrop-blur-xl',
+                'border border-zinc-200 dark:border-white/10',
+                'shadow-2xl shadow-zinc-200/50 dark:shadow-black/80',
                 maxWidthClass
               )}
               onClick={(e) => e.stopPropagation()}
@@ -152,11 +154,11 @@ function DesktopDialog({
               {/* Header */}
               <div className="flex items-start justify-between px-5 pt-5 pb-3">
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-lg font-semibold text-[var(--theme-text)]">
+                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
                     {title}
                   </h2>
                   {hint && (
-                    <p className="text-sm text-[var(--theme-text-muted)] mt-0.5">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5 font-medium">
                       {hint}
                     </p>
                   )}
@@ -165,9 +167,10 @@ function DesktopDialog({
                   type="button"
                   onClick={() => onOpenChange(false)}
                   className={cn(
-                    'p-1.5 -mr-1.5 rounded-lg',
-                    'text-[var(--theme-text-muted)]',
-                    'hover:bg-[var(--theme-overlay)]',
+                    'p-2 -mr-2 rounded-full',
+                    'text-zinc-400 dark:text-zinc-500',
+                    'hover:bg-zinc-100 hover:text-zinc-900',
+                    'dark:hover:bg-white/10 dark:hover:text-white',
                     'transition-colors duration-150'
                   )}
                 >
@@ -187,7 +190,7 @@ function DesktopDialog({
 
               {/* Footer */}
               {footer && (
-                <div className="px-5 py-4 border-t border-[var(--theme-border)] bg-[var(--theme-overlay)]/50 rounded-b-xl">
+                <div className="px-5 py-4 border-t border-zinc-200 dark:border-white/5 bg-zinc-50/80 dark:bg-white/[0.02] rounded-b-2xl">
                   {footer}
                 </div>
               )}
@@ -289,36 +292,40 @@ function MobileSheet({
             onDragEnd={handleDragEnd}
             className={cn(
               'fixed bottom-0 left-0 right-0 z-[1201]',
-              'max-h-[85vh] overflow-hidden rounded-t-2xl',
-              'bg-[var(--theme-panel)] border-t border-[var(--theme-border)]',
-              'shadow-[0_-4px_24px_rgba(0,0,0,0.12)]',
-              'pb-[env(safe-area-inset-bottom)]'
+              // Premium: rounder corners (3xl = 24px radius)
+              'max-h-[90vh] overflow-hidden rounded-t-3xl',
+              'bg-white/95 dark:bg-zinc-950/95',
+              'backdrop-blur-xl',
+              'border-t border-zinc-200 dark:border-white/10',
+              'shadow-[0_-8px_32px_rgba(0,0,0,0.12)] dark:shadow-[0_-8px_32px_rgba(0,0,0,0.5)]'
             )}
           >
-            {/* Drag Handle */}
-            <div className="sticky top-0 z-10 flex justify-center py-3 bg-[var(--theme-panel)]">
-              <div className="h-1 w-10 rounded-full bg-[var(--theme-border)]" />
+            {/* Drag Handle - larger for better touch affordance */}
+            <div className="sticky top-0 z-10 flex justify-center pt-3 pb-2 bg-white/95 dark:bg-zinc-950/95">
+              <div className="w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700/50" />
             </div>
 
             {/* Header */}
             <div className="flex items-start justify-between px-4 pb-3">
               <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold text-[var(--theme-text)]">
+                <h2 className="text-base font-semibold text-zinc-900 dark:text-white">
                   {title}
                 </h2>
                 {hint && (
-                  <p className="text-xs text-[var(--theme-text-muted)] mt-0.5">
+                  <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-0.5 font-medium">
                     {hint}
                   </p>
                 )}
               </div>
+              {/* Close button with larger hit area for touch */}
               <button
                 type="button"
                 onClick={() => onOpenChange(false)}
                 className={cn(
-                  'p-2 -mr-2 rounded-full',
-                  'text-[var(--theme-text-muted)]',
-                  'hover:bg-[var(--theme-overlay)]',
+                  'p-3 -mr-3 rounded-full',
+                  'text-zinc-400 dark:text-zinc-500',
+                  'hover:bg-zinc-100 hover:text-zinc-900',
+                  'dark:hover:bg-white/10 dark:hover:text-white',
                   'transition-colors duration-150'
                 )}
               >
@@ -337,9 +344,15 @@ function MobileSheet({
               {children}
             </div>
 
-            {/* Footer */}
+            {/* Footer - with iOS safe area padding */}
             {footer && (
-              <div className="sticky bottom-0 px-4 py-4 border-t border-[var(--theme-border)] bg-[var(--theme-panel)]">
+              <div className={cn(
+                'sticky bottom-0 px-4 py-4',
+                'border-t border-zinc-200 dark:border-white/5',
+                'bg-white/95 dark:bg-zinc-950/95',
+                // Critical: Respect iOS Home Indicator
+                'pb-[calc(1rem+env(safe-area-inset-bottom))]'
+              )}>
                 {footer}
               </div>
             )}

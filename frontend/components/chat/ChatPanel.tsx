@@ -1,6 +1,7 @@
 // frontend/components/ChatPanel.tsx
 'use client';
 
+import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUp, Cpu, RotateCcw, Sparkles, Square } from 'lucide-react';
 import {
   forwardRef,
@@ -53,6 +54,7 @@ import { CollapsedMessageRow } from './CollapsedMessageRow';
 import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { MobileChatCompactHeader } from './MobileChatCompactHeader';
+import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 // NodeProgress removed - replaced by Live Logic Status Pill above input
 import { PlanModeHint } from './PlanModeHint';
 import { SystemAckLine } from './SystemAckLine';
@@ -146,9 +148,9 @@ const MARKDOWN_COMPONENTS = {
   p: ({ children }: { children?: React.ReactNode }) => (
     <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
   ),
-  // Bold text with emphasis - amber color for key variables (dates, prices, locations)
+  // Bold text with emphasis - zinc for key variables (dates, prices, locations)
   strong: ({ children }: { children?: React.ReactNode }) => (
-    <strong className="font-semibold text-amber-500">{children}</strong>
+    <strong className="font-semibold text-zinc-900 dark:text-emerald-400">{children}</strong>
   ),
   // Italic text
   em: ({ children }: { children?: React.ReactNode }) => (
@@ -203,7 +205,7 @@ const MARKDOWN_COMPONENTS = {
               })
             );
           }}
-          className="text-amber-500 font-semibold hover:underline cursor-pointer inline"
+          className="text-zinc-900 dark:text-emerald-400 font-semibold hover:underline cursor-pointer inline"
         >
           {children}
         </button>
@@ -448,6 +450,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
     // Track which messages are collapsed (by message ID)
     const [collapsedMessages, setCollapsedMessages] = useState<Set<string>>(new Set());
+    // Mobile Setup header collapse state - triggers when scroll > 50px
+    const [isSetupHeaderCollapsed, setIsSetupHeaderCollapsed] = useState(false);
     // Track last user message ID for ack updates
     const lastUserMsgIdRef = useRef<string | null>(null);
     // Track last system event ID for updating status on completion
@@ -600,9 +604,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     }, [smoothScrollTo]);
 
     // Track user scroll position to avoid fighting user scroll
+    // Also track scroll position for mobile setup header collapse (threshold: 50px)
     const handleScroll = useCallback(() => {
       isUserScrolledUpRef.current = !isNearBottom();
-    }, [isNearBottom]);
+
+      // Mobile setup header collapse: collapse when scrolled past 50px
+      const container = scrollContainerRef.current;
+      if (container && !isDesktop) {
+        const shouldCollapse = container.scrollTop > 50;
+        setIsSetupHeaderCollapsed(shouldCollapse);
+      }
+    }, [isNearBottom, isDesktop]);
 
     // Scroll the page to bring chat panel into view (used after send/receive)
     const scrollPanelIntoView = useCallback(() => {
@@ -1096,42 +1108,64 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ref={panelRef}
         className={`text-foreground flex ${panelHeightClass} min-h-0 w-full flex-col gap-4 transition-[min-height,max-height] duration-300 bg-transparent p-4`}
       >
-        {/* Mobile Hero Banner - Compact topo with branding (Setup phase only) */}
+        {/* Mobile Setup Header - Collapsed/Expanded state based on scroll */}
+        {/* When scrolled > 50px, collapse to compact glass bar */}
         {!isDesktop && planViewState === 'S0_BOOTSTRAP' && (
-          <div className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30">
-            {/* Topo pattern layer - boosted opacity for retina mobile visibility */}
-            <div
-              className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
-              style={{
-                maskImage: 'url("/assets/contours.svg")',
-                WebkitMaskImage: 'url("/assets/contours.svg")',
-                maskSize: '350px',
-                WebkitMaskSize: '350px',
-                maskRepeat: 'repeat',
-                WebkitMaskRepeat: 'repeat',
-                maskPosition: '0% 0%',
-                WebkitMaskPosition: '0% 0%',
-                willChange: '-webkit-mask-position, mask-position',
-              }}
-            >
-              {/* Black background for max contrast in light mode */}
-              <div className="absolute inset-0 bg-black dark:bg-white" />
-            </div>
+          <AnimatePresence mode="wait">
+            {isSetupHeaderCollapsed ? (
+              <MobileSetupCollapsedHeader
+                key="collapsed-header"
+                tripInputs={tripInputs}
+                dateRange={dateRange}
+                onExpand={() => {
+                  // Scroll back to top to expand
+                  scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+              />
+            ) : (
+              <motion.div
+                key="hero-banner"
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="relative -mx-4 -mt-4 mb-0 w-[calc(100%+2rem)] overflow-hidden border-b border-border/30"
+              >
+                {/* Topo pattern layer - boosted opacity for retina mobile visibility */}
+                <div
+                  className="absolute inset-0 animate-topo-drift opacity-[0.12] dark:opacity-[0.08]"
+                  style={{
+                    maskImage: 'url("/assets/contours.svg")',
+                    WebkitMaskImage: 'url("/assets/contours.svg")',
+                    maskSize: '350px',
+                    WebkitMaskSize: '350px',
+                    maskRepeat: 'repeat',
+                    WebkitMaskRepeat: 'repeat',
+                    maskPosition: '0% 0%',
+                    WebkitMaskPosition: '0% 0%',
+                    willChange: '-webkit-mask-position, mask-position',
+                  }}
+                >
+                  {/* Black background for max contrast in light mode */}
+                  <div className="absolute inset-0 bg-black dark:bg-white" />
+                </div>
 
-            {/* Content - padding-based height for tighter fit */}
-            <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
-              <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
-                Where to next?
-              </h1>
-              {/* Breathing cursor indicator - tight spacing */}
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400 dark:text-emerald-400/60">
-                  Awaiting Input
-                </span>
-                <div className="w-1 h-1.5 bg-zinc-400 dark:bg-emerald-400 animate-blink rounded-sm" />
-              </div>
-            </div>
-          </div>
+                {/* Content - padding-based height for tighter fit */}
+                <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
+                  <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
+                    Where to next?
+                  </h1>
+                  {/* Breathing cursor indicator - tight spacing */}
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-zinc-400 dark:text-emerald-400/60">
+                      Awaiting Input
+                    </span>
+                    <div className="w-1 h-1.5 bg-zinc-400 dark:bg-emerald-400 animate-blink rounded-sm" />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         )}
 
         {/* Mobile Compact Header - shown after plan generation (replaces hero) */}
@@ -1146,8 +1180,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         {/* Unified Chip Row - two-row layout: core constraints + module toggles */}
         {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
-        {/* Show UnifiedChipRow in S0 only (bootstrap phase) */}
-        {planViewState === 'S0_BOOTSTRAP' && (
+        {/* Show UnifiedChipRow in S0 only (bootstrap phase) - hide when mobile header is collapsed */}
+        {planViewState === 'S0_BOOTSTRAP' && (!isSetupHeaderCollapsed || isDesktop) && (
           <UnifiedChipRow
             destination={destination}
             origin={origin}
@@ -1282,17 +1316,32 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                       <div
                         className={
                           isUserMessage
-                            ? 'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 bg-zinc-900 text-white border border-zinc-900 hover:bg-zinc-800 hover:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-100 dark:border-zinc-700/50 dark:hover:border-zinc-600/60'
+                            ? cn(
+                                // Shape: Speech bubble with sharp bottom-right corner
+                                'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
+                                // Light Mode: Solid Black (The Commander)
+                                'bg-zinc-900 text-white border border-zinc-900',
+                                'shadow-md hover:shadow-lg hover:-translate-y-0.5',
+                                'hover:bg-zinc-800 hover:border-zinc-800',
+                                // Dark Mode: Solid White (Maximum Contrast Signal)
+                                'dark:bg-white dark:text-zinc-950 dark:border-white',
+                                'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
+                                'dark:hover:bg-zinc-100'
+                              )
                             : cn(
                                 // Shape: Speech bubble with sharp bottom-left corner
                                 'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
-                                // Light Mode: Pure white card that POPS off the page
-                                'bg-white border border-zinc-100 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.05)]',
-                                'hover:shadow-[0_4px_12px_-4px_rgba(0,0,0,0.08)] hover:-translate-y-0.5',
-                                // Dark Mode: Deep glass panel
-                                'dark:bg-zinc-800/70 dark:backdrop-blur-sm dark:border-white/10 dark:shadow-none',
+                                // Light Mode: Glass effect
+                                'bg-white/80 backdrop-blur-sm',
+                                'border border-zinc-200',
+                                'shadow-sm',
+                                'hover:shadow-md hover:-translate-y-0.5',
+                                // Dark Mode: Dark Glass (The System/Infrastructure)
+                                'dark:bg-white/5 dark:backdrop-blur-sm',
+                                'dark:border-white/10',
+                                'dark:shadow-none',
                                 // Text: High contrast
-                                'text-zinc-800 dark:text-zinc-200',
+                                'text-zinc-700 dark:text-zinc-300',
                                 isStreaming && 'typing-pulse'
                               )
                         }
@@ -1369,7 +1418,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {effectiveSuggestions.length > 0 && !isLoading && !showSuggestions && (
             <div
               key={`suggestions-container-${effectiveSuggestions.length}`}
-              className="flex flex-wrap justify-center gap-1.5 pt-3 pb-1 px-2"
+              className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
             >
               {effectiveSuggestions.map((suggestion, idx) => (
                 <button
@@ -1381,7 +1430,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     // Pass suggestion_clicked to enable LQA echo in backend
                     sendMessageCore(suggestion, { suggestionClicked: suggestion });
                   }}
-                  className="text-xs px-3 py-1.5 rounded-full bg-gradient-to-b from-card to-muted/40 border border-border/60 hover:border-primary/40 text-foreground/70 hover:text-primary shadow-pill-accent hover:shadow-pill-hover transition-all duration-200 max-w-full truncate"
+                  className={cn(
+                    'px-4 py-2 rounded-lg',
+                    'bg-white dark:bg-transparent',
+                    'border border-zinc-200 dark:border-white/10',
+                    'shadow-[0_2px_4px_rgba(0,0,0,0.02)]',
+                    'text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide',
+                    'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-md',
+                    'dark:hover:border-white/30 dark:hover:text-white',
+                    'transition-all active:scale-95',
+                    'max-w-full truncate'
+                  )}
                 >
                   {suggestion}
                 </button>
@@ -1411,22 +1470,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           {/* Action Bar: Unified Capsule Design */}
           {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
           <div
-            className={`
-              relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300
-              border bg-white dark:bg-zinc-900
-              shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]
-              ${readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
-                ? 'border-emerald-500/50 ring-1 ring-emerald-500/30'
-                : 'border-zinc-200 dark:border-zinc-800'
-              }
-            `}
+            className={cn(
+              'relative flex items-center w-full h-14 rounded-[28px] transition-all duration-300',
+              'bg-zinc-50 dark:bg-black/40',
+              'shadow-[0_8px_30px_-8px_rgba(0,0,0,0.08)] dark:shadow-[0_8px_30px_-8px_rgba(0,0,0,0.3)]',
+              readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches
+                ? 'border border-emerald-500/50 ring-1 ring-emerald-500/30 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]'
+                : 'border border-zinc-200 dark:border-white/10'
+            )}
           >
             {/* Input Field - takes remaining space */}
             <form onSubmit={handleSubmit} className="flex-1 h-full">
               <textarea
                 ref={inputRef}
                 disabled={isInputDisabledByPlanState}
-                className="w-full h-full bg-transparent text-zinc-900 dark:text-zinc-100 pl-6 pr-2 py-4 text-sm leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-500"
+                className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
                 placeholder={
                   isInputDisabledByPlanState
                     ? 'Updating...'
@@ -1482,11 +1540,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   type="button"
                   onClick={(e) => input.trim() && handleSubmit(e as unknown as React.FormEvent)}
                   disabled={isLoading || !input.trim()}
-                  className={`h-11 w-11 flex items-center justify-center rounded-[22px] transition-all duration-300 ${
+                  className={cn(
+                    'h-11 w-11 flex items-center justify-center rounded-[22px] transition-all duration-300',
                     input.trim() && !isLoading
-                      ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:scale-105 active:scale-95'
-                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
-                  }`}
+                      ? 'bg-zinc-900 text-white hover:bg-zinc-800 hover:scale-105 active:scale-95 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]'
+                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600'
+                  )}
                   title="Send message (Enter)"
                 >
                   <ArrowUp className="h-5 w-5" />

@@ -1,22 +1,24 @@
 /**
  * DatesSheet
  *
- * Sheet for setting travel dates using a range picker.
- * Shows computed nights count.
+ * Premium date picker - clean, headless design.
+ * Deep glass material with emerald accents.
+ * Pills as header, floating close button.
  */
 
 'use client';
 
 import { addDays, differenceInDays, format, isBefore, startOfDay } from 'date-fns';
-import { Calendar } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { X } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 import { DateRange } from 'react-day-picker';
+import { createPortal } from 'react-dom';
 
 import { Calendar as CalendarComponent } from '@/components/ui/calendar';
 import { useToast } from '@/components/ui/toast';
+import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
-
-import { BaseSheet } from './BaseSheet';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -32,10 +34,10 @@ export interface DatesSheetProps {
 
 // Quick presets
 const DATE_PRESETS = [
-  { label: 'This weekend', getDates: () => getThisWeekend() },
-  { label: 'Next weekend', getDates: () => getNextWeekend() },
-  { label: '1 week', getDates: () => getWeekFromNow(1) },
-  { label: '2 weeks', getDates: () => getWeekFromNow(2) },
+  { label: 'This Weekend', getDates: () => getThisWeekend() },
+  { label: 'Next Week', getDates: () => getNextWeekend() },
+  { label: '1 Week', getDates: () => getWeekFromNow(1) },
+  { label: '2 Weeks', getDates: () => getWeekFromNow(2) },
 ];
 
 function getThisWeekend(): { from: Date; to: Date } {
@@ -71,9 +73,15 @@ function DatesSheetInner({
   onSave,
 }: DatesSheetProps) {
   const { toast } = useToast();
+  const { isDesktop } = useMobileMode();
   const [range, setRange] = useState<DateRange | undefined>(undefined);
-  // Track if user is starting a new selection (clicked once, waiting for second click)
-  const [_isSelectingNewRange, setIsSelectingNewRange] = useState(false);
+  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  // SSR safety
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Initialize from props when opened
   useEffect(() => {
@@ -83,154 +91,242 @@ function DatesSheetInner({
       } else {
         setRange(undefined);
       }
-      setIsSelectingNewRange(false);
+      setActivePreset(null);
     }
   }, [open, startDate, endDate]);
 
-  // Computed nights
-  const nights = range?.from && range?.to ? differenceInDays(range.to, range.from) : 0;
+  // Close on escape
+  useEffect(() => {
+    if (!open) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onOpenChange(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [open, onOpenChange]);
 
-  // Format date range for display
-  const formatDateRange = useCallback((from: Date, to: Date): string => {
-    const fromStr = format(from, 'MMM d');
-    const toStr = format(to, 'MMM d');
-    return `${fromStr}–${toStr}`;
-  }, []);
+  // Prevent body scroll
+  useEffect(() => {
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [open]);
+
+  // Computed values
+  const nights = range?.from && range?.to ? differenceInDays(range.to, range.from) : 0;
+  const days = nights + 1;
+
+  // Format duration display
+  const durationDisplay = (() => {
+    if (!range?.from || !range?.to) return 'Select dates';
+    const fromStr = format(range.from, 'MMM d');
+    const toStr = format(range.to, 'MMM d');
+    return `${fromStr} — ${toStr} (${days} Day${days !== 1 ? 's' : ''})`;
+  })();
 
   // Handle save
   const handleSave = useCallback(() => {
     if (!range?.from || !range?.to) return;
-
     onSave(range.from, range.to);
-    toast(`Dates set: ${formatDateRange(range.from, range.to)}`);
+    toast(`Dates set: ${format(range.from, 'MMM d')}–${format(range.to, 'MMM d')}`);
     onOpenChange(false);
-  }, [range, onSave, toast, formatDateRange, onOpenChange]);
+  }, [range, onSave, toast, onOpenChange]);
 
   // Handle preset click
-  const handlePreset = useCallback((preset: typeof DATE_PRESETS[0]) => {
+  const handlePreset = useCallback((preset: (typeof DATE_PRESETS)[0]) => {
     const { from, to } = preset.getDates();
     setRange({ from, to });
+    setActivePreset(preset.label);
   }, []);
 
   // Handle calendar select
-  // react-day-picker v9 range mode behavior:
-  // - Click 1: sets 'from' (start date)
-  // - Click 2: sets 'to' (end date), completing the range
-  // - Click when range is complete: resets to new 'from'
   const handleSelect = useCallback((newRange: DateRange | undefined) => {
-    // Track selection state for UI feedback
-    if (newRange?.from && !newRange?.to) {
-      setIsSelectingNewRange(true);
-    } else {
-      setIsSelectingNewRange(false);
-    }
     setRange(newRange);
+    setActivePreset(null);
+  }, []);
+
+  // Handle clear
+  const handleClear = useCallback(() => {
+    setRange(undefined);
+    setActivePreset(null);
   }, []);
 
   const canSave = range?.from && range?.to;
   const today = startOfDay(new Date());
 
-  return (
-    <BaseSheet
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Dates"
-      hint="When are you traveling?"
-      maxWidth="2xl"
-      footer={
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-[var(--theme-text-muted)]">
-            {nights > 0 ? (
-              <span>
-                <Calendar className="inline h-4 w-4 mr-1" />
-                {nights} night{nights !== 1 ? 's' : ''}
-              </span>
-            ) : (
-              <span>Select dates</span>
-            )}
-          </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => onOpenChange(false)}
-              className={cn(
-                'px-4 py-2.5 rounded-lg text-sm font-medium',
-                'border border-[var(--theme-border)]',
-                'text-[var(--theme-text-muted)]',
-                'hover:bg-[var(--theme-overlay)]',
-                'transition-colors'
-              )}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={!canSave}
-              className={cn(
-                'px-4 py-2.5 rounded-lg text-sm font-medium',
-                'transition-colors',
-                canSave
-                  ? 'bg-amber-500 text-white hover:bg-amber-600'
-                  : 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600 cursor-not-allowed'
-              )}
-            >
-              Save
-            </button>
-          </div>
-        </div>
-      }
-    >
-      <div className="space-y-4">
-        {/* Quick presets */}
-        <div className="flex flex-wrap gap-2">
-          {DATE_PRESETS.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              onClick={() => handlePreset(preset)}
-              className={cn(
-                'px-3 py-1.5 rounded-full text-sm',
-                'bg-[var(--theme-overlay)] border border-[var(--theme-border)]',
-                'text-[var(--theme-text)]',
-                'hover:border-amber-500/50 hover:bg-amber-500/10',
-                'transition-colors'
-              )}
-            >
-              {preset.label}
-            </button>
-          ))}
-        </div>
+  if (!mounted) return null;
 
-        {/* Calendar - Booking.com style with 2 months */}
-        <div className="flex justify-center">
-          <CalendarComponent
-            mode="range"
-            selected={range}
-            onSelect={handleSelect}
-            numberOfMonths={2}
-            disabled={(date) => isBefore(date, today)}
-            className="rounded-lg border border-[var(--theme-border)] p-4"
+  const content = (
+    <AnimatePresence>
+      {open && (
+        <>
+          {/* Backdrop */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="fixed inset-0 z-[1200] bg-black/60 backdrop-blur-sm"
+            onClick={() => onOpenChange(false)}
           />
-        </div>
 
-        {/* Selected range display */}
-        {range?.from && (
-          <div className="text-center text-sm text-[var(--theme-text)]">
-            {range.to ? (
-              <>
-                {format(range.from, 'EEEE, MMM d')} – {format(range.to, 'EEEE, MMM d')}
-              </>
-            ) : (
-              <span className="text-amber-500">
-                {format(range.from, 'EEEE, MMM d')} – Select end date
-              </span>
-            )}
+          {/* THE GLASS MONOLITH */}
+          <div
+            className="fixed inset-0 z-[1201] flex items-center justify-center p-4"
+            onClick={(e) => e.target === e.currentTarget && onOpenChange(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', damping: 30, stiffness: 400 }}
+              className={cn(
+                // SIZE & SHAPE
+                'relative max-w-2xl w-full',
+                'p-0 gap-0 overflow-hidden',
+                'rounded-2xl',
+                // MATERIAL: White Paper (Light) / Deep Glass (Dark)
+                'bg-white/95 dark:bg-zinc-950/95',
+                'backdrop-blur-xl',
+                'border border-zinc-200 dark:border-white/10',
+                'shadow-[0_20px_50px_rgba(0,0,0,0.1)] dark:shadow-2xl dark:shadow-black/80',
+                // Mobile
+                !isDesktop && 'max-w-[95vw]'
+              )}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* FLOATING CLOSE BUTTON */}
+              <button
+                type="button"
+                onClick={() => onOpenChange(false)}
+                className={cn(
+                  'absolute right-4 top-4 z-50',
+                  'p-2 rounded-full',
+                  'text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100',
+                  'dark:text-zinc-500 dark:hover:text-white dark:hover:bg-white/10',
+                  'transition-all'
+                )}
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              {/* SECTION 1: HEADER + QUICK SELECTORS */}
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              <div className="pt-6 px-6 pb-4 border-b border-zinc-100 dark:border-white/5">
+                {/* Header */}
+                <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500 dark:text-zinc-500 mb-4">
+                  Timeline
+                </h2>
+                {/* Quick Select Pills - High Contrast Wireframe Look */}
+                <div className="flex flex-wrap gap-2">
+                  {DATE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => handlePreset(preset)}
+                      className={cn(
+                        'px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide',
+                        'transition-all duration-200',
+                        activePreset === preset.label
+                          // Selected: Solid Black (Light) / Solid White (Dark)
+                          ? 'bg-zinc-900 text-white dark:bg-white dark:text-black shadow-md'
+                          // Unselected: White with border
+                          : cn(
+                              'border border-zinc-200 dark:border-white/10',
+                              'text-zinc-600 dark:text-zinc-400',
+                              'hover:border-zinc-900 hover:bg-zinc-50 dark:hover:border-white/30 dark:hover:bg-white/5'
+                            )
+                      )}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              {/* SECTION 2: CALENDAR BODY */}
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              <div
+                className={cn(
+                  'p-6 w-full flex justify-center',
+                  !isDesktop && 'overflow-x-auto'
+                )}
+              >
+                <CalendarComponent
+                  mode="range"
+                  selected={range}
+                  onSelect={handleSelect}
+                  numberOfMonths={isDesktop ? 2 : 1}
+                  disabled={(date) => isBefore(date, today)}
+                  className="p-0"
+                />
+              </div>
+
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              {/* SECTION 3: FOOTER */}
+              {/* ═══════════════════════════════════════════════════════════════ */}
+              <div className={cn(
+                'p-4 px-6 flex items-center justify-between',
+                'border-t border-zinc-100 dark:border-white/5',
+                'bg-zinc-50/50 dark:bg-zinc-900/50'
+              )}>
+                {/* Selection Display */}
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-zinc-400 dark:text-zinc-500 font-bold uppercase tracking-wider mb-0.5">
+                    Selection
+                  </span>
+                  <span className="text-sm font-bold text-zinc-900 dark:text-white tracking-wide">
+                    {durationDisplay}
+                  </span>
+                </div>
+
+                {/* Actions */}
+                <div className="flex gap-2 items-center">
+                  {range && (
+                    <button
+                      type="button"
+                      onClick={handleClear}
+                      className={cn(
+                        'px-4 py-2 text-xs font-bold transition-colors',
+                        'text-zinc-500 hover:text-zinc-900 dark:hover:text-white'
+                      )}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={!canSave}
+                    className={cn(
+                      'px-6 py-2.5 rounded-xl',
+                      'text-xs font-bold uppercase tracking-widest',
+                      'transition-all duration-200 active:scale-95',
+                      canSave
+                        // Light: Solid Black / Dark: Glowing Emerald
+                        ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
+                    )}
+                  >
+                    Apply Dates
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           </div>
-        )}
-      </div>
-    </BaseSheet>
+        </>
+      )}
+    </AnimatePresence>
   );
+
+  return createPortal(content, document.body);
 }
 
 export const DatesSheet = memo(DatesSheetInner);

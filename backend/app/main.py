@@ -2530,8 +2530,10 @@ async def expand_itinerary_endpoint(
                     "strategy_stage": 3,  # Force Stage 3
                     "strategy_sections": strategy_sections_data,
                     "executed_strategy_topics": executed_topics,
-                    # Pass tiles if provided
-                    "tiles": req.tiles if req.tiles else None,
+                    # Note: Frontend tiles are keyed by ID (e.g., "curated_...": {})
+                    # but GraphStateV2.tiles expects category keys (e.g., "flights": [])
+                    # Don't pass incompatible frontend tiles to planner
+                    "tiles": {},
                 },
                 "today_iso": compute_today_iso(),
             }

@@ -64,5 +64,19 @@
     "**/dist": true,
     "**/build": true,
     "**/.next": true
-  }
+  },
+
+  // PERFORMANCE: Reduce file watcher memory usage
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/__pycache__/**": true,
+    "**/db-data/**": true,
+    "**/.venv/**": true
+  },
+
+  // PERFORMANCE: Limit TypeScript server memory
+  "typescript.tsserver.maxTsServerMemory": 2048
 }

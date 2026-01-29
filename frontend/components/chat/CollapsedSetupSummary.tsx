@@ -8,7 +8,7 @@
 
 'use client';
 
-import { ChevronDown, MessageSquare, Sparkles } from 'lucide-react';
+import { ChevronDown, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import { cn } from '@/lib/utils';
@@ -118,28 +118,17 @@ function TripBrief({ tripInputs, executedTopics }: TripBriefProps) {
           </span>
         </div>
 
-        {/* Preference pills */}
+        {/* Preference pills - monochromatic design */}
         <div className="px-3 pb-3 flex flex-wrap gap-1.5">
           {preferences.map((pref, i) => (
             <span
               key={i}
               className={cn(
-                'text-xs px-2 py-0.5 rounded-full font-medium transition-colors',
-                // Activity pills: Emerald theme
-                pref.variant === 'activity' && cn(
-                  'bg-emerald-100 text-emerald-700 border border-emerald-200',
-                  'dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20'
-                ),
-                // Setting pills: Blue theme
-                pref.variant === 'setting' && cn(
-                  'bg-blue-100 text-blue-700 border border-blue-200',
-                  'dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20'
-                ),
-                // Topic pills: Neutral theme
-                pref.variant === 'topic' && cn(
-                  'bg-zinc-200 text-zinc-700 border border-zinc-300',
-                  'dark:bg-zinc-700/50 dark:text-zinc-400 dark:border-zinc-600/30'
-                )
+                'text-xs px-2.5 py-1 rounded-lg font-medium transition-colors',
+                // All pills: Monochromatic zinc styling
+                'bg-white dark:bg-transparent',
+                'border border-zinc-200 dark:border-white/10',
+                'text-zinc-600 dark:text-zinc-400'
               )}
             >
               {pref.label}
@@ -253,8 +242,18 @@ export function CollapsedSetupSummary({
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // CARD VARIANT: Full card with shadow (default, for desktop)
+  // CARD VARIANT: System Status card design
   // ─────────────────────────────────────────────────────────────────────────────
+
+  // Extract summary parts from summaryText for data display
+  // Format: "Setup complete: Dubai · Jan 25-Feb 1 · 1 adult"
+  const summaryParts = summaryText
+    .replace(/^(Setup complete:|Trip configured:)\s*/i, '')
+    .split(' · ')
+    .filter(Boolean);
+  const primaryInfo = summaryParts[0] || '';
+  const secondaryInfo = summaryParts.slice(1).join(' · ');
+
   return (
     <div className="my-4 relative">
       {/* Visual divider line above - "chapter break" between Setup and Plan */}
@@ -262,33 +261,61 @@ export function CollapsedSetupSummary({
         <div className="flex-1 h-px bg-gradient-to-r from-transparent via-zinc-300 dark:via-zinc-700/60 to-transparent" />
       </div>
 
-      {/* Collapsed header */}
+      {/* System Status Card */}
       <button
         type="button"
         onClick={handleClick}
         className={cn(
-          'w-full flex items-center gap-2 px-4 py-3 rounded-xl',
-          'text-left text-xs font-medium transition-all duration-200',
-          // Light: Pure white card that pops against grey background
-          'bg-white border border-zinc-200 shadow-sm hover:shadow-md hover:border-zinc-300',
-          // Dark: Glass panel
-          'dark:bg-zinc-800/40 dark:hover:bg-zinc-800/60 dark:border-zinc-700/40 dark:shadow-none',
+          'w-full p-3 rounded-xl',
+          'flex items-center justify-between',
+          'text-left transition-colors cursor-pointer',
+          // Light: Subtle grey card
+          'bg-zinc-50 border border-zinc-200',
+          'hover:border-zinc-300',
+          // Dark: Transparent dark panel
+          'dark:bg-white/[0.02] dark:border-white/10',
+          'dark:hover:border-white/20',
           'group'
         )}
       >
-        {/* Status dot indicator */}
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />
-        <MessageSquare className="h-3.5 w-3.5 text-zinc-400 dark:text-zinc-500 flex-shrink-0" />
-        <span className="flex-1 text-zinc-900 dark:text-zinc-300 truncate">
-          {summaryText.replace('Setup complete:', 'Trip configured:')}
-        </span>
-        <ChevronDown
-          className={cn(
-            'h-4 w-4 text-zinc-400 dark:text-zinc-600 transition-transform duration-200',
-            'group-hover:text-zinc-600 dark:group-hover:text-zinc-400',
-            isExpanded && 'rotate-180'
-          )}
-        />
+        {/* Left: Status Indicator */}
+        <div className="flex items-center gap-3">
+          {/* Pulsing emerald dot */}
+          <div className="relative flex h-2.5 w-2.5">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+          </div>
+
+          <div className="flex flex-col">
+            <span className="text-[10px] uppercase font-bold text-zinc-400 dark:text-zinc-500 tracking-wider">
+              System Status
+            </span>
+            <span className="text-xs font-bold text-zinc-900 dark:text-white font-mono">
+              CONFIG_READY
+            </span>
+          </div>
+        </div>
+
+        {/* Right: Summary Data */}
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+              {primaryInfo}
+            </div>
+            {secondaryInfo && (
+              <div className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                {secondaryInfo}
+              </div>
+            )}
+          </div>
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 text-zinc-400 dark:text-zinc-600 transition-transform duration-200',
+              'group-hover:text-zinc-600 dark:group-hover:text-zinc-400',
+              isExpanded && 'rotate-180'
+            )}
+          />
+        </div>
       </button>
 
       {/* Expanded content - prioritize Trip Brief over original messages */}

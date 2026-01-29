@@ -132,10 +132,10 @@ function BudgetSheetInner({
             type="button"
             onClick={() => onOpenChange(false)}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-lg text-sm font-medium',
-              'border border-[var(--theme-border)]',
-              'text-[var(--theme-text-muted)]',
-              'hover:bg-[var(--theme-overlay)]',
+              'flex-1 px-4 py-2.5 rounded-xl text-sm font-medium',
+              'text-zinc-500 dark:text-zinc-500',
+              'hover:text-zinc-900 hover:bg-zinc-100',
+              'dark:hover:text-white dark:hover:bg-white/5',
               'transition-colors'
             )}
           >
@@ -146,11 +146,11 @@ function BudgetSheetInner({
             onClick={handleSave}
             disabled={!canSave}
             className={cn(
-              'flex-1 px-4 py-2.5 rounded-lg text-sm font-medium',
-              'transition-colors',
+              'flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold',
+              'transition-all active:scale-[0.98]',
               canSave
-                ? 'bg-amber-500 text-white hover:bg-amber-600'
-                : 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800 dark:text-zinc-600 cursor-not-allowed'
+                ? 'bg-zinc-900 text-white shadow-lg shadow-zinc-900/10 hover:bg-zinc-800 dark:bg-emerald-600 dark:hover:bg-emerald-500 dark:shadow-[0_0_20px_-5px_rgba(16,185,129,0.4)]'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-600 cursor-not-allowed'
             )}
           >
             Save
@@ -161,36 +161,46 @@ function BudgetSheetInner({
       <div className="space-y-5">
         {/* Currency selector */}
         <div>
-          <h3 className="text-xs font-medium text-[var(--theme-text-muted)] uppercase tracking-wide mb-2">
+          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
             Currency
           </h3>
           <div className="flex flex-wrap gap-2">
-            {CURRENCIES.map((curr) => (
-              <button
-                key={curr.code}
-                type="button"
-                onClick={() => setCurrency(curr.code)}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-sm',
-                  'border transition-colors',
-                  currency === curr.code
-                    ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                    : 'border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] hover:border-amber-500/50'
-                )}
-              >
-                {curr.symbol} {curr.code}
-              </button>
-            ))}
+            {CURRENCIES.map((curr) => {
+              const isSelected = currency === curr.code;
+              return (
+                <button
+                  key={curr.code}
+                  type="button"
+                  onClick={() => setCurrency(curr.code)}
+                  className={cn(
+                    'px-4 py-2.5 rounded-lg text-sm font-medium',
+                    'transition-all duration-150',
+                    isSelected
+                      // Selected: Solid Black (Light) / Solid White (Dark)
+                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                      // Inactive: Glass Fill (Dark) - substance, not just outline
+                      : cn(
+                          'bg-white border-2 border-zinc-200 text-zinc-600',
+                          'hover:border-zinc-900 hover:text-zinc-900',
+                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white'
+                        )
+                  )}
+                >
+                  {curr.symbol} {curr.code}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Amount input */}
+        {/* Amount input - THE BIG NUMBER */}
         <div>
-          <h3 className="text-xs font-medium text-[var(--theme-text-muted)] uppercase tracking-wide mb-2">
+          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
             Amount
           </h3>
-          <div className="relative">
-            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-lg text-[var(--theme-text-muted)]">
+          <div className="relative flex justify-center py-8">
+            <span className="text-3xl text-zinc-400 dark:text-zinc-600 font-bold absolute left-6 top-1/2 -translate-y-1/2">
               {currencySymbol}
             </span>
             <input
@@ -201,59 +211,82 @@ function BudgetSheetInner({
               onChange={handleInputChange}
               placeholder="0"
               className={cn(
-                'w-full pl-10 pr-4 py-3 rounded-lg text-lg font-semibold',
-                'bg-[var(--theme-overlay)] border border-[var(--theme-border)]',
-                'text-[var(--theme-text)] placeholder:text-[var(--theme-text-muted)]',
-                'focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/50',
-                'transition-colors'
+                'bg-transparent',
+                // HUGE and BOLD - this determines the luxury level
+                'text-5xl font-bold text-center tracking-tight',
+                'text-zinc-900 dark:text-white',
+                'border-none focus:ring-0 w-full',
+                'placeholder:text-zinc-300 dark:placeholder:text-zinc-700',
+                'focus:outline-none',
+                // Matrix caret effect
+                'caret-zinc-900 dark:caret-emerald-500'
               )}
             />
           </div>
 
           {/* Quick presets */}
-          <div className="flex flex-wrap gap-2 mt-3">
-            {AMOUNT_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                onClick={() => handlePreset(preset)}
-                className={cn(
-                  'px-3 py-1.5 rounded-full text-sm',
-                  'bg-[var(--theme-overlay)] border border-[var(--theme-border)]',
-                  'text-[var(--theme-text)]',
-                  'hover:border-amber-500/50 hover:bg-amber-500/10',
-                  'transition-colors',
-                  amount === preset.toString() && 'border-amber-500 bg-amber-500/10'
-                )}
-              >
-                {currencySymbol}{preset >= 1000 ? `${preset / 1000}k` : preset}
-              </button>
-            ))}
+          <div className="flex flex-wrap justify-center gap-2 mt-2">
+            {AMOUNT_PRESETS.map((preset) => {
+              const isSelected = amount === preset.toString();
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handlePreset(preset)}
+                  className={cn(
+                    'px-3.5 py-1.5 rounded-full text-xs font-semibold',
+                    'transition-all duration-150',
+                    isSelected
+                      // Selected: Solid Black / White
+                      ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-black'
+                      // Inactive: Glass Fill
+                      : cn(
+                          'bg-white border border-zinc-200 text-zinc-500',
+                          'hover:border-zinc-400 hover:text-zinc-900',
+                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white'
+                        )
+                  )}
+                >
+                  {currencySymbol}{preset >= 1000 ? `${preset / 1000}k` : preset}
+                </button>
+              );
+            })}
           </div>
         </div>
 
         {/* Budget type selector */}
         <div>
-          <h3 className="text-xs font-medium text-[var(--theme-text-muted)] uppercase tracking-wide mb-2">
+          <h3 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider mb-3">
             Budget basis
           </h3>
           <div className="flex gap-2">
-            {BUDGET_TYPES.map((type) => (
-              <button
-                key={type.value}
-                type="button"
-                onClick={() => setBudgetType(type.value)}
-                className={cn(
-                  'flex-1 px-3 py-2 rounded-lg text-sm',
-                  'border transition-colors',
-                  budgetType === type.value
-                    ? 'border-amber-500 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                    : 'border-[var(--theme-border)] bg-[var(--theme-overlay)] text-[var(--theme-text)] hover:border-amber-500/50'
-                )}
-              >
-                {type.label}
-              </button>
-            ))}
+            {BUDGET_TYPES.map((type) => {
+              const isSelected = budgetType === type.value;
+              return (
+                <button
+                  key={type.value}
+                  type="button"
+                  onClick={() => setBudgetType(type.value)}
+                  className={cn(
+                    'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
+                    'transition-all duration-150',
+                    isSelected
+                      // Selected: Strong emphasis
+                      ? 'bg-zinc-100 text-zinc-900 border-2 border-zinc-900 font-semibold dark:bg-white/10 dark:text-white dark:border-white/40'
+                      // Inactive: Glass Fill
+                      : cn(
+                          'bg-white border-2 border-zinc-200 text-zinc-600',
+                          'hover:border-zinc-900 hover:text-zinc-900',
+                          'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
+                          'dark:hover:bg-white/10 dark:hover:text-white'
+                        )
+                  )}
+                >
+                  {type.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>

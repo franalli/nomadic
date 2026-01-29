@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { memo } from 'react';
 
+import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
 import { type ActivitySettings,type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
 
@@ -158,6 +159,8 @@ interface CoreChipProps {
   isOptional?: boolean;
   /** If true, treat as "default value" - don't highlight even if has value */
   isDefault?: boolean;
+  /** Mobile mode - larger touch targets */
+  isMobile?: boolean;
 }
 
 const CoreChip = memo(function CoreChip({
@@ -167,6 +170,7 @@ const CoreChip = memo(function CoreChip({
   onClick,
   isOptional,
   isDefault = false,
+  isMobile = false,
 }: CoreChipProps) {
   const hasValue = !!value;
   // Only highlight if has user-set value (not default)
@@ -177,37 +181,37 @@ const CoreChip = memo(function CoreChip({
       type="button"
       onClick={onClick}
       className={cn(
-        // Premium Standard: h-9 (36px) - tactile & readable
-        'inline-flex items-center gap-2 h-9 px-3.5 rounded-lg',
+        // Mobile: h-10 (40px) for better touch, Desktop: h-9 (36px)
+        'inline-flex items-center gap-2 rounded-lg flex-shrink-0',
+        isMobile ? 'h-10 px-4' : 'h-9 px-3.5',
         'transition-all duration-200 ease-out active:scale-[0.98]',
         'border',
         // Base state (unfilled) - Light: White card with grey border
         !isHighlighted && [
           'bg-white text-zinc-500 border-zinc-200',
-          'hover:border-emerald-500/50 hover:text-emerald-600',
-          // Dark: glass with subtle border
-          'dark:bg-white/[0.05] dark:text-zinc-400 dark:border-white/[0.10]',
-          'dark:hover:bg-white/[0.10] dark:hover:border-white/20 dark:hover:text-white',
+          'hover:border-zinc-400 hover:text-zinc-900',
+          // Dark: ghost with subtle border
+          'dark:bg-transparent dark:text-zinc-400 dark:border-white/10',
+          'dark:hover:border-white/30 dark:hover:text-white',
         ],
-        // Highlighted state (filled) - Light: Monochrome "Printed Label"
-        // Data is neutral - facts don't need color emphasis
+        // Highlighted state (filled) - Light: Strong zinc border "Printed Label"
         isHighlighted && [
-          'bg-zinc-100 text-zinc-900 border-zinc-300 shadow-sm',
-          'hover:bg-zinc-200 hover:border-zinc-400',
-          // Dark: brighter glass with white text
-          'dark:bg-white/[0.10] dark:text-white dark:border-white/20',
-          'dark:hover:bg-white/[0.15] dark:hover:border-white/30',
+          'bg-zinc-100 text-zinc-900 border-zinc-900 font-bold shadow-sm',
+          'hover:bg-zinc-200',
+          // Dark: white on transparent
+          'dark:bg-white/10 dark:text-white dark:border-white/30',
+          'dark:hover:bg-white/15',
         ],
         // Focus ring
         'focus-visible:outline-none focus-visible:ring-2',
-        'focus-visible:ring-emerald-500/40 dark:focus-visible:ring-white/20'
+        'focus-visible:ring-zinc-900/20 dark:focus-visible:ring-white/20'
       )}
     >
       <Icon
         className={cn(
           'h-4 w-4 flex-shrink-0',
           // Light: dark grey when filled (monochrome), grey when empty
-          isHighlighted ? 'text-zinc-700 dark:text-white' : 'text-zinc-400 dark:text-zinc-500'
+          isHighlighted ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-500'
         )}
       />
       <span className="text-xs font-semibold uppercase tracking-wide truncate max-w-[100px]">
@@ -232,6 +236,8 @@ interface ModuleChipProps {
   state: ModuleState;
   summary?: string | null;
   onClick?: () => void;
+  /** Mobile mode - larger touch targets */
+  isMobile?: boolean;
 }
 
 const ModuleChip = memo(function ModuleChip({
@@ -240,6 +246,7 @@ const ModuleChip = memo(function ModuleChip({
   state,
   summary,
   onClick,
+  isMobile = false,
 }: ModuleChipProps) {
   const isOff = state === 'off';
   const isOnDefault = state === 'on-default';
@@ -251,45 +258,43 @@ const ModuleChip = memo(function ModuleChip({
       type="button"
       onClick={onClick}
       className={cn(
-        // Premium Standard: h-10 (40px) - primary touch target
-        'inline-flex items-center gap-2 h-10 px-5 rounded-full',
+        // Mobile: h-11 (44px) for Apple's minimum, Desktop: h-10 (40px)
+        'inline-flex items-center gap-2 rounded-full flex-shrink-0',
+        isMobile ? 'h-11 px-5' : 'h-10 px-5',
         'transition-all duration-200 ease-out active:scale-[0.95]',
         'border',
-        // Off: Light: white card, Dark: ghost outline
+        // Off: Light: grey ghost, Dark: ghost outline
         isOff && [
-          'bg-white text-zinc-500 border-zinc-200',
-          'hover:bg-zinc-50 hover:text-zinc-900',
+          'bg-zinc-50 text-zinc-400 border-zinc-200',
+          'hover:border-zinc-400 hover:text-zinc-600',
           // Dark: ghost outline
-          'dark:bg-transparent dark:text-zinc-500 dark:border-zinc-800',
-          'dark:hover:border-zinc-700 dark:hover:text-zinc-400',
+          'dark:bg-transparent dark:text-zinc-500 dark:border-white/10',
+          'dark:hover:border-white/30 dark:hover:text-zinc-300',
         ],
-        // On Default: Pastel emerald "Highlighter" - tinted, not solid
-        // Actions are colored but subtle - like a highlighter mark
+        // On Default: Monochromatic - solid black/white
         isOnDefault && [
-          'bg-emerald-50 text-emerald-800 border-emerald-200 shadow-sm',
-          'hover:bg-emerald-100 hover:border-emerald-300',
-          // Dark: emerald glow
-          'dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/50',
-          'dark:shadow-[0_0_15px_-3px_rgba(16,185,129,0.2)]',
-          'dark:hover:border-emerald-500/70 dark:hover:shadow-[0_0_20px_-3px_rgba(16,185,129,0.3)]',
+          'bg-zinc-900 text-white border-zinc-900 shadow-md',
+          'hover:bg-zinc-800',
+          // Dark: solid white
+          'dark:bg-white dark:text-black dark:border-white',
+          'dark:hover:bg-zinc-100',
         ],
-        // On Custom: Slightly stronger pastel with indicator dot
+        // On Custom: Same as default but with indicator dot
         isOnCustom && [
-          'bg-emerald-100 text-emerald-900 border-emerald-300 shadow-sm font-semibold',
-          'hover:bg-emerald-200 hover:border-emerald-400',
-          // Dark: stronger emerald glow
-          'dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-500/70',
-          'dark:shadow-[0_0_20px_-3px_rgba(16,185,129,0.3)]',
-          'dark:hover:border-emerald-400 dark:hover:shadow-[0_0_25px_-3px_rgba(16,185,129,0.4)]',
+          'bg-zinc-900 text-white border-zinc-900 shadow-md font-semibold',
+          'hover:bg-zinc-800',
+          // Dark: solid white
+          'dark:bg-white dark:text-black dark:border-white',
+          'dark:hover:bg-zinc-100',
         ],
         // Focus ring
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40'
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-white/30'
       )}
     >
       <Icon className={cn(
         'h-5 w-5 flex-shrink-0',
-        // Light: emerald when active (pastel bg), grey when off
-        isOff ? 'text-zinc-400 dark:text-zinc-600' : 'text-emerald-700 dark:text-emerald-400'
+        // Monochrome icon colors
+        isOff ? 'text-zinc-400 dark:text-zinc-500' : 'text-white dark:text-black'
       )} />
       <span className="text-sm font-medium">
         {label}
@@ -297,9 +302,9 @@ const ModuleChip = memo(function ModuleChip({
           <span className="ml-1.5 text-xs opacity-75">· {summary}</span>
         )}
       </span>
-      {/* Custom dot indicator */}
+      {/* Custom dot indicator - emerald to show customization */}
       {isOnCustom && (
-        <span className="h-2 w-2 rounded-full bg-emerald-600 dark:bg-emerald-400" />
+        <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-600" />
       )}
     </button>
   );
@@ -332,6 +337,9 @@ function UnifiedChipRowInner({
   onOpenStays,
   onOpenActivities,
 }: UnifiedChipRowProps) {
+  const { isDesktop } = useMobileMode();
+  const isMobile = !isDesktop;
+
   // Determine module chip states (tri-state: suggested or on = enabled)
   const getFlightState = (): ModuleState => {
     if (!isBookingEnabled(bookingTypes.flights)) return 'off';
@@ -352,15 +360,22 @@ function UnifiedChipRowInner({
   const isTravelersDefault = travelers === '1 adult';
 
   return (
-    <div className="flex flex-col gap-4 w-full">
+    <div className="flex flex-col gap-3 w-full">
       {/* DECK 1: TRIP CONTEXT (The Facts) */}
-      {/* Premium tactile buttons, monochrome, wraps naturally */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Mobile: horizontal scroll reel, Desktop: wrap naturally */}
+      <div className={cn(
+        'flex items-center gap-2',
+        // Mobile: horizontal scroll carousel
+        isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
+        // Desktop: natural wrap
+        !isMobile && 'flex-wrap'
+      )}>
         <CoreChip
           icon={MapPin}
           label="Destination"
           value={destination}
           onClick={onOpenDestination}
+          isMobile={isMobile}
         />
 
         <CoreChip
@@ -368,6 +383,7 @@ function UnifiedChipRowInner({
           label="Origin"
           value={origin}
           onClick={onOpenOrigin}
+          isMobile={isMobile}
         />
 
         <CoreChip
@@ -375,6 +391,7 @@ function UnifiedChipRowInner({
           label="Dates"
           value={dateRange}
           onClick={onOpenDates}
+          isMobile={isMobile}
         />
 
         <CoreChip
@@ -383,6 +400,7 @@ function UnifiedChipRowInner({
           value={travelers}
           onClick={onOpenTravelers}
           isDefault={isTravelersDefault}
+          isMobile={isMobile}
         />
 
         <CoreChip
@@ -391,18 +409,26 @@ function UnifiedChipRowInner({
           value={budget}
           onClick={onOpenBudget}
           isOptional
+          isMobile={isMobile}
         />
       </div>
 
       {/* DECK 2: SCOPE TOGGLES (The Tools) */}
-      {/* Premium touch targets, teal accents, highly clickable */}
-      <div className="flex flex-wrap items-center gap-2.5">
+      {/* Mobile: horizontal scroll reel, Desktop: wrap naturally */}
+      <div className={cn(
+        'flex items-center gap-2.5',
+        // Mobile: horizontal scroll carousel
+        isMobile && 'overflow-x-auto no-scrollbar -mx-4 px-4 py-1',
+        // Desktop: natural wrap
+        !isMobile && 'flex-wrap'
+      )}>
         <ModuleChip
           icon={Plane}
           label="Flights"
           state={getFlightState()}
           summary={getFlightChipSummary(flightSettings)}
           onClick={onOpenFlights}
+          isMobile={isMobile}
         />
 
         <ModuleChip
@@ -411,6 +437,7 @@ function UnifiedChipRowInner({
           state={getStaysState()}
           summary={getHotelChipSummary(hotelSettings)}
           onClick={onOpenStays}
+          isMobile={isMobile}
         />
 
         <ModuleChip
@@ -419,6 +446,7 @@ function UnifiedChipRowInner({
           state={getActivitiesState()}
           summary={getActivityChipSummary(activitySettings)}
           onClick={onOpenActivities}
+          isMobile={isMobile}
         />
       </div>
     </div>

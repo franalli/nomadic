@@ -1,7 +1,6 @@
 'use client';
 
 // date-fns imports removed - no longer needed after TripDetailsForm removal
-import { AnimatePresence, motion } from 'framer-motion';
 import { Compass, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -17,7 +16,6 @@ import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { BookingSection } from '@/components/plan/BookingSection';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
-import { TripLengthSheet } from '@/components/plan/TripLengthSheet';
 import {
   BudgetSheet,
   DatesSheet,
@@ -27,6 +25,7 @@ import {
 } from '@/components/planner/sheets';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { useToast } from '@/components/ui/toast';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
@@ -89,18 +88,6 @@ function detectTopicsFromMessage(message: string): string[] {
 }
 
 // Toast notification system
-const MAX_TOASTS = 3;
-const TOAST_DISMISS_MS = 4000;
-const TOAST_DISMISS_FAST_MS = 2000;
-const TOAST_DISMISS_ERROR_MS = 5000;
-const TOAST_DISMISS_CONFIRMATION_MS = 2500;
-
-export interface Toast {
-  id: string;
-  message: string;
-  type: ToastType;
-  createdAt: number;
-}
 
 // Helper to detect which trip input fields changed between two states
 function detectChangedFieldNames(
@@ -187,36 +174,20 @@ export function NomadicLanding() {
     return { ...DEFAULT_TRIP_INPUTS, ...storeTripInputs };
   }, [storeTripInputs]);
 
-  // Toast notification state - supports multiple stacked toasts
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const toastIdRef = useRef(0);
+  // Toast system - use centralized ToastProvider
+  const { toast } = useToast();
+
+  // Wrapper for legacy addToast signature (message, type) -> toast(message, { type })
+  // Maps 'confirmation' type to 'success' since ToastProvider only supports standard types
+  const addToast = useCallback((message: string, type: ToastType = 'info') => {
+    // Map legacy 'confirmation' type to 'success' for the unified toast system
+    const mappedType = type === 'confirmation' ? 'success' : type;
+    toast(message, { type: mappedType as 'success' | 'info' | 'warning' | 'error' });
+  }, [toast]);
 
   // Local UI generation state (fallback if backend doesn't emit generation in envelope)
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
   const [lastGenerationError, setLastGenerationError] = useState<string | null>(null);
-
-  // Add a toast with optional type (defaults to 'info')
-  // Confirmation toasts coalesce (replace existing confirmations) to avoid stacking rapid changes
-  const addToast = useCallback((message: string, type: ToastType = 'info') => {
-    const id = `toast-${++toastIdRef.current}`;
-    const newToast: Toast = { id, message, type, createdAt: Date.now() };
-
-    setToasts((prev) => {
-      // For confirmation toasts, replace any existing confirmation instead of stacking
-      if (type === 'confirmation') {
-        const withoutConfirmations = prev.filter((t) => t.type !== 'confirmation');
-        return [...withoutConfirmations, newToast];
-      }
-      // For other types, apply max limit
-      const updated = prev.length >= MAX_TOASTS ? prev.slice(1) : prev;
-      return [...updated, newToast];
-    });
-  }, []);
-
-  // Remove a specific toast by ID
-  const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
 
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
@@ -239,9 +210,6 @@ export function NomadicLanding() {
 
   // Shortlist hook - manages user's saved tiles in S2
   const shortlist = useShortlist();
-
-  // Sheet states for itinerary validation flow
-  const [tripLengthSheetOpen, setTripLengthSheetOpen] = useState(false);
 
   // Confirmation dialog for destructive Setup click (from Plan/Book mode)
   const [setupConfirmDialogOpen, setSetupConfirmDialogOpen] = useState(false);
@@ -318,9 +286,8 @@ export function NomadicLanding() {
     // Clear destination image
     setDestinationImageUrl(null);
     lastFetchedDestination.current = null;
-    // Close any open sheets (validation + trip input sheets)
-    setTripLengthSheetOpen(false);
-    closeSheet(); // Close any open trip input sheet
+    // Close any open trip input sheet
+    closeSheet();
     // Reset mobile mode to planner view (shows chat/setup)
     if (!isDesktop) {
       switchToPlanner();
@@ -418,38 +385,6 @@ export function NomadicLanding() {
   // Note: resetDraft is accessed via tripInputsEditorRef.current in branchManager callback
   const { handleUpdateAdults, handleUpdateChildren, handleToggleRequiresAssistance } =
     tripInputsEditor;
-
-  // Toast auto-dismiss effect - handles multiple toasts with different timings
-  useEffect(() => {
-    if (toasts.length === 0) return undefined;
-
-    const timers: NodeJS.Timeout[] = [];
-
-    toasts.forEach((toast, index) => {
-      // Calculate dismiss time based on type and queue position
-      let dismissTime = TOAST_DISMISS_MS;
-      if (toast.type === 'error') {
-        dismissTime = TOAST_DISMISS_ERROR_MS;
-      } else if (toast.type === 'confirmation') {
-        dismissTime = TOAST_DISMISS_CONFIRMATION_MS;
-      } else if (toasts.length >= MAX_TOASTS && index === 0) {
-        // Oldest toast when queue is full dismisses faster
-        dismissTime = TOAST_DISMISS_FAST_MS;
-      }
-
-      const elapsed = Date.now() - toast.createdAt;
-      const remaining = Math.max(0, dismissTime - elapsed);
-
-      const timer = setTimeout(() => {
-        removeToast(toast.id);
-      }, remaining);
-      timers.push(timer);
-    });
-
-    return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-    };
-  }, [toasts, removeToast]);
 
   const missingFields = tripInputs.missing_fields ?? [];
 
@@ -860,16 +795,10 @@ export function NomadicLanding() {
 
     const currentTripInputs = storeDocument?.trip_inputs;
 
-    // GATE 1: Check for duration (end_date OR trip_duration - no date_flex requirement)
-    const hasDuration =
-      !!currentTripInputs?.end_date || currentTripInputs?.trip_duration != null;
-    if (!hasDuration) {
-      // Only open TripLengthSheet if we have a start date
-      if (!currentTripInputs?.start_date) {
-        addToast('Set a start date first', 'info');
-        return;
-      }
-      setTripLengthSheetOpen(true);
+    // GATE 1: Just need a start_date - 1-day trips are valid
+    // Backend defaults to 1-day if no end_date specified
+    if (!currentTripInputs?.start_date) {
+      addToast('Set a start date first', 'info');
       return;
     }
 
@@ -878,7 +807,7 @@ export function NomadicLanding() {
     await proceedWithItineraryGeneration();
   }, [storeDocument, addToast, proceedWithItineraryGeneration, isRegenerating]);
 
-  // Handle quick pick from TripLengthSheet or InlineDatePrompt
+  // Handle quick pick from InlineDatePrompt
   const handleSelectNights = useCallback(
     async (nights: number) => {
       const startDate = storeDocument?.trip_inputs?.start_date;
@@ -890,11 +819,8 @@ export function NomadicLanding() {
       // Update trip inputs and await confirmation
       const success = await documentStore.commitTripInputs({ end_date: endDateStr });
 
-      // Close sheet (if open)
-      setTripLengthSheetOpen(false);
-
       // Just confirm the date was set - DON'T auto-trigger expand-itinerary
-      // User clicks "Create day-by-day itinerary" button to continue
+      // User clicks "Build Itinerary" button to continue
       // This prevents race conditions where expand-itinerary runs before plan regenerates
       if (success) {
         addToast('Trip length set', 'confirmation');
@@ -1083,126 +1009,6 @@ export function NomadicLanding() {
     />
   );
 
-  // Toast container elements - rendered outside .appTopo to avoid CSS conflicts
-  const errorToasts = (
-    <div
-      style={{
-        position: 'fixed',
-        top: '16px',
-        right: '16px',
-        zIndex: 9999,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-end',
-        gap: '8px',
-      }}
-    >
-      <AnimatePresence mode="popLayout">
-        {toasts
-          .filter((t) => t.type === 'error')
-          .map((toast) => (
-            <motion.div
-              key={toast.id}
-              layout
-              initial={{ opacity: 0, y: -50, scale: 0.9 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9, y: -20 }}
-              transition={{
-                type: 'spring',
-                stiffness: 500,
-                damping: 35,
-                layout: { type: 'spring', stiffness: 500, damping: 35 },
-              }}
-              role="alert"
-              aria-live="assertive"
-              className="border-destructive/40 bg-destructive/5 dark:bg-destructive/20 text-destructive/70 flex items-center gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg backdrop-blur-sm dark:text-red-200"
-            >
-              <span className="max-w-[260px] truncate sm:max-w-[320px]">
-                {toast.message}
-              </span>
-              <button
-                type="button"
-                className="text-destructive/60 hover:text-destructive/50 text-xs font-semibold transition-colors dark:text-red-300/70 dark:hover:text-red-300"
-                onClick={() => removeToast(toast.id)}
-                aria-label="Dismiss notification"
-              >
-                ✕
-              </button>
-            </motion.div>
-          ))}
-      </AnimatePresence>
-    </div>
-  );
-
-  const successToasts = (
-    <div
-      style={{
-        position: 'fixed',
-        top: '16px',
-        right: '16px',
-        zIndex: 9998, // Slightly below errorToasts so errors appear on top
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-end',
-        gap: '8px',
-        pointerEvents: 'none',
-      }}
-    >
-      <AnimatePresence mode="popLayout">
-        {toasts
-          .filter((t) => t.type !== 'error')
-          .map((toast) => {
-            const typeStyles: Record<string, string> = {
-              success:
-                'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
-              info: 'border-primary/30 bg-primary/5 dark:bg-primary/20 text-primary dark:text-primary-foreground',
-              confirmation:
-                'border-primary/20 bg-primary/5 dark:bg-primary/20 text-primary/80 dark:text-primary-foreground/90',
-            };
-            const buttonStyles: Record<string, string> = {
-              success:
-                'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
-              info: 'text-primary/50 hover:text-primary/70 dark:text-primary-foreground/60 dark:hover:text-primary-foreground',
-              confirmation:
-                'text-primary/40 hover:text-primary/60 dark:text-primary-foreground/50 dark:hover:text-primary-foreground/80',
-            };
-
-            return (
-              <motion.div
-                key={toast.id}
-                layout
-                initial={{ opacity: 0, y: -50, scale: 0.9 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9, y: -20 }}
-                transition={{
-                  type: 'spring',
-                  stiffness: 500,
-                  damping: 35,
-                  layout: { type: 'spring', stiffness: 500, damping: 35 },
-                }}
-                role="status"
-                aria-live="polite"
-                style={{ pointerEvents: 'auto' }}
-                className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm shadow-md backdrop-blur-sm ${typeStyles[toast.type] || typeStyles.info}`}
-              >
-                <span className="max-w-[280px] truncate sm:max-w-[360px]">
-                  {toast.message}
-                </span>
-                <button
-                  type="button"
-                  className={`text-xs font-medium transition-colors ${buttonStyles[toast.type] || buttonStyles.info}`}
-                  onClick={() => removeToast(toast.id)}
-                  aria-label="Dismiss notification"
-                >
-                  ✕
-                </button>
-              </motion.div>
-            );
-          })}
-      </AnimatePresence>
-    </div>
-  );
-
   return (
     <>
       {/* Main app content */}
@@ -1268,23 +1074,6 @@ export function NomadicLanding() {
           hasEverHadPlan={hasEverHadPlan}
         />
       </div>
-
-      {/* Toast containers - rendered outside .appTopo to avoid CSS conflicts */}
-      {errorToasts}
-      {successToasts}
-
-      {/* Validation sheets for itinerary generation */}
-      <TripLengthSheet
-        open={tripLengthSheetOpen}
-        onOpenChange={setTripLengthSheetOpen}
-        startDate={storeDocument?.trip_inputs?.start_date ?? null}
-        onSelectNights={handleSelectNights}
-        onOpenDatePicker={() => {
-          setTripLengthSheetOpen(false);
-          // Delay to let TripLengthSheet close animation finish
-          setTimeout(() => openSheet('dates'), 150);
-        }}
-      />
 
       {/* Destructive action confirmation - when clicking Setup from Plan/Book */}
       <ConfirmDialog
