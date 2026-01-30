@@ -174,3 +174,30 @@ The renderer uses data density to determine what to show:
 3. **Backend is SSoT:** `plan_view_state` from backend determines rendering mode.
 4. **Coordinates Flow:** `[lng, lat]` format preserved from specialist → strategy_sections → DayBlock.
 5. **Dates Gate Plan Navigation:** The Plan tab MUST be locked until `start_date` is set. Strategy content alone does NOT unlock Plan.
+
+---
+
+## X. Mobile Topology & Adaptation
+
+The "Split Screen" desktop architecture translates to a "Tabbed View" on mobile.
+
+### Spatial Translation
+
+| Desktop Concept | Mobile Translation | Behavior |
+| --- | --- | --- |
+| **Right Panel** | **Plan Tab** | The "Canvas" lives behind the "Plan" tab. |
+| **Instant Update** | **Toast Notification** | When backend updates Bridge/Plan state, show a Toast: *"Plan Updated: Diving Strategy Added"* |
+| **Bridge Mode** | **Preview Sheet** | In Setup phase, tapping the Plan tab shows the Strategy Cards + Ghost Timeline. |
+| **Navigation** | **Bottom/Top Bar** | Explicit switching between `Chat` (Commander) and `Plan` (Canvas). |
+
+### Mobile Invariants
+
+1. **Notification of Change:** Since the Canvas is hidden behind a tab, every significant state change (e.g., Strategy Card added) MUST trigger a **Toast** or **Badge Dot** on the Plan tab to alert the user.
+2. **State Persistence:** Switching tabs must NEVER lose the scroll position or drafted message.
+3. **Touch Targets:** All interactive elements must be minimum 44x44px per `design-system.md`.
+4. **Safe Areas:** Respect iOS/Android safe areas for notches and home indicators.
+
+### Cross-Reference
+
+* **Visual Specs:** See `design-system.md` Sections 11 & 12 for mobile styling (touch targets, safe areas, sticky headers).
+* **This Document:** Handles **behavior** (state mapping, notification logic).

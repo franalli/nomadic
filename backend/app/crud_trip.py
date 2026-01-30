@@ -102,23 +102,6 @@ async def get_or_create_session(
     return db_session
 
 
-async def create_trip_context(
-    db: AsyncSession,
-    *,
-    session: models.Session,
-    parent_trip_context: Optional[models.TripContext],
-    req_message: str,
-) -> models.TripContext:
-    ctx = models.TripContext(
-        session_id=session.id,
-        parent_trip_context_id=parent_trip_context.id if parent_trip_context else None,
-        raw_prompt=req_message,
-    )
-    db.add(ctx)
-    await db.flush()
-    return ctx
-
-
 async def get_latest_trip_context_for_session(
     db: AsyncSession,
     *,
