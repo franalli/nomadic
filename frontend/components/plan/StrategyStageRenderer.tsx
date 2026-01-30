@@ -344,66 +344,45 @@ export function StrategyStageRenderer({
   }, []);
 
   // Plan content - heavy, needs persistence
-  // Guard: Show ghost timeline preview if S0_BOOTSTRAP with specialist content
+  // Uses computeDataDensity for unified rendering logic
+  // @see docs/ux_unified_architecture.md Section VII - Data Density Levels
   const planContent = useMemo(() => {
-    if (state === 'S0_BOOTSTRAP') {
-      // Check if we have specialist content for ghost timeline
-      const hasContent = hasSpecialistContent(viewModel.strategy_sections);
-      const tripDuration = effectiveTripInputs?.trip_duration ?? 5;
+    // Compute data density using the SSoT function
+    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
 
-      if (hasContent) {
-        // Generate ghost day cards from specialist content
-        const ghostDayCards = generateGhostDayCards(viewModel.strategy_sections, tripDuration);
-        // Check if we have duration set (for inline date prompt)
-        const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
-
-        return (
-          <div className="p-4">
-            <TimelineThread
-              dayCards={ghostDayCards}
-              isDraft={true}
-              showPriceEstimates={false}
-              // Inline date prompt props
-              hasDuration={ghostHasDuration}
-              startDate={effectiveTripInputs?.start_date ?? null}
-              onSelectNights={onSelectNights}
-              onOpenDatePicker={() => onOpenSheet?.('dates')}
-            />
-            {/* CTA hint at bottom */}
-            <div className="text-center pt-4 pb-8">
-              <p className="text-sm text-muted-foreground">
-                Activities from your specialists. Click &ldquo;Build Plan&rdquo; to see the full itinerary.
-              </p>
-            </div>
-          </div>
-        );
-      }
-
-      // Zero-UI: No content in center for S0_BOOTSTRAP
-      // Hero banner handles all messaging, center stays clean
-      // Ghost timeline will appear here when specialist content is available
+    // EMPTY: S0 without specialist content - hero is the view
+    if (density === 'empty') {
       return null;
     }
 
-    // Bridge Mode Detection: S2 with specialist content but no tiles/dates
-    // Shows Strategy Cards + Sample Day Flow + POI Map to inspire users before dates are set
-    const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
-    const hasDateSet = !!effectiveTripInputs?.start_date;
-    const hasSpecialist = hasSpecialistContent(viewModel.strategy_sections);
-    const isBridgeMode = state === 'S2_STRATEGY_READY' && hasSpecialist && !hasTiles && !hasDateSet;
+    // GHOST: S0 with specialist content - show preview timeline
+    if (density === 'ghost') {
+      const tripDuration = effectiveTripInputs?.trip_duration ?? 5;
+      const ghostDayCards = generateGhostDayCards(viewModel.strategy_sections, tripDuration);
+      const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
 
-    // DEBUG: Bridge Mode detection
-    console.log('[BRIDGE MODE DEBUG]', {
-      state,
-      hasSpecialist,
-      hasTiles,
-      hasDateSet,
-      isBridgeMode,
-      strategySectionsCount: viewModel.strategy_sections?.length ?? 0,
-      strategySectionTypes: viewModel.strategy_sections?.map(s => s.specialist_type) ?? [],
-    });
+      return (
+        <div className="p-4">
+          <TimelineThread
+            dayCards={ghostDayCards}
+            isDraft={true}
+            showPriceEstimates={false}
+            hasDuration={ghostHasDuration}
+            startDate={effectiveTripInputs?.start_date ?? null}
+            onSelectNights={onSelectNights}
+            onOpenDatePicker={() => onOpenSheet?.('dates')}
+          />
+          <div className="text-center pt-4 pb-8">
+            <p className="text-sm text-muted-foreground">
+              Activities from your specialists. Click &ldquo;Build Plan&rdquo; to see the full itinerary.
+            </p>
+          </div>
+        </div>
+      );
+    }
 
-    if (isBridgeMode) {
+    // BRIDGE: S2 with specialist but no tiles/dates - Strategy Cards + Sample Timeline + POI Map
+    if (density === 'bridge') {
       // Bridge Mode: Strategy Cards + Ghost Timeline + POI Map
       const sections = viewModel.strategy_sections ?? [];
 
@@ -420,19 +399,6 @@ export function StrategyStageRenderer({
       const ghostDayCards = generateGhostDayCards(sections, tripDuration);
       const mapPOIs = extractPOIsFromSections(sections);
       const mapCenter = calculateMapCenter(mapPOIs);
-
-      // DEBUG: Log Bridge Mode data for verification
-      console.log('[BRIDGE MODE CONTENT]', {
-        tripDuration,
-        ghostDayCardsCount: ghostDayCards.length,
-        mapPOIsCount: mapPOIs.length,
-        mapPOIs: mapPOIs.map(p => ({ title: p.title, coords: p.coordinates })),
-        strategySections: viewModel.strategy_sections?.map(s => ({
-          type: s.specialist_type,
-          contentCount: s.content_added?.length ?? 0,
-          hasCoordinates: s.content_added?.some(c => c.coordinates) ?? false,
-        })),
-      });
 
       return (
         <div className="flex flex-col lg:flex-row gap-6 p-4">

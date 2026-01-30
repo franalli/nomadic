@@ -128,11 +128,11 @@ const ToastItem = memo(function ToastItem({ toast, onDismiss }: ToastItemProps) 
       {/* Message */}
       <span className="flex-1 min-w-0 truncate">{message}</span>
 
-      {/* Dismiss button */}
+      {/* Dismiss button - min 44px touch target per design-system.md */}
       <button
         type="button"
         onClick={() => onDismiss(id)}
-        className="flex-shrink-0 p-0.5 rounded-full hover:bg-white/20 transition-colors"
+        className="flex-shrink-0 p-2 -m-1 rounded-full hover:bg-white/20 transition-colors"
       >
         <X className="h-3.5 w-3.5" />
       </button>

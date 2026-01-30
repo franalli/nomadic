@@ -121,7 +121,7 @@ function SetupProgressIndicatorInner({ className }: SetupProgressIndicatorProps)
         'flex items-center gap-2',
         'text-sm font-medium text-foreground',
         'hover:text-primary transition-colors',
-        '-ml-1 px-1 py-1', // Expand tap target
+        '-ml-2 px-2 py-2', // 44px min touch target per design-system.md
         className
       )}
       aria-label={`Setup progress: ${completedCount} of ${totalCount} completed. Tap to ${isSetupDrawerOpen ? 'close' : 'open'} checklist.`}

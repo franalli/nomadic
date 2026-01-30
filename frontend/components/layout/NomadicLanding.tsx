@@ -501,20 +501,25 @@ export function NomadicLanding() {
   }, [executedTopics]);
 
   // Badge notification: Track when specialists update (for Plan tab badge on mobile)
+  // @see docs/ux_unified_architecture.md Section X - Mobile Toast Notifications
   const lastSeenTopicsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const executed = new Set(executedTopics);
-    const hasNew = [...executed].some((t) => !lastSeenTopicsRef.current.has(t));
-    // Show badge when new topics executed AND user is not on Plan tab
+    const newTopics = [...executed].filter((t) => !lastSeenTopicsRef.current.has(t));
+    const hasNew = newTopics.length > 0;
+    // Show badge + toast when new topics executed AND user is not on Plan tab
     if (hasNew && activeTab !== 'plan') {
       setPlanTabHasUpdate(true);
+      // Mobile UX: Toast notification for hidden canvas updates
+      const topicLabel = newTopics[0].charAt(0).toUpperCase() + newTopics[0].slice(1);
+      toast(`Plan Updated: ${topicLabel} Strategy Added`);
     }
     // Update last seen when viewing Plan tab
     if (activeTab === 'plan') {
       lastSeenTopicsRef.current = executed;
       setPlanTabHasUpdate(false);
     }
-  }, [executedTopics, activeTab, setPlanTabHasUpdate]);
+  }, [executedTopics, activeTab, setPlanTabHasUpdate, toast]);
 
   const planViewState: PlanViewState = useMemo(() => {
     // =========================================================================

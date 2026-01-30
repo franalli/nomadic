@@ -69,9 +69,6 @@ export function useViewNavigation(): UseViewNavigationReturn {
   // Book is accessible when in a bookable state (S2 or S3)
   const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(planViewState ?? '');
 
-  // DEBUG: Trace tile detection
-  console.log('[useViewNavigation] tiles:', tiles, 'hasTiles:', hasTiles, 'hasStrategyContent:', hasStrategyContent, 'planViewState:', planViewState, 'inBookableState:', inBookableState, 'hasDates:', hasDates);
-
   // Check if user has progressed past Setup (requires BOTH dates AND content)
   // Strategy content alone is Bridge Mode (still in Setup conceptually)
   // Only when dates are set do we truly "leave Setup"

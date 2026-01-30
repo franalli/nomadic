@@ -570,8 +570,8 @@ function TripDetailsFormInner({
                           onUpdateHotelSettings({ min_stars: hotelSettings.min_stars === star ? 0 : star });
                           acknowledgeField('hotel_settings.min_stars' as LLMUpdatableField);
                         }}
-                        // Tier 11.8: Increased touch target from 24x24 to 36x36 for mobile accessibility
-                        className={`min-w-9 min-h-9 rounded text-xs font-medium transition-all duration-200 touch-manipulation active:scale-95 ${
+                        // 44px min touch target per design-system.md Section 11
+                        className={`min-w-11 min-h-11 rounded text-xs font-medium transition-all duration-200 touch-manipulation active:scale-95 ${
                           star <= hotelSettings.min_stars
                             ? 'bg-gradient-to-b from-primary/20 to-primary/15 text-primary border border-primary/50 shadow-pill-active'
                             : 'bg-gradient-to-b from-card/80 to-muted/20 text-muted-foreground border border-border/40 shadow-pill hover:from-card hover:to-muted/40 hover:border-border/60 hover:shadow-pill-hover'
