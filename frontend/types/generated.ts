@@ -21,7 +21,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/validate-trip-input": {
+    "/api/validate-trip-input": {
         parameters: {
             query?: never;
             header?: never;
@@ -47,7 +47,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/admin/clear-validation-cache": {
+    "/api/admin/clear-validation-cache": {
         parameters: {
             query?: never;
             header?: never;
@@ -67,7 +67,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/tiles/click": {
+    "/api/tiles/click": {
         parameters: {
             query?: never;
             header?: never;
@@ -87,7 +87,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/suggestions/click": {
+    "/api/suggestions/click": {
         parameters: {
             query?: never;
             header?: never;
@@ -108,7 +108,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/graph_plan": {
+    "/api/graph_plan": {
         parameters: {
             query?: never;
             header?: never;
@@ -138,7 +138,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/plan": {
+    "/api/plan": {
         parameters: {
             query?: never;
             header?: never;
@@ -164,7 +164,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/session": {
+    "/api/session": {
         parameters: {
             query?: never;
             header?: never;
@@ -187,7 +187,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/chat": {
+    "/api/chat": {
         parameters: {
             query?: never;
             header?: never;
@@ -210,7 +210,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/document": {
+    "/api/document": {
         parameters: {
             query?: never;
             header?: never;
@@ -236,7 +236,7 @@ export interface paths {
         patch: operations["patch_plan_document_v1_document_patch"];
         trace?: never;
     };
-    "/v1/document/tiles/{branch_id}": {
+    "/api/document/tiles/{branch_id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -530,7 +530,7 @@ export interface components {
         };
         /**
          * GraphPlanObservability
-         * @description Minimal observability data for /v1/graph_plan responses.
+         * @description Minimal observability data for /api/graph_plan responses.
          */
         GraphPlanObservability: {
             tokens?: components["schemas"]["GraphPlanTokens"];
@@ -603,7 +603,7 @@ export interface components {
         };
         /**
          * GraphPlanResponse
-         * @description Response from /v1/graph_plan endpoint.
+         * @description Response from /api/graph_plan endpoint.
          */
         GraphPlanResponse: {
             document: components["schemas"]["PlanDocumentData"];

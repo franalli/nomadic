@@ -2,6 +2,8 @@
 
 import { Loader2, Map } from 'lucide-react';
 
+import { cn } from '@/lib/utils';
+
 interface DestinationMapPlaceholderProps {
   /** Hero image URL to display as backdrop */
   imageUrl?: string | null;
@@ -9,6 +11,8 @@ interface DestinationMapPlaceholderProps {
   destination?: string;
   /** Show loading state during itinerary generation */
   isLoading?: boolean;
+  /** Additional CSS classes */
+  className?: string;
 }
 
 /**
@@ -22,9 +26,10 @@ export function DestinationMapPlaceholder({
   imageUrl,
   destination = 'Destination',
   isLoading = false,
+  className,
 }: DestinationMapPlaceholderProps) {
   return (
-    <div className="relative h-full w-full overflow-hidden bg-zinc-900/50">
+    <div className={cn("relative h-full w-full overflow-hidden bg-zinc-900/50 rounded-xl", className)}>
       {/* Background image */}
       {imageUrl ? (
         <img

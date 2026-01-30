@@ -81,7 +81,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     set({ isLoadingHistory: true });
 
     try {
-      const res = await apiFetch('/v1/chat');
+      const res = await apiFetch('/api/chat');
       if (res.ok) {
         const data = await res.json();
         if (data.messages && data.messages.length > 0) {
@@ -213,7 +213,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     const actualIdx = messages.length - 1 - lastUserIdx;
 
     try {
-      const res = await apiFetch('/v1/chat/last', { method: 'DELETE' });
+      const res = await apiFetch('/api/chat/last', { method: 'DELETE' });
 
       if (!res.ok) {
         const errorText = await res.text().catch(() => 'Unknown error');

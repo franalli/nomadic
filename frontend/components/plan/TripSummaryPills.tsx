@@ -12,7 +12,7 @@
 
 import { Calendar, DollarSign, MapPin, Plane, Users } from 'lucide-react';
 
-import { CoreChip } from '@/components/planner/CoreChip';
+import { CoreChip } from '@/components/plan/CoreChip';
 import {
   formatBudgetForPills,
   formatDateRangeForPills,

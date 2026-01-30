@@ -93,6 +93,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     "price_estimate": 350,
                     "currency": "USD",
                     "location": "Nad Al Sheba",
+                    "coordinates": [55.3075, 25.1177],  # [lng, lat] Mapbox format
                     "booking_url": "https://deepdivedubai.com",
                     "highlights": [
                         "World's deepest pool (60m)",
@@ -117,6 +118,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     "price_estimate": 180,
                     "currency": "USD",
                     "location": "Jumeirah Beach",
+                    "coordinates": [55.1850, 25.2048],  # [lng, lat] Mapbox format
                     "highlights": [
                         "Shore entry - no boat needed",
                         "Max depth 12m",
@@ -140,6 +142,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     "price_estimate": 280,
                     "currency": "USD",
                     "location": "Off Umm Al Quwain",
+                    "coordinates": [55.6000, 25.5700],  # [lng, lat] Mapbox format - off UAE coast
                     "highlights": [
                         "Historic wreck from 1961",
                         "20m depth",
@@ -230,6 +233,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "15 min from Deep Dive Dubai",
                 "amenities": ["pool", "spa", "beach", "fitness", "restaurant"],
                 "location": "Palm Jumeirah",
+                "coordinates": [55.1174, 25.1304],  # [lng, lat] Palm Jumeirah
                 "distance_to_dive_sites": "15 min drive",
             },
             {
@@ -247,6 +251,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "On-site dive center - walk to shore dives",
                 "amenities": ["pool", "beach", "dive_center", "spa", "kids_club"],
                 "location": "Jumeirah Beach",
+                "coordinates": [55.1850, 25.2048],  # [lng, lat] Jumeirah Beach
                 "distance_to_dive_sites": "On-site",
             },
             {
@@ -264,6 +269,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "Budget-friendly, 25 min to dive sites",
                 "amenities": ["pool", "gym", "restaurant"],
                 "location": "Downtown Dubai",
+                "coordinates": [55.2744, 25.1972],  # [lng, lat] Downtown Dubai
                 "distance_to_dive_sites": "25 min drive",
             },
         ],
@@ -399,6 +405,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "5 min walk to Spanish Steps",
                 "amenities": ["spa", "garden", "restaurant", "fitness"],
                 "location": "Via del Babuino",
+                "coordinates": [12.4797, 41.9092],  # [lng, lat] Via del Babuino, Rome
             },
             {
                 "id": "curated_rome_hotel_002",
@@ -414,6 +421,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "Rooftop Colosseum views - book sunset drinks",
                 "amenities": ["rooftop_bar", "restaurant", "spa"],
                 "location": "Monti",
+                "coordinates": [12.4963, 41.8947],  # [lng, lat] Monti district, Rome
             },
             {
                 "id": "curated_rome_hotel_003",
@@ -430,6 +438,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "Budget pick - 10 min walk to Colosseum",
                 "amenities": ["cafe", "garden"],
                 "location": "Termini",
+                "coordinates": [12.5016, 41.9010],  # [lng, lat] Termini, Rome
             },
         ],
         # Curated Flights - Demo-ready with ITA Airways branding
@@ -558,6 +567,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "Michelin dining + ski-in/ski-out",
                 "amenities": ["spa", "restaurant", "pool", "ski_room"],
                 "location": "Town center",
+                "coordinates": [6.8694, 45.9237],  # [lng, lat] Chamonix town center
             },
             {
                 "id": "curated_cham_hotel_002",
@@ -574,6 +584,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                 "logic_hook": "3 min walk to Aiguille du Midi lift",
                 "amenities": ["pool", "spa", "restaurant", "ski_room"],
                 "location": "Town center",
+                "coordinates": [6.8694, 45.9237],  # [lng, lat] Chamonix town center
             },
         ],
         # Curated Flights - To Geneva (GVA), nearest airport to Chamonix

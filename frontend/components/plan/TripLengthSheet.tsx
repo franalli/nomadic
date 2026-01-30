@@ -10,7 +10,7 @@
 import { CalendarDays } from 'lucide-react';
 import { memo } from 'react';
 
-import { BaseSheet } from '@/components/planner/sheets/BaseSheet';
+import { BaseSheet } from '@/components/plan/sheets/BaseSheet';
 import { cn, formatDateForDisplay } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────

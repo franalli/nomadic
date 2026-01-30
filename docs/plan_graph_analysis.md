@@ -1,6 +1,6 @@
-# Plan Graph V2 Architecture
+# Plan Graph Architecture
 
-> **Source**: `backend/app/plan_graph_v2.py` > **Planner Package**: `backend/app/planner/` > **Prompt Files**: `backend/app/prompts/`
+> **Source**: `backend/app/plan_graph.py` > **Planner Package**: `backend/app/planner/` > **Prompt Files**: `backend/app/prompts/`
 
 ---
 
@@ -35,7 +35,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | Deterministic Nodes   | 1     | ConstraintGuard (pure Python validation) |
 | **Total Nodes**       | **7** | Core graph nodes                        |
 
-### Design Principles (V2)
+### Design Principles
 
 1. **"Flights/Hotels are NOT Agents"** - They are data fetchers (LogisticsNode + TileService)
 2. **"Diving IS an Agent"** - It requires domain logic (VerticalSpecialist)
@@ -46,18 +46,6 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 7. **Constraint Injector Pattern** - Specialist runs BEFORE Architect calls tools
 8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
 9. **Auto-Fix Loop** - ConstraintGuard can loop back to Architect once to self-correct
-
-### Migration Summary
-
-| Aspect | V1 | V2 |
-|--------|----|----|
-| Nodes | 19 | 7 |
-| Prompts | 27 | 12 |
-| Intent Detection | Regex gates + precedence | LLM classification |
-| Routing | GateEvaluator (13 gates) | Simple conditional edges |
-| State | Fragmented trip_inputs | Unified TripPlan SSoT |
-| Specialists | LLM nodes per domain | VerticalSpecialist + LocalExpert |
-| Flight Fetching | Scattered | Centralized LogisticsNode |
 
 ---
 
@@ -74,7 +62,7 @@ backend/app/planner/
 ├── telemetry.py             # Telemetry instrumentation
 ├── test_mode.py             # Test mode detection
 ├── node_utils.py            # Simple utilities for module-level imports
-├── nodes_v2/                # V2 Node implementations
+├── nodes/                   # Node implementations
 │   ├── __init__.py          # Node exports
 │   ├── intent_router.py     # LLM-based intent classification
 │   ├── trip_architect.py    # Core planning node (The Boss)
@@ -85,7 +73,7 @@ backend/app/planner/
 │   └── synthesizer.py       # Unified response generation
 ├── state/
 │   ├── __init__.py          # State exports
-│   └── schemas_v2.py        # V2 state models (GraphStateV2, TripPlan)
+│   └── schemas.py           # State models (GraphState, TripPlan)
 └── cache/
     ├── __init__.py          # Cache exports
     ├── framework.py         # CacheNode ABC + all cache implementations
@@ -212,7 +200,7 @@ backend/app/planner/
 
 ## Complete Node Reference Table
 
-### V2 Nodes
+### Nodes
 
 | Node | Type | Purpose | LLM Model | Max Tokens | Streaming |
 |------|------|---------|-----------|------------|-----------|
@@ -391,7 +379,7 @@ Pure Python deterministic validation. **NO LLM calls.**
 
 **Auto-Fix Loop with Route Error Short-Circuit:**
 ```python
-def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
+def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     has_blocking = state.metadata.get("has_blocking_violations", False)
     retry_count = state.guard_retry_count
     violations = state.metadata.get("constraint_violations", [])
@@ -450,12 +438,12 @@ async for event in graph.astream_events(state, version="v2"):
 
 ## State Models
 
-### GraphStateV2
+### GraphState
 
 Unified state for the 7-node architecture.
 
 ```python
-class GraphStateV2(BaseModel):
+class GraphState(BaseModel):
     # Chat history
     messages: List[BaseMessage]
 
@@ -583,7 +571,7 @@ if user_message.strip().lower() in PANIC_COMMANDS:
 ### Route After Router
 
 ```python
-def route_after_router(state: GraphStateV2) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
+def route_after_router(state: GraphState) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
     # GREETING/RESET short-circuits skip to synthesizer
     if state.metadata.get("short_circuit_response"):
         return "synthesizer"
@@ -601,7 +589,7 @@ def route_after_router(state: GraphStateV2) -> Literal["specialist", "local_expe
 ### Route After Specialist
 
 ```python
-def route_after_specialist(state: GraphStateV2):
+def route_after_specialist(state: GraphState):
     # 1. Recursion: If pending specialists exist, run the next one
     if state.pending_specialists:
         return "specialist"  # (or "local_expert")
@@ -635,7 +623,7 @@ synthesizer → END
 ### Should Run Guard
 
 ```python
-def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
+def should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
     # Run guard if we have tiles or constraints to validate
     if state.tiles or state.trip_plan.constraints:
         return "guard"
@@ -645,7 +633,7 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
 ### Route After Guard (Auto-Fix vs. Rejection)
 
 ```python
-def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
+def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     has_blocking = state.metadata.get("has_blocking_violations", False)
     retry_count = state.guard_retry_count
     violations = state.metadata.get("constraint_violations", [])
@@ -803,7 +791,7 @@ Two-tier cache for destination images.
 
 ## Prompt File Mapping
 
-### V2 Prompts
+### Prompts
 
 ```
 backend/app/prompts/
@@ -849,7 +837,7 @@ backend/app/prompts/
 
 ### Current Implementation: True Streaming via astream_events
 
-V2 uses LangGraph's `astream_events` for real-time token streaming from the Synthesizer.
+Uses LangGraph's `astream_events` for real-time token streaming from the Synthesizer.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -862,7 +850,7 @@ V2 uses LangGraph's `astream_events` for real-time token streaming from the Synt
 │     - on_chain_start: Node transitions → node_status events                  │
 │     - on_chat_model_stream: LLM tokens → token events (Synthesizer only)     │
 │     - on_chain_end: Capture final state                                      │
-│  4. "complete" event with full V1-compatible result                          │
+│  4. "complete" event with full result                          │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -874,7 +862,7 @@ V2 uses LangGraph's `astream_events` for real-time token streaming from the Synt
 | `node_status` | `{node, status, label, icon_key}` | Node progress tracking |
 | `logic_reveal` | `{node, label, status}` | Routing decisions for Logic Terminal (e.g., "ROUTING: DIVING") |
 | `token` | `string` | Response text (from Synthesizer LLM) |
-| `complete` | `{...result}` | Full V1-compatible result |
+| `complete` | `{...result}` | Full result object |
 | `error` | `{message}` | Error information |
 
 ### Streaming Implementation
@@ -929,10 +917,10 @@ STREAMING_PARAMS = {
 | Module | Exports |
 |--------|---------|
 | `planner` | `run_turn`, `run_turn_streaming`, `GraphState`, `TripInputs` |
-| `planner.state` | `GraphStateV2`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
+| `planner.state` | `GraphState`, `TripPlan`, `TripSegment`, `ItineraryBlock`, `SpecialistConstraint`, `SpecialistOutput`, `UIEvent`, `MissingFieldsResponse`, `SynthesizerOutput` |
 | `planner.hashing` | `stable_hash`, `stable_hash_int`, `stable_hash_index`, `make_cache_key` |
 | `planner.telemetry` | `TraceEnvelope`, `create_envelope`, `emit_event`, `emit_node_start`, `emit_node_end` |
-| `planner.nodes_v2` | `intent_router`, `trip_architect`, `vertical_specialist`, `local_expert`, `logistics_node`, `constraint_guard`, `synthesizer` |
+| `planner.nodes` | `intent_router`, `trip_architect`, `vertical_specialist`, `local_expert`, `logistics_node`, `constraint_guard`, `synthesizer` |
 
 ---
 
@@ -940,10 +928,10 @@ STREAMING_PARAMS = {
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/v1/admin/clear-validation-cache` | POST | Clear validation caches |
-| `/v1/admin/fresh-start` | POST | Clear validation + response caches |
-| `/v1/admin/clear-all-checkpoints` | POST | Clear ALL LangGraph checkpoints |
-| `/v1/admin/clear-all-caches` | POST | Comprehensive clear of ALL caches |
+| `/api/admin/clear-validation-cache` | POST | Clear validation caches |
+| `/api/admin/fresh-start` | POST | Clear validation + response caches |
+| `/api/admin/clear-all-checkpoints` | POST | Clear ALL LangGraph checkpoints |
+| `/api/admin/clear-all-caches` | POST | Comprehensive clear of ALL caches |
 
 ---
 
@@ -952,7 +940,7 @@ STREAMING_PARAMS = {
 ### Tile Refresh Endpoint
 
 ```
-POST /v1/tiles/refresh
+POST /api/tiles/refresh
 ```
 
 | Field | Type | Description |
@@ -1058,17 +1046,17 @@ Events emitted to frontend for UI updates.
 
 ---
 
-## V1-Compatible Interface
+## Public Interface
 
-V2 exports maintain backward compatibility with main.py.
+Planner exports the stable public API.
 
 ```python
-# These are re-exported from plan_graph_v2.py
+# These are re-exported from plan_graph.py
 from app.planner import (
     run_turn,              # Main entry point
     run_turn_streaming,    # SSE streaming entry point
-    GraphState,            # Alias for GraphStateV2
-    TripInputs,            # V1-compatible input type
+    GraphState,            # State type
+    TripInputs,            # Input type
     get_planner_debug_info,
     validate_template_coverage,
     clear_all_caches,
@@ -1083,7 +1071,7 @@ from app.planner import (
     "assistant_message": "...",
     "suggested_responses": ["...", "...", "..."],
     "session_state": {...},
-    "branches": [],  # V2 doesn't use branches
+    "branches": [],  # Document branches
     "trip_inputs": {...},
     "ready_to_generate": bool,
     "errors": [...],

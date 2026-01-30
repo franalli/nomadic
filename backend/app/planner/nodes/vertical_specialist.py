@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.planner.state import (
-    GraphStateV2,
+    GraphState,
     ItineraryBlock,
     SpecialistConstraint,
     SpecialistOutput,
@@ -457,7 +457,7 @@ class VerticalSpecialist:
         """
         return list(self.knowledge.get("constraints", []))
 
-    def _calculate_activity_days(self, state: GraphStateV2) -> int:
+    def _calculate_activity_days(self, state: GraphState) -> int:
         """
         Calculate how many days are available for activities.
 
@@ -525,7 +525,7 @@ class VerticalSpecialist:
         return result
 
     def get_content_for_destination(
-        self, destination: str, state: Optional[GraphStateV2] = None
+        self, destination: str, state: Optional[GraphState] = None
     ) -> List[ItineraryBlock]:
         """
         Get suggested activities for a destination.
@@ -600,6 +600,8 @@ class VerticalSpecialist:
                             source_specialist=self.topic,
                             skill_level=activity.get("skill_level"),
                             logic_hook=activity.get("logic_hook"),  # Pro tip for UI
+                            image_url=activity.get("image"),  # Curated image URL
+                            coordinates=activity.get("coordinates"),  # [lng, lat] for Mapbox
                         )
                     )
                 return blocks
@@ -662,6 +664,7 @@ class VerticalSpecialist:
                         skill_level=activity.get("skill_level"),
                         logic_hook=activity.get("logic_hook"),
                         image_url=activity.get("image"),  # Curated image URL
+                        coordinates=activity.get("coordinates"),  # [lng, lat] for Mapbox
                     )
                 )
 
@@ -673,7 +676,7 @@ class VerticalSpecialist:
         except ImportError:
             return []
 
-    def critique_plan(self, state: GraphStateV2) -> Optional[str]:
+    def critique_plan(self, state: GraphState) -> Optional[str]:
         """
         Review current plan from domain expertise perspective.
 
@@ -692,7 +695,7 @@ class VerticalSpecialist:
 
         return None
 
-    def generate_enhancements(self, state: GraphStateV2) -> List[str]:
+    def generate_enhancements(self, state: GraphState) -> List[str]:
         """
         Suggest enhancements to the plan.
         """
@@ -714,7 +717,7 @@ class VerticalSpecialist:
 
         return enhancements
 
-    def generate_bookends(self, state: GraphStateV2) -> List[ItineraryBlock]:
+    def generate_bookends(self, state: GraphState) -> List[ItineraryBlock]:
         """
         Generate arrival/departure bookend blocks.
 
@@ -769,7 +772,7 @@ class VerticalSpecialist:
 
         return blocks
 
-    def generate_safety_buffers(self, state: GraphStateV2) -> List[ItineraryBlock]:
+    def generate_safety_buffers(self, state: GraphState) -> List[ItineraryBlock]:
         """
         Generate safety buffer blocks based on domain constraints.
 
@@ -853,7 +856,7 @@ class VerticalSpecialist:
 
         return blocks
 
-    def generate_output(self, state: GraphStateV2) -> SpecialistOutput:
+    def generate_output(self, state: GraphState) -> SpecialistOutput:
         """
         Generate the complete specialist output.
 
@@ -1019,7 +1022,7 @@ def _get_curated_image(topic: str, destination: str, title: str) -> Optional[str
 # =============================================================================
 
 
-async def vertical_specialist(state: GraphStateV2) -> GraphStateV2:
+async def vertical_specialist(state: GraphState) -> GraphState:
     """
     VerticalSpecialist node function for LangGraph.
 

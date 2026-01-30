@@ -14,7 +14,7 @@ Key Principle: "The math must work."
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
-from app.planner.state import GraphStateV2, TripPlan
+from app.planner.state import GraphState, TripPlan
 
 # =============================================================================
 # Place Validation Helper
@@ -462,7 +462,7 @@ class ConstraintGuard:
 
     def check_all(
         self,
-        state: GraphStateV2,
+        state: GraphState,
     ) -> Tuple[List[ConstraintViolation], bool]:
         """
         Run all constraint checks.
@@ -501,15 +501,15 @@ class ConstraintGuard:
 # =============================================================================
 
 
-async def constraint_guard(state: GraphStateV2) -> GraphStateV2:
+async def constraint_guard(state: GraphState) -> GraphState:
     """
     ConstraintGuard node function for LangGraph.
 
     Pure Python validation - no LLM calls.
     """
-    from app.debug_utils import _debug_v2_node_end, _debug_v2_node_start
+    from app.debug_utils import _debug_graph_node_end, _debug_graph_node_start
 
-    _debug_v2_node_start(
+    _debug_graph_node_start(
         "guard",
         "🛡️",
         destination=state.trip_plan.destination,
@@ -582,7 +582,7 @@ async def constraint_guard(state: GraphStateV2) -> GraphStateV2:
     if violations:
         state.ui_events.append("CONSTRAINT_VIOLATED")
 
-    _debug_v2_node_end(
+    _debug_graph_node_end(
         "guard",
         "🛡️",
         violations_count=len(violations),

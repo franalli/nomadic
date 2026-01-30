@@ -280,7 +280,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
    */
   const { planStatus, isRegenerating, markRegenerationComplete } = usePlanRegeneration({
     tripInputs,
-    // V2 doesn't use branches - use hasEverHadPlan to detect if plan exists
+    // Use hasEverHadPlan to detect if plan exists (not branches)
     hasBranches: hasEverHadPlan ?? false,
     onRegenerate: async () => {
       // IMPORTANT: Do NOT clear branches - keep existing plan visible during regen
@@ -572,7 +572,7 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
       // Signal that regeneration is complete (data has arrived)
       // This ensures planStatus transitions from 'updating' to 'ready'
-      // NOTE: V2 doesn't use branches, so we check for tiles or always complete
+      // NOTE: We check for tiles (branches are legacy)
       const hasTilesInResult = Object.keys(result.tiles).length > 0;
       if (hasBranchesInResult || hasTilesInResult) {
         markRegenerationComplete();

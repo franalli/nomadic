@@ -20,6 +20,34 @@ import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
 import { InlineDatePrompt } from './timeline/InlineDatePrompt';
 
+// =============================================================================
+// Timeline Variant System (Grand Unification)
+// =============================================================================
+
+/**
+ * Timeline rendering mode - determines badge and styling.
+ * @see docs/ux_unified_architecture.md
+ */
+export type TimelineVariant = 'ghost' | 'draft' | 'real';
+
+/**
+ * Configuration for each timeline variant.
+ */
+const variantConfig: Record<TimelineVariant, { badge: string | null; badgeClass: string }> = {
+  ghost: {
+    badge: 'Specialist Preview',
+    badgeClass: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+  },
+  draft: {
+    badge: 'Draft Itinerary',
+    badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+  },
+  real: {
+    badge: null,
+    badgeClass: '',
+  },
+};
+
 interface TimelineThreadProps {
   dayCards: DayCard[];
   /** Currently expanded day (for accordion behavior) */
@@ -30,8 +58,18 @@ interface TimelineThreadProps {
   showPriceEstimates?: boolean;
   /** Active block ID for scroll spy highlight (map integration) */
   activeBlockId?: string | null;
-  /** Draft mode - shows "Draft Preview" badge for ghost timeline */
+  /**
+   * @deprecated Use `variant` instead for clearer semantics
+   * Draft mode - shows "Draft Preview" badge for ghost timeline
+   */
   isDraft?: boolean;
+  /**
+   * Timeline rendering mode (Grand Unification)
+   * - ghost: Speculative pre-plan timeline (Specialist Preview badge)
+   * - draft: Generated but unfinalized (Draft Itinerary badge)
+   * - real: Confirmed itinerary (no badge)
+   */
+  variant?: TimelineVariant;
   // Inline date prompt props (Change 2)
   /** Whether trip has duration set (end_date OR trip_duration) */
   hasDuration?: boolean;
@@ -104,11 +142,15 @@ export function TimelineThread({
   showPriceEstimates = false,
   activeBlockId,
   isDraft = false,
+  variant,
   hasDuration = true,
   startDate,
   onSelectNights,
   onOpenDatePicker,
 }: TimelineThreadProps) {
+  // Compute effective variant: prefer explicit variant, fall back to isDraft for backward compatibility
+  const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
+  const { badge, badgeClass } = variantConfig[effectiveVariant];
   const sortedDays = useMemo(() => {
     return [...dayCards].sort((a, b) => a.day_number - b.day_number);
   }, [dayCards]);
@@ -123,11 +165,14 @@ export function TimelineThread({
 
   return (
     <div className="relative pl-4 pr-2 py-6 space-y-8 timeline-thread">
-      {/* Draft Preview badge for ghost timeline */}
-      {isDraft && (
+      {/* Variant badge for non-real timelines */}
+      {badge && (
         <div className="absolute top-2 right-2 z-10">
-          <span className="text-xs px-2 py-1 bg-muted/80 rounded-full text-muted-foreground border border-border/50">
-            Draft Preview
+          <span className={cn(
+            'text-xs px-2 py-1 rounded-full border border-border/50 font-medium',
+            badgeClass
+          )}>
+            {badge}
           </span>
         </div>
       )}

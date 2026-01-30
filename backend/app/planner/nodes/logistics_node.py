@@ -17,8 +17,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
-from app.debug_utils import _debug_v2, _debug_v2_node_end, _debug_v2_node_start, log
-from app.planner.state.schemas_v2 import GraphStateV2
+from app.debug_utils import _debug_graph, _debug_graph_node_end, _debug_graph_node_start, log
+from app.planner.state.schemas import GraphState
 from app.tools.amadeus_client import AmadeusClient, city_to_airport_code
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Main Node
 # =============================================================================
-async def logistics_node(state: GraphStateV2) -> GraphStateV2:
+async def logistics_node(state: GraphState) -> GraphState:
     """
     Logistics Node:
     1. Fetches raw flights from Amadeus (or backup).
@@ -37,7 +37,7 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
     plan = state.trip_plan
 
     # DEBUG: Node start
-    _debug_v2_node_start(
+    _debug_graph_node_start(
         "logistics",
         "✈️",
         destination=plan.destination,
@@ -48,7 +48,7 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
     # Skip if missing required fields
     if not plan.destination or not plan.start_date:
         log("LOGISTICS", "Skipping - no destination or dates")
-        _debug_v2_node_end("logistics", "✈️", status="skipped", reason="missing_fields")
+        _debug_graph_node_end("logistics", "✈️", status="skipped", reason="missing_fields")
         return state
 
     origin_code = _city_to_code(plan.origin or "")
@@ -59,11 +59,11 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
         logger.warning(
             f"[Logistics] Could not resolve airport codes: {plan.origin} -> {plan.destination}"
         )
-        _debug_v2_node_end("logistics", "✈️", status="skipped", reason="no_airport_codes")
+        _debug_graph_node_end("logistics", "✈️", status="skipped", reason="no_airport_codes")
         return state
 
     log("LOGISTICS", f"Searching flights: {origin_code} -> {dest_code}")
-    _debug_v2(
+    _debug_graph(
         f"Flight search params: origin={origin_code}, dest={dest_code}, "
         f"date={plan.end_date or plan.start_date}"
     )
@@ -84,13 +84,13 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
         )
         raw_flights = _curated_to_amadeus_format(curated_flights, plan.end_date or plan.start_date)
         flight_source = "curated"
-        _debug_v2(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
+        _debug_graph(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
     else:
         # 2. FETCH from Amadeus for non-curated destinations
         client = AmadeusClient()
 
         if client.is_configured():
-            _debug_v2("Amadeus client configured, calling API...")
+            _debug_graph("Amadeus client configured, calling API...")
             try:
                 # Use return date for the flight search (end of trip)
                 departure_date = plan.end_date or plan.start_date
@@ -104,27 +104,27 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
                 # Convert FlightOffer objects to Amadeus-like dicts for processing
                 raw_flights = [_offer_to_dict(o) for o in offers]
                 flight_source = "amadeus"
-                _debug_v2(f"Amadeus returned {len(raw_flights)} flight offers")
+                _debug_graph(f"Amadeus returned {len(raw_flights)} flight offers")
             except Exception as e:
                 log("LOGISTICS", f"Amadeus API failed: {e}", data="using fallback")
                 logger.warning(f"[Logistics] Amadeus API failed: {e}")
                 raw_flights = []
         else:
-            _debug_v2("Amadeus client not configured, skipping API call")
+            _debug_graph("Amadeus client not configured, skipping API call")
 
     # 3. Fallback: If nothing found, use Demo Backup
     if not raw_flights:
         log("LOGISTICS", "Using DEMO BACKUP flight data", data="no curated or API data")
         raw_flights = _get_demo_backup_flights(plan.end_date or plan.start_date)
         flight_source = "demo_backup"
-        _debug_v2(f"Demo backup provided {len(raw_flights)} flights")
+        _debug_graph(f"Demo backup provided {len(raw_flights)} flights")
 
     # 2. DETECT CONSTRAINTS
     # Check if diving specialist added a "no fly" or "24h" rule
     has_diving_safety_rule = _has_diving_constraints(state)
     if has_diving_safety_rule:
         log("LOGISTICS", "Diving safety constraints detected", data="applying 24h no-fly rule")
-        _debug_v2("Will calculate surface interval for each flight")
+        _debug_graph("Will calculate surface interval for each flight")
 
     # 3. PROCESS & SANITIZE
     processed_options = []
@@ -187,12 +187,12 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
 
         except Exception as e:
             logger.warning(f"[Logistics] Skipping malformed offer: {e}")
-            _debug_v2(f"Malformed offer skipped: {e}")
+            _debug_graph(f"Malformed offer skipped: {e}")
             continue
 
     # Log sanitization summary
     if sanitized_carriers:
-        _debug_v2(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
+        _debug_graph(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
 
     # 4. STORE IN STATE - Write to state.tiles["flights"] for frontend display
     state.tiles["flights"] = processed_options
@@ -217,7 +217,7 @@ async def logistics_node(state: GraphStateV2) -> GraphStateV2:
     logger.info(f"[Logistics] Found {len(processed_options)} flight options")
 
     # DEBUG: Node end
-    _debug_v2_node_end(
+    _debug_graph_node_end(
         "logistics",
         "✈️",
         flights=len(processed_options),
@@ -244,7 +244,7 @@ def _city_to_code(city: str) -> str:
     return city_to_airport_code(city) or ""
 
 
-def _has_diving_constraints(state: GraphStateV2) -> bool:
+def _has_diving_constraints(state: GraphState) -> bool:
     """Check if diving specialist added safety constraints."""
     # Check active specialist
     if state.active_specialist == "diving":

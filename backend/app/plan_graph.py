@@ -1,25 +1,23 @@
 """
-Plan Graph V2 - Simplified 6-Node "Core + Specialist" Architecture.
-
-This is the optimized graph that replaces the 19-node architecture:
-- 19 nodes → 6 nodes
-- 27 prompts → 10 prompts
-- 60% complexity reduction, 100% capability preserved
+Plan Graph - 7-Node "Core + Specialist" Architecture.
 
 Nodes:
-1. IntentRouter - LLM (Fast): Classify intent
-2. TripArchitect - LLM (Smart): The Core, manages TripPlan
+1. IntentRouter - LLM (Fast): Classify intent → route to appropriate node
+2. TripArchitect - LLM (Smart): The Core, manages TripPlan and tools
 3. VerticalSpecialist - LLM (Expert): Domain logic (diving/hiking/skiing)
-4. ConstraintGuard - Python: Deterministic validation
-5. Synthesizer - LLM (Writer): Unified response generation
+4. LocalExpert - LLM (Expert): Cultural & local knowledge
+5. LogisticsNode - Python: Data fetching (flights/hotels via TileService)
+6. ConstraintGuard - Python: Deterministic validation (safety buffers, conflicts)
+7. Synthesizer - LLM (Writer): Unified response generation
 
 Key Principles:
-- "Flights/Hotels are NOT Agents" - They are data fetchers (TileService tool)
+- "Flights/Hotels are NOT Agents" - They are data fetchers (LogisticsNode)
 - "Diving IS an Agent" - It requires domain logic (VerticalSpecialist)
 - "Architect sees the whole picture" - Avoids context fracture
+- "One Voice" - Synthesizer ensures consistent tone
 
 Usage:
-    from app.plan_graph_v2 import run_turn, run_turn_streaming
+    from app.plan_graph import run_turn, run_turn_streaming
     result = await run_turn(user_message, session_state)
 """
 
@@ -30,16 +28,14 @@ from typing import Any, AsyncGenerator, Dict, Literal, Optional
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
-from app.planner.nodes_v2.constraint_guard import constraint_guard
-
-# Import V2 nodes
-from app.planner.nodes_v2.intent_router import intent_router
-from app.planner.nodes_v2.local_expert import local_expert
-from app.planner.nodes_v2.logistics_node import logistics_node
-from app.planner.nodes_v2.synthesizer import synthesizer
-from app.planner.nodes_v2.trip_architect import trip_architect
-from app.planner.nodes_v2.vertical_specialist import vertical_specialist
-from app.planner.state import GraphStateV2, TripPlan
+from app.planner.nodes.constraint_guard import constraint_guard
+from app.planner.nodes.intent_router import intent_router
+from app.planner.nodes.local_expert import local_expert
+from app.planner.nodes.logistics_node import logistics_node
+from app.planner.nodes.synthesizer import synthesizer
+from app.planner.nodes.trip_architect import trip_architect
+from app.planner.nodes.vertical_specialist import vertical_specialist
+from app.planner.state import GraphState, TripPlan
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +74,8 @@ def _create_reset_response() -> Dict[str, Any]:
 DEBUG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
 # Build identifiers for cache compatibility
-PLANNER_BUILD_ID = "v2.0.0"
-CACHE_SCHEMA_VERSION = "v2"
+PLANNER_BUILD_ID = "1.0.0"
+CACHE_SCHEMA_VERSION = "1"
 
 
 # =============================================================================
@@ -160,16 +156,16 @@ def _get_node_duration(node_name: str) -> int:
     return config.get("estimated_duration_ms", 1000)
 
 
-PROMPT_BUNDLE_HASH = "v2_optimized"
+PROMPT_BUNDLE_HASH = "optimized"
 
 
 # =============================================================================
-# V1-Compatible Types (for main.py compatibility)
+# Input Types (for main.py interface)
 # =============================================================================
 
 
 class TripInputs(BaseModel):
-    """V1-compatible TripInputs for main.py interface."""
+    """TripInputs for main.py interface."""
 
     destination: Optional[str] = None
     origin: Optional[str] = None
@@ -192,12 +188,8 @@ class TripInputs(BaseModel):
     date_window_end: Optional[str] = None
 
 
-# Alias for backward compatibility
-GraphState = GraphStateV2
-
-
 def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
-    """Convert V2 TripPlan to V1 trip_inputs dict with legacy display fields."""
+    """Convert TripPlan to trip_inputs dict with display fields."""
     # Calculate travelers count
     total_travelers = (plan.adults or 1) + (plan.children or 0)
 
@@ -240,10 +232,10 @@ def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
     }
 
 
-def _state_to_session_state(state: GraphStateV2) -> Dict[str, Any]:
-    """Convert V2 GraphStateV2 to V1-compatible session_state dict."""
-    # Keep tiles in CATEGORY format for V2 state restoration
-    # V2 stores: {"hotels": [tile1, tile2], "flights": [tile3]}
+def _state_to_session_state(state: GraphState) -> Dict[str, Any]:
+    """Convert GraphState to session_state dict for persistence."""
+    # Keep tiles in CATEGORY format for state restoration
+    # Stored as: {"hotels": [tile1, tile2], "flights": [tile3]}
     # We preserve this format so state can be restored correctly on next request
 
     return {
@@ -254,7 +246,7 @@ def _state_to_session_state(state: GraphStateV2) -> Dict[str, Any]:
         "trip_inputs": _trip_plan_to_trip_inputs(state.trip_plan),
         "metadata": {
             **state.metadata,
-            "tiles": state.tiles,  # Keep in category format for V2 restoration
+            "tiles": state.tiles,  # Keep in category format for state restoration
             "active_specialist": state.active_specialist,
             "constraints_violated": state.constraints_violated,
             # Persist for constraint change detection
@@ -263,17 +255,17 @@ def _state_to_session_state(state: GraphStateV2) -> Dict[str, Any]:
     }
 
 
-def _session_state_to_v2_state(session_state: Optional[Dict[str, Any]]) -> GraphStateV2:
-    """Convert V1 session_state dict to V2 GraphStateV2."""
+def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
+    """Restore GraphState from session_state dict."""
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_graph
 
     if not session_state:
-        _debug_v2("_session_state_to_v2_state: No session_state provided, returning empty state")
-        return GraphStateV2()
+        _debug_graph("_restore_graph_state: No session_state provided, returning empty state")
+        return GraphState()
 
-    state = GraphStateV2()
+    state = GraphState()
 
     # Convert messages
     for msg in session_state.get("messages", []):
@@ -312,8 +304,8 @@ def _session_state_to_v2_state(session_state: Optional[Dict[str, Any]]) -> Graph
     # DEBUG: Log what strategy_sections we're restoring
     incoming_sections = metadata.get("strategy_sections", [])
     restored_sections = state.metadata.get("strategy_sections", [])
-    _debug_v2(
-        f"_session_state_to_v2_state: Incoming strategy_sections={len(incoming_sections)}, "
+    _debug_graph(
+        f"_restore_graph_state: Incoming strategy_sections={len(incoming_sections)}, "
         f"Restored={len(restored_sections)}, "
         f"types={[s.get('specialist_type') for s in incoming_sections]}"
     )
@@ -327,7 +319,7 @@ def _session_state_to_v2_state(session_state: Optional[Dict[str, Any]]) -> Graph
 
 
 def route_after_router(
-    state: GraphStateV2,
+    state: GraphState,
 ) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
     """
     Route based on intent classification.
@@ -349,7 +341,7 @@ def route_after_router(
 
 
 def route_after_specialist(
-    state: GraphStateV2,
+    state: GraphState,
 ) -> Literal["specialist", "local_expert", "logistics", "architect", "synthesizer"]:
     """
     Route after specialist completes - check for more pending specialists.
@@ -366,13 +358,13 @@ def route_after_specialist(
     - If booking intent: Specialist → Logistics → Architect (fetch tiles)
     - If general intent: Specialist → Architect (extract fields, no tiles)
     """
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_graph
 
     # Check if there are more specialists to process
     # NOTE: We just peek, we don't pop - the specialist node handles that
     if state.pending_specialists:
         next_specialist = state.pending_specialists[0]
-        _debug_v2(
+        _debug_graph(
             f"Multi-specialist routing: next='{next_specialist}', "
             f"queue_len={len(state.pending_specialists)}"
         )
@@ -386,7 +378,7 @@ def route_after_specialist(
     # SPECULATIVE: Skip logistics (fetching prices) and architect (planning)
     # Go straight to synthesizer to emit the preview cards.
     if state.intent == "speculative":
-        _debug_v2("Specialist done, routing to synthesizer (speculative intent - preload only)")
+        _debug_graph("Specialist done, routing to synthesizer (speculative intent - preload only)")
         return "synthesizer"
 
     # Check if this is a "booking" intent (Build Plan button) or just general chat
@@ -394,15 +386,15 @@ def route_after_specialist(
     is_generate_trigger = state.metadata.get("is_generate_trigger", False)
 
     if is_booking_intent or is_generate_trigger:
-        _debug_v2("Specialist done, routing to logistics (booking intent)")
+        _debug_graph("Specialist done, routing to logistics (booking intent)")
         return "logistics"
 
     # General intent - skip tile fetching, but still go to architect for extraction
-    _debug_v2("Specialist done, skipping logistics, routing to architect (general intent)")
+    _debug_graph("Specialist done, skipping logistics, routing to architect (general intent)")
     return "architect"
 
 
-def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
+def should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
     """
     Determine if we should run constraint checking.
 
@@ -420,7 +412,7 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
     return "synthesizer"
 
 
-def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
+def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     """
     Route based on constraint violations.
 
@@ -464,8 +456,8 @@ def create_optimized_graph() -> StateGraph:
 
     The specialist and guard nodes are conditional based on state.
     """
-    # Initialize the graph with V2 state
-    workflow = StateGraph(GraphStateV2)
+    # Initialize the graph with state
+    workflow = StateGraph(GraphState)
 
     # ==========================================================================
     # Add Nodes
@@ -580,7 +572,7 @@ async def run_turn(
     - assistant_message: The response text
     - suggested_responses: Quick reply options
     - session_state: Updated state for persistence
-    - branches: Empty list (V2 doesn't use branches)
+    - branches: Empty list (not used)
     - trip_inputs: Extracted trip parameters
     - ready_to_generate: Whether plan is complete
 
@@ -599,10 +591,10 @@ async def run_turn(
         return _create_reset_response()
 
     # Get compiled graph
-    graph = get_or_create_v2_graph()
+    graph = get_or_create_graph()
 
-    # Convert V1 session state to V2
-    state = _session_state_to_v2_state(session_state)
+    # Restore state from session
+    state = _restore_graph_state(session_state)
 
     # Add user message
     state.messages.append(HumanMessage(content=user_message))
@@ -612,15 +604,15 @@ async def run_turn(
         result = await graph.ainvoke(state)
         # LangGraph returns dict, convert back to Pydantic
         if isinstance(result, dict):
-            result_state = GraphStateV2(**result)
+            result_state = GraphState(**result)
         else:
             result_state = result
     except Exception as e:
-        logger.error(f"V2 graph execution failed: {e}")
+        logger.error(f"Graph execution failed: {e}")
         raise
 
     # Convert result to V1 format
-    return _v2_result_to_v1_format(result_state, session_state)
+    return _format_result(result_state, session_state)
 
 
 async def run_turn_streaming(
@@ -658,10 +650,10 @@ async def run_turn_streaming(
         return
 
     # Get compiled graph
-    graph = get_or_create_v2_graph()
+    graph = get_or_create_graph()
 
-    # Convert V1 session state to V2
-    state = _session_state_to_v2_state(session_state)
+    # Restore state from session
+    state = _restore_graph_state(session_state)
 
     # Add user message
     state.messages.append(HumanMessage(content=user_message))
@@ -719,13 +711,13 @@ async def run_turn_streaming(
                 node = event.get("metadata", {}).get("langgraph_node")
                 output = event.get("data", {}).get("output")
                 if output is not None:
-                    # Always capture the latest output - it might be a dict or GraphStateV2
+                    # Always capture the latest output - it might be a dict or GraphState
                     final_output = output
 
                     # Logic Terminal: Emit routing decision when router completes (DS Section 19.C)
                     # This creates the ">> ROUTING: DIVING" line in the frontend terminal
                     if node == "router":
-                        # Extract active_specialist from output (dict or GraphStateV2)
+                        # Extract active_specialist from output (dict or GraphState)
                         active_specialist = None
                         if isinstance(output, dict):
                             active_specialist = output.get("active_specialist")
@@ -750,14 +742,14 @@ async def run_turn_streaming(
                 "data": {"node": current_node, "status": "completed"},
             }
 
-        # Convert final output to GraphStateV2
+        # Convert final output to GraphState
         if final_output is not None:
             if isinstance(final_output, dict):
                 try:
-                    result_state = GraphStateV2(**final_output)
+                    result_state = GraphState(**final_output)
                 except Exception as e:
-                    logger.warning(f"Failed to parse final output as GraphStateV2: {e}")
-            elif isinstance(final_output, GraphStateV2):
+                    logger.warning(f"Failed to parse final output as GraphState: {e}")
+            elif isinstance(final_output, GraphState):
                 result_state = final_output
 
         # If still no state, construct from input state + streamed tokens
@@ -773,7 +765,7 @@ async def run_turn_streaming(
             yield {"type": "token", "data": result_state.last_summary}
 
         # Emit complete event with full result
-        final_result = _v2_result_to_v1_format(result_state, session_state)
+        final_result = _format_result(result_state, session_state)
 
         # Summary of graph execution
         from app.debug_utils import log_complete
@@ -790,27 +782,37 @@ async def run_turn_streaming(
         }
 
     except Exception as e:
-        logger.error(f"V2 streaming execution failed: {e}")
+        logger.error(f"Streaming execution failed: {e}")
         # Emit error event but don't re-raise to ensure generator completes cleanly
         yield {"type": "error", "message": str(e)}
 
 
-def _compute_plan_view_state(state: GraphStateV2) -> str:
+def _compute_plan_view_state(state: GraphState) -> str:
     """
     Compute plan_view_state for frontend stage rendering.
 
-    V2 simplified state machine:
-    - S0_BOOTSTRAP: Show "Finish setup" checklist. CTA enabled when dest+dates set.
-    - S2_STRATEGY_READY: Tiles loaded. Show strategy/tiles.
+    State machine:
+    - S0_BOOTSTRAP: Setup checklist, no specialist content yet.
+    - S2_STRATEGY_READY: Strategy preview (specialist content) OR full logistics (tiles).
     - S3_*: Itinerary states (handled by expand-itinerary endpoint)
 
-    S1_FRAMING is deprecated in V2 - we stay in S0_BOOTSTRAP until tiles load.
+    Bridge State: Promotes to S2 when specialist content exists (even without dates/tiles)
+    to show Strategy Cards + Sample Day Flow + POI Map immediately.
     """
-    # S2: Has tiles → strategy ready
+    # S2: Has tiles → full logistics mode (dates set, real prices)
     if state.tiles and any(state.tiles.values()):
         return "S2_STRATEGY_READY"
 
-    # S0: No tiles yet → show setup checklist (CTA enabled/disabled based on dest+dates)
+    # S2: Has specialist content → strategy preview mode (inspiration, no prices)
+    # This enables the "Bridge State" - showing diving/skiing/hiking cards before dates
+    sections = state.metadata.get("strategy_sections", [])
+    has_specialist_content = any(
+        s.get("specialist_type") not in ("general", None) for s in sections
+    )
+    if has_specialist_content:
+        return "S2_STRATEGY_READY"
+
+    # S0: No tiles or specialist content → blank slate / setup checklist
     return "S0_BOOTSTRAP"
 
 
@@ -845,14 +847,14 @@ def _flatten_tiles_to_id_map(tiles_by_category: Optional[Dict[str, Any]]) -> Dic
     return result
 
 
-def _v2_result_to_v1_format(
-    state: GraphStateV2,
+def _format_result(
+    state: GraphState,
     original_session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Convert V2 result state to V1-compatible format for main.py."""
+    """Format result state for main.py response."""
     from datetime import datetime
 
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_graph
     from app.planner.state import trip_plan_is_ready
 
     trip_inputs = _trip_plan_to_trip_inputs(state.trip_plan)
@@ -910,7 +912,7 @@ def _v2_result_to_v1_format(
     plan_view_state = _compute_plan_view_state(state)
 
     logger.info(
-        f"_v2_result_to_v1_format: plan_view_state={plan_view_state}, "
+        f"_format_result: plan_view_state={plan_view_state}, "
         f"flattened_tiles_count={len(flattened_tiles)}, "
         f"raw_tiles_count={sum(len(v) for v in state.tiles.values()) if state.tiles else 0}"
     )
@@ -921,14 +923,13 @@ def _v2_result_to_v1_format(
 
     # DEBUG: Log existing sections
     section_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_v2(
-        f"_v2_result_to_v1_format: BEFORE - {len(strategy_sections)} sections, "
-        f"types={section_types}"
+    _debug_graph(
+        f"_format_result: BEFORE - {len(strategy_sections)} sections, " f"types={section_types}"
     )
     for s in strategy_sections:
         content_count = len(s.get("content_added", []))
         constraint_count = len(s.get("constraints_applied", []))
-        _debug_v2(
+        _debug_graph(
             f"  Section '{s.get('specialist_type')}': "
             f"content_added={content_count}, constraints={constraint_count}"
         )
@@ -938,8 +939,8 @@ def _v2_result_to_v1_format(
     last_specialist = state.metadata.get("last_executed_specialist")
     specialist_type = state.active_specialist or last_specialist or "general"
 
-    _debug_v2(
-        f"_v2_result_to_v1_format: active_specialist={state.active_specialist}, "
+    _debug_graph(
+        f"_format_result: active_specialist={state.active_specialist}, "
         f"last_specialist={last_specialist}, specialist_type={specialist_type}"
     )
 
@@ -955,8 +956,8 @@ def _v2_result_to_v1_format(
             specialist_type == "general" and last_specialist
         )  # Don't create general if specialist ran
     )
-    _debug_v2(
-        f"_v2_result_to_v1_format: needs_section={needs_section} "
+    _debug_graph(
+        f"_format_result: needs_section={needs_section} "
         f"(flattened_tiles={bool(flattened_tiles)})"
     )
 
@@ -1032,20 +1033,25 @@ def _v2_result_to_v1_format(
                     "type": block.type,
                     "description": block.description,  # Rich description for UI
                     "logic_hook": getattr(block, "logic_hook", None),  # Pro tip for UI
+                    "image_url": getattr(block, "image_url", None),  # Curated image
+                    "coordinates": getattr(block, "coordinates", None),  # [lng, lat] for Mapbox
                 }
             )
 
-        # Merge image_url from specialist sections (they have rich curated content)
-        # This ensures images are preserved even when rebuilding content_added
+        # Merge image_url and coordinates from specialist sections (rich curated content)
+        # This ensures images and map POIs are preserved even when rebuilding content_added
         for section in strategy_sections:
             if section.get("specialist_type") == specialist_type:
                 existing_content = section.get("content_added", [])
                 for item in existing_content:
-                    # Merge in image_url if present in specialist section
+                    # Merge in image_url/coordinates if present in specialist section
                     # but missing from our content
                     for ca in content_added:
-                        if ca.get("title") == item.get("title") and item.get("image_url"):
-                            ca["image_url"] = item.get("image_url")
+                        if ca.get("title") == item.get("title"):
+                            if item.get("image_url") and not ca.get("image_url"):
+                                ca["image_url"] = item.get("image_url")
+                            if item.get("coordinates") and not ca.get("coordinates"):
+                                ca["coordinates"] = item.get("coordinates")
 
         # Build must_dos from itinerary_blocks (actual specialist recommendations)
         # NOT from generic trip parameters
@@ -1141,8 +1147,8 @@ def _v2_result_to_v1_format(
 
     # DEBUG: Log what strategy_sections we're saving for next turn
     saved_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_v2(
-        f"_v2_result_to_v1_format: Saving {len(strategy_sections)} "
+    _debug_graph(
+        f"_format_result: Saving {len(strategy_sections)} "
         f"strategy_sections to session_state, types={saved_types}"
     )
 
@@ -1150,7 +1156,7 @@ def _v2_result_to_v1_format(
     document = {
         "trip_context_id": None,
         "trip_inputs": trip_inputs,
-        "branches": [],  # V2 doesn't use branches
+        "branches": [],  # Not used
         "tiles": flattened_tiles,  # Flattened to ID-based map for frontend
         "assistant_message": state.last_summary or "",
         "ready_to_generate": trip_plan_is_ready(state.trip_plan),
@@ -1183,20 +1189,20 @@ def _v2_result_to_v1_format(
     }
 
 
-async def run_turn_v2(
+async def run_turn_internal(
     graph: Any,
     user_message: str,
     session_state: Optional[Dict[str, Any]] = None,
-) -> GraphStateV2:
+) -> GraphState:
     """
-    Run a single turn (V2-native interface).
+    Run a single turn (internal interface).
 
     For internal use - prefer run_turn() for compatibility.
     """
     from langchain_core.messages import HumanMessage
 
-    # Convert session state to V2
-    state = _session_state_to_v2_state(session_state)
+    # Restore state from session
+    state = _restore_graph_state(session_state)
 
     # Add user message
     state.messages.append(HumanMessage(content=user_message))
@@ -1206,12 +1212,12 @@ async def run_turn_v2(
 
     # LangGraph returns dict, convert back to Pydantic if needed
     if isinstance(result, dict):
-        result = GraphStateV2(**result)
+        result = GraphState(**result)
 
     return result
 
 
-def get_response_from_state(state: GraphStateV2) -> Dict[str, Any]:
+def get_response_from_state(state: GraphState) -> Dict[str, Any]:
     """
     Extract the response data from state for frontend.
 
@@ -1239,13 +1245,13 @@ def get_response_from_state(state: GraphStateV2) -> Dict[str, Any]:
 # =============================================================================
 
 
-def get_v2_graph():
+def get_graph():
     """
-    Factory function to get a compiled V2 graph.
+    Factory function to get a compiled graph.
 
     Usage:
-        graph = get_v2_graph()
-        result = await run_turn_v2(graph, "I want to go diving in Bali")
+        graph = get_graph()
+        result = await run_turn_internal(graph, "I want to go diving in Bali")
     """
     workflow = create_optimized_graph()
     return compile_graph(workflow)
@@ -1255,28 +1261,28 @@ def get_v2_graph():
 # Module-level graph instance (lazy initialization)
 # =============================================================================
 
-_v2_graph = None
+_graph = None
 
 
-def get_or_create_v2_graph():
-    """Get or create the V2 graph instance (singleton pattern)."""
-    global _v2_graph
-    if _v2_graph is None:
-        _v2_graph = get_v2_graph()
-    return _v2_graph
+def get_or_create_graph():
+    """Get or create the graph instance (singleton pattern)."""
+    global _graph
+    if _graph is None:
+        _graph = get_graph()
+    return _graph
 
 
 # =============================================================================
 # Stub Functions for V1 Compatibility
 # =============================================================================
-# These functions are imported by main.py but may not be needed in V2.
+# These functions are imported by main.py for compatibility.
 # They provide safe no-op implementations to prevent import errors.
 
 
 def get_planner_debug_info() -> Dict[str, Any]:
-    """Return debug info for V2 planner."""
+    """Return debug info for planner."""
     return {
-        "version": "v2",
+        "version": "1.0",
         "build_id": PLANNER_BUILD_ID,
         "cache_schema": CACHE_SCHEMA_VERSION,
         "prompt_hash": PROMPT_BUNDLE_HASH,
@@ -1294,21 +1300,21 @@ def get_graph_stats() -> Dict[str, Any]:
     return {
         "nodes": 5,
         "edges": 6,
-        "version": "v2",
+        "version": "1.0",
     }
 
 
 def prewarm_prompts() -> Dict[str, Any]:
-    """Pre-warm prompts (no-op in V2, prompts are loaded on demand)."""
+    """Pre-warm prompts (no-op, prompts are loaded on demand)."""
     return {
         "prompts_warmed": 0,
-        "templates_loaded": 5,  # V2 has ~5 prompt templates
+        "templates_loaded": 5,  # ~5 prompt templates
         "warmup_ms": 0,
     }
 
 
 def validate_template_coverage() -> Dict[str, Any]:
-    """Validate all templates are covered (always valid in V2)."""
+    """Validate all templates are covered."""
     return {
         "valid": True,
         "missing_fields": [],
@@ -1325,35 +1331,35 @@ def condense_long_message(message: str, max_len: int) -> str:
 
 async def clear_all_caches() -> None:
     """Clear all caches."""
-    global _v2_graph
-    _v2_graph = None
+    global _graph
+    _graph = None
 
 
 async def clear_all_checkpoints() -> None:
-    """Clear all checkpoints (no-op in V2)."""
+    """Clear all checkpoints (no-op)."""
     pass
 
 
 async def clear_response_caches() -> None:
-    """Clear response caches (no-op in V2)."""
+    """Clear response caches (no-op)."""
     pass
 
 
 async def clear_session_checkpoint(session_id: str) -> None:
-    """Clear session checkpoint (no-op in V2)."""
+    """Clear session checkpoint (no-op)."""
     pass
 
 
 def checkpoint_stats() -> Dict[str, Any]:
     """Return checkpoint statistics."""
-    return {"count": 0, "version": "v2"}
+    return {"count": 0, "version": "1.0"}
 
 
 def response_cache_stats() -> Dict[str, Any]:
     """Return response cache statistics."""
-    return {"hits": 0, "misses": 0, "version": "v2"}
+    return {"hits": 0, "misses": 0, "version": "1.0"}
 
 
 def prune_stale_checkpoints(max_age_hours: int = 24) -> int:
-    """Prune stale checkpoints (no-op in V2)."""
+    """Prune stale checkpoints (no-op)."""
     return 0

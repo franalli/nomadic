@@ -96,7 +96,7 @@ export const TileCard = memo(function TileCard({
 
   // Memoize click tracking payload to avoid recreating on each render
   const trackClick = useCallback(() => {
-    apiFetch('/v1/tiles/click', {
+    apiFetch('/api/tiles/click', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -1428,7 +1428,7 @@ The Reset button allows users to start over with a fresh planning session. It mu
 - SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
 - ThinkingTerminal: `frontend/components/chat/ThinkingTerminal.tsx`
 - Integration: `frontend/components/chat/ChatPanel.tsx`
-- Backend telemetry: `backend/app/plan_graph_v2.py` (emits `logic_reveal` events)
+- Backend telemetry: `backend/app/plan_graph.py` (emits `logic_reveal` events)
 
 ---
 
@@ -1466,4 +1466,4 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ### Implementation Reference
 - SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
-- ConstraintGuard: `backend/app/planner/nodes_v2/constraint_guard.py`
+- ConstraintGuard: `backend/app/planner/nodes/constraint_guard.py`

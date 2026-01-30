@@ -71,7 +71,7 @@ def clear_all_plan_graph_caches():
     async def _clear():
         await clear_all_caches()
 
-    # Clear before test (V2 clear_all_caches is async)
+    # Clear before test (clear_all_caches is async)
     asyncio.run(_clear())
 
     yield

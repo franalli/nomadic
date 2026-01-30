@@ -6,7 +6,7 @@ This module defines the state models for the 7-node architecture:
 - TripSegment: Individual booking segment (flight/hotel/activity)
 - ItineraryBlock: Specialist-generated content (activities, experiences)
 - SpecialistConstraint: Domain constraints from Vertical Specialist
-- GraphStateV2: Unified state for the new architecture
+- GraphState: Unified state for the new architecture
 
 Key Principle: Architect sees the whole picture.
 """
@@ -49,6 +49,7 @@ class ItineraryBlock(BaseModel):
     image_url: Optional[str] = None
     duration_hours: Optional[float] = None
     location: Optional[str] = None
+    coordinates: Optional[List[float]] = None  # [lng, lat] for Mapbox - Bridge Mode map POIs
     # Specialist metadata
     source_specialist: Optional[str] = None  # "diving", "hiking", etc.
     skill_level: Optional[str] = None  # "beginner", "intermediate", "advanced"
@@ -308,7 +309,7 @@ class ExtractedSettingsFields(BaseModel):
 # =============================================================================
 
 
-class GraphStateV2(BaseModel):
+class GraphState(BaseModel):
     """
     Unified state for the 7-node architecture.
 

@@ -178,7 +178,7 @@ type DocumentState = {
     tileId?: string
   ) => Promise<void>;
 
-  // Set document from graph plan response (when /v1/graph_plan returns new document)
+  // Set document from graph plan response (when /api/graph_plan returns new document)
   setFromPlanResponse: (response: PlanDocumentResponse) => void;
 
   // Merge partial envelope update (used for streaming updates)
@@ -472,7 +472,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         trip_inputs: updates,
       };
 
-      const res = await apiFetch('/v1/document', {
+      const res = await apiFetch('/api/document', {
         method: 'PATCH',
         body: JSON.stringify(patch),
       });
@@ -520,7 +520,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (errorMessage.includes('409')) {
         try {
           // Fetch fresh document state
-          const freshRes = await apiFetch('/v1/document');
+          const freshRes = await apiFetch('/api/document');
           if (!freshRes.ok) {
             throw new Error('Failed to refresh document');
           }
@@ -593,7 +593,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   fetchDocument: async () => {
     set({ isLoading: true, error: null });
     try {
-      const res = await apiFetch('/v1/document');
+      const res = await apiFetch('/api/document');
       if (!res.ok) {
         if (res.status === 204 || res.status === 404) {
           // 204: No document yet (expected for new sessions)
@@ -633,7 +633,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   patchDocument: async (patch: PlanDocumentPatch) => {
     set({ isLoading: true, error: null });
     try {
-      const res = await apiFetch('/v1/document', {
+      const res = await apiFetch('/api/document', {
         method: 'PATCH',
         body: JSON.stringify(patch),
       });

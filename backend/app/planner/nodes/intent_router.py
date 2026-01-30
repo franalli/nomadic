@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from app.planner.state import GraphStateV2, TripPlan
+from app.planner.state import GraphState, TripPlan
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def _compute_constraint_hash(trip_plan: TripPlan, trip_inputs: dict) -> str:
     return hashlib.md5(json.dumps(hash_payload, sort_keys=True).encode()).hexdigest()
 
 
-def _clear_stale_specialist_content(state: GraphStateV2) -> None:
+def _clear_stale_specialist_content(state: GraphState) -> None:
     """
     Wipe old specialist data so we don't merge 'Aspen Skiing' into 'Hawaii'.
 
@@ -355,7 +355,7 @@ SPECIALIST_ACTIVITY_CATEGORIES = [
 ]
 
 
-def _detect_specialists_from_activity_settings(state: GraphStateV2) -> List[str]:
+def _detect_specialists_from_activity_settings(state: GraphState) -> List[str]:
     """
     Detect specialists from activity_settings.categories (UI pill selection).
 
@@ -443,7 +443,7 @@ def _get_router_llm() -> ChatOpenAI:
 
 
 async def _classify_intent_with_llm(
-    user_text: str, state: GraphStateV2
+    user_text: str, state: GraphState
 ) -> tuple[IntentClassification, dict]:
     """
     Classify user intent using LLM.
@@ -511,7 +511,7 @@ def _detect_specialist_keywords(user_text: str) -> List[str]:
 # =============================================================================
 
 
-async def intent_router(state: GraphStateV2) -> GraphStateV2:
+async def intent_router(state: GraphState) -> GraphState:
     """
     IntentRouter node function for LangGraph.
 

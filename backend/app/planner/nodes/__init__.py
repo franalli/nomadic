@@ -1,7 +1,7 @@
 """
-Nodes V2 Package - 7-Node Architecture.
+Nodes Package - 7-Node Architecture.
 
-This package contains the new "Core + Specialist" architecture nodes:
+This package contains the "Core + Specialist" architecture nodes:
 
 1. IntentRouter       - LLM (Fast): Classifies intent, detects specialist hints
 2. TripArchitect      - LLM (Smart): The Core, manages TripPlan, calls tools
@@ -18,13 +18,13 @@ Key Principles:
 - "Local Expert Fallback" - Generic trips always have content via LocalExpert
 """
 
-from app.planner.nodes_v2.constraint_guard import ConstraintGuard, constraint_guard
-from app.planner.nodes_v2.intent_router import IntentClassification, intent_router
-from app.planner.nodes_v2.local_expert import local_expert
-from app.planner.nodes_v2.logistics_node import logistics_node
-from app.planner.nodes_v2.synthesizer import Synthesizer, synthesizer
-from app.planner.nodes_v2.trip_architect import TripArchitect, trip_architect
-from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist, vertical_specialist
+from app.planner.nodes.constraint_guard import ConstraintGuard, constraint_guard
+from app.planner.nodes.intent_router import IntentClassification, intent_router
+from app.planner.nodes.local_expert import local_expert
+from app.planner.nodes.logistics_node import logistics_node
+from app.planner.nodes.synthesizer import Synthesizer, synthesizer
+from app.planner.nodes.trip_architect import TripArchitect, trip_architect
+from app.planner.nodes.vertical_specialist import VerticalSpecialist, vertical_specialist
 
 __all__ = [
     # Node classes/schemas

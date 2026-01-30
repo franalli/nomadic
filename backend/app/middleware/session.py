@@ -132,7 +132,7 @@ def get_session_from_request(request: Request) -> str:
     Use this as a FastAPI dependency to access the session in endpoints.
 
     Example:
-        @app.get("/v1/document")
+        @app.get("/api/document")
         def get_document(session_id: str = Depends(get_session_from_request)):
             ...
     """
@@ -155,11 +155,11 @@ CSRF_EXEMPT_PATHS = {
     "/docs",
     "/redoc",
     "/openapi.json",
-    "/v1/validate-trip-input",
-    "/v1/admin/clear-validation-cache",
-    "/v1/admin/clear-all-caches",
-    "/v1/admin/clear-all-checkpoints",
-    "/v1/admin/fresh-start",
+    "/api/validate-trip-input",
+    "/api/admin/clear-validation-cache",
+    "/api/admin/clear-all-caches",
+    "/api/admin/clear-all-checkpoints",
+    "/api/admin/fresh-start",
 }
 
 # Header name for CSRF token

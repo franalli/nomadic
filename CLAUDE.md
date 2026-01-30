@@ -4,9 +4,12 @@
 - **Backend SSoT:** `@docs/plan_graph_analysis.md` is the SINGLE SOURCE OF TRUTH for architecture.
   - **Rule:** Before generating code for `backend/app/planner/`, you **MUST** verify your plan against this spec.
   - **Invariant:** Strictly adhere to the 7-node structure; DO NOT create new nodes without updating the spec first.
-- **Frontend SSoT:** `@docs/design-system.md` is the SINGLE SOURCE OF TRUTH for UI/UX.
+- **Frontend SSoT:** `@docs/design-system.md` is the SINGLE SOURCE OF TRUTH for UI styling.
   - **Rule:** All React components **MUST** use the tokens, colors, and patterns defined in this file.
   - **Invariant:** Do not invent arbitrary Tailwind values; use the design tokens.
+- **UX Logic SSoT:** `@docs/ux_unified_architecture.md` is the SINGLE SOURCE OF TRUTH for View States & Rendering.
+  - **Rule:** Never swap entire renderers (Setup vs Plan). Use `UnifiedStageRenderer` and adapt based on data density (Bridge Mode vs Full Mode).
+  - **Invariant:** The Right Panel must NEVER be empty after the first user interaction.
 
 ## Tech Stack
 - **Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS, Zustand, Framer Motion, Mapbox GL, Unsplash Images
@@ -54,7 +57,7 @@ nomadic/ ├── frontend/ # Next.js app │ ├── app/ # App Router pages
 ## Coding Standards
 
 ### TypeScript/React
-- **Check `@docs/design-system.md` first.**
+- **Check `@docs/design-system.md` AND `@docs/ux_unified_architecture.md` first.**
 - 2-space indentation
 - Named exports (avoid default exports)
 - Use `cn()` for className merging
@@ -73,13 +76,13 @@ nomadic/ ├── frontend/ # Next.js app │ ├── app/ # App Router pages
 ## Memory Management (16GB RAM)
 - **Avoid:** Large-scale refactors of more than 5 files at once
 - **Avoid:** Reading entire directories or node_modules
-- **Reference Mode:** Read specific files (e.g., `@backend/app/planner/nodes_v2/intent_router.py`) rather than broad directory scans
+- **Reference Mode:** Read specific files (e.g., `@backend/app/planner/nodes/intent_router.py`) rather than broad directory scans
 - **Context Reset:** Run `/clear` after completing tasks to purge history from RAM
 - **If stuck:** Reference `@CLAUDE.md` to reload context cleanly
 
 ## Auto-Compact Instructions
 When auto-compacting this conversation, MUST preserve:
-- **Governance:** The SSoT status of `plan_graph_analysis.md` and `design-system.md`
+- **Governance:** The SSoT status of `plan_graph_analysis.md`, `design-system.md`, and `ux_unified_architecture.md`
 - **Architecture SSoT:** The 7-node LangGraph structure and `TripPlan` as single source of truth
 - **Memory Safety:** The "Memory Management (16GB RAM)" rules
 - **Current Progress:** Verbatim file paths and function signatures currently being modified

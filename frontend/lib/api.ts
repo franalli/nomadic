@@ -142,7 +142,7 @@ export interface FetchWithRetryOptions {
  *
  * @example
  * ```ts
- * const res = await fetchWithRetry('/v1/document/tiles/abc', { method: 'POST' }, {
+ * const res = await fetchWithRetry('/api/document/tiles/abc', { method: 'POST' }, {
  *   maxRetries: 3,
  *   onRetry: (attempt) => console.log(`Retrying (attempt ${attempt})...`)
  * });
@@ -196,11 +196,11 @@ export async function fetchWithRetry(
 }
 
 /**
- * Reset the current session by calling DELETE /v1/session.
+ * Reset the current session by calling DELETE /api/session.
  * The backend will clear the session cookies.
  */
 export async function resetSession(): Promise<Response> {
-  const url = `${API_BASE}/v1/session`;
+  const url = `${API_BASE}/api/session`;
 
   const headers: HeadersInit = {};
   const csrfToken = getCsrfToken();
@@ -223,7 +223,7 @@ const LOCAL_STORAGE_KEYS = {
   /** Trip summary cached for the summary page */
   TRIP_SUMMARY: 'nomadic_trip_summary',
   /** User consent preferences (GDPR) - should NOT be cleared on fresh start */
-  CONSENT: 'nomadic_consent_v1',
+  CONSENT: 'nomadic_consent',
 } as const;
 
 /**
@@ -268,7 +268,7 @@ export async function validateTripInput(
   fieldType: 'origin' | 'destination',
   value: string
 ): Promise<ValidationResponse> {
-  const res = await apiFetch('/v1/validate-trip-input', {
+  const res = await apiFetch('/api/validate-trip-input', {
     method: 'POST',
     body: JSON.stringify({ field_type: fieldType, value }),
   });
@@ -292,7 +292,7 @@ export interface DestinationImageResponse {
 export async function fetchDestinationImage(
   destination: string
 ): Promise<DestinationImageResponse> {
-  const res = await apiFetch('/v1/destination-image', {
+  const res = await apiFetch('/api/destination-image', {
     method: 'POST',
     body: JSON.stringify({ destination }),
   });
@@ -313,7 +313,7 @@ export function trackSuggestionClick(
   suggestionIndex: number,
   requestId?: string
 ): void {
-  apiFetch('/v1/suggestions/click', {
+  apiFetch('/api/suggestions/click', {
     method: 'POST',
     body: JSON.stringify({
       suggestion_text: suggestionText,
@@ -371,7 +371,7 @@ export async function refreshTiles(
   verticals?: ('hotel' | 'flight' | 'activity')[]
 ): Promise<TileRefreshResponse> {
   const res = await fetchWithRetry(
-    '/v1/tiles/refresh',
+    '/api/tiles/refresh',
     {
       method: 'POST',
       body: JSON.stringify({
@@ -475,7 +475,7 @@ export function streamGraphPlan(
   callbacks: StreamGraphPlanCallbacks
 ): () => void {
   const controller = new AbortController();
-  const url = `${API_BASE}/v1/graph_plan/stream`;
+  const url = `${API_BASE}/api/graph_plan/stream`;
 
   // Build headers with CSRF token
   const headers: HeadersInit = {

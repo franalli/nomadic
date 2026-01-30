@@ -310,7 +310,7 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
           try {
             // Use fetchWithRetry for automatic retry on transient errors
             const res = await fetchWithRetry(
-              `/v1/document/tiles/${encodeURIComponent(fallbackBranchId)}`,
+              `/api/document/tiles/${encodeURIComponent(fallbackBranchId)}`,
               {
                 method: 'POST',
                 signal: controller.signal,

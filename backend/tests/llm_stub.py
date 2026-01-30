@@ -111,7 +111,7 @@ def llm_json_for_prompt(
 ) -> Dict[str, Any]:
     """Return a deterministic JSON payload matching the prompt type.
 
-    This is a test stub for LLM calls in plan_graph_v2.
+    This is a test stub for LLM calls in plan_graph.
     """
 
     # Check for GENERATE_PLAN_NOW trigger in user_message or prompt

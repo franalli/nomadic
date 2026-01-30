@@ -167,7 +167,7 @@ def _has_missing_critical_fields(trip_inputs: dict) -> bool:
 
 @dataclass
 class TripReadiness:
-    """Simple trip readiness checker (V2 replacement for gates.compute_trip_readiness)."""
+    """Simple trip readiness checker."""
 
     has_origin: bool
     has_destination: bool
@@ -544,7 +544,7 @@ def health():
 # =============================================================================
 
 
-@app.post("/v1/validate-trip-input", response_model=TripInputValidationResponse)
+@app.post("/api/validate-trip-input", response_model=TripInputValidationResponse)
 async def validate_trip_input(req: TripInputValidationRequest, request: Request):
     """
     Validate a trip input (origin or destination).
@@ -588,7 +588,7 @@ class DestinationImageResponse(BaseModel):
     destination: str
 
 
-@app.post("/v1/destination-image", response_model=DestinationImageResponse)
+@app.post("/api/destination-image", response_model=DestinationImageResponse)
 async def get_destination_image(req: DestinationImageRequest, db: AsyncSession = db_dependency):
     """
     Get the Unsplash image URL for a destination.
@@ -608,7 +608,7 @@ async def get_destination_image(req: DestinationImageRequest, db: AsyncSession =
     )
 
 
-@app.post("/v1/admin/clear-validation-cache")
+@app.post("/api/admin/clear-validation-cache")
 def admin_clear_validation_cache():
     """
     Clear the validation cache. For development/debugging only.
@@ -627,7 +627,7 @@ def admin_clear_validation_cache():
     }
 
 
-@app.post("/v1/admin/fresh-start")
+@app.post("/api/admin/fresh-start")
 def admin_fresh_start():
     """
     Perform a complete system cache and checkpoint cleanup.
@@ -677,7 +677,7 @@ def admin_fresh_start():
     }
 
 
-@app.get("/v1/admin/graph-stats")
+@app.get("/api/admin/graph-stats")
 def admin_graph_stats():
     """
     Get comprehensive graph statistics for observability.
@@ -705,7 +705,7 @@ def admin_graph_stats():
     return get_graph_stats()
 
 
-@app.get("/v1/admin/planner")
+@app.get("/api/admin/planner")
 def admin_planner_debug():
     """
     Get planner configuration and build identifiers for ops debugging.
@@ -730,7 +730,7 @@ def admin_planner_debug():
     return get_planner_debug_info()
 
 
-@app.post("/v1/admin/clear-all-checkpoints")
+@app.post("/api/admin/clear-all-checkpoints")
 def admin_clear_all_checkpoints():
     """
     Clear ALL LangGraph checkpoints regardless of age.
@@ -747,7 +747,7 @@ def admin_clear_all_checkpoints():
     }
 
 
-@app.post("/v1/admin/clear-all-caches")
+@app.post("/api/admin/clear-all-caches")
 async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
     """
     Clear ALL caches in the system - comprehensive cache reset.
@@ -805,7 +805,7 @@ async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
     return results
 
 
-@app.post("/v1/tiles/click")
+@app.post("/api/tiles/click")
 def track_tile_click(
     request: Request,
     event: schemas.TileClickEvent,
@@ -828,7 +828,7 @@ def track_tile_click(
     return {"status": "ok"}
 
 
-@app.post("/v1/suggestions/click")
+@app.post("/api/suggestions/click")
 def track_suggestion_click(
     request: Request,
     event: schemas.SuggestionClickEvent,
@@ -852,7 +852,7 @@ def track_suggestion_click(
     return {"status": "ok"}
 
 
-@app.post("/v1/graph_plan", response_model=GraphPlanResponse)
+@app.post("/api/graph_plan", response_model=GraphPlanResponse)
 async def graph_plan_endpoint(
     request: Request,
     response: Response,
@@ -1366,27 +1366,31 @@ async def graph_plan_endpoint(
             ),
         )
 
-    # --- V2 Graph Output Processing ---
-    # V2 always computes plan_view_state based on actual state (tiles/destination/dates)
-    v2_document = result.get("document", {})
-    response_document.plan_view_state = v2_document.get("plan_view_state", "S0_BOOTSTRAP")
+    # --- Graph Output Processing ---
+    # Compute plan_view_state based on actual state (tiles/destination/dates)
+    graph_document = result.get("document", {})
+    response_document.plan_view_state = graph_document.get("plan_view_state", "S0_BOOTSTRAP")
 
     # Apply strategy sections if present
-    v2_strategy_sections = v2_document.get("strategy_sections", [])
-    if v2_strategy_sections:
+    graph_strategy_sections = graph_document.get("strategy_sections", [])
+    if graph_strategy_sections:
         response_document.strategy_sections = [
             StrategySection(**section) if isinstance(section, dict) else section
-            for section in v2_strategy_sections
+            for section in graph_strategy_sections
         ]
-        response_document.executed_strategy_topics = v2_document.get("executed_strategy_topics", [])
-        response_document.pending_strategy_topics = v2_document.get("pending_strategy_topics", [])
+        response_document.executed_strategy_topics = graph_document.get(
+            "executed_strategy_topics", []
+        )
+        response_document.pending_strategy_topics = graph_document.get(
+            "pending_strategy_topics", []
+        )
 
-    # Apply V2 tiles if present and response doesn't have tiles
-    v2_tiles = v2_document.get("tiles", {})
-    if v2_tiles and not response_document.tiles:
+    # Apply graph tiles if present and response doesn't have tiles
+    graph_tiles = graph_document.get("tiles", {})
+    if graph_tiles and not response_document.tiles:
         response_document.tiles = {
             tile_id: Tile.model_validate(tile_data) if isinstance(tile_data, dict) else tile_data
-            for tile_id, tile_data in v2_tiles.items()
+            for tile_id, tile_data in graph_tiles.items()
         }
 
     # --- Build and return response ---
@@ -1407,7 +1411,7 @@ async def graph_plan_endpoint(
 # =============================================================================
 
 
-@app.post("/v1/graph_plan/stream")
+@app.post("/api/graph_plan/stream")
 async def graph_plan_stream_endpoint(
     request: Request,
     req: GraphPlanRequest,
@@ -1814,41 +1818,43 @@ async def graph_plan_stream_endpoint(
                     ),
                 )
 
-            # --- V2 Graph Output Processing ---
-            # V2 graph generates strategy_sections, plan_view_state, and executed_topics
-            v2_document = final_result.get("document", {})
-            v2_strategy_sections = v2_document.get("strategy_sections", [])
+            # --- Graph Output Processing ---
+            # Graph generates strategy_sections, plan_view_state, and executed_topics
+            graph_document = final_result.get("document", {})
+            graph_strategy_sections = graph_document.get("strategy_sections", [])
 
-            # V2 always computes plan_view_state based on actual state (tiles/destination/dates)
-            response_document.plan_view_state = v2_document.get("plan_view_state", "S0_BOOTSTRAP")
+            # Compute plan_view_state based on actual state (tiles/destination/dates)
+            response_document.plan_view_state = graph_document.get(
+                "plan_view_state", "S0_BOOTSTRAP"
+            )
 
             # Apply strategy sections if present
-            if v2_strategy_sections:
+            if graph_strategy_sections:
                 response_document.strategy_sections = [
                     StrategySection(**section) if isinstance(section, dict) else section
-                    for section in v2_strategy_sections
+                    for section in graph_strategy_sections
                 ]
-                response_document.executed_strategy_topics = v2_document.get(
+                response_document.executed_strategy_topics = graph_document.get(
                     "executed_strategy_topics", []
                 )
-                response_document.pending_strategy_topics = v2_document.get(
+                response_document.pending_strategy_topics = graph_document.get(
                     "pending_strategy_topics", []
                 )
                 response_document.needs_refresh = False
                 response_document.can_expand_to_itinerary = True
 
-            # Apply V2 tiles if present
-            v2_tiles = v2_document.get("tiles", {})
-            if v2_tiles and not response_document.tiles:
+            # Apply graph tiles if present
+            graph_tiles = graph_document.get("tiles", {})
+            if graph_tiles and not response_document.tiles:
                 response_document.tiles = {
                     tile_id: (
                         Tile.model_validate(tile_data) if isinstance(tile_data, dict) else tile_data
                     )
-                    for tile_id, tile_data in v2_tiles.items()
+                    for tile_id, tile_data in graph_tiles.items()
                 }
 
             _debug(
-                f"[MAIN.PY] V2 output: plan_view_state={response_document.plan_view_state}, "
+                f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "
                 f"strategy_sections={len(response_document.strategy_sections or [])}, "
                 f"tiles={len(response_document.tiles or {})}"
             )
@@ -1910,7 +1916,7 @@ async def graph_plan_stream_endpoint(
     )
 
 
-@app.delete("/v1/session", status_code=204)
+@app.delete("/api/session", status_code=204)
 def reset_session(
     request: Request,
     db: Session = db_dependency,
@@ -1985,7 +1991,7 @@ def reset_session(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@app.get("/v1/chat", response_model=ChatHistoryResponse)
+@app.get("/api/chat", response_model=ChatHistoryResponse)
 async def get_chat_history(
     request: Request,
     db: AsyncSession = async_db_dependency,
@@ -2022,7 +2028,7 @@ async def get_chat_history(
     return ChatHistoryResponse(messages=response_messages)
 
 
-@app.delete("/v1/chat/last", response_model=DeleteLastMessageResponse)
+@app.delete("/api/chat/last", response_model=DeleteLastMessageResponse)
 async def delete_last_message(
     request: Request,
     db: AsyncSession = async_db_dependency,
@@ -2092,7 +2098,7 @@ async def delete_last_message(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@app.get("/v1/document", response_model=PlanDocumentResponse)
+@app.get("/api/document", response_model=PlanDocumentResponse)
 async def get_plan_document(
     request: Request,
     db: AsyncSession = async_db_dependency,
@@ -2121,7 +2127,7 @@ async def get_plan_document(
     )
 
 
-@app.patch("/v1/document", response_model=PlanDocumentResponse)
+@app.patch("/api/document", response_model=PlanDocumentResponse)
 async def patch_plan_document(
     request: Request,
     patch: PlanDocumentPatch,
@@ -2237,7 +2243,7 @@ async def patch_plan_document(
     )
 
 
-@app.post("/v1/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
+@app.post("/api/document/tiles/{branch_id}", response_model=PlanDocumentResponse)
 async def fetch_tiles_for_branch(
     request: Request,
     branch_id: str,
@@ -2356,7 +2362,7 @@ async def fetch_tiles_for_branch(
     )
 
 
-@app.post("/v1/tiles/refresh", response_model=TileRefreshResponse)
+@app.post("/api/tiles/refresh", response_model=TileRefreshResponse)
 async def refresh_tiles(
     request: Request,
     body: TileRefreshRequest,
@@ -2463,7 +2469,7 @@ def _check_idempotency(key: str) -> bool:
     return False
 
 
-@app.post("/v1/expand-itinerary")
+@app.post("/api/expand-itinerary")
 async def expand_itinerary_endpoint(
     request: Request,
     req: ExpandItineraryRequest,
@@ -2570,7 +2576,7 @@ async def expand_itinerary_endpoint(
                     "strategy_sections": strategy_sections_data,
                     "executed_strategy_topics": executed_topics,
                     # Note: Frontend tiles are keyed by ID (e.g., "curated_...": {})
-                    # but GraphStateV2.tiles expects category keys (e.g., "flights": [])
+                    # but GraphState.tiles expects category keys (e.g., "flights": [])
                     # Don't pass incompatible frontend tiles to planner
                     "tiles": {},
                 },

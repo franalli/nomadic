@@ -62,7 +62,11 @@ export function generateGhostDayCards(
           period: 'morning', // Default to morning for specialist activities
           activity_type: content.type || section.specialist_type || 'activity',
           summary: content.title,
-          coordinates: undefined, // Specialist content may have coordinates
+          // Pass through coordinates from specialist content for map integration
+          // Backend sends [lng, lat] format, convert to { lat, lng } for Mapbox
+          coordinates: content.coordinates
+            ? { lat: content.coordinates[1], lng: content.coordinates[0] }
+            : undefined,
           is_skeleton: false,
           specialist_type: section.specialist_type,
         };
@@ -146,4 +150,73 @@ export function hasSpecialistContent(
 function capitalize(str: string): string {
   if (!str) return str;
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * POI item for map display in Bridge Mode.
+ * Matches InteractiveMap's MapItem interface.
+ */
+export interface MapPOI {
+  id: string;
+  title: string;
+  type: string;
+  coordinates: { lat: number; lng: number };
+}
+
+/**
+ * Extract POI coordinates from specialist content for map display.
+ * Used in Bridge Mode to show activity locations without booking tiles.
+ *
+ * @param strategySections - Strategy sections from documentStore
+ * @returns Array of MapPOI items for InteractiveMap
+ */
+export function extractPOIsFromSections(
+  strategySections: StrategySection[] | undefined
+): MapPOI[] {
+  if (!strategySections) return [];
+
+  const pois: MapPOI[] = [];
+
+  strategySections.forEach((section) => {
+    // Skip general agent - no specific locations
+    if (section.specialist_type === 'general') return;
+    // Skip infeasible specialists
+    if (section.feasibility_status === 'infeasible') return;
+
+    section.content_added?.forEach((content, idx) => {
+      // Only include if content has valid coordinates
+      // Backend sends [lng, lat] format, convert to { lat, lng } for Mapbox
+      if (
+        content.coordinates &&
+        Array.isArray(content.coordinates) &&
+        content.coordinates.length === 2
+      ) {
+        const [lng, lat] = content.coordinates;
+        pois.push({
+          id: `poi-${section.specialist_type}-${idx}`,
+          title: content.title,
+          type: section.specialist_type || 'activity',
+          coordinates: { lat, lng },
+        });
+      }
+    });
+  });
+
+  return pois;
+}
+
+/**
+ * Calculate center point from POIs for map initialization.
+ * Returns average of all coordinates, or Dubai default if no POIs.
+ */
+export function calculateMapCenter(pois: MapPOI[]): { lat: number; lng: number; zoom: number } {
+  if (pois.length === 0) {
+    // Default: Dubai center
+    return { lat: 25.2048, lng: 55.2708, zoom: 10 };
+  }
+
+  const avgLat = pois.reduce((sum, p) => sum + p.coordinates.lat, 0) / pois.length;
+  const avgLng = pois.reduce((sum, p) => sum + p.coordinates.lng, 0) / pois.length;
+
+  return { lat: avgLat, lng: avgLng, zoom: 11 };
 }

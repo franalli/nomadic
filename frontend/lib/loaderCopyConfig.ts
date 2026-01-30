@@ -115,7 +115,7 @@ export const FALLBACK_TIMEOUT_MS = 30000;
 
 /**
  * Compelling node labels for the "Live Logic" status bar.
- * Keys must match NODE_STATUS_CONFIG in plan_graph_v2.py exactly.
+ * Keys must match NODE_STATUS_CONFIG in plan_graph.py exactly.
  */
 export const COMPELLING_NODE_LABELS: Record<string, string> = {
   // Main graph nodes

@@ -2,7 +2,7 @@
 PR-E: Debug Utilities Module
 ============================
 
-Consolidated debug logging for the V2 planning graph.
+Consolidated debug logging for the planning graph.
 
 DEBUG modes (set in .env or environment):
 - DEBUG=off   - Zero output (production)
@@ -270,37 +270,43 @@ def _truncate(value: Any, max_len: int = 100) -> str:
         return "<unserializable>"
 
 
-def _debug_v2_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
-    """Log V2 node start with inputs. Only shown in full mode."""
+def _debug_graph_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
+    """Log node start with inputs. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
     try:
         inputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in inputs.items())
-        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} START | {inputs_str}")
+        _safe_print(f"[DEBUG] {emoji} {node_name.upper()} START | {inputs_str}")
     except Exception:
         pass
 
 
-def _debug_v2_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
-    """Log V2 node end with outputs. Only shown in full mode."""
+def _debug_graph_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
+    """Log node end with outputs. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
     try:
         outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())
-        _safe_print(f"[V2 DEBUG] {emoji} {node_name.upper()} END | {outputs_str}")
+        _safe_print(f"[DEBUG] {emoji} {node_name.upper()} END | {outputs_str}")
     except Exception:
         pass
 
 
-def _debug_v2(message: str, **kwargs: Any) -> None:
-    """General V2 debug message. Only shown in full mode."""
+def _debug_graph(message: str, **kwargs: Any) -> None:
+    """General graph debug message. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
     try:
         extras = " ".join(f"{k}={_truncate(v)}" for k, v in kwargs.items()) if kwargs else ""
-        _safe_print(f"[V2 DEBUG] {message} {extras}".strip())
+        _safe_print(f"[DEBUG] {message} {extras}".strip())
     except Exception:
         pass
+
+
+# Backward compatibility aliases
+_debug_v2_node_start = _debug_graph_node_start
+_debug_v2_node_end = _debug_graph_node_end
+_debug_v2 = _debug_graph
 
 
 def _debug(message: str, **kwargs: Any) -> None:
@@ -410,7 +416,7 @@ def configure_demo_logging():
     # App-level loggers (suppress warnings/errors from our code in demo mode)
     logging.getLogger("app").setLevel(logging.CRITICAL)
     logging.getLogger("app.planner").setLevel(logging.CRITICAL)
-    logging.getLogger("app.planner.nodes_v2").setLevel(logging.CRITICAL)
+    logging.getLogger("app.planner.nodes").setLevel(logging.CRITICAL)
 
     # Telemetry trace logger (suppress structured trace events)
     logging.getLogger("planner.trace").setLevel(logging.CRITICAL)

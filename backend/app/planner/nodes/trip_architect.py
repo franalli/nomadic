@@ -25,7 +25,7 @@ from langchain_openai import ChatOpenAI
 from app.planner.state import (
     ExtractedSettingsFields,
     ExtractedTripFields,
-    GraphStateV2,
+    GraphState,
     TripPlan,
     create_missing_fields_response,
     get_missing_fields,
@@ -366,7 +366,7 @@ async def _update_trip_plan_from_llm(
     return plan
 
 
-def _detect_and_handle_pivot(state: "GraphStateV2", old_destination: str | None) -> bool:
+def _detect_and_handle_pivot(state: "GraphState", old_destination: str | None) -> bool:
     """
     Detects if destination changed and clears dependent state.
     Returns True if pivot occurred.
@@ -432,7 +432,7 @@ class TripArchitect:
     def __init__(self):
         self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
-    def determine_mode(self, state: GraphStateV2) -> str:
+    def determine_mode(self, state: GraphState) -> str:
         """
         Determine the current operating mode.
 
@@ -453,7 +453,7 @@ class TripArchitect:
 
         return "planning"
 
-    def generate_pre_core_response(self, state: GraphStateV2, user_text: str) -> str:
+    def generate_pre_core_response(self, state: GraphState, user_text: str) -> str:
         """
         Generate a Pre-Core (S0) inspiration response.
 
@@ -500,7 +500,7 @@ class TripArchitect:
             "cultural exploration, or something else?"
         )
 
-    def generate_missing_fields_response(self, state: GraphStateV2) -> Dict[str, Any]:
+    def generate_missing_fields_response(self, state: GraphState) -> Dict[str, Any]:
         """
         Generate structured response for missing fields.
 
@@ -513,7 +513,7 @@ class TripArchitect:
 
         return {"type": "missing_fields", "fields": [], "message": "Ready to plan!"}
 
-    def should_fetch_tiles(self, state: GraphStateV2, intent: str) -> bool:
+    def should_fetch_tiles(self, state: GraphState, intent: str) -> bool:
         """
         Determine if we should call fetch_travel_tiles.
 
@@ -546,7 +546,7 @@ class TripArchitect:
         logger.debug("should_fetch_tiles: returning False (waiting for Build Plan click)")
         return False
 
-    def fetch_tiles_for_plan(self, state: GraphStateV2) -> Dict[str, List[Dict]]:
+    def fetch_tiles_for_plan(self, state: GraphState) -> Dict[str, List[Dict]]:
         """
         Fetch tiles for the current plan.
 
@@ -620,7 +620,7 @@ class TripArchitect:
         )
         return tiles_result
 
-    def generate_planning_response(self, state: GraphStateV2, user_text: str) -> str:
+    def generate_planning_response(self, state: GraphState, user_text: str) -> str:
         """
         Generate a planning mode response.
 
@@ -662,7 +662,7 @@ class TripArchitect:
 # =============================================================================
 
 
-async def trip_architect(state: GraphStateV2) -> GraphStateV2:
+async def trip_architect(state: GraphState) -> GraphState:
     """
     TripArchitect node function for LangGraph.
 

@@ -236,11 +236,11 @@ def teardown_module(_: object):
 
 
 def test_get_document_returns_branches_and_tiles():
-    """Test that GET /v1/document returns the document with branches and tiles."""
+    """Test that GET /api/document returns the document with branches and tiles."""
     seed = seed_session_with_document(session_token="session-get-doc")
 
     response = client.get(
-        "/v1/document",
+        "/api/document",
         cookies=get_session_cookies(seed["session_token"]),
     )
 
@@ -263,9 +263,9 @@ def test_get_document_returns_branches_and_tiles():
 
 
 def test_get_document_handles_missing_session():
-    """Test that GET /v1/document returns 204 for missing session (no document yet)."""
+    """Test that GET /api/document returns 204 for missing session (no document yet)."""
     response = client.get(
-        "/v1/document",
+        "/api/document",
         cookies=get_session_cookies("missing-session"),
     )
 
@@ -273,7 +273,7 @@ def test_get_document_handles_missing_session():
 
 
 def test_patch_document_updates_selections():
-    """Test that PATCH /v1/document updates tile selections."""
+    """Test that PATCH /api/document updates tile selections."""
     seed = seed_session_with_document(session_token="session-patch-doc")
 
     # Update selections for branch_1
@@ -289,7 +289,7 @@ def test_patch_document_updates_selections():
     }
 
     response = client.patch(
-        "/v1/document",
+        "/api/document",
         cookies=get_session_cookies(seed["session_token"]),
         headers=get_csrf_headers(),
         json=patch,
@@ -307,11 +307,11 @@ def test_patch_document_updates_selections():
 
 
 def test_session_delete_wipes_document():
-    """Test that DELETE /v1/session removes the PlanDocument."""
+    """Test that DELETE /api/session removes the PlanDocument."""
     seed = seed_session_with_document(session_token="session-delete-doc")
 
     response = client.delete(
-        "/v1/session",
+        "/api/session",
         cookies=get_session_cookies(seed["session_token"]),
         headers=get_csrf_headers(),
     )
@@ -335,7 +335,7 @@ def test_session_delete_wipes_document():
         assert doc_row is None
 
     # Verify document endpoint returns 204 (no content, session gone)
-    doc_response = client.get("/v1/document", params={"session_id": seed["session_token"]})
+    doc_response = client.get("/api/document", params={"session_id": seed["session_token"]})
     assert doc_response.status_code == 204
 
 
@@ -798,12 +798,12 @@ def test_apply_user_patch_cascades_destination_change_to_branch():
 
 
 def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
-    """PATCH /v1/document should not reset destinations when only activity categories change."""
+    """PATCH /api/document should not reset destinations when only activity categories change."""
 
     seed = seed_session_with_document(session_token="session-activities-patch")
 
     response = client.patch(
-        "/v1/document",
+        "/api/document",
         cookies=get_session_cookies(seed["session_token"]),
         headers=get_csrf_headers(),
         json={
@@ -821,7 +821,7 @@ def test_patch_trip_inputs_activity_categories_preserves_existing_fields():
     ]
 
     persisted = client.get(
-        "/v1/document",
+        "/api/document",
         cookies=get_session_cookies(seed["session_token"]),
     )
     assert persisted.status_code == 200

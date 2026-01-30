@@ -240,6 +240,7 @@ export interface StrategySection {
     description?: string;  // Rich description of the content
     logic_hook?: string;   // "Why this matters" tip (e.g., "Indoor - Summer safe")
     image_url?: string;    // Curated thumbnail image for demo destinations
+    coordinates?: [number, number];  // [lng, lat] for Mapbox - Bridge Mode map POIs
   }>;
 
   // For General Agent: trip parameters summary (inventory counts from tiles, not here)

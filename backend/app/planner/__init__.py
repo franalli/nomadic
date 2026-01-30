@@ -1,9 +1,9 @@
 # backend/app/planner/__init__.py
 """
-Planner facade module - V2 Architecture.
+Planner facade module.
 
 This module exports the stable public API for the planner.
-External code should import from here, not from plan_graph_v2.py directly.
+External code should import from here, not from plan_graph.py directly.
 
 Usage:
     from app.planner import run_turn, run_turn_streaming
@@ -57,9 +57,9 @@ from app.planner.meta_keys import (
     TRACE_ENVELOPE,
 )
 
-# V2 State models
+# State models
 from app.planner.state import (
-    GraphStateV2,
+    GraphState,
     ItineraryBlock,
     MissingFieldsResponse,
     SpecialistConstraint,
@@ -101,11 +101,10 @@ from app.planner.test_mode import (
 
 # Type checking imports (no runtime cost)
 if TYPE_CHECKING:
-    from app.plan_graph_v2 import (
+    from app.plan_graph import (
         CACHE_SCHEMA_VERSION,
         PLANNER_BUILD_ID,
         PROMPT_BUNDLE_HASH,
-        GraphState,
         TripInputs,
         checkpoint_stats,
         clear_all_caches,
@@ -126,12 +125,11 @@ if TYPE_CHECKING:
 
 
 def __getattr__(name: str):
-    """Lazy import for plan_graph_v2 exports to avoid circular imports."""
+    """Lazy import for plan_graph exports to avoid circular imports."""
     _PLAN_GRAPH_EXPORTS = {
         "CACHE_SCHEMA_VERSION",
         "PLANNER_BUILD_ID",
         "PROMPT_BUNDLE_HASH",
-        "GraphState",
         "TripInputs",
         "checkpoint_stats",
         "clear_all_caches",
@@ -151,9 +149,9 @@ def __getattr__(name: str):
     }
 
     if name in _PLAN_GRAPH_EXPORTS:
-        from app import plan_graph_v2
+        from app import plan_graph
 
-        return getattr(plan_graph_v2, name)
+        return getattr(plan_graph, name)
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -165,8 +163,7 @@ __all__ = [
     # State types
     "GraphState",
     "TripInputs",
-    # V2 State models
-    "GraphStateV2",
+    # State models
     "TripPlan",
     "TripSegment",
     "ItineraryBlock",

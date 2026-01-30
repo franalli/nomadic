@@ -2,7 +2,7 @@
 """
 Import contract enforcement tests.
 
-Verifies that the planner facade exports expected V2 symbols.
+Verifies that the planner facade exports expected symbols.
 """
 
 import re
@@ -213,16 +213,16 @@ class TestPlannerFacadeExports:
         assert callable(cache_set)
         assert callable(cache_delete)
 
-    def test_facade_exports_v2_state_models(self):
-        """V2 state models should be exported from facade."""
+    def test_facade_exports_state_models(self):
+        """State models should be exported from facade."""
         from app.planner import (
-            GraphStateV2,
+            GraphState,
             ItineraryBlock,
             SpecialistConstraint,
             TripPlan,
         )
 
-        assert GraphStateV2 is not None
+        assert GraphState is not None
         assert TripPlan is not None
         assert ItineraryBlock is not None
         assert SpecialistConstraint is not None
@@ -241,8 +241,8 @@ class TestPlannerFacadeExports:
             "meta_set",
             "is_test_mode",
             "cache_get",
-            # V2 state models
-            "GraphStateV2",
+            # State models
+            "GraphState",
             "TripPlan",
         ]
 

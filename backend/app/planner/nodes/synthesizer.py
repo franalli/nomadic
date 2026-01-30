@@ -15,7 +15,7 @@ Key responsibilities:
 
 Key Principle: "One voice, regardless of which agents contributed."
 
-V2 Enhancement: Uses LLM for complex planning responses to weave together
+Uses LLM for complex planning responses to weave together
 Architect, Specialist, and Guard outputs into a coherent narrative.
 """
 
@@ -28,7 +28,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from app.planner.state import (
-    GraphStateV2,
+    GraphState,
     SynthesizerOutput,
     UIEvent,
 )
@@ -63,7 +63,7 @@ def _load_system_prompt() -> str:
     )
 
 
-def _build_synthesis_context(state: GraphStateV2) -> str:
+def _build_synthesis_context(state: GraphState) -> str:
     """Build context string from all graph sources for LLM synthesis."""
     parts = []
     plan = state.trip_plan
@@ -180,7 +180,7 @@ def _build_synthesis_context(state: GraphStateV2) -> str:
     return "\n".join(parts)
 
 
-async def synthesize_with_llm(state: GraphStateV2) -> tuple[str | None, dict]:
+async def synthesize_with_llm(state: GraphState) -> tuple[str | None, dict]:
     """
     Generate response using LLM for coherent synthesis.
 
@@ -262,7 +262,7 @@ CONSTRAINT_WARNING_TEMPLATE = """⚠️ Just a heads up: {warning}"""
 # =============================================================================
 
 
-def generate_suggested_replies(state: GraphStateV2) -> List[str]:
+def generate_suggested_replies(state: GraphState) -> List[str]:
     """
     Generate context-aware suggestion chips.
 
@@ -317,7 +317,7 @@ def generate_suggested_replies(state: GraphStateV2) -> List[str]:
 # =============================================================================
 
 
-async def enrich_with_images(state: GraphStateV2) -> None:
+async def enrich_with_images(state: GraphState) -> None:
     """
     Enrich itinerary blocks with images via Unsplash.
 
@@ -357,11 +357,11 @@ class Synthesizer:
     def __init__(self):
         self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
-    def synthesize_greeting(self, state: GraphStateV2) -> str:
+    def synthesize_greeting(self, state: GraphState) -> str:
         """Generate greeting response."""
         return GREETING_TEMPLATE
 
-    def synthesize_inspiration(self, state: GraphStateV2) -> str:
+    def synthesize_inspiration(self, state: GraphState) -> str:
         """Generate inspiration (pre-core) response."""
         plan = state.trip_plan
         specialist = state.active_specialist or state.metadata.get("last_executed_specialist")
@@ -382,7 +382,7 @@ class Synthesizer:
             activities=activities,
         )
 
-    def synthesize_planning(self, state: GraphStateV2) -> str:
+    def synthesize_planning(self, state: GraphState) -> str:
         """Generate planning response."""
         plan = state.trip_plan
         parts = []
@@ -420,7 +420,7 @@ class Synthesizer:
 
         return "".join(parts)
 
-    def synthesize_constraint_warning(self, state: GraphStateV2) -> str:
+    def synthesize_constraint_warning(self, state: GraphState) -> str:
         """Generate response highlighting constraint violations."""
         warnings = state.constraints_violated
 
@@ -432,7 +432,7 @@ class Synthesizer:
 
         return "A few things to note:\n" + "\n".join(f"• {w}" for w in warnings[:3])
 
-    def generate_response(self, state: GraphStateV2) -> SynthesizerOutput:
+    def generate_response(self, state: GraphState) -> SynthesizerOutput:
         """
         Generate the complete synthesized response.
         """
@@ -475,7 +475,7 @@ class Synthesizer:
 # =============================================================================
 
 
-async def synthesizer(state: GraphStateV2) -> GraphStateV2:
+async def synthesizer(state: GraphState) -> GraphState:
     """
     Synthesizer node function for LangGraph.
 
@@ -493,9 +493,9 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
 
     from langchain_core.messages import AIMessage
 
-    from app.debug_utils import _debug_v2_node_end, _debug_v2_node_start
+    from app.debug_utils import _debug_graph_node_end, _debug_graph_node_start
 
-    _debug_v2_node_start(
+    _debug_graph_node_start(
         "synthesizer",
         "📝",
         mode=state.metadata.get("architect_mode"),
@@ -516,7 +516,7 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
         state.ui_events.append("SPECIALIST_PREVIEW_READY")
         # Keep suggested_replies unchanged
 
-        _debug_v2_node_end(
+        _debug_graph_node_end(
             "synthesizer",
             "📝",
             speculative=True,
@@ -594,7 +594,7 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
         "used_llm": use_llm,
     }
 
-    _debug_v2_node_end(
+    _debug_graph_node_end(
         "synthesizer",
         "📝",
         response_len=len(message),
@@ -605,7 +605,7 @@ async def synthesizer(state: GraphStateV2) -> GraphStateV2:
     return state
 
 
-def _should_use_llm_synthesis(state: GraphStateV2) -> bool:
+def _should_use_llm_synthesis(state: GraphState) -> bool:
     """
     Determine if we should use LLM synthesis or templates.
 

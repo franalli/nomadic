@@ -1,25 +1,23 @@
 """
-Test V2 Architecture - "Diving in Bali" Scenario.
+Test Architecture - "Diving in Bali" Scenario.
 
 This test verifies the complete flow:
 Router → Specialist → Architect → Guard → Synthesizer
 
-Run with: pytest tests/test_v2_architecture.py -v
+Run with: pytest tests/test_architecture.py -v
 """
 
 import pytest
 
-from app.planner.nodes_v2.intent_router import (
+from app.planner.nodes.intent_router import (
     IntentClassification,
-    _detect_specialist_keyword,
+    _detect_specialist_keywords,
 )
-from app.planner.nodes_v2.synthesizer import Synthesizer, generate_suggested_replies
-from app.planner.nodes_v2.trip_architect import TripArchitect
-from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
-
-# Import V2 components
+from app.planner.nodes.synthesizer import Synthesizer, generate_suggested_replies
+from app.planner.nodes.trip_architect import TripArchitect
+from app.planner.nodes.vertical_specialist import VerticalSpecialist
 from app.planner.state import (
-    GraphStateV2,
+    GraphState,
     SpecialistConstraint,
     TripPlan,
 )
@@ -34,39 +32,39 @@ class TestIntentRouter:
 
     def test_detect_diving_specialist(self):
         """Should detect diving keywords via fallback detection."""
-        assert _detect_specialist_keyword("I want to go diving") == "diving"
-        assert _detect_specialist_keyword("scuba trip to Bali") == "diving"
-        assert _detect_specialist_keyword("wreck diving in Egypt") == "diving"
-        assert _detect_specialist_keyword("padi certification") == "diving"
+        assert "diving" in _detect_specialist_keywords("I want to go diving")
+        assert "diving" in _detect_specialist_keywords("scuba trip to Bali")
+        assert "diving" in _detect_specialist_keywords("wreck diving in Egypt")
+        assert "diving" in _detect_specialist_keywords("padi certification")
 
     def test_detect_hiking_specialist(self):
         """Should detect hiking keywords."""
-        assert _detect_specialist_keyword("hiking in Patagonia") == "hiking"
-        assert _detect_specialist_keyword("trekking to Everest") == "hiking"
-        assert _detect_specialist_keyword("mountain trails") == "hiking"
+        assert "hiking" in _detect_specialist_keywords("hiking in Patagonia")
+        assert "hiking" in _detect_specialist_keywords("trekking to Everest")
+        assert "hiking" in _detect_specialist_keywords("mountain trails")
 
     def test_detect_skiing_specialist(self):
         """Should detect skiing keywords."""
-        assert _detect_specialist_keyword("skiing in Chamonix") == "skiing"
-        assert _detect_specialist_keyword("snowboarding trip") == "skiing"
-        assert _detect_specialist_keyword("powder snow Japan") == "skiing"
+        assert "skiing" in _detect_specialist_keywords("skiing in Chamonix")
+        assert "skiing" in _detect_specialist_keywords("snowboarding trip")
+        assert "skiing" in _detect_specialist_keywords("powder snow Japan")
 
     def test_no_specialist_for_general(self):
-        """Should return None for general queries."""
-        assert _detect_specialist_keyword("I want to visit Paris") is None
-        assert _detect_specialist_keyword("beach vacation") is None
+        """Should return empty list for general queries."""
+        assert _detect_specialist_keywords("I want to visit Paris") == []
+        assert _detect_specialist_keywords("beach vacation") == []
 
     def test_intent_classification_schema(self):
         """Test IntentClassification schema structure."""
-        # Test PLANNING classification with specialist hint
+        # Test PLANNING classification with specialist hints
         classification = IntentClassification(
             intent="PLANNING",
             confidence=0.9,
             reasoning="User wants to go diving",
-            specialist_hint="diving",
+            specialist_hints=["diving"],
         )
         assert classification.intent == "PLANNING"
-        assert classification.specialist_hint == "diving"
+        assert "diving" in classification.specialist_hints
         assert classification.confidence == 0.9
 
     def test_intent_classification_greeting(self):
@@ -77,7 +75,7 @@ class TestIntentRouter:
             reasoning="Simple greeting with no trip content",
         )
         assert classification.intent == "GREETING"
-        assert classification.specialist_hint is None
+        assert classification.specialist_hints == []
 
     def test_intent_classification_reset(self):
         """Test RESET classification schema."""
@@ -95,7 +93,7 @@ class TestTripArchitect:
     def test_pre_core_mode_detection(self):
         """Should detect pre-core mode when destination missing."""
         architect = TripArchitect()
-        state = GraphStateV2()
+        state = GraphState()
 
         mode = architect.determine_mode(state)
         assert mode == "pre_core"
@@ -103,7 +101,7 @@ class TestTripArchitect:
     def test_missing_fields_mode(self):
         """Should detect missing fields when destination present but dates missing."""
         architect = TripArchitect()
-        state = GraphStateV2()
+        state = GraphState()
         state.trip_plan.destination = "Bali"
 
         mode = architect.determine_mode(state)
@@ -112,7 +110,7 @@ class TestTripArchitect:
     def test_planning_mode(self):
         """Should be in planning mode when core fields present."""
         architect = TripArchitect()
-        state = GraphStateV2()
+        state = GraphState()
         state.trip_plan.destination = "Bali"
         state.trip_plan.start_date = "2024-03-15"
 
@@ -122,7 +120,7 @@ class TestTripArchitect:
     def test_pre_core_response(self):
         """Should generate conversational pre-core response."""
         architect = TripArchitect()
-        state = GraphStateV2()
+        state = GraphState()
 
         response = architect.generate_pre_core_response(state, "I want to go somewhere warm")
         assert "beach" in response.lower() or "tropical" in response.lower()
@@ -152,7 +150,7 @@ class TestVerticalSpecialist:
     def test_specialist_output_structure(self):
         """Should return both constraints and content."""
         specialist = VerticalSpecialist("diving")
-        state = GraphStateV2()
+        state = GraphState()
         state.trip_plan.destination = "Bali"
 
         output = specialist.generate_output(state)
@@ -167,7 +165,7 @@ class TestConstraintGuard:
 
     def test_budget_constraint(self):
         """Should detect budget violations."""
-        from app.planner.nodes_v2.constraint_guard import check_budget_constraint
+        from app.planner.nodes.constraint_guard import check_budget_constraint
 
         plan = TripPlan(budget=1000)
         tiles = {
@@ -181,7 +179,7 @@ class TestConstraintGuard:
 
     def test_date_order_constraint(self):
         """Should detect date order violations."""
-        from app.planner.nodes_v2.constraint_guard import check_temporal_constraints
+        from app.planner.nodes.constraint_guard import check_temporal_constraints
 
         plan = TripPlan(
             start_date="2024-03-20",
@@ -194,7 +192,7 @@ class TestConstraintGuard:
 
     def test_specialist_constraint_checking(self):
         """Should check specialist constraints."""
-        from app.planner.nodes_v2.constraint_guard import check_specialist_constraints
+        from app.planner.nodes.constraint_guard import check_specialist_constraints
 
         plan = TripPlan()
         plan.constraints.append(
@@ -215,14 +213,14 @@ class TestSynthesizer:
 
     def test_suggested_replies_count(self):
         """Should always return exactly 3 suggestions."""
-        state = GraphStateV2()
+        state = GraphState()
         suggestions = generate_suggested_replies(state)
         assert len(suggestions) == 3
 
     def test_greeting_response(self):
         """Should generate appropriate greeting."""
         synth = Synthesizer()
-        state = GraphStateV2()
+        state = GraphState()
 
         response = synth.synthesize_greeting(state)
         assert "trip" in response.lower() or "adventure" in response.lower()
@@ -230,7 +228,7 @@ class TestSynthesizer:
     def test_planning_response_with_tiles(self):
         """Should mention tiles in planning response."""
         synth = Synthesizer()
-        state = GraphStateV2()
+        state = GraphState()
         state.trip_plan.destination = "Bali"
         state.tiles = {"hotels": [{"id": "1"}, {"id": "2"}]}
 
@@ -243,8 +241,8 @@ class TestSynthesizer:
 # =============================================================================
 
 
-class TestV2Integration:
-    """Integration tests for the full V2 flow."""
+class TestIntegration:
+    """Integration tests for the full flow."""
 
     @pytest.mark.asyncio
     async def test_diving_bali_flow(self):
@@ -254,14 +252,14 @@ class TestV2Integration:
         """
         from langchain_core.messages import HumanMessage
 
-        from app.planner.nodes_v2.constraint_guard import constraint_guard
-        from app.planner.nodes_v2.intent_router import intent_router
-        from app.planner.nodes_v2.synthesizer import synthesizer
-        from app.planner.nodes_v2.trip_architect import trip_architect
-        from app.planner.nodes_v2.vertical_specialist import vertical_specialist
+        from app.planner.nodes.constraint_guard import constraint_guard
+        from app.planner.nodes.intent_router import intent_router
+        from app.planner.nodes.synthesizer import synthesizer
+        from app.planner.nodes.trip_architect import trip_architect
+        from app.planner.nodes.vertical_specialist import vertical_specialist
 
         # Initialize state
-        state = GraphStateV2()
+        state = GraphState()
         state.messages.append(HumanMessage(content="I want to go diving in Bali next month"))
 
         # Step 1: Router (LLM-based, sets active_specialist for diving)
@@ -306,11 +304,11 @@ class TestV2Integration:
         """Test the pre-core inspiration flow for vague requests."""
         from langchain_core.messages import HumanMessage
 
-        from app.planner.nodes_v2.intent_router import intent_router
-        from app.planner.nodes_v2.synthesizer import synthesizer
-        from app.planner.nodes_v2.trip_architect import trip_architect
+        from app.planner.nodes.intent_router import intent_router
+        from app.planner.nodes.synthesizer import synthesizer
+        from app.planner.nodes.trip_architect import trip_architect
 
-        state = GraphStateV2()
+        state = GraphState()
         state.messages.append(HumanMessage(content="I want to go somewhere warm"))
 
         # Router (no specialist detected)
@@ -340,10 +338,10 @@ class TestV2Integration:
         """
         from langchain_core.messages import HumanMessage
 
-        from app.planner.nodes_v2.intent_router import intent_router
-        from app.planner.nodes_v2.vertical_specialist import vertical_specialist
+        from app.planner.nodes.intent_router import intent_router
+        from app.planner.nodes.vertical_specialist import vertical_specialist
 
-        state = GraphStateV2()
+        state = GraphState()
         state.messages.append(HumanMessage(content="I want to go diving in Dubai"))
         state.trip_plan.destination = "Dubai"
 
@@ -377,10 +375,10 @@ class TestV2Integration:
         """
         from langchain_core.messages import HumanMessage
 
-        from app.planner.nodes_v2.intent_router import intent_router
-        from app.planner.nodes_v2.vertical_specialist import vertical_specialist
+        from app.planner.nodes.intent_router import intent_router
+        from app.planner.nodes.vertical_specialist import vertical_specialist
 
-        state = GraphStateV2()
+        state = GraphState()
         state.messages.append(HumanMessage(content="I want to go skiing in Miami"))
         state.trip_plan.destination = "Miami"
 
@@ -410,7 +408,7 @@ class TestFeasibilityChecks:
 
     def test_dubai_diving_caveat(self):
         """Dubai should return CAVEAT status for diving (indoor pool recommended)."""
-        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+        from app.planner.nodes.vertical_specialist import check_feasibility
 
         status, reason, alternative = check_feasibility("diving", "Dubai")
 
@@ -420,7 +418,7 @@ class TestFeasibilityChecks:
 
     def test_landlocked_diving_infeasible(self):
         """Landlocked countries should return INFEASIBLE for diving."""
-        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+        from app.planner.nodes.vertical_specialist import check_feasibility
 
         status, reason, alternative = check_feasibility("diving", "Switzerland")
 
@@ -429,7 +427,7 @@ class TestFeasibilityChecks:
 
     def test_bali_diving_feasible(self):
         """Bali should return FEASIBLE for diving (prime destination)."""
-        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+        from app.planner.nodes.vertical_specialist import check_feasibility
 
         status, reason, alternative = check_feasibility("diving", "Bali")
 
@@ -437,7 +435,7 @@ class TestFeasibilityChecks:
 
     def test_miami_skiing_infeasible(self):
         """Miami should return INFEASIBLE for skiing."""
-        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+        from app.planner.nodes.vertical_specialist import check_feasibility
 
         status, reason, alternative = check_feasibility("skiing", "Miami")
 
@@ -445,7 +443,7 @@ class TestFeasibilityChecks:
 
     def test_unknown_destination_feasible(self):
         """Unknown destinations should default to FEASIBLE."""
-        from app.planner.nodes_v2.vertical_specialist import check_feasibility
+        from app.planner.nodes.vertical_specialist import check_feasibility
 
         status, reason, alternative = check_feasibility("diving", "Some Random Place")
 
@@ -457,14 +455,14 @@ class TestDubaiDiving:
 
     def test_dubai_diving_content_exists(self):
         """Should have Dubai in diving knowledge base."""
-        from app.planner.nodes_v2.vertical_specialist import DIVING_KNOWLEDGE
+        from app.planner.nodes.vertical_specialist import DIVING_KNOWLEDGE
 
         destinations = DIVING_KNOWLEDGE.get("top_destinations", {})
         assert "dubai" in destinations, "Dubai should be in diving destinations"
 
     def test_deep_dive_dubai_in_content(self):
         """Should include Deep Dive Dubai recommendation."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
         blocks = specialist.get_content_for_destination("Dubai")
@@ -478,7 +476,7 @@ class TestDubaiDiving:
 
     def test_dubai_content_has_logic_hook(self):
         """Dubai diving content should include logic_hook for UI."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
         blocks = specialist.get_content_for_destination("Dubai")
@@ -491,10 +489,10 @@ class TestDubaiDiving:
 
     def test_specialist_output_includes_feasibility(self):
         """Specialist output should include feasibility status for Dubai."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
-        state = GraphStateV2()
+        state = GraphState()
         state.trip_plan.destination = "Dubai"
 
         output = specialist.generate_output(state)
@@ -510,7 +508,7 @@ class TestLogicHooks:
 
     def test_bali_diving_has_logic_hooks(self):
         """Bali diving content should have logic_hooks."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
         blocks = specialist.get_content_for_destination("Bali")
@@ -523,7 +521,7 @@ class TestLogicHooks:
 
     def test_egypt_diving_has_logic_hooks(self):
         """Egypt diving content should have logic_hooks."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
         blocks = specialist.get_content_for_destination("Egypt")
@@ -533,7 +531,7 @@ class TestLogicHooks:
 
     def test_itinerary_block_schema_has_logic_hook(self):
         """ItineraryBlock schema should include logic_hook field."""
-        from app.planner.state.schemas_v2 import ItineraryBlock
+        from app.planner.state.schemas import ItineraryBlock
 
         block = ItineraryBlock(
             day=1,
@@ -551,7 +549,7 @@ class TestConstraintFormatting:
 
     def test_diving_constraint_rule_format(self):
         """Diving constraints should use snake_case rules that map to readable titles."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
         constraints = specialist.get_constraints()
@@ -564,10 +562,10 @@ class TestConstraintFormatting:
 
     def test_caveat_constraint_injected(self):
         """Caveat status should inject a feasibility_caveat constraint."""
-        from app.planner.nodes_v2.vertical_specialist import VerticalSpecialist
+        from app.planner.nodes.vertical_specialist import VerticalSpecialist
 
         specialist = VerticalSpecialist("diving")
-        state = GraphStateV2()
+        state = GraphState()
         state.trip_plan.destination = "Dubai"  # Caveat destination
 
         output = specialist.generate_output(state)
@@ -583,7 +581,7 @@ class TestLocalExpert:
 
     def test_dubai_local_expert_knowledge(self):
         """Dubai should have static local expert knowledge."""
-        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+        from app.planner.nodes.local_expert import _get_static_local_knowledge
 
         knowledge = _get_static_local_knowledge("Dubai")
 
@@ -596,7 +594,7 @@ class TestLocalExpert:
 
     def test_paris_local_expert_knowledge(self):
         """Paris should have static local expert knowledge."""
-        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+        from app.planner.nodes.local_expert import _get_static_local_knowledge
 
         knowledge = _get_static_local_knowledge("Paris")
 
@@ -611,7 +609,7 @@ class TestLocalExpert:
 
     def test_unknown_destination_empty_knowledge(self):
         """Unknown destinations should return empty knowledge."""
-        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+        from app.planner.nodes.local_expert import _get_static_local_knowledge
 
         knowledge = _get_static_local_knowledge("Random Unknown Place XYZ")
 
@@ -620,7 +618,7 @@ class TestLocalExpert:
 
     def test_local_expert_logic_hooks(self):
         """Local Expert recommendations should have logic_hooks."""
-        from app.planner.nodes_v2.local_expert import _get_static_local_knowledge
+        from app.planner.nodes.local_expert import _get_static_local_knowledge
 
         knowledge = _get_static_local_knowledge("Tokyo")
 
@@ -634,30 +632,30 @@ class TestLocalExpert:
 # =============================================================================
 
 
-class TestV2Graph:
-    """Test the compiled V2 graph."""
+class TestGraph:
+    """Test the compiled graph."""
 
     def test_graph_creation(self):
         """Should create graph without errors."""
-        from app.plan_graph_v2 import create_optimized_graph
+        from app.plan_graph import create_optimized_graph
 
         workflow = create_optimized_graph()
         assert workflow is not None
 
     def test_graph_compilation(self):
         """Should compile graph without errors."""
-        from app.plan_graph_v2 import get_v2_graph
+        from app.plan_graph import get_graph
 
-        graph = get_v2_graph()
+        graph = get_graph()
         assert graph is not None
 
     @pytest.mark.asyncio
     async def test_full_graph_execution(self):
         """Should execute full graph flow."""
-        from app.plan_graph_v2 import get_v2_graph, run_turn_v2
+        from app.plan_graph import get_graph, run_turn_internal
 
-        graph = get_v2_graph()
-        result = await run_turn_v2(graph, "I want to go diving in Bali")
+        graph = get_graph()
+        result = await run_turn_internal(graph, "I want to go diving in Bali")
 
         assert result.last_summary  # Has response
         assert result.suggested_replies  # Has suggestions

@@ -8,18 +8,19 @@
 
 'use client';
 
-import { cn } from '@/lib/utils';
 import {
-  Loader2, // Default spinner
   Brain, // router
   Building2, // architect
+  Loader2, // Default spinner
+  type LucideIcon,
+  MapPin, // local_expert
+  PenTool, // synthesizer
   Plane, // logistics
   Shield, // guard
-  PenTool, // synthesizer
   Star, // specialist
-  MapPin, // local_expert
-  type LucideIcon,
 } from 'lucide-react';
+
+import { cn } from '@/lib/utils';
 
 // Map backend 'icon_key' to Lucide components
 const ICON_MAP: Record<string, LucideIcon> = {

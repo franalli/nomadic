@@ -920,11 +920,24 @@ function StrategyStack({
 
   // Extract General agent separately for TripHealthDashboard
   const generalSection = sections.find((s) => s.specialist_type === 'general');
-  // Filter out General from card list (it gets TripHealthDashboard instead)
-  const filtered = sections.filter((s) => s.specialist_type !== 'general');
-  // Always show TripHealthDashboard when General agent exists (replaces General AgentCard)
-  // This provides consistent UX whether specialists are active or not
-  const showTripHealth = generalSection && Object.keys(tiles).length > 0;
+  // Get non-general specialist sections
+  const specialistSections = sections.filter((s) => s.specialist_type !== 'general');
+
+  // BRIDGE MODE FIX: If no specialist sections exist but we have a general section,
+  // show the general section as a regular card instead of filtering it out.
+  // This ensures content is visible in Setup (Bridge) state before tiles are fetched.
+  const hasTiles = Object.keys(tiles).length > 0;
+  const hasSpecialists = specialistSections.length > 0;
+
+  // In Bridge Mode (no tiles), show general as a card if no specialists exist
+  // With tiles, general becomes TripHealthBar instead
+  const filtered = hasSpecialists
+    ? specialistSections  // Normal: show only specialists
+    : sections;           // Bridge fallback: show all (including general)
+
+  // Show TripHealthDashboard when General agent exists AND we have tiles
+  // (In Bridge Mode without tiles, general renders as a card instead)
+  const showTripHealth = generalSection && hasTiles;
 
   // Sort by topic priority for stable ordering
   const sorted = [...filtered].sort((a, b) => {
@@ -1096,25 +1109,11 @@ export function S2StrategyView({
   // Check if dates are set
   const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
 
-  // Skeleton state - show when strategy is being prepared (empty sections)
+  // Empty state - parent (StrategyStageRenderer) handles the empty case
+  // This prevents duplicate skeletons and allows Bridge Mode to work correctly
+  // @see docs/ux_unified_architecture.md - Grand Unification
   if (strategy_sections.length === 0 && pendingTopics.length === 0) {
-    return (
-      <div className="flex flex-col p-4 space-y-4">
-        <div className="bg-card rounded-lg border border-border px-4 py-3 shadow-sm">
-          <p className="text-xs text-muted-foreground">
-            Strategy is being prepared...
-          </p>
-        </div>
-        {[1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="bg-card rounded-lg border border-border px-4 py-3 shadow-sm"
-          >
-            <div className="h-4 bg-muted rounded w-2/3 animate-pulse" />
-          </div>
-        ))}
-      </div>
-    );
+    return null;
   }
 
   return (

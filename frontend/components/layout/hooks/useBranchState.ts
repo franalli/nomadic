@@ -314,7 +314,7 @@ export function useBranchState(options: UseBranchStateOptions): UseBranchStateRe
       try {
         // Use fetchWithRetry for automatic retry on transient errors (network timeouts, 503s)
         const res = await fetchWithRetry(
-          `/v1/document/tiles/${encodeURIComponent(branchId)}`,
+          `/api/document/tiles/${encodeURIComponent(branchId)}`,
           {
             method: 'POST',
             signal: controller.signal,

@@ -1,24 +1,24 @@
 """
-State Package - V2 Architecture.
+State Package.
 
-This package contains state management for the V2 planner.
+This package contains state management for the planner.
 
-V2 Exports (6-node architecture):
+Exports:
     TripPlan, TripSegment, ItineraryBlock, SpecialistConstraint
-    GraphStateV2, SpecialistOutput, UIEvent, MissingFieldsResponse
+    GraphState, SpecialistOutput, UIEvent, MissingFieldsResponse
     SynthesizerOutput
 
 Usage:
-    from app.planner.state import TripPlan, GraphStateV2
+    from app.planner.state import TripPlan, GraphState
 """
 
-# V2 State Models
-from app.planner.state.schemas_v2 import (
+# State Models
+from app.planner.state.schemas import (
     ExtractedSettingsFields,
     # LLM Extraction
     ExtractedTripFields,
     # State
-    GraphStateV2,
+    GraphState,
     ItineraryBlock,
     MissingFieldsResponse,
     SpecialistConstraint,
@@ -36,19 +36,19 @@ from app.planner.state.schemas_v2 import (
 )
 
 __all__ = [
-    # V2 Core Models
+    # Core Models
     "TripPlan",
     "TripSegment",
     "ItineraryBlock",
     "SpecialistConstraint",
-    # V2 State
-    "GraphStateV2",
-    # V2 Output Models
+    # State
+    "GraphState",
+    # Output Models
     "SpecialistOutput",
     "UIEvent",
     "MissingFieldsResponse",
     "SynthesizerOutput",
-    # V2 Helpers
+    # Helpers
     "trip_plan_is_ready",
     "get_missing_fields",
     "create_missing_fields_response",

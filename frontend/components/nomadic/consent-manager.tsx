@@ -13,7 +13,7 @@ type ConsentPreferences = {
   updatedAt?: string;
 };
 
-const CONSENT_STORAGE_KEY = 'nomadic_consent_v1';
+const CONSENT_STORAGE_KEY = 'nomadic_consent';
 const OPEN_EVENT = 'nomadic-open-consent';
 
 const defaultPreferences: ConsentPreferences = {

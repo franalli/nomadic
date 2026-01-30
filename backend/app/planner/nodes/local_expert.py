@@ -20,7 +20,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from app.data.demo_curation import DEMO_MANIFEST
-from app.planner.state import GraphStateV2
+from app.planner.state import GraphState
 
 # =============================================================================
 # LLM Output Schema (OpenAI Structured Output compatible)
@@ -373,7 +373,7 @@ def _get_static_local_knowledge(destination: str) -> LocalExpertOutput:
 # =============================================================================
 
 
-async def local_expert(state: GraphStateV2) -> GraphStateV2:
+async def local_expert(state: GraphState) -> GraphState:
     """
     The 'Concierge' agent. Adds logistical constraints and city tips.
 
@@ -420,7 +420,7 @@ async def local_expert(state: GraphStateV2) -> GraphStateV2:
         return state
 
 
-async def _run_local_expert(state: GraphStateV2, plan, log) -> GraphStateV2:
+async def _run_local_expert(state: GraphState, plan, log) -> GraphState:
     """Inner implementation with the actual logic."""
 
     # ==========================================================================
@@ -569,10 +569,10 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
     # ==========================================================================
 
     # DEBUG: Log incoming strategy_sections
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_graph
 
     incoming_sections = state.metadata.get("strategy_sections", [])
-    _debug_v2(
+    _debug_graph(
         f"local_expert: BEFORE update - {len(incoming_sections)} sections, "
         f"types={[s.get('specialist_type') for s in incoming_sections]}"
     )
@@ -589,7 +589,7 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
 
     # DEBUG: Log outgoing strategy_sections
     outgoing_sections = state.metadata.get("strategy_sections", [])
-    _debug_v2(
+    _debug_graph(
         f"local_expert: AFTER update - {len(outgoing_sections)} sections, "
         f"types={[s.get('specialist_type') for s in outgoing_sections]}"
     )

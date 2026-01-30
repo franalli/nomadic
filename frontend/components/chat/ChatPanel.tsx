@@ -19,8 +19,8 @@ import {
   ActivitiesSheet,
   FlightsSheet,
   StaysSheet,
-} from '@/components/planner/sheets';
-import { UnifiedChipRow } from '@/components/planner/UnifiedChipRow';
+} from '@/components/plan/sheets';
+import { UnifiedChipRow } from '@/components/plan/UnifiedChipRow';
 import { useToast } from '@/components/ui/toast';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useActionLoader } from '@/hooks/useActionLoader';
@@ -55,9 +55,9 @@ import { MobileChatCompactHeader } from './MobileChatCompactHeader';
 import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 // NodeProgress removed - replaced by Live Logic Status Pill above input
 import { PlanModeHint } from './PlanModeHint';
+import { type ActiveStatus,SmartLoader } from './SmartLoader';
 import { SystemAckLine } from './SystemAckLine';
 import { SystemReceipt } from './SystemReceipt';
-import { SmartLoader, type ActiveStatus } from './SmartLoader';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering

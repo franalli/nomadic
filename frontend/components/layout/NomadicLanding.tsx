@@ -16,14 +16,14 @@ import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEdit
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { BookingSection } from '@/components/plan/BookingSection';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
-import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import {
   BudgetSheet,
   DatesSheet,
   DestinationSheet,
   OriginSheet,
   TravelersSheet,
-} from '@/components/planner/sheets';
+} from '@/components/plan/sheets';
+import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
@@ -463,12 +463,11 @@ export function NomadicLanding() {
   const hasStrategyContent = (storeDocument?.strategy_sections?.length ?? 0) > 0;
 
   // Update hasEverHadPlan when plan content becomes available
-  // V1: branches + strategy content
-  // V2: tiles (branches are empty in V2)
+  // Tiles indicate plan is ready
   // Using state ensures useMemo re-computes when this changes
   const hasTilesReady = Object.keys(storeDocument?.tiles ?? {}).length > 0;
   useEffect(() => {
-    // V1 path: branches + strategy
+    // Legacy path: branches + strategy
     if (
       hasBranchesReady &&
       hasStrategyContent &&
@@ -477,7 +476,7 @@ export function NomadicLanding() {
     ) {
       setHasEverHadPlan(true);
     }
-    // V2 path: tiles exist (even without explicit Build Plan click)
+    // Tiles path: tiles exist (even without explicit Build Plan click)
     if (hasTilesReady && !hasEverHadPlan) {
       setHasEverHadPlan(true);
     }
@@ -521,10 +520,9 @@ export function NomadicLanding() {
     // =========================================================================
     // Setup → Plan transition logic
     // =========================================================================
-    // V1: Requires explicit "Build Plan" click
-    // V2: Auto-transitions when tiles are available
+    // Auto-transitions when tiles are available
 
-    // V2 path: If tiles exist, trust backend's plan_view_state
+    // Tiles path: If tiles exist, trust backend's plan_view_state
     if (
       hasTilesReady &&
       backendPlanViewState &&
@@ -533,7 +531,7 @@ export function NomadicLanding() {
       return backendPlanViewState;
     }
 
-    // V1 path: Before user clicks "Build Plan", stay in Setup mode
+    // Before user clicks "Build Plan", stay in Setup mode
     if (!hasEverHadPlan && !userRequestedGeneration && !hasTilesReady) {
       return 'S0_BOOTSTRAP';
     }
@@ -713,7 +711,7 @@ export function NomadicLanding() {
     try {
       // Get current document state for context
       const currentDoc = documentStore.document;
-      const response = await apiFetch('/v1/expand-itinerary', {
+      const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
         body: JSON.stringify({
           idempotency_key: runId,

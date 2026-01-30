@@ -27,12 +27,18 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
+import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
-import { generateGhostDayCards, hasSpecialistContent } from '@/lib/ghost-timeline-adapter';
+import {
+  calculateMapCenter,
+  extractPOIsFromSections,
+  generateGhostDayCards,
+  hasSpecialistContent,
+} from '@/lib/ghost-timeline-adapter';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
@@ -44,7 +50,43 @@ import type {
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
+// =============================================================================
+// Data Density Computation (Grand Unification)
+// =============================================================================
+
+/**
+ * Compute the current data density level for adaptive rendering.
+ * This determines what content to show in the right panel.
+ *
+ * @see docs/ux_unified_architecture.md for the full specification
+ */
+export type DataDensity = 'empty' | 'ghost' | 'bridge' | 'full';
+
+export function computeDataDensity(
+  state: PlanViewState,
+  strategySections: PlanViewModel['strategy_sections'],
+  tiles: Record<string, Tile> | undefined,
+  tripInputs: DocumentTripInputs | undefined
+): DataDensity {
+  const hasSpecialist = hasSpecialistContent(strategySections);
+  const hasTiles = tiles && Object.keys(tiles).length > 0;
+  const hasDateSet = !!tripInputs?.start_date;
+
+  // S0 with specialist content -> ghost (show draft timeline)
+  if (state === 'S0_BOOTSTRAP' && hasSpecialist) return 'ghost';
+
+  // S0 without content -> empty (hero is the view)
+  if (state === 'S0_BOOTSTRAP') return 'empty';
+
+  // S2 with specialist but no tiles/dates -> bridge mode
+  if (state === 'S2_STRATEGY_READY' && hasSpecialist && !hasTiles && !hasDateSet) return 'bridge';
+
+  // Everything else -> full rendering
+  return 'full';
+}
+
 import { BookingSection } from './BookingSection';
+import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
 import { NextStepBar } from './NextStepBar';
 import { PlanHeader } from './PlanHeader';
 import {
@@ -342,6 +384,113 @@ export function StrategyStageRenderer({
       // Ghost timeline will appear here when specialist content is available
       return null;
     }
+
+    // Bridge Mode Detection: S2 with specialist content but no tiles/dates
+    // Shows Strategy Cards + Sample Day Flow + POI Map to inspire users before dates are set
+    const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
+    const hasDateSet = !!effectiveTripInputs?.start_date;
+    const hasSpecialist = hasSpecialistContent(viewModel.strategy_sections);
+    const isBridgeMode = state === 'S2_STRATEGY_READY' && hasSpecialist && !hasTiles && !hasDateSet;
+
+    // DEBUG: Bridge Mode detection
+    console.log('[BRIDGE MODE DEBUG]', {
+      state,
+      hasSpecialist,
+      hasTiles,
+      hasDateSet,
+      isBridgeMode,
+      strategySectionsCount: viewModel.strategy_sections?.length ?? 0,
+      strategySectionTypes: viewModel.strategy_sections?.map(s => s.specialist_type) ?? [],
+    });
+
+    if (isBridgeMode) {
+      // Bridge Mode: Strategy Cards + Ghost Timeline + POI Map
+      const sections = viewModel.strategy_sections ?? [];
+
+      // Calculate exact duration from content (don't default to 5)
+      // Find the maximum day number from specialist content
+      const maxContentDay = Math.max(
+        0,
+        ...sections.flatMap(s =>
+          s.content_added?.map(c => c.day || 0) || []
+        )
+      );
+      // Use trip_duration if set, otherwise fit to content (min 3 for diving safety sequence)
+      const tripDuration = effectiveTripInputs?.trip_duration || (maxContentDay > 0 ? maxContentDay : 3);
+      const ghostDayCards = generateGhostDayCards(sections, tripDuration);
+      const mapPOIs = extractPOIsFromSections(sections);
+      const mapCenter = calculateMapCenter(mapPOIs);
+
+      // DEBUG: Log Bridge Mode data for verification
+      console.log('[BRIDGE MODE CONTENT]', {
+        tripDuration,
+        ghostDayCardsCount: ghostDayCards.length,
+        mapPOIsCount: mapPOIs.length,
+        mapPOIs: mapPOIs.map(p => ({ title: p.title, coords: p.coordinates })),
+        strategySections: viewModel.strategy_sections?.map(s => ({
+          type: s.specialist_type,
+          contentCount: s.content_added?.length ?? 0,
+          hasCoordinates: s.content_added?.some(c => c.coordinates) ?? false,
+        })),
+      });
+
+      return (
+        <div className="flex flex-col lg:flex-row gap-6 p-4">
+          {/* Left Column: Strategy + Timeline */}
+          <div className="flex-1 min-w-0 space-y-6">
+            {/* Strategy Cards */}
+            <S2StrategyView
+              viewModel={viewModel}
+              destinationCard={destinationCard}
+              pendingTopics={viewModel.pending_strategy_topics}
+              executedTopics={viewModel.executed_strategy_topics}
+              tiles={{}} // Empty - no booking tiles in bridge mode
+              tripInputs={effectiveTripInputs}
+            />
+
+            {/* Sample Sequence (Ghost Timeline) - Clearly labeled as draft */}
+            <div className="border-t border-border/50 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
+                  Sample Sequence (Draft)
+                </h3>
+                <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
+                  {tripDuration}-Day Logic Check
+                </span>
+              </div>
+              <TimelineThread
+                dayCards={ghostDayCards}
+                isDraft={true}
+                showPriceEstimates={false}
+                hasDuration={false}
+                startDate={null}
+                onSelectNights={onSelectNights}
+                onOpenDatePicker={() => onOpenSheet?.('dates')}
+              />
+            </div>
+          </div>
+
+          {/* Right Column: Map (Fixed Width on Desktop) */}
+          <div className="hidden lg:block w-[350px] shrink-0">
+            {mapPOIs.length > 0 ? (
+              <InteractiveMap
+                items={mapPOIs}
+                activeItemId={null}
+                defaultCenter={mapCenter}
+                className="h-[400px] rounded-xl sticky top-4"
+              />
+            ) : (
+              <DestinationMapPlaceholder
+                destination={destinationCard?.title || 'Destination'}
+                imageUrl={destinationCard?.image_url || ''}
+                className="h-[400px] sticky top-4"
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
     // Determine which view to show based on subView toggle
     // When in S3_ITINERARY_READY and subView is 'overview', show S2StrategyView
     const effectiveState = (hasItinerary && subView === 'overview')
@@ -533,35 +682,33 @@ export function StrategyStageRenderer({
           </div>
         )}
 
-        {/* VIEW: PLAN (Persistent Layer - ALWAYS MOUNTED) */}
-        {/* Uses opacity/pointer-events to preserve Scroll Position & Accordion State */}
+        {/* VIEW: PLAN (Conditional Rendering - Grand Unification) */}
+        {/* Key-based rendering ensures clean unmount/remount, preventing ghosting */}
+        {/* Trade-off: Map re-initializes on view switch (acceptable per plan) */}
         {/* Zero-UI: Also visible when Setup view has no content (controls in sidebar) */}
-        <div
-          className={cn(
-            'absolute inset-0 flex flex-col transition-all duration-300',
-            (activeView === 'plan' || (activeView === 'setup' && !setupContent))
-              ? 'opacity-100 z-10 translate-x-0'
-              : 'opacity-0 pointer-events-none z-0 -translate-x-4'
-          )}
-          aria-hidden={activeView !== 'plan' && !(activeView === 'setup' && !setupContent)}
-        >
-          {/* ISOLATED SCROLL CONTEXT - scrollbar lives HERE, not parent */}
+        {(activeView === 'plan' || (activeView === 'setup' && !setupContent)) && (
           <div
-            ref={scrollContainerRef}
-            className={cn(
-              'flex-1 overflow-y-auto custom-scrollbar min-h-0', // min-h-0 fixes flexbox content collapse on mobile
-              nextAction && activeView === 'plan' && 'pb-20' // Reserve space for sticky footer
-            )}
+            key={`plan-${destinationCard?.title ?? 'default'}-${state}`}
+            className="absolute inset-0 z-10 flex flex-col animate-in fade-in slide-in-from-left-4 duration-200"
           >
-            {/* Content scrim - preserves topo visibility while ensuring content readability */}
-            <div className="relative">
-              {/* Scrim layer - stronger in light mode, subtle in dark */}
-              <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
-              {/* Content layer - above scrim */}
-              <div className="relative z-[2]">{planContent}</div>
+            {/* ISOLATED SCROLL CONTEXT - scrollbar lives HERE, not parent */}
+            <div
+              ref={scrollContainerRef}
+              className={cn(
+                'flex-1 overflow-y-auto custom-scrollbar min-h-0', // min-h-0 fixes flexbox content collapse on mobile
+                nextAction && activeView === 'plan' && 'pb-20' // Reserve space for sticky footer
+              )}
+            >
+              {/* Content scrim - preserves topo visibility while ensuring content readability */}
+              <div className="relative">
+                {/* Scrim layer - stronger in light mode, subtle in dark */}
+                <div className="pointer-events-none absolute inset-0 z-[1] bg-background/70 dark:bg-background/20" />
+                {/* Content layer - above scrim */}
+                <div className="relative z-[2]">{planContent}</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* VIEW: BOOK (Absolute Overlay, unmounts) */}
         {activeView === 'book' && (

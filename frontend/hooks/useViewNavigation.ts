@@ -51,6 +51,7 @@ export function useViewNavigation(): UseViewNavigationReturn {
   const generation = useDocumentStore((s) => s.document?.generation);
   const strategySections = useDocumentStore((s) => s.document?.strategy_sections);
   const planViewState = useDocumentStore((s) => s.document?.plan_view_state);
+  const tripInputs = useDocumentStore((s) => s.document?.trip_inputs);
   const isGenerating = generation?.active === true;
 
   // Plan finalization state
@@ -61,24 +62,26 @@ export function useViewNavigation(): UseViewNavigationReturn {
   const hasTiles = Object.keys(tiles ?? {}).length > 0;
   const hasStrategyContent = (strategySections?.length ?? 0) > 0;
 
+  // CRITICAL: Dates are the gatekeeper for Plan navigation
+  // @see docs/ux_unified_architecture.md Section VI - "Dates are the Gatekeeper"
+  const hasDates = Boolean(tripInputs?.start_date);
+
   // Book is accessible when in a bookable state (S2 or S3)
   const inBookableState = ['S2_STRATEGY_READY', 'S3_ITINERARY_READY', 'S3_EDITING'].includes(planViewState ?? '');
 
   // DEBUG: Trace tile detection
-  console.log('[useViewNavigation] tiles:', tiles, 'hasTiles:', hasTiles, 'hasStrategyContent:', hasStrategyContent, 'planViewState:', planViewState, 'inBookableState:', inBookableState);
+  console.log('[useViewNavigation] tiles:', tiles, 'hasTiles:', hasTiles, 'hasStrategyContent:', hasStrategyContent, 'planViewState:', planViewState, 'inBookableState:', inBookableState, 'hasDates:', hasDates);
 
-  // Check if user has progressed past Setup (plan generation has produced content)
-  // We use multiple indicators since any one might arrive first:
-  // - hasTiles: booking options have been generated
-  // - hasStrategyContent: strategy sections have been generated
-  // - inBookableState: backend explicitly says we're past S0
-  const hasLeftSetup = hasTiles || hasStrategyContent || inBookableState;
+  // Check if user has progressed past Setup (requires BOTH dates AND content)
+  // Strategy content alone is Bridge Mode (still in Setup conceptually)
+  // Only when dates are set do we truly "leave Setup"
+  const hasLeftSetup = hasDates && (hasTiles || hasStrategyContent || inBookableState);
 
-  // Unlock Rules
-  // Setup: Only accessible if we haven't left it yet
-  const canViewSetup = !hasLeftSetup;
-  // Plan: Unlocked when Build is clicked (generation starts or content exists)
-  const canViewPlan = hasLeftSetup || isGenerating;
+  // Unlock Rules (Grand Unification - dates are the gatekeeper)
+  // Setup: Only accessible if we haven't set dates yet
+  const canViewSetup = !hasDates;
+  // Plan: Unlocked when dates are set (enables logistics/pricing)
+  const canViewPlan = hasDates || isGenerating;
   // Book: Unlocked when plan is finalized AND (tiles exist OR in bookable state)
   const canViewBook = isPlanFinalized && (hasTiles || inBookableState);
 

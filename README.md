@@ -90,46 +90,46 @@ docker compose --profile backend up --build db backend
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/health` | GET | Health check |
-| `/v1/graph_plan` | POST | Generate travel plan |
-| `/v1/graph_plan/stream` | POST | Stream travel plan |
-| `/v1/document` | GET | Get plan document |
-| `/v1/document` | PATCH | Update plan document |
-| `/v1/chat` | GET | Get chat history |
-| `/v1/chat/last` | DELETE | Delete last message |
+| `/api/graph_plan` | POST | Generate travel plan |
+| `/api/graph_plan/stream` | POST | Stream travel plan |
+| `/api/document` | GET | Get plan document |
+| `/api/document` | PATCH | Update plan document |
+| `/api/chat` | GET | Get chat history |
+| `/api/chat/last` | DELETE | Delete last message |
 
 ### Session Management
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/session` | DELETE | Archive session data |
+| `/api/session` | DELETE | Archive session data |
 
 ### Tiles & Suggestions
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/tiles/click` | POST | Record tile click |
-| `/v1/tiles/refresh` | POST | Refresh tiles |
-| `/v1/suggestions/click` | POST | Record suggestion click |
-| `/v1/document/tiles/{branch_id}` | POST | Add tiles to document |
+| `/api/tiles/click` | POST | Record tile click |
+| `/api/tiles/refresh` | POST | Refresh tiles |
+| `/api/suggestions/click` | POST | Record suggestion click |
+| `/api/document/tiles/{branch_id}` | POST | Add tiles to document |
 
 ### Validation & Utilities
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/validate-trip-input` | POST | Validate trip input |
-| `/v1/destination-image` | POST | Get destination image |
-| `/v1/expand-itinerary` | POST | Expand itinerary details |
+| `/api/validate-trip-input` | POST | Validate trip input |
+| `/api/destination-image` | POST | Get destination image |
+| `/api/expand-itinerary` | POST | Expand itinerary details |
 
 ### Admin Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/admin/clear-validation-cache` | POST | Clear validation caches |
-| `/v1/admin/fresh-start` | POST | Reset planner state |
-| `/v1/admin/graph-stats` | GET | Get graph statistics |
-| `/v1/admin/planner` | GET | Get planner state |
-| `/v1/admin/clear-all-checkpoints` | POST | Clear all checkpoints |
-| `/v1/admin/clear-all-caches` | POST | Clear all caches |
+| `/api/admin/clear-validation-cache` | POST | Clear validation caches |
+| `/api/admin/fresh-start` | POST | Reset planner state |
+| `/api/admin/graph-stats` | GET | Get graph statistics |
+| `/api/admin/planner` | GET | Get planner state |
+| `/api/admin/clear-all-checkpoints` | POST | Clear all checkpoints |
+| `/api/admin/clear-all-caches` | POST | Clear all caches |
 
 ## Environment Setup
 
