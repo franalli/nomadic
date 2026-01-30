@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     openai_plan_temperature: float = 0.5  # Response creativity (lower = more consistent)
     llm_max_retries: int = 3  # Retry count for API errors
     openai_plan_seed: int | None = None  # Optional seed for reproducibility
-    openai_plan_model: str = "gpt-4o-mini"  # Model for planning
+    openai_plan_model: str = os.getenv("OPENAI_PLAN_MODEL", "gpt-4o-mini")  # Model for validation
     openai_small_model: str = "gpt-4o-mini"  # Small model for simple tasks
     openai_medium_model: str = "gpt-4o-mini"  # Medium model for moderate tasks
     llm_specialist_model: str = "gpt-4o-mini"  # Model for strategy specialist calls

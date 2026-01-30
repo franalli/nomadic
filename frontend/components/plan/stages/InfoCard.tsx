@@ -23,10 +23,10 @@ export function InfoCard({ icon: Icon, title, text, className }: InfoCardProps) 
     <div
       className={cn(
         'p-3 rounded-xl border transition-colors',
-        // Light mode
-        'bg-zinc-50 border-zinc-200',
-        // Dark mode
-        'dark:bg-zinc-900 dark:border-white/10',
+        // Light mode - matches DS.materials.surface
+        'bg-zinc-50 border-zinc-100',
+        // Dark mode - Glass Fill Rule: bg-white/[0.03] for secondary surfaces
+        'dark:bg-white/[0.03] dark:border-white/5',
         className
       )}
     >

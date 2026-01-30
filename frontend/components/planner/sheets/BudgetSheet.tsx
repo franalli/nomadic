@@ -272,12 +272,12 @@ function BudgetSheetInner({
                     'flex-1 px-3 py-2.5 rounded-lg text-sm font-medium',
                     'transition-all duration-150',
                     isSelected
-                      // Selected: Strong emphasis
-                      ? 'bg-zinc-100 text-zinc-900 border-2 border-zinc-900 font-semibold dark:bg-white/10 dark:text-white dark:border-white/40'
-                      // Inactive: Glass Fill
+                      // Selected: Solid Black (Light) / Solid White (Dark) - maximum contrast per DS.pills.active
+                      ? 'bg-zinc-900 text-white border-2 border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white'
+                      // Inactive: Glass Fill - Tactile Rule
                       : cn(
                           'bg-white border-2 border-zinc-200 text-zinc-600',
-                          'hover:border-zinc-900 hover:text-zinc-900',
+                          'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
                           'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
                           'dark:hover:bg-white/10 dark:hover:text-white'
                         )

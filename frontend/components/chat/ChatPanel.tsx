@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, Cpu, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, RotateCcw, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -27,7 +27,6 @@ import { useActionLoader } from '@/hooks/useActionLoader';
 import { useDelayedLoader } from '@/hooks/useDelayedLoader';
 import { type SSENodeStatusEvent, streamGraphPlan, trackSuggestionClick } from '@/lib/api';
 import { classifyNodeAction, shouldShowLoaderForNode } from '@/lib/loaderConfig';
-import { COMPELLING_NODE_LABELS } from '@/lib/loaderCopyConfig';
 import { preprocessSpecialistLinks } from '@/lib/specialistLinkParser';
 import { cn } from '@/lib/utils';
 import { GENERATE_PLAN_TRIGGER, useChatStore } from '@/state/chatStore';
@@ -50,7 +49,6 @@ import type { PlanViewState } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
-import { CollapsedMessageRow } from './CollapsedMessageRow';
 import { CollapsedSetupSummary } from './CollapsedSetupSummary';
 import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { MobileChatCompactHeader } from './MobileChatCompactHeader';
@@ -58,6 +56,8 @@ import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 // NodeProgress removed - replaced by Live Logic Status Pill above input
 import { PlanModeHint } from './PlanModeHint';
 import { SystemAckLine } from './SystemAckLine';
+import { SystemReceipt } from './SystemReceipt';
+import { SmartLoader, type ActiveStatus } from './SmartLoader';
 
 // Helper to fix escaped characters from backend
 // Converts literal escape sequences to actual characters for proper markdown rendering
@@ -69,6 +69,33 @@ const sanitizeContent = (content: string): string => {
 };
 // ID prefix for "ready to generate" messages that should be replaced when branches are created
 const READY_MESSAGE_ID_PREFIX = 'ready_';
+
+// "Agency Voice" - Translates technical backend labels to travel concierge terminology
+// This makes the loading states feel like a premium travel service, not a server
+const AGENT_VOCAB: Record<string, string> = {
+  // Technical -> Agency
+  ROUTING: 'CONSULTING',
+  VALIDATING: 'VERIFYING',
+  CHECKING: 'REVIEWING',
+  FETCHING: 'SEARCHING',
+  GENERATING: 'DRAFTING',
+  READING: 'REVIEWING',
+  WRITING: 'DRAFTING',
+
+  // Specific nouns
+  CONSTRAINTS: 'LOGISTICS',
+  MESSAGE: 'REQUEST',
+  RESPONSE: 'ITINERARY',
+};
+
+// Helper to translate "ROUTING: DIVING" -> "CONSULTING: DIVING"
+const toAgencyVoice = (rawLabel: string): string => {
+  let text = rawLabel.toUpperCase();
+  Object.entries(AGENT_VOCAB).forEach(([tech, agency]) => {
+    text = text.replace(new RegExp(tech, 'g'), agency);
+  });
+  return text;
+};
 
 // Prompt suggestions - insert starter text into input, not send messages
 // These are conversation primers that disappear after first submit
@@ -144,9 +171,9 @@ function isRetryableError(content: string): boolean {
 // Markdown components config - extracted to module level to prevent recreation on each render
 // Full GFM support with professional styling for chat bubbles
 const MARKDOWN_COMPONENTS = {
-  // Paragraphs with proper spacing
+  // Paragraphs with proper spacing - mb-4 creates "Visual Islands" separation
   p: ({ children }: { children?: React.ReactNode }) => (
-    <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
+    <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>
   ),
   // Bold text with emphasis - zinc for key variables (dates, prices, locations)
   strong: ({ children }: { children?: React.ReactNode }) => (
@@ -448,8 +475,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const [generateTriggered, setGenerateTriggered] = useState(false);
     const [readyMessageShown, setReadyMessageShown] = useState(false);
     const [suggestedResponses, setSuggestedResponses] = useState<string[]>([]);
-    // Track which messages are collapsed (by message ID)
-    const [collapsedMessages, setCollapsedMessages] = useState<Set<string>>(new Set());
     // Mobile Setup header collapse state - triggers when scroll > 50px
     const [isSetupHeaderCollapsed, setIsSetupHeaderCollapsed] = useState(false);
     // Track last user message ID for ack updates
@@ -470,6 +495,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       stage?: number;
       topic?: string;
     } | null>(null);
+
+    // Smart Loader: current active status for single mutating line (DS Section 19.C)
+    const [activeStatus, setActiveStatus] = useState<ActiveStatus | null>(null);
 
     // Module sheet open states (flights/stays/activities remain in ChatPanel)
     // Trip input sheets (destination/origin/dates/travelers/budget) are now in NomadicLanding
@@ -649,7 +677,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
     // Scroll panel into view and focus input when response finishes (isLoading: true -> false)
     useEffect(() => {
-      if (prevIsLoadingRef.current && !isLoading) {
+      if (!prevIsLoadingRef.current && isLoading) {
+        // Scroll to bottom when loading STARTS so Logic Terminal is visible
+        // (especially important on mobile where keyboard may cover the bottom)
+        scrollToBottom(true);
+      } else if (prevIsLoadingRef.current && !isLoading) {
         // Reset scroll tracking and force scroll to bottom when response finishes
         isUserScrolledUpRef.current = false;
         scrollToBottom(true);
@@ -715,10 +747,43 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       }
     }, [readyToGenerate, readyMessageShown, hasBranches, generateTriggered]);
 
+    // Smart Loader: Single mutating status line (DS Section 19.C)
+    // Uses "Agency Voice" to translate technical terms to travel concierge language
+    useEffect(() => {
+      if (!nodeStatus || !isLoading) return;
+
+      // 1. HANDLE LOGIC REVEAL (The "Brain" Event)
+      // Backend sends: { node: "logic_reveal", label: "ROUTING: DIVING" }
+      // Frontend shows: "CONSULTING: DIVING"
+      if (nodeStatus.node === 'logic_reveal') {
+        setActiveStatus((prev) =>
+          prev
+            ? {
+                ...prev,
+                detail: toAgencyVoice(nodeStatus.label), // Translate to agency speak
+              }
+            : null
+        );
+        return;
+      }
+
+      // 2. STANDARD STATUS UPDATE
+      // Backend sends: { node: "architect", label: "Reading message...", iconKey: "building" }
+      // Frontend shows: "REVIEWING REQUEST"
+      setActiveStatus({
+        label: toAgencyVoice(nodeStatus.label.replace(/\.+$/, '')),
+        icon_key: nodeStatus.iconKey || 'default',
+        detail: undefined, // Reset detail on new node
+      });
+    }, [nodeStatus, isLoading]);
+
     const sendMessageCore = useCallback(
       async (messageText: string, options?: { suggestionClicked?: string }) => {
         const trimmed = messageText.trim();
         if (!trimmed || isLoading) return;
+
+        // Reset Smart Loader for new message
+        setActiveStatus(null);
 
         // Check for generate trigger - either the explicit trigger or "Build plan" suggestion chip
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
@@ -949,18 +1014,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   updateMessageId(streamingMsgId, `${READY_MESSAGE_ID_PREFIX}${streamingMsgId}`);
                 }
 
-                // --- Update user message with ack data for collapsible UI ---
+                // --- Update user message with ack data for SystemReceipt display ---
+                // "Command & Receipt" pattern: user message stays visible, receipt shows below
                 if (lastUserMsgIdRef.current && doc.ack_updates && doc.ack_updates.length > 0) {
                   const userMsgId = lastUserMsgIdRef.current;
-                  // Update the user message with ack data
+                  // Update the user message with ack data (no auto-collapse)
                   updateMessage(userMsgId, {
                     ackStatus: doc.ack_status || 'applied',
                     ackUpdates: doc.ack_updates,
                   });
-                  // Auto-collapse after delay (1200ms)
-                  setTimeout(() => {
-                    setCollapsedMessages((prev) => new Set(prev).add(userMsgId));
-                  }, 1200);
                 } else if (lastUserMsgIdRef.current) {
                   // No ack updates - mark as no_change
                   updateMessage(lastUserMsgIdRef.current, {
@@ -1082,7 +1144,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         ...m,
         content: sanitizeContent(m.content),
       }))
-      .flatMap((m) => {
+      .flatMap((m): (ChatMessage & { _isPartOfSplit?: boolean; _isFirstPart?: boolean; _isLastPart?: boolean })[] => {
         // Only split assistant messages by paragraph breaks
         if (m.role === 'assistant') {
           const paragraphs = m.content.split(/\n\n+/).filter((p) => p.trim().length > 0);
@@ -1098,7 +1160,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             }));
           }
         }
-        return m;
+        return [m];
       });
 
     // Note: Three-dot typing indicator removed - Live Logic Status Pill above input is the only loading indicator
@@ -1243,8 +1305,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 // Setup phase messages should appear faded (past tense visual treatment)
                 const isSetupPhase = m.phase === 'setup';
 
-                // Check if this user message should be collapsed
-                const isCollapsed = isUserMessage && collapsedMessages.has(m.id) && m.ackUpdates && m.ackUpdates.length > 0;
+                // Check if this user message has ack updates (for SystemReceipt display)
+                const hasAckUpdates = isUserMessage && m.ackUpdates && m.ackUpdates.length > 0;
 
                 // Render system ack line for system messages or ack_line displayMode
                 if (m.role === 'system' || m.displayMode === 'ack_line') {
@@ -1282,30 +1344,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   );
                 }
 
-                // Render collapsed row for eligible messages
-                if (isCollapsed) {
-                  return (
-                    <div
-                      key={m.id}
-                      className="message-enter"
-                      style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
-                    >
-                      <CollapsedMessageRow
-                        ackStatus={m.ackStatus || 'applied'}
-                        ackUpdates={m.ackUpdates || []}
-                        isExpanded={false}
-                        onToggle={() => {
-                          setCollapsedMessages((prev) => {
-                            const next = new Set(prev);
-                            next.delete(m.id);
-                            return next;
-                          });
-                        }}
-                      />
-                    </div>
-                  );
-                }
-
                 return (
                   <div
                     key={m.id}
@@ -1314,64 +1352,75 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   >
                     {/* Relative container for absolute delete button positioning */}
                     <div className={`inline-block relative max-w-[85%] ${showDeleteButton ? 'group/msg' : ''}`}>
-                      <div
-                        className={
-                          isUserMessage
-                            ? cn(
-                                // Shape: Speech bubble with sharp bottom-right corner
-                                'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
-                                // Light Mode: Solid Black (The Commander)
-                                'bg-zinc-900 text-white border border-zinc-900',
-                                'shadow-md hover:shadow-lg hover:-translate-y-0.5',
-                                'hover:bg-zinc-800 hover:border-zinc-800',
-                                // Dark Mode: Solid White (Maximum Contrast Signal)
-                                'dark:bg-white dark:text-zinc-950 dark:border-white',
-                                'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
-                                'dark:hover:bg-zinc-100'
-                              )
-                            : cn(
-                                // Shape: Speech bubble with sharp bottom-left corner
-                                'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
-                                // Light Mode: Glass effect
-                                'bg-white/80 backdrop-blur-sm',
-                                'border border-zinc-200',
-                                'shadow-sm',
-                                'hover:shadow-md hover:-translate-y-0.5',
-                                // Dark Mode: Dark Glass (The System/Infrastructure)
-                                'dark:bg-white/5 dark:backdrop-blur-sm',
-                                'dark:border-white/10',
-                                'dark:shadow-none',
-                                // Text: High contrast
-                                'text-zinc-700 dark:text-zinc-300',
-                                isStreaming && 'typing-pulse'
-                              )
-                        }
-                      >
-                        {m.role === 'assistant' ? (
-                          <>
-                            <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
-                              {preprocessSpecialistLinks(m.content)}
-                            </Markdown>
-                            {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
-                            {originalId.startsWith('a_err_') &&
-                              lastUserMessage &&
-                              isRetryableError(m.content) &&
-                              !isLoading &&
-                              (!isSplitMessage || isLastPart) && (
-                                <button
-                                  type="button"
-                                  onClick={() => sendMessageCore(lastUserMessage)}
-                                  className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
-                                >
-                                  <RotateCcw className="h-3 w-3" />
-                                  Retry
-                                </button>
-                              )}
-                          </>
-                        ) : (
-                          <>{m.content}</>
-                        )}
-                      </div>
+                      {/* "Command & Receipt" pattern: User message + SystemReceipt below */}
+                      {isUserMessage ? (
+                        <div className="flex flex-col items-end">
+                          {/* The Commander (User Bubble) */}
+                          <div
+                            className={cn(
+                              // Shape: Speech bubble with sharp bottom-right corner
+                              'rounded-2xl rounded-br-md px-4 py-2.5 text-left transition-all',
+                              // Light Mode: Solid Black (The Commander)
+                              'bg-zinc-900 text-white border border-zinc-900',
+                              'shadow-md hover:shadow-lg hover:-translate-y-0.5',
+                              'hover:bg-zinc-800 hover:border-zinc-800',
+                              // Dark Mode: Solid White (Maximum Contrast Signal)
+                              'dark:bg-white dark:text-zinc-950 dark:border-white',
+                              'dark:shadow-[0_0_20px_-5px_rgba(255,255,255,0.3)]',
+                              'dark:hover:bg-zinc-100'
+                            )}
+                          >
+                            {m.content}
+                          </div>
+                          {/* The System Receipt - DS Section 19 */}
+                          {hasAckUpdates && (
+                            <SystemReceipt
+                              ackStatus={m.ackStatus || 'applied'}
+                              ackUpdates={m.ackUpdates || []}
+                              mode={m.phase}
+                            />
+                          )}
+                        </div>
+                      ) : (
+                        /* Assistant message */
+                        <div
+                          className={cn(
+                            // Shape: Speech bubble with sharp bottom-left corner
+                            'rounded-2xl rounded-bl-sm px-4 py-2.5 transition-all',
+                            // Light Mode: Glass effect
+                            'bg-white/80 backdrop-blur-sm',
+                            'border border-zinc-200',
+                            'shadow-sm',
+                            'hover:shadow-md hover:-translate-y-0.5',
+                            // Dark Mode: Dark Glass (The System/Infrastructure)
+                            'dark:bg-white/5 dark:backdrop-blur-sm',
+                            'dark:border-white/10',
+                            'dark:shadow-none',
+                            // Text: High contrast
+                            'text-zinc-700 dark:text-zinc-300',
+                            isStreaming && 'typing-pulse'
+                          )}
+                        >
+                          <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+                            {preprocessSpecialistLinks(m.content)}
+                          </Markdown>
+                          {/* Tier 11.12: Retry button for transient errors - only on last part of split messages */}
+                          {originalId.startsWith('a_err_') &&
+                            lastUserMessage &&
+                            isRetryableError(m.content) &&
+                            !isLoading &&
+                            (!isSplitMessage || isLastPart) && (
+                              <button
+                                type="button"
+                                onClick={() => sendMessageCore(lastUserMessage)}
+                                className="mt-2 flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition-colors"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Retry
+                              </button>
+                            )}
+                        </div>
+                      )}
                       {/* Delete button - positioned at bottom-right corner, visible only on hover */}
                       {showDeleteButton && (
                         <div className="absolute -bottom-4 right-1 opacity-0 group-hover/msg:opacity-100 transition-opacity z-[999]">
@@ -1385,7 +1434,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   </div>
                 );
               })}
-              {/* Three-dot typing indicator removed - Live Logic Status Pill is the only loading indicator */}
+              {/* Smart Loader: Single mutating status line - DS Section 19.C */}
+              {/* Shows current processing state with dynamic icon */}
+              {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
+                <SmartLoader status={activeStatus} />
+              )}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
               <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
             </>
@@ -1480,32 +1533,21 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     ]
             )}
           >
-            {/* Status indicator overlay - inside the capsule during processing */}
-            {isLoading && nodeStatus?.node && (
-              <div className="absolute left-6 flex items-center gap-2 text-xs font-mono text-emerald-600 dark:text-emerald-400 pointer-events-none z-10">
-                <Cpu className="w-3 h-3" />
-                <span className="tracking-tight opacity-80">
-                  {COMPELLING_NODE_LABELS[nodeStatus.node] || nodeStatus.label || 'Processing...'}
-                </span>
-              </div>
-            )}
             {/* Input Field - takes remaining space */}
+            {/* Note: Status text removed - Logic Terminal in chat list is the single source of truth (DS Section 19.C) */}
             <form onSubmit={handleSubmit} className="flex-1 h-full">
               <textarea
                 ref={inputRef}
                 disabled={isInputDisabledByPlanState}
                 className="w-full h-full bg-transparent text-zinc-900 dark:text-white pl-6 pr-2 py-4 text-sm font-medium leading-5 resize-none overflow-hidden border-none outline-none focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed placeholder:text-zinc-400 dark:placeholder:text-zinc-600"
                 placeholder={
-                  // Hide placeholder when Living Void status is showing
-                  isLoading && nodeStatus?.node
-                    ? ''
-                    : isInputDisabledByPlanState
-                      ? 'Updating...'
-                      : readyToGenerate
-                        ? 'Type to refine...'
-                        : !hasDestination
-                          ? (isDesktop ? 'Where to?' : 'Where to?')
-                          : 'Tell me more...'
+                  isInputDisabledByPlanState
+                    ? 'Updating...'
+                    : readyToGenerate
+                      ? 'Type to refine...'
+                      : !hasDestination
+                        ? 'Where to?'
+                        : 'Tell me more...'
                 }
                 value={input}
                 onChange={(e) => {

@@ -41,6 +41,13 @@ These constraints MUST be passed to the Architect:
    - Check historical snow data before booking low-altitude resorts
    - Climate change has reduced reliable snow at lower elevations
 
+6. SEASONALITY (HEMISPHERE AWARENESS):
+   - Northern Hemisphere (Alps, Rockies, Japan): December to April only.
+   - Southern Hemisphere (NZ, Chile, Argentina): June to September only.
+   - Summer Glacier Skiing: Only possible at specific resorts (Zermatt, Hintertux, Les 2 Alpes).
+   - IF dates fall outside season: Flag as INFEASIBLE or restrict recommendations to glacier areas.
+   - Example: "Alps in July" → INFEASIBLE unless glacier skiing specified.
+
 ==============================
 SKIING DESTINATION KNOWLEDGE
 ==============================

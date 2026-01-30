@@ -17,6 +17,37 @@ from typing import Any, Dict, List, Tuple
 from app.planner.state import GraphStateV2, TripPlan
 
 # =============================================================================
+# Place Validation Helper
+# =============================================================================
+
+
+def validate_place_exists(place: str) -> tuple[bool, str | None]:
+    """
+    Check if a place exists using the validation cache.
+
+    Uses the existing LLM-backed validation with TTL caching.
+    Returns (is_valid, reason) tuple.
+    Fails open (returns True) if validation service unavailable.
+    """
+    import logging
+
+    from app.validation import validate_input
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        result = validate_input(place, "destination")
+        logger.info(
+            f"[GUARD] validate_place_exists('{place}'): "
+            f"is_valid={result.is_valid}, reason={result.reason}"
+        )
+        return result.is_valid, result.reason
+    except Exception as e:
+        logger.warning(f"[GUARD] validate_place_exists('{place}'): EXCEPTION - {e}, failing open")
+        return True, None  # Fail open - don't block if validation unavailable
+
+
+# =============================================================================
 # Constraint Violation Types
 # =============================================================================
 
@@ -372,6 +403,51 @@ def check_geographic_constraints(plan: TripPlan) -> List[ConstraintViolation]:
     return violations
 
 
+def check_route_constraint(plan: TripPlan) -> List[ConstraintViolation]:
+    """
+    Check route validity (Logic Guards).
+
+    Validates:
+    - Origin !== Destination (same city error)
+    - Destination exists (LLM validation)
+
+    These are USER INTENT errors that cannot be auto-fixed by the Architect.
+    They must be rejected and corrected by the user.
+    """
+    violations = []
+
+    origin = (plan.origin or "").lower().strip()
+    destination = (plan.destination or "").lower().strip()
+
+    # 1. Same City Check
+    if origin and destination and origin == destination:
+        violations.append(
+            ConstraintViolation(
+                code="SAME_CITY_ERROR",
+                message=f"Origin and destination cannot be the same ({plan.destination})",
+                severity="blocking",
+                category="route",
+                suggested_action="Please choose a different destination",
+            )
+        )
+
+    # 2. Unknown Place Check (uses LLM-backed validation)
+    if plan.destination and len(plan.destination) > 1:
+        is_valid, reason = validate_place_exists(plan.destination)
+        if not is_valid:
+            violations.append(
+                ConstraintViolation(
+                    code="UNKNOWN_DESTINATION_ERROR",
+                    message=reason or f"'{plan.destination}' is not a valid destination",
+                    severity="blocking",
+                    category="route",
+                    suggested_action="Check spelling or be more specific",
+                )
+            )
+
+    return violations
+
+
 # =============================================================================
 # ConstraintGuard Class
 # =============================================================================
@@ -410,6 +486,9 @@ class ConstraintGuard:
 
         # Geographic constraints
         violations.extend(check_geographic_constraints(state.trip_plan))
+
+        # Route constraints (Logic Guards - user intent errors)
+        violations.extend(check_route_constraint(state.trip_plan))
 
         # Check for blocking violations
         has_blocking = any(v.severity == "blocking" for v in violations)
@@ -465,6 +544,31 @@ async def constraint_guard(state: GraphStateV2) -> GraphStateV2:
     # Store detailed violations in metadata
     state.metadata["constraint_violations"] = [v.to_dict() for v in violations]
     state.metadata["has_blocking_violations"] = has_blocking
+
+    # ==========================================================================
+    # ROUTE ERROR ROLLBACK (Logic Guards)
+    # If a route error is detected, revert TripPlan to previous valid state.
+    # This prevents the UI from showing invalid destinations (Rome → Rome).
+    # ==========================================================================
+    is_route_error = any(v.category == "route" for v in violations)
+    if is_route_error:
+        log("GUARD", "🚫 ROUTE ERROR: Rolling back TripPlan to previous state")
+        previous_inputs = state.metadata.get("trip_inputs", {})
+        if previous_inputs:
+            state.trip_plan.destination = previous_inputs.get("destination")
+            state.trip_plan.origin = previous_inputs.get("origin")
+            state.trip_plan.start_date = previous_inputs.get("start_date")
+            state.trip_plan.end_date = previous_inputs.get("end_date")
+            log(
+                "GUARD",
+                f"Rolled back to: origin={state.trip_plan.origin}, "
+                f"dest={state.trip_plan.destination}",
+            )
+        else:
+            # New session with no previous state - clear invalid fields
+            state.trip_plan.destination = None
+            state.trip_plan.origin = None
+            log("GUARD", "No previous state - cleared origin/destination")
 
     # Prepare violation context for Architect retry (Auto-Fix Loop)
     if has_blocking:

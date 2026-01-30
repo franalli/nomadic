@@ -246,6 +246,53 @@ def _resolve_flexible_dates(plan: TripPlan, user_text: str, metadata: dict) -> T
     return plan
 
 
+def _auto_toggle_flights(
+    plan: TripPlan,
+    prev_origin: str | None,
+    extracted_settings: dict,
+    metadata: dict,
+) -> None:
+    """
+    Auto-toggle flights based on origin presence.
+
+    Implements the behavior documented in schemas.py:
+    "Upgrades to 'suggested' when origin is set"
+
+    Precedence Rules:
+    1. Explicit user preference wins (e.g., "No flights" keeps flights OFF)
+    2. Origin added → auto-enable flights to "suggested"
+    3. Origin removed → auto-disable flights to "off"
+
+    NOTE: TripPlan (internal graph state) does NOT have booking_types.
+    We set extracted_settings which gets merged into trip_inputs.booking_types
+    during _v2_result_to_v1_format conversion (plan_graph_v2.py lines 866-877).
+    """
+    from app.debug_utils import _debug_v2
+
+    # 1. Respect explicit user preference in THIS turn
+    if extracted_settings.get("flights_toggle") is not None:
+        _debug_v2(f"Flights: user explicit = {extracted_settings.get('flights_toggle')}")
+        return
+
+    current_origin = plan.origin
+
+    # 2. Origin added → enable flights
+    if current_origin and not prev_origin:
+        # Update extracted_settings (merged into trip_inputs.booking_types during result conversion)
+        metadata.setdefault("extracted_settings", {})
+        metadata["extracted_settings"]["flights_toggle"] = "suggested"
+        metadata["auto_toggle_flights"] = {"action": "enabled", "origin": current_origin}
+        _debug_v2(f"Flights auto-toggled to 'suggested' (origin: {current_origin})")
+
+    # 3. Origin removed → disable flights
+    elif not current_origin and prev_origin:
+        # Update extracted_settings (merged into trip_inputs.booking_types during result conversion)
+        metadata.setdefault("extracted_settings", {})
+        metadata["extracted_settings"]["flights_toggle"] = "off"
+        metadata["auto_toggle_flights"] = {"action": "disabled", "prev_origin": prev_origin}
+        _debug_v2("Flights auto-toggled to 'off' (origin cleared)")
+
+
 async def _update_trip_plan_from_llm(
     plan: TripPlan,
     user_text: str,
@@ -704,6 +751,14 @@ async def trip_architect(state: GraphStateV2) -> GraphStateV2:
 
     # Resolve flexible dates to concrete dates
     state.trip_plan = _resolve_flexible_dates(state.trip_plan, user_text, state.metadata)
+
+    # Auto-toggle flights based on origin presence (implements schemas.py line 328)
+    _auto_toggle_flights(
+        plan=state.trip_plan,
+        prev_origin=prev_trip_values.get("origin"),
+        extracted_settings=state.metadata.get("extracted_settings", {}),
+        metadata=state.metadata,
+    )
 
     # ==========================================================================
     # Track what changed (for ack_updates)

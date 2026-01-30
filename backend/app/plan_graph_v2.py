@@ -409,7 +409,12 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
     Run guard if:
     - We have tiles to validate
     - We have specialist constraints to check
+    - We have a destination set (for route validation - SAME_CITY, UNKNOWN_PLACE)
     """
+    # Always run guard if destination is set (route validation)
+    if state.trip_plan.destination:
+        return "guard"
+    # Also run for tiles/constraints
     if state.tiles or state.trip_plan.constraints:
         return "guard"
     return "synthesizer"
@@ -417,18 +422,27 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
 
 def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
     """
-    Route based on constraint violations (Auto-Fix Loop).
+    Route based on constraint violations.
 
-    If blocking violations AND retry_count < 1 → Architect (for auto-fix)
-    Otherwise → Synthesizer
-
-    This allows the Architect to self-correct one time before showing
-    errors to the user. The user never sees "Budget exceeded", they just
-    get a corrected plan with cheaper options.
+    Logic:
+    1. Route Errors (Rome->Rome, Atlantis) → Synthesizer (skip auto-fix)
+       NOTE: Rollback happens in constraint_guard node, not here.
+    2. Budget/Time Errors → Architect (auto-fix loop, max 1 retry)
+    3. No Errors → Synthesizer (success)
     """
     has_blocking = state.metadata.get("has_blocking_violations", False)
     retry_count = state.guard_retry_count
+    violations = state.metadata.get("constraint_violations", [])
 
+    # 1. ROUTE ERROR SHORT-CIRCUIT
+    # Route errors are unfixable by Architect - skip auto-fix loop.
+    # Rollback already happened in constraint_guard node.
+    is_route_error = any(v.get("category") == "route" for v in violations)
+    if is_route_error:
+        logger.debug("Route error detected - skipping auto-fix, going to Synthesizer")
+        return "synthesizer"
+
+    # 2. OPTIMIZATION AUTO-FIX (Budget/Schedule - Safe to retry)
     if has_blocking and retry_count < 1:
         logger.debug(f"Auto-fix loop triggered: routing back to Architect (retry {retry_count})")
         return "architect"
@@ -707,6 +721,27 @@ async def run_turn_streaming(
                 if output is not None:
                     # Always capture the latest output - it might be a dict or GraphStateV2
                     final_output = output
+
+                    # Logic Terminal: Emit routing decision when router completes (DS Section 19.C)
+                    # This creates the ">> ROUTING: DIVING" line in the frontend terminal
+                    if node == "router":
+                        # Extract active_specialist from output (dict or GraphStateV2)
+                        active_specialist = None
+                        if isinstance(output, dict):
+                            active_specialist = output.get("active_specialist")
+                        elif hasattr(output, "active_specialist"):
+                            active_specialist = output.active_specialist
+
+                        # Emit logic_reveal for non-general specialists
+                        if active_specialist and active_specialist not in ("general", None):
+                            yield {
+                                "type": "node_status",
+                                "data": {
+                                    "node": "logic_reveal",
+                                    "label": f"ROUTING: {active_specialist.upper()}",
+                                    "status": "completed",
+                                },
+                            }
 
         # Emit final node completion
         if current_node:

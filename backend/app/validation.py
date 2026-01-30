@@ -95,10 +95,14 @@ def clear_validation_caches() -> int:
 
 
 def _get_model_name() -> str:
-    """Get the OpenAI model name (same as planner)."""
-    model_name = os.getenv("OPENAI_PLAN_MODEL", "").strip()
-    if not model_name:
-        raise RuntimeError("OPENAI_PLAN_MODEL is required for validation")
+    """Get the OpenAI model name for validation (uses settings with fallback)."""
+    # Use settings.openai_plan_model which has a default of gpt-4o-mini
+    # Also check env vars as override
+    model_name = (
+        os.getenv("OPENAI_PLAN_MODEL", "").strip()
+        or settings.openai_plan_model
+        or "gpt-4o-mini"  # Ultimate fallback
+    )
     return model_name
 
 
@@ -186,9 +190,17 @@ _LOCATION_PROMPT = """Validate "{value}" as a travel {field_type}. Return JSON o
 Valid place: {{"v":["Corrected Name"],"ok":true}}
 Multiple places: {{"v":["Place1","Place2"],"ok":true}}
 Invalid: {{"v":[],"ok":false,"r":"reason"}}
-Correct misspellings to real places (Sydny->Sydney, vinna -> Vienna, Barselonaa->Barcelona).
-Expand abbreviations (NYC->New York City, SF->San Francisco, LA->Los Angeles).
-Reject fictional or non-existent places."""
+
+RULES:
+1. VALID: Real cities, regions, or countries on Earth (Paris, Bali, Japan)
+2. VALID: Correct misspellings (Sydny->Sydney, Barselonaa->Barcelona)
+3. VALID: Expand abbreviations (NYC->New York City, SF->San Francisco)
+4. INVALID: Celestial bodies (Moon, Mars, Sun) - reason: "Not a destination on Earth"
+5. INVALID: Fictional places (Atlantis, Mordor, Hogwarts) - reason: "Fictional location"
+6. INVALID: Too vague (The Beach, Asia, The World) - reason: "Too vague, specify a city or region"
+7. INVALID: Nonsense (asdf, 12345) - reason: "Not a recognized location"
+
+Be STRICT: Only return ok:true for real, specific, reachable destinations on Earth."""
 
 
 def _call_llm_validation(

@@ -68,7 +68,8 @@
       "Bash(\"/c/Users/Filippo/Desktop/nomadic/frontend/node_modules/.bin/tsc\" --noEmit --project \"/c/Users/Filippo/Desktop/nomadic/frontend/tsconfig.json\")",
       "Bash(\"/c/Users/Filippo/Desktop/nomadic/frontend/node_modules/.bin/vitest\" run --project \"/c/Users/Filippo/Desktop/nomadic/frontend\")",
       "Bash(npx vitest run)",
-      "Bash(node ./node_modules/typescript/bin/tsc:*)"
+      "Bash(node ./node_modules/typescript/bin/tsc:*)",
+      "Bash(ruff check:*)"
     ],
     "deny": [],
     "ask": []

@@ -148,6 +148,20 @@ def _build_synthesis_context(state: GraphStateV2) -> str:
         for v in state.constraints_violated:
             parts.append(f"- {v}")
 
+    # REJECTION ALERT: If route error detected, inject explicit guidance
+    constraint_violations = state.metadata.get("constraint_violations", [])
+    route_violations = [v for v in constraint_violations if v.get("category") == "route"]
+    if route_violations:
+        parts.append("\n## ⚠️ REJECTION ALERT (CRITICAL)")
+        parts.append("The user's input was REJECTED due to invalid route/destination.")
+        for v in route_violations:
+            parts.append(f"- Error: {v.get('code')} - {v.get('message')}")
+        parts.append("YOUR TASK:")
+        parts.append("1. Do NOT generate any itinerary content")
+        parts.append("2. Firmly but politely explain WHY the input was rejected")
+        parts.append("3. Ask the user to provide a VALID alternative")
+        parts.append("4. Keep response under 30 words")
+
     # Tile results - COUNTS ONLY (details are in the right panel)
     # Don't include tile names/prices - LLM should only mention counts
     if state.tiles:
@@ -253,11 +267,26 @@ def generate_suggested_replies(state: GraphStateV2) -> List[str]:
     Generate context-aware suggestion chips.
 
     Always returns exactly 3 suggestions.
+    Priority: Rejection > Missing Fields > Specialist > Default
     """
     suggestions = []
     plan = state.trip_plan
 
-    # Based on current state
+    # PRIORITY 1: Rejection state - suggest valid alternatives
+    constraint_violations = state.metadata.get("constraint_violations", [])
+    route_violations = [v for v in constraint_violations if v.get("category") == "route"]
+    if route_violations:
+        # Get the previous valid destination for context
+        prev_dest = state.metadata.get("trip_inputs", {}).get("destination")
+        if prev_dest:
+            # Suggest nearby alternatives (generic)
+            suggestions = [f"Back to {prev_dest}", "Different city", "Help me choose"]
+        else:
+            # No previous destination - suggest inspiration
+            suggestions = ["Paris", "Tokyo", "Barcelona"]
+        return suggestions[:3]
+
+    # PRIORITY 2: Based on current state
     if not plan.destination:
         suggestions = ["Beach destination", "Mountain adventure", "City break"]
     elif not plan.start_date:

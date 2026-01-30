@@ -350,6 +350,8 @@ The "Concierge" agent for city trips - ensures the Agent Feed is never empty.
 }
 ```
 
+**Reality Check:** Includes a pre-generation check to return EMPTY recommendations if the destination is fictional or unrecognized (e.g., "Atlantis", "Mordor"). This prevents hallucination of non-existent transit systems or opening hours.
+
 ### LogisticsNode (NEW)
 
 Centralized flight fetching with safety logic. Runs AFTER Specialist/LocalExpert, BEFORE Architect.
@@ -378,6 +380,8 @@ Pure Python deterministic validation. **NO LLM calls.**
 
 | Constraint Type | Check | Severity |
 |-----------------|-------|----------|
+| Route | `origin == destination` | blocking |
+| Route | `validate_place_exists(dest)` returns false | blocking |
 | Budget | Total cost < budget | blocking |
 | Budget | Category cost < allocation | warning |
 | Temporal | end_date > start_date | blocking |
@@ -385,13 +389,21 @@ Pure Python deterministic validation. **NO LLM calls.**
 | Geographic | Diving in landlocked country | blocking |
 | Specialist | 24h surface interval | info |
 
-**Auto-Fix Loop (NEW):**
+**Auto-Fix Loop with Route Error Short-Circuit:**
 ```python
 def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
     has_blocking = state.metadata.get("has_blocking_violations", False)
     retry_count = state.guard_retry_count
+    violations = state.metadata.get("constraint_violations", [])
 
-    # Allow one self-correction attempt
+    # 1. ROUTE ERROR SHORT-CIRCUIT (Logic Guards)
+    # User Intent errors (Rome->Rome, Atlantis) are UNFIXABLE by the Architect.
+    # They must bypass the auto-fix loop and go straight to rejection.
+    if any(v.get("category") == "route" for v in violations):
+        return "synthesizer"  # Triggers Amber "REJECTED" receipt
+
+    # 2. OPTIMIZATION AUTO-FIX
+    # Budget/Schedule errors can be self-corrected by the Architect.
     if has_blocking and retry_count < 1:
         return "architect"  # Loop back for auto-fix
 
@@ -420,6 +432,8 @@ Unified response generator - "One voice, regardless of which agents contributed.
 - `suggested_replies` (exactly 3 chips)
 - Image enrichment via Unsplash
 - Graceful constraint warnings
+
+**Logic Guard Voice:** When a blocking route violation is detected (`category="route"`), the Synthesizer shifts to **"Architectural Safety Mode"**. It refuses to generate enthusiasm or itinerary content and instead provides a firm, corrective statement (e.g., "I cannot generate a route where Origin and Destination are identical.").
 
 **True Streaming:**
 Uses LangGraph's `astream_events` to tap into the LLM token stream:
@@ -584,14 +598,34 @@ def route_after_router(state: GraphStateV2) -> Literal["specialist", "local_expe
     return "architect"
 ```
 
+### Route After Specialist
+
+```python
+def route_after_specialist(state: GraphStateV2):
+    # 1. Recursion: If pending specialists exist, run the next one
+    if state.pending_specialists:
+        return "specialist"  # (or "local_expert")
+
+    # 2. Speculative Intent: Skip tools, go to Synthesizer (Preload)
+    if state.intent == "speculative":
+        return "synthesizer"
+
+    # 3. Booking Intent: Fetch tiles via Logistics
+    if state.intent == "booking" or state.is_generate_trigger:
+        return "logistics"
+
+    # 4. General Intent: Extract fields in Architect (skip tiles)
+    return "architect"
+```
+
 ### Graph Edge Flow
 
 ```
 Entry: router
 
 router → specialist/local_expert/architect/synthesizer (conditional)
-specialist → logistics (always)
-local_expert → logistics (always)
+specialist → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
+local_expert → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
 logistics → architect (always)
 architect → guard/synthesizer (conditional)
 guard → architect/synthesizer (conditional - auto-fix loop)
@@ -608,19 +642,32 @@ def should_run_guard(state: GraphStateV2) -> Literal["guard", "synthesizer"]:
     return "synthesizer"
 ```
 
-### Route After Guard (Auto-Fix Loop)
+### Route After Guard (Auto-Fix vs. Rejection)
 
 ```python
 def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"]:
     has_blocking = state.metadata.get("has_blocking_violations", False)
     retry_count = state.guard_retry_count
+    violations = state.metadata.get("constraint_violations", [])
 
-    # Allow one self-correction attempt before showing errors to user
+    # 1. ROUTE ERROR SHORT-CIRCUIT (Logic Guards)
+    # User Intent errors (Rome->Rome, Atlantis) are UNFIXABLE by the Architect.
+    # They must bypass the auto-fix loop and go straight to rejection.
+    if any(v.get("category") == "route" for v in violations):
+        return "synthesizer"  # Triggers Amber "REJECTED" receipt
+
+    # 2. OPTIMIZATION AUTO-FIX
+    # Budget/Schedule errors can be self-corrected by the Architect.
     if has_blocking and retry_count < 1:
         return "architect"
 
     return "synthesizer"
 ```
+
+**Route errors bypass auto-fix because:**
+- The Architect cannot fix user intent errors (it would hallucinate destinations)
+- The user must provide valid input
+- Triggers Amber "REJECTED" receipt in UI (DS Section 20)
 
 ---
 
@@ -665,26 +712,30 @@ def route_after_guard(state: GraphStateV2) -> Literal["architect", "synthesizer"
 - Chamonix: Vallee Blanche, Les Grands Montets
 - Japan: Niseko Powder, Hakuba Valley
 
+**Seasonality Guard:** Checks hemisphere/month alignment before generating content. Northern Hemisphere (Alps, Rockies, Japan) is December-April; Southern Hemisphere (NZ, Chile, Argentina) is June-September. Out-of-season requests (e.g., "Alps in July") are flagged as INFEASIBLE unless glacier skiing is specified.
+
 ---
 
 ## Constraint Validation
 
 ### Validation Categories
 
-| Category | Check | Severity |
-|----------|-------|----------|
-| Budget | `total_cost > budget` | blocking |
-| Budget | `category_cost > allocation` | warning |
-| Temporal | `end_date < start_date` | blocking |
-| Temporal | `duration > 30 days` | info |
-| Temporal | `duration < 1 day` | warning |
-| Seasonal | Hiking in Swiss Alps in winter | warning |
-| Seasonal | Skiing in summer months | warning |
-| Geographic | Diving in landlocked country | blocking |
-| Geographic | Beach in landlocked country | blocking |
-| Specialist | 24h surface interval (diving) | info |
-| Specialist | Altitude warning (hiking) | info |
-| Specialist | Certification required | warning |
+| Category | Check | Severity | Note |
+|----------|-------|----------|------|
+| **Route** | `origin == destination` | **blocking** | Triggers `SAME_CITY_ERROR` |
+| **Route** | `validate_place_exists(dest)` | **blocking** | Triggers `UNKNOWN_DESTINATION_ERROR` |
+| Budget | `total_cost > budget` | blocking | Auto-fixable |
+| Budget | `category_cost > allocation` | warning | Auto-fixable |
+| Temporal | `end_date < start_date` | blocking | Auto-fixable |
+| Temporal | `duration > 30 days` | info | |
+| Temporal | `duration < 1 day` | warning | |
+| Seasonal | Hiking in Swiss Alps in winter | warning | |
+| Seasonal | Skiing in summer months | warning | |
+| Geographic | Diving in landlocked country | blocking | |
+| Geographic | Beach in landlocked country | blocking | |
+| Specialist | 24h surface interval (diving) | info | |
+| Specialist | Altitude warning (hiking) | info | |
+| Specialist | Certification required | warning | |
 
 ### Landlocked Countries (Partial List)
 
@@ -821,6 +872,7 @@ V2 uses LangGraph's `astream_events` for real-time token streaming from the Synt
 | Event Type | Data | Description |
 |------------|------|-------------|
 | `node_status` | `{node, status, label, icon_key}` | Node progress tracking |
+| `logic_reveal` | `{node, label, status}` | Routing decisions for Logic Terminal (e.g., "ROUTING: DIVING") |
 | `token` | `string` | Response text (from Synthesizer LLM) |
 | `complete` | `{...result}` | Full V1-compatible result |
 | `error` | `{message}` | Error information |

@@ -12,9 +12,14 @@ Determine STATUS:
 3. "infeasible": Impossible (e.g., Surfing in Kansas, Skiing in Miami).
 
 IF "INFEASIBLE":
-- STOP planning immediately.
-- Output ONLY the feasibility_status and a blocking constraint.
-- Suggest an ALTERNATIVE (e.g., "Try Wakeboarding" or "Nearest skiing is 500km away").
+- STOP planning immediately. Generate NO content_blocks.
+- Output ONLY feasibility_status, feasibility_reason, and alternative_suggestion.
+- Set feasibility_reason to a clear, corrective statement:
+  * BAD: "Cannot do skiing here."
+  * GOOD: "Skiing is not possible in **Miami** due to climate. Nearest skiing is **500km away** in North Carolina."
+- ALWAYS suggest an ALTERNATIVE:
+  * Same destination, different activity: "Try **Wakeboarding** or **Jet Skiing** instead."
+  * Different destination, same activity: "For skiing, consider **Aspen** or **Park City**."
 
 IF "CAVEAT":
 - Proceed, but add a WARNING constraint explaining the limitation.

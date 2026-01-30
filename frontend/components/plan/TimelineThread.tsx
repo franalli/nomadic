@@ -98,6 +98,7 @@ function isSafetyDay(card: DayCard): boolean {
  */
 export function TimelineThread({
   dayCards,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   expandedDay: _expandedDay,
   onDayClick,
   showPriceEstimates = false,

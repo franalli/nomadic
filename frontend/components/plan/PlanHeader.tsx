@@ -77,6 +77,7 @@ export function PlanHeader({
   planViewState = 'S0_BOOTSTRAP',
   hasDates: _hasDates = false,
   isExpandingItinerary = false,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   currentSubStage: _currentSubStage,
   tripInputs: propTripInputs,
   onOpenSheet,

@@ -1357,3 +1357,113 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 - Web: `frontend/components/layout/NomadicLanding.tsx` (line ~1056)
 - Mobile: `frontend/components/layout/MobileModeHeader.tsx` (line ~136)
+
+---
+
+## 19. Chat Interaction: Command & Receipt
+
+**Core Philosophy:** Never hide the user's intent. The chat is the **Audit Log** of the trip construction.
+
+* **Old Way:** Replace user text with "Updated Destination". (Bad: Destroys context).
+* **Architect Way:** Keep user text visible → Append technical "System Receipt" below it.
+
+### Component Anatomy
+
+#### A. The Commander (User Message)
+- **Visual:** High-contrast solid "Poker Chip." Maximum visibility.
+- **Light Mode:** `bg-zinc-900 text-white`
+- **Dark Mode:** `bg-white text-zinc-950` + white glow shadow
+
+#### B. The System Receipt (The Log)
+- **Visual:** Tiny monospaced status line below user message.
+- **Typography:** `font-mono text-[10px] uppercase tracking-widest font-bold`
+- **Light Mode:** `text-zinc-600`
+- **Dark Mode:** `text-emerald-500` + `drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]`
+
+#### C. The Logic Terminal (Loading State)
+
+**Purpose:** Transparent thought process showing accumulated processing steps, routing decisions, and specialist activations. The "brain activity" of the Travel Architect.
+
+**Layout:**
+- Glass Bubble (visual anchor) above stacked log entries
+- Left-aligned as Assistant placeholder
+
+**Glass Bubble (The Hardware):**
+- `rounded-2xl border` (NO speech tail - status indicator, not message)
+- Uses `DS.materials.surface` token
+- Contents: 3 bouncing dots (`animate-bounce` with staggered delays)
+- Dot colors: `bg-zinc-400` / `dark:bg-emerald-500`
+
+**Log Entries (The Software):**
+- Typography: `font-mono text-[10px] uppercase tracking-widest`
+- **Completed step:** Checkmark icon (`text-emerald-500`) + dimmed text (`text-zinc-400` / `dark:text-zinc-500`)
+- **Active step:** Pulsing dot (`bg-emerald-500 animate-pulse`) + bold text (`text-zinc-900` / `dark:text-emerald-400`)
+- **Routing detail:** `text-[9px] text-emerald-600` / `dark:text-emerald-500/80` with left border (`border-l border-emerald-500/20`)
+
+**Example Output:**
+```
+[ (• • •) ]
+✓ READING_YOUR_MESSAGE
+  >> ROUTING: DIVING
+✓ CONSULTING_EXPERT
+  >> ACTIVATING: DIVING
+● CHECKING_CONSTRAINTS
+  >> VALIDATING_CONSTRAINTS
+```
+
+#### D. The Architect (Assistant Response)
+- **Visual:** Glass surface, part of the infrastructure.
+- **Light Mode:** `bg-white/80 border-zinc-200`
+- **Dark Mode:** `bg-white/5 border-white/10`
+
+### Behavior by Mode
+
+| Mode | Verb | Example |
+|------|------|---------|
+| **SETUP** | EXTRACTED | `>> EXTRACTED: DESTINATION · DATES · BUDGET` |
+| **PLAN** | MODIFIED | `>> MODIFIED: DAY_03_DINNER_SLOT` |
+| **BOOK** | UPDATED | `>> UPDATED: OUTBOUND_FLIGHT_SELECTION` |
+
+### Implementation Reference
+- SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
+- ThinkingTerminal: `frontend/components/chat/ThinkingTerminal.tsx`
+- Integration: `frontend/components/chat/ChatPanel.tsx`
+- Backend telemetry: `backend/app/plan_graph_v2.py` (emits `logic_reveal` events)
+
+---
+
+## 20. Logic Guards (Amber Rejection Pattern)
+
+**Core Philosophy:** The Architect does not crash; it rejects invalid parameters and asks for correction. We use the **"Reject & Correct"** pattern.
+
+* **Banned:** Red error alerts, blocking popups, or silent failures.
+* **Architect Way:** A "Rejected" System Receipt (Amber) + Explanatory Assistant Message.
+
+> **Note:** Amber is intentionally introduced for semantic rejection/warning states. This is an exception to the "BANNED Colors" rule in Section 4.
+
+### Visual Specifications ("The Amber Warning")
+
+| Element | Light Mode | Dark Mode |
+|---------|------------|-----------|
+| **Status Dot** | `bg-amber-500 animate-pulse` | `bg-amber-500 animate-pulse` |
+| **Status Text** | `text-amber-600` | `text-amber-500` |
+| **Text Glow** | None | `drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]` |
+| **Font** | `font-mono text-[10px] uppercase tracking-widest font-bold` | Same |
+
+### Behavior Patterns
+
+**Example 1: Same City Error**
+1. **User Input:** "From Rome to Rome"
+2. **System Action:** Detects `origin === destination`
+3. **Receipt:** Displays `>> REJECTED: ROUTE` (amber)
+4. **Assistant:** "I cannot build an itinerary where the Origin and Destination are the same..."
+
+**Example 2: Unknown Destination**
+1. **User Input:** "Take me to Atlantis"
+2. **System Action:** `validate_place_exists("Atlantis")` returns `false`
+3. **Receipt:** Displays `>> REJECTED: ROUTE` (amber)
+4. **Assistant:** "I couldn't verify 'Atlantis' as a valid destination. Could you check the spelling?"
+
+### Implementation Reference
+- SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
+- ConstraintGuard: `backend/app/planner/nodes_v2/constraint_guard.py`

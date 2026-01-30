@@ -1264,8 +1264,27 @@ async def graph_plan_endpoint(
         if value:
             ack_updates.append(AckUpdate(field=ui_key, to=value))
     response_document.ack_updates = ack_updates
-    # Set ack_status based on whether updates were applied
-    if ack_updates:
+
+    # --- Check for blocking route violations (Logic Guards) ---
+    # Route errors (SAME_CITY_ERROR, UNKNOWN_DESTINATION_ERROR) trigger "rejected" status
+    constraint_violations = session_metadata.get("constraint_violations", [])
+    route_violation = next(
+        (
+            v
+            for v in constraint_violations
+            if v.get("category") == "route" and v.get("severity") == "blocking"
+        ),
+        None,
+    )
+
+    # Set ack_status based on violations or applied updates
+    if route_violation:
+        # Logic Guard rejection - use amber UI pattern (DS Section 20)
+        response_document.ack_status = "rejected"
+        response_document.ack_updates = [
+            AckUpdate(field="route", to=route_violation.get("code", "INVALID_ROUTE"))
+        ]
+    elif ack_updates:
         response_document.ack_status = "applied"
     elif response_document.applied_updates:
         response_document.ack_status = "partial"
@@ -1692,7 +1711,27 @@ async def graph_plan_stream_endpoint(
                 if value:
                     ack_updates.append(AckUpdate(field=ui_key, to=value))
             response_document.ack_updates = ack_updates
-            if ack_updates:
+
+            # --- Check for blocking route violations (Logic Guards) ---
+            # Route errors (SAME_CITY_ERROR, UNKNOWN_DESTINATION_ERROR) trigger "rejected" status
+            constraint_violations = session_metadata.get("constraint_violations", [])
+            route_violation = next(
+                (
+                    v
+                    for v in constraint_violations
+                    if v.get("category") == "route" and v.get("severity") == "blocking"
+                ),
+                None,
+            )
+
+            # Set ack_status based on violations or applied updates
+            if route_violation:
+                # Logic Guard rejection - use amber UI pattern (DS Section 20)
+                response_document.ack_status = "rejected"
+                response_document.ack_updates = [
+                    AckUpdate(field="route", to=route_violation.get("code", "INVALID_ROUTE"))
+                ]
+            elif ack_updates:
                 response_document.ack_status = "applied"
             elif response_document.applied_updates:
                 response_document.ack_status = "partial"

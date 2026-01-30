@@ -10,7 +10,7 @@ export type MessageDisplayMode = 'full' | 'ack_line' | 'collapsed_summary';
 export type MessageClassification = 'constraint' | 'preference' | 'question' | 'meta';
 
 // Ack status from backend
-export type AckStatus = 'pending' | 'applied' | 'partial' | 'no_change' | 'needs_clarification' | 'failed';
+export type AckStatus = 'pending' | 'applied' | 'partial' | 'no_change' | 'needs_clarification' | 'failed' | 'rejected';
 
 // Detailed update info
 export interface AckUpdate {

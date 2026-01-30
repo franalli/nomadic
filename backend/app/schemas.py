@@ -589,7 +589,7 @@ class AckUpdate(BaseModel):
 
 
 # Ack status for constraint updates
-AckStatus = Literal["applied", "partial", "no_change", "needs_clarification", "failed"]
+AckStatus = Literal["applied", "partial", "no_change", "needs_clarification", "failed", "rejected"]
 
 
 class PlanDocumentData(BaseModel):
