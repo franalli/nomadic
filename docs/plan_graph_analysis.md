@@ -265,9 +265,25 @@ SPECIALIST_KEYWORDS = {
 }
 ```
 
-**Routing Decision:**
-- Specialist detected → `state.active_specialist = "diving"` → VerticalSpecialist
-- No specialist → `state.active_specialist = "local_expert"` → LocalExpert
+**Routing Decision (Local Expert Always First):**
+
+CRITICAL: Local Expert ALWAYS runs first to generate the "Trip Overview" anchor card.
+Niche specialists are ADDITIVE, not replacements.
+
+```python
+# When "diving in Bali" detected:
+# Queue built: ["local_expert", "diving"]
+#
+# Flow:
+# 1. Router → LocalExpert (generates Trip Overview)
+# 2. LocalExpert → VerticalSpecialist (generates Diving Strategy)
+# 3. VerticalSpecialist → Logistics/Architect
+```
+
+- Specialist detected → Queue = `["local_expert", "diving"]` → LocalExpert first
+- No specialist → Queue = `["local_expert"]` → LocalExpert only
+
+See `ux_unified_architecture.md` Section III.A for full specification.
 
 ### TripArchitect
 
@@ -325,18 +341,26 @@ The "Concierge" agent for city trips - ensures the Agent Feed is never empty.
 **Static Knowledge Destinations:**
 - Dubai, Paris, Rome, London, Amsterdam, Tokyo, New York
 
-**Output Format:**
+**Output Format (Pydantic Schema):**
 ```python
-{
-    "constraints": [
-        {"type": "opening_hours", "description": "...", "severity": "warning"},
-        {"type": "booking_window", "description": "...", "severity": "info"},
-    ],
-    "recommendations": [
-        {"title": "Paris Museum Pass", "description": "...", "logic_hook": "Saves €40+..."},
-    ]
-}
+class LocalConstraint(BaseModel):
+    type: str = "general"        # Flexible: opening_hours, booking_window, seasonal, cultural, safety, transport, etc.
+    description: str             # Short, actionable constraint text
+    severity: str = "info"       # Flexible: warning, info, etc.
+
+class LocalRecommendation(BaseModel):
+    title: str                   # Name of pass/tip/area
+    description: str             # What is it?
+    category: str = "logistics"  # Flexible: logistics, attraction, dining, activity, general, etc.
+    logic_hook: str = ""         # Specific logistical advantage
+
+class LocalExpertOutput(BaseModel):
+    constraints: List[LocalConstraint]
+    recommendations: List[LocalRecommendation]
 ```
+
+**Note:** Fields use `str` instead of `Literal` to prevent Pydantic validation errors from LLM-generated values.
+Control flow fields (e.g., IntentRouter's `intent`) remain strict `Literal` types.
 
 **Reality Check:** Includes a pre-generation check to return EMPTY recommendations if the destination is fictional or unrecognized (e.g., "Atlantis", "Mordor"). This prevents hallucination of non-existent transit systems or opening hours.
 
@@ -523,10 +547,20 @@ Constraint injected by VerticalSpecialist.
 class SpecialistConstraint(BaseModel):
     type: Literal["temporal", "safety", "equipment", "certification", "budget"]
     rule: str                    # e.g., "min_24h_buffer_after_dive"
+    severity: ConstraintSeverity = ConstraintSeverity.STRONG  # Priority for conflicts
     applies_to: Optional[str]    # "flights", "activities", etc.
     parameters: Dict[str, Any]   # e.g., {"max_depth_without_cert": 18}
     reason: Optional[str]        # Human-readable explanation
+
+class ConstraintSeverity(str, Enum):
+    """Constraint priority for multi-specialist conflict resolution."""
+    BLOCKING = "blocking"  # Safety/Legal - always wins (e.g., 24h no-fly)
+    STRONG = "strong"      # Optimization - negotiates (e.g., best weather)
+    SOFT = "soft"          # Preference - defers (e.g., scenic route)
 ```
+
+**Note:** Uses `Literal` because constraints are created by code (not LLM-generated).
+Compare with `LocalConstraint` which uses `str` for LLM-generated content.
 
 ### ItineraryBlock
 
@@ -550,7 +584,35 @@ class ItineraryBlock(BaseModel):
     is_buffer: bool = False
     buffer_type: Optional[Literal["no_fly", "rest_day", "acclimatization", "arrival", "departure"]]
     buffer_reason: Optional[str]
+
+    # === S3 Itinerary View Enhancement Fields ===
+    # See docs/ux_unified_architecture.md Section 10.C for UI mapping
+
+    # Rich display fields
+    duration: Optional[str]           # Human-readable: "4 hours", "Half day"
+    scheduled_time: Optional[str]     # Exact time: "08:00 AM" (for flights/check-in)
+    logistics_details: Optional[str]  # Terminal info, hotel address
+    hotel_name: Optional[str]         # For check-in/check-out blocks
+
+    # Booking integration
+    requires_booking: bool = False    # True = show ghost slot in UI if not booked
+    booking_category: Optional[Literal["hotel", "flight", "activity"]]
+    booked_tile_id: Optional[str]     # Reference to selected tile (if user has booked)
+
+    # Coordinates for map integration
+    coordinates: Optional[Tuple[float, float]]  # (lat, lng) for map POI
 ```
+
+**S3 Block Type Mapping:**
+
+| Backend Field | Frontend Component | Condition |
+|---------------|-------------------|-----------|
+| `buffer_type in ["arrival", "departure"]` | `LogisticsBlock` | Flight logistics |
+| `type.includes("check")` | `LogisticsBlock` | Hotel check-in/out |
+| `is_buffer and buffer_type == "no_fly"` | `SafetyBlock` | No-fly constraint |
+| `is_buffer` | `SafetyBlock` | Rest day / acclimatization |
+| `requires_booking and not booked_tile_id` | `GhostSlot` | Unbooked placeholder |
+| Default | `ActivityMiniCard` | Rich activity card |
 
 ---
 
@@ -570,17 +632,21 @@ if user_message.strip().lower() in PANIC_COMMANDS:
 
 ### Route After Router
 
+**NOTE:** Due to "Local Expert Always First" pattern, `active_specialist` is always
+`"local_expert"` on first pass. Niche specialists are in `pending_specialists` queue.
+
 ```python
 def route_after_router(state: GraphState) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
     # GREETING/RESET short-circuits skip to synthesizer
     if state.metadata.get("short_circuit_response"):
         return "synthesizer"
 
-    # Specialist detected → run specialist first
+    # First pass: active_specialist is "local_expert" (always first in queue)
+    # Niche specialists (diving, etc.) wait in pending_specialists
     if state.active_specialist:
         if state.active_specialist == "local_expert":
             return "local_expert"
-        return "specialist"
+        return "specialist"  # For niche specialists in multi-specialist loop
 
     # Default → architect (shouldn't happen if router sets local_expert)
     return "architect"
@@ -588,11 +654,18 @@ def route_after_router(state: GraphState) -> Literal["specialist", "local_expert
 
 ### Route After Specialist
 
+**Multi-Specialist Loop:** After LocalExpert completes, niche specialists (diving, etc.)
+are processed in queue order. Each specialist clears `active_specialist` at end.
+
 ```python
 def route_after_specialist(state: GraphState):
-    # 1. Recursion: If pending specialists exist, run the next one
+    # 1. Multi-specialist: If pending specialists exist, run the next one
+    #    e.g., after local_expert, pending_specialists = ["diving"]
     if state.pending_specialists:
-        return "specialist"  # (or "local_expert")
+        next_specialist = state.pending_specialists[0]
+        if next_specialist == "local_expert":
+            return "local_expert"
+        return "specialist"  # Routes to vertical_specialist
 
     # 2. Speculative Intent: Skip tools, go to Synthesizer (Preload)
     if state.intent == "speculative":
@@ -912,6 +985,135 @@ STREAMING_PARAMS = {
 
 ---
 
+## Itinerary Builder Service
+
+**Location:** `backend/app/services/itinerary_builder.py`
+
+**Purpose:** Pure Python service that transforms specialist outputs into chronological, constraint-validated timeline. Called from `/api/expand-itinerary`.
+
+**NOT a LangGraph node** - preserves 7-node architecture invariant.
+
+### Algorithm Phases
+
+```
+Phase 1: Temporal Scaffolding
+├─ Create DayCard[] skeleton from start_date to end_date
+├─ Calculate trip duration
+└─ Initialize empty block lists per day
+
+Phase 2: Anchor Placement
+├─ Arrival block on Day 1 (from flight tiles)
+├─ Departure block on last day (from flight tiles)
+└─ Hotel check-in/check-out blocks
+
+Phase 2a: Multi-Specialist Block Collection
+├─ Collect ItineraryBlock[] from each specialist
+├─ Tag with source_specialist for color-coding
+└─ Preserve constraint references
+
+Phase 2b: Conflict Detection & Resolution
+├─ Detect temporal_capacity violations (>11h/day)
+├─ Detect constraint_clash between specialists
+├─ Resolve by severity: BLOCKING > STRONG > SOFT
+└─ Generate ConflictResolution if irreconcilable
+
+Phase 3: Buffer Injection
+├─ Safety buffers (24h no-fly after diving)
+├─ Rest days (acclimatization for altitude)
+└─ Placed by constraint severity (BLOCKING first)
+
+Phase 4: Activity Distribution
+├─ Round-robin interleaving across specialists
+├─ Max 2-3 activities per day
+├─ Respect day capacity (11 usable hours)
+└─ Alternate for variety (dive → hike → dive)
+
+Phase 5: Tile Matching
+├─ Hotels span all days
+├─ Activities matched to day blocks
+└─ Flights attached to arrival/departure
+```
+
+### Constraint Severity Hierarchy
+
+Multi-specialist trips require conflict resolution when constraints clash.
+
+| Severity | Examples | Resolution |
+|----------|----------|------------|
+| **BLOCKING** | 24h no-fly (diving), visa requirements, permits | Always wins |
+| **STRONG** | Best weather timing, equipment availability, opening hours | Negotiates |
+| **SOFT** | Scenic routes, photo opportunities, early starts | Defers |
+
+**Resolution Example:**
+```
+Conflict: Day 4
+├─ Diving specialist: "blocking" - 24h no-fly buffer
+├─ Hiking specialist: "strong" - optimal weather for summit
+└─ Resolution: Diving wins (blocking > strong)
+    Action: Move hike to Day 2 or Day 3, keep buffer on Day 4
+```
+
+### Day Capacity Model
+
+```
+Total hours per day: 24
+├─ Sleep buffer: 8 hours
+├─ Meals/transit: 3 hours
+├─ Available: 13 hours
+└─ Reserve: 2 hours (flexibility)
+
+Usable capacity per day: 11 hours
+```
+
+When activities exceed 11 hours, the builder:
+1. Sorts blocks by constraint severity (SOFT first)
+2. Removes lowest-priority blocks until under capacity
+3. Suggests trip extension if still over capacity
+
+### Integration
+
+**Input:**
+- `strategy_sections`: Specialist-generated content
+- `tiles`: Flights, hotels, activities from TileService
+- `trip_inputs`: Dates, destination, travelers
+
+**Output:**
+- `DayCard[]`: Chronological day-by-day structure
+- `ConflictResolution` (if irreconcilable conflicts)
+
+**Trigger:** `/api/expand-itinerary` endpoint
+
+### Conflict Resolution Response
+
+When conflicts cannot be automatically resolved:
+
+```python
+class ConflictResponse(BaseModel):
+    success: bool = False
+    error: str = "CONSTRAINT_CONFLICT"
+    conflicts: List[Conflict]
+    resolutions: List[Resolution]
+
+class Conflict(BaseModel):
+    type: Literal["temporal_capacity", "constraint_clash", "insufficient_days"]
+    severity: Literal["blocking", "strong", "soft"]
+    day: Optional[int]
+    specialists: List[str]
+    message: str
+    overflow_hours: Optional[float]
+
+class Resolution(BaseModel):
+    action: Literal["extend_trip", "reduce_activities", "reorder", "shift_activities"]
+    description: str
+    new_duration: Optional[int]
+    keep_specialist: Optional[str]
+    feasibility: Literal["recommended", "possible", "not_recommended"]
+```
+
+**Frontend Handling:** `ConflictResolutionModal` displays conflicts and resolution options.
+
+---
+
 ## Key Exports
 
 | Module | Exports |
@@ -1076,20 +1278,80 @@ from app.planner import (
     "ready_to_generate": bool,
     "errors": [...],
     "document": {
-        "plan_view_state": "S0_BOOTSTRAP" | "S2_STRATEGY_READY",
+        "plan_view_state": "P0_MINIMAL" | "P1_ENRICHED" | "P2_LOGISTICS" | "P3_FINALIZED",
         "tiles": {...},           # Flattened ID-based map
         "strategy_sections": [...], # Agent cards data
     },
 }
 ```
 
-### Plan View States
+### Planning Phases (Density-Oriented)
 
-| State | Description |
-|-------|-------------|
-| `S0_BOOTSTRAP` | Show "Finish setup" checklist. CTA enabled when dest+dates set. |
-| `S2_STRATEGY_READY` | Tiles loaded. Show strategy/tiles. |
-| `S3_*` | Itinerary states (handled by expand-itinerary endpoint) |
+| Phase | Description | Data Richness |
+|-------|-------------|---------------|
+| `P0_MINIMAL` | Destination only, no specialists yet | Minimal input |
+| `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards visible |
+| `P2_LOGISTICS` | Tiles fetched, suggestions available | Full dashboard |
+| `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary |
+
+### Two-Mode Frontend System
+
+> **NOTE:** The frontend uses a simplified two-mode system (PLANNING + BOOKING). Planning phases (P0-P3) represent data richness within PLANNING mode.
+
+| Frontend Mode | Planning Phases | Description |
+|---------------|-----------------|-------------|
+| **PLANNING** | `P0_MINIMAL` → `P1_ENRICHED` → `P2_LOGISTICS` → `P3_FINALIZED` | Progressive enrichment |
+| **BOOKING** | After `P3_FINALIZED` + "Proceed to Booking" click | Transaction + price comparison |
+
+**Key Points:**
+- PLANNING mode evolves naturally based on user inputs (no explicit "Build" click)
+- Dates auto-trigger tile search (SOFT gate)
+- "Proceed to Booking" is the only HARD gate (explicit click required)
+- See `docs/ux_unified_architecture.md` Section I for full specification
+
+#### Mode-Aware Tile Components
+
+| Component | Mode | Purpose | Location |
+|-----------|------|---------|----------|
+| `SuggestionCard` | PLANNING | Shows tiles with AI reasoning | `components/plan/tiles/` |
+| `BookableCard` | BOOKING | Shows price comparison | `components/plan/tiles/` |
+| `SuggestionBlock` | PLANNING | Timeline block for suggestions | `components/plan/timeline/blocks/` |
+| `AlternativesModal` | PLANNING | "Change" sheet with alternatives | `components/plan/modals/` |
+
+#### Mode-Aware Layout Components
+
+| Component | Mode Support | Purpose | Location |
+|-----------|--------------|---------|----------|
+| `PlanHeader` | Both | Optional ModeIndicator (PLANNING/BOOKING pills) vs legacy GlassCommandBar | `components/plan/` |
+| `UnifiedChipRow` | Both | Chips disabled (read-only) in BOOKING mode | `components/plan/` |
+| `TileDetailsModal` | Both | "Why this?" in PLANNING, price comparison in BOOKING | `components/tiles/` |
+| `StrategyStageRenderer` | Both | Derives mode from activeView, passes to BookingSection | `components/plan/` |
+
+#### Frontend State (documentStore.ts)
+
+```typescript
+// Cart state for BOOKING mode
+cartTileIds: Set<string>;
+addToCart: (tileId: string) => void;
+removeFromCart: (tileId: string) => void;
+clearCart: () => void;
+
+// Selector hooks
+useCartTileIds(): Set<string>
+useCartActions(): { addToCart, removeFromCart, clearCart }
+```
+
+#### Map-Itinerary Sync (useMapSync)
+
+| Direction | Trigger | Action |
+|-----------|---------|--------|
+| Timeline → Map | User scrolls itinerary | Map flies to location, highlights pin |
+| Map → Timeline | User clicks pin | Timeline scrolls to item, ring highlight |
+
+**Files:**
+- `hooks/useMapSync.ts` - Central sync state management
+- `lib/route-utils.ts` - GeoJSON route generation
+- `components/map/MapLayerFilter.tsx` - Activity type toggles
 
 ---
 

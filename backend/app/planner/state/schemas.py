@@ -11,10 +11,30 @@ This module defines the state models for the 7-node architecture:
 Key Principle: Architect sees the whole picture.
 """
 
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
+
+# =============================================================================
+# Constraint Severity Enum
+# =============================================================================
+
+
+class ConstraintSeverity(str, Enum):
+    """
+    Constraint priority levels for multi-specialist conflict resolution.
+
+    BLOCKING: Safety/Legal constraints - always wins (e.g., 24h no-fly)
+    STRONG: Optimization constraints - negotiates (e.g., best weather)
+    SOFT: Preference constraints - defers (e.g., scenic route)
+    """
+
+    BLOCKING = "blocking"
+    STRONG = "strong"
+    SOFT = "soft"
+
 
 # =============================================================================
 # Trip Plan Models (SSoT)
@@ -72,10 +92,12 @@ class SpecialistConstraint(BaseModel):
     A constraint injected by the Vertical Specialist.
 
     The Architect MUST respect these when calling TileService.
+    Constraints have severity levels for multi-specialist conflict resolution.
     """
 
     type: Literal["temporal", "safety", "equipment", "certification", "budget"]
     rule: str  # e.g., "min_24h_buffer_after_dive"
+    severity: ConstraintSeverity = ConstraintSeverity.STRONG  # Priority for conflicts
     applies_to: Optional[str] = None  # "flights", "activities", etc.
     parameters: Dict[str, Any] = Field(default_factory=dict)
     reason: Optional[str] = None  # Human-readable explanation

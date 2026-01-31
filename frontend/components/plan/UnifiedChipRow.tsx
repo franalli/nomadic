@@ -20,6 +20,7 @@
 
 import {
   Calendar,
+  Check,
   DollarSign,
   Hotel,
   MapPin,
@@ -32,6 +33,7 @@ import { memo } from 'react';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
 import { type ActivitySettings,type BookingTypes, type FlightSettings, type HotelSettings, isBookingEnabled } from '@/types/document';
+import type { ViewMode } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -62,6 +64,10 @@ export interface UnifiedChipRowProps {
   onOpenFlights?: () => void;
   onOpenStays?: () => void;
   onOpenActivities?: () => void;
+
+  // Two-mode system support
+  /** Current mode - chips are read-only in 'booking' mode */
+  mode?: ViewMode;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +167,8 @@ interface CoreChipProps {
   isDefault?: boolean;
   /** Mobile mode - larger touch targets */
   isMobile?: boolean;
+  /** Disabled state (e.g., in BOOKING mode) */
+  disabled?: boolean;
 }
 
 const CoreChip = memo(function CoreChip({
@@ -171,47 +179,87 @@ const CoreChip = memo(function CoreChip({
   isOptional,
   isDefault = false,
   isMobile = false,
+  disabled = false,
 }: CoreChipProps) {
   const hasValue = !!value;
   // Only highlight if has user-set value (not default)
-  const isHighlighted = hasValue && !isDefault;
+  const isSet = hasValue && !isDefault;
 
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={cn(
         // Mobile: h-10 (40px) for better touch, Desktop: h-9 (36px)
-        'inline-flex items-center gap-2 rounded-lg flex-shrink-0',
+        'inline-flex items-center gap-2 rounded-lg flex-shrink-0 cursor-pointer',
         isMobile ? 'h-10 px-4' : 'h-9 px-3.5',
         'transition-all duration-200 ease-out active:scale-[0.98]',
-        'border',
-        // Base state (unfilled) - Light: White card with grey border
-        !isHighlighted && [
-          'bg-white text-zinc-500 border-zinc-200',
-          'hover:border-zinc-400 hover:text-zinc-900',
-          // Dark: ghost with subtle border
-          'dark:bg-transparent dark:text-zinc-400 dark:border-white/10',
-          'dark:hover:border-white/30 dark:hover:text-white',
-        ],
-        // Highlighted state (filled) - Light: Strong zinc border "Printed Label"
-        isHighlighted && [
-          'bg-zinc-100 text-zinc-900 border-zinc-900 font-bold shadow-sm',
-          'hover:bg-zinc-200',
-          // Dark: white on transparent
-          'dark:bg-white/10 dark:text-white dark:border-white/30',
+        // Hover: Scale 1.02 + blue border
+        'hover:scale-[1.02] hover:border-blue-500',
+        // Dark hover
+        'dark:hover:border-blue-400',
+
+        // --- STATE: SET (has user value) ---
+        isSet && [
+          // Background: Very subtle grey
+          'bg-zinc-50',
+          // Border: Blue at 30% opacity
+          'border border-blue-500/30',
+          // Text: Near-black
+          'text-zinc-900 font-semibold',
+          // Shadow for "lifted" feel
+          'shadow-sm',
+          // Dark mode
+          'dark:bg-white/10 dark:text-white dark:border-blue-400/30',
           'dark:hover:bg-white/15',
         ],
+
+        // --- STATE: OPTIONAL (unset, optional field) ---
+        !isSet && isOptional && [
+          // Background: Transparent
+          'bg-transparent',
+          // Border: Dashed, very light
+          'border border-dashed border-zinc-200',
+          // Text: Muted
+          'text-zinc-400',
+          // Dark mode
+          'dark:border-white/10 dark:text-zinc-500',
+          'dark:hover:border-white/30 dark:hover:text-zinc-300',
+        ],
+
+        // --- STATE: UNSET REQUIRED (no value, required field) ---
+        !isSet && !isOptional && [
+          // Background: Transparent
+          'bg-transparent',
+          // Border: Solid, subtle grey
+          'border border-zinc-200',
+          // Text: Muted grey
+          'text-zinc-400',
+          // Dark mode
+          'dark:bg-transparent dark:text-zinc-500 dark:border-white/10',
+          'dark:hover:border-white/30 dark:hover:text-white',
+        ],
+
         // Focus ring
         'focus-visible:outline-none focus-visible:ring-2',
-        'focus-visible:ring-zinc-900/20 dark:focus-visible:ring-white/20'
+        'focus-visible:ring-blue-500/20 dark:focus-visible:ring-blue-400/20',
+
+        // --- STATE: DISABLED (BOOKING mode) ---
+        disabled && [
+          'opacity-60 cursor-not-allowed',
+          'hover:scale-100 hover:border-current', // Disable hover effects
+        ]
       )}
     >
       <Icon
         className={cn(
           'h-4 w-4 flex-shrink-0',
-          // Light: dark grey when filled (monochrome), grey when empty
-          isHighlighted ? 'text-zinc-900 dark:text-white' : 'text-zinc-400 dark:text-zinc-500'
+          // Icon color based on state
+          isSet
+            ? 'text-blue-500 dark:text-blue-400'
+            : 'text-zinc-400 dark:text-zinc-500',
+          disabled && 'opacity-60'
         )}
       />
       <span className="text-xs font-semibold uppercase tracking-wide truncate max-w-[100px]">
@@ -238,6 +286,8 @@ interface ModuleChipProps {
   onClick?: () => void;
   /** Mobile mode - larger touch targets */
   isMobile?: boolean;
+  /** Disabled state (e.g., in BOOKING mode) */
+  disabled?: boolean;
 }
 
 const ModuleChip = memo(function ModuleChip({
@@ -247,6 +297,7 @@ const ModuleChip = memo(function ModuleChip({
   summary,
   onClick,
   isMobile = false,
+  disabled = false,
 }: ModuleChipProps) {
   const isOff = state === 'off';
   const isOnDefault = state === 'on-default';
@@ -256,47 +307,61 @@ const ModuleChip = memo(function ModuleChip({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       className={cn(
         // Mobile: h-11 (44px) for Apple's minimum, Desktop: h-10 (40px)
         'inline-flex items-center gap-2 rounded-full flex-shrink-0',
         isMobile ? 'h-11 px-5' : 'h-10 px-5',
         'transition-all duration-200 ease-out active:scale-[0.95]',
         'border',
-        // Off: Light: grey ghost, Dark: ghost outline
+
+        // --- STATE: OFF (inactive) ---
         isOff && [
-          'bg-zinc-50 text-zinc-400 border-zinc-200',
+          // Transparent background
+          'bg-transparent',
+          // Grey border
+          'border-zinc-200',
+          // Grey text
+          'text-zinc-400',
+          // Hover: border darkens
           'hover:border-zinc-400 hover:text-zinc-600',
-          // Dark: ghost outline
-          'dark:bg-transparent dark:text-zinc-500 dark:border-white/10',
+          // Dark mode
+          'dark:border-white/10 dark:text-zinc-500',
           'dark:hover:border-white/30 dark:hover:text-zinc-300',
         ],
-        // On Default: Monochromatic - solid black/white
-        isOnDefault && [
-          'bg-zinc-900 text-white border-zinc-900 shadow-md',
-          'hover:bg-zinc-800',
-          // Dark: solid white
-          'dark:bg-white dark:text-black dark:border-white',
+
+        // --- STATE: ON (active - default or custom) ---
+        isOn && [
+          // Solid white background
+          'bg-white',
+          // Blue border for active state
+          'border-blue-500',
+          // Dark text
+          'text-zinc-900 font-medium',
+          // Subtle shadow
+          'shadow-sm',
+          // Hover
+          'hover:bg-zinc-50 hover:shadow-md',
+          // Dark mode: invert
+          'dark:bg-white dark:text-black dark:border-blue-400',
           'dark:hover:bg-zinc-100',
         ],
-        // On Custom: Same as default but with indicator dot
-        isOnCustom && [
-          'bg-zinc-900 text-white border-zinc-900 shadow-md font-semibold',
-          'hover:bg-zinc-800',
-          // Dark: solid white
-          'dark:bg-white dark:text-black dark:border-white',
-          'dark:hover:bg-zinc-100',
-        ],
+
         // Focus ring
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-white/30'
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20 dark:focus-visible:ring-blue-400/30',
+
+        // --- STATE: DISABLED (BOOKING mode) ---
+        disabled && 'opacity-60 cursor-not-allowed hover:shadow-sm'
       )}
     >
-      <Icon className={cn(
-        'h-5 w-5 flex-shrink-0',
-        // Monochrome icon colors
-        isOff ? 'text-zinc-400 dark:text-zinc-500' : 'text-white dark:text-black'
-      )} />
-      <span className="text-sm font-medium">
+      {/* Checkmark for active state (replaces icon position) */}
+      {isOn ? (
+        <Check className="h-4 w-4 flex-shrink-0 text-blue-500 dark:text-blue-600" strokeWidth={2.5} />
+      ) : (
+        <Icon className="h-5 w-5 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
+      )}
+      <span className="text-sm">
         {label}
         {isOn && summary && (
           <span className="ml-1.5 text-xs opacity-75">· {summary}</span>
@@ -336,9 +401,14 @@ function UnifiedChipRowInner({
   onOpenFlights,
   onOpenStays,
   onOpenActivities,
+  // Mode
+  mode,
 }: UnifiedChipRowProps) {
   const { isDesktop } = useMobileMode();
   const isMobile = !isDesktop;
+
+  // In BOOKING mode, chips are read-only (show values but can't edit)
+  const isBookingMode = mode === 'booking';
 
   // Determine module chip states (tri-state: suggested or on = enabled)
   const getFlightState = (): ModuleState => {
@@ -376,6 +446,7 @@ function UnifiedChipRowInner({
           value={destination}
           onClick={onOpenDestination}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
 
         <CoreChip
@@ -384,6 +455,7 @@ function UnifiedChipRowInner({
           value={origin}
           onClick={onOpenOrigin}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
 
         <CoreChip
@@ -392,6 +464,7 @@ function UnifiedChipRowInner({
           value={dateRange}
           onClick={onOpenDates}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
 
         <CoreChip
@@ -401,6 +474,7 @@ function UnifiedChipRowInner({
           onClick={onOpenTravelers}
           isDefault={isTravelersDefault}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
 
         <CoreChip
@@ -410,6 +484,7 @@ function UnifiedChipRowInner({
           onClick={onOpenBudget}
           isOptional
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
       </div>
 
@@ -429,6 +504,7 @@ function UnifiedChipRowInner({
           summary={getFlightChipSummary(flightSettings)}
           onClick={onOpenFlights}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
 
         <ModuleChip
@@ -438,6 +514,7 @@ function UnifiedChipRowInner({
           summary={getHotelChipSummary(hotelSettings)}
           onClick={onOpenStays}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
 
         <ModuleChip
@@ -447,6 +524,7 @@ function UnifiedChipRowInner({
           summary={getActivityChipSummary(activitySettings)}
           onClick={onOpenActivities}
           isMobile={isMobile}
+          disabled={isBookingMode}
         />
       </div>
     </div>

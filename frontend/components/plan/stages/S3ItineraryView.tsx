@@ -8,21 +8,25 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { ArrowRight, ChevronUp } from 'lucide-react';
-import React from 'react';
+import { ArrowRight, ChevronUp, Map } from 'lucide-react';
+import React, { useCallback, useState } from 'react';
 
-import { InteractiveMap, type MapItem } from '@/components/map/InteractiveMap';
+import { InteractiveMap } from '@/components/map/InteractiveMap';
+import { MapLayerFilter } from '@/components/map/MapLayerFilter';
+import { BookingDrawer } from '@/components/plan/booking/BookingDrawer';
 import { DestinationMapPlaceholder } from '@/components/plan/DestinationMapPlaceholder';
 import { TimelineSkeleton } from '@/components/plan/timeline/TimelineSkeleton';
 import { TimelineThread } from '@/components/plan/TimelineThread';
 import { Button } from '@/components/ui/button';
-import { useScrollSpy } from '@/hooks/useScrollSpy';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
+import { useMapSync } from '@/hooks/useMapSync';
 import { cn } from '@/lib/utils';
 import type {
   DestinationCard,
   ItineraryOverview,
   PlanViewModel,
 } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
 
 interface S3ItineraryViewProps {
   viewModel: PlanViewModel;
@@ -36,6 +40,15 @@ interface S3ItineraryViewProps {
   isFinalizing?: boolean;
   /** Whether itinerary is being generated */
   isGenerating?: boolean;
+  // === NEW: Booking Integration Props ===
+  /** Available tiles for booking drawer */
+  tiles?: Record<string, Tile>;
+  /** Set of saved tile IDs */
+  savedTileIds?: Set<string>;
+  /** Callback when user saves a tile */
+  onSaveTile?: (tile: Tile) => void;
+  /** Callback when user unassigns a tile from a block */
+  onUnassignTile?: (blockId: string) => void;
 }
 
 function OverviewCard({ overview }: { overview: ItineraryOverview }) {
@@ -59,12 +72,52 @@ export function S3ItineraryView({
   onFinalize,
   isFinalizing = false,
   isGenerating = false,
+  // Booking integration props
+  tiles,
+  savedTileIds,
+  onSaveTile,
+  onUnassignTile,
 }: S3ItineraryViewProps) {
-  const { day_cards = [], itinerary_overview, itinerary_assumptions } = viewModel;
+  const { day_cards = [], itinerary_overview, itinerary_assumptions, strategy_sections } = viewModel;
   const [expandedDay, setExpandedDay] = React.useState<number | null>(null);
 
   // Mobile bottom sheet expansion state
   const [isMobileExpanded, setIsMobileExpanded] = React.useState(false);
+
+  // Booking drawer state
+  const [bookingDrawerCategory, setBookingDrawerCategory] = useState<'hotel' | 'flight' | 'activity' | null>(null);
+
+  // Mobile full-screen map state
+  const [isMobileMapOpen, setIsMobileMapOpen] = useState(false);
+
+  // === Map-Itinerary Two-Way Sync ===
+  const {
+    mapItems,
+    activeItemId: activeBlockId,
+    hoveredDay,
+    setHoveredDay,
+    handleMarkerClick,
+    routeGeoJson,
+    visibleLayers,
+    toggleLayer,
+    showAllLayers,
+    availableTypes,
+    hasItems: hasMapItems,
+  } = useMapSync({
+    dayCards: day_cards,
+    strategySections: strategy_sections,
+    mode: 'plan',
+  });
+
+  // Handle opening booking drawer
+  const handleOpenBookingDrawer = useCallback((category: 'hotel' | 'flight' | 'activity') => {
+    setBookingDrawerCategory(category);
+  }, []);
+
+  // Handle closing booking drawer
+  const handleCloseBookingDrawer = useCallback(() => {
+    setBookingDrawerCategory(null);
+  }, []);
 
   // Track if we've already animated (only animate once on mount)
   const [hasAnimated, setHasAnimated] = React.useState(false);
@@ -77,32 +130,6 @@ export function S3ItineraryView({
       return () => clearTimeout(timer);
     }
   }, [animateEntrance, day_cards.length]);
-
-  // Prepare map items from day cards (blocks with coordinates)
-  const mapItems = React.useMemo((): MapItem[] => {
-    const items: MapItem[] = [];
-    day_cards.forEach((card) => {
-      card.blocks.forEach((block, blockIndex) => {
-        if (block.coordinates) {
-          const blockId = block.id || `block-${card.day_number}-${blockIndex}`;
-          items.push({
-            id: blockId,
-            title: block.activity_type || block.summary || `Day ${card.day_number}`,
-            type: block.activity_type || 'activity',
-            coordinates: block.coordinates,
-          });
-        }
-      });
-    });
-    return items;
-  }, [day_cards]);
-
-  // Scroll spy for map synchronization
-  const itemIds = React.useMemo(() => mapItems.map((i) => i.id), [mapItems]);
-  const activeBlockId = useScrollSpy(itemIds);
-
-  // Check if we have map-ready items (with coordinates)
-  const hasMapItems = mapItems.length > 0;
 
   // Shared content for timeline
   const timelineContent = (
@@ -123,6 +150,12 @@ export function S3ItineraryView({
             onDayClick={(dayNumber) => setExpandedDay(expandedDay === dayNumber ? null : dayNumber)}
             showPriceEstimates={true}
             activeBlockId={activeBlockId}
+            // S3 Itinerary View props
+            useRichBlocks={true}
+            onDayHover={setHoveredDay}
+            onOpenBookingDrawer={handleOpenBookingDrawer}
+            onUnassignTile={onUnassignTile}
+            savedTileIds={savedTileIds}
           />
         </motion.div>
       ) : (
@@ -187,11 +220,28 @@ export function S3ItineraryView({
 
   // Map content (shared between desktop and mobile)
   const mapContent = hasMapItems ? (
-    <InteractiveMap
-      items={mapItems}
-      activeItemId={activeBlockId}
-      defaultCenter={{ lat: 25.2048, lng: 55.2708, zoom: 10 }} // Dubai default
-    />
+    <div className="relative h-full">
+      <InteractiveMap
+        items={mapItems}
+        activeItemId={activeBlockId}
+        defaultCenter={{ lat: 25.2048, lng: 55.2708, zoom: 10 }} // Dubai default
+        onMarkerClick={handleMarkerClick}
+        routeGeoJson={routeGeoJson}
+        visibleLayers={visibleLayers}
+        highlightedDay={hoveredDay}
+      />
+      {/* Layer filter - positioned at top-left of map */}
+      {availableTypes.length > 1 && (
+        <div className="absolute top-3 left-3 z-10">
+          <MapLayerFilter
+            visibleLayers={visibleLayers}
+            onToggle={toggleLayer}
+            availableTypes={availableTypes}
+            onShowAll={showAllLayers}
+          />
+        </div>
+      )}
+    </div>
   ) : (
     <DestinationMapPlaceholder
       imageUrl={destinationCard?.image_url}
@@ -204,18 +254,18 @@ export function S3ItineraryView({
     <>
       {/* ========== DESKTOP LAYOUT ========== */}
       <div className="hidden lg:flex h-full flex-col">
-        {/* Split-screen layout: Timeline (7 cols) + Map (5 cols) */}
-        <div className="flex-1 grid grid-cols-12 gap-6 min-h-0">
+        {/* Split-screen layout: Timeline (50%) + Map (50%) - True equal split */}
+        <div className="flex-1 grid grid-cols-2 gap-0 min-h-0">
           {/* LEFT: Scrollable itinerary content */}
-          <div className="col-span-7 overflow-y-auto custom-scrollbar">
+          <div className="overflow-y-auto custom-scrollbar border-r border-border">
             <div id="itinerary-content" className="flex flex-col p-4 space-y-4">
               {timelineContent}
             </div>
           </div>
 
           {/* RIGHT: Map - sticky for scroll sync */}
-          <div className="col-span-5 relative">
-            <div className="sticky top-4 h-[calc(100vh-8rem)] rounded-xl overflow-hidden">
+          <div className="relative">
+            <div className="sticky top-0 h-[calc(100vh-4rem)] overflow-hidden">
               {mapContent}
             </div>
           </div>
@@ -263,7 +313,46 @@ export function S3ItineraryView({
             </div>
           </div>
         </div>
+
+        {/* Floating Map Action Button (bottom-right, above safe area) */}
+        <button
+          onClick={() => setIsMobileMapOpen(true)}
+          className={cn(
+            'fixed bottom-[calc(50vh+1rem)] right-4 z-20',
+            'flex items-center gap-2 px-4 py-3 rounded-full shadow-lg',
+            'bg-white dark:bg-zinc-800 border border-border',
+            'hover:shadow-xl transition-shadow'
+          )}
+        >
+          <Map className="w-5 h-5 text-emerald-600" />
+          <span className="text-sm font-medium">View Route</span>
+        </button>
+
+        {/* Full-screen map sheet for mobile */}
+        <Sheet open={isMobileMapOpen} onOpenChange={setIsMobileMapOpen}>
+          <SheetContent side="bottom" className="h-[90vh] p-0">
+            <div className="h-full flex flex-col">
+              {/* Drag handle */}
+              <div className="flex justify-center py-3 border-b">
+                <div className="w-12 h-1.5 rounded-full bg-zinc-300 dark:bg-zinc-700" />
+              </div>
+              {/* Full-screen map */}
+              <div className="flex-1">
+                {mapContent}
+              </div>
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
+
+      {/* ========== BOOKING DRAWER ========== */}
+      <BookingDrawer
+        category={bookingDrawerCategory}
+        tiles={tiles}
+        savedTileIds={savedTileIds}
+        onSave={onSaveTile}
+        onClose={handleCloseBookingDrawer}
+      />
     </>
   );
 }

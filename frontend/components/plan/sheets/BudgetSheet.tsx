@@ -241,8 +241,8 @@ function BudgetSheetInner({
                       ? 'bg-zinc-900 text-white shadow-sm dark:bg-white dark:text-black'
                       // Inactive: Glass Fill
                       : cn(
-                          'bg-white border border-zinc-200 text-zinc-500',
-                          'hover:border-zinc-400 hover:text-zinc-900',
+                          'bg-white border-2 border-zinc-200 text-zinc-500',
+                          'hover:border-zinc-900 hover:text-zinc-900',
                           'dark:bg-white/5 dark:border-white/5 dark:text-zinc-400',
                           'dark:hover:bg-white/10 dark:hover:text-white'
                         )

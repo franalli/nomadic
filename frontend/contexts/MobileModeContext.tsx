@@ -10,7 +10,6 @@ import React, {
   useState,
 } from 'react';
 
-import type { ViewName } from '@/hooks/useViewNavigation';
 import { useDocumentStore } from '@/state/documentStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,15 +62,16 @@ const DESKTOP_BREAKPOINT = 1024; // lg breakpoint in Tailwind
 const MEDIA_QUERY = `(min-width: ${DESKTOP_BREAKPOINT}px)`;
 
 // Mapping between mobile tabs and document views (for bi-directional sync)
-const TAB_TO_VIEW: Record<MobileTab, ViewName> = {
-  chat: 'setup',
-  plan: 'plan',
-  book: 'book',
+// Document store uses two-mode system: 'planning' | 'booking'
+// Mobile uses three tabs: 'chat' | 'plan' | 'book'
+const TAB_TO_VIEW: Record<MobileTab, 'planning' | 'booking'> = {
+  chat: 'planning',
+  plan: 'planning',
+  book: 'booking',
 };
-const VIEW_TO_TAB: Record<ViewName, MobileTab> = {
-  setup: 'chat',
-  plan: 'plan',
-  book: 'book',
+const VIEW_TO_TAB: Record<'planning' | 'booking', MobileTab> = {
+  planning: 'plan',  // Default to plan tab for planning mode
+  booking: 'book',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

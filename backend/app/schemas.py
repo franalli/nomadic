@@ -414,18 +414,28 @@ ReadinessKey = Literal["origin", "destination", "start_date", "end_date", "trave
 BookingState = Literal["idle", "loading", "ready", "error"]
 
 # =============================================================================
-# Plan View State Machine Types (Stage-Aware Right-Side View)
+# Planning Phase Types (Density-Oriented State)
 # =============================================================================
 
-# State machine states for right-side plan view
+# Planning phases - progressive density, NOT discrete modes
+# Frontend renders based on data availability, not explicit "mode unlocking"
 PlanViewState = Literal[
-    "S0_BOOTSTRAP",  # No plan yet (or reset). Placeholders only.
-    "S1_FRAMING",  # Stage 1 output available (shortlist/skeleton)
-    "S2_STRATEGY_READY",  # All relevant Stage 2 strategy nodes complete
-    "S2_BLOCKED",  # Stage 2 incomplete due to missing critical fields
-    "S3_ITINERARY_READY",  # Itinerary generated (day cards)
-    "S3_EDITING",  # User editing itinerary assumptions/constraints
-    "S3_BLOCKED",  # Stage 3 requested but blocked (missing locks)
+    # Core density levels
+    "P0_MINIMAL",  # Destination only, no specialists yet
+    "P1_ENRICHED",  # Specialists run, strategy sections present
+    "P2_LOGISTICS",  # Tiles fetched, suggestions available
+    "P3_FINALIZED",  # Itinerary validated, ready to book
+    # Editing/blocked states (kept for state machine completeness)
+    "P3_EDITING",  # User editing itinerary assumptions/constraints
+    "P3_BLOCKED",  # Itinerary requested but blocked (missing locks)
+    # Legacy aliases (for migration - will be removed)
+    "S0_BOOTSTRAP",  # -> P0_MINIMAL
+    "S1_FRAMING",  # -> P0_MINIMAL (merged)
+    "S2_STRATEGY_READY",  # -> P1_ENRICHED
+    "S2_BLOCKED",  # -> P1_ENRICHED (handled by data checks)
+    "S3_ITINERARY_READY",  # -> P3_FINALIZED
+    "S3_EDITING",  # -> P3_EDITING
+    "S3_BLOCKED",  # -> P3_BLOCKED
 ]
 
 
@@ -488,10 +498,37 @@ class OpenDecision(BaseModel):
 class DayBlock(BaseModel):
     """A single activity block within a day (Stage 3)."""
 
+    id: Optional[str] = None  # Unique block identifier for scroll spy
     period: Literal["morning", "afternoon", "evening"]
     activity_type: str  # e.g., "moderate hike", "city stroll"
     intensity: Optional[Literal["light", "moderate", "challenging"]] = None
     summary: str  # ≤15 words, no times/prices
+
+    # Buffer/Safety block fields
+    is_buffer: bool = False
+    buffer_type: Optional[
+        Literal["no_fly", "rest_day", "acclimatization", "arrival", "departure"]
+    ] = None
+    buffer_reason: Optional[str] = None
+
+    # Specialist metadata
+    specialist_type: Optional[str] = None  # "diving", "hiking", etc.
+    constraints: List[str] = Field(default_factory=list)
+
+    # Rich content fields
+    image_url: Optional[str] = None
+    duration: Optional[str] = None  # "4 hours", "Half day"
+    coordinates: Optional[Dict[str, float]] = None  # {lat, lng}
+
+    # Logistics layer (hard times)
+    scheduled_time: Optional[str] = None  # "08:00 AM" for flights/check-in
+    logistics_details: Optional[str] = None
+    hotel_name: Optional[str] = None
+
+    # Booking integration
+    booked_tile: Optional[Dict[str, Any]] = None  # Embedded confirmed booking
+    requires_booking: bool = False
+    booking_category: Optional[Literal["hotel", "flight", "activity"]] = None
 
 
 class DayCard(BaseModel):
@@ -637,10 +674,11 @@ class PlanDocumentData(BaseModel):
     booking_status: Optional[BookingStatus] = None
 
     # ==========================================================================
-    # Plan View State Machine (Stage-Aware Right-Side View)
+    # Planning Phase (Density-Oriented State)
     # ==========================================================================
-    # State machine state - determines what content to show in right panel
-    plan_view_state: PlanViewState = "S0_BOOTSTRAP"
+    # Planning phase - determines data richness, NOT UI mode
+    # Frontend renders based on data availability, not explicit "mode unlocking"
+    plan_view_state: PlanViewState = "P0_MINIMAL"
 
     # Stage 2 content (populated when plan_view_state in S2_*)
     strategy_sections: List[StrategySection] = Field(default_factory=list)

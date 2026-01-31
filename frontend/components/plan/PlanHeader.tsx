@@ -3,13 +3,14 @@
  *
  * Sticky header for the right-side plan panel.
  * Two variants:
- * 1. Empty (no destination) - Compact bar with stepper only
+ * 1. Empty (no destination) - Compact bar with progress indicator only
  * 2. Hero (destination exists) - Full image header with title/subtitle
  *
- * Single progress system: Setup • Plan • Book
- * - Amber = active
- * - Green = completed only
- * - Gray = locked
+ * Two-mode system: PLANNING + BOOKING
+ * - PLANNING: Evolves naturally based on user inputs (destination → dates → itinerary)
+ * - BOOKING: Transaction mode with price comparison
+ *
+ * Progress indicator shows completion within PLANNING mode.
  */
 
 'use client';
@@ -18,12 +19,13 @@ import { ArrowRight, ChevronLeft, Loader2 } from 'lucide-react';
 import React from 'react';
 
 import { GlassCommandBar } from '@/components/plan/GlassCommandBar';
+import { ModeIndicator } from '@/components/plan/PlanningProgress';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { getStatusPillText } from '@/lib/statusCopyMap';
 import type { DocumentTripInputs } from '@/types/document';
-import type { DestinationCard } from '@/types/plan-envelope';
+import type { DestinationCard, PlanningPhase, ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
 export interface PlanHeaderProps {
@@ -56,14 +58,26 @@ export interface PlanHeaderProps {
   hasMinimumSelections?: boolean;
   /** Whether header is collapsed (mobile scroll state) */
   isCollapsed?: boolean;
-  /** Currently active view (for view-based navigation) */
+  /** @deprecated Legacy prop - use `mode` instead for two-mode system */
   activeView?: 'setup' | 'plan' | 'book';
-  /** Whether Setup view is accessible (not locked after planning starts) */
+  /** @deprecated Legacy prop - always true in two-mode system */
   canViewSetup?: boolean;
   /** Whether Plan view is unlocked (destination exists) */
   canViewPlan?: boolean;
   /** Whether Book view is unlocked (tiles exist) */
   canViewBook?: boolean;
+
+  // Two-mode system props (PLANNING + BOOKING)
+  /** Current mode in two-mode system */
+  mode?: ViewMode;
+  /** Planning phase for progress tracking */
+  planningPhase?: PlanningPhase;
+  /** Progress percentage (0-100) */
+  progress?: number;
+  /** Whether to use new ModeIndicator instead of GlassCommandBar */
+  useModeIndicator?: boolean;
+  /** Callback when mode is changed via ModeIndicator */
+  onModeChange?: (mode: ViewMode) => void;
 }
 
 /** Step key type for navigation callbacks */
@@ -91,6 +105,12 @@ export function PlanHeader({
   canViewSetup = true,
   canViewPlan = false,
   canViewBook = false,
+  // Two-mode system props
+  mode,
+  planningPhase,
+  progress = 0,
+  useModeIndicator = false,
+  onModeChange,
 }: PlanHeaderProps) {
   // FIX: Header needs to update immediately when dates change in store
   const tripInputs = useTripInputsWithFallback(propTripInputs);
@@ -322,22 +342,39 @@ export function PlanHeader({
         </div>
       </div>
 
-      {/* Floating Glass Command Bar - Desktop only (mobile uses bottom nav) */}
+      {/* Navigation Controls - Desktop only (mobile uses bottom nav) */}
       <div className="hidden md:block">
-        <GlassCommandBar
-          activeView={activeView ?? 'setup'}
-          canViewSetup={canViewSetup}
-          canViewPlan={canViewPlan}
-          canViewBook={canViewBook}
-          isGenerating={isGenerating}
-          onNavigate={(view) => handleStepClick(view as 'setup' | 'plan' | 'book')}
-        />
+        {useModeIndicator && mode && planningPhase ? (
+          // Two-mode system: ModeIndicator with PLANNING/BOOKING pills
+          <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 z-30">
+            <div className="bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md rounded-full px-4 py-2 shadow-lg border border-zinc-200/50 dark:border-zinc-700/50">
+              <ModeIndicator
+                mode={mode}
+                phase={planningPhase}
+                progress={progress}
+                onModeClick={onModeChange}
+                canViewBooking={canViewBook}
+              />
+            </div>
+          </div>
+        ) : (
+          // Legacy three-mode system: GlassCommandBar (fallback when useModeIndicator=false)
+          <GlassCommandBar
+            activeView={activeView ?? (mode === 'booking' ? 'book' : 'plan')}
+            canViewSetup={canViewSetup}
+            canViewPlan={canViewPlan}
+            canViewBook={canViewBook}
+            isGenerating={isGenerating}
+            onNavigate={(view) => handleStepClick(view as 'setup' | 'plan' | 'book')}
+          />
+        )}
       </div>
 
-      {/* THE ARCHITECT INSTRUCTION LAYER - Setup mode only */}
+      {/* THE ARCHITECT INSTRUCTION LAYER - Early PLANNING mode only */}
       {/* Console-style status indicator for the empty/setup state */}
-      {/* Hidden in Plan/Book modes - the Hero Image IS the confirmation */}
-      {activeView === 'setup' && (
+      {/* Hidden once destination exists - the Hero Image IS the confirmation */}
+      {/* Terminal Status Message - contextual based on what input is still needed */}
+      {mode === 'planning' && !hasDestination && (
         <div className="mt-8 flex flex-col items-center justify-center space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-700 delay-500">
           <div className="flex items-center gap-3 group cursor-default">
             {/* The Pointer (Animated '<<') */}
@@ -347,7 +384,7 @@ export function PlanHeader({
             </div>
             {/* The System Text - "Typewriter Ink" (Light) / "System Pulse" (Dark) */}
             <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-              {!hasDestination ? 'Awaiting Input_' : 'Parameters Updated_'}
+              Awaiting Input_
             </p>
             {/* The Blinking Cursor */}
             <div className="w-1.5 h-2.5 bg-zinc-950 dark:bg-emerald-500 animate-blink dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />

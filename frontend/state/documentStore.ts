@@ -141,13 +141,19 @@ type DocumentState = {
   isCommitting: boolean;
   error: string | null;
 
-  // View navigation (decoupled from plan_view_state)
-  activeView: 'setup' | 'plan' | 'book';
-  setActiveView: (view: 'setup' | 'plan' | 'book') => void;
+  // View navigation (two-mode system: PLANNING + BOOKING)
+  activeView: 'planning' | 'booking';
+  setActiveView: (view: 'planning' | 'booking') => void;
 
   // Plan finalization (gates Book view access)
   isPlanFinalized: boolean;
   setFinalized: (finalized: boolean) => void;
+
+  // Cart state (for BOOKING mode)
+  cartTileIds: Set<string>;
+  addToCart: (tileId: string) => void;
+  removeFromCart: (tileId: string) => void;
+  clearCart: () => void;
 
   // LLM update tracking - fields that were recently updated by the planner
   llmUpdatedFields: Set<LLMUpdatableField>;
@@ -221,10 +227,12 @@ const initialState = {
   // Streaming robustness
   currentRunId: null as string | null,
   abortController: null as AbortController | null,
-  // View navigation
-  activeView: 'setup' as const,
+  // View navigation (two-mode system)
+  activeView: 'planning' as const,
   // Plan finalization
   isPlanFinalized: false,
+  // Cart state
+  cartTileIds: new Set<string>(),
 };
 
 /**
@@ -954,12 +962,33 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   // View navigation action
-  setActiveView: (view: 'setup' | 'plan' | 'book') => {
+  setActiveView: (view: 'planning' | 'booking') => {
     set({ activeView: view });
   },
 
   setFinalized: (finalized: boolean) => {
     set({ isPlanFinalized: finalized });
+  },
+
+  // Cart actions (for BOOKING mode)
+  addToCart: (tileId: string) => {
+    const { cartTileIds } = get();
+    if (!cartTileIds.has(tileId)) {
+      set({ cartTileIds: new Set([...cartTileIds, tileId]) });
+    }
+  },
+
+  removeFromCart: (tileId: string) => {
+    const { cartTileIds } = get();
+    if (cartTileIds.has(tileId)) {
+      const newSet = new Set(cartTileIds);
+      newSet.delete(tileId);
+      set({ cartTileIds: newSet });
+    }
+  },
+
+  clearCart: () => {
+    set({ cartTileIds: new Set() });
   },
 
   reset: () => {
@@ -968,7 +997,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (abortController) {
       abortController.abort();
     }
-    set({ ...initialState, llmUpdatedFields: new Set(), activeView: 'setup', isPlanFinalized: false });
+    set({ ...initialState, llmUpdatedFields: new Set(), activeView: 'planning', isPlanFinalized: false, cartTileIds: new Set() });
   },
 }));
 
@@ -1018,3 +1047,19 @@ export const useActiveView = () =>
  */
 export const useSetActiveView = () =>
   useDocumentStore((state) => state.setActiveView);
+
+/**
+ * Subscribe to cart tile IDs only (for BOOKING mode).
+ */
+export const useCartTileIds = () =>
+  useDocumentStore((state) => state.cartTileIds);
+
+/**
+ * Get cart actions. Used for adding/removing items from cart.
+ */
+export const useCartActions = () =>
+  useDocumentStore((state) => ({
+    addToCart: state.addToCart,
+    removeFromCart: state.removeFromCart,
+    clearCart: state.clearCart,
+  }));

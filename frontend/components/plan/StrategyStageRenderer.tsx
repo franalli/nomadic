@@ -42,10 +42,14 @@ import {
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
-import type {
-  DestinationCard,
-  PlanViewModel,
-  PlanViewState,
+import {
+  computePlanningPhase,
+  computePlanningProgress,
+  normalizePlanViewState,
+  type DestinationCard,
+  type PlanViewModel,
+  type PlanViewState,
+  type ViewMode,
 } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
@@ -70,18 +74,26 @@ export function computeDataDensity(
 ): DataDensity {
   const hasSpecialist = hasSpecialistContent(strategySections);
   const hasTiles = tiles && Object.keys(tiles).length > 0;
-  const hasDateSet = !!tripInputs?.start_date;
+  // Note: hasDateSet was removed from bridge mode condition per CRITICAL FIX comment below
+  void tripInputs; // Silence unused parameter warning (kept for future use)
 
-  // S0 with specialist content -> ghost (show draft timeline)
-  if (state === 'S0_BOOTSTRAP' && hasSpecialist) return 'ghost';
+  // Normalize legacy S* values to P* values
+  const normalizedState = normalizePlanViewState(state);
 
-  // S0 without content -> empty (hero is the view)
-  if (state === 'S0_BOOTSTRAP') return 'empty';
+  // P0 with specialist content -> ghost (show draft timeline)
+  if (normalizedState === 'P0_MINIMAL' && hasSpecialist) return 'ghost';
 
-  // S2 with specialist but no tiles/dates -> bridge mode
-  if (state === 'S2_STRATEGY_READY' && hasSpecialist && !hasTiles && !hasDateSet) return 'bridge';
+  // P0 without content -> empty (hero is the view)
+  if (normalizedState === 'P0_MINIMAL') return 'empty';
 
-  // Everything else -> full rendering
+  // P1 with specialist but no tiles -> bridge mode (shows strategy cards + ghost timeline)
+  // CRITICAL FIX: Removed !hasDateSet condition - keep bridge mode until tiles are fetched
+  // This ensures strategy cards remain visible in hero mode while waiting for tile fetch
+  // (e.g., user said "diving in Bali" then "next week" but hasn't set origin)
+  // @see docs/ux_unified_architecture.md Section VII - Bridge Mode
+  if (normalizedState === 'P1_ENRICHED' && hasSpecialist && !hasTiles) return 'bridge';
+
+  // Full mode: P1+ with tiles (booking options available) or P3 (finalized)
   return 'full';
 }
 
@@ -102,6 +114,7 @@ import { S2StrategyView } from './stages/S2StrategyView';
 import { S3BlockedView } from './stages/S3BlockedView';
 import { S3EditingView } from './stages/S3EditingView';
 import { S3ItineraryView } from './stages/S3ItineraryView';
+import { TimelineSkeleton } from './timeline/TimelineSkeleton';
 import { TimelineThread } from './TimelineThread';
 
 interface StrategyStageRendererProps {
@@ -159,6 +172,8 @@ interface StrategyStageRendererProps {
   isRegenerating?: boolean;
   /** Called when user selects a quick pick nights option from inline date prompt */
   onSelectNights?: (nights: number) => void;
+  /** Two-mode system: explicit mode override (if not using view navigation) */
+  mode?: ViewMode;
 }
 
 function renderStageContent(
@@ -175,30 +190,28 @@ function renderStageContent(
   tripInputs?: DocumentTripInputs,
   onFinalizePlan?: () => void,
   isFinalizing?: boolean,
-  isExpandingItinerary?: boolean
+  isExpandingItinerary?: boolean,
+  density?: DataDensity
 ): React.ReactNode {
-  // Zero-UI: S0 controls live in sidebar, not center card
+  // Zero-UI: P0 controls live in sidebar, not center card
   // These params were for S0BootstrapView, now unused
   void canGeneratePlan;
   void onBuildPlan;
   void hasEverHadPlan;
   void isDesktop;
 
-  switch (state) {
-    case 'S0_BOOTSTRAP':
+  // Normalize legacy S* values to P* values for consistent handling
+  const normalizedState = normalizePlanViewState(state);
+
+  switch (normalizedState) {
+    case 'P0_MINIMAL':
       // Zero-UI: No form in center - controls live in sidebar
-      // This case shouldn't fire (planContent handles S0 specially) but defensive fallback
+      // This case shouldn't fire (planContent handles P0 specially) but defensive fallback
       return null;
 
-    case 'S1_FRAMING':
-      return (
-        <S1FramingView
-          viewModel={viewModel}
-          destinationCard={destinationCard}
-        />
-      );
-
-    case 'S2_STRATEGY_READY':
+    case 'P1_ENRICHED':
+    case 'P2_LOGISTICS':
+      // Enriched phase: show strategy cards (specialists have run)
       return (
         <S2StrategyView
           key={`strategy-${destinationCard?.title}`}
@@ -210,18 +223,12 @@ function renderStageContent(
           executedTopics={viewModel.executed_strategy_topics}
           tiles={tiles}
           tripInputs={tripInputs}
+          density={density}
         />
       );
 
-    case 'S2_BLOCKED':
-      return (
-        <S2BlockedView
-          viewModel={viewModel}
-          destinationCard={destinationCard}
-        />
-      );
-
-    case 'S3_ITINERARY_READY':
+    case 'P3_FINALIZED':
+      // Finalized phase: show full itinerary
       return (
         <S3ItineraryView
           viewModel={viewModel}
@@ -232,7 +239,7 @@ function renderStageContent(
         />
       );
 
-    case 'S3_EDITING':
+    case 'P3_EDITING':
       return (
         <S3EditingView
           viewModel={viewModel}
@@ -241,7 +248,7 @@ function renderStageContent(
         />
       );
 
-    case 'S3_BLOCKED':
+    case 'P3_BLOCKED':
       return (
         <S3BlockedView
           viewModel={viewModel}
@@ -250,6 +257,24 @@ function renderStageContent(
       );
 
     default:
+      // Handle legacy S1_FRAMING state separately (shows minimal framing UI)
+      if (state === 'S1_FRAMING') {
+        return (
+          <S1FramingView
+            viewModel={viewModel}
+            destinationCard={destinationCard}
+          />
+        );
+      }
+      // Handle legacy S2_BLOCKED state
+      if (state === 'S2_BLOCKED') {
+        return (
+          <S2BlockedView
+            viewModel={viewModel}
+            destinationCard={destinationCard}
+          />
+        );
+      }
       // Zero-UI: Unknown state fallback - show nothing, controls in sidebar
       return null;
   }
@@ -286,6 +311,7 @@ export function StrategyStageRenderer({
   hasMinimumSelections = false,
   isRegenerating = false,
   onSelectNights,
+  mode: explicitMode,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -316,8 +342,20 @@ export function StrategyStageRenderer({
   // Compute streaming state for disabling pills
   const isStreaming = generating || isCommitting || isExpandingItinerary;
 
-  // View navigation - decoupled from plan_view_state
-  const { activeView, canViewSetup, canViewPlan, canViewBook } = useViewNavigation();
+  // View navigation - two-mode system (PLANNING + BOOKING)
+  const { activeMode, canViewBooking, activeView, canViewSetup, canViewPlan, canViewBook: _canViewBook } = useViewNavigation();
+
+  // Two-mode system: use activeMode from hook, allow explicit override
+  const effectiveMode: ViewMode = explicitMode ?? activeMode;
+
+  // Compute planning phase for ModeIndicator
+  const hasItineraryContent = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+  const planningPhase = computePlanningPhase(
+    effectiveTripInputs,
+    hasItineraryContent,
+    hasMinimumSelections
+  );
+  const planningProgress = computePlanningProgress(planningPhase);
 
   // Sub-view toggle: Overview (S2) vs Itinerary (S3) within Plan mode
   // Smart initialization: show itinerary if already generated, otherwise overview
@@ -335,18 +373,39 @@ export function StrategyStageRenderer({
   // Check if itinerary has been generated (for showing toggle)
   const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
 
-  // Setup content - Zero-UI: no form, just hero
-  // The sidebar (ChatPanel) has all controls - no need for duplicate checklist
-  const setupContent = useMemo(() => {
-    // "Zero-UI" - the hero is the view, controls live in sidebar
-    // Return null - the hero already shows "Where to next?" prompt
-    return null;
-  }, []);
-
   // Plan content - heavy, needs persistence
   // Uses computeDataDensity for unified rendering logic
   // @see docs/ux_unified_architecture.md Section VII - Data Density Levels
   const planContent = useMemo(() => {
+    // MIRROR LOADER: Show skeleton when auto-fetching tiles after dates are set
+    // @see docs/ux_unified_architecture.md Section VI - "Mirror Loader Strategy"
+    // Rule: "Never auto-switch to an empty container"
+    const hasDates = !!effectiveTripInputs?.start_date;
+    const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
+
+    if (generating && hasDates && !hasTiles) {
+      const tripDuration = effectiveTripInputs?.trip_duration ?? 3;
+      return (
+        <div className="p-4 space-y-6">
+          {/* Status indicator */}
+          <div className="flex items-center gap-3">
+            <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            <span className="text-sm text-muted-foreground">
+              Searching live availability...
+            </span>
+          </div>
+
+          {/* Timeline skeleton with days */}
+          <TimelineSkeleton />
+
+          {/* Duration hint */}
+          <p className="text-xs text-muted-foreground text-center">
+            Finding flights and hotels for your {tripDuration}-day trip
+          </p>
+        </div>
+      );
+    }
+
     // Compute data density using the SSoT function
     const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
 
@@ -355,14 +414,50 @@ export function StrategyStageRenderer({
       return null;
     }
 
-    // GHOST: S0 with specialist content - show preview timeline
+    // GHOST: S0 with specialist content - show "Planning Intelligence" panel + preview timeline
+    // Cards are collapsed by default in SETUP mode - user can expand to see details
+    // This ensures constraint visibility BEFORE date selection (core value prop)
     if (density === 'ghost') {
       const tripDuration = effectiveTripInputs?.trip_duration ?? 5;
       const ghostDayCards = generateGhostDayCards(viewModel.strategy_sections, tripDuration);
       const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
 
+      // Count constraints across all specialists for the header badge
+      const totalConstraints = (viewModel.strategy_sections ?? []).reduce(
+        (acc, s) => acc + (s.constraints_applied?.length ?? 0),
+        0
+      );
+
       return (
-        <div className="p-4">
+        <div className="p-4 space-y-4">
+          {/* PLANNING INTELLIGENCE HEADER */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">⚡</span>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                Planning Intelligence
+              </h3>
+            </div>
+            {totalConstraints > 0 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium">
+                {totalConstraints} constraint{totalConstraints > 1 ? 's' : ''} applied
+              </span>
+            )}
+          </div>
+
+          {/* SPECIALIST CARDS (collapsed by default in SETUP mode) */}
+          <S2StrategyView
+            viewModel={viewModel}
+            destinationCard={destinationCard}
+            pendingTopics={viewModel.pending_strategy_topics}
+            executedTopics={viewModel.executed_strategy_topics}
+            tiles={{}} // No tiles in SETUP mode
+            tripInputs={effectiveTripInputs}
+            density="ghost"
+            autoExpandOnLoad={false} // Cards stay collapsed in SETUP
+          />
+
+          {/* GHOST TIMELINE (preview of activities) */}
           <TimelineThread
             dayCards={ghostDayCards}
             isDraft={true}
@@ -381,30 +476,48 @@ export function StrategyStageRenderer({
       );
     }
 
-    // BRIDGE: S2 with specialist but no tiles/dates - Strategy Cards + Sample Timeline + POI Map
+    // BRIDGE: S2 with specialist but no tiles - Strategy Cards + POI Map
+    // CRITICAL FIX: Removed ghost timeline - user wants NO ITINERARY in shopping phase
+    // Show Strategy Cards (expert recommendations) + Map only
+    // @see docs/ux_unified_architecture.md Section VII - Bridge Mode
     if (density === 'bridge') {
-      // Bridge Mode: Strategy Cards + Ghost Timeline + POI Map
       const sections = viewModel.strategy_sections ?? [];
-
-      // Calculate exact duration from content (don't default to 5)
-      // Find the maximum day number from specialist content
-      const maxContentDay = Math.max(
-        0,
-        ...sections.flatMap(s =>
-          s.content_added?.map(c => c.day || 0) || []
-        )
-      );
-      // Use trip_duration if set, otherwise fit to content (min 3 for diving safety sequence)
-      const tripDuration = effectiveTripInputs?.trip_duration || (maxContentDay > 0 ? maxContentDay : 3);
-      const ghostDayCards = generateGhostDayCards(sections, tripDuration);
       const mapPOIs = extractPOIsFromSections(sections);
       const mapCenter = calculateMapCenter(mapPOIs);
 
+      // SETUP vs PLAN mode detection:
+      // - No dates = SETUP mode = cards collapsed
+      // - Has dates = PLAN mode = cards auto-expand briefly
+      const hasDates = !!effectiveTripInputs?.start_date;
+
+      // Count constraints for header badge
+      const totalConstraints = sections.reduce(
+        (acc, s) => acc + (s.constraints_applied?.length ?? 0),
+        0
+      );
+
       return (
         <div className="flex flex-col lg:flex-row gap-6 p-4">
-          {/* Left Column: Strategy + Timeline */}
-          <div className="flex-1 min-w-0 space-y-6">
-            {/* Strategy Cards */}
+          {/* Left Column: Strategy Cards Only (no timeline) */}
+          <div className="flex-1 min-w-0 space-y-4">
+            {/* PLANNING INTELLIGENCE HEADER (SETUP mode only - before dates) */}
+            {!hasDates && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">⚡</span>
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                    Planning Intelligence
+                  </h3>
+                </div>
+                {totalConstraints > 0 && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium">
+                    {totalConstraints} constraint{totalConstraints > 1 ? 's' : ''} applied
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Strategy Cards - collapsed in SETUP (no dates), auto-expand in PLAN (has dates) */}
             <S2StrategyView
               viewModel={viewModel}
               destinationCard={destinationCard}
@@ -412,28 +525,9 @@ export function StrategyStageRenderer({
               executedTopics={viewModel.executed_strategy_topics}
               tiles={{}} // Empty - no booking tiles in bridge mode
               tripInputs={effectiveTripInputs}
+              density="bridge"
+              autoExpandOnLoad={hasDates} // SETUP = collapsed, PLAN = brief auto-expand
             />
-
-            {/* Sample Sequence (Ghost Timeline) - Clearly labeled as draft */}
-            <div className="border-t border-border/50 pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
-                  Sample Sequence (Draft)
-                </h3>
-                <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
-                  {tripDuration}-Day Logic Check
-                </span>
-              </div>
-              <TimelineThread
-                dayCards={ghostDayCards}
-                isDraft={true}
-                showPriceEstimates={false}
-                hasDuration={false}
-                startDate={null}
-                onSelectNights={onSelectNights}
-                onOpenDatePicker={() => onOpenSheet?.('dates')}
-              />
-            </div>
           </div>
 
           {/* Right Column: Map (Fixed Width on Desktop) */}
@@ -511,7 +605,8 @@ export function StrategyStageRenderer({
             effectiveTripInputs,
             onFinalizePlan,
             isFinalizing,
-            isExpandingItinerary
+            isExpandingItinerary,
+            density
           )}
 
           {/* Regeneration overlay - shows when constraints changed and plan is refreshing */}
@@ -524,6 +619,23 @@ export function StrategyStageRenderer({
             </div>
           )}
         </div>
+
+        {/* TILES SECTION: Show booking tiles in Plan view when available */}
+        {/* @see docs/ux_unified_architecture.md Section I.2 - "Tiles: VISIBLE" in Plan Phase */}
+        {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
+          <div className="mt-4 px-4">
+            <BookingSection
+              state={state}
+              tiles={effectiveTiles}
+              generation={generation}
+              hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+              savedTileIds={savedTileIds}
+              onSaveTile={onSaveTile}
+              hasDates={!!effectiveTripInputs?.start_date}
+              mode={effectiveMode}
+            />
+          </div>
+        )}
       </>
     );
   }, [
@@ -546,6 +658,11 @@ export function StrategyStageRenderer({
     onOpenSheet,
     hasItinerary,
     subView,
+    generating, // Added for Mirror Loader skeleton
+    generation, // Added for BookingSection in Plan view
+    savedTileIds,
+    onSaveTile,
+    effectiveMode, // Two-mode system
   ]);
 
   // Book content - full booking section view
@@ -557,8 +674,10 @@ export function StrategyStageRenderer({
       hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
       savedTileIds={savedTileIds}
       onSaveTile={onSaveTile}
+      hasDates={!!effectiveTripInputs?.start_date}
+      mode="booking" // Book view is always in booking mode
     />
-  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile]);
+  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile, effectiveTripInputs?.start_date]);
 
   // MOBILE: Simplified layout - no absolute positioning layer system
   // Desktop uses layers to preserve scroll position across view switches
@@ -584,10 +703,16 @@ export function StrategyStageRenderer({
           onBookClick={onBookClick}
           hasMinimumSelections={hasMinimumSelections}
           isCollapsed={isCollapsed}
+          // Legacy props for GlassCommandBar fallback (deprecated)
           activeView={activeView}
           canViewSetup={canViewSetup}
           canViewPlan={canViewPlan}
-          canViewBook={canViewBook}
+          canViewBook={canViewBooking}
+          // Two-mode system (PLANNING + BOOKING)
+          useModeIndicator={true}
+          mode={effectiveMode}
+          planningPhase={planningPhase}
+          progress={planningProgress}
         />
 
         {/* Content - direct render, scrollable */}
@@ -595,7 +720,7 @@ export function StrategyStageRenderer({
           ref={scrollContainerRef}
           className={cn(
             'flex-1 overflow-y-auto',
-            nextAction && 'pb-24' // Space for MobilePlanFooter
+            nextAction && 'pb-32' // Space for MobilePlanFooter and sticky footer
           )}
         >
           {/* Content scrim for topo visibility */}
@@ -629,30 +754,24 @@ export function StrategyStageRenderer({
         onBookClick={onBookClick}
         hasMinimumSelections={hasMinimumSelections}
         isCollapsed={!isDesktop && isCollapsed}
+        // Legacy props for GlassCommandBar fallback (deprecated)
         activeView={activeView}
         canViewSetup={canViewSetup}
         canViewPlan={canViewPlan}
-        canViewBook={canViewBook}
+        canViewBook={canViewBooking}
+        // Two-mode system (PLANNING + BOOKING)
+        useModeIndicator={true}
+        mode={effectiveMode}
+        planningPhase={planningPhase}
+        progress={planningProgress}
       />
 
       {/* View container - relative positioning for absolute views */}
       <div className="flex-1 min-h-0 relative overflow-hidden">
-        {/* VIEW: SETUP - Zero-UI: No content overlay, just hero */}
-        {/* The hero (PlanHeader) shows "Where to next?" - controls live in sidebar */}
-        {/* When setupContent is null, we don't render an overlay - hero is the view */}
-        {activeView === 'setup' && setupContent && (
-          <div className="absolute inset-0 z-20 animate-in fade-in slide-in-from-left-4 duration-200">
-            <div className="h-full overflow-y-auto custom-scrollbar p-4">
-              {setupContent}
-            </div>
-          </div>
-        )}
-
-        {/* VIEW: PLAN (Conditional Rendering - Grand Unification) */}
+        {/* VIEW: PLANNING - Two-mode system: PLANNING mode shows all planning content */}
         {/* Key-based rendering ensures clean unmount/remount, preventing ghosting */}
         {/* Trade-off: Map re-initializes on view switch (acceptable per plan) */}
-        {/* Zero-UI: Also visible when Setup view has no content (controls in sidebar) */}
-        {(activeView === 'plan' || (activeView === 'setup' && !setupContent)) && (
+        {effectiveMode === 'planning' && (
           <div
             key={`plan-${destinationCard?.title ?? 'default'}-${state}`}
             className="absolute inset-0 z-10 flex flex-col animate-in fade-in slide-in-from-left-4 duration-200"
@@ -662,7 +781,7 @@ export function StrategyStageRenderer({
               ref={scrollContainerRef}
               className={cn(
                 'flex-1 overflow-y-auto custom-scrollbar min-h-0', // min-h-0 fixes flexbox content collapse on mobile
-                nextAction && activeView === 'plan' && 'pb-20' // Reserve space for sticky footer
+                nextAction && effectiveMode === 'planning' && 'pb-32' // Reserve space for sticky footer (button overlap fix)
               )}
             >
               {/* Content scrim - preserves topo visibility while ensuring content readability */}
@@ -676,8 +795,8 @@ export function StrategyStageRenderer({
           </div>
         )}
 
-        {/* VIEW: BOOK (Absolute Overlay, unmounts) */}
-        {activeView === 'book' && (
+        {/* VIEW: BOOKING (Absolute Overlay, unmounts) */}
+        {effectiveMode === 'booking' && (
           <div className="absolute inset-0 z-20 animate-in fade-in slide-in-from-right-4 duration-200">
             <div className="h-full overflow-y-auto custom-scrollbar">
               {bookContent}
@@ -686,8 +805,8 @@ export function StrategyStageRenderer({
         )}
       </div>
 
-      {/* Sticky footer - only shown in Plan view, hidden on mobile (MobilePlanFooter handles mobile CTA) */}
-      {nextAction && activeView === 'plan' && (
+      {/* Sticky footer - only shown in PLANNING mode, hidden on mobile (MobilePlanFooter handles mobile CTA) */}
+      {nextAction && effectiveMode === 'planning' && (
         <NextStepBar
           state={state}
           generation={generation}

@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, RotateCcw, Sparkles } from 'lucide-react';
+import { ArrowUp, RotateCcw } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -1215,15 +1215,23 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 {/* Content - padding-based height for tighter fit */}
                 <div className="relative z-10 flex flex-col items-center justify-center text-center px-4 py-6">
                   <h1 className="text-lg font-semibold tracking-tight text-zinc-900 dark:text-white">
-                    Where to next?
+                    {/* Dynamic headline based on trip input progress */}
+                    {!destination ? 'Where to next?' :
+                     !dateRange ? 'When would you like to go?' :
+                     !tripInputs?.adults ? 'Who\'s traveling?' :
+                     'Ready to build your plan'}
                   </h1>
-                  {/* Breathing cursor indicator - tight spacing */}
+                  {/* Terminal cursor indicator - classic blink */}
                   {/* Light: "Typewriter Ink" (Jet Black) | Dark: "System Pulse" (Emerald Glow) */}
                   <div className="mt-1.5 flex items-center gap-1.5">
                     <span className="font-mono text-[9px] uppercase tracking-[0.12em] font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-                      Awaiting Input
+                      {/* Contextual status message */}
+                      {!destination ? 'Awaiting Input' :
+                       !dateRange ? 'Set Dates' :
+                       !tripInputs?.adults ? 'Add Travelers' :
+                       'Generating Plan'}
                     </span>
-                    <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
+                    <div className="w-1 h-1.5 bg-zinc-950 dark:bg-emerald-500 animate-terminal-blink rounded-sm dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
                   </div>
                 </div>
               </motion.div>
@@ -1502,13 +1510,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             </div>
           )}
 
-          {/* Nudge text - on desktop, point to the right panel's Build Plan button */}
-          {isDesktop && readyToGenerate && !isGenerating && !hasBranches && (
-            <p className="text-center text-xs text-muted-foreground py-2">
-              Ready. Click <span className="font-medium text-foreground">{hasEverHadPlan ? 'Update plan' : 'Build plan'}</span> to continue →
-            </p>
-          )}
-
           {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}
           {/* Input and button merged into one continuous capsule (like Perplexity/ChatGPT) */}
           {/* During AI processing: the input BECOMES the status indicator (emerald glow + pulse) */}
@@ -1581,19 +1582,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 >
                   {/* Minimal square icon - matches theme */}
                   <div className="w-3 h-3 bg-zinc-900 dark:bg-white rounded-[2px]" />
-                </button>
-              ) : readyToGenerate && !input.trim() && planViewState === 'S0_BOOTSTRAP' && !isGenerating && !hasBranches ? (
-                // BUILD STATE: Emerald pill inside capsule
-                <button
-                  type="button"
-                  onClick={() => sendMessageCore(GENERATE_PLAN_TRIGGER)}
-                  className="relative h-11 px-5 rounded-[22px] font-semibold text-sm flex items-center justify-center gap-2 transition-all duration-300 overflow-hidden
-                    bg-emerald-600 text-white shadow-md shadow-emerald-900/10
-                    hover:bg-emerald-500 active:scale-95"
-                  title="Build your trip plan"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span>Build</span>
                 </button>
               ) : (
                 // SEND STATE: Arrow button inside capsule

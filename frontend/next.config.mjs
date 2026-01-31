@@ -20,6 +20,10 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'pics.avs.io',  // Airline logos
       },
+      {
+        protocol: 'https',
+        hostname: 'picsum.photos',  // Placeholder images for tiles
+      },
     ],
     // Cache optimized images for 1 year (browser + CDN)
     minimumCacheTTL: 31536000,

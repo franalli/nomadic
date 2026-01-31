@@ -309,6 +309,60 @@ These colors should NOT be used:
 | teal-500 | `#14B8A6` | Replaced by emerald |
 | Any amber/orange | - | Clashes with premium aesthetic |
 
+### Specialist Color Palette
+
+Multi-specialist trips use color-coded visual indicators to distinguish activity sources.
+
+| Specialist | Color Name | Hex | Usage |
+|------------|------------|-----|-------|
+| `local_expert` | Neutral Gray | `#6B7280` | Foundational content, Trip DNA |
+| `diving` | Ocean Blue | `#0EA5E9` | Aquatic activities |
+| `hiking` | Forest Green | `#10B981` | Terrestrial activities |
+| `skiing` | Snow Blue | `#3B82F6` | Alpine activities |
+| `cycling` | Lime | `#84CC16` | Cycling activities |
+| `boating` | Indigo | `#6366F1` | Water/sailing activities |
+| `default` | Zinc | `#71717A` | Fallback for unknown types |
+
+#### Timeline Block Styling
+
+Each activity block in the S3 Itinerary View shows specialist attribution via colored borders:
+
+```tsx
+// 4px colored left-border per specialist
+<div
+  className="rounded-xl border bg-white dark:bg-zinc-800/50"
+  style={{ borderLeftWidth: '4px', borderLeftColor: SPECIALIST_COLORS[block.specialist_type] }}
+>
+```
+
+**Visual Treatment:**
+- 4px colored left-border on each ActivityMiniCard
+- Icon color matches specialist
+- Card background: neutral white/zinc
+- Safety buffers: Amber (`#F59E0B`) or Red (`#EF4444`) for no-fly constraints
+
+#### Implementation Reference
+
+**Frontend:** `frontend/components/plan/timeline/blocks/types.ts`
+
+```typescript
+export const SPECIALIST_COLORS: Record<string, string> = {
+  local_expert: '#6B7280',
+  diving: '#0EA5E9',
+  hiking: '#10B981',
+  skiing: '#3B82F6',
+  cycling: '#84CC16',
+  boating: '#6366F1',
+  default: '#71717A',
+};
+
+export function getSpecialistBorderColor(specialistType?: string): string {
+  return SPECIALIST_COLORS[specialistType || ''] || SPECIALIST_COLORS.default;
+}
+```
+
+**Note:** These hex values are deliberately NOT Tailwind classes—they're used for inline `style` props to ensure precise color matching across the timeline.
+
 ---
 
 ## 5. Migration Checklist
@@ -365,59 +419,158 @@ When applying this system to existing components:
 
 ---
 
-## 7. Calendar Component ("White Paper, Black Ink")
+## 7. Calendar Component ("The Seamless Pill")
 
-The calendar uses a special "Braun/Leica" industrial design approach:
+The calendar uses a **Seamless Pill** design inspired by Booking.com — a continuous ribbon with emerald "caps" (start/end) and a neutral zinc "bridge" (middle range).
 
 ### Design Philosophy
 
-- **Light Mode:** "White Paper, Black Ink" — The calendar is a crisp white architectural sheet. Selected dates are heavy black "ink".
-- **Dark Mode:** "Bioluminescent" — Deep glass with emerald glow selections.
+**Problem:** Using emerald for the entire range creates a "muddy" look in light mode. The faint green middle strip becomes invisible against white backgrounds.
+
+**Solution:** The **"Caps & Bridge"** pattern:
+- **Caps (Start/End):** Solid emerald endpoints — the "action anchors"
+- **Bridge (Middle):** Neutral zinc strip — high contrast, clearly visible
+- **Today:** Emerald text + underline only — no background to avoid overlap bugs
+
+### Implementation: Custom DayButton
+
+We use a **custom `DayButton` component** with JavaScript priority logic instead of CSS specificity battles. This eliminates all `!important` hacks and makes styling predictable.
+
+```tsx
+// Priority-based styling (JS logic, not CSS specificity)
+const getStyles = () => {
+  if (isRangeStart) return 'bg-emerald-600 text-white ...';
+  if (isRangeMiddle) return 'bg-zinc-200 text-zinc-900 ...';
+  if (isToday) return 'text-emerald-600 underline ...';
+  return 'text-zinc-900 ...';
+};
+```
 
 ### Visual Elements
 
 | Element | Light Mode | Dark Mode |
 |---------|------------|-----------|
-| **Container** | `bg-white/95 backdrop-blur-xl shadow-[0_20px_50px_rgba(0,0,0,0.1)]` | `bg-zinc-950/95 shadow-2xl shadow-black/80` |
-| **Day Text** | `text-zinc-600` | `text-zinc-400` |
-| **Day Hover** | `bg-zinc-100 text-zinc-900` | `bg-white/10 text-white` |
-| **Selected (Start/End)** | `bg-zinc-900 text-white shadow-lg` | `bg-emerald-500 text-white shadow-glow` |
-| **Range Middle** | `bg-zinc-100 text-zinc-900` | `bg-emerald-900/30 text-emerald-200` |
-| **Today** | `bg-zinc-100 border-b-2 border-zinc-900` | `bg-zinc-800 border-white/20` |
+| **Day Text** | `text-zinc-900` | `text-zinc-100` |
+| **Day Hover** | `bg-zinc-200` (square) | `bg-zinc-800` (square) |
+| **Weekday Headers** | `text-zinc-500 font-bold text-[10px] tracking-widest uppercase` | `text-zinc-400` |
+| **Caps (Start/End)** | `bg-emerald-600 text-white font-extrabold` | `bg-emerald-500 text-zinc-950` |
+| **Bridge (Middle)** | `bg-zinc-200 text-zinc-900` | `bg-zinc-800 text-zinc-100` |
+| **Single Selection** | `bg-emerald-600 text-white rounded-md font-extrabold` | `bg-emerald-500 text-zinc-950` |
+| **Today** | `text-emerald-600 font-extrabold underline decoration-2` | `text-emerald-400` |
+| **Outside Month** | `text-zinc-400 opacity-50` | `text-zinc-600 opacity-50` |
 | **Quick Select Pills** | Same as `DS.pills.active/inactive` | Same |
-| **Apply Button** | `bg-zinc-900 text-white` | `bg-emerald-600 + glow` |
+| **Apply Button** | `bg-emerald-600 text-white` | Same + glow |
+
+### The Seamless Pill Strip
+
+The range selection creates a **continuous pill with emerald caps and zinc bridge**:
+
+```
+┌─────────────────────────────────────────────────────┐
+│  12   13   [14 ░░░░ 15 ░░░░ 16 ░░░░ 17]  18   19   │
+│            ╰──┬──╯ ╰───┬───╯ ╰───┬───╯ ╰──┬──╯     │
+│           Start    Bridge    Bridge    End         │
+│         (emerald)  (zinc)    (zinc)  (emerald)     │
+│         (round L)  (flat)    (flat)  (round R)     │
+└─────────────────────────────────────────────────────┘
+```
+
+### Geometric Precision
+
+| Element | Outer Radius | Inner Radius |
+|---------|--------------|--------------|
+| **Start Cap** | `rounded-l-md` (4px left) | `rounded-r-none` (0px right) |
+| **End Cap** | `rounded-r-md` (4px right) | `rounded-l-none` (0px left) |
+| **Bridge** | `rounded-none` (0px all) | Creates gapless ribbon |
+| **Single Selection** | `rounded-md` (4px all) | N/A |
+| **Hover** | `rounded-none` (0px all) | Square highlight |
+
+### Premium Typography
+
+| Element | Specification |
+|---------|---------------|
+| **Font Family** | Geometric Sans (Inter, Geist) |
+| **Numerical Mode** | `tabular-nums` — prevents layout jitter |
+| **Day Headers** | `text-[10px] font-bold uppercase tracking-widest` |
+| **Unselected Dates** | `font-medium` (500) |
+| **Selected/Today** | `font-extrabold` (800) |
+| **Letter Spacing** | `tracking-tight` (-0.02em) for dates |
+
+### Today Indicator ("The Beacon")
+
+**Problem:** A background color on "Today" creates grey-on-emerald overlap when Today is also selected.
+
+**Solution:** Use **text styling only** — emerald text with an underline. No background.
+
+| Property | Light Mode | Dark Mode |
+|----------|------------|-----------|
+| **Text** | `text-emerald-600` | `text-emerald-400` |
+| **Weight** | `font-extrabold` | Same |
+| **Underline** | `underline decoration-2 underline-offset-4` | Same |
+| **Decoration** | `decoration-emerald-600` | `decoration-emerald-400` |
+| **Background** | `bg-transparent` | Same |
 
 ### Code Reference
 
 The calendar component is at `frontend/components/ui/calendar.tsx`.
-The date picker modal is at `frontend/components/planner/sheets/DatesSheet.tsx`.
 
 ```tsx
-// Quick Select Pills in DatesSheet
-<button
-  className={cn(
-    'px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wide',
-    isActive
-      ? 'bg-zinc-900 text-white dark:bg-white dark:text-black shadow-md'
-      : 'border border-zinc-200 dark:border-white/10 text-zinc-600 dark:text-zinc-400'
-  )}
->
-  {preset.label}
-</button>
+// Custom DayButton with priority-based styling
+function CustomDayButton({ modifiers, ...props }: DayButtonProps) {
+  const isRangeStart = modifiers?.range_start;
+  const isRangeEnd = modifiers?.range_end;
+  const isRangeMiddle = modifiers?.range_middle;
+  const isToday = modifiers?.today;
 
-// Calendar Day Selection (handled by calendar.tsx classNames)
-range_start: 'bg-zinc-900 text-white dark:bg-emerald-500 shadow-lg'
-range_end: 'bg-zinc-900 text-white dark:bg-emerald-500 shadow-lg'
-range_middle: 'bg-zinc-100 text-zinc-900 dark:bg-emerald-900/30 dark:text-emerald-200'
+  const getStyles = () => {
+    // PRIORITY 1: Range endpoints (Caps)
+    if (isRangeStart && isRangeEnd) {
+      return 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-zinc-950 rounded-md font-extrabold';
+    }
+    if (isRangeStart) {
+      return 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-zinc-950 rounded-l-md rounded-r-none font-extrabold';
+    }
+    if (isRangeEnd) {
+      return 'bg-emerald-600 text-white dark:bg-emerald-500 dark:text-zinc-950 rounded-r-md rounded-l-none font-extrabold';
+    }
+
+    // PRIORITY 2: Range middle (Bridge)
+    if (isRangeMiddle) {
+      return 'bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 rounded-none';
+    }
+
+    // PRIORITY 3: Today (Emerald text + underline, NO background)
+    if (isToday) {
+      return 'text-emerald-600 dark:text-emerald-400 font-extrabold underline decoration-2 underline-offset-4 bg-transparent';
+    }
+
+    // Default
+    return 'text-zinc-900 dark:text-zinc-100';
+  };
+
+  return (
+    <button
+      {...props}
+      className={cn(
+        'h-9 w-9 p-0 font-medium inline-flex items-center justify-center',
+        'rounded-none text-sm tracking-tight tabular-nums',
+        'transition-all duration-150 ease-in-out',
+        !isRangeStart && !isRangeEnd && !isSelected && !isRangeMiddle && 'hover:bg-zinc-200 dark:hover:bg-zinc-800',
+        getStyles()
+      )}
+    />
+  );
+}
 ```
 
-### Why This Matters
+### Why This Works
 
-The calendar was previously styled as a "dark-only" component. This created visual discord when placed in a light mode interface. The "White Paper, Black Ink" approach:
-
-1. **Maintains brand identity** — Black selections feel premium and technical
-2. **Respects physical logic** — Surfaces are white (paper), actions are black (ink)
-3. **Works in both modes** — Dark mode retains the emerald glow aesthetic
+1. **No CSS Specificity Wars:** JavaScript priority logic determines styles — no `!important` needed.
+2. **High Contrast Bridge:** Zinc-100/Zinc-800 is clearly visible against white/dark backgrounds.
+3. **Emerald Anchors:** Start/End caps use emerald to signal "selection boundaries."
+4. **Today Beacon:** Underline-only styling avoids background collision bugs.
+5. **Tabular Numbers:** Prevents layout jitter when selecting different dates.
+6. **Premium Typography:** Extra-bold weights for high-intent elements (selected, today).
 
 ---
 

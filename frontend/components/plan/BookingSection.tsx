@@ -12,6 +12,12 @@
  * - S2 with tiles: Preview mode with MiniCards (Plan view)
  * - S2 generating: Skeleton loaders
  * - S2 without tiles: Minimal placeholder
+ *
+ * Two-Mode System:
+ * - PLANNING mode: Shows SuggestionCard with AI reasoning, no checkout
+ * - BOOKING mode: Shows BookableCard with price comparison, checkout sidebar
+ *
+ * @see docs/ux_unified_architecture.md Section I.B - Booking Suggestions Pattern
  */
 
 'use client';
@@ -19,16 +25,20 @@
 import { ChevronDown, ChevronUp, Lock, Package } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
-import { MiniCard, MiniCardSkeleton } from '@/components/tiles/MiniCard';
+import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
-import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
+import type { GenerationState, PlanViewState, ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
+
+import { AlternativesModal } from './modals/AlternativesModal';
+import { SuggestionCard } from './tiles/SuggestionCard';
+import { BookableCard, type PartnerPrice } from './tiles/BookableCard';
 
 import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
@@ -61,6 +71,27 @@ export interface BookingSectionProps {
   onCheckout?: () => void;
   /** Whether we're in the full Book view (manifest layout) */
   isBookView?: boolean;
+  /**
+   * Whether trip dates are set.
+   * Used to conditionally show "unlock" message.
+   * @see docs/ux_unified_architecture.md Section XII
+   */
+  hasDates?: boolean;
+  /**
+   * Two-mode system: planning or booking.
+   * - planning: Shows SuggestionCard with AI reasoning
+   * - booking: Shows BookableCard with price comparison
+   * @see docs/ux_unified_architecture.md Section I.B
+   */
+  mode?: ViewMode;
+  /** Callback when user wants to view alternatives for a tile */
+  onViewAlternatives?: (tile: Tile) => void;
+  /** Partner prices for booking mode (keyed by tile ID) */
+  partnerPrices?: Record<string, PartnerPrice[]>;
+  /** Set of tile IDs in cart (for booking mode) */
+  cartTileIds?: Set<string>;
+  /** Callback to toggle cart state */
+  onCartToggle?: (tile: Tile) => void;
 }
 
 export function BookingSection({
@@ -72,8 +103,14 @@ export function BookingSection({
   onSaveTile,
   onRemoveTile,
   onOpenSheet,
+  hasDates = false,
   onCheckout,
   isBookView = false,
+  mode = 'planning',
+  onViewAlternatives,
+  partnerPrices = {},
+  cartTileIds = new Set(),
+  onCartToggle,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
@@ -82,11 +119,16 @@ export function BookingSection({
   const [isExpanded, setIsExpanded] = useState(true);
   const [activeCategory, setActiveCategory] = useState<TileCategory>('stays');
   const [selectedTile, setSelectedTile] = useState<Tile | null>(null);
+  const [alternativesTile, setAlternativesTile] = useState<Tile | null>(null);
   const [filters, setFilters] = useState<TileFilters>({
     sort: 'recommended',
     freeCancel: false,
     maxPrice: null,
   });
+
+  // Determine effective mode based on props
+  // If isBookView is explicitly set, use booking mode
+  const effectiveMode: ViewMode = isBookView ? 'booking' : mode;
 
   // Convert tiles to array if needed
   const tileArray = Array.isArray(tiles) ? tiles : Object.values(tiles);
@@ -212,6 +254,33 @@ export function BookingSection({
     setSelectedTile(null);
   }, []);
 
+  // Handler for viewing alternatives
+  const handleViewAlternatives = useCallback((tile: Tile) => {
+    if (onViewAlternatives) {
+      onViewAlternatives(tile);
+    } else {
+      // Use internal alternatives modal
+      setAlternativesTile(tile);
+    }
+  }, [onViewAlternatives]);
+
+  const handleCloseAlternatives = useCallback(() => {
+    setAlternativesTile(null);
+  }, []);
+
+  const handleSelectAlternative = useCallback((tile: Tile) => {
+    onSaveTile?.(tile);
+    setAlternativesTile(null);
+  }, [onSaveTile]);
+
+  // Get alternatives for a tile (same category, excluding current)
+  const getAlternatives = useCallback((tile: Tile): Tile[] => {
+    return tileArray.filter(t =>
+      t.id !== tile.id &&
+      t.type === tile.type
+    );
+  }, [tileArray]);
+
   // Handler for tile click in CategorySection
   const handleTileClick = useCallback((tile: Tile) => {
     setSelectedTile(tile);
@@ -240,7 +309,7 @@ export function BookingSection({
           <div className="px-4 pt-4 pb-1">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-medium text-card-foreground">
-                Options to choose from
+                Available Options
               </h3>
               {savedTileIds.size > 0 && (
                 <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
@@ -249,27 +318,30 @@ export function BookingSection({
               )}
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Compare and save favorites.
+              Compare and select your favorites.
             </p>
-            {/* Section-level lock message */}
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
-              <Lock className="h-3 w-3" />
-              <span>
-                Booking links unlock after you{' '}
-                {onOpenSheet ? (
-                  <button
-                    type="button"
-                    onClick={() => onOpenSheet('dates')}
-                    className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400 underline underline-offset-2"
-                  >
-                    set trip dates
-                  </button>
-                ) : (
-                  'set trip dates'
-                )}{' '}
-                and create your itinerary.
-              </span>
-            </p>
+            {/* Section-level lock message - only show if dates are NOT set */}
+            {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
+            {!hasDates && (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-2">
+                <Lock className="h-3 w-3" />
+                <span>
+                  Booking links unlock after you{' '}
+                  {onOpenSheet ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenSheet('dates')}
+                      className="text-emerald-600 hover:text-emerald-500 dark:text-emerald-500 dark:hover:text-emerald-400 underline underline-offset-2"
+                    >
+                      set trip dates
+                    </button>
+                  ) : (
+                    'set trip dates'
+                  )}{' '}
+                  and create your itinerary.
+                </span>
+              </p>
+            )}
           </div>
 
           {/* Category chips with counts */}
@@ -332,19 +404,37 @@ export function BookingSection({
             )}
           </button>
 
-          {/* MiniCards grid */}
+          {/* Tile cards grid - mode-aware rendering */}
           {isExpanded && (
-            <div className="px-4 pb-4 space-y-2">
+            <div className="px-4 pb-4 space-y-3">
               {previewTiles.length > 0 ? (
                 <>
                   {previewTiles.map((tile) => (
-                    <MiniCard
-                      key={tile.id}
-                      tile={tile}
-                      isSaved={savedTileIds.has(tile.id)}
-                      onDetailsClick={handleDetailsClick}
-                      onSaveClick={handleSaveClick}
-                    />
+                    effectiveMode === 'planning' ? (
+                      <SuggestionCard
+                        key={tile.id}
+                        tile={tile}
+                        reasoning={tile.meta?.reasoning as string | undefined}
+                        isSaved={savedTileIds.has(tile.id)}
+                        onSave={handleSaveClick}
+                        onViewAlternatives={() => handleViewAlternatives(tile)}
+                        onDetailsClick={handleDetailsClick}
+                        variant="compact"
+                      />
+                    ) : (
+                      <BookableCard
+                        key={tile.id}
+                        tile={tile}
+                        partnerPrices={partnerPrices[tile.id]}
+                        isInCart={cartTileIds.has(tile.id)}
+                        onBook={(t, partner) => {
+                          // External booking redirect would happen here
+                          console.log('Book', t.id, 'via', partner);
+                        }}
+                        onCartToggle={onCartToggle}
+                        onDetailsClick={handleDetailsClick}
+                      />
+                    )
                   ))}
                   {remainingCount > 0 && (
                     <p className="text-xs text-muted-foreground pt-2">
@@ -380,6 +470,18 @@ export function BookingSection({
           onClose={handleCloseModal}
           onSaveClick={handleSaveClick}
         />
+
+        {/* Alternatives modal (PLANNING mode) */}
+        {effectiveMode === 'planning' && (
+          <AlternativesModal
+            open={alternativesTile !== null}
+            onOpenChange={(open) => !open && handleCloseAlternatives()}
+            currentTile={alternativesTile}
+            alternatives={alternativesTile ? getAlternatives(alternativesTile) : []}
+            category={alternativesTile?.type === 'hotel' ? 'Hotel' : alternativesTile?.type === 'flight' ? 'Flight' : 'Activity'}
+            onSelect={handleSelectAlternative}
+          />
+        )}
       </>
     );
   }

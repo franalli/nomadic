@@ -1,15 +1,15 @@
 """
-Logistics Node - Fetches and sanitizes flight data from Amadeus.
+Logistics Node - Fetches tiles (flights, hotels, activities) from providers.
 
 Placed AFTER Specialist nodes (reads constraints) and BEFORE Architect.
 This is the "Fetch & Polish" pattern for demo-ready data.
 
 Key responsibilities:
-1. Fetch flights from Amadeus API
-2. Sanitize garbage test carriers (XX -> Emirates)
-3. Apply 24h no-fly safety logic
-4. Store results in state.metadata["flight_options"]
-5. Fall back to demo backup if API fails
+1. Fetch flights from Amadeus API (requires origin)
+2. Fetch hotels/activities from mock providers (only needs destination)
+3. Sanitize garbage test carriers (XX -> Emirates)
+4. Apply 24h no-fly safety logic for diving trips
+5. Store results in state.tiles for frontend display
 """
 
 import logging
@@ -19,6 +19,8 @@ from typing import Any, Dict, List
 from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
 from app.debug_utils import _debug_graph, _debug_graph_node_end, _debug_graph_node_start, log
 from app.planner.state.schemas import GraphState
+from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
+from app.tile_service.models import SearchContext
 from app.tools.amadeus_client import AmadeusClient, city_to_airport_code
 
 logger = logging.getLogger(__name__)
@@ -45,21 +47,42 @@ async def logistics_node(state: GraphState) -> GraphState:
         dates=f"{plan.start_date} to {plan.end_date}",
     )
 
+    # Mark that logistics has been attempted (prevents infinite loop in route_after_architect)
+    state.metadata["logistics_attempted"] = True
+
     # Skip if missing required fields
     if not plan.destination or not plan.start_date:
         log("LOGISTICS", "Skipping - no destination or dates")
         _debug_graph_node_end("logistics", "✈️", status="skipped", reason="missing_fields")
         return state
 
+    # Resolve airport codes for flights (flights need origin, hotels/activities don't)
     origin_code = _city_to_code(plan.origin or "")
     dest_code = _city_to_code(plan.destination)
+    can_search_flights = bool(origin_code and dest_code)
 
-    if not origin_code or not dest_code:
-        log("LOGISTICS", f"Could not resolve airport codes: {plan.origin} -> {plan.destination}")
-        logger.warning(
-            f"[Logistics] Could not resolve airport codes: {plan.origin} -> {plan.destination}"
+    # CRITICAL FIX: Always search for hotels/activities even without origin
+    # Hotels and activities only need destination + dates
+    # @see docs/ux_unified_architecture.md - Enable tile search without origin
+    await _search_hotels_and_activities(state, plan)
+
+    # Skip flight search if missing origin
+    if not can_search_flights:
+        log("LOGISTICS", "Skipping flights (no origin) - hotels/activities searched")
+        hotels_count = len(state.tiles.get("hotels", []))
+        activities_count = len(state.tiles.get("activities", []))
+        logger.info(
+            f"[Logistics] No origin, skipped flights. "
+            f"Hotels/activities tiles: {hotels_count} + {activities_count}"
         )
-        _debug_graph_node_end("logistics", "✈️", status="skipped", reason="no_airport_codes")
+        _debug_graph_node_end(
+            "logistics",
+            "✈️",
+            status="partial",
+            reason="no_origin_for_flights",
+            hotels=len(state.tiles.get("hotels", [])),
+            activities=len(state.tiles.get("activities", [])),
+        )
         return state
 
     log("LOGISTICS", f"Searching flights: {origin_code} -> {dest_code}")
@@ -232,6 +255,105 @@ async def logistics_node(state: GraphState) -> GraphState:
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+
+async def _search_hotels_and_activities(state: GraphState, plan) -> None:
+    """
+    Search for hotels and activities using mock providers.
+
+    CRITICAL: This runs independently of flight search.
+    Hotels/Activities only need destination + dates, not origin.
+    """
+    _debug_graph(f"Searching hotels/activities for {plan.destination}...")
+
+    # Build search context from trip_plan
+    ctx = SearchContext(
+        destination=plan.destination,
+        origin=plan.origin,  # May be None - that's OK for hotels/activities
+        start_date=str(plan.start_date) if plan.start_date else None,
+        end_date=str(plan.end_date) if plan.end_date else None,
+        adults=plan.adults or 1,
+        children=plan.children or 0,
+        currency="USD",
+        verticals=["hotel", "activity"],
+        max_results_per_vertical=5,
+    )
+
+    # Search hotels
+    hotel_provider = MockHotelProvider()
+    hotel_tiles = hotel_provider.search(ctx)
+
+    # Convert Tile objects to dicts for state storage
+    hotel_dicts = []
+    for tile in hotel_tiles:
+        hotel_dicts.append(
+            {
+                "id": tile.id,
+                "type": "hotel",
+                "partner": tile.partner,
+                "partner_product_id": tile.partner_product_id,
+                "title": tile.title,
+                "subtitle": tile.subtitle,
+                "image_url": tile.image_url,
+                "price_estimate": tile.price_estimate,
+                "currency": tile.currency,
+                "price_basis": tile.price_basis,
+                "is_estimate_only": tile.is_estimate_only,
+                "deeplink_url": tile.deeplink_url,
+                "rating": tile.rating,
+                "location_label": tile.location_label,
+                "tags": tile.tags,
+                "availability_status": tile.availability_status,
+                "meta": tile.meta,
+                "source": tile.source,
+                "source_agent": "logistics_node",
+            }
+        )
+
+    state.tiles["hotels"] = hotel_dicts
+    log("LOGISTICS", f"Found {len(hotel_dicts)} hotels for {plan.destination}")
+    _debug_graph(f"Hotels found: {len(hotel_dicts)}")
+
+    # Search activities
+    activity_provider = MockActivityProvider()
+    activity_tiles = activity_provider.search(ctx)
+
+    # Convert Tile objects to dicts
+    activity_dicts = []
+    for tile in activity_tiles:
+        activity_dicts.append(
+            {
+                "id": tile.id,
+                "type": "activity",
+                "partner": tile.partner,
+                "partner_product_id": tile.partner_product_id,
+                "title": tile.title,
+                "subtitle": tile.subtitle,
+                "image_url": tile.image_url,
+                "price_estimate": tile.price_estimate,
+                "currency": tile.currency,
+                "price_basis": tile.price_basis,
+                "is_estimate_only": tile.is_estimate_only,
+                "deeplink_url": tile.deeplink_url,
+                "rating": tile.rating,
+                "location_label": tile.location_label,
+                "tags": tile.tags,
+                "availability_status": tile.availability_status,
+                "meta": tile.meta,
+                "source": tile.source,
+                "source_agent": "logistics_node",
+            }
+        )
+
+    state.tiles["activities"] = activity_dicts
+    log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
+    _debug_graph(f"Activities found: {len(activity_dicts)}")
+
+    # Update booking summary
+    booking_summary = state.metadata.get("booking_summary", {})
+    booking_summary["hotels_found"] = len(hotel_dicts)
+    booking_summary["activities_found"] = len(activity_dicts)
+    state.metadata["booking_summary"] = booking_summary
 
 
 def _city_to_code(city: str) -> str:

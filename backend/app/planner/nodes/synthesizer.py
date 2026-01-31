@@ -73,15 +73,20 @@ def _build_synthesis_context(state: GraphState) -> str:
     parts.append("## Current Mode")
     parts.append(f"- Architect mode: {architect_mode}")
 
-    # Plan view state for tone differentiation (Setup vs Plan mode)
-    plan_view_state = state.metadata.get("plan_view_state", "S0_BOOTSTRAP")
-    is_setup_mode = (
-        plan_view_state.startswith("S0")
-        or plan_view_state.startswith("S1")
-        or plan_view_state.startswith("S2")
-    )
-    tone_mode = "SETUP" if is_setup_mode else "PLAN"
-    parts.append(f"- Plan view state: {plan_view_state}")
+    # Planning phase for tone differentiation
+    # P0/P1/P2 = gathering/exploring phase (conversational, guiding)
+    # P3 = finalized phase (confirming, ready to book)
+    plan_view_state = state.metadata.get("plan_view_state", "P0_MINIMAL")
+    # Normalize legacy S* values to P* for tone calculation
+    if plan_view_state.startswith("S0") or plan_view_state.startswith("S1"):
+        plan_view_state = "P0_MINIMAL"
+    elif plan_view_state.startswith("S2"):
+        plan_view_state = "P1_ENRICHED"
+    elif plan_view_state.startswith("S3"):
+        plan_view_state = "P3_FINALIZED"
+    is_gathering_phase = plan_view_state in ("P0_MINIMAL", "P1_ENRICHED", "P2_LOGISTICS")
+    tone_mode = "GATHERING" if is_gathering_phase else "FINALIZING"
+    parts.append(f"- Planning phase: {plan_view_state}")
     parts.append(f"- Tone mode: {tone_mode}")
 
     # Flexible date resolution info

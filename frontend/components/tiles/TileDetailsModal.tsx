@@ -27,8 +27,19 @@ import { createPortal } from 'react-dom';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn, isFlightType } from '@/lib/utils';
+import type { ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
+
+// Partner price type for BOOKING mode
+interface PartnerPrice {
+  partner: string;
+  price: number;
+  currency: string;
+  url?: string;
+  logo?: string;
+  isBestPrice?: boolean;
+}
 
 export interface TileDetailsModalProps {
   tile: Tile | null;
@@ -40,6 +51,12 @@ export interface TileDetailsModalProps {
   onSaveClick?: (tile: Tile) => void;
   /** Callback to open a sheet (for "Set trip dates" CTA) */
   onOpenSheet?: (sheet: SheetType) => void;
+  /** Current mode for mode-specific sections */
+  mode?: ViewMode;
+  /** Partner prices for BOOKING mode price comparison */
+  partnerPrices?: PartnerPrice[];
+  /** Callback when user books from a partner */
+  onBook?: (tile: Tile, partner: string) => void;
 }
 
 /**
@@ -161,6 +178,24 @@ function getReviewCount(tile: Tile): number | null {
 }
 
 /**
+ * Get AI reasoning for why this tile was suggested (PLANNING mode)
+ */
+function getAIReasoning(tile: Tile): string | null {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  if (typeof meta?.reasoning === 'string') return meta.reasoning;
+  if (typeof meta?.ai_reasoning === 'string') return meta.ai_reasoning;
+  return null;
+}
+
+/**
+ * Check if tile is an AI pick
+ */
+function isAIPick(tile: Tile): boolean {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  return meta?.is_ai_pick === true || meta?.ai_recommended === true;
+}
+
+/**
  * Image Carousel component
  */
 function ImageCarousel({ images }: { images: string[] }) {
@@ -236,6 +271,9 @@ export const TileDetailsModal = memo(function TileDetailsModal({
   onClose,
   onSaveClick,
   onOpenSheet,
+  mode = 'planning',
+  partnerPrices,
+  onBook,
 }: TileDetailsModalProps) {
   // Close on escape key
   useEffect(() => {
@@ -272,6 +310,8 @@ export const TileDetailsModal = memo(function TileDetailsModal({
     [tile]
   );
   const reviewCount = useMemo(() => (tile ? getReviewCount(tile) : null), [tile]);
+  const aiReasoning = useMemo(() => (tile ? getAIReasoning(tile) : null), [tile]);
+  const aiPick = useMemo(() => (tile ? isAIPick(tile) : false), [tile]);
 
   const handleSaveClick = useCallback(() => {
     if (tile && onSaveClick) {
@@ -403,6 +443,94 @@ export const TileDetailsModal = memo(function TileDetailsModal({
                 </div>
               )}
             </div>
+
+            {/* MODE-SPECIFIC SECTIONS */}
+
+            {/* PLANNING mode: "Why this?" AI reasoning section */}
+            {mode === 'planning' && (aiReasoning || aiPick) && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">✨</span>
+                  <h3 className="text-sm font-medium text-zinc-300">
+                    Why this suggestion?
+                  </h3>
+                  {aiPick && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400">
+                      AI Pick
+                    </span>
+                  )}
+                </div>
+                {aiReasoning && (
+                  <p className="text-sm text-zinc-400 leading-relaxed">
+                    {aiReasoning}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* BOOKING mode: Partner price comparison */}
+            {mode === 'booking' && partnerPrices && partnerPrices.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-zinc-300">
+                  Compare prices
+                </h3>
+                <div className="space-y-2">
+                  {partnerPrices.map((pp) => (
+                    <div
+                      key={pp.partner}
+                      className={cn(
+                        'flex items-center justify-between p-3 rounded-lg border transition-colors',
+                        pp.isBestPrice
+                          ? 'border-emerald-500/50 bg-emerald-500/10'
+                          : 'border-zinc-700 bg-zinc-800/30 hover:bg-zinc-800/50'
+                      )}
+                    >
+                      <div className="flex items-center gap-3">
+                        {pp.logo ? (
+                          <img
+                            src={pp.logo}
+                            alt={pp.partner}
+                            className="h-6 w-auto object-contain"
+                          />
+                        ) : (
+                          <span className="text-sm text-zinc-300 font-medium">
+                            {pp.partner}
+                          </span>
+                        )}
+                        {pp.isBestPrice && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-400">
+                            Best Price
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-semibold text-zinc-100">
+                          {new Intl.NumberFormat('en-US', {
+                            style: 'currency',
+                            currency: pp.currency,
+                            maximumFractionDigits: 0,
+                          }).format(pp.price)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (pp.url) {
+                              window.open(pp.url, '_blank', 'noopener,noreferrer');
+                            }
+                            if (tile && onBook) {
+                              onBook(tile, pp.partner);
+                            }
+                          }}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-500 text-white hover:bg-emerald-600 transition-colors"
+                        >
+                          Book
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

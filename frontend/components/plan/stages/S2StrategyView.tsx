@@ -18,6 +18,7 @@ import {
   Briefcase,
   Building,
   ChevronDown,
+  ChevronUp,
   CreditCard,
   Globe,
   Lightbulb,
@@ -35,7 +36,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import Image from 'next/image';
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -52,7 +53,9 @@ import {
 } from '@/types/plan-envelope';
 import type { Tile } from '@/types/tile';
 
+import type { DataDensity } from '../StrategyStageRenderer';
 import { TripHealthBar } from '../TripHealthBar';
+import { StrategyHero } from './StrategyHero';
 
 // Markdown components for rich text rendering (emerald bold for key variables)
 const MARKDOWN_COMPONENTS = {
@@ -160,6 +163,27 @@ interface S2StrategyViewProps {
   tiles?: Record<string, Tile>;
   /** Trip inputs for reactivity (store subscription provides live updates) */
   tripInputs?: DocumentTripInputs;
+  /**
+   * Data density level for adaptive rendering.
+   * - 'bridge' / 'ghost': Use Accordion mode (collapsible inline)
+   * - 'full': Use Compact mode (Trip DNA Bar)
+   * - 'empty': Cards not rendered (handled by parent)
+   * @see docs/ux_unified_architecture.md Section XII
+   */
+  density?: DataDensity;
+  /**
+   * Specialist type to expand (for chat-triggered expansion).
+   * When this value changes to a valid specialist type, that card will be expanded.
+   * Set to null/undefined to not trigger expansion.
+   */
+  expandSpecialistType?: string | null;
+  /**
+   * Whether to auto-expand cards on first load (3s preview then collapse).
+   * - true (default for 'bridge'): Cards expand briefly then collapse
+   * - false (default for 'ghost'): Cards stay collapsed
+   * @default true for bridge density, false for ghost density
+   */
+  autoExpandOnLoad?: boolean;
 }
 
 // =============================================================================
@@ -625,24 +649,6 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
       {/* Expanded content (normal bg-card, no tint) - NOT shown for infeasible */}
       {isExpanded && !isInfeasible && (
         <div className="px-4 pb-4 pt-2 border-t border-border/50 space-y-4">
-          {/* Trip Summary (General Agent only - not for specialists) */}
-          {section.trip_summary && section.specialist_type === 'general' && (
-            <div className="text-xs space-y-1 py-2 border-b border-border/30 tabular-nums">
-              <div>
-                <span className="text-muted-foreground">Trip:</span>{' '}
-                <span className="text-card-foreground">{section.trip_summary.destination}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Dates:</span>{' '}
-                <span className="text-card-foreground">{section.trip_summary.dates}</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground">Travelers:</span>{' '}
-                <span className="text-card-foreground">{section.trip_summary.travelers}</span>
-              </div>
-            </div>
-          )}
-
           {/* Destination Gallery - "Vibe Trio" for Local Expert card */}
           {section.specialist_type === 'local_expert' && section.destination_gallery && section.destination_gallery.length > 0 && (
             <div className="mb-2">
@@ -654,8 +660,8 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
                     className="shrink-0 snap-center relative w-64 h-40 rounded-xl overflow-hidden shadow-sm border border-zinc-200 dark:border-zinc-700/50"
                   >
                     <Image
-                      src={img.url}
-                      alt={img.alt}
+                      src={img.image_url}
+                      alt={img.label}
                       fill
                       className="object-cover"
                     />
@@ -666,10 +672,10 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
               {/* DESKTOP: 3-column grid */}
               <div className="hidden md:grid grid-cols-3 gap-4">
                 {section.destination_gallery.map((img, idx) => (
-                  <div key={idx} className="relative aspect-video rounded-xl overflow-hidden shadow-sm border border-zinc-100 dark:border-zinc-700/50 group">
+                  <div key={idx} className="relative h-48 md:h-64 rounded-xl overflow-hidden shadow-sm border border-zinc-100 dark:border-zinc-700/50 group">
                     <Image
-                      src={img.url}
-                      alt={img.alt}
+                      src={img.image_url}
+                      alt={img.label}
                       fill
                       className="object-cover transition-transform duration-500 group-hover:scale-105"
                     />
@@ -1093,6 +1099,9 @@ export function S2StrategyView({
   executedTopics,
   tiles = {},
   tripInputs: propTripInputs,
+  density,
+  expandSpecialistType,
+  autoExpandOnLoad,
 }: S2StrategyViewProps) {
   // FIX: Use store values with prop fallback for reactivity
   const tripInputs = useTripInputsWithFallback(propTripInputs);
@@ -1116,16 +1125,201 @@ export function S2StrategyView({
     return null;
   }
 
+  // Compute variant from density
+  // 'full' density (Plan Mode with tiles) = compact cards (Trip DNA Bar)
+  // 'bridge' (PLAN mode, no tiles yet) = accordion cards (auto-expand 3s preview)
+  // 'ghost' (SETUP mode with specialist content) = accordion cards (collapsed by default)
+  // Both bridge and ghost use accordion - difference is auto-expand behavior
+  const variant = density === 'full' ? 'compact' : (density === 'bridge' || density === 'ghost') ? 'accordion' : 'hero';
+
+  // Determine auto-expand behavior based on density if not explicitly set
+  // SETUP (ghost): Cards stay collapsed - user must expand
+  // PLAN (bridge): Cards auto-expand briefly (3s) then collapse
+  const shouldAutoExpand = autoExpandOnLoad ?? (density === 'bridge');
+
+  // Use Magazine-style rendering when density is provided (new architecture)
+  // Fall back to StrategyStack for backward compatibility
+  const useMagazineStyle = density !== undefined;
+
+  // =========================================================================
+  // ACCORDION STATE MANAGEMENT (for Bridge Mode)
+  // =========================================================================
+
+  // Track which cards are expanded (by section ID)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  // Track if this is the first render (for auto-expand preview)
+  const [hasShownPreview, setHasShownPreview] = useState(false);
+
+  // Count expanded cards
+  const expandedCount = expandedIds.size;
+
+  // Staggered auto-expand on first load - only for PLAN mode (bridge density)
+  // SETUP mode (ghost density) keeps cards collapsed by default
+  // Animation sequence: Each card expands for 2.5s, then collapses, with 500ms delay before next
+  useEffect(() => {
+    if (variant === 'accordion' && strategy_sections.length > 0 && !hasShownPreview && shouldAutoExpand) {
+      setHasShownPreview(true);
+
+      // Staggered animation timing constants
+      const EXPAND_DURATION = 2500; // How long each card stays expanded
+      const STAGGER_DELAY = 500;    // Delay between collapse and next expand
+      const CARD_CYCLE = EXPAND_DURATION + STAGGER_DELAY; // Total time per card
+
+      // Timeout IDs for cleanup
+      const timeoutIds: NodeJS.Timeout[] = [];
+
+      // Stagger expand each card sequentially
+      strategy_sections.forEach((section, index) => {
+        // When to expand this card
+        const expandAt = index * CARD_CYCLE;
+        // When to collapse this card
+        const collapseAt = expandAt + EXPAND_DURATION;
+
+        // Schedule expand
+        const expandTimer = setTimeout(() => {
+          setExpandedIds(prev => {
+            const next = new Set(prev);
+            next.add(section.id);
+            return next;
+          });
+        }, expandAt);
+        timeoutIds.push(expandTimer);
+
+        // Schedule collapse
+        const collapseTimer = setTimeout(() => {
+          setExpandedIds(prev => {
+            const next = new Set(prev);
+            next.delete(section.id);
+            return next;
+          });
+        }, collapseAt);
+        timeoutIds.push(collapseTimer);
+      });
+
+      return () => {
+        timeoutIds.forEach(id => clearTimeout(id));
+      };
+    }
+  }, [variant, strategy_sections, hasShownPreview, shouldAutoExpand]);
+
+  // Chat-triggered expansion: expand a specific specialist card
+  useEffect(() => {
+    if (expandSpecialistType && variant === 'accordion') {
+      // Find the section with this specialist type
+      const section = strategy_sections.find(s => s.specialist_type === expandSpecialistType);
+      if (section) {
+        // Expand this card
+        setExpandedIds(prev => {
+          const next = new Set(prev);
+          next.add(section.id);
+          return next;
+        });
+
+        // Scroll to the card (smooth scroll)
+        setTimeout(() => {
+          const card = document.querySelector(`[data-specialist="${expandSpecialistType}"]`);
+          if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      }
+    }
+  }, [expandSpecialistType, variant, strategy_sections]);
+
+  // Handle expansion change for a single card
+  const handleExpandChange = useCallback((sectionId: string, expanded: boolean) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (expanded) {
+        next.add(sectionId);
+      } else {
+        next.delete(sectionId);
+      }
+      return next;
+    });
+  }, []);
+
+  // Collapse all cards
+  const handleCollapseAll = useCallback(() => {
+    setExpandedIds(new Set());
+  }, []);
+
   return (
-    <div className="flex flex-col p-4 space-y-4">
-      {/* Strategy stack - TripHealthBar (General) + Specialist cards */}
-      <StrategyStack
-        sections={strategy_sections}
-        pendingTopics={pendingTopics}
-        executedTopics={resolvedExecutedTopics}
-        tiles={tiles}
-        hasDates={hasDates}
-      />
+    <div className={cn('flex flex-col', useMagazineStyle ? 'gap-2' : 'p-4 space-y-4')}>
+      {useMagazineStyle ? (
+        <>
+          {/* Collapse All button (shown when 2+ accordion cards are expanded) */}
+          {variant === 'accordion' && expandedCount >= 2 && (
+            <div className="flex justify-end mb-1">
+              <button
+                onClick={handleCollapseAll}
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md',
+                  'text-[10px] font-bold uppercase tracking-wider',
+                  'text-zinc-500 hover:text-zinc-900',
+                  'dark:text-zinc-400 dark:hover:text-white',
+                  'bg-zinc-100 hover:bg-zinc-200',
+                  'dark:bg-white/5 dark:hover:bg-white/10',
+                  'transition-colors duration-150'
+                )}
+              >
+                <ChevronUp className="w-3 h-3" />
+                Collapse All
+              </button>
+            </div>
+          )}
+
+          {/* Magazine Style: StrategyHero cards */}
+          {/* Note: StrategyHero is self-contained - compact mode manages its own BottomSheet */}
+          {/* Accordion mode: parent manages expansion state */}
+          {strategy_sections.map((section) => (
+            <StrategyHero
+              key={section.id}
+              section={section}
+              variant={variant}
+              isExpanded={variant === 'accordion' ? expandedIds.has(section.id) : undefined}
+              onExpandChange={variant === 'accordion' ? (expanded) => handleExpandChange(section.id, expanded) : undefined}
+            />
+          ))}
+
+          {/* Pending topics placeholder */}
+          {pendingTopics.map((topic) => {
+            const config = TOPIC_CONFIG[topic] || TOPIC_CONFIG.general;
+            const TopicIcon = config.icon;
+            return (
+              <div
+                key={`pending-${topic}`}
+                className="flex items-center gap-3 p-3 rounded-xl bg-zinc-50 dark:bg-white/5 border border-zinc-200 dark:border-white/10 animate-pulse"
+              >
+                <div className="w-10 h-10 rounded-lg bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center">
+                  <TopicIcon className="w-4 h-4 text-zinc-400" />
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-zinc-500">{config.label}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-medium">
+                      Loading...
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-0.5">Generating strategy...</p>
+                </div>
+              </div>
+            );
+          })}
+        </>
+      ) : (
+        <>
+          {/* Legacy: Strategy stack - TripHealthBar (General) + Specialist cards */}
+          <StrategyStack
+            sections={strategy_sections}
+            pendingTopics={pendingTopics}
+            executedTopics={resolvedExecutedTopics}
+            tiles={tiles}
+            hasDates={hasDates}
+          />
+        </>
+      )}
 
       {/* Open decisions panel */}
       <OpenDecisionsPanel decisions={open_decisions} />

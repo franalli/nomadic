@@ -23,11 +23,13 @@ Usage:
 
 import logging
 import os
+from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, Literal, Optional
 
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
+from app.placeholders import get_hero_image
 from app.planner.nodes.constraint_guard import constraint_guard
 from app.planner.nodes.intent_router import intent_router
 from app.planner.nodes.local_expert import local_expert
@@ -326,17 +328,44 @@ def route_after_router(
 
     If short_circuit_response (GREETING/RESET) → Synthesizer (skip architect)
     If specialist topic detected → VerticalSpecialist or LocalExpert
-    Otherwise → TripArchitect
+    Otherwise → TripArchitect (extracts destination first)
+
+    CRITICAL: Specialists need destination to be meaningful.
+    If destination is NOT extracted yet, route to Architect FIRST.
+    Architect extracts destination, then route_after_architect() sends to specialists.
     """
+    from app.debug_utils import _debug_graph
+
     # Short-circuit responses (GREETING/RESET) skip to synthesizer
     if state.metadata.get("short_circuit_response"):
         return "synthesizer"
 
-    if state.active_specialist:
-        # Route to local_expert node if that's the active specialist
-        if state.active_specialist == "local_expert":
-            return "local_expert"
+    has_destination = bool(state.trip_plan.destination)
+
+    # CRITICAL FIX: If specialists are queued BUT destination is missing,
+    # route to Architect FIRST to extract destination from user message.
+    # Specialists without destination produce generic/empty content.
+    # @see trace: "LOCAL_EXPERT Skipped - no destination set"
+    if state.active_specialist and not has_destination:
+        _debug_graph(
+            f"Specialists queued ({state.active_specialist}) but no destination - "
+            "routing to architect first for extraction"
+        )
+        return "architect"
+
+    # Explicit Niche Specialist (Diving, Skiing, etc.)
+    # Only route here if destination is already known
+    if state.active_specialist and state.active_specialist != "local_expert":
         return "specialist"
+
+    # Explicit LocalExpert request
+    # Only route here if destination is already known
+    if state.active_specialist == "local_expert":
+        return "local_expert"
+
+    # Default: Route to Architect for field extraction
+    # For "Rome to Dubai tomorrow", Architect extracts destination=Dubai, dates, etc.
+    # Then route_after_architect() will route to LocalExpert if needed
     return "architect"
 
 
@@ -385,16 +414,141 @@ def route_after_specialist(
     is_booking_intent = state.intent == "booking"
     is_generate_trigger = state.metadata.get("is_generate_trigger", False)
 
-    if is_booking_intent or is_generate_trigger:
-        _debug_graph("Specialist done, routing to logistics (booking intent)")
+    # AUTO-FETCH RULE: Route to logistics when we have enough data to search
+    # @see docs/ux_unified_architecture.md Section VI - "Dates = Search Trigger"
+    #
+    # CRITICAL FIX: Allow logistics routing when destination+dates exist (for hotels/activities)
+    # even without origin. Hotels don't need origin - only flights do.
+    # Previously this required origin, blocking hotel search.
+    has_dates = bool(state.trip_plan.start_date)
+    has_origin = bool(state.trip_plan.origin)
+    has_destination = bool(state.trip_plan.destination)
+
+    # Route to logistics if:
+    # 1. Booking intent (Build Plan button) AND have destination
+    # 2. Generate trigger AND have destination
+    # 3. Dates set AND destination set (can search hotels even without origin)
+    can_search = has_destination and (is_booking_intent or is_generate_trigger or has_dates)
+
+    if can_search:
+        if is_booking_intent:
+            reason = "booking intent"
+        elif has_dates:
+            reason = "dates+destination set (auto-fetch hotels/activities)"
+        else:
+            reason = "generate trigger"
+
+        # Log flight limitation if no origin
+        if not has_origin:
+            _debug_graph(
+                f"Specialist done, routing to logistics ({reason}) - "
+                "note: flights disabled, no origin"
+            )
+        else:
+            _debug_graph(f"Specialist done, routing to logistics ({reason})")
         return "logistics"
 
-    # General intent - skip tile fetching, but still go to architect for extraction
-    _debug_graph("Specialist done, skipping logistics, routing to architect (general intent)")
+    # Log skip reason for debugging
+    if has_dates and not has_destination:
+        _debug_graph("Specialist done, skipping logistics (no destination set)")
+
+    # General intent without dates - skip tile fetching, go to architect for extraction
+    _debug_graph("Specialist done, skipping logistics, routing to architect (no dates)")
     return "architect"
 
 
-def should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
+def route_after_architect(
+    state: GraphState,
+) -> Literal["specialist", "local_expert", "logistics", "guard", "synthesizer"]:
+    """
+    Route after architect completes.
+
+    SPECIALIST DISPATCH: If specialists were queued (from router) but deferred
+    because destination was missing, NOW dispatch them since architect extracted it.
+
+    LOCAL EXPERT RULE: If intent is general/planning, destination is set,
+    and local_expert hasn't run yet, route to LocalExpert for content generation.
+    This ensures the UI gets destination vibes, local tips, etc.
+    @see docs/plan_graph_analysis.md - "Local Expert Fallback"
+
+    AUTO-FETCH RULE: If dates are set but tiles are empty, route to logistics.
+    This ensures tile search happens automatically when user provides dates in chat.
+    @see docs/ux_unified_architecture.md Section VI - "Dates = Search Trigger"
+
+    Flow:
+    1. First pass: Architect extracts destination → Queued specialists (local_expert first)
+    2. Specialists generate content → Logistics (if dates) or Guard
+    3. OR: Architect extracts dates → Logistics → Architect (second pass) → Guard
+    """
+    from app.debug_utils import _debug_graph
+
+    has_destination = bool(state.trip_plan.destination)
+    has_origin = bool(state.trip_plan.origin)
+    has_dates = bool(state.trip_plan.start_date)
+    has_tiles = bool(state.tiles)
+    is_speculative = state.intent == "speculative"
+    local_expert_ran = state.metadata.get("local_expert_ran", False)  # Persistent flag
+    logistics_attempted = state.metadata.get("logistics_attempted", False)
+
+    # SPECIALIST DISPATCH: If specialists were queued but deferred (no destination),
+    # now route to them since architect has extracted the destination.
+    # @see route_after_router - defers specialists when destination is missing
+    if has_destination and state.active_specialist:
+        if state.active_specialist == "local_expert":
+            _debug_graph(
+                f"Architect done, dispatching deferred local_expert "
+                f"(destination={state.trip_plan.destination})"
+            )
+            return "local_expert"
+        else:
+            _debug_graph(
+                f"Architect done, dispatching deferred specialist={state.active_specialist} "
+                f"(destination={state.trip_plan.destination})"
+            )
+            return "specialist"
+
+    # LOCAL EXPERT RULE: Route to LocalExpert for general planning intent
+    # Conditions: destination extracted + no specialist ran yet + general intent
+    # This ensures "Rome to Dubai tomorrow" gets local content before logistics
+    is_general_intent = state.intent in ("general", "planning", None)
+    needs_local_expert = (
+        has_destination
+        and not local_expert_ran
+        and is_general_intent
+        and not state.active_specialist  # No niche specialist active
+    )
+
+    if needs_local_expert:
+        _debug_graph(
+            f"Architect done, routing to local_expert "
+            f"(destination={state.trip_plan.destination}, local_expert_ran={local_expert_ran})"
+        )
+        return "local_expert"
+
+    # Auto-fetch: dates set but no tiles yet, and not speculative intent
+    # CRITICAL FIX: Allow logistics routing with destination+dates (for hotels/activities)
+    # even without origin. Hotels don't need origin - only flights do.
+    # Only block if logistics has already been attempted (prevents infinite loop)
+    can_fetch_logistics = has_destination and not logistics_attempted
+    if has_dates and not has_tiles and not is_speculative and can_fetch_logistics:
+        if not has_origin:
+            _debug_graph(
+                "Architect done, routing to logistics "
+                "(dates+destination set, hotels only - no origin)"
+            )
+        else:
+            _debug_graph("Architect done, routing to logistics (dates set, no tiles yet)")
+        return "logistics"
+
+    # Skip logistics if no destination - can't search anything
+    if has_dates and not has_tiles and not has_destination:
+        _debug_graph("Architect done, skipping logistics (no destination set)")
+
+    # Fall through to existing guard logic
+    return _should_run_guard(state)
+
+
+def _should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
     """
     Determine if we should run constraint checking.
 
@@ -524,11 +678,16 @@ def create_optimized_graph() -> StateGraph:
     # Logistics sanitizes flight data, then Architect builds the plan
     workflow.add_edge("logistics", "architect")
 
-    # Architect → Guard or Synthesizer (conditional)
+    # Architect → LocalExpert, Logistics, Guard, or Synthesizer (conditional)
+    # LOCAL EXPERT: If destination extracted and general intent, route to local_expert
+    # AUTO-FETCH: If dates extracted but no tiles, route to logistics
     workflow.add_conditional_edges(
         "architect",
-        should_run_guard,
+        route_after_architect,
         {
+            "specialist": "specialist",  # For deferred specialists after destination extracted
+            "local_expert": "local_expert",  # For general intent after destination extracted
+            "logistics": "logistics",
             "guard": "guard",
             "synthesizer": "synthesizer",
         },
@@ -847,13 +1006,24 @@ def _flatten_tiles_to_id_map(tiles_by_category: Optional[Dict[str, Any]]) -> Dic
     return result
 
 
+def _sort_sections_anchor_first(sections: list) -> list:
+    """
+    Ensure local_expert/general is always at index 0 (anchor rule).
+
+    This fixes the ordering flip bug where filter+append pattern
+    reverses section order when local_expert runs twice.
+    """
+    anchor_types = {"local_expert", "general"}
+    anchors = [s for s in sections if s.get("specialist_type") in anchor_types]
+    others = [s for s in sections if s.get("specialist_type") not in anchor_types]
+    return anchors + others
+
+
 def _format_result(
     state: GraphState,
     original_session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Format result state for main.py response."""
-    from datetime import datetime
-
     from app.debug_utils import _debug_graph
     from app.planner.state import trip_plan_is_ready
 
@@ -945,13 +1115,17 @@ def _format_result(
     )
 
     # Check if we need to create/update a section for this specialist
-    # NOTE: "local_expert" creates its own section in local_expert.py - don't create here
-    # This prevents creating empty sections when local_expert returns early
-    # Also don't create "general" section if a specialist already ran (they have their own section)
+    # FIX: Check if section ALREADY EXISTS (not just type) - defensive against
+    # nodes that fail silently. This prevents silent failures when a node
+    # doesn't create its expected section.
+    # @see docs/plan_graph_analysis.md - Nodes should not fail silently
+    existing_types = [s.get("specialist_type") for s in strategy_sections]
+    specialist_already_has_section = specialist_type in existing_types
+
     needs_section = (
         flattened_tiles
-        and specialist_type != "local_expert"  # local_expert manages its own section
-        and specialist_type not in [s.get("specialist_type") for s in strategy_sections]
+        # Only skip if the section ALREADY EXISTS in strategy_sections
+        and not specialist_already_has_section
         and not (
             specialist_type == "general" and last_specialist
         )  # Don't create general if specialist ran
@@ -960,6 +1134,87 @@ def _format_result(
         f"_format_result: needs_section={needs_section} "
         f"(flattened_tiles={bool(flattened_tiles)})"
     )
+
+    # CRITICAL FIX: Enrich EXISTING specialist sections even when needs_section=False
+    # This ensures diving/hiking/skiing sections get hero_image, one_liner, principles
+    # even before tiles are fetched (e.g., user hasn't set origin yet)
+    # @see docs/ux_unified_architecture.md - Niche specialists need rich data for UI
+    strategy_sections = list(strategy_sections)  # Make a copy for mutation
+    plan = state.trip_plan
+    for section in strategy_sections:
+        section_type = section.get("specialist_type")
+        # Skip general/local_expert - they have their own logic
+        if section_type in ("general", "local_expert", None):
+            continue
+
+        # ENRICH: Add hero_image if missing
+        if not section.get("hero_image"):
+            # Try to get from content_added first
+            hero_img = None
+            for item in section.get("content_added", []):
+                if item.get("image_url"):
+                    hero_img = item["image_url"]
+                    break
+            # Fallback to curated placeholder
+            if not hero_img:
+                hero_img = get_hero_image(section_type, plan.destination)
+            section["hero_image"] = hero_img
+
+        # ENRICH: Add one_liner if missing
+        if not section.get("one_liner"):
+            constraint_count = len(section.get("constraints_applied", []))
+            if constraint_count > 0:
+                suffix = "s" if constraint_count > 1 else ""
+                section["one_liner"] = (
+                    f"{section_type.title()} mode active. "
+                    f"{constraint_count} safety constraint{suffix} applied."
+                )
+            else:
+                section["one_liner"] = (
+                    f"{section_type.title()} recommendations for "
+                    f"{plan.destination or 'your destination'}"
+                )
+            # Also set editorial_one_liner for niche specialists
+            section["editorial_one_liner"] = section["one_liner"]
+
+        # ENRICH: Add principles if missing or empty
+        if not section.get("principles"):
+            principles = []
+            # 1. Try from constraints
+            for c in section.get("constraints_applied", [])[:4]:
+                if c.get("reason"):
+                    principles.append(c["reason"])
+                else:
+                    rule_text = c.get("rule", "").replace("_", " ").title()
+                    principles.append(f"{rule_text} applied")
+            # 2. Fallback to domain defaults
+            if not principles:
+                domain_defaults = {
+                    "diving": [
+                        "24-hour no-fly buffer after dives",
+                        "Depth and time limits for safe diving",
+                        "Equipment and certification requirements",
+                    ],
+                    "hiking": [
+                        "Altitude acclimatization schedule",
+                        "Daily elevation gain limits",
+                        "Rest day planning",
+                    ],
+                    "skiing": [
+                        "Slope difficulty progression",
+                        "Weather window optimization",
+                        "Equipment rental coordination",
+                    ],
+                }
+                principles = domain_defaults.get(
+                    section_type,
+                    [
+                        f"{section_type.title()} safety protocols active",
+                        "Expert recommendations applied",
+                        "Optimized scheduling",
+                    ],
+                )
+            section["principles"] = principles
 
     if needs_section:
         # Build bullets from available data
@@ -1062,10 +1317,21 @@ def _format_result(
         must_dos = must_dos[:5]  # Limit to 5
 
         # Build one-liner based on specialist type
+        # General: Editorial "magazine" style, evocative
+        # Specialist: Technical, domain-focused
         if specialist_type == "general":
-            one_liner = (
-                f"Your trip to {plan.destination or 'your destination'} is ready to customize"
-            )
+            # Try to get editorial summary from Architect metadata (LLM-generated)
+            editorial_summary = state.metadata.get("editorial_summary")
+            if editorial_summary:
+                one_liner = editorial_summary
+            else:
+                # Fallback: Generate a more evocative one-liner than generic
+                if plan.origin and plan.destination:
+                    one_liner = f"A journey from {plan.origin} to {plan.destination} awaits"
+                elif plan.destination:
+                    one_liner = f"Your adventure to {plan.destination} is taking shape"
+                else:
+                    one_liner = "Your personalized trip is ready to customize"
         elif specialist_type == "local_expert":
             one_liner = f"Local logistics and tips for {plan.destination or 'your destination'}"
         else:
@@ -1074,18 +1340,153 @@ def _format_result(
                 f"{plan.destination or 'your destination'}"
             )
 
+        # Build principles based on specialist type
+        # General: Trip highlights (destinations, flights, hotels)
+        # Niche: Domain-specific strategy principles from constraints/content
+        principles = []
+        if specialist_type == "general":
+            if plan.origin and plan.destination:
+                principles.append(f"{plan.origin} → {plan.destination} adventure")
+            elif plan.destination:
+                principles.append(f"Exploring {plan.destination}")
+            if flights_count:
+                principles.append(f"{flights_count} flight options to compare")
+            if hotels_count:
+                principles.append(f"{hotels_count} accommodation choices")
+            if activities_count:
+                principles.append(f"{activities_count} activities to discover")
+            if plan.start_date and plan.end_date:
+                # Calculate trip duration
+                try:
+                    start = datetime.fromisoformat(plan.start_date)
+                    end = datetime.fromisoformat(plan.end_date)
+                    days = (end - start).days + 1
+                    principles.append(f"{days}-day itinerary")
+                except (ValueError, TypeError):
+                    pass
+            if not principles:
+                principles.append("Your personalized trip is taking shape")
+        elif specialist_type not in ("general", "local_expert"):
+            # NICHE SPECIALIST: Build principles from constraints + specialist output
+            # 1. Get principles from specialist metadata (LLM-generated)
+            specialist_output = state.metadata.get("specialist_output", {})
+            llm_principles = specialist_output.get("principles", [])
+            if llm_principles:
+                principles.extend(llm_principles[:5])
+
+            # 2. Fallback: Generate principles from constraints
+            if not principles and plan.constraints:
+                for c in plan.constraints[:4]:
+                    # Convert constraint to principle
+                    if c.reason:
+                        principles.append(c.reason)
+                    else:
+                        # Format the rule nicely
+                        rule_text = c.rule.replace("_", " ").title()
+                        principles.append(f"{rule_text} applied")
+
+            # 3. Fallback: Domain-specific defaults
+            if not principles:
+                domain_defaults = {
+                    "diving": [
+                        "24-hour no-fly buffer after dives",
+                        "Depth and time limits for safe diving",
+                        "Equipment and certification requirements",
+                    ],
+                    "hiking": [
+                        "Altitude acclimatization schedule",
+                        "Daily elevation gain limits",
+                        "Rest day planning",
+                    ],
+                    "skiing": [
+                        "Slope difficulty progression",
+                        "Weather window optimization",
+                        "Equipment rental coordination",
+                    ],
+                }
+                principles = domain_defaults.get(
+                    specialist_type,
+                    [
+                        f"{specialist_type.title()} safety protocols active",
+                        "Expert recommendations applied",
+                        "Optimized scheduling",
+                    ],
+                )
+
+        # Build vibe_trio for General and Local Expert (destination images)
+        # @see docs/ux_unified_architecture.md Section XII - Magazine Style
+        # Local Expert also needs images for the magazine layout
+        vibe_trio = []
+        if specialist_type in ("general", "local_expert"):
+            # 1. Try to get vibes from Architect metadata (LLM-generated)
+            extracted_vibes = state.metadata.get("trip_vibes", [])
+
+            # 2. If no LLM-generated vibes, create fallback vibes based on destination
+            if not extracted_vibes:
+                if plan.destination:
+                    destination_slug = plan.destination.lower().replace(" ", ",")
+                    extracted_vibes = [
+                        {"label": "City Highlights", "query": f"{destination_slug} landmark"},
+                        {"label": "Local Culture", "query": f"{destination_slug} culture"},
+                        {"label": "Hidden Gems", "query": f"{destination_slug} street scene"},
+                    ]
+                else:
+                    # No destination yet - use generic travel vibes
+                    extracted_vibes = [
+                        {"label": "Inspiration", "query": "travel inspiration"},
+                        {"label": "Adventure", "query": "adventure travel"},
+                        {"label": "Relaxation", "query": "luxury resort"},
+                    ]
+
+            # 3. Build vibe_trio with curated images (max 3)
+            for idx, vibe in enumerate(extracted_vibes[:3]):
+                label = vibe.get("label", "Vibe")
+                category = (
+                    "culture"
+                    if "culture" in label.lower()
+                    else "adventure" if "adventure" in label.lower() else "destination"
+                )
+                vibe_trio.append(
+                    {
+                        "label": label,
+                        "image_url": vibe.get("image_url")
+                        or get_hero_image(category, f"{plan.destination}-{label}-{idx}"),
+                    }
+                )
+
+        # Build hero_image for Niche Specialists (single focused action shot)
+        # @see docs/ux_unified_architecture.md Section XII - Activity Layout
+        hero_image = None
+        if specialist_type not in ("general", "local_expert"):
+            # 1. Try to get from content_added (first item with image)
+            for item in content_added:
+                if item.get("image_url"):
+                    hero_image = item["image_url"]
+                    break
+
+            # 2. Fallback: Use curated placeholder image
+            if not hero_image:
+                hero_image = get_hero_image(specialist_type, plan.destination)
+
         new_section = {
             "id": f"strategy_{specialist_type}",
             "title": (
                 f"{specialist_type.title()} Strategy"
                 if specialist_type != "general"
-                else "Trip Strategy"
+                else "Trip Overview"
             ),
             "subtitle": plan.destination,
             "specialist_type": specialist_type,
             "one_liner": one_liner,
+            # Magazine-style fields for General and Local Expert
+            "editorial_one_liner": (
+                one_liner if specialist_type in ("general", "local_expert") else None
+            ),
+            "vibe_trio": vibe_trio if specialist_type in ("general", "local_expert") else None,
+            # Niche specialist hero image (single focused action shot)
+            "hero_image": hero_image,
             "bullets": [],  # No longer show generic trip params
-            "principles": [],
+            "principles": principles,
             "must_dos": must_dos,  # Actual specialist recommendations
             "optional_upgrades": [],
             "logistics_notes": [],
@@ -1138,7 +1539,8 @@ def _format_result(
 
     # CRITICAL: Write accumulated sections back to state.metadata for persistence
     # This ensures sections are preserved across turns via session_state
-    state.metadata["strategy_sections"] = strategy_sections
+    # Apply anchor rule: local_expert/general always at index 0
+    state.metadata["strategy_sections"] = _sort_sections_anchor_first(strategy_sections)
     state.metadata["executed_strategy_topics"] = executed_topics
 
     # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
@@ -1146,11 +1548,18 @@ def _format_result(
     updated_session_state = _state_to_session_state(state)
 
     # DEBUG: Log what strategy_sections we're saving for next turn
-    saved_types = [s.get("specialist_type") for s in strategy_sections]
+    final_sections = state.metadata["strategy_sections"]
+    saved_types = [s.get("specialist_type") for s in final_sections]
     _debug_graph(
-        f"_format_result: Saving {len(strategy_sections)} "
+        f"_format_result: Saving {len(final_sections)} "
         f"strategy_sections to session_state, types={saved_types}"
     )
+    # Enhanced tracing: verify anchor rule was applied
+    if saved_types and saved_types[0] not in ("local_expert", "general"):
+        _debug_graph(
+            f"⚠️ WARNING: Anchor rule violation! First section is '{saved_types[0]}', "
+            f"expected 'local_expert' or 'general'"
+        )
 
     # Build document object matching PlanDocumentData type expected by frontend
     document = {

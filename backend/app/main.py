@@ -2545,18 +2545,9 @@ async def expand_itinerary_endpoint(
                 )
             )
 
-            # Extract executed topics from strategy sections
-            executed_topics = (
-                list(
-                    set(
-                        s.get("specialist_type") or "general"
-                        for s in strategy_sections_data
-                        if s.get("specialist_type")
-                    )
-                )
-                if strategy_sections_data
-                else (doc_data.executed_strategy_topics or [])
-            )
+            # NOTE: executed_topics was extracted here but is no longer used
+            # since we build itinerary directly instead of via planner graph.
+            # Kept as comment for reference if needed in future.
 
             tiles_count = len(req.tiles) if req.tiles else 0
             logger.debug(
@@ -2564,24 +2555,9 @@ async def expand_itinerary_endpoint(
                 f"trip_inputs={trip_inputs_data.get('destination')}, tiles={tiles_count}"
             )
 
-            # Build session state from document for planner
-            # CRITICAL: Include strategy_sections so the graph has specialist context
-            session_state = {
-                "trip_inputs": trip_inputs_data,
-                "branches": (
-                    [b.model_dump() for b in doc_data.branches] if doc_data.branches else []
-                ),
-                "metadata": {
-                    "strategy_stage": 3,  # Force Stage 3
-                    "strategy_sections": strategy_sections_data,
-                    "executed_strategy_topics": executed_topics,
-                    # Note: Frontend tiles are keyed by ID (e.g., "curated_...": {})
-                    # but GraphState.tiles expects category keys (e.g., "flights": [])
-                    # Don't pass incompatible frontend tiles to planner
-                    "tiles": {},
-                },
-                "today_iso": compute_today_iso(),
-            }
+            # NOTE: session_state used to be built here for planner graph
+            # but is no longer needed as we build itinerary directly.
+            # See CRITICAL comment below for context that was preserved.
 
             # Emit progress: processing
             event = ExpandItineraryStreamEvent(
@@ -2592,19 +2568,55 @@ async def expand_itinerary_endpoint(
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
-            # Run planner to generate itinerary
-            # Use a synthetic message to trigger itinerary generation
+            # Build itinerary using pure Python service (NOT LLM)
+            # This is faster and more predictable than run_turn()
+            from app.services.itinerary_builder import (
+                ItineraryBuilder,
+                ItineraryBuilderInput,
+            )
+
+            builder = ItineraryBuilder()
+            builder_input = ItineraryBuilderInput(
+                start_date=trip_inputs_data.get("start_date"),
+                end_date=trip_inputs_data.get("end_date"),
+                strategy_sections=strategy_sections_data,
+                tiles=req.tiles or {},
+                destination=trip_inputs_data.get("destination"),
+                origin=trip_inputs_data.get("origin"),
+            )
+
             try:
-                result = await asyncio.wait_for(
-                    run_turn("Generate the full day-by-day itinerary", session_state),
-                    timeout=60.0,
-                )
-            except asyncio.TimeoutError:
+                itinerary_result = builder.build(builder_input)
+            except Exception as e:
+                logger.exception(f"Itinerary builder failed: {e}")
                 event = ExpandItineraryStreamEvent(
-                    type="error", message="Itinerary generation timed out"
+                    type="error", message=f"Itinerary generation failed: {str(e)}"
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
                 return
+
+            # Handle conflicts - return error response with resolutions
+            if not itinerary_result.success:
+                if itinerary_result.conflicts:
+                    # Emit conflict response for frontend to handle
+                    conflict_data = {
+                        "error": "CONSTRAINT_CONFLICT",
+                        "conflicts": [c.model_dump() for c in itinerary_result.conflicts],
+                        "resolutions": [r.model_dump() for r in itinerary_result.resolutions],
+                    }
+                    event = ExpandItineraryStreamEvent(
+                        type="error",
+                        message=json.dumps(conflict_data),
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
+                else:
+                    event = ExpandItineraryStreamEvent(
+                        type="error",
+                        message=itinerary_result.error or "Itinerary generation failed",
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
 
             # Emit progress: finalizing
             event = ExpandItineraryStreamEvent(
@@ -2615,10 +2627,18 @@ async def expand_itinerary_endpoint(
             )
             yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
-            # Extract itinerary data from result
-            new_session_state = result.get("session_state", {})
-            metadata = new_session_state.get("metadata", {})
-            trip_inputs = new_session_state.get("trip_inputs", {})
+            # Build metadata from itinerary result
+            # CRITICAL: Include strategy_stage=3 so _compute_plan_view_state
+            # returns S3_ITINERARY_READY
+            metadata = {
+                "strategy_stage": 3,  # Force stage 3 for proper state computation
+                "day_cards": [dc.model_dump() for dc in itinerary_result.day_cards],
+                "itinerary_overview": (
+                    itinerary_result.overview.model_dump() if itinerary_result.overview else None
+                ),
+                "strategy_sections": strategy_sections_data,
+            }
+            trip_inputs = trip_inputs_data
 
             # Build envelope update
             plan_envelope = {}

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.placeholders import get_activity_image
 from app.planner.state import (
     GraphState,
     ItineraryBlock,
@@ -591,6 +592,10 @@ class VerticalSpecialist:
                 blocks = []
                 # Limit to available activity days
                 for i, activity in enumerate(activities[:max_activities]):
+                    # Use curated image if available, otherwise generate Unsplash fallback
+                    image_url = activity.get("image") or get_activity_image(
+                        self.topic, destination, activity["title"]
+                    )
                     blocks.append(
                         ItineraryBlock(
                             day=i + 2,  # Start from day 2 (day 1 is arrival)
@@ -600,7 +605,7 @@ class VerticalSpecialist:
                             source_specialist=self.topic,
                             skill_level=activity.get("skill_level"),
                             logic_hook=activity.get("logic_hook"),  # Pro tip for UI
-                            image_url=activity.get("image"),  # Curated image URL
+                            image_url=image_url,  # Curated or Unsplash fallback
                             coordinates=activity.get("coordinates"),  # [lng, lat] for Mapbox
                         )
                     )
@@ -1190,6 +1195,13 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             }
         )
 
+    # Determine hero_image: use first content image or generate fallback
+    hero_image = None
+    if content_added:
+        hero_image = content_added[0].get("image_url")
+    if not hero_image:
+        hero_image = get_activity_image(topic, state.trip_plan.destination or "", topic)
+
     section: Dict[str, Any] = {
         "id": f"specialist_{topic}",
         "title": f"{topic.title()} Specialist",
@@ -1201,6 +1213,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             {"rule": c.rule, "reason": c.reason, "type": c.type} for c in output.constraints
         ],
         "content_added": content_added,
+        "hero_image": hero_image,  # Hero banner for niche specialist layout
         "impact_areas": [topic.title(), "Safety", "Activities"],
         # Required fields for StrategySection
         "principles": [],

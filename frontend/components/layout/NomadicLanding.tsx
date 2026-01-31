@@ -146,7 +146,7 @@ export function NomadicLanding() {
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
 
   // View navigation - decoupled from plan_view_state
-  const { navigateTo, hasLeftSetup, finalizePlan } = useViewNavigation();
+  const { navigateTo, hasLeftSetup, finalizePlan, canViewPlan, activeView } = useViewNavigation();
 
   // Receipt state - shows "Updated: X, Y · Undo" after freeform extraction
   // Kept for future receipt UI implementation
@@ -537,7 +537,14 @@ export function NomadicLanding() {
     }
 
     // Before user clicks "Build Plan", stay in Setup mode
+    // CRITICAL FIX: Trust backend's S2_STRATEGY_READY when strategy content exists
+    // This fixes the "diving in Bali" case where specialist runs via chat without "Build Plan"
+    // @see docs/ux_unified_architecture.md - Strategy content should trigger Plan view
     if (!hasEverHadPlan && !userRequestedGeneration && !hasTilesReady) {
+      // If backend says S2_STRATEGY_READY AND we have strategy content, trust it
+      if (backendPlanViewState === 'S2_STRATEGY_READY' && hasStrategyContent) {
+        return 'S2_STRATEGY_READY';
+      }
       return 'S0_BOOTSTRAP';
     }
 
@@ -582,7 +589,7 @@ export function NomadicLanding() {
         switchToPlan(); // Mobile uses tab switching
       }
       // Desktop: Update activeView in store (drives GlassCommandBar)
-      setActiveView('plan');
+      setActiveView('planning');
     }
   }, [isDesktop, planViewState, switchToPlan, setActiveView]);
 
@@ -670,6 +677,22 @@ export function NomadicLanding() {
     (tripInputs.date_flex === true && tripInputs.trip_duration != null);
   const canGeneratePlan = hasDestination && hasDates;
   const hasPlan = hasBranchesReady;
+
+  // AUTO-TRANSITION: Switch to Plan when dates are set (SOFT GATE)
+  // @see docs/ux_unified_architecture.md Section VI - "Dates = Search Trigger"
+  // When user provides dates, auto-navigate to Plan view to show loading/results
+  useEffect(() => {
+    // Only auto-switch if:
+    // 1. Dates are set (hasDates = true)
+    // 2. Plan view is accessible (canViewPlan = true)
+    // 3. Currently in Setup view
+    if (hasDates && canViewPlan && activeView === 'setup') {
+      if (!isDesktop) {
+        switchToPlan(); // Mobile uses tab switching
+      }
+      setActiveView('planning');
+    }
+  }, [hasDates, canViewPlan, activeView, isDesktop, switchToPlan, setActiveView]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Itinerary Generation Flow

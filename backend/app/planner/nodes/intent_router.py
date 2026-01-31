@@ -710,12 +710,30 @@ async def intent_router(state: GraphState) -> GraphState:
 
     # Store all specialists in the pending queue (multi-specialist support)
     # Pop the first one to activate, rest stay in queue for sequential processing
+    #
+    # CRITICAL: Local Expert ALWAYS runs FIRST (Trip DNA anchor)
+    # Even when niche specialists (diving, hiking) are detected, we need Local Expert
+    # to generate the "Trip Overview" card with destination vibes and context.
+    # The niche specialist then ADDS their strategy on top, not replaces it.
+    # @see docs/ux_unified_architecture.md - "Local Expert Always First"
     if specialist_hints:
-        state.pending_specialists = specialist_hints[1:]  # Rest of the queue
-        first_specialist = specialist_hints[0]
+        # Prepend local_expert if not already in the queue
+        if "local_expert" not in specialist_hints:
+            all_specialists = ["local_expert"] + specialist_hints
+        else:
+            # Move local_expert to front if it's somewhere in the list
+            hints_without_local = [s for s in specialist_hints if s != "local_expert"]
+            all_specialists = ["local_expert"] + hints_without_local
+
+        state.pending_specialists = all_specialists[1:]  # Rest of the queue
+        first_specialist = all_specialists[0]  # Should be "local_expert"
         state.active_specialist = first_specialist
         state.active_agent_id = first_specialist
         state.ui_events.append("SPECIALIST_ACTIVE")
+
+        from app.debug_utils import log
+
+        log("ROUTER", f"Specialists queue: local_expert first, then {state.pending_specialists}")
     elif state.trip_plan.destination and state.intent == "booking":
         # FALLBACK: No niche specialist detected, but user triggered "Build Plan"
         # Activate Local Expert for city-specific logistics
