@@ -11,7 +11,9 @@
 
 import { Check, ExternalLink, Star } from 'lucide-react';
 import Image from 'next/image';
+import { useCallback, useState } from 'react';
 
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -98,12 +100,24 @@ export function BookableCard({
   onDetailsClick,
   className,
 }: BookableCardProps) {
+  const [imageError, setImageError] = useState(false);
+
   // Sort prices to show best first
   const sortedPrices = [...partnerPrices].sort((a, b) => a.price - b.price);
   const bestPrice = sortedPrices[0];
 
-  // Get image URL with fallback
-  const imageUrl = tile.image_url || '/assets/placeholder-tile.jpg';
+  // Get placeholder URL (deterministic based on tile)
+  const placeholderUrl = placeholderImageForTile(tile);
+
+  // Get image URL with fallback to Unsplash placeholder
+  const imageUrl = imageError
+    ? placeholderUrl
+    : (tile.image_url || placeholderUrl);
+
+  // Handle image load error
+  const handleImageError = useCallback(() => {
+    setImageError(true);
+  }, []);
 
   // Determine if hotel (show /night)
   const isHotel = tile.type === 'hotel' || tile.type === 'accommodation';
@@ -128,6 +142,7 @@ export function BookableCard({
           alt={tile.title}
           fill
           className="object-cover"
+          onError={handleImageError}
         />
         {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />

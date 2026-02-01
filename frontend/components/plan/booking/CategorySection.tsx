@@ -1,10 +1,38 @@
 'use client';
 
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { useState } from 'react';
+import { memo, useCallback, useState } from 'react';
 
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
+
+/**
+ * Tile thumbnail with fallback support.
+ * Shows placeholder when image_url is missing or fails to load.
+ */
+const TileThumbnail = memo(function TileThumbnail({ tile }: { tile: Tile }) {
+  const [hasError, setHasError] = useState(false);
+
+  const handleError = useCallback(() => {
+    setHasError(true);
+  }, []);
+
+  const imageSrc = hasError
+    ? placeholderImageForTile(tile)
+    : (tile.image_url || placeholderImageForTile(tile));
+
+  return (
+    <div className="flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden bg-muted">
+      <img
+        src={imageSrc}
+        alt={tile.title}
+        className="w-full h-full object-cover"
+        onError={handleError}
+      />
+    </div>
+  );
+});
 
 interface CategorySectionProps {
   /** Emoji for the category */
@@ -21,12 +49,30 @@ interface CategorySectionProps {
   onTileClick?: (tile: Tile) => void;
   /** Initially expanded state */
   defaultExpanded?: boolean;
+  /** Current mode - determines UI variant (hearts vs cart) */
+  mode?: 'planning' | 'booking';
 }
 
 /**
  * Traffic light status badge for booking status.
+ * Mode-aware: Planning shows preference status, Booking shows cart status.
  */
-function StatusBadge({ status }: { status: 'available' | 'hold' | 'booked' }) {
+function StatusBadge({ status, mode }: { status: 'available' | 'hold' | 'booked'; mode: 'planning' | 'booking' }) {
+  // Planning mode: Show preference status
+  if (mode === 'planning') {
+    if (status === 'hold') {
+      return (
+        <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-emerald-500">
+          <span className="text-sm">❤️</span>
+          Preferred
+        </div>
+      );
+    }
+    // Don't show badge for non-preferred items in planning mode
+    return null;
+  }
+
+  // Booking mode: Show cart status
   const config = {
     available: {
       dot: 'bg-gray-400',
@@ -34,8 +80,8 @@ function StatusBadge({ status }: { status: 'available' | 'hold' | 'booked' }) {
       label: 'Available',
     },
     hold: {
-      dot: 'bg-emerald-500',
-      text: 'text-emerald-500',
+      dot: 'bg-amber-500',
+      text: 'text-amber-500',
       label: 'In Cart',
     },
     booked: {
@@ -69,6 +115,7 @@ export function CategorySection({
   onSaveTile,
   onTileClick,
   defaultExpanded = true,
+  mode = 'booking',
 }: CategorySectionProps) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
 
@@ -110,23 +157,15 @@ export function CategorySection({
                 className="relative group rounded-xl border bg-background p-4 hover:border-primary/50 hover:shadow-md transition-all cursor-pointer"
                 onClick={() => onTileClick?.(tile)}
               >
-                {/* Status badge */}
+                {/* Status badge - mode-aware */}
                 <div className="absolute top-3 right-3 z-10">
-                  <StatusBadge status={status} />
+                  <StatusBadge status={status} mode={mode} />
                 </div>
 
                 {/* Tile content */}
                 <div className="flex gap-4">
-                  {/* Thumbnail */}
-                  {tile.image_url && (
-                    <div className="flex-shrink-0 w-20 h-20 rounded-lg overflow-hidden bg-muted">
-                      <img
-                        src={tile.image_url}
-                        alt={tile.title}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  )}
+                  {/* Thumbnail with fallback */}
+                  <TileThumbnail tile={tile} />
 
                   {/* Details */}
                   <div className="flex-1 min-w-0">
@@ -162,7 +201,7 @@ export function CategorySection({
                   </div>
                 </div>
 
-                {/* Save button */}
+                {/* Action button - mode-aware */}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -176,7 +215,9 @@ export function CategorySection({
                       : 'bg-muted hover:bg-muted/80 text-foreground'
                   )}
                 >
-                  {isSaved ? 'Remove from Trip' : 'Add to Trip'}
+                  {mode === 'planning'
+                    ? (isSaved ? 'Preferred ❤️' : 'Add to Trip ♡')
+                    : (isSaved ? 'Remove from Cart' : 'Add to Cart')}
                 </button>
               </div>
             );

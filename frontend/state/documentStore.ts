@@ -149,6 +149,11 @@ type DocumentState = {
   isPlanFinalized: boolean;
   setFinalized: (finalized: boolean) => void;
 
+  // Heart preference system (PLANNING mode - preference signals for AI weighting)
+  preferredTileIds: Set<string>;
+  toggleTilePreference: (tileId: string) => void;
+  clearPreferences: () => void;
+
   // Cart state (for BOOKING mode)
   cartTileIds: Set<string>;
   addToCart: (tileId: string) => void;
@@ -214,6 +219,9 @@ type DocumentState = {
   reset: () => void;
 };
 
+// NOTE: Heart preferences are now persisted to DB via PATCH /api/document
+// SessionStorage is no longer used - preferences are hydrated from API response
+
 const initialState = {
   version: 0,
   updatedBy: null as UpdatedBy | null,
@@ -231,6 +239,8 @@ const initialState = {
   activeView: 'planning' as const,
   // Plan finalization
   isPlanFinalized: false,
+  // Heart preference system
+  preferredTileIds: new Set<string>(),
   // Cart state
   cartTileIds: new Set<string>(),
 };
@@ -599,23 +609,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   fetchDocument: async () => {
+    console.log('[documentStore.fetchDocument] 🚀 Starting fetch...');
     set({ isLoading: true, error: null });
     try {
       const res = await apiFetch('/api/document');
+      console.log('[documentStore.fetchDocument] 📡 Response status:', res.status);
+
+      // Handle 204 No Content FIRST (before trying to parse JSON)
+      // 204 is a success status (res.ok=true) but has no body
+      if (res.status === 204) {
+        console.log('[documentStore.fetchDocument] ⚠️ No document (204 No Content)');
+        set({ isLoading: false, document: null });
+        return null;
+      }
+
       if (!res.ok) {
-        if (res.status === 204 || res.status === 404) {
-          // 204: No document yet (expected for new sessions)
-          // 404: Legacy handling
+        if (res.status === 404) {
+          // 404: Legacy handling for no document
+          console.log('[documentStore.fetchDocument] ⚠️ No document (404)');
           set({ isLoading: false, document: null });
           return null;
         }
         throw new Error(`${res.status}`);
       }
       const response: PlanDocumentResponse = await res.json();
-      // DEBUG: Log tiles from fetchDocument
-      console.log('[documentStore.fetchDocument] Response tiles:', {
+      // DEBUG: Log document details
+      console.log('[documentStore.fetchDocument] Response:', {
         tilesCount: Object.keys(response.document.tiles ?? {}).length,
-        tilesKeys: Object.keys(response.document.tiles ?? {}),
+        preferredTileIds: response.document.preferred_tile_ids,
+        branchesCount: response.document.branches?.length ?? 0,
       });
       set({
         version: response.version,
@@ -629,9 +651,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           response.document.branches.find((b) => b.is_primary)?.id ||
           response.document.branches[0]?.id ||
           null,
+        // Hydrate preferences from DB (replaces sessionStorage)
+        preferredTileIds: new Set(response.document.preferred_tile_ids ?? []),
       });
       return response.document;
     } catch (err) {
+      console.error('[documentStore.fetchDocument] ❌ Error:', err);
       const message = err instanceof Error ? err.message : 'Failed to fetch document';
       set({ isLoading: false, error: message });
       return null;
@@ -799,6 +824,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       }
     }
 
+    // Hydrate preferences from response (keep existing if not in response)
+    const currentPreferences = get().preferredTileIds;
+    const responsePreferences = response.document.preferred_tile_ids;
+    const mergedPreferences = responsePreferences && responsePreferences.length > 0
+      ? new Set(responsePreferences)
+      : currentPreferences;
+
     set({
       version: response.version,
       updatedBy: response.updated_by,
@@ -813,6 +845,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         response.document.branches[0]?.id ||
         null,
       llmUpdatedFields: newLLMUpdatedFields,
+      preferredTileIds: mergedPreferences,
     });
   },
 
@@ -821,10 +854,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!currentDoc) return;
 
     // DEBUG: Log what's in the envelope
-    console.log('[documentStore.mergeEnvelope] Received envelope:', {
+    console.log('[documentStore.mergeEnvelope] 📥 Received envelope:', {
       hasTiles: envelope.tiles !== undefined,
-      tilesKeys: envelope.tiles ? Object.keys(envelope.tiles) : [],
       tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
+      hasDayCards: envelope.day_cards !== undefined,
+      dayCardsCount: envelope.day_cards?.length ?? 0,
       plan_view_state: envelope.plan_view_state,
       envelopeKeys: Object.keys(envelope),
     });
@@ -844,13 +878,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...(envelope.can_expand_to_itinerary !== undefined && { can_expand_to_itinerary: envelope.can_expand_to_itinerary }),
       // Generation state
       ...(envelope.generation !== undefined && { generation: envelope.generation }),
-      // Tiles (if included in envelope)
-      ...(envelope.tiles !== undefined && { tiles: envelope.tiles }),
+      // Tiles: Only update if envelope has non-empty tiles
+      // This prevents intermediate SSE states from wiping cached tiles during regeneration
+      ...(envelope.tiles !== undefined &&
+        Object.keys(envelope.tiles).length > 0 && { tiles: envelope.tiles }),
     };
 
-    // DEBUG: Log what ended up in document.tiles after merge
-    console.log('[documentStore.mergeEnvelope] After merge - document.tiles:', {
-      tilesKeys: Object.keys(updatedDoc.tiles ?? {}),
+    // DEBUG: Log tile merge behavior
+    const envelopeTileCount = envelope.tiles ? Object.keys(envelope.tiles).length : 0;
+    const preservedTiles = envelope.tiles !== undefined && envelopeTileCount === 0;
+    console.log('[documentStore.mergeEnvelope] Tiles:', {
+      envelopeTileCount,
+      preservedTiles,
+      finalCount: Object.keys(updatedDoc.tiles ?? {}).length,
+    });
+
+    // DEBUG: Log final document state after merge
+    console.log('[documentStore.mergeEnvelope] 📤 Updated document:', {
+      plan_view_state: updatedDoc.plan_view_state,
+      dayCardsCount: updatedDoc.day_cards?.length ?? 0,
       tilesCount: Object.keys(updatedDoc.tiles ?? {}).length,
     });
 
@@ -970,6 +1016,55 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ isPlanFinalized: finalized });
   },
 
+  // Heart preference actions (PLANNING mode - preference signals for AI weighting)
+  // Persisted to DB via PATCH /api/document, hydrated from API response
+  toggleTilePreference: (tileId: string) => {
+    const { preferredTileIds, version } = get();
+    const newSet = new Set(preferredTileIds);
+    if (newSet.has(tileId)) {
+      newSet.delete(tileId);
+    } else {
+      newSet.add(tileId);
+    }
+    // Optimistic update
+    set({ preferredTileIds: newSet });
+
+    // Sync to backend (fire-and-forget, preferences are not critical path)
+    const patch = {
+      version,
+      preferred_tile_ids: Array.from(newSet),
+    };
+    console.log('[documentStore] 💜 PATCH preferences:', patch);
+    apiFetch('/api/document', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    })
+      .then((res) => {
+        console.log('[documentStore] 💜 PATCH response:', res.status);
+      })
+      .catch((err) => {
+        console.warn('[documentStore] Failed to sync preferences:', err);
+        // Don't revert - preferences will sync on next successful PATCH
+      });
+  },
+
+  clearPreferences: () => {
+    const { version } = get();
+    set({ preferredTileIds: new Set() });
+
+    // Sync to backend
+    const patch = {
+      version,
+      preferred_tile_ids: [],
+    };
+    apiFetch('/api/document', {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }).catch((err) => {
+      console.warn('[documentStore] Failed to clear preferences:', err);
+    });
+  },
+
   // Cart actions (for BOOKING mode)
   addToCart: (tileId: string) => {
     const { cartTileIds } = get();
@@ -997,7 +1092,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (abortController) {
       abortController.abort();
     }
-    set({ ...initialState, llmUpdatedFields: new Set(), activeView: 'planning', isPlanFinalized: false, cartTileIds: new Set() });
+    // Preferences are cleared via clearPreferences() which syncs to backend
+    set({
+      ...initialState,
+      llmUpdatedFields: new Set(),
+      activeView: 'planning',
+      isPlanFinalized: false,
+      preferredTileIds: new Set(),
+      cartTileIds: new Set(),
+    });
   },
 }));
 
@@ -1063,3 +1166,38 @@ export const useCartActions = () =>
     removeFromCart: state.removeFromCart,
     clearCart: state.clearCart,
   }));
+
+// =============================================================================
+// Heart Preference System (PLANNING mode - preference signals for AI weighting)
+// =============================================================================
+
+/**
+ * Subscribe to preferred tile IDs only. Re-renders only when preferences change.
+ */
+export const usePreferredTileIds = () =>
+  useDocumentStore((state) => state.preferredTileIds);
+
+/**
+ * Check if a specific tile is preferred. Avoids subscribing to the whole Set.
+ */
+export const useTilePreference = (tileId: string) =>
+  useDocumentStore((state) => state.preferredTileIds.has(tileId));
+
+/**
+ * Get preference actions. Used for toggling/clearing preferences.
+ */
+export const usePreferenceActions = () =>
+  useDocumentStore((state) => ({
+    toggleTilePreference: state.toggleTilePreference,
+    clearPreferences: state.clearPreferences,
+  }));
+
+/**
+ * Hydrate preferences from API response (not sessionStorage).
+ * This is now called automatically by fetchDocument and setFromPlanResponse.
+ * Kept for backward compatibility but does nothing - preferences come from DB.
+ */
+export const hydratePreferences = () => {
+  // No-op: Preferences are hydrated from API response in fetchDocument/setFromPlanResponse
+  // See preferred_tile_ids in PlanDocumentData
+};

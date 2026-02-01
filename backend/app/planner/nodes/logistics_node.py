@@ -4,9 +4,16 @@ Logistics Node - Fetches tiles (flights, hotels, activities) from providers.
 Placed AFTER Specialist nodes (reads constraints) and BEFORE Architect.
 This is the "Fetch & Polish" pattern for demo-ready data.
 
+Provider routing strategy (consistent with tile_service):
+1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
+2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
+3. Fallback → MockProviders
+
+@see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
+
 Key responsibilities:
-1. Fetch flights from Amadeus API (requires origin)
-2. Fetch hotels/activities from mock providers (only needs destination)
+1. Fetch hotels/activities from providers (curated → amadeus → mock)
+2. Fetch flights from curated data or mock (amadeus flights disabled)
 3. Sanitize garbage test carriers (XX -> Emirates)
 4. Apply 24h no-fly safety logic for diving trips
 5. Store results in state.tiles for frontend display
@@ -19,9 +26,10 @@ from typing import Any, Dict, List
 from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
 from app.debug_utils import _debug_graph, _debug_graph_node_end, _debug_graph_node_start, log
 from app.planner.state.schemas import GraphState
+from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
 from app.tile_service.models import SearchContext
-from app.tools.amadeus_client import AmadeusClient, city_to_airport_code
+from app.tools.amadeus_client import city_to_airport_code
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +99,9 @@ async def logistics_node(state: GraphState) -> GraphState:
         f"date={plan.end_date or plan.start_date}"
     )
 
-    # 1. CHECK FOR CURATED FLIGHTS (hero destinations)
+    # Flight provider routing (consistent with hotels/activities):
+    # 1. Curated destinations → curated flights
+    # 2. Non-curated destinations → mock flights
     raw_flights = []
     flight_source = "unknown"
     dest_key = plan.destination.lower().strip()
@@ -99,7 +109,7 @@ async def logistics_node(state: GraphState) -> GraphState:
     curated_flights = curated_manifest.get("curated_flights")
 
     if curated_flights:
-        # Use curated flights for demo destinations (Dubai, Rome, Chamonix)
+        # Use curated flights for hero destinations (Dubai, Rome, Chamonix)
         log(
             "LOGISTICS",
             f"Using curated flights for {plan.destination}",
@@ -109,38 +119,11 @@ async def logistics_node(state: GraphState) -> GraphState:
         flight_source = "curated"
         _debug_graph(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
     else:
-        # 2. FETCH from Amadeus for non-curated destinations
-        client = AmadeusClient()
-
-        if client.is_configured():
-            _debug_graph("Amadeus client configured, calling API...")
-            try:
-                # Use return date for the flight search (end of trip)
-                departure_date = plan.end_date or plan.start_date
-                offers = await client.search_flights(
-                    origin=origin_code,
-                    destination=dest_code,
-                    departure_date=departure_date,
-                    adults=plan.adults or 1,
-                    max_results=5,
-                )
-                # Convert FlightOffer objects to Amadeus-like dicts for processing
-                raw_flights = [_offer_to_dict(o) for o in offers]
-                flight_source = "amadeus"
-                _debug_graph(f"Amadeus returned {len(raw_flights)} flight offers")
-            except Exception as e:
-                log("LOGISTICS", f"Amadeus API failed: {e}", data="using fallback")
-                logger.warning(f"[Logistics] Amadeus API failed: {e}")
-                raw_flights = []
-        else:
-            _debug_graph("Amadeus client not configured, skipping API call")
-
-    # 3. Fallback: If nothing found, use Demo Backup
-    if not raw_flights:
-        log("LOGISTICS", "Using DEMO BACKUP flight data", data="no curated or API data")
-        raw_flights = _get_demo_backup_flights(plan.end_date or plan.start_date)
-        flight_source = "demo_backup"
-        _debug_graph(f"Demo backup provided {len(raw_flights)} flights")
+        # Use mock flights for non-curated destinations
+        log("LOGISTICS", f"Using mock flights for {plan.destination}")
+        raw_flights = _get_mock_flights(plan.end_date or plan.start_date)
+        flight_source = "mock"
+        _debug_graph(f"Mock provider returned {len(raw_flights)} flights")
 
     # 2. DETECT CONSTRAINTS
     # Check if diving specialist added a "no fly" or "24h" rule
@@ -257,9 +240,41 @@ async def logistics_node(state: GraphState) -> GraphState:
 # =============================================================================
 
 
+def _tile_to_dict(tile) -> Dict[str, Any]:
+    """Convert a Tile object to a dict for state storage."""
+    return {
+        "id": tile.id,
+        "type": tile.type,
+        "partner": tile.partner,
+        "partner_product_id": tile.partner_product_id,
+        "title": tile.title,
+        "subtitle": tile.subtitle,
+        "image_url": tile.image_url,
+        "price_estimate": tile.price_estimate,
+        "currency": tile.currency,
+        "price_basis": tile.price_basis,
+        "is_estimate_only": tile.is_estimate_only,
+        "deeplink_url": tile.deeplink_url,
+        "rating": tile.rating,
+        "location_label": tile.location_label,
+        "tags": tile.tags,
+        "availability_status": tile.availability_status,
+        "meta": tile.meta,
+        "source": tile.source,
+        "source_agent": tile.source_agent or "logistics_node",
+    }
+
+
 async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     """
-    Search for hotels and activities using mock providers.
+    Search for hotels and activities.
+
+    Provider routing strategy (consistent with tile_service):
+    1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
+    2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
+    3. Fallback → MockProviders
+
+    @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
 
     CRITICAL: This runs independently of flight search.
     Hotels/Activities only need destination + dates, not origin.
@@ -279,71 +294,70 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
         max_results_per_vertical=5,
     )
 
-    # Search hotels
-    hotel_provider = MockHotelProvider()
-    hotel_tiles = hotel_provider.search(ctx)
+    # Check for curated destination (hero destinations for demo)
+    dest_key = plan.destination.lower().strip() if plan.destination else ""
+    curated_manifest = DEMO_MANIFEST.get(dest_key, {})
 
-    # Convert Tile objects to dicts for state storage
-    hotel_dicts = []
-    for tile in hotel_tiles:
-        hotel_dicts.append(
-            {
-                "id": tile.id,
-                "type": "hotel",
-                "partner": tile.partner,
-                "partner_product_id": tile.partner_product_id,
-                "title": tile.title,
-                "subtitle": tile.subtitle,
-                "image_url": tile.image_url,
-                "price_estimate": tile.price_estimate,
-                "currency": tile.currency,
-                "price_basis": tile.price_basis,
-                "is_estimate_only": tile.is_estimate_only,
-                "deeplink_url": tile.deeplink_url,
-                "rating": tile.rating,
-                "location_label": tile.location_label,
-                "tags": tile.tags,
-                "availability_status": tile.availability_status,
-                "meta": tile.meta,
-                "source": tile.source,
-                "source_agent": "logistics_node",
-            }
+    hotel_tiles = []
+    activity_tiles = []
+
+    if curated_manifest:
+        # Use CuratedProvider for hero destinations
+        log(
+            "LOGISTICS",
+            f"Using CuratedProvider for {plan.destination}",
+            data="curated destination",
         )
+        _debug_graph(f"Curated destination detected: {dest_key}")
+
+        curated_provider = CuratedProvider(dest_key)
+        all_tiles = curated_provider.search(ctx)
+
+        # Separate by type
+        for tile in all_tiles:
+            if tile.type == "hotel":
+                hotel_tiles.append(tile)
+            elif tile.type == "activity":
+                activity_tiles.append(tile)
+    else:
+        # 2. AMADEUS SECOND - Real hotel names with placeholder images
+        from app.config import settings
+
+        if settings.use_amadeus_provider:
+            log(
+                "LOGISTICS",
+                f"Using Amadeus for hotels in {plan.destination}",
+                data="real hotel names",
+            )
+            _debug_graph("Non-curated destination, using AmadeusHotelProvider")
+
+            from app.tile_service.amadeus_provider import AmadeusHotelProvider
+
+            hotel_provider = AmadeusHotelProvider()
+            hotel_tiles = hotel_provider.search(ctx)
+        else:
+            # 3. MOCK FALLBACK - Development/offline mode
+            log(
+                "LOGISTICS",
+                f"Using MockProviders for {plan.destination}",
+                data="amadeus disabled",
+            )
+            _debug_graph("Amadeus disabled, using MockHotelProvider")
+
+            hotel_provider = MockHotelProvider()
+            hotel_tiles = hotel_provider.search(ctx)
+
+        # Activities always use Mock (no Amadeus activities API)
+        activity_provider = MockActivityProvider()
+        activity_tiles = activity_provider.search(ctx)
+
+    # Convert to dicts for state storage
+    hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
+    activity_dicts = [_tile_to_dict(tile) for tile in activity_tiles]
 
     state.tiles["hotels"] = hotel_dicts
     log("LOGISTICS", f"Found {len(hotel_dicts)} hotels for {plan.destination}")
     _debug_graph(f"Hotels found: {len(hotel_dicts)}")
-
-    # Search activities
-    activity_provider = MockActivityProvider()
-    activity_tiles = activity_provider.search(ctx)
-
-    # Convert Tile objects to dicts
-    activity_dicts = []
-    for tile in activity_tiles:
-        activity_dicts.append(
-            {
-                "id": tile.id,
-                "type": "activity",
-                "partner": tile.partner,
-                "partner_product_id": tile.partner_product_id,
-                "title": tile.title,
-                "subtitle": tile.subtitle,
-                "image_url": tile.image_url,
-                "price_estimate": tile.price_estimate,
-                "currency": tile.currency,
-                "price_basis": tile.price_basis,
-                "is_estimate_only": tile.is_estimate_only,
-                "deeplink_url": tile.deeplink_url,
-                "rating": tile.rating,
-                "location_label": tile.location_label,
-                "tags": tile.tags,
-                "availability_status": tile.availability_status,
-                "meta": tile.meta,
-                "source": tile.source,
-                "source_agent": "logistics_node",
-            }
-        )
 
     state.tiles["activities"] = activity_dicts
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
@@ -469,10 +483,11 @@ def _curated_to_amadeus_format(curated_flights: List[Dict], date_str: str) -> Li
     return result
 
 
-def _get_demo_backup_flights(date_str: str) -> List[Dict]:
+def _get_mock_flights(date_str: str) -> List[Dict]:
     """
-    Guaranteed data if API fails.
-    Includes one UNSAFE option (08:00) and two SAFE options (18:00, 21:30).
+    Mock flight data for non-curated destinations.
+    Includes one UNSAFE option (08:00) and two SAFE options (18:00, 21:30)
+    to demonstrate the 24h no-fly diving safety logic.
     """
     # Use provided date or default
     try:

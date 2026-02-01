@@ -25,7 +25,7 @@
 
 ## Architecture Overview
 
-LangGraph-based conversational trip planning system with **7 nodes**.
+LangGraph-based conversational trip planning system with **8 nodes**.
 
 | Category              | Count | Description                             |
 | --------------------- | ----- | --------------------------------------- |
@@ -33,7 +33,8 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 | Domain Specialists    | 1     | LocalExpert (city logistics and tips) |
 | Data Fetchers         | 1     | LogisticsNode (flight fetching + safety logic) |
 | Deterministic Nodes   | 1     | ConstraintGuard (pure Python validation) |
-| **Total Nodes**       | **7** | Core graph nodes                        |
+| Itinerary Builders    | 1     | ItineraryBuilder (pure Python scheduling) |
+| **Total Nodes**       | **8** | Core graph + itinerary synthesis        |
 
 ### Design Principles
 
@@ -46,6 +47,7 @@ LangGraph-based conversational trip planning system with **7 nodes**.
 7. **Constraint Injector Pattern** - Specialist runs BEFORE Architect calls tools
 8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
 9. **Auto-Fix Loop** - ConstraintGuard can loop back to Architect once to self-correct
+10. **Itinerary Synthesis** - ItineraryBuilder is pure Python (no LLM) for deterministic scheduling
 
 ---
 
@@ -133,14 +135,14 @@ backend/app/planner/
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  LogisticsNode (Data Fetcher - No LLM)                                      │
 │  ─────────────────────────────────────                                      │
-│  Fetches and sanitizes flight data                                          │
-│  1. Check for curated flights (hero destinations: Dubai, Rome, Chamonix)    │
-│  2. Fetch from Amadeus API if not curated                                   │
-│  3. Fallback to demo backup if API fails                                    │
-│  4. Sanitize carrier names (XX → Emirates)                                  │
-│  5. Apply 24h no-fly safety logic if diving constraints exist               │
+│  Fetches and sanitizes tile data (flights, hotels, activities)              │
+│  1. Check for curated destination (Dubai, Rome, Chamonix)                   │
+│     → CuratedProvider for hotels/activities                                 │
+│  2. Fallback to MockProviders for non-curated destinations                  │
+│  3. Curated/Demo flights with carrier sanitization (XX → Emirates)          │
+│  4. Apply 24h no-fly safety logic if diving constraints exist               │
 │                                                                             │
-│  Outputs to: state.tiles["flights"], state.metadata["flight_options"]       │
+│  Outputs to: state.tiles["flights"], ["hotels"], ["activities"]             │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
                                    ▼
@@ -195,6 +197,27 @@ backend/app/planner/
                               │   END   │
                               └─────────┘
 ```
+
+### Frontend Trigger Points
+
+The frontend triggers itinerary generation via the "Build Itinerary" CTA when:
+1. Destination is set
+2. Dates are provided
+3. (Optional) User has hearted preferred tiles
+
+**API Call:** `POST /api/expand-itinerary` with:
+```json
+{
+  "preferences": {
+    "preferred_hotel_ids": ["tile_id_1", "tile_id_2"],
+    "preferred_activity_ids": ["tile_id_3"]
+  }
+}
+```
+
+The `ItineraryBuilder` applies a 1.5x score multiplier to preferred tiles when
+selecting accommodations. Attribution is tracked via `preference_status` field
+on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 
 ---
 
@@ -366,12 +389,16 @@ Control flow fields (e.g., IntentRouter's `intent`) remain strict `Literal` type
 
 ### LogisticsNode (NEW)
 
-Centralized flight fetching with safety logic. Runs AFTER Specialist/LocalExpert, BEFORE Architect.
+Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, BEFORE Architect.
 
-**Data Sources (Priority Order):**
-1. **Curated Flights**: Hero destinations (Dubai, Rome, Chamonix) with hand-picked carriers
-2. **Amadeus API**: Live flight search for non-curated destinations
-3. **Demo Backup**: Guaranteed fallback data if API fails
+**Provider Routing Strategy (Consistent with TileService):**
+
+| Destination Type | Hotels | Activities | Flights |
+|------------------|--------|------------|---------|
+| Curated (Dubai, Rome, Chamonix) | CuratedProvider | CuratedProvider | Curated + Demo Backup |
+| Non-Curated | MockProvider | MockProvider | Demo Backup |
+
+> **Note:** Amadeus providers are disabled for now to ensure consistent behavior between first request and regeneration flows.
 
 **Safety Logic (Diving Integration):**
 - Detects diving constraints from VerticalSpecialist
@@ -384,6 +411,8 @@ Centralized flight fetching with safety logic. Runs AFTER Specialist/LocalExpert
 
 **Output:**
 - `state.tiles["flights"]` - Flight tiles for frontend display
+- `state.tiles["hotels"]` - Hotel tiles for frontend display
+- `state.tiles["activities"]` - Activity tiles for frontend display
 - `state.metadata["flight_options"]` - Backwards compatibility
 
 ### ConstraintGuard
@@ -460,11 +489,49 @@ async for event in graph.astream_events(state, version="v2"):
 
 ---
 
+### ItineraryBuilder (Pure Python - No LLM)
+
+Transforms specialist content + tiles into day-by-day timeline.
+
+**Location:** `backend/app/services/itinerary_builder.py`
+
+**Why No LLM:** Deterministic scheduling is faster and more predictable than LLM-based generation. The specialists provide the "what", the builder provides the "when".
+
+**Algorithm (5 phases):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  ItineraryBuilder (Pure Python - No LLM)                        │
+│  Transforms specialist content + tiles into day-by-day timeline  │
+│                                                                  │
+│  Algorithm (5 phases):                                           │
+│  1. Temporal Scaffolding - Create DayCard[] from dates           │
+│  2. Anchor Placement - Arrival/departure from flight tiles       │
+│  3. Buffer Injection - Safety blocks (no-fly, acclimatization)   │
+│  4. Activity Distribution - Round-robin interleaving by day      │
+│  5. Tile Matching - Hotels span all days, preferences weighted   │
+│                                                                  │
+│  Routing: Logistics → ItineraryBuilder → Guard → Synthesizer    │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Preference Weighting:**
+- User heart preferences passed via `PreferenceOverrideInput`
+- Preferred hotels get 1.5x score multiplier
+- Preference attribution badges: "user_preferred", "ai_selected", "ai_override"
+
+**Conflict Detection:**
+- Temporal capacity (>11h activities per day)
+- Constraint clash (diving + high-altitude hiking same day)
+- Insufficient days for planned activities
+
+---
+
 ## State Models
 
 ### GraphState
 
-Unified state for the 7-node architecture.
+Unified state for the 8-node architecture.
 
 ```python
 class GraphState(BaseModel):
@@ -1083,6 +1150,43 @@ When activities exceed 11 hours, the builder:
 
 **Trigger:** `/api/expand-itinerary` endpoint
 
+### Debugging the Itinerary Flow
+
+**Enable debug logs:** Set `DEBUG=full` in `backend/.env`. Logs use `_debug()` from `app.debug_utils` which only outputs when DEBUG=full.
+
+```bash
+# backend/.env
+DEBUG=full
+```
+
+When debugging S2 → S3 transitions, trace these logs in terminal:
+
+```
+[DEBUG] ✅ [expand-itinerary] Session & doc found        # Generator started
+[DEBUG] 📊 [expand-itinerary] Input data: sections=2    # Frontend sent data
+[DEBUG] 🔥 [expand-itinerary] BUILDER CALLED             # About to call builder
+[DEBUG] [ItineraryBuilder] 🏗️ Starting build            # Builder received input
+[DEBUG] [ItineraryBuilder] Extracted: activities=3      # Content parsed
+[DEBUG] [ItineraryBuilder] ✅ Success: 8 day cards       # Build completed
+[DEBUG] 📤 [expand-itinerary] Emitting envelope          # Sending to frontend
+```
+
+**Early Return Detection:**
+- If 🔥 log is missing, check for `❌ [expand-itinerary]` logs indicating:
+  - Missing end_date
+  - Trip too short (< 2 days)
+  - Session/document not found
+
+**Common Issues:**
+
+| Symptom | Log to Check | Fix |
+|---------|--------------|-----|
+| No backend logs at all | `DEBUG` env var | Set `DEBUG=full` in backend/.env |
+| No backend logs | Session/doc check | Verify session cookie |
+| `sections=0` | Frontend payload | Check Network tab for empty `strategy_sections` |
+| `activities=0` | Content extraction | Verify `content_added` in strategy_sections |
+| Build succeeds but UI unchanged | Browser console | Check `mergeEnvelope` logs + Zustand selector (see ux_unified_architecture.md) |
+
 ### Conflict Resolution Response
 
 When conflicts cannot be automatically resolved:
@@ -1159,9 +1263,22 @@ tile_service/
 ├── service.py            # search_tiles() orchestrator
 ├── provider_base.py      # Provider ABC + BookableProvider ABC
 ├── mock_provider.py      # Mock providers for development
-├── amadeus_provider.py   # Amadeus API integration
-└── curated_provider.py   # Curated content provider
+├── amadeus_provider.py   # Amadeus API (disabled for now)
+└── curated_provider.py   # Curated content for hero destinations
 ```
+
+### Provider Routing Consistency
+
+Both `logistics_node.py` and `tile_service/service.py` use identical routing logic:
+
+| Flow | Destination Type | Provider Used |
+|------|------------------|---------------|
+| First Request (logistics_node) | Curated | CuratedProvider |
+| First Request (logistics_node) | Non-Curated | MockProviders |
+| Regeneration (tile_service) | Curated | CuratedProvider |
+| Regeneration (tile_service) | Non-Curated | MockProviders |
+
+This ensures tiles have consistent images and data regardless of how they were fetched.
 
 ### Settings-Aware Tile Filtering
 

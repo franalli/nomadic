@@ -11,8 +11,12 @@
 
 import { DoorOpen, Key, PlaneLanding, PlaneTakeoff, type LucideIcon } from 'lucide-react';
 
-import { cn } from '@/lib/utils';
+import { cn, normalizeTitle } from '@/lib/utils';
 
+import {
+  PreferenceAttributionBadge,
+  type PreferenceStatus,
+} from './PreferenceAttributionBadge';
 import type { DisplayTime } from './types';
 
 interface LogisticsBlockProps {
@@ -20,6 +24,10 @@ interface LogisticsBlockProps {
   time?: DisplayTime;
   details?: string;
   hotelName?: string;
+  /** Preference attribution for check-in blocks */
+  preferenceStatus?: PreferenceStatus;
+  alternativeTileId?: string;
+  onSwitchToAlternative?: (tileId: string) => void;
 }
 
 const CONFIG: Record<
@@ -56,9 +64,20 @@ const CONFIG: Record<
   },
 };
 
-export function LogisticsBlock({ type, time, details, hotelName }: LogisticsBlockProps) {
+export function LogisticsBlock({
+  type,
+  time,
+  details,
+  hotelName,
+  preferenceStatus,
+  alternativeTileId,
+  onSwitchToAlternative,
+}: LogisticsBlockProps) {
   const config = CONFIG[type];
   const Icon = config.icon;
+
+  // Only show preference badge for check-in blocks (hotels)
+  const showPreferenceBadge = type === 'checkin' && preferenceStatus;
 
   return (
     <div
@@ -83,10 +102,19 @@ export function LogisticsBlock({ type, time, details, hotelName }: LogisticsBloc
           <span className="font-medium text-sm">{config.label}</span>
         </div>
         {hotelName && (
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">{hotelName}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 truncate">{normalizeTitle(hotelName)}</p>
         )}
         {details && (
           <p className="text-xs text-muted-foreground mt-0.5">{details}</p>
+        )}
+        {/* Preference attribution badge for check-in blocks */}
+        {showPreferenceBadge && (
+          <PreferenceAttributionBadge
+            status={preferenceStatus}
+            alternativeTileId={alternativeTileId}
+            onSwitchToAlternative={onSwitchToAlternative}
+            className="mt-2"
+          />
         )}
       </div>
     </div>

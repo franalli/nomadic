@@ -15,12 +15,17 @@ Algorithm Phases:
 6. Tile Matching - Hotels span all days
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
+
+from app.debug_utils import _debug
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Constraint Severity Enum
@@ -74,6 +79,11 @@ class DayBlockOutput(BaseModel):
     booked_tile: Optional[Dict[str, Any]] = None
     requires_booking: bool = False
     booking_category: Optional[Literal["hotel", "flight", "activity"]] = None
+
+    # Preference attribution (shows why this tile was selected)
+    preference_status: Optional[Literal["user_preferred", "ai_selected", "ai_override"]] = None
+    preference_override_reason: Optional[str] = None
+    alternative_tile_id: Optional[str] = None
 
 
 class DayCardOutput(BaseModel):
@@ -158,6 +168,22 @@ class ActivityBlock:
 
 
 @dataclass
+class PreferenceOverrideInput:
+    """User heart preferences for tile weighting."""
+
+    preferred_hotel_ids: List[str] = field(default_factory=list)
+    preferred_activity_ids: List[str] = field(default_factory=list)
+
+    def is_hotel_preferred(self, tile_id: str) -> bool:
+        """Check if a hotel tile is user-preferred."""
+        return tile_id in self.preferred_hotel_ids
+
+    def is_activity_preferred(self, tile_id: str) -> bool:
+        """Check if an activity tile is user-preferred."""
+        return tile_id in self.preferred_activity_ids
+
+
+@dataclass
 class ItineraryBuilderInput:
     """Input to the itinerary builder."""
 
@@ -167,6 +193,7 @@ class ItineraryBuilderInput:
     tiles: Dict[str, Any]  # Tile ID -> Tile dict
     destination: Optional[str] = None
     origin: Optional[str] = None
+    preferences: Optional[PreferenceOverrideInput] = None  # User heart preferences
 
 
 # =============================================================================
@@ -230,12 +257,28 @@ class ItineraryBuilder:
         Returns:
             ItineraryResult with day_cards, or conflicts if irreconcilable
         """
+        _debug(
+            f"[ItineraryBuilder] 🏗️ Starting build: "
+            f"start={input_data.start_date}, end={input_data.end_date}, "
+            f"dest={input_data.destination}, "
+            f"sections={len(input_data.strategy_sections)}, "
+            f"tiles={len(input_data.tiles)}"
+        )
         try:
             # Parse dates
             start = self._parse_date(input_data.start_date)
             end = self._parse_date(input_data.end_date)
+            duration = (end - start).days + 1 if start and end else "N/A"
+            _debug(
+                f"[ItineraryBuilder] Parsed dates: start={start}, end={end}, "
+                f"duration={duration} days"
+            )
 
             if not start or not end:
+                _debug(
+                    f"[ItineraryBuilder] ⚠️ Invalid dates - start_date={input_data.start_date}, "
+                    f"end_date={input_data.end_date}"
+                )
                 return ItineraryResult(
                     success=False,
                     error="Invalid dates - cannot generate itinerary",
@@ -245,6 +288,18 @@ class ItineraryBuilder:
                 return ItineraryResult(
                     success=False,
                     error="End date must be after start date",
+                )
+
+            # Validate minimum trip duration (2+ days required)
+            trip_duration = (end - start).days + 1
+            if trip_duration < 2:
+                logger.warning(
+                    f"[ItineraryBuilder] Trip too short: {trip_duration} day(s). "
+                    f"Minimum 2 days required."
+                )
+                return ItineraryResult(
+                    success=False,
+                    error="TRIP_TOO_SHORT",
                 )
 
             # Phase 1: Create day skeleton
@@ -276,8 +331,11 @@ class ItineraryBuilder:
             # Phase 5: Distribute activities across days (interleaved)
             days = self._distribute_activities(days, activities)
 
-            # Phase 6: Match tiles to blocks
-            days = self._match_tiles(days, input_data.tiles)
+            # Phase 5.5: Handle empty days (add FreeDay placeholders)
+            days = self._handle_empty_days(days, input_data.tiles)
+
+            # Phase 6: Match tiles to blocks (with preference weighting)
+            days = self._match_tiles(days, input_data.tiles, input_data.preferences)
 
             # Phase 7: Detect post-placement conflicts (overflow)
             conflicts = self._detect_temporal_conflicts(days)
@@ -289,6 +347,10 @@ class ItineraryBuilder:
             # Compute overview
             overview = self._compute_overview(days)
 
+            _debug(
+                f"[ItineraryBuilder] ✅ Success: generated {len(days)} day cards with "
+                f"{sum(len(d.blocks) for d in days)} total blocks"
+            )
             return ItineraryResult(
                 success=True,
                 day_cards=days,
@@ -298,6 +360,7 @@ class ItineraryBuilder:
             )
 
         except Exception as e:
+            logger.exception(f"[ItineraryBuilder] Exception during build: {e}")
             return ItineraryResult(
                 success=False,
                 error=f"Itinerary generation failed: {str(e)}",
@@ -392,6 +455,13 @@ class ItineraryBuilder:
             for c in constraints:
                 c["source"] = specialist_type
             all_constraints.extend(constraints)
+
+        # Log extraction results
+        total_activities = sum(len(acts) for acts in activities_by_specialist.values())
+        _debug(
+            f"[ItineraryBuilder] Extracted: activities={total_activities} from "
+            f"{list(activities_by_specialist.keys())}, constraints={len(all_constraints)}"
+        )
 
         return activities_by_specialist, all_constraints
 
@@ -723,17 +793,115 @@ class ItineraryBuilder:
         return days
 
     # =========================================================================
+    # Phase 5.5: Handle Empty Days
+    # =========================================================================
+
+    def _handle_empty_days(
+        self,
+        days: List[DayCardOutput],
+        tiles: Dict[str, Any],
+    ) -> List[DayCardOutput]:
+        """
+        Phase 5.5: Add FreeDay placeholders for days without activities.
+
+        For each day (excluding arrival/departure) that has no activity blocks,
+        insert a free_day block so the timeline never appears empty.
+        """
+        # Count available activity tiles for reference in the placeholder
+        activity_count = sum(
+            1
+            for tile in tiles.values()
+            if isinstance(tile, dict) and tile.get("type") == "activity"
+        )
+
+        for i, day in enumerate(days):
+            # Skip arrival day (first) and departure day (last)
+            if i == 0 or i == len(days) - 1:
+                continue
+
+            # Check if day has any non-buffer, non-logistics activity blocks
+            has_activity = any(
+                not b.is_buffer
+                and b.activity_type not in ("check-in", "check-out", "arrival", "departure")
+                for b in day.blocks
+            )
+
+            if not has_activity:
+                # Create FreeDay placeholder block
+                free_day_block = DayBlockOutput(
+                    id=f"free_day_{day.day_number}",
+                    period="morning",
+                    activity_type="free_day",
+                    summary="Free Day - explore at your own pace",
+                    is_buffer=False,
+                    specialist_type=None,
+                    intensity="light",
+                    constraints=[f"{activity_count} activities available to add"],
+                )
+
+                # Insert after any buffer blocks
+                buffer_count = sum(1 for b in day.blocks if b.is_buffer)
+                day.blocks.insert(buffer_count, free_day_block)
+
+                # Update day label if generic
+                if day.label.startswith("Day "):
+                    day.label = "Free Day"
+
+        return days
+
+    # =========================================================================
     # Phase 6: Tile Matching
     # =========================================================================
 
-    def _match_tiles(self, days: List[DayCardOutput], tiles: Dict[str, Any]) -> List[DayCardOutput]:
-        """Match tiles to blocks (hotels span all days)."""
-        # Find hotel tile
-        hotel_tile = None
-        for _tile_id, tile in tiles.items():
+    def _match_tiles(
+        self,
+        days: List[DayCardOutput],
+        tiles: Dict[str, Any],
+        preferences: Optional[PreferenceOverrideInput] = None,
+    ) -> List[DayCardOutput]:
+        """Match tiles to blocks (hotels span all days).
+
+        Applies 1.5x preference boost to user-hearted tiles.
+        """
+        # Find hotel tiles, sorted by preference (preferred first)
+        hotel_tiles = []
+        for tile_id, tile in tiles.items():
             if isinstance(tile, dict) and tile.get("type") == "hotel":
-                hotel_tile = tile
-                break
+                # Apply 1.5x score boost if preferred
+                # Use bool() to ensure is_preferred is never None (needed for sort)
+                is_preferred = bool(preferences and preferences.is_hotel_preferred(tile_id))
+                base_score = tile.get("score", 0) or 0
+                adjusted_score = base_score * 1.5 if is_preferred else base_score
+                hotel_tiles.append(
+                    {
+                        "tile": tile,
+                        "tile_id": tile_id,
+                        "is_preferred": is_preferred,
+                        "adjusted_score": adjusted_score,
+                    }
+                )
+
+        # Sort by: preferred first, then by adjusted score
+        hotel_tiles.sort(key=lambda x: (-x["is_preferred"], -x["adjusted_score"]))
+
+        # Select best hotel (preferred tiles win)
+        selected_hotel = hotel_tiles[0] if hotel_tiles else None
+        hotel_tile = selected_hotel["tile"] if selected_hotel else None
+        is_user_preferred = selected_hotel["is_preferred"] if selected_hotel else False
+
+        # Determine preference status
+        preference_status = None
+        if selected_hotel:
+            preference_status = "user_preferred" if is_user_preferred else "ai_selected"
+
+        # Find alternative if AI selected over user preference
+        alternative_tile_id = None
+        if len(hotel_tiles) > 1 and not is_user_preferred:
+            # Check if there was a user-preferred option we didn't select
+            user_preferred = next((h for h in hotel_tiles[1:] if h["is_preferred"]), None)
+            if user_preferred:
+                alternative_tile_id = user_preferred["tile_id"]
+                preference_status = "ai_override"
 
         if hotel_tile and len(days) > 1:
             # Add check-in to Day 1 (after arrival)
@@ -746,6 +914,9 @@ class ItineraryBuilder:
                 logistics_details=hotel_tile.get("location_label"),
                 booked_tile=hotel_tile,
                 booking_category="hotel",
+                # Preference attribution
+                preference_status=preference_status,
+                alternative_tile_id=alternative_tile_id,
             )
             days[0].blocks.append(checkin_block)
 

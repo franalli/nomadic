@@ -236,7 +236,9 @@ frontend/
 │   │   ├── PlanningProgress.tsx
 │   │   ├── planStateHelpers.ts
 │   │   ├── Segment.tsx
-│   │   ├── StrategyStageRenderer.tsx
+│   │   ├── SelectionsBar.tsx       # Hearted tiles carousel (sticky bar of preferred tiles)
+│   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
+│   │   ├── TimelineDivider.tsx     # Visual separator before timeline (unused)
 │   │   ├── TimelineThread.tsx
 │   │   ├── TripHealthBar.tsx
 │   │   ├── TripHealthDashboard.tsx
@@ -299,6 +301,7 @@ frontend/
 │   │           ├── GhostSlot.tsx
 │   │           ├── index.ts
 │   │           ├── LogisticsBlock.tsx
+│   │           ├── PreferenceAttributionBadge.tsx  # "You preferred this" badge
 │   │           ├── SafetyBlock.tsx
 │   │           ├── SuggestionBlock.tsx
 │   │           └── types.ts
@@ -312,6 +315,7 @@ frontend/
 │   │   ├── TileCard.tsx
 │   │   ├── TileDetailsModal.tsx
 │   │   ├── TileFilterBar.tsx
+│   │   ├── TileSectionHeader.tsx  # Section headers for tile categories
 │   │   └── TilesGrid.tsx
 │   │
 │   └── ui/                     # Base UI components
@@ -338,17 +342,20 @@ frontend/
 │   ├── useScrollCollapse.ts
 │   ├── useScrollSpy.ts
 │   ├── useSheetManager.ts
-│   ├── useShortlist.ts
+│   ├── useShortlist.ts         # Heart preferences - backed by documentStore.preferredTileIds
 │   ├── useSpecialistDeepLink.ts
 │   ├── useSpeculativeExecution.ts
 │   ├── useTripInputsWithFallback.ts
+│   ├── useTripValidation.ts    # Unified trip date/destination validation
 │   └── useViewNavigation.ts
 │
 ├── lib/                        # Utility functions
+│   ├── animation-config.ts     # Progressive disclosure timing constants
 │   ├── api.ts                  # API client
 │   ├── chipStyles.ts           # Chip styling utilities
 │   ├── contentPolicyGuard.ts   # Content policy validation
 │   ├── design-system.ts        # Design system tokens
+│   ├── destination-coords.ts   # Destination coordinate lookup (~90 destinations)
 │   ├── format-utils.ts         # Formatting utilities
 │   ├── ghost-timeline-adapter.ts
 │   ├── loaderConfig.ts         # Loader configuration
@@ -357,6 +364,7 @@ frontend/
 │   ├── plan-transform.ts       # Plan data transforms
 │   ├── refinementSummaries.ts
 │   ├── route-utils.ts          # Routing utilities
+│   ├── specialist-utils.ts     # Specialist topic utilities
 │   ├── specialistLinkParser.ts
 │   ├── statusCopyMap.ts        # Status text mappings
 │   ├── streamParser.ts         # Stream parsing utilities

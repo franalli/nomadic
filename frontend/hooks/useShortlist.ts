@@ -4,6 +4,9 @@
  * Hook for managing the user's shortlist of saved tiles in S2.
  * Tracks saved items by category with primary stay selection.
  *
+ * Now integrates with documentStore.preferredTileIds for persistence.
+ * Local state tracks category and isPrimary; IDs sync to backend.
+ *
  * Rules:
  * - Stays: pick 1 primary (required to proceed)
  * - Flights: 0-1 (optional)
@@ -12,8 +15,9 @@
 
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useDocumentStore } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
 export type ShortlistCategory = 'stays' | 'flights' | 'activities';
@@ -52,7 +56,7 @@ export interface UseShortlistReturn {
 /**
  * Determine category from tile type
  */
-function getCategoryFromTile(tile: Tile): ShortlistCategory {
+export function getCategoryFromTile(tile: Tile): ShortlistCategory {
   const type = tile.type?.toLowerCase() || '';
 
   if (type === 'hotel' || type === 'stay' || type === 'accommodation') {
@@ -74,13 +78,77 @@ const CATEGORY_LIMITS: Record<ShortlistCategory, number> = {
   activities: 3,
 };
 
+// Stable empty object for when no tiles exist (avoids new object on each render)
+const EMPTY_TILES: Record<string, Tile> = {};
+
 export function useShortlist(): UseShortlistReturn {
-  const [items, setItems] = useState<ShortlistItem[]>([]);
+  // Connect to documentStore for persistence
+  // Use stable selectors to avoid infinite re-render loops
+  const preferredTileIds = useDocumentStore((state) => state.preferredTileIds);
+  const tiles = useDocumentStore((state) => state.document?.tiles ?? EMPTY_TILES);
+
+  // Get actions from store directly (stable references, not via selector that creates new objects)
+  const toggleTilePreference = useDocumentStore((state) => state.toggleTilePreference);
+  const clearPreferences = useDocumentStore((state) => state.clearPreferences);
+
+  // Local state for category and isPrimary (computed/UI-specific, not persisted)
+  const [itemsMetadata, setItemsMetadata] = useState<Map<string, { category: ShortlistCategory; isPrimary: boolean }>>(
+    new Map()
+  );
+
+  // Sync itemsMetadata when preferredTileIds changes (e.g., on hydration)
+  useEffect(() => {
+    setItemsMetadata((prev) => {
+      const newMap = new Map(prev);
+      let changed = false;
+
+      // Add metadata for new IDs (from hydration)
+      for (const tileId of preferredTileIds) {
+        if (!newMap.has(tileId)) {
+          const tile = tiles[tileId];
+          if (tile) {
+            const category = getCategoryFromTile(tile);
+            // First stay becomes primary
+            const staysInMap = Array.from(newMap.values()).filter((m) => m.category === 'stays');
+            const isPrimary = category === 'stays' && staysInMap.length === 0;
+            newMap.set(tileId, { category, isPrimary });
+            changed = true;
+          }
+        }
+      }
+
+      // Remove metadata for IDs no longer in preferences
+      for (const tileId of newMap.keys()) {
+        if (!preferredTileIds.has(tileId)) {
+          newMap.delete(tileId);
+          changed = true;
+        }
+      }
+
+      return changed ? newMap : prev;
+    });
+  }, [preferredTileIds, tiles]);
+
+  // Build items array from preferredTileIds + metadata
+  const items = useMemo((): ShortlistItem[] => {
+    const result: ShortlistItem[] = [];
+    for (const tileId of preferredTileIds) {
+      const meta = itemsMetadata.get(tileId);
+      if (meta) {
+        result.push({ tileId, category: meta.category, isPrimary: meta.isPrimary });
+      } else {
+        // Tile not in metadata yet (loading), derive category from tiles map
+        const tile = tiles[tileId];
+        if (tile) {
+          result.push({ tileId, category: getCategoryFromTile(tile), isPrimary: false });
+        }
+      }
+    }
+    return result;
+  }, [preferredTileIds, itemsMetadata, tiles]);
 
   // Computed values
-  const savedTileIds = useMemo(() => {
-    return new Set(items.map((item) => item.tileId));
-  }, [items]);
+  const savedTileIds = preferredTileIds; // Now backed by documentStore
 
   const counts = useMemo(() => {
     return {
@@ -91,76 +159,86 @@ export function useShortlist(): UseShortlistReturn {
   }, [items]);
 
   const primaryStayId = useMemo(() => {
-    const primaryStay = items.find(
-      (i) => i.category === 'stays' && i.isPrimary
-    );
+    const primaryStay = items.find((i) => i.category === 'stays' && i.isPrimary);
     return primaryStay?.tileId ?? null;
   }, [items]);
 
   const hasPrimaryStay = primaryStayId !== null;
   const canProceed = hasPrimaryStay;
 
-  // Add item to shortlist
-  const addItem = useCallback((tile: Tile) => {
-    const category = getCategoryFromTile(tile);
+  // Add item to shortlist (persists to backend via documentStore)
+  const addItem = useCallback(
+    (tile: Tile) => {
+      const category = getCategoryFromTile(tile);
 
-    setItems((prev) => {
       // Check if already saved
-      if (prev.some((i) => i.tileId === tile.id)) {
-        return prev;
+      if (preferredTileIds.has(tile.id)) {
+        return;
       }
 
-      // Check category limit
-      const categoryCount = prev.filter((i) => i.category === category).length;
-      if (categoryCount >= CATEGORY_LIMITS[category]) {
-        // Replace oldest in category (except primary for stays)
-        const toRemove = prev.find(
-          (i) => i.category === category && !i.isPrimary
-        );
+      // Check category limit - may need to remove oldest
+      const currentCategoryCount = items.filter((i) => i.category === category).length;
+      if (currentCategoryCount >= CATEGORY_LIMITS[category]) {
+        // Find oldest non-primary item in category to replace
+        const toRemove = items.find((i) => i.category === category && !i.isPrimary);
         if (toRemove) {
-          const filtered = prev.filter((i) => i.tileId !== toRemove.tileId);
-          return [...filtered, { tileId: tile.id, category }];
+          // Remove old item from preferences
+          toggleTilePreference(toRemove.tileId);
+        } else {
+          // Can't add - all slots are primary or at limit
+          return;
         }
-        // Can't add - all slots are primary or at limit
-        return prev;
       }
 
       // For stays: if this is the first one, make it primary automatically
-      const isFirstStay =
-        category === 'stays' && !prev.some((i) => i.category === 'stays');
+      const isFirstStay = category === 'stays' && !items.some((i) => i.category === 'stays');
 
-      return [
-        ...prev,
-        {
-          tileId: tile.id,
-          category,
-          isPrimary: isFirstStay,
-        },
-      ];
-    });
-  }, []);
+      // Update local metadata
+      setItemsMetadata((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(tile.id, { category, isPrimary: isFirstStay });
+        return newMap;
+      });
 
-  // Remove item from shortlist
-  const removeItem = useCallback((tileId: string) => {
-    setItems((prev) => {
-      const item = prev.find((i) => i.tileId === tileId);
-      if (!item) return prev;
+      // Persist to backend
+      toggleTilePreference(tile.id);
+    },
+    [preferredTileIds, items, toggleTilePreference]
+  );
 
-      const filtered = prev.filter((i) => i.tileId !== tileId);
+  // Remove item from shortlist (persists to backend via documentStore)
+  const removeItem = useCallback(
+    (tileId: string) => {
+      const item = items.find((i) => i.tileId === tileId);
+      if (!item) return;
 
-      // If removed primary stay, promote next stay to primary
+      // If removing primary stay, promote next stay to primary
       if (item.category === 'stays' && item.isPrimary) {
-        const nextStay = filtered.find((i) => i.category === 'stays');
+        const nextStay = items.find((i) => i.category === 'stays' && i.tileId !== tileId);
         if (nextStay) {
-          return filtered.map((i) =>
-            i.tileId === nextStay.tileId ? { ...i, isPrimary: true } : i
-          );
+          setItemsMetadata((prev) => {
+            const newMap = new Map(prev);
+            const meta = newMap.get(nextStay.tileId);
+            if (meta) {
+              newMap.set(nextStay.tileId, { ...meta, isPrimary: true });
+            }
+            return newMap;
+          });
         }
       }
 
-      return filtered;
-    });
-  }, []);
+      // Remove from local metadata
+      setItemsMetadata((prev) => {
+        const newMap = new Map(prev);
+        newMap.delete(tileId);
+        return newMap;
+      });
+
+      // Persist to backend
+      toggleTilePreference(tileId);
+    },
+    [items, toggleTilePreference]
+  );
 
   // Toggle item (add or remove)
   const toggleItem = useCallback(
@@ -176,21 +254,26 @@ export function useShortlist(): UseShortlistReturn {
 
   // Set a stay as primary
   const setPrimary = useCallback((tileId: string) => {
-    setItems((prev) => {
-      const item = prev.find((i) => i.tileId === tileId);
-      if (!item || item.category !== 'stays') return prev;
+    setItemsMetadata((prev) => {
+      const meta = prev.get(tileId);
+      if (!meta || meta.category !== 'stays') return prev;
 
-      return prev.map((i) => ({
-        ...i,
-        isPrimary: i.category === 'stays' ? i.tileId === tileId : i.isPrimary,
-      }));
+      const newMap = new Map(prev);
+      // Set all stays to non-primary, then set this one to primary
+      for (const [id, m] of newMap) {
+        if (m.category === 'stays') {
+          newMap.set(id, { ...m, isPrimary: id === tileId });
+        }
+      }
+      return newMap;
     });
   }, []);
 
-  // Clear entire shortlist
+  // Clear entire shortlist (persists to backend via documentStore)
   const clear = useCallback(() => {
-    setItems([]);
-  }, []);
+    setItemsMetadata(new Map());
+    clearPreferences();
+  }, [clearPreferences]);
 
   return {
     items,

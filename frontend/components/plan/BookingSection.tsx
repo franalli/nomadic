@@ -28,11 +28,13 @@ import { useCallback, useMemo, useState } from 'react';
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
 import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
+import { TileSectionHeader } from '@/components/tiles/TileSectionHeader';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
-import { getTotalTileCount, selectTilesByType } from '@/lib/tileSelectors';
+import { getActiveSpecialists } from '@/lib/specialist-utils';
+import { getTotalTileCount, normalizeTileType, selectTilesByType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
-import type { GenerationState, PlanViewState, ViewMode } from '@/types/plan-envelope';
+import type { GenerationState, PlanViewState, StrategySection, ViewMode } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
@@ -42,7 +44,7 @@ import { BookableCard, type PartnerPrice } from './tiles/BookableCard';
 
 import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
-import { canShowBookingTiles, canShowTilesPreview, isGenerating } from './planStateHelpers';
+import { isGenerating } from './planStateHelpers';
 
 // Category types for S2 preview
 type TileCategory = 'stays' | 'flights' | 'activities';
@@ -92,13 +94,15 @@ export interface BookingSectionProps {
   cartTileIds?: Set<string>;
   /** Callback to toggle cart state */
   onCartToggle?: (tile: Tile) => void;
+  /** Strategy sections for contextual headers (specialist-aware) */
+  strategySections?: StrategySection[];
 }
 
 export function BookingSection({
   state,
   tiles: propTiles,
   generation,
-  hasStrategyContent,
+  hasStrategyContent: _hasStrategyContent, // Deprecated: mode is now SSoT, not state
   savedTileIds = new Set(),
   onSaveTile,
   onRemoveTile,
@@ -111,6 +115,7 @@ export function BookingSection({
   partnerPrices = {},
   cartTileIds = new Set(),
   onCartToggle,
+  strategySections,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
@@ -135,10 +140,10 @@ export function BookingSection({
   const tilesByType = selectTilesByType(tiles);
   const totalTiles = getTotalTileCount(tilesByType);
 
-  // Compute category counts
-  const stayTiles = tileArray.filter(t => t.type === 'hotel' || t.type === 'stay' || t.type === 'accommodation');
-  const flightTiles = tileArray.filter(t => t.type === 'flight');
-  const activityTiles = tileArray.filter(t => t.type === 'activity' || t.type === 'experience' || t.type === 'tour' || t.type === 'attraction');
+  // Compute category counts using normalized type matching
+  const stayTiles = tileArray.filter(t => normalizeTileType(t.type) === 'hotel');
+  const flightTiles = tileArray.filter(t => normalizeTileType(t.type) === 'flight');
+  const activityTiles = tileArray.filter(t => normalizeTileType(t.type) === 'activity');
 
   // Get saved tiles for checkout sidebar
   const savedTiles = useMemo(() => {
@@ -149,6 +154,11 @@ export function BookingSection({
   const checkoutTotal = useMemo(() => {
     return savedTiles.reduce((sum, t) => sum + (t.total_inclusive ?? t.price_estimate ?? 0), 0);
   }, [savedTiles]);
+
+  // Extract active specialists for contextual headers
+  const activeSpecialists = useMemo(() => {
+    return getActiveSpecialists(strategySections);
+  }, [strategySections]);
 
   // Get currency from first saved tile or first tile
   const checkoutCurrency = useMemo(() => {
@@ -291,35 +301,34 @@ export function BookingSection({
     onRemoveTile?.(tileId);
   }, [onRemoveTile]);
 
-  // Group tiles by category for manifest layout
+  // Group tiles by category for manifest layout (using normalized type matching)
   const tilesByCategory = useMemo(() => {
     const grouped: Record<string, Tile[]> = {};
     for (const cat of CATEGORY_CONFIG) {
-      grouped[cat.key] = tileArray.filter(t => (cat.types as readonly string[]).includes(t.type || ''));
+      const targetType = cat.key === 'stays' ? 'hotel' : cat.key === 'flights' ? 'flight' : 'activity';
+      grouped[cat.key] = tileArray.filter(t => normalizeTileType(t.type) === targetType);
     }
     return grouped;
   }, [tileArray]);
 
-  // S2 with tiles + strategy content: "Options to choose from" with MiniCards
-  if (canShowTilesPreview(state, totalTiles, generation, hasStrategyContent) && totalTiles > 0) {
+  // PLANNING mode: Show S2-style preview regardless of S2/S3 state
+  // Mode is the SSoT for UI variant, not state. See docs/ux_unified_architecture.md
+  if (effectiveMode === 'planning' && totalTiles > 0 && !isGenerating(generation)) {
     return (
       <>
         <div id="booking-section" className="border-t border-border">
-          {/* Header */}
+          {/* Contextual Header - specialist-aware */}
           <div className="px-4 pt-4 pb-1">
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium text-card-foreground">
-                Available Options
-              </h3>
-              {savedTileIds.size > 0 && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
-                  {savedTileIds.size} in trip
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Compare and select your favorites.
-            </p>
+            <TileSectionHeader
+              category={activeCategory}
+              specialists={activeSpecialists}
+              count={categoryCounts[activeCategory]}
+            />
+            {savedTileIds.size > 0 && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 mt-2">
+                {savedTileIds.size} in trip
+              </span>
+            )}
             {/* Section-level lock message - only show if dates are NOT set */}
             {/* @see docs/ux_unified_architecture.md Section XII - Tiles-first logic */}
             {!hasDates && (
@@ -510,8 +519,9 @@ export function BookingSection({
     );
   }
 
-  // S3/Book View: Full "Itinerary Manifest" layout
-  if (canShowBookingTiles(state) || isBookView) {
+  // BOOKING mode only: Full "Itinerary Manifest" layout with checkout sidebar
+  // Mode is the SSoT - state (S3) alone doesn't trigger booking UI
+  if (effectiveMode === 'booking') {
     if (totalTiles === 0) {
       return (
         <div id="booking-section" className="flex items-center justify-center h-64">
@@ -559,6 +569,7 @@ export function BookingSection({
                   onSaveTile={onSaveTile}
                   onTileClick={handleTileClick}
                   defaultExpanded={cat.key === 'flights'} // Expand flights by default
+                  mode={effectiveMode} // Mode-aware rendering (hearts vs cart)
                 />
               ))}
             </div>

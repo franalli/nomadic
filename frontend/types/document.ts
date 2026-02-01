@@ -211,6 +211,12 @@ export type PlanDocumentData = {
   needs_refresh?: boolean;
   can_expand_to_itinerary?: boolean;
 
+  // ==========================================================================
+  // User Preferences (synced to DB, hydrated on refresh)
+  // ==========================================================================
+  /** Heart-selected tiles - used for AI weighting in itinerary generation */
+  preferred_tile_ids?: string[];
+
   /** Generation progress - envelope wins if present, else use local UI state */
   generation?: GenerationState;
 };

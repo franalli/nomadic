@@ -696,6 +696,11 @@ export interface DayBlock {
   booked_tile?: Tile; // Embedded confirmed booking
   requires_booking?: boolean; // True = show ghost slot in UI
   booking_category?: 'hotel' | 'flight' | 'activity';
+
+  // === NEW: Preference attribution (shows why tile was selected) ===
+  preference_status?: 'user_preferred' | 'ai_selected' | 'ai_override';
+  preference_override_reason?: string; // Why AI overrode user preference
+  alternative_tile_id?: string; // ID of user's preferred tile if AI overrode
 }
 
 /**

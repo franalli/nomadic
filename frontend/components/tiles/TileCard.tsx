@@ -1,4 +1,4 @@
-import { Heart, MapPin, Star } from 'lucide-react';
+import { Check, Heart, MapPin, Star } from 'lucide-react';
 import {
   type KeyboardEvent,
   memo,
@@ -24,6 +24,7 @@ import { apiFetch } from '@/lib/api';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { getDeepLinkParams } from '@/lib/tileUtils';
 import { cn, isFlightType } from '@/lib/utils';
+import { usePreferenceActions, useTilePreference } from '@/state/documentStore';
 import type { Tile } from '@/types/tile';
 
 type TileCardProps = {
@@ -62,6 +63,38 @@ const getFeaturesForTile = (tile: Tile): string[] => {
   return [];
 };
 
+/**
+ * Extract relevance badges from tile attributes.
+ * Used for specialist relevance indicators (max 2 badges).
+ */
+const getRelevanceBadges = (tile: Tile): string[] => {
+  const badges: string[] = [];
+  const meta = tile.meta as Record<string, unknown> | undefined;
+
+  // Free cancellation
+  if (tile.is_refundable === true) {
+    badges.push('Free cancellation');
+  }
+
+  // Breakfast included
+  if (meta?.breakfast_included === true) {
+    badges.push('Breakfast included');
+  }
+
+  // Pool access (common amenity for diving/resort trips)
+  if (meta?.has_pool === true) {
+    badges.push('Pool');
+  }
+
+  // Specialist badges from backend (future)
+  if (meta?.specialist_badges && Array.isArray(meta.specialist_badges)) {
+    badges.push(...(meta.specialist_badges as string[]));
+  }
+
+  // Return max 2 badges
+  return badges.slice(0, 2);
+};
+
 export const TileCard = memo(function TileCard({
   tile,
   branchId,
@@ -70,9 +103,13 @@ export const TileCard = memo(function TileCard({
   onSelectionToast,
   isSaved = false,
 }: TileCardProps) {
-  const [isLiked, setIsLiked] = useState(isSaved);
+  // Heart preference system - connects to Zustand store with sessionStorage persistence
+  const isPreferred = useTilePreference(tile.id);
+  const { toggleTilePreference } = usePreferenceActions();
   // Track just-selected state for animation feedback
   const [justSelected, setJustSelected] = useState(false);
+  // Track heart animation state
+  const [heartAnimating, setHeartAnimating] = useState(false);
   // Track previous selection state to detect transitions
   const prevSelectedRef = useRef(isSelected);
   // Tier 11.7: Track image loading state for skeleton feedback
@@ -80,6 +117,7 @@ export const TileCard = memo(function TileCard({
   const [imageError, setImageError] = useState(false);
 
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
+  const relevanceBadges = useMemo(() => getRelevanceBadges(tile), [tile]);
 
   // Detect when tile becomes selected and trigger animation
   useEffect(() => {
@@ -135,11 +173,16 @@ export const TileCard = memo(function TileCard({
     [onToggleSelect, tile, isSelected, onSelectionToast]
   );
 
-  const handleLikeToggle = useCallback((event: MouseEvent) => {
+  const handlePreferenceToggle = useCallback((event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    setIsLiked((prev) => !prev);
-  }, []);
+    console.log('[TileCard] 💜 Heart clicked for tile:', tile.id);
+    // Trigger scale animation
+    setHeartAnimating(true);
+    setTimeout(() => setHeartAnimating(false), 200);
+    // Toggle in Zustand store (persists to DB via PATCH)
+    toggleTilePreference(tile.id);
+  }, [toggleTilePreference, tile.id]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -160,6 +203,7 @@ export const TileCard = memo(function TileCard({
 
   return (
     <Card
+      data-tile-id={tile.id}
       onClick={handleToggleSelect}
       className={cn(
         'bg-card group relative flex h-full flex-col overflow-hidden rounded-2xl border shadow-sm transition-all hover:shadow-md',
@@ -172,7 +216,7 @@ export const TileCard = memo(function TileCard({
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="relative aspect-[4/3] w-full overflow-hidden">
+      <div className="relative aspect-[16/9] w-full overflow-hidden">
         {/* Tier 11.7: Skeleton shown while image loads */}
         {!imageLoaded && (
           <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
@@ -190,18 +234,47 @@ export const TileCard = memo(function TileCard({
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
 
-        {/* Tier 9: Increased touch target to 44x44px for mobile accessibility */}
-        <button
-          type="button"
-          className="text-muted-foreground absolute right-2 top-2 inline-flex h-11 w-11 items-center justify-center rounded-full bg-card/90 shadow-sm transition touch-manipulation hover:bg-card hover:text-red-500 active:scale-95"
-          onClick={handleLikeToggle}
-          aria-label={isLiked ? 'Unlike option' : 'Like option'}
-        >
-          <Heart className={`h-5 w-5 ${isLiked ? 'fill-red-500 text-red-500' : ''}`} />
-        </button>
+        {/* Heart preference button - emerald when preferred, zinc outline when not */}
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  'absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full transition-all touch-manipulation',
+                  'bg-black/40 backdrop-blur-sm',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50',
+                  heartAnimating && 'scale-110'
+                )}
+                onClick={handlePreferenceToggle}
+                aria-label={isPreferred ? 'Remove from preferences' : 'Add to preferences'}
+                aria-pressed={isPreferred}
+              >
+                <Heart
+                  className={cn(
+                    'h-5 w-5 transition-colors',
+                    isPreferred
+                      ? 'fill-emerald-500 stroke-emerald-500'
+                      : 'stroke-zinc-400 fill-transparent hover:stroke-zinc-300'
+                  )}
+                />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="left" className="text-xs">
+              {isPreferred ? 'Remove preference' : 'Prefer this option'}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
-        {/* Saved badge (from shortlist) */}
-        {isSaved && (
+        {/* Preferred badge (top-left, emerald pill with heart icon) */}
+        {isPreferred && (
+          <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-emerald-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
+            <Heart className="h-3 w-3 fill-white" />
+            Preferred
+          </div>
+        )}
+        {/* Saved badge (from shortlist) - only show if not preferred */}
+        {!isPreferred && isSaved && (
           <div className="absolute left-2 top-2 rounded bg-emerald-500/90 px-2 py-0.5 text-xs font-medium text-white shadow-sm">
             Saved
           </div>
@@ -239,6 +312,21 @@ export const TileCard = memo(function TileCard({
           </div>
         )}
 
+        {/* Specialist relevance badges - max 2, shows key attributes */}
+        {relevanceBadges.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 -mt-1">
+            {relevanceBadges.map((badge) => (
+              <span
+                key={badge}
+                className="inline-flex items-center gap-1 text-[13px] text-zinc-400"
+              >
+                <Check className="h-3 w-3 text-emerald-500" />
+                {badge}
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {features.map((feature) => (
             <span
@@ -256,18 +344,18 @@ export const TileCard = memo(function TileCard({
               {tile.total_inclusive != null ? 'Total from' : 'From'}
             </span>
             <div className="flex items-baseline gap-1">
-              <span className="text-foreground text-lg font-bold">
+              <span className="text-zinc-100 text-[18px] font-semibold">
                 {(tile.total_inclusive ?? tile.price_estimate) != null
                   ? Math.round(tile.total_inclusive ?? tile.price_estimate!).toLocaleString()
                   : ''}
               </span>
-              <span className="text-foreground text-sm font-medium">{tile.currency}</span>
+              <span className="text-zinc-300 text-sm font-medium">{tile.currency}</span>
               {tile.type?.toLowerCase().includes('stay') && !tile.total_inclusive && (
                 <span className="text-muted-foreground text-xs">/night</span>
               )}
             </div>
             {(tile.total_inclusive ?? tile.price_estimate) == null && (
-              <span className="text-foreground text-sm font-bold">Check price</span>
+              <span className="text-zinc-100 text-sm font-semibold">Check price</span>
             )}
             {/* Expedia taxes & fees disclosure with legal tooltip */}
             <TaxesFeesTooltip
@@ -276,33 +364,43 @@ export const TileCard = memo(function TileCard({
               currency={tile.currency}
             />
           </div>
-          <div className="flex flex-col items-end">
-            <TooltipProvider delayDuration={400}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold shadow-sm"
-                    onClick={handleViewDetailsClick}
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2">
+              <TooltipProvider delayDuration={400}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={handleViewDetailsClick}
+                    >
+                      Details
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    side="top"
+                    className="max-w-xs bg-slate-900 text-slate-100 text-xs font-mono p-3 rounded-lg shadow-lg"
                   >
-                    View Details
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent
-                  side="top"
-                  className="max-w-xs bg-slate-900 text-slate-100 text-xs font-mono p-3 rounded-lg shadow-lg"
-                >
-                  <div className="text-slate-400 text-[10px] uppercase tracking-wider mb-1.5">
-                    API Params
-                  </div>
-                  <pre className="whitespace-pre-wrap break-all">
-                    {JSON.stringify(getDeepLinkParams(tile), null, 2)}
-                  </pre>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <span className="text-[10px] text-muted-foreground mt-1">
+                    <div className="text-slate-400 text-[10px] uppercase tracking-wider mb-1.5">
+                      API Params
+                    </div>
+                    <pre className="whitespace-pre-wrap break-all">
+                      {JSON.stringify(getDeepLinkParams(tile), null, 2)}
+                    </pre>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <Button
+                variant="primary"
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-sm"
+                onClick={handleViewDetailsClick}
+              >
+                Book
+              </Button>
+            </div>
+            <span className="text-[10px] text-muted-foreground">
               Opens partner site
             </span>
           </div>

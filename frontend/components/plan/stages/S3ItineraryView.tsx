@@ -20,6 +20,7 @@ import { TimelineThread } from '@/components/plan/TimelineThread';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useMapSync } from '@/hooks/useMapSync';
+import { getDestinationCoords } from '@/lib/destination-coords';
 import { cn } from '@/lib/utils';
 import type {
   DestinationCard,
@@ -108,6 +109,11 @@ export function S3ItineraryView({
     strategySections: strategy_sections,
     mode: 'plan',
   });
+
+  // Get destination coordinates from hardcoded lookup (MVP)
+  const destinationCoords = React.useMemo(() => {
+    return getDestinationCoords(destinationCard?.title);
+  }, [destinationCard?.title]);
 
   // Handle opening booking drawer
   const handleOpenBookingDrawer = useCallback((category: 'hotel' | 'flight' | 'activity') => {
@@ -218,20 +224,37 @@ export function S3ItineraryView({
     </>
   );
 
+  // Compute map center: use destination coords if available, otherwise fallback
+  const mapCenter = React.useMemo(() => {
+    if (destinationCoords) {
+      return { lng: destinationCoords[0], lat: destinationCoords[1], zoom: 11 };
+    }
+    // Fallback to first map item's coordinates if available
+    if (mapItems.length > 0) {
+      return { lat: mapItems[0].coordinates.lat, lng: mapItems[0].coordinates.lng, zoom: 11 };
+    }
+    // Default fallback (Dubai)
+    return { lat: 25.2048, lng: 55.2708, zoom: 10 };
+  }, [destinationCoords, mapItems]);
+
   // Map content (shared between desktop and mobile)
-  const mapContent = hasMapItems ? (
+  // Static mode (no POIs): non-interactive, clean UI with just destination pin
+  // Interactive mode (with POIs): full scrollytelling experience
+  const mapContent = hasMapItems || destinationCoords ? (
     <div className="relative h-full">
       <InteractiveMap
         items={mapItems}
         activeItemId={activeBlockId}
-        defaultCenter={{ lat: 25.2048, lng: 55.2708, zoom: 10 }} // Dubai default
+        defaultCenter={mapCenter}
         onMarkerClick={handleMarkerClick}
         routeGeoJson={routeGeoJson}
         visibleLayers={visibleLayers}
         highlightedDay={hoveredDay}
+        interactive={hasMapItems} // Static when no POIs, interactive when there are
+        showAttribution={false} // Clean UI for MVP
       />
-      {/* Layer filter - positioned at top-left of map */}
-      {availableTypes.length > 1 && (
+      {/* Layer filter - positioned at top-left of map (only when interactive) */}
+      {hasMapItems && availableTypes.length > 1 && (
         <div className="absolute top-3 left-3 z-10">
           <MapLayerFilter
             visibleLayers={visibleLayers}
@@ -253,20 +276,22 @@ export function S3ItineraryView({
   return (
     <>
       {/* ========== DESKTOP LAYOUT ========== */}
-      <div className="hidden lg:flex h-full flex-col">
-        {/* Split-screen layout: Timeline (50%) + Map (50%) - True equal split */}
-        <div className="flex-1 grid grid-cols-2 gap-0 min-h-0">
-          {/* LEFT: Scrollable itinerary content */}
-          <div className="overflow-y-auto custom-scrollbar border-r border-border">
-            <div id="itinerary-content" className="flex flex-col p-4 space-y-4">
+      <div className="hidden lg:block h-full overflow-y-auto custom-scrollbar">
+        {/* Flex layout: Timeline (60%) + Map (40%, 300px height, sticky) */}
+        <div className="flex gap-6 p-4">
+          {/* LEFT: Timeline content */}
+          <div className="flex-1 min-w-0">
+            <div id="itinerary-content" className="flex flex-col space-y-4">
               {timelineContent}
             </div>
           </div>
 
-          {/* RIGHT: Map - sticky for scroll sync */}
-          <div className="relative">
-            <div className="sticky top-0 h-[calc(100vh-4rem)] overflow-hidden">
-              {mapContent}
+          {/* RIGHT: Map panel - sticky, 300px height */}
+          <div className="w-[400px] shrink-0">
+            <div className="sticky top-20">
+              <div className="h-[300px] rounded-xl overflow-hidden border border-white/10 shadow-lg">
+                {mapContent}
+              </div>
             </div>
           </div>
         </div>

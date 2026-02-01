@@ -1,10 +1,12 @@
 'use client';
 
-import { ArrowUp, Calendar, Loader2, Sparkles } from 'lucide-react';
+import { ArrowUp, Calendar, ChevronRight, Loader2, Zap } from 'lucide-react';
 import { memo, useState } from 'react';
 
 import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useTripValidation } from '@/hooks/useTripValidation';
 import { cn } from '@/lib/utils';
+import { useDocumentStore } from '@/state/documentStore';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -32,17 +34,23 @@ interface MobilePlanFooterProps {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * MobilePlanFooter - Sticky bottom dock with CTA + command line input.
+ * MobilePlanFooter - Compact sticky bar with CTA + command line input.
  *
- * Replaces MinimizedChatInput on Plan/Book tabs with a more prominent CTA.
+ * Design: Sticky Bar Pattern (per user spec)
+ * - 48dp height, single line
+ * - Inline context: duration + specialist count
+ * - State-aware: amber (needs dates), emerald (ready), muted (building)
+ * - Position: Above chat bar, within thumb zone
+ *
  * Structure:
- * - Layer 1: Primary CTA ("Create Itinerary" or "Select Dates")
- * - Layer 2: Command line input for making changes
- *
- * This ensures the primary action is always visible and never scrolls off-screen.
+ * ┌─────────────────────────────────────────┐
+ * │ ⚡ Build (4d • 2 specs)              → │  ← Sticky CTA bar
+ * ├─────────────────────────────────────────┤
+ * │ Type changes...                         │  ← Command input
+ * └─────────────────────────────────────────┘
  */
 function MobilePlanFooterInner({
-  hasDates,
+  hasDates: _hasDates, // Kept for API compat, validation handled by useTripValidation
   showCta,
   onBuildItinerary,
   onSelectDates,
@@ -50,11 +58,18 @@ function MobilePlanFooterInner({
   isProcessing = false,
   className,
 }: MobilePlanFooterProps) {
+  void _hasDates; // Silence unused warning - validation now handled by useTripValidation hook
   const [inputValue, setInputValue] = useState('');
   const { isDesktop, activeTab } = useMobileMode();
 
+  // Unified validation state
+  const validation = useTripValidation();
+
+  // Get specialist count from strategy sections
+  const strategySections = useDocumentStore((s) => s.document?.strategy_sections);
+  const specialistCount = strategySections?.length ?? 0;
+
   // Only render on mobile, and specifically on Plan/Book tabs
-  // Chat tab uses the standard ChatInput
   if (isDesktop || activeTab === 'chat') return null;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -65,67 +80,116 @@ function MobilePlanFooterInner({
     }
   };
 
+  // Compute state for styling
+  const isReady = validation.valid && !isProcessing;
+  const needsDates = !validation.valid && validation.reason !== 'no_destination';
+  const isBuilding = isProcessing;
+
+  // Build context string: "4d • 2 specs" or just "4d"
+  const contextParts: string[] = [];
+  if (validation.duration) {
+    contextParts.push(`${validation.duration}d`);
+  }
+  if (specialistCount > 0) {
+    contextParts.push(`${specialistCount} spec${specialistCount > 1 ? 's' : ''}`);
+  }
+  const contextString = contextParts.join(' • ');
+
+  // Handle CTA click
+  const handleCtaClick = () => {
+    if (isBuilding) return;
+    if (needsDates) {
+      onSelectDates();
+    } else {
+      onBuildItinerary();
+    }
+  };
+
   return (
     <div
       className={cn(
         'fixed left-0 right-0 z-[1001]',
-        // Position above the tab bar
+        // Position above the tab bar (thumb zone)
         'bottom-[calc(var(--mobile-tab-bar-height,68px)+env(safe-area-inset-bottom))]',
-        'flex flex-col gap-2 px-4 pb-4 pt-2',
-        // Gradient fade to handle content scrolling underneath
+        'flex flex-col gap-2 px-4 pb-3 pt-2',
+        // Glass effect
         'bg-gradient-to-t from-background via-background/95 to-transparent',
         'lg:hidden',
         className
       )}
     >
-      {/* LAYER 1: THE PRIMARY ACTION (Sticky CTA) */}
+      {/* STICKY CTA BAR (48dp height, single line) */}
       {showCta && (
-        <div className="w-full animate-in slide-in-from-bottom-2 fade-in duration-300">
-          {hasDates ? (
-            <button
-              type="button"
-              onClick={onBuildItinerary}
-              disabled={isProcessing}
-              className={cn(
-                'w-full flex items-center justify-center gap-2',
-                // Gradient background with glass top highlight
-                'bg-gradient-to-br from-emerald-500 to-emerald-600 text-white',
-                'border-t border-white/20',
-                'font-bold py-4 rounded-2xl',
-                'shadow-xl shadow-emerald-900/10',
-                'hover:from-emerald-400 hover:to-emerald-500 hover:shadow-emerald-900/20',
-                'active:scale-[0.98] transition-all',
-                'disabled:opacity-50 disabled:cursor-not-allowed'
-              )}
-            >
-              {isProcessing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
-              )}
-              <span>Build Itinerary</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={onSelectDates}
-              className={cn(
-                'w-full flex items-center justify-center gap-2',
-                'bg-muted text-muted-foreground',
-                'font-medium py-3 rounded-xl',
-                'border border-border',
-                'active:scale-[0.98] transition-all',
-                'hover:bg-muted/80'
-              )}
-            >
-              <Calendar className="w-4 h-4" />
-              <span>Select dates to build plan</span>
-            </button>
+        <button
+          type="button"
+          onClick={handleCtaClick}
+          disabled={isBuilding}
+          className={cn(
+            // Layout: 48dp height, flex row
+            'h-12 w-full flex items-center justify-between',
+            'px-4 rounded-xl',
+            // Glass material
+            'backdrop-blur-md border',
+            'transition-all duration-200',
+            'active:scale-[0.98]',
+            'disabled:cursor-not-allowed',
+            // State-aware styling
+            isReady && [
+              'bg-emerald-500/95 border-emerald-400/30',
+              'text-white',
+              'shadow-lg shadow-emerald-500/20',
+            ],
+            needsDates && [
+              'bg-amber-500/95 border-amber-400/30',
+              'text-white',
+              'shadow-lg shadow-amber-500/20',
+            ],
+            isBuilding && [
+              'bg-zinc-200/90 dark:bg-zinc-800/90',
+              'border-zinc-300/50 dark:border-zinc-700/50',
+              'text-zinc-500 dark:text-zinc-400',
+            ]
           )}
-        </div>
+        >
+          {/* Left: Icon + Label + Context */}
+          <div className="flex items-center gap-2">
+            {/* Icon */}
+            {isBuilding ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : needsDates ? (
+              <Calendar className="w-4 h-4" />
+            ) : (
+              <Zap className="w-4 h-4" />
+            )}
+
+            {/* Label */}
+            <span className="font-semibold text-sm">
+              {isBuilding
+                ? 'Building...'
+                : needsDates
+                  ? validation.action
+                  : 'Build'}
+            </span>
+
+            {/* Context: duration + specialists */}
+            {!isBuilding && contextString && (
+              <>
+                <span className="opacity-50">•</span>
+                <span className="text-sm opacity-80">{contextString}</span>
+              </>
+            )}
+          </div>
+
+          {/* Right: Arrow indicator (or spinner progress) */}
+          {isBuilding ? (
+            <span className="text-xs opacity-60">Generating...</span>
+          ) : (
+            <ChevronRight className="w-4 h-4 opacity-70" />
+          )}
+        </button>
       )}
 
-      {/* LAYER 2: THE COMMAND LINE (Input Bar) */}
+      {/* COMMAND LINE INPUT */}
       <form onSubmit={handleSubmit} className="relative w-full">
         <input
           type="text"

@@ -48,18 +48,17 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
     """
     Decide which providers to call based on the context.
 
-    Provider routing strategy:
-    1. Hero destinations (Dubai, Rome, Chamonix) → CuratedProvider for hotels/activities
-    2. Amadeus enabled → AmadeusProviders for flights/hotels
+    Provider routing strategy (consistent with logistics_node):
+    1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
+    2. Non-curated + Amadeus enabled → AmadeusProvider for hotels (real names, placeholder images)
     3. Fallback → MockProviders
 
-    The CuratedProvider serves high-quality demo content while optionally
-    fetching live flight prices from Amadeus to prove the engine is real.
+    @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
     """
     providers: List[Provider] = []
     dest_key = (ctx.destination or "").lower().strip()
 
-    # Check for curated content (Golden Path for demo)
+    # 1. CURATED FIRST - Hero destinations with perfect demo content
     if settings.use_demo_curation:
         from app.data.demo_curation import DEMO_MANIFEST
 
@@ -72,38 +71,30 @@ def _get_providers(ctx: SearchContext) -> List[Provider]:
             curated = CuratedProvider(dest_key)
             providers.append(curated)
 
-            # For flights, use Amadeus if enabled (live prices prove engine is real)
-            if settings.use_amadeus_provider:
-                if "flight" in ctx.verticals or not ctx.verticals:
-                    from .amadeus_provider import AmadeusFlightProvider
-
-                    providers.append(AmadeusFlightProvider())
-            else:
-                # Fallback to mock flights
-                if "flight" in ctx.verticals or not ctx.verticals:
-                    providers.append(MockFlightProvider())
+            # Add mock flights (CuratedProvider doesn't handle flights)
+            if "flight" in ctx.verticals or not ctx.verticals:
+                providers.append(MockFlightProvider())
 
             return providers
 
-    # Use Amadeus if enabled (non-demo destinations)
+    # 2. AMADEUS SECOND - Real hotel names with placeholder images
     if settings.use_amadeus_provider:
-        _debug(f"[PROVIDER] Using AmadeusProviders for: {dest_key}")
+        _debug(f"[PROVIDER] Using Amadeus for hotels: {dest_key}")
 
         if "hotel" in ctx.verticals or not ctx.verticals:
             from .amadeus_provider import AmadeusHotelProvider
 
             providers.append(AmadeusHotelProvider())
-        if "flight" in ctx.verticals or not ctx.verticals:
-            from .amadeus_provider import AmadeusFlightProvider
 
-            providers.append(AmadeusFlightProvider())
+        # Flights and activities use Mock (Amadeus flights disabled for consistency)
+        if "flight" in ctx.verticals or not ctx.verticals:
+            providers.append(MockFlightProvider())
         if "activity" in ctx.verticals or not ctx.verticals:
-            # Amadeus doesn't have activities API, use mock
             providers.append(MockActivityProvider())
 
         return providers
 
-    # Fallback to mock providers
+    # 3. MOCK FALLBACK - Development/offline mode
     _debug(f"[PROVIDER] Using MockProviders for: {dest_key}")
 
     if "hotel" in ctx.verticals or not ctx.verticals:

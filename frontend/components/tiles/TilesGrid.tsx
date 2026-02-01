@@ -1,7 +1,7 @@
 'use client';
 
-import { AlertCircle, Plane, RotateCcw, Sparkles, TentTree } from 'lucide-react';
-import { type ElementType, memo, useMemo, useState } from 'react';
+import { AlertCircle, ChevronDown, Plane, RotateCcw, Sparkles, TentTree } from 'lucide-react';
+import { type ElementType, memo, useEffect, useMemo, useState } from 'react';
 
 import { TileCard } from '@/components/tiles/TileCard';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -77,6 +77,9 @@ type TilesGridProps = {
   savedTileIds?: Set<string>;
 };
 
+// Default number of tiles to show before "View All" expansion
+const DEFAULT_SHOW_COUNT = 3;
+
 export const TilesGrid = memo(function TilesGrid({
   tiles,
   activeBranch,
@@ -91,7 +94,13 @@ export const TilesGrid = memo(function TilesGrid({
   savedTileIds = new Set(),
 }: TilesGridProps) {
   const [activeTab, setActiveTab] = useState<TileTabKey>(forcedTab ?? 'stays');
+  const [isExpanded, setIsExpanded] = useState(false);
   const effectiveTab = forcedTab ?? activeTab;
+
+  // Reset expansion when tab changes (progressive disclosure per category)
+  useEffect(() => {
+    setIsExpanded(false);
+  }, [effectiveTab]);
 
   const tabCounts = useMemo(() => {
     return tiles.reduce(
@@ -116,6 +125,14 @@ export const TilesGrid = memo(function TilesGrid({
     }
     return filtered;
   }, [effectiveTab, tiles, savedTileIds]);
+
+  // Progressive disclosure: Show limited tiles by default, expand on click
+  const displayedTiles = useMemo(() => {
+    if (isExpanded) return filteredTiles;
+    return filteredTiles.slice(0, DEFAULT_SHOW_COUNT);
+  }, [filteredTiles, isExpanded]);
+
+  const hiddenCount = filteredTiles.length - displayedTiles.length;
 
   const priceSummary = useMemo(() => {
     const priceValues = tiles
@@ -227,7 +244,7 @@ export const TilesGrid = memo(function TilesGrid({
             {TAB_CONFIG[effectiveTab].emptyMessage}
           </div>
         ) : (
-          filteredTiles.map((tile) => (
+          displayedTiles.map((tile) => (
             <TileCard
               key={tile.id}
               tile={tile}
@@ -248,6 +265,28 @@ export const TilesGrid = memo(function TilesGrid({
           ))
         )}
       </div>
+
+      {/* Progressive disclosure: View All / Show Less buttons */}
+      {hiddenCount > 0 && !isExpanded && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded(true)}
+          className="w-full mt-2 py-3 rounded-xl text-sm font-medium border border-zinc-200 dark:border-white/10 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-white/5 transition-colors flex items-center justify-center gap-2"
+        >
+          View All {filteredTiles.length} {TAB_CONFIG[effectiveTab].label}
+          <ChevronDown className="w-4 h-4" />
+        </button>
+      )}
+
+      {isExpanded && filteredTiles.length > DEFAULT_SHOW_COUNT && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded(false)}
+          className="w-full mt-2 py-2 text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+        >
+          Show Less
+        </button>
+      )}
     </div>
   );
 });

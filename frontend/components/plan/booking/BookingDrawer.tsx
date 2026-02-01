@@ -13,6 +13,7 @@ import { Package, X } from 'lucide-react';
 
 import { MiniCard } from '@/components/tiles/MiniCard';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { normalizeTileType } from '@/lib/tileSelectors';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -36,20 +37,22 @@ const CATEGORY_LABELS = {
 } as const;
 
 /**
- * Filter tiles by category.
+ * Filter tiles by category using normalized type matching.
+ * Handles case variations, compound types, and synonyms.
  */
 function filterTilesByCategory(tiles: Record<string, Tile>, category: 'hotel' | 'flight' | 'activity'): Tile[] {
-  return Object.values(tiles).filter((tile) => {
-    const type = (tile.type || '').toLowerCase();
-    if (category === 'hotel') {
-      return ['hotel', 'stay', 'accommodation'].includes(type);
+  const all = Object.values(tiles);
+  const filtered = all.filter((tile) => normalizeTileType(tile.type) === category);
+
+  // DEBUG: Log tile type distribution to help diagnose "0 options" issue
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[BookingDrawer] Category: ${category}, Total tiles: ${all.length}, Matched: ${filtered.length}`);
+    if (filtered.length === 0 && all.length > 0) {
+      console.log('[BookingDrawer] All types:', all.map(t => `${t.id}: "${t.type}"`));
     }
-    if (category === 'flight') {
-      return type === 'flight';
-    }
-    // Activity - anything else
-    return ['activity', 'experience', 'tour', 'attraction'].includes(type);
-  });
+  }
+
+  return filtered;
 }
 
 export function BookingDrawer({
@@ -109,9 +112,11 @@ export function BookingDrawer({
           {categoryTiles.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p className="font-medium">No {category}s available yet.</p>
-              <p className="text-sm mt-1">
-                Try adjusting your dates or destination.
+              <p className="font-medium">No {category === 'activity' ? 'activities' : `${category}s`} available</p>
+              <p className="text-sm mt-1 text-muted-foreground/70">
+                {category === 'activity'
+                  ? 'Activities will appear once specialists have generated recommendations.'
+                  : 'Try adjusting your dates or destination.'}
               </p>
             </div>
           )}

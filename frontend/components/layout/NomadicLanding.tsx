@@ -397,7 +397,8 @@ export function NomadicLanding() {
 
   // NEW: Derive plan state envelope fields
   // Use backend-provided plan_state if available, otherwise derive from local state
-  const storeDocument = documentStore.document;
+  // CRITICAL: Use selector for reactivity - accessing documentStore.document directly won't re-render
+  const storeDocument = useDocumentStore((state) => state.document);
   const documentPlanState = storeDocument?.plan_state;
   const planState: PlanState = useMemo(() => {
     if (documentPlanState) return documentPlanState;
@@ -617,10 +618,10 @@ export function NomadicLanding() {
 
   // Plan View Model - populated from backend response via storeDocument
   const planViewModel: PlanViewModel = useMemo(() => {
-    // DEBUG: Log strategy sections when building view model
-    console.log('[NomadicLanding] Building planViewModel:', {
+    // DEBUG: Log when building view model
+    console.log('[NomadicLanding] 🔄 Building planViewModel:', {
       strategy_sections_count: storeDocument?.strategy_sections?.length ?? 0,
-      strategy_sections: storeDocument?.strategy_sections,
+      day_cards_count: storeDocument?.day_cards?.length ?? 0,
       plan_view_state: storeDocument?.plan_view_state,
       executed_strategy_topics: storeDocument?.executed_strategy_topics,
     });
@@ -671,9 +672,10 @@ export function NomadicLanding() {
   const fallbackTitle = tripInputs.destination ?? undefined;
 
   // CTA gating flags per strict render contract
-  // hasDates: at least start_date OR flexible dates with duration
+  // hasDates: BOTH start_date AND end_date required for fixed trips
+  // OR flexible dates with duration
   const hasDates =
-    Boolean(tripInputs.start_date) ||
+    (Boolean(tripInputs.start_date) && Boolean(tripInputs.end_date)) ||
     (tripInputs.date_flex === true && tripInputs.trip_duration != null);
   const canGeneratePlan = hasDestination && hasDates;
   const hasPlan = hasBranchesReady;
@@ -739,6 +741,58 @@ export function NomadicLanding() {
     try {
       // Get current document state for context
       const currentDoc = documentStore.document;
+      const preferredTileIds = documentStore.preferredTileIds;
+
+      // Build preferences from heart state
+      const tiles = currentDoc?.tiles ?? {};
+      const preferredHotelIds: string[] = [];
+      const preferredActivityIds: string[] = [];
+
+      // Debug: Log raw preference state BEFORE categorization
+      console.log('[expand-itinerary] 💜 Raw preferences:', {
+        preferredTileIds: Array.from(preferredTileIds),
+        preferredTileIds_size: preferredTileIds.size,
+        tilesKeys: Object.keys(tiles).slice(0, 5),
+        tilesCount: Object.keys(tiles).length,
+      });
+
+      // Categorize preferred tiles by type (handle various type variants)
+      for (const tileId of preferredTileIds) {
+        const tile = tiles[tileId];
+        const tileType = (tile?.type || '').toLowerCase();
+        console.log('[expand-itinerary] 💜 Processing tile:', {
+          tileId,
+          found: !!tile,
+          type: tileType,
+          title: tile?.title?.substring(0, 30),
+        });
+        if (tile) {
+          // Match hotel variants
+          if (tileType === 'hotel' || tileType === 'stay' || tileType === 'accommodation') {
+            preferredHotelIds.push(tileId);
+          }
+          // Match activity variants
+          else if (
+            tileType === 'activity' ||
+            tileType === 'experience' ||
+            tileType === 'tour' ||
+            tileType === 'attraction' ||
+            tileType === 'excursion' ||
+            tileType === 'ticket' ||
+            tileType === 'event'
+          ) {
+            preferredActivityIds.push(tileId);
+          }
+        }
+      }
+
+      // Debug: Log what we're sending
+      console.log('[expand-itinerary] 📤 Final preferences payload:', {
+        preferred_hotel_ids: preferredHotelIds,
+        preferred_activity_ids: preferredActivityIds,
+        will_send: preferredHotelIds.length > 0 || preferredActivityIds.length > 0,
+      });
+
       const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
         body: JSON.stringify({
@@ -747,6 +801,14 @@ export function NomadicLanding() {
           trip_inputs: currentDoc?.trip_inputs,
           strategy_sections: currentDoc?.strategy_sections,
           tiles: currentDoc?.tiles,
+          // Pass user heart preferences for AI weighting
+          preferences:
+            preferredHotelIds.length > 0 || preferredActivityIds.length > 0
+              ? {
+                  preferred_hotel_ids: preferredHotelIds,
+                  preferred_activity_ids: preferredActivityIds,
+                }
+              : null,
         }),
         signal: abortController.signal,
       });
@@ -773,7 +835,9 @@ export function NomadicLanding() {
 
         resetTimeout();
 
+        console.debug('[expand-itinerary] Received event:', event.type, event);
         if (event.type === 'envelope') {
+          console.debug('[expand-itinerary] Merging envelope with day_cards:', event.plan_envelope?.day_cards?.length);
           documentStore.mergeEnvelope(event.plan_envelope);
         } else if (event.type === 'progress') {
           setUiGeneration({
@@ -783,9 +847,11 @@ export function NomadicLanding() {
             pct: event.pct,
           });
         } else if (event.type === 'done') {
+          console.debug('[expand-itinerary] Generation complete');
           setUiGeneration(null);
           setLastGenerationError(null);
         } else if (event.type === 'error') {
+          console.error('[expand-itinerary] Error received:', event.message);
           setLastGenerationError(event.message || 'Failed to generate itinerary');
         }
       });
@@ -822,10 +888,15 @@ export function NomadicLanding() {
 
     const currentTripInputs = storeDocument?.trip_inputs;
 
-    // GATE 1: Just need a start_date - 1-day trips are valid
-    // Backend defaults to 1-day if no end_date specified
+    // GATE 1: Require start_date
     if (!currentTripInputs?.start_date) {
       addToast('Set a start date first', 'info');
+      return;
+    }
+
+    // GATE 2: Require end_date (multi-day trips are Nomadic's core product)
+    if (!currentTripInputs?.end_date) {
+      addToast('Add return date to see itinerary', 'info');
       return;
     }
 
@@ -958,9 +1029,11 @@ export function NomadicLanding() {
       destination={tripInputs.destination ?? undefined}
       origin={tripInputs.origin ?? undefined}
       dateRange={
-        hasStartDate || hasEndDate
-          ? `${formatDateForDisplay(tripInputs.start_date)}${hasStartDate && hasEndDate ? ' - ' : ''}${formatDateForDisplay(tripInputs.end_date)}`
-          : undefined
+        hasStartDate && hasEndDate
+          ? `${formatDateForDisplay(tripInputs.start_date)} - ${formatDateForDisplay(tripInputs.end_date)}`
+          : hasStartDate
+            ? `${formatDateForDisplay(tripInputs.start_date)} → ?`  // Incomplete state
+            : undefined
       }
       budget={
         tripInputs.budget != null ? `$${tripInputs.budget.toLocaleString()}` : undefined
@@ -1053,6 +1126,7 @@ export function NomadicLanding() {
               savedTileIds={shortlist.savedTileIds}
               onSaveTile={shortlist.toggleItem}
               onOpenSheet={openSheet}
+              strategySections={storeDocument?.strategy_sections}
             />
           }
           planState={planState}

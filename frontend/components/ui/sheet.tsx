@@ -3,6 +3,7 @@
 import { AnimatePresence, motion } from 'framer-motion';
 import { X } from 'lucide-react';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
 
@@ -80,6 +81,12 @@ const positionClasses = {
 
 function SheetContent({ side = 'right', className, children }: SheetContentProps) {
   const { open, onOpenChange } = useSheet();
+  const [mounted, setMounted] = React.useState(false);
+
+  // Handle client-side mounting for portal
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Close on escape key
   React.useEffect(() => {
@@ -109,7 +116,8 @@ function SheetContent({ side = 'right', className, children }: SheetContentProps
 
   const variants = slideVariants[side];
 
-  return (
+  // Use portal to escape stacking context and render at document body level
+  const content = (
     <AnimatePresence>
       {open && (
         <>
@@ -149,6 +157,11 @@ function SheetContent({ side = 'right', className, children }: SheetContentProps
       )}
     </AnimatePresence>
   );
+
+  // Only use portal on client-side to avoid SSR hydration issues
+  if (!mounted) return null;
+
+  return createPortal(content, document.body);
 }
 
 function SheetHeader({ className, children }: { className?: string; children: React.ReactNode }) {

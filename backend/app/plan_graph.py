@@ -1077,9 +1077,27 @@ def _format_result(
             f"Merged extracted settings into trip_inputs: {list(extracted_settings.keys())}"
         )
 
-    # Flatten tiles for frontend
-    flattened_tiles = _flatten_tiles_to_id_map(state.tiles)
-    plan_view_state = _compute_plan_view_state(state)
+    # ==========================================================================
+    # BLOCKING VIOLATION CHECK
+    # When there's a blocking constraint violation (e.g., SAME_CITY_ERROR),
+    # don't show strategy sections or tiles - return to S0_BOOTSTRAP state.
+    # The error message from synthesizer tells user what went wrong.
+    # ==========================================================================
+    has_blocking_violations = state.metadata.get("has_blocking_violations", False)
+    if has_blocking_violations:
+        logger.warning("[_format_result] Blocking violations detected - clearing tiles/sections")
+        # Clear tiles and strategy sections - user needs to fix the error first
+        flattened_tiles = {}
+        plan_view_state = "S0_BOOTSTRAP"
+        # Clear strategy sections from metadata so they don't persist
+        state.metadata["strategy_sections"] = []
+        state.metadata["executed_strategy_topics"] = []
+        # Clear tiles so they don't persist in session
+        state.tiles = {}
+    else:
+        # Normal path - flatten tiles for frontend
+        flattened_tiles = _flatten_tiles_to_id_map(state.tiles)
+        plan_view_state = _compute_plan_view_state(state)
 
     logger.info(
         f"_format_result: plan_view_state={plan_view_state}, "
@@ -1540,8 +1558,14 @@ def _format_result(
     # CRITICAL: Write accumulated sections back to state.metadata for persistence
     # This ensures sections are preserved across turns via session_state
     # Apply anchor rule: local_expert/general always at index 0
-    state.metadata["strategy_sections"] = _sort_sections_anchor_first(strategy_sections)
-    state.metadata["executed_strategy_topics"] = executed_topics
+    # BUT: Skip persistence when there are blocking violations (user needs to fix error first)
+    if not has_blocking_violations:
+        state.metadata["strategy_sections"] = _sort_sections_anchor_first(strategy_sections)
+        state.metadata["executed_strategy_topics"] = executed_topics
+    else:
+        # Keep sections/topics cleared (set earlier in blocking violations check)
+        strategy_sections = []
+        executed_topics = []
 
     # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
     # This ensures strategy_sections are persisted for the next turn

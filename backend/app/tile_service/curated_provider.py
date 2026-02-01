@@ -13,6 +13,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from app.data.demo_curation import DEMO_MANIFEST
+from app.placeholders import get_placeholder_image
 from app.schemas import Tile
 
 from .models import SearchContext
@@ -86,6 +87,12 @@ class CuratedProvider(Provider):
         """Convert curated hotel data to a Tile."""
         hotel_id = hotel.get("id") or f"curated_hotel_{uuid.uuid4().hex[:8]}"
 
+        # Use curated image or fallback to deterministic placeholder
+        image_url = hotel.get("image") or get_placeholder_image(
+            category="hotel",
+            seed=hotel_id,
+        )
+
         return Tile(
             id=hotel_id,
             type="hotel",
@@ -93,7 +100,7 @@ class CuratedProvider(Provider):
             partner_product_id=hotel_id,
             title=hotel.get("name", "Hotel"),
             subtitle=hotel.get("location", self.destination_key.title()),
-            image_url=hotel.get("image"),
+            image_url=image_url,
             price_estimate=hotel.get("price_estimate"),
             currency=hotel.get("currency", ctx.currency or "USD"),
             price_basis="per_night",
@@ -132,6 +139,12 @@ class CuratedProvider(Provider):
         if specialist_type and specialist_type != "general":
             tags.append(specialist_type)
 
+        # Use curated image or fallback to deterministic placeholder
+        image_url = activity.get("image") or get_placeholder_image(
+            category="activity",
+            seed=activity_id,
+        )
+
         return Tile(
             id=activity_id,
             type="activity",
@@ -139,7 +152,7 @@ class CuratedProvider(Provider):
             partner_product_id=activity_id,
             title=activity.get("title", "Activity"),
             subtitle=activity.get("location", self.destination_key.title()),
-            image_url=activity.get("image"),
+            image_url=image_url,
             price_estimate=activity.get("price_estimate"),
             currency=activity.get("currency", ctx.currency or "USD"),
             price_basis="per_person",

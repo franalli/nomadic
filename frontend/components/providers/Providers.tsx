@@ -1,8 +1,9 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 
 import { ToastProvider } from '@/components/ui/toast';
+import { hydratePreferences } from '@/state/documentStore';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -13,6 +14,11 @@ interface ProvidersProps {
  * Wraps the app with all necessary client providers.
  */
 export function Providers({ children }: ProvidersProps) {
+  // Hydrate heart preferences from sessionStorage on mount
+  useEffect(() => {
+    hydratePreferences();
+  }, []);
+
   return (
     <ToastProvider>
       {children}

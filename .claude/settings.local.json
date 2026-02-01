@@ -70,7 +70,10 @@
       "Bash(npx vitest run)",
       "Bash(node ./node_modules/typescript/bin/tsc:*)",
       "Bash(ruff check:*)",
-      "Bash(git mv:*)"
+      "Bash(git mv:*)",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd //c \"taskkill /PID 114792 /F\")"
     ],
     "deny": [],
     "ask": []

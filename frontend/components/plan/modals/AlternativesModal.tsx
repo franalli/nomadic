@@ -18,7 +18,7 @@ import {
   Star,
 } from 'lucide-react';
 import Image from 'next/image';
-import { useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 
 import {
   Sheet,
@@ -27,8 +27,35 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
+
+// Helper component for tile thumbnails with error fallback
+const TileThumbnail = memo(function TileThumbnail({
+  tile,
+  size,
+}: {
+  tile: Tile;
+  size: string;
+}) {
+  const [hasError, setHasError] = useState(false);
+  const handleError = useCallback(() => setHasError(true), []);
+
+  const placeholderUrl = placeholderImageForTile(tile);
+  const imageSrc = hasError ? placeholderUrl : (tile.image_url || placeholderUrl);
+
+  return (
+    <Image
+      src={imageSrc}
+      alt={tile.title}
+      fill
+      className="object-cover"
+      sizes={size}
+      onError={handleError}
+    />
+  );
+});
 
 // =============================================================================
 // Types
@@ -151,13 +178,7 @@ export function AlternativesModal({
               <div className="flex gap-3 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
                 {/* Thumbnail */}
                 <div className="relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0">
-                  <Image
-                    src={currentTile.image_url || '/assets/placeholder-tile.jpg'}
-                    alt={currentTile.title}
-                    fill
-                    className="object-cover"
-                    sizes="64px"
-                  />
+                  <TileThumbnail tile={currentTile} size="64px" />
                   <div className="absolute inset-0 flex items-center justify-center bg-emerald-500/40">
                     <Check className="w-6 h-6 text-white" />
                   </div>
@@ -241,13 +262,7 @@ export function AlternativesModal({
                     >
                       {/* Thumbnail */}
                       <div className="relative w-14 h-14 rounded-lg overflow-hidden flex-shrink-0">
-                        <Image
-                          src={alt.image_url || '/assets/placeholder-tile.jpg'}
-                          alt={alt.title}
-                          fill
-                          className="object-cover"
-                          sizes="56px"
-                        />
+                        <TileThumbnail tile={alt} size="56px" />
                       </div>
 
                       {/* Info */}

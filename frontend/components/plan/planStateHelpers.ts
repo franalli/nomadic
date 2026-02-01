@@ -35,7 +35,12 @@ export function canExpandToItinerary(
   return state === 'S2_STRATEGY_READY' && !isGenerating(generation);
 }
 
-/** Can user view booking tiles? (primary display in S3) */
+/**
+ * Can user view booking tiles? (primary display in S3)
+ * @deprecated Use `effectiveMode === 'booking'` instead.
+ * State-based check replaced by mode-based check per two-mode system.
+ * @see docs/ux_unified_architecture.md Section I.B - Mode is SSoT for UI variant
+ */
 export function canShowBookingTiles(state: PlanViewState): boolean {
   return state === 'S3_ITINERARY_READY';
 }
@@ -43,6 +48,9 @@ export function canShowBookingTiles(state: PlanViewState): boolean {
 /**
  * Can show tiles preview? When S2 READY and has tiles, not generating.
  * Strategy content check removed - tiles should show as soon as available.
+ * @deprecated Use `effectiveMode === 'planning' && tileCount > 0 && !isGenerating(generation)` instead.
+ * State-based check replaced by mode-based check per two-mode system.
+ * @see docs/ux_unified_architecture.md Section I.B - Mode is SSoT for UI variant
  */
 export function canShowTilesPreview(
   state: PlanViewState,
@@ -68,20 +76,22 @@ export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structur
 
 /**
  * Get next action for NextStepBar (null = no CTA).
- * hasTripContext gates 'expand_itinerary' action.
  * Compute ONCE in parent and pass to NextStepBar to avoid flicker.
  *
  * Note: S3_ITINERARY_READY returns null because "The Bridge" CTA
  * is rendered inline at the bottom of the timeline, not in NextStepBar.
+ *
+ * IMPORTANT: Returns action type based on state alone. NextStepBar handles
+ * validation gating (disabled state + messaging) via useTripValidation hook.
  */
 export function getNextAction(
   state: PlanViewState,
   generation?: GenerationState | null,
-  hasTripContext?: boolean
+  _hasTripContext?: boolean // Deprecated: validation now handled by NextStepBar
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;
-  // Gate expand_itinerary on hasTripContext
-  if (state === 'S2_STRATEGY_READY' && hasTripContext) return 'expand_itinerary';
+  // S2 shows expand_itinerary CTA (NextStepBar gates enabled/disabled via validation)
+  if (state === 'S2_STRATEGY_READY') return 'expand_itinerary';
   // S3 uses inline "The Bridge" CTA, not NextStepBar
   return null;
 }

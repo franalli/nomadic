@@ -20,6 +20,7 @@ from app.schemas import (
     ActivitySettings,
     BookingTypes,
     BranchSelections,
+    DayCard,
     DocumentBranch,
     DocumentTripInputs,
     DocumentTripInputsPatch,
@@ -27,6 +28,8 @@ from app.schemas import (
     HotelSettings,
     PlanDocumentData,
     PlanDocumentPatch,
+    PlanViewState,
+    StrategySection,
     TransportSettings,
     UpdatedBy,
 )
@@ -556,6 +559,10 @@ async def apply_user_patch(
                 primary.currency = data.trip_inputs.currency
             data.branches[primary_idx] = primary
 
+    # Update preferences (heart-selected tiles) if provided
+    if patch.preferred_tile_ids is not None:
+        data.preferred_tile_ids = patch.preferred_tile_ids
+
     return await save_document_data(db, doc=doc, data=data, updated_by="user")
 
 
@@ -567,11 +574,19 @@ async def apply_planner_update(
     trip_inputs: Optional[DocumentTripInputs],
     branches: Optional[list[DocumentBranch]] = None,
     tiles: Optional[dict[str, TileSchema]] = None,
+    # ViewModel fields - persisted for session restoration
+    plan_view_state: Optional[PlanViewState] = None,
+    strategy_sections: Optional[list[StrategySection]] = None,
+    executed_strategy_topics: Optional[list[str]] = None,
+    pending_strategy_topics: Optional[list[str]] = None,
+    day_cards: Optional[list[DayCard]] = None,
+    can_expand_to_itinerary: Optional[bool] = None,
 ) -> models.PlanDocument:
     """
-    Apply planner-generated branches and tiles to the document (async).
+    Apply planner-generated branches, tiles, and viewModel state to the document (async).
 
     Most recent update wins - no field protection needed.
+    Also persists viewModel fields (strategy_sections, day_cards, etc.) for session restoration.
 
     When trip_inputs change but no new branches are provided, the primary branch
     is updated to reflect the new trip parameters (destinations, origin, dates, etc).
@@ -631,6 +646,20 @@ async def apply_planner_update(
     if tiles is not None:
         data.tiles = merge_tiles(data.tiles, tiles)
 
+    # Persist viewModel fields for session restoration on refresh
+    if plan_view_state is not None:
+        data.plan_view_state = plan_view_state
+    if strategy_sections is not None:
+        data.strategy_sections = strategy_sections
+    if executed_strategy_topics is not None:
+        data.executed_strategy_topics = executed_strategy_topics
+    if pending_strategy_topics is not None:
+        data.pending_strategy_topics = pending_strategy_topics
+    if day_cards is not None:
+        data.day_cards = day_cards
+    if can_expand_to_itinerary is not None:
+        data.can_expand_to_itinerary = can_expand_to_itinerary
+
     return await save_document_data(db, doc=doc, data=data, updated_by="planner")
 
 
@@ -642,10 +671,18 @@ def apply_planner_update_sync(
     trip_inputs: Optional[DocumentTripInputs],
     branches: Optional[list[DocumentBranch]] = None,
     tiles: Optional[dict[str, TileSchema]] = None,
+    # ViewModel fields - persisted for session restoration
+    plan_view_state: Optional[PlanViewState] = None,
+    strategy_sections: Optional[list[StrategySection]] = None,
+    executed_strategy_topics: Optional[list[str]] = None,
+    pending_strategy_topics: Optional[list[str]] = None,
+    day_cards: Optional[list[DayCard]] = None,
+    can_expand_to_itinerary: Optional[bool] = None,
 ) -> models.PlanDocument:
-    """Apply planner-generated branches and tiles to the document (sync).
+    """Apply planner-generated branches, tiles, and viewModel state to the document (sync).
 
     Mirrors apply_planner_update() but for sync SQLAlchemy sessions.
+    Also persists viewModel fields (strategy_sections, day_cards, etc.) for session restoration.
     """
     data = get_document_data(doc)
 
@@ -695,6 +732,20 @@ def apply_planner_update_sync(
     # Merge tiles - only if provided
     if tiles is not None:
         data.tiles = merge_tiles(data.tiles, tiles)
+
+    # Persist viewModel fields for session restoration on refresh
+    if plan_view_state is not None:
+        data.plan_view_state = plan_view_state
+    if strategy_sections is not None:
+        data.strategy_sections = strategy_sections
+    if executed_strategy_topics is not None:
+        data.executed_strategy_topics = executed_strategy_topics
+    if pending_strategy_topics is not None:
+        data.pending_strategy_topics = pending_strategy_topics
+    if day_cards is not None:
+        data.day_cards = day_cards
+    if can_expand_to_itinerary is not None:
+        data.can_expand_to_itinerary = can_expand_to_itinerary
 
     return save_document_data_sync(db, doc=doc, data=data, updated_by="planner")
 

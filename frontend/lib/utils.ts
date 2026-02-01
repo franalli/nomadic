@@ -7,6 +7,69 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Title Normalization Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Words that should remain uppercase (acronyms, proper nouns)
+ */
+const UPPERCASE_WORDS = new Set([
+  'usat', 'usa', 'uk', 'uae', 'dj', 'vip', 'spa', 'atv', 'suv', 'bmw', 'f1',
+  'id', 'bali', 'dubai', 'rome', 'paris', 'nyc', 'la', 'sf', 'dc',
+]);
+
+/**
+ * Words that should remain lowercase (articles, prepositions)
+ */
+const LOWERCASE_WORDS = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'in', 'on', 'at', 'to', 'for']);
+
+/**
+ * Normalize a snake_case or raw title to natural language Title Case.
+ *
+ * Examples:
+ * - "usat_liberty_wreck" → "USAT Liberty Wreck"
+ * - "manta_point_nusa_penida" → "Manta Point Nusa Penida"
+ * - "crystal_bay" → "Crystal Bay"
+ * - "Already Title Case" → "Already Title Case" (unchanged)
+ *
+ * @param title The raw title string
+ * @returns Normalized title in Title Case
+ */
+export function normalizeTitle(title: string | null | undefined): string {
+  if (!title) return '';
+
+  // If already looks like natural language (has spaces, no underscores), return as-is
+  if (!title.includes('_') && title.includes(' ')) {
+    return title;
+  }
+
+  // Replace underscores with spaces
+  const withSpaces = title.replace(/_/g, ' ');
+
+  // Split into words and process each
+  const words = withSpaces.split(/\s+/).filter(Boolean);
+
+  return words
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+
+      // Check if it's an acronym that should be uppercase
+      if (UPPERCASE_WORDS.has(lower)) {
+        return word.toUpperCase();
+      }
+
+      // Check if it's a word that should stay lowercase (but not at start)
+      if (index > 0 && LOWERCASE_WORDS.has(lower)) {
+        return lower;
+      }
+
+      // Standard title case: capitalize first letter
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Tile Type Detection Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 

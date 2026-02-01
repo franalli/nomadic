@@ -66,6 +66,12 @@ async def _extract_fields_with_llm(
 
 CURRENT DATE: {today_str}
 
+FIELD DEFINITIONS:
+- destination: WHERE they're traveling TO (the vacation place)
+- origin: WHERE they're departing FROM (their home city, e.g. "from New York", "flying from London")
+  IMPORTANT: Origin is ONLY set if user explicitly mentions where they're FLYING FROM.
+  "I want to go to Bali" does NOT set origin - only destination.
+
 EXISTING PLAN (for context - don't overwrite unless user explicitly changes):
 - Destination: {current_plan.destination or 'Not set'}
 - Origin: {current_plan.origin or 'Not set'}
@@ -89,6 +95,7 @@ RULES:
 
 3. Only extract fields EXPLICITLY mentioned in this message.
    Return null for fields not mentioned.
+   CRITICAL: Origin should be null unless user says "from <city>" or "flying from <city>".
 
 4. Don't change existing values unless user explicitly updates them.
    Exception: If user says "actually Paris" and destination was "London", update it.
@@ -318,12 +325,13 @@ async def _update_trip_plan_from_llm(
         )
 
     # Apply extracted fields (only non-null values)
+    # Title-case place names for proper display (LLM may return lowercase)
     if extracted.destination:
-        plan.destination = extracted.destination
+        plan.destination = extracted.destination.title()
         _debug_v2(f"LLM extracted destination: {extracted.destination}")
 
     if extracted.origin:
-        plan.origin = extracted.origin
+        plan.origin = extracted.origin.title()
         _debug_v2(f"LLM extracted origin: {extracted.origin}")
 
     if extracted.start_date:

@@ -25,7 +25,8 @@
 
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { useMobileMode } from '@/contexts/MobileModeContext';
@@ -33,6 +34,7 @@ import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
+import { getDestinationCoords } from '@/lib/destination-coords';
 import {
   calculateMapCenter,
   extractPOIsFromSections,
@@ -97,23 +99,31 @@ export function computeDataDensity(
   return 'full';
 }
 
+import { Loader2 } from 'lucide-react';
+
 import { BookingSection } from './BookingSection';
 import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
 import { NextStepBar } from './NextStepBar';
 import { PlanHeader } from './PlanHeader';
+import { SelectionsBar } from './SelectionsBar';
+import {
+  REVEAL_TIMING,
+  SPRING_CONFIG,
+} from '@/lib/animation-config';
 import {
   type GenerationState,
   getNextAction,
   getStageFromState,
   isGenerating,
 } from './planStateHelpers';
-// S0BootstrapView removed - Zero-UI: no form in center, controls live in sidebar
-import { S1FramingView } from './stages/S1FramingView';
-import { S2BlockedView } from './stages/S2BlockedView';
+// Unified Planning View: Only S2StrategyView is used (specialist cards)
+// Legacy stage views removed - timeline lives in Section 4, not embedded in stage content
+// import { S1FramingView } from './stages/S1FramingView';
+// import { S2BlockedView } from './stages/S2BlockedView';
 import { S2StrategyView } from './stages/S2StrategyView';
-import { S3BlockedView } from './stages/S3BlockedView';
-import { S3EditingView } from './stages/S3EditingView';
-import { S3ItineraryView } from './stages/S3ItineraryView';
+// import { S3BlockedView } from './stages/S3BlockedView';
+// import { S3EditingView } from './stages/S3EditingView';
+// import { S3ItineraryView } from './stages/S3ItineraryView';
 import { TimelineSkeleton } from './timeline/TimelineSkeleton';
 import { TimelineThread } from './TimelineThread';
 
@@ -176,109 +186,11 @@ interface StrategyStageRendererProps {
   mode?: ViewMode;
 }
 
-function renderStageContent(
-  state: PlanViewState,
-  viewModel: PlanViewModel,
-  destinationCard: DestinationCard | undefined,
-  canGeneratePlan: boolean,
-  onRefineAssumptions?: () => void,
-  onExpandToItinerary?: () => void,
-  onBuildPlan?: () => void,
-  hasEverHadPlan?: boolean,
-  tiles?: Record<string, Tile>,
-  isDesktop?: boolean,
-  tripInputs?: DocumentTripInputs,
-  onFinalizePlan?: () => void,
-  isFinalizing?: boolean,
-  isExpandingItinerary?: boolean,
-  density?: DataDensity
-): React.ReactNode {
-  // Zero-UI: P0 controls live in sidebar, not center card
-  // These params were for S0BootstrapView, now unused
-  void canGeneratePlan;
-  void onBuildPlan;
-  void hasEverHadPlan;
-  void isDesktop;
-
-  // Normalize legacy S* values to P* values for consistent handling
-  const normalizedState = normalizePlanViewState(state);
-
-  switch (normalizedState) {
-    case 'P0_MINIMAL':
-      // Zero-UI: No form in center - controls live in sidebar
-      // This case shouldn't fire (planContent handles P0 specially) but defensive fallback
-      return null;
-
-    case 'P1_ENRICHED':
-    case 'P2_LOGISTICS':
-      // Enriched phase: show strategy cards (specialists have run)
-      return (
-        <S2StrategyView
-          key={`strategy-${destinationCard?.title}`}
-          viewModel={viewModel}
-          destinationCard={destinationCard}
-          onRefineAssumptions={onRefineAssumptions}
-          canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
-          pendingTopics={viewModel.pending_strategy_topics}
-          executedTopics={viewModel.executed_strategy_topics}
-          tiles={tiles}
-          tripInputs={tripInputs}
-          density={density}
-        />
-      );
-
-    case 'P3_FINALIZED':
-      // Finalized phase: show full itinerary
-      return (
-        <S3ItineraryView
-          viewModel={viewModel}
-          destinationCard={destinationCard}
-          onFinalize={onFinalizePlan}
-          isFinalizing={isFinalizing}
-          isGenerating={isExpandingItinerary}
-        />
-      );
-
-    case 'P3_EDITING':
-      return (
-        <S3EditingView
-          viewModel={viewModel}
-          destinationCard={destinationCard}
-          onRefresh={onExpandToItinerary}
-        />
-      );
-
-    case 'P3_BLOCKED':
-      return (
-        <S3BlockedView
-          viewModel={viewModel}
-          destinationCard={destinationCard}
-        />
-      );
-
-    default:
-      // Handle legacy S1_FRAMING state separately (shows minimal framing UI)
-      if (state === 'S1_FRAMING') {
-        return (
-          <S1FramingView
-            viewModel={viewModel}
-            destinationCard={destinationCard}
-          />
-        );
-      }
-      // Handle legacy S2_BLOCKED state
-      if (state === 'S2_BLOCKED') {
-        return (
-          <S2BlockedView
-            viewModel={viewModel}
-            destinationCard={destinationCard}
-          />
-        );
-      }
-      // Zero-UI: Unknown state fallback - show nothing, controls in sidebar
-      return null;
-  }
-}
+// renderStageContent - REMOVED for Unified Planning View
+// In the unified single-scroll flow, we always use S2StrategyView for Section 1 (specialists)
+// and TimelineThread for Section 4 (timeline). The old full-page views (S3ItineraryView, etc.)
+// are no longer used in this architecture.
+// @see docs/ux_unified_architecture.md - Unified Planning View
 
 export function StrategyStageRenderer({
   state,
@@ -322,6 +234,10 @@ export function StrategyStageRenderer({
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
   const effectiveTiles = storeTiles ?? tiles;
 
+  // Heart preference system for SelectionsBar
+  const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
+  const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
+
   // Get desktop state for mobile-specific rendering
   const { isDesktop } = useMobileMode();
 
@@ -329,10 +245,34 @@ export function StrategyStageRenderer({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isCollapsed = useScrollCollapse(scrollContainerRef, { threshold: 60, hysteresis: 15 });
 
+  // Timeline ref for auto-scroll
+  const timelineSectionRef = useRef<HTMLDivElement>(null);
+  const prevHasItineraryRef = useRef(false);
+
   // Enforce content policy in development
-  React.useEffect(() => {
+  useEffect(() => {
     guardedEnforcePolicy(state, viewModel);
   }, [state, viewModel]);
+
+  // Track hasItineraryContent for auto-scroll trigger
+  const hasItineraryContent: boolean = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING' ||
+    Boolean(viewModel.day_cards && viewModel.day_cards.length > 0);
+
+  // Auto-scroll to timeline when itinerary is generated
+  useEffect(() => {
+    // Only scroll when hasItineraryContent changes from false to true
+    if (hasItineraryContent && !prevHasItineraryRef.current) {
+      // Small delay to ensure DOM is rendered
+      const timer = setTimeout(() => {
+        timelineSectionRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+    prevHasItineraryRef.current = hasItineraryContent;
+  }, [hasItineraryContent]);
 
   // hasTripContext = canGeneratePlan (destination + dates set)
   const nextAction = getNextAction(state, generation, canGeneratePlan);
@@ -349,7 +289,7 @@ export function StrategyStageRenderer({
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
 
   // Compute planning phase for ModeIndicator
-  const hasItineraryContent = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+  // Note: hasItineraryContent is computed above with auto-scroll logic
   const planningPhase = computePlanningPhase(
     effectiveTripInputs,
     hasItineraryContent,
@@ -357,21 +297,17 @@ export function StrategyStageRenderer({
   );
   const planningProgress = computePlanningProgress(planningPhase);
 
-  // Sub-view toggle: Overview (S2) vs Itinerary (S3) within Plan mode
-  // Smart initialization: show itinerary if already generated, otherwise overview
-  const [subView, setSubView] = useState<'overview' | 'itinerary'>(
-    state === 'S3_ITINERARY_READY' ? 'itinerary' : 'overview'
-  );
+  // =========================================================================
+  // UNIFIED PLANNING VIEW - Preferences & Scroll State
+  // =========================================================================
 
-  // Auto-switch to itinerary when generation completes
-  useEffect(() => {
-    if (state === 'S3_ITINERARY_READY') {
-      setSubView('itinerary');
+  // Scroll to a tile in the tiles section when clicked from SelectionsBar
+  const scrollToTile = useCallback((tileId: string) => {
+    const tileElement = document.querySelector(`[data-tile-id="${tileId}"]`);
+    if (tileElement) {
+      tileElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
-  }, [state]);
-
-  // Check if itinerary has been generated (for showing toggle)
-  const hasItinerary = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING';
+  }, []);
 
   // Plan content - heavy, needs persistence
   // Uses computeDataDensity for unified rendering logic
@@ -483,7 +419,25 @@ export function StrategyStageRenderer({
     if (density === 'bridge') {
       const sections = viewModel.strategy_sections ?? [];
       const mapPOIs = extractPOIsFromSections(sections);
-      const mapCenter = calculateMapCenter(mapPOIs);
+
+      // Get destination coordinates for map center
+      const bridgeDestCoords = getDestinationCoords(destinationCard?.title);
+      const bridgeMapCenter = bridgeDestCoords
+        ? { lng: bridgeDestCoords[0], lat: bridgeDestCoords[1], zoom: 8 }
+        : calculateMapCenter(mapPOIs);
+
+      // Destination pin for the map (shown when no POIs available)
+      const bridgeDestMarker: import('@/components/map/InteractiveMap').MapItem[] = bridgeDestCoords
+        ? [{
+            id: 'destination-pin',
+            title: destinationCard?.title || 'Destination',
+            type: 'destination',
+            coordinates: { lat: bridgeDestCoords[1], lng: bridgeDestCoords[0] },
+          }]
+        : [];
+
+      // Use POIs if available, otherwise show destination pin
+      const bridgeMapItems = mapPOIs.length > 0 ? mapPOIs : bridgeDestMarker;
 
       // SETUP vs PLAN mode detection:
       // - No dates = SETUP mode = cards collapsed
@@ -530,113 +484,233 @@ export function StrategyStageRenderer({
             />
           </div>
 
-          {/* Right Column: Map (Fixed Width on Desktop) */}
+          {/* Right Column: Map (Fixed Width on Desktop) - shows destination pin or POIs */}
           <div className="hidden lg:block w-[350px] shrink-0">
-            {mapPOIs.length > 0 ? (
-              <InteractiveMap
-                items={mapPOIs}
-                activeItemId={null}
-                defaultCenter={mapCenter}
-                className="h-[400px] rounded-xl sticky top-4"
-              />
-            ) : (
-              <DestinationMapPlaceholder
-                destination={destinationCard?.title || 'Destination'}
-                imageUrl={destinationCard?.image_url || ''}
-                className="h-[400px] sticky top-4"
-              />
-            )}
+            {/* Explicit height wrapper ensures Mapbox initializes correctly */}
+            <div style={{ height: 400 }} className="rounded-xl overflow-hidden sticky top-4">
+              {bridgeMapItems.length > 0 ? (
+                <InteractiveMap
+                  items={bridgeMapItems}
+                  activeItemId={null}
+                  defaultCenter={bridgeMapCenter}
+                  className="h-full w-full"
+                />
+              ) : (
+                <DestinationMapPlaceholder
+                  destination={destinationCard?.title || 'Destination'}
+                  imageUrl={destinationCard?.image_url || ''}
+                  className="h-full"
+                />
+              )}
+            </div>
           </div>
         </div>
       );
     }
 
-    // Determine which view to show based on subView toggle
-    // When in S3_ITINERARY_READY and subView is 'overview', show S2StrategyView
-    const effectiveState = (hasItinerary && subView === 'overview')
-      ? 'S2_STRATEGY_READY'
-      : state;
+    // Unified single-scroll view - no more subView toggle
+    // Shows: Specialists → Tiles → Timeline (if generated)
+    // Desktop P3+: 60/40 split with sticky map sidebar
+    // Mobile: Inline map between tiles and timeline
+    // @see docs/ux_unified_architecture.md - Unified Planning View
+
+    // Get destination coordinates for map (used in P3+ only)
+    const destCoords = getDestinationCoords(destinationCard?.title);
+    const mapCenter = destCoords
+      ? { lng: destCoords[0], lat: destCoords[1], zoom: 8 }
+      : { lng: 0, lat: 0, zoom: 2 }; // Fallback world view
+
+    // Desktop: Show sticky map sidebar when destination is set
+    // Map appears immediately when destination is known, not just after itinerary
+    const showDesktopMap = isDesktop && !!destCoords;
+
+    // Destination pin for the map center
+    const destinationMarker: import('@/components/map/InteractiveMap').MapItem[] = destCoords
+      ? [{
+          id: 'destination-pin',
+          title: destinationCard?.title || 'Destination',
+          type: 'destination',
+          coordinates: { lat: destCoords[1], lng: destCoords[0] },
+        }]
+      : [];
 
     return (
-      <>
-        {/* Sub-view toggle - visible only after itinerary is generated */}
-        {hasItinerary && (
-          <div className="flex justify-center py-4 sticky top-0 z-30 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm border-b border-zinc-200/50 dark:border-zinc-800/50">
-            <div className="bg-zinc-200 dark:bg-zinc-800 p-1 rounded-full flex">
-              <button
-                onClick={() => setSubView('overview')}
-                className={cn(
-                  "px-6 py-2 rounded-full text-xs font-bold transition-all duration-200",
-                  subView === 'overview'
-                    ? "bg-white dark:bg-zinc-700 shadow-sm text-zinc-900 dark:text-white"
-                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-                )}
-              >
-                Overview
-              </button>
-              <button
-                onClick={() => setSubView('itinerary')}
-                className={cn(
-                  "px-6 py-2 rounded-full text-xs font-bold transition-all duration-200",
-                  subView === 'itinerary'
-                    ? "bg-white dark:bg-zinc-700 shadow-sm text-zinc-900 dark:text-white"
-                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-                )}
-              >
-                Itinerary
-              </button>
-            </div>
-          </div>
-        )}
+      <div className={cn(
+        'flex',
+        // Desktop P3+: Content + fixed map layout
+        showDesktopMap && 'gap-6'
+      )}>
+        {/* LEFT COLUMN: Main content (flex-1 on desktop P3+, 100% otherwise) */}
+        <div
+          className={cn(
+            'flex flex-col min-w-0',
+            showDesktopMap ? 'flex-1' : 'w-full'
+          )}
+          style={showDesktopMap ? { minWidth: 720, maxWidth: 900 } : undefined}
+        >
+          {/* SECTION 1: SPECIALISTS */}
+          <section id="specialists-section" className="relative">
+            <S2StrategyView
+              key={`strategy-${destinationCard?.title}`}
+              viewModel={viewModel}
+              destinationCard={destinationCard}
+              onRefineAssumptions={onRefineAssumptions}
+              canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
+              pendingTopics={viewModel.pending_strategy_topics}
+              executedTopics={viewModel.executed_strategy_topics}
+              tiles={effectiveTiles}
+              tripInputs={effectiveTripInputs}
+              density={density}
+            />
 
-        {/* Stage content with regeneration overlay */}
-        <div className="relative">
-          {renderStageContent(
-            effectiveState,
-            viewModel,
-            destinationCard,
-            canGeneratePlan,
-            onRefineAssumptions,
-            onExpandToItinerary,
-            onBuildPlan,
-            hasEverHadPlan,
-            effectiveTiles,
-            isDesktop,
-            effectiveTripInputs,
-            onFinalizePlan,
-            isFinalizing,
-            isExpandingItinerary,
-            density
+            {/* Regeneration overlay */}
+            {isRegenerating && (
+              <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
+                <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  <p className="text-sm font-medium text-muted-foreground">Updating plan...</p>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* SELECTIONS BAR - slides in when user has hearted tiles */}
+          <AnimatePresence>
+            {preferredTileIds.size > 0 && (
+              <motion.div
+                initial={{ y: -40, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -40, opacity: 0 }}
+                transition={{
+                  type: 'spring',
+                  stiffness: SPRING_CONFIG.SLIDE.stiffness,
+                  damping: SPRING_CONFIG.SLIDE.damping,
+                }}
+                className={cn(
+                  'sticky top-0 z-20',
+                  isDesktop && 'mx-4'
+                )}
+              >
+                <SelectionsBar
+                  tiles={effectiveTiles}
+                  preferredTileIds={preferredTileIds}
+                  onRemovePreference={toggleTilePreference}
+                  onTileClick={scrollToTile}
+                  isSticky={isDesktop}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* SECTION 2: TILE BROWSER - fades in when tiles available */}
+          <AnimatePresence>
+            {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
+              <motion.section
+                key="tiles-section"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
+                id="tiles-section"
+                className={cn(
+                  'mt-4 px-4',
+                  isExpandingItinerary && 'opacity-60 pointer-events-none'
+                )}
+              >
+                <BookingSection
+                state={state}
+                tiles={effectiveTiles}
+                generation={generation}
+                hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
+                savedTileIds={savedTileIds}
+                onSaveTile={onSaveTile}
+                hasDates={!!effectiveTripInputs?.start_date}
+                mode={effectiveMode}
+                strategySections={viewModel.strategy_sections}
+              />
+              </motion.section>
+            )}
+          </AnimatePresence>
+
+          {/* MOBILE ONLY: Inline map before timeline */}
+          {!isDesktop && hasItineraryContent && (
+            <section className="mt-4 px-4">
+              {/* Explicit height wrapper ensures Mapbox initializes correctly */}
+              <div style={{ height: 300 }} className="rounded-xl overflow-hidden border border-border/50">
+                {destCoords ? (
+                  <InteractiveMap
+                    items={[]}
+                    activeItemId={null}
+                    defaultCenter={mapCenter}
+                    className="h-full w-full"
+                  />
+                ) : (
+                  <DestinationMapPlaceholder
+                    destination={destinationCard?.title || 'Destination'}
+                    imageUrl={destinationCard?.image_url || ''}
+                    className="h-full"
+                  />
+                )}
+              </div>
+            </section>
           )}
 
-          {/* Regeneration overlay - shows when constraints changed and plan is refreshing */}
-          {isRegenerating && (
-            <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
-              <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
-                <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                <p className="text-sm font-medium text-muted-foreground">Updating plan...</p>
-              </div>
-            </div>
+          {/* SECTION 3: TIMELINE - fades in after generation */}
+          <AnimatePresence>
+            {hasItineraryContent && (
+              <motion.section
+                key="timeline-section"
+                ref={timelineSectionRef}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: REVEAL_TIMING.TIMELINE_FADE / 1000 }}
+                id="timeline-section"
+                className="px-4 py-4"
+              >
+                <TimelineThread
+                  dayCards={viewModel.day_cards ?? []}
+                  variant="draft"
+                  useRichBlocks={true}
+                  savedTileIds={savedTileIds}
+                />
+              </motion.section>
+            )}
+          </AnimatePresence>
+
+          {/* LOADING STATE: Show during itinerary generation */}
+          {isExpandingItinerary && !hasItineraryContent && (
+            <section className="flex flex-col items-center justify-center py-16 gap-3">
+              <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+              <span className="text-sm text-muted-foreground">Building your itinerary...</span>
+            </section>
           )}
         </div>
 
-        {/* TILES SECTION: Show booking tiles in Plan view when available */}
-        {/* @see docs/ux_unified_architecture.md Section I.2 - "Tiles: VISIBLE" in Plan Phase */}
-        {effectiveTiles && Object.keys(effectiveTiles).length > 0 && (
-          <div className="mt-4 px-4">
-            <BookingSection
-              state={state}
-              tiles={effectiveTiles}
-              generation={generation}
-              hasStrategyContent={(viewModel.strategy_sections?.length ?? 0) > 0}
-              savedTileIds={savedTileIds}
-              onSaveTile={onSaveTile}
-              hasDates={!!effectiveTripInputs?.start_date}
-              mode={effectiveMode}
-            />
-          </div>
-        )}
-      </>
+        {/* RIGHT COLUMN: Sticky map - shows when destination is set (Desktop only, fixed 400px width) */}
+        <AnimatePresence>
+          {showDesktopMap && (
+            <motion.div
+              key="desktop-map"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3 }}
+              className="shrink-0"
+              style={{ width: 400, maxWidth: '35vw' }}
+            >
+              <div className="sticky top-20 z-10">
+                {/* Explicit height wrapper ensures Mapbox initializes correctly */}
+                <div style={{ height: 400 }} className="rounded-xl overflow-hidden border border-border/50">
+                  <InteractiveMap
+                    items={destinationMarker}
+                    activeItemId={null}
+                    defaultCenter={mapCenter}
+                    className="h-full w-full"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     );
   }, [
     state,
@@ -656,13 +730,16 @@ export function StrategyStageRenderer({
     isExpandingItinerary,
     onSelectNights,
     onOpenSheet,
-    hasItinerary,
-    subView,
     generating, // Added for Mirror Loader skeleton
     generation, // Added for BookingSection in Plan view
     savedTileIds,
     onSaveTile,
     effectiveMode, // Two-mode system
+    hasItineraryContent,
+    // Progressive disclosure dependencies
+    preferredTileIds,
+    toggleTilePreference,
+    scrollToTile,
   ]);
 
   // Book content - full booking section view
@@ -676,6 +753,7 @@ export function StrategyStageRenderer({
       onSaveTile={onSaveTile}
       hasDates={!!effectiveTripInputs?.start_date}
       mode="booking" // Book view is always in booking mode
+      strategySections={viewModel.strategy_sections}
     />
   ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile, effectiveTripInputs?.start_date]);
 
@@ -805,18 +883,33 @@ export function StrategyStageRenderer({
         )}
       </div>
 
-      {/* Sticky footer - only shown in PLANNING mode, hidden on mobile (MobilePlanFooter handles mobile CTA) */}
-      {nextAction && effectiveMode === 'planning' && (
-        <NextStepBar
-          state={state}
-          generation={generation}
-          nextAction={nextAction}
-          onExpandToItinerary={onExpandToItinerary}
-          lastError={lastError}
-          onRetry={onRetry}
-          className="hidden lg:block"
-        />
-      )}
+      {/* Sticky footer - slides up, only shown in PLANNING mode, hidden on mobile */}
+      <AnimatePresence>
+        {nextAction && effectiveMode === 'planning' && (
+          <motion.div
+            key="next-step-bar"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            transition={{
+              type: 'spring',
+              stiffness: SPRING_CONFIG.SLIDE.stiffness,
+              damping: SPRING_CONFIG.SLIDE.damping,
+            }}
+            className="hidden lg:block"
+          >
+            <NextStepBar
+              state={state}
+              generation={generation}
+              nextAction={nextAction}
+              onExpandToItinerary={onExpandToItinerary}
+              onOpenDates={() => onOpenSheet?.('dates')}
+              lastError={lastError}
+              onRetry={onRetry}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -26,14 +26,14 @@ PLANNING mode evolves naturally based on what the user has provided. No artifici
   * Hero image of destination
   * Specialist strategy cards (diving, local expert, etc.)
   * Progress indicator: "Add dates to see itinerary"
-  * Map with POI pins from specialist recommendations
+  * Map with static destination pin (POIs from specialists deferred)
 * **Tiles:** HIDDEN (no prices without dates)
 
 #### Phase 2: After Dates Added
 * **Trigger:** User provides dates (e.g., "April 15-25")
 * **UI Shows:**
   * Day-by-day itinerary auto-generates
-  * Map shows route with day-by-day pins
+  * Map shows day markers (route lines deferred to post-MVP)
   * Suggested hotels/flights/activities appear in timeline
   * Strategy cards compact into "Trip DNA" bar
   * "Proceed to Booking" button appears at bottom
@@ -94,6 +94,324 @@ interface PlanningPhase {
 
 ---
 
+## I.A.1 Single-Scroll Progressive Disclosure (PLANNING Mode)
+
+PLANNING mode uses a **single-scroll layout** that progressively reveals content based on data density. No tab switching required.
+
+### Content Stack (Top to Bottom)
+
+**Pre-Generation (P0-P2): No Map - Tiles get full width**
+```
+┌─────────────────────────────────────────────────┐
+│  SECTION 1: Specialist Strategy Cards           │  ← Phase 1+
+│  (Collapsed by default, expandable)             │
+├─────────────────────────────────────────────────┤
+│  SECTION 2: Tile Browser (full width)           │  ← Phase 2+
+│  Hotels, Flights, Activities with heart actions │
+│  Heart = preference signal for AI weighting     │
+│  Component: BookingSection.tsx                  │
+├─────────────────────────────────────────────────┤
+│  "Build Itinerary" CTA (NextStepBar)            │  ← Phase 2+
+│  Sticky at bottom                               │
+└─────────────────────────────────────────────────┘
+```
+
+**Post-Generation (P3+) - Desktop: Content + Fixed Map Sidebar**
+```
+┌─────────────────────────────────┬──────────────┐
+│  LEFT COLUMN (flex-1)           │  RIGHT       │
+│  min: 720px, max: 900px         │  fixed 400px │
+│  ┌────────────────────────────┐ │  max: 35vw   │
+│  │ SECTION 1: Specialists     │ │  ┌─────────┐ │
+│  │ (Collapsed cards)          │ │  │         │ │
+│  ├────────────────────────────┤ │  │   MAP   │ │
+│  │ SECTION 2: Tile Browser    │ │  │  sticky │ │
+│  │ (Hotels, Flights, etc.)    │ │  │  top-20 │ │
+│  ├────────────────────────────┤ │  │  400px  │ │
+│  │ SECTION 3: Timeline        │ │  │  height │ │
+│  │ (Day cards + activities)   │ │  │         │ │
+│  └────────────────────────────┘ │  └─────────┘ │
+└─────────────────────────────────┴──────────────┘
+```
+
+**Post-Generation (P3+) - Mobile: Stacked with Inline Map**
+```
+┌─────────────────────────────────────────────────┐
+│  SECTION 1: Specialist Strategy Cards           │
+├─────────────────────────────────────────────────┤
+│  SECTION 2: Tile Browser                        │
+├─────────────────────────────────────────────────┤
+│  MAP (300px height, inline, non-sticky)         │
+├─────────────────────────────────────────────────┤
+│  SECTION 3: Timeline                            │
+└─────────────────────────────────────────────────┘
+```
+
+### New Components (v3.1)
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| SelectionsBar | `components/plan/SelectionsBar.tsx` | Horizontal carousel of hearted tiles (sticky on desktop) |
+
+### Progressive Disclosure Rules
+
+| Data Available | Content Shown | Map State |
+|----------------|---------------|-----------|
+| Destination only | Strategy cards, destination hero | **Visible (destination pin)** |
+| + Dates | + Tile browser (prices available) | Visible (destination pin) |
+| + Generation complete | + Itinerary timeline | Visible (destination pin) |
+| + Hearts/preferences | Preference attribution in timeline | Visible |
+
+### Map Display Rules
+
+| Phase | Desktop (>1024px) | Mobile (<1024px) |
+|-------|-------------------|------------------|
+| With Destination | Fixed 400px (max 35vw), sticky `top-20`, 400px height, z-10, destination pin centered | 300px height, inline before timeline |
+| No Destination | Hidden | Hidden |
+
+**Map Content:**
+- Static destination pin centered on map (zoom level 6)
+- Uses `getDestinationCoords()` lookup for ~90 destinations
+- Falls back to `DestinationMapPlaceholder` if coords not found
+
+### Scroll Behavior
+- **Strategy Cards:** Collapsed by default, user can expand
+- **Tiles:** Natural scroll, `data-tile-id` attribute for scroll targeting
+- **Map (Desktop P3+):** Sticky right sidebar - stays visible while scrolling content
+- **Map (Mobile P3+):** Inline between tiles and timeline, scrolls with content
+- **Timeline:** Inline after tiles (or after map on mobile)
+
+### Auto-Scroll Triggers
+- **First heart:** Scrolls to SelectionsBar
+- **Itinerary generated:** Scrolls to timeline section (smooth scroll, 300ms delay after fade starts)
+
+### Animation Specification
+
+Progressive disclosure uses coordinated animations to reveal UI elements at the right moment.
+
+**Configuration File:** `frontend/lib/animation-config.ts`
+
+#### Timing Constants
+| Element | Trigger | Duration | Animation |
+|---------|---------|----------|-----------|
+| Tiles fade-in | P2 (tiles fetched) | 300ms | Opacity 0→1 |
+| SelectionsBar | First heart | 250ms | Slide down (spring) |
+| Timeline fade-in | P3 (itinerary ready) | 500ms | Opacity + translateY 20→0 |
+| Map fade-in | Destination set | 300ms | Opacity 0→1 (simple fade) |
+| NextStepBar slide-up | P2+ | Spring | Slide up from bottom |
+
+#### Spring Physics
+All interactive animations use spring physics:
+- **SLIDE config:** `{ stiffness: 400, damping: 30 }` - for slide animations
+- **EXPAND config:** `{ stiffness: 300, damping: 25 }` - for card expansions
+
+#### State-Based Reveals
+
+```
+P0_MINIMAL (destination only)
+├─ Hero + chips
+├─ Specialists (collapsed)
+└─ Map (fade in, desktop only, destination pin) ← AnimatePresence
+
+P1_ENRICHED (specialists complete)
+├─ Above +
+└─ Specialists (can expand manually)
+
+P2_LOGISTICS (tiles fetched)
+├─ Above +
+├─ Tiles (fade in, 300ms) ← AnimatePresence
+├─ SelectionsBar (slide down on first heart) ← AnimatePresence
+└─ NextStepBar (slide up) ← AnimatePresence
+
+P3_FINALIZED (itinerary generated)
+├─ Above +
+└─ Timeline (fade in, 500ms) ← AnimatePresence + auto-scroll
+```
+
+#### Interaction-Based Reveals
+
+```
+First heart click
+└─ SelectionsBar slides down from top (spring, 250ms)
+    └─ Becomes sticky on desktop, inline on mobile
+
+Tile click from SelectionsBar
+└─ Smooth scroll to tile in TilesGrid (data-tile-id attribute)
+
+Itinerary generated
+└─ Auto-scroll to timeline section (300ms after fade starts)
+```
+
+#### Mobile Optimization
+
+Mobile skips heavy animations for performance:
+- **Tiles:** Immediate render (no AnimatePresence wrapper)
+- **Timeline:** Immediate render
+- **SelectionsBar:** Non-sticky (inline), still has slide animation
+- **Map:** 300px inline block, no slide animation
+
+#### Loading States
+
+```
+isExpandingItinerary = true:
+├─ Tiles: 60% opacity, pointer-events-none
+├─ CTA: Spinner + "Building your itinerary..."
+└─ Timeline placeholder shown
+```
+
+#### Component Implementation
+
+All animations use Framer Motion with `AnimatePresence` for enter/exit:
+
+```tsx
+// Tiles fade-in example
+<AnimatePresence>
+  {hasTiles && (
+    <motion.section
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: REVEAL_TIMING.TILES_FADE / 1000 }}
+    >
+      <BookingSection ... />
+    </motion.section>
+  )}
+</AnimatePresence>
+```
+
+**Files:**
+- `frontend/lib/animation-config.ts` - Centralized timing constants
+- `frontend/components/plan/StrategyStageRenderer.tsx` - Main orchestrator with AnimatePresence wrappers
+
+### Implementation Notes
+- No `subView` state - tab navigation removed entirely
+- `StrategyStageRenderer.tsx` uses conditional layout:
+  - **No Destination:** Single column `<div className="flex flex-col w-full">`
+  - **With Destination (Desktop):** Content (flex-1, min 720px, max 900px) + Map (fixed 400px, max 35vw)
+  - **With Destination (Mobile):** Single column with inline map (300px height, shown after itinerary)
+- Map visibility controlled by `showDesktopMap = isDesktop && !!destCoords` (shows immediately when destination is set)
+- Timeline section conditionally renders when `hasItineraryContent === true`
+- Mode prop threads through TimelineThread → ActivityMiniCard for Book button visibility
+- Preference attribution uses `preferredTileIds` to show "You preferred this" badge
+- Legacy stage views (S3ItineraryView, S1FramingView, etc.) removed from unified flow
+- Only S2StrategyView used for specialist cards in all phases
+
+---
+
+## I.A.2 Heart Preference System (Consolidated)
+
+Users can heart tiles to signal preference to the AI. Hearts are preference signals, not cart additions.
+
+### States
+| State | Visual | Interaction |
+|-------|--------|-------------|
+| Unpressed | Outline heart, zinc-400 | Click to prefer |
+| Pressed | Filled heart, emerald-500, scale animation | Click to unprefer |
+
+### Data Flow
+1. User hearts tiles via `SuggestionCard`, `TileCard`, or `BookableCard`
+2. All heart clicks route through `useShortlist` hook → `toggleTilePreference()`
+3. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document`
+4. On page refresh, `fetchDocument()` hydrates `preferredTileIds` from DB
+5. `useShortlist` syncs local metadata (category, isPrimary) from hydrated IDs
+6. On "Build Itinerary" click, preferences extracted and categorized by tile type
+7. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
+8. Timeline shows attribution badge: "You preferred this" on check-in blocks
+
+### Itinerary Generation with Preferences
+
+When user clicks "Build Itinerary", preferences flow to backend:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Frontend: NomadicLanding.tsx (proceedWithItineraryGeneration)  │
+│                                                                  │
+│  1. Read preferredTileIds from documentStore                     │
+│  2. Categorize by tile.type:                                     │
+│     - hotel/stay/accommodation → preferred_hotel_ids             │
+│     - activity/experience/tour → preferred_activity_ids          │
+│  3. POST /api/expand-itinerary { preferences: {...} }            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Backend: ItineraryBuilder (services/itinerary_builder.py)       │
+│                                                                  │
+│  1. PreferenceOverrideInput receives hotel/activity IDs          │
+│  2. Hotel selection: preferred tiles get 1.5x score boost        │
+│  3. Sort by: is_preferred (desc), adjusted_score (desc)          │
+│  4. Set preference_status on DayBlockOutput:                     │
+│     - "user_preferred": Selected tile was hearted                │
+│     - "ai_selected": AI chose without user preference            │
+│     - "ai_override": AI chose different tile over user's pick    │
+│  5. alternative_tile_id: User's preferred tile if AI overrode    │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Frontend: TimelineThread.tsx → LogisticsBlock                   │
+│                                                                  │
+│  Renders PreferenceAttributionBadge based on block data:         │
+│  - user_preferred → "💚 You preferred this"                      │
+│  - ai_override → "AI selected" + "Switch" button                 │
+│  - ai_selected → No badge (default)                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Tile Type Matching
+
+Frontend categorizes tiles by type (case-insensitive):
+
+| Category | Matched Types |
+|----------|---------------|
+| Hotels | `hotel`, `stay`, `accommodation` |
+| Activities | `activity`, `experience`, `tour`, `attraction`, `excursion`, `ticket`, `event` |
+| Flights | `flight` (not currently used in preferences) |
+
+### Preference Timing
+
+**Important:** Preferences are snapshot at itinerary generation time. Hearts added AFTER generation don't automatically update the itinerary. User must regenerate to apply new preferences.
+
+### Architecture (Consolidated)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  UI Components                                                   │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
+│  │SuggestionCard│ │  TileCard   │ │BookableCard │               │
+│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘               │
+│         │               │               │                        │
+│         ▼               ▼               ▼                        │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  useShortlist (hooks/useShortlist.ts)                     │   │
+│  │  - Local state: category, isPrimary (UI-specific)         │   │
+│  │  - Backed by: documentStore.preferredTileIds              │   │
+│  │  - On toggle: calls toggleTilePreference()                │   │
+│  │  - On hydration: syncs from preferredTileIds              │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           │                                      │
+│                           ▼                                      │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  documentStore (state/documentStore.ts)                   │   │
+│  │  - preferredTileIds: Set<string>                          │   │
+│  │  - toggleTilePreference() → PATCH /api/document           │   │
+│  │  - fetchDocument() → hydrates preferredTileIds from DB    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                           │                                      │
+└───────────────────────────┼──────────────────────────────────────┘
+                            ▼
+┌───────────────────────────────────────────────────────────────────┐
+│  Backend: PATCH /api/document                                      │
+│  - preferred_tile_ids persisted to plan_documents table            │
+│  - Survives page refresh, session timeout (24h)                    │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+### Storage
+- **Zustand state:** `documentStore.preferredTileIds: Set<string>`
+- **Local metadata:** `useShortlist.itemsMetadata: Map<id, {category, isPrimary}>`
+- **Database:** `plan_documents.document.preferred_tile_ids[]` (survives refresh)
+
+---
+
 ## I.B Booking Suggestions Pattern
 
 ### In PLANNING Mode: Suggestions with Reasoning
@@ -145,12 +463,15 @@ The backend emits **planning phases** (not UI modes) based on data density:
 |-------|-----------|----------|
 | `P0_MINIMAL` | Destination only, no specialists | Hero image, empty timeline |
 | `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards, ghost timeline |
-| `P2_LOGISTICS` | Tiles fetched, suggestions available | Full timeline with suggestions |
+| `P2_LOGISTICS` | Tiles fetched, suggestions available | Tile browser in Overview tab |
+| `P2.5_PREFERENCE` | User has hearted tiles (optional) | Preferred tiles sorted first |
 | `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary, "Proceed to Booking" |
 
-### Legacy Mapping (Deprecated)
+### Legacy Mapping (Coexistence)
 
-> **NOTE:** The old S0-S3 states are deprecated. Use P0-P3 for new code.
+> **NOTE:** The S0-S3 states coexist with P0-P3 for pragmatic reasons.
+> Backend emits S* states; frontend maps them to P* for rendering decisions.
+> This avoids a large migration while keeping the mental model clear.
 
 | Legacy State | Maps To | Reason |
 |--------------|---------|--------|
@@ -438,6 +759,77 @@ To support the Map and Cards in "Bridge Mode," the backend MUST serialize this d
 
 ---
 
+## V.A Unified Trip Validation (useTripValidation Hook)
+
+Single source of truth for date/destination validation across all components.
+
+### Overview
+
+**File:** `hooks/useTripValidation.ts`
+
+The `useTripValidation` hook provides consistent validation state across the application, ensuring components show identical messaging for incomplete trip inputs.
+
+### Validation States
+
+| Reason Code | Condition | User Message | CTA Action |
+|-------------|-----------|--------------|------------|
+| `no_destination` | Destination missing | "Add a destination to start planning" | "Add Destination" |
+| `no_dates` | No start date | "Add dates to build your itinerary" | "Add Dates" |
+| `no_return_date` | Start date only | "Add a return date to continue" | "Add Return Date" |
+| `same_day` | Start == End | "Trip must be at least 2 days" | "Adjust Dates" |
+| `too_short` | Duration < 1 day | "Trip must be at least 2 days" | "Adjust Dates" |
+| `valid` | All requirements met | (empty) | "Build Itinerary" |
+
+### Special Case: Flexible Dates
+
+If `date_flex === true` AND `trip_duration >= 2`, validation passes without specific dates:
+```typescript
+if (dateFlex === true && tripDuration != null && tripDuration >= 2) {
+  return { valid: true, reason: 'valid', duration: tripDuration, ... };
+}
+```
+
+### Hook Interface
+
+```typescript
+interface TripValidation {
+  valid: boolean;           // Whether itinerary can be generated
+  reason: ValidationReason; // Machine-readable reason code
+  message: string;          // Human-readable message for UI
+  action: string;           // CTA button text when invalid
+  duration: number | null;  // Trip duration in days (null if invalid)
+}
+
+function useTripValidation(): TripValidation;
+```
+
+### Usage Pattern
+
+```typescript
+// In any component needing validation state
+const validation = useTripValidation();
+
+// Gate button/action
+<Button disabled={!validation.valid}>
+  {validation.valid ? 'Build Itinerary' : validation.action}
+</Button>
+
+// Show helper text
+{!validation.valid && (
+  <p className="text-amber-500">{validation.message}</p>
+)}
+```
+
+### Consumers
+
+| Component | Usage |
+|-----------|-------|
+| `NextStepBar` | Validation-aware CTA states (amber/green) |
+| `PlanHeader` | Progress indicator messaging |
+| `ChatInput` | Build button gating |
+
+---
+
 ## VI. State Transitions & Input Requirements
 
 The UI must enforce strict data requirements before promoting the user to the next phase.
@@ -545,6 +937,162 @@ The renderer uses data density to determine what to show:
 
 ---
 
+## VII.A. Session Persistence (Refresh Survival)
+
+The planning session survives page refreshes via database persistence. All session state is stored in the `plan_documents.document` JSON column.
+
+### Database Schema
+
+**Table:** `plan_documents`
+- `id`: Primary key
+- `session_id`: Foreign key to sessions table
+- `document`: JSONB column containing `PlanDocumentData`
+- `version`: Optimistic locking counter
+- `updated_by`: "user" | "planner"
+- `updated_at`: Timestamp
+
+### Full Document Structure (`PlanDocumentData`)
+
+```
+plan_documents.document (JSONB)
+├── trip_context_id: int                    # FK to trip contexts
+├── trip_inputs: DocumentTripInputs         # ✅ PERSISTED
+│   ├── destination: string                 # "Bali"
+│   ├── origin: string                      # "New York"
+│   ├── start_date: date                    # "2026-02-16"
+│   ├── end_date: date                      # "2026-02-19"
+│   ├── adults: int                         # 2
+│   ├── children: int                       # 0
+│   ├── requires_assistance: bool           # false
+│   ├── budget: float                       # 5000
+│   └── currency: string                    # "USD"
+├── branches: List[DocumentBranch]          # ✅ PERSISTED
+│   └── [branch]
+│       ├── id: string                      # UUID
+│       ├── destination, origin, dates...   # Mirrors trip_inputs
+│       ├── is_primary: bool
+│       ├── tiles: { stays[], flights[], activities[] }
+│       └── selections: { stay_id, flight_ids[], activity_ids[] }
+├── tiles: Dict[str, Tile]                  # ✅ PERSISTED
+│   └── [tile_id]: Tile
+│       ├── id, type, title, description
+│       ├── price, currency
+│       ├── image_url, provider
+│       └── metadata (varies by type)
+│
+│ ─── ViewModel Fields (Refresh Survival) ─────────────────
+│
+├── plan_view_state: PlanViewState          # ✅ PERSISTED
+│   # S0_BOOTSTRAP | S1_FRAMING | S2_STRATEGY_READY | S3_ITINERARY_READY | ...
+├── strategy_sections: List[StrategySection] # ✅ PERSISTED
+│   └── [section]
+│       ├── specialist_type: string         # "diving" | "hiking" | "general"
+│       ├── title: string                   # "Diving Expert"
+│       ├── bullets: List[str]              # Advice points
+│       ├── local_expert_tips: List[str]
+│       └── constraints: Dict               # Safety rules
+├── executed_strategy_topics: List[str]     # ✅ PERSISTED ["diving", "hiking"]
+├── pending_strategy_topics: List[str]      # ✅ PERSISTED ["skiing"]
+├── day_cards: List[DayCard]                # ✅ PERSISTED
+│   └── [day_card]
+│       ├── day_number: int
+│       ├── date: string
+│       ├── title: string                   # "Arrival Day"
+│       └── blocks: List[Block]             # Activities, logistics
+├── can_expand_to_itinerary: bool           # ✅ PERSISTED
+│
+│ ─── Response-Only Fields (NOT Persisted) ────────────────
+│
+├── assistant_message: string               # ❌ Response only
+├── suggested_responses: List[str]          # ❌ Response only
+├── plan_state: PlanState                   # ❌ Computed at response time
+├── ui_phase: UIPhase                       # ❌ Computed at response time
+├── destination_card: DestinationCard       # ❌ Computed (Unsplash fetch)
+├── booking_status: BookingStatus           # ❌ Computed from tiles
+├── readiness: List[ReadinessItem]          # ❌ Computed from trip_inputs
+└── resolver: ResolverState                 # ❌ Streaming only
+```
+
+### Persistence Matrix
+
+| Field | Stored in DB | Survives Refresh | Source |
+|-------|--------------|------------------|--------|
+| `trip_inputs` | ✅ Yes | ✅ Yes | User input / LLM extraction |
+| `branches` | ✅ Yes | ✅ Yes | Graph plan generation |
+| `tiles` | ✅ Yes | ✅ Yes | Amadeus/Curated providers |
+| `strategy_sections` | ✅ Yes | ✅ Yes | Specialist nodes |
+| `day_cards` | ✅ Yes | ✅ Yes | Itinerary builder |
+| `plan_view_state` | ✅ Yes | ✅ Yes | State machine |
+| `executed_strategy_topics` | ✅ Yes | ✅ Yes | Graph execution |
+| `can_expand_to_itinerary` | ✅ Yes | ✅ Yes | Stage 3 gate |
+| `preferred_tile_ids` | ✅ Yes | ✅ Yes | Heart actions (PATCH /api/document) |
+| `assistant_message` | ❌ No | ❌ No | LLM response |
+| `destination_card` | ❌ No | ❌ No | Unsplash API |
+| `booking_status` | ❌ No | ❌ No | Computed from tiles |
+
+### Frontend Hydration Flow
+
+```
+Page Load
+    │
+    ▼
+useSessionHydration() runs
+    │
+    ├── Check session expiration (24hr max)
+    │   └── If expired → Clear state, start fresh
+    │
+    ├── GET /api/document
+    │   └── Returns full PlanDocumentData from DB
+    │
+    ├── documentStore.set({ document: response.document })
+    │   └── Zustand store populated
+    │
+    └── StrategyStageRenderer reads from store
+        ├── viewModel = useDocumentStore(s => s.document)
+        ├── tiles = useDocumentStore(s => s.document?.tiles)
+        └── Renders: Specialists → Tiles → Timeline
+```
+
+### Backend Persistence Points
+
+| Endpoint | Function | When Called | Fields Persisted |
+|----------|----------|-------------|------------------|
+| `POST /api/graph_plan` | `apply_planner_update()` | Non-streaming chat | All |
+| `POST /api/graph_plan/stream` | `apply_planner_update()` | Streaming chat | All |
+| `POST /api/expand-itinerary/stream` | `apply_planner_update()` | Build Itinerary CTA | `day_cards`, `plan_view_state` |
+| `PATCH /api/document` | `apply_user_patch()` | Tile selection | `branches.selections` |
+
+### Implementation Files
+
+| Layer | File | Function |
+|-------|------|----------|
+| Schema | `backend/app/schemas.py:650` | `PlanDocumentData` class |
+| Persistence | `backend/app/crud_document.py:565` | `apply_planner_update()` |
+| Endpoints | `backend/app/main.py:1668` | Graph plan SSE stream |
+| Hydration | `frontend/.../useSessionHydration.ts` | Session restore hook |
+| Store | `frontend/state/documentStore.ts:613` | `fetchDocument()` |
+
+### Session Lifecycle
+
+```
+1. First Visit
+   └── No session cookie → Backend creates session + empty document
+
+2. Chat Interaction
+   └── graph_plan → apply_planner_update() → DB write
+
+3. Build Itinerary
+   └── expand-itinerary → apply_planner_update(day_cards) → DB write
+
+4. Page Refresh
+   └── GET /api/document → Full document from DB → Hydrate UI
+
+5. 24hr Expiration
+   └── useSessionHydration detects age → Clear + fresh start
+```
+
+---
+
 ## VIII. Component Responsibilities
 
 | Component | Responsibility |
@@ -554,6 +1102,34 @@ The renderer uses data density to determine what to show:
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
+| `NextStepBar` | Validation-aware CTA (uses `useTripValidation` for gating) |
+
+### State Helper Functions (`planStateHelpers.ts`)
+
+| Function | Purpose | Status |
+| --- | --- | --- |
+| `getNextAction(state, generation)` | Returns action type based on state alone. Does NOT gate on dates. | Active |
+| `isGenerating(generation)` | Checks if any generation is in progress | Active |
+| `isReady(state, generation)` | Checks if plan is in ready state | Active |
+| `canShowTilesPreview(state, tileCount)` | Gates tile preview visibility | **Deprecated** |
+| `canShowBookingTiles(state)` | Gates booking tiles visibility | **Deprecated** |
+
+**IMPORTANT:** `getNextAction()` returns action type based on state alone. Validation gating (enabled/disabled) is handled by `NextStepBar` via the `useTripValidation` hook. This ensures the CTA is always visible in S2_STRATEGY_READY state.
+
+**DEPRECATION NOTICE:** `canShowBookingTiles()` and `canShowTilesPreview()` are deprecated. Mode is the SSoT for tile rendering, not state. Use `effectiveMode === 'planning'` or `effectiveMode === 'booking'` instead. See Section XI.11.F.1 for details.
+
+```typescript
+// planStateHelpers.ts
+export function getNextAction(
+  state: PlanViewState,
+  generation?: GenerationState | null,
+  _hasTripContext?: boolean // Deprecated - validation now in NextStepBar
+): 'expand_itinerary' | 'finalize_plan' | null {
+  if (isGenerating(generation)) return null;
+  if (state === 'S2_STRATEGY_READY') return 'expand_itinerary';
+  return null;
+}
+```
 
 ---
 
@@ -617,12 +1193,58 @@ We separate **Conversation** (Talking to the Architect) from **Commitment** (Loc
 
 | Property | Value |
 | --- | --- |
-| **Label** | **"Finalize & Book"** |
-| **Location** | Right Panel (Sticky Footer or Header Action) |
-| **Visibility** | Hidden in Setup/Bridge. Visible in Plan (Full Mode with tiles) |
-| **Action** | Transitions state from `S2` → `S3` (Checkout) |
+| **Label** | **"Build Itinerary"** (S2) or **"Finalize & Book"** (S3) |
+| **Location** | Right Panel (Sticky Footer - "Command Island") |
+| **Visibility** | Visible in S2_STRATEGY_READY (always, with validation states) |
+| **Action** | S2: Generates itinerary. S3: Transitions to Checkout. |
 
 **Invariant:** This is the ONLY way to enter the Booking phase. It is a **HARD GATE**.
+
+#### Validation-Aware CTA States (NextStepBar)
+
+The NextStepBar uses `useTripValidation()` to show validation-aware states:
+
+| Validation State | Button Text | Color | Badge |
+|------------------|-------------|-------|-------|
+| `no_destination` | "Add Destination" | Amber | "needs dates" |
+| `no_dates` | "Add Dates" | Amber | "needs dates" |
+| `no_return_date` | "Add Return Date" | Amber | "needs dates" |
+| `same_day` | "Adjust Dates" | Amber | "needs dates" |
+| `valid` | "Build Itinerary" | Green | "X days" |
+
+**Visual States:**
+- **Green** (emerald-500): Ready to build - dates complete, fully clickable
+- **Amber** (amber-500/80): Validation blocked - shows action needed, disabled
+- **Gray** (zinc-200): Processing state - spinner, disabled
+
+**Context Display:**
+- Left side shows "TIMELINE" label with date range (e.g., "Feb 5 → ?")
+- Badge shows trip duration when valid, or "needs dates" when incomplete
+- No additional helper text below the pill - the button text itself is the call-to-action
+
+**Click Behavior:**
+- **Valid dates:** Clicking triggers `onExpandToItinerary()` to build the itinerary
+- **Missing dates:** Clicking triggers `onOpenDates()` to open the calendar sheet
+
+**Implementation:**
+```typescript
+// NextStepBar.tsx
+const validation = useTripValidation();
+const validationBlocked = nextAction === 'expand_itinerary' && !validation.valid;
+
+const handleClick = () => {
+  if (validationBlocked) {
+    onOpenDates?.();  // Open calendar to add dates
+    return;
+  }
+  onExpandToItinerary?.();  // Build itinerary
+};
+
+// Button shows validation.action when blocked
+buttonText: validationBlocked ? validation.action : 'Build Itinerary'
+```
+
+**Invariant:** The CTA is ALWAYS visible and clickable in S2_STRATEGY_READY state. When dates are missing, clicking opens the calendar rather than being disabled.
 
 ### 3. Button Separation Rationale
 
@@ -1358,6 +1980,81 @@ The `BookingSection` component adapts rendering based on `mode` prop:
 | PLANNING | SuggestionCard | Hidden | Save, Change, Details |
 | BOOKING | BookableCard | Visible | Book, Cart, Details |
 
+#### F.1 Mode-Based Conditional Rendering (SSoT)
+
+**CRITICAL:** Mode (`effectiveMode`) is the Single Source of Truth for which tile variant to render. State (S2, S3, etc.) should NOT be used to determine tile UI.
+
+**The Wrong Pattern (Deprecated):**
+```tsx
+// DON'T: State-based conditionals
+if (canShowBookingTiles(state)) {
+  return <BookingManifest />  // Triggers on S3 state regardless of mode
+}
+```
+
+**The Correct Pattern:**
+```tsx
+// DO: Mode-based conditionals
+if (effectiveMode === 'planning' && totalTiles > 0 && !isGenerating(generation)) {
+  return <SuggestionCards />  // PLANNING mode: hearts, no checkout
+}
+
+if (effectiveMode === 'booking') {
+  return <BookingManifest />  // BOOKING mode: cart, checkout sidebar
+}
+```
+
+**Why This Matters:**
+- A user can have a complete itinerary (S3_ITINERARY_READY) but still be in PLANNING mode
+- They're refining, comparing options, not ready to commit
+- Showing checkout UI (cart, "Add to Trip", sidebar totals) is premature
+- Mode transition requires explicit user action (clicking "Finalize & Unlock Booking")
+
+**State vs Mode:**
+| Concept | Purpose | Examples |
+|---------|---------|----------|
+| **State** (S0-S3) | Data density indicator | S3 = itinerary exists |
+| **Mode** (planning/booking) | User intent indicator | booking = ready to purchase |
+
+**Invariant:** Itinerary existence (S3 state) does NOT imply booking intent. Mode is the only valid gate for checkout UI.
+
+#### F.3 CategorySection Mode Awareness
+
+**File:** `components/plan/booking/CategorySection.tsx`
+
+The `CategorySection` component (used in the manifest view) adapts its UI based on mode:
+
+```typescript
+interface CategorySectionProps {
+  // ... other props
+  mode?: 'planning' | 'booking';  // Determines UI variant
+}
+```
+
+**Mode-Specific Behavior:**
+
+| Element | PLANNING Mode | BOOKING Mode |
+|---------|---------------|--------------|
+| **Status Badge** | "❤️ Preferred" (emerald) | "In Cart" (amber dot) |
+| **Non-preferred Badge** | Hidden | "Available" (gray dot) |
+| **Action Button (saved)** | "Preferred ❤️" | "Remove from Cart" |
+| **Action Button (unsaved)** | "Add to Trip ♡" | "Add to Cart" |
+
+**StatusBadge Logic:**
+```typescript
+function StatusBadge({ status, mode }) {
+  if (mode === 'planning') {
+    // Only show badge for preferred items
+    if (status === 'hold') return <div>❤️ Preferred</div>;
+    return null;  // No badge for non-preferred in planning
+  }
+  // Booking mode: Show traffic-light cart status
+  return <CartStatusBadge status={status} />;
+}
+```
+
+**Invariant:** Hearts (♡/❤️) in PLANNING mode, Cart badges in BOOKING mode. Never mixed.
+
 ---
 
 ## XI.G Additional Mode-Aware Components
@@ -1443,6 +2140,258 @@ const effectiveMode: ViewMode = explicitMode ?? (activeView === 'book' ? 'bookin
 ```
 
 Passes `mode` to BookingSection for mode-aware tile rendering.
+
+---
+
+---
+
+## XIII. Tile Provider Architecture
+
+This section documents the provider routing strategy for fetching tiles (hotels, activities, flights).
+
+### Overview
+
+Both first-time requests (`logistics_node`) and regeneration (`tile_service`) use identical provider routing:
+
+| Priority | Provider | Data Quality | Use Case |
+|----------|----------|--------------|----------|
+| 1 | **CuratedProvider** | 4K images, hand-picked hotels, accurate prices | Hero destinations (Dubai, Rome, Chamonix) |
+| 2 | **AmadeusProvider** | Real hotel names, chain codes, coordinates | Live data with placeholder images |
+| 3 | **MockProvider** | Generic data, Unsplash images | Development fallback |
+
+### Provider Files
+
+```
+backend/app/tile_service/
+├── service.py            # Provider routing orchestrator
+├── curated_provider.py   # Hero destination content (DEMO_MANIFEST)
+├── amadeus_provider.py   # Amadeus API integration (real hotel names)
+├── mock_provider.py      # Mock data with Unsplash images
+└── provider_base.py      # Provider ABC interface
+```
+
+### Routing Logic
+
+```python
+# In both logistics_node.py and tile_service/service.py:
+
+def get_providers(destination: str) -> List[Provider]:
+    dest_key = destination.lower().strip()
+
+    # 1. CURATED FIRST - Hero destinations with perfect demo content
+    if dest_key in DEMO_MANIFEST:
+        return [CuratedProvider(dest_key)]
+
+    # 2. AMADEUS SECOND - Real hotel names, placeholder images
+    if settings.use_amadeus_provider:
+        return [AmadeusHotelProvider(), AmadeusFlightProvider()]
+
+    # 3. MOCK FALLBACK - Development/offline mode
+    return [MockHotelProvider(), MockFlightProvider(), MockActivityProvider()]
+```
+
+### Provider Comparison
+
+| Aspect | CuratedProvider | AmadeusProvider | MockProvider |
+|--------|-----------------|-----------------|--------------|
+| **Hotel Names** | Hand-picked (e.g., "Atlantis The Royal") | Real API data (e.g., "Hilton Dubai Creek") | Generic (e.g., "Mock Hotel 1") |
+| **Images** | Hand-picked Unsplash URLs | Auto-generated Unsplash | Auto-generated Unsplash |
+| **Prices** | Curated estimates | None (Hotel List API) | Calculated mock prices |
+| **Coordinates** | Hand-picked [lng, lat] | Real API data | Generated |
+| **Availability** | Always "available" | "unknown" (needs separate API) | Always "available" |
+
+### Image Strategy (Always Unsplash)
+
+**ALL tile images come from Unsplash** - never null, never broken:
+
+| Provider | Image Source | How |
+|----------|--------------|-----|
+| **Curated** | Hand-picked Unsplash URLs in DEMO_MANIFEST | `hotel.get("image")` |
+| **Amadeus** | Auto-generated Unsplash via placeholder | `get_placeholder_image(category, seed)` |
+| **Mock** | Auto-generated Unsplash via placeholder | `get_placeholder_image(category, seed)` |
+
+```python
+# All providers use the same pattern:
+from app.placeholders import get_placeholder_image
+
+# Curated image if provided, otherwise deterministic Unsplash placeholder
+image_url = hotel.get("image") or get_placeholder_image(
+    category="hotel",
+    seed=hotel_id,  # Same hotel ID = same Unsplash photo
+)
+```
+
+**Guarantees:**
+1. **Never null** - Every tile has a valid Unsplash image URL
+2. **Deterministic** - Same tile ID = same placeholder image
+3. **Category-aware** - Hotels get hotel photos, activities get activity photos
+
+### Hero Destinations (DEMO_MANIFEST)
+
+Curated content is defined in `backend/app/data/demo_curation.py`:
+
+| Destination | Focus | Content |
+|-------------|-------|---------|
+| **Dubai** | Diving | Deep Dive Dubai, Jumeirah Beach dives, luxury resorts |
+| **Rome** | Culture | Historical tours, food experiences, boutique hotels |
+| **Chamonix** | Skiing | Ski runs, mountain activities, alpine lodges |
+
+Each entry includes:
+- `curated_hotels[]` - Hand-picked hotels with 4K images
+- `curated_flights[]` - Demo-ready flight options
+- `specialist_content{}` - Activities by specialist type (diving, hiking, etc.)
+- `destination_gallery[]` - Vibe Trio images for Trip DNA card
+
+### Consistency Guarantee
+
+| Flow | Hotels | Activities | Flights |
+|------|--------|------------|---------|
+| First Request (logistics_node) | Curated → Amadeus → Mock | Curated → Mock | Curated → Mock |
+| Regeneration (tile_service) | Curated → Amadeus → Mock | Curated → Mock | Curated → Mock |
+
+**Invariant:** Both flows use identical routing logic, ensuring tiles have consistent data regardless of how they were fetched.
+
+---
+
+## XIV. Implementation Wiring Summary
+
+This section provides a quick reference for how the key systems are wired across the codebase.
+
+### Provider Routing Files
+
+| File | Purpose | Routing Logic |
+|------|---------|---------------|
+| `backend/app/tile_service/service.py:47-107` | Tile regeneration | `_get_providers()` - 3-tier cascade |
+| `backend/app/planner/nodes/logistics_node.py` | First-time fetch | Same 3-tier cascade |
+| `backend/app/tile_service/curated_provider.py` | Hero destinations | Dubai, Rome, Chamonix |
+| `backend/app/tile_service/amadeus_provider.py` | Real hotel names | Placeholder images fallback |
+| `backend/app/tile_service/mock_provider.py` | Development fallback | Auto-generated Unsplash |
+
+### Mode-Aware UI Components
+
+| Component | File | Mode Prop | Planning UI | Booking UI |
+|-----------|------|-----------|-------------|------------|
+| **CategorySection** | `frontend/components/plan/booking/CategorySection.tsx:53` | `mode?: 'planning' \| 'booking'` | ❤️ Preferred / ♡ Add to Trip | In Cart / Remove from Cart |
+| **BookingSection** | `frontend/components/plan/BookingSection.tsx:570` | `mode={effectiveMode}` | SuggestionCard | BookableCard |
+| **StatusBadge** | `frontend/components/plan/booking/CategorySection.tsx:60-102` | `mode` param | "Preferred" with heart | Traffic light badges |
+
+### Date Validation Wiring
+
+| Check | File | Logic |
+|-------|------|-------|
+| `hasDates` | `frontend/components/layout/NomadicLanding.tsx:676-678` | `(start_date && end_date) \|\| (date_flex && trip_duration)` |
+| `canGeneratePlan` | `frontend/components/layout/NomadicLanding.tsx:679` | `hasDestination && hasDates` |
+
+### Tile Type Normalization
+
+| Input Type | Normalized | Mapping Location |
+|------------|------------|------------------|
+| hotel, stay, accommodation, lodging, resort | `'hotel'` | `frontend/lib/tileSelectors.ts:123-132` |
+| flight, air | `'flight'` | `frontend/lib/tileSelectors.ts:133-135` |
+| activity, experience, tour, attraction, excursion | `'activity'` | `frontend/lib/tileSelectors.ts:136-144` |
+
+### Image Fallback Chain
+
+| Component | File | Fallback Logic |
+|-----------|------|----------------|
+| **TileThumbnail** | `frontend/components/plan/modals/AlternativesModal.tsx:35-58` | `onError` → `placeholderImageForTile()` |
+| **SuggestionBlock** | `frontend/components/plan/timeline/blocks/SuggestionBlock.tsx:81-92` | `onError` → `placeholderImageForTile()` |
+| **CategorySection** | `frontend/components/plan/booking/CategorySection.tsx:14-35` | `onError` → `placeholderImageForTile()` |
+
+### Title Normalization
+
+Backend data may contain snake_case identifiers (e.g., `usat_liberty_wreck`). These MUST be normalized to natural language Title Case for display.
+
+**Function:** `normalizeTitle()` in `frontend/lib/utils.ts`
+
+| Input | Output |
+|-------|--------|
+| `usat_liberty_wreck` | USAT Liberty Wreck |
+| `manta_point_nusa_penida` | Manta Point Nusa Penida |
+| `crystal_bay` | Crystal Bay |
+| `Already Title Case` | Already Title Case (unchanged) |
+
+**Components applying normalization:**
+
+| Component | Field | Location |
+|-----------|-------|----------|
+| `ActivityMiniCard` | `block.activity_type`, `block.summary` | `timeline/blocks/ActivityMiniCard.tsx:126` |
+| `LogisticsBlock` | `hotelName` | `timeline/blocks/LogisticsBlock.tsx:105` |
+| `SuggestionBlock` | `tile.title`, `tile.subtitle` | `timeline/blocks/SuggestionBlock.tsx:170-176` |
+
+**Invariant:** All user-facing titles in the itinerary timeline MUST pass through `normalizeTitle()`.
+
+### Debug Logging
+
+| Location | Trigger | Output |
+|----------|---------|--------|
+| `frontend/lib/tileSelectors.ts:161` | `type === null/undefined` | `[normalizeTileType] Received null/undefined type` |
+| `frontend/lib/tileSelectors.ts:188` | Unknown type | `[normalizeTileType] Unknown type: "X"` |
+| `frontend/components/plan/booking/BookingDrawer.tsx:48-52` | Dev mode filter | `[BookingDrawer] Category: X, Total: N, Matched: M` |
+
+### Itinerary Builder Debug Flow
+
+When debugging the S2 → S3 transition (BUILD ITINERARY flow), trace these logs:
+
+**Backend (terminal):**
+
+| Log | File | Indicates |
+|-----|------|-----------|
+| `✅ [expand-itinerary] Session & doc found` | `main.py` | Generator started successfully |
+| `📊 [expand-itinerary] Input data: sections=N` | `main.py` | Data received from frontend |
+| `🔥 [expand-itinerary] BUILDER CALLED` | `main.py` | Builder is about to execute |
+| `[ItineraryBuilder] 🏗️ Starting build` | `itinerary_builder.py` | Builder received input |
+| `[ItineraryBuilder] Extracted: activities=N` | `itinerary_builder.py` | Content parsed from sections |
+| `[ItineraryBuilder] Success: N day cards` | `itinerary_builder.py` | Build completed |
+| `📤 [expand-itinerary] Emitting envelope` | `main.py` | Envelope sent to frontend |
+
+**Frontend (browser console):**
+
+| Log | File | Indicates |
+|-----|------|-----------|
+| `[expand-itinerary] Received event: envelope` | `NomadicLanding.tsx` | Stream parser received envelope |
+| `[documentStore.mergeEnvelope] 📥 Received envelope` | `documentStore.ts` | Envelope being processed |
+| `hasDayCards: true, dayCardsCount: N` | `documentStore.ts` | day_cards present in envelope |
+| `[documentStore.mergeEnvelope] 📤 Updated document` | `documentStore.ts` | State updated |
+| `[NomadicLanding] 🔄 Building planViewModel` | `NomadicLanding.tsx` | React re-rendering with new data |
+
+**Common Issues:**
+
+| Symptom | Likely Cause | Check |
+|---------|--------------|-------|
+| No 🔥 log | Early return (dates/session/doc) | Check for ❌ logs before 🔥 |
+| 🔥 shows but no Success | Builder error | Check `itinerary_builder.py` exception logs |
+| Success but UI unchanged | Frontend state sync | Check browser console for `mergeEnvelope` logs |
+| `dayCardsCount: 0` in envelope | Empty `strategy_sections` | Check 📊 log for `sections=0` |
+| No `[NomadicLanding] 🔄` log | Zustand reactivity issue | See "Zustand Selector Pattern" below |
+
+**Enable Debug Logging:**
+
+Set `DEBUG=full` in `backend/.env` to see all `_debug()` output. Logs are suppressed in `demo` and `off` modes.
+
+```bash
+# backend/.env
+DEBUG=full  # Shows [DEBUG] prefixed logs
+```
+
+### Zustand Selector Pattern (Critical)
+
+When accessing store data in React components, **always use selectors** to ensure reactivity:
+
+```typescript
+// ❌ WRONG - No subscription, won't trigger re-render on changes
+const documentStore = useDocumentStore();
+const storeDocument = documentStore.document;
+
+// ✅ CORRECT - Selector establishes subscription, re-renders on changes
+const storeDocument = useDocumentStore((state) => state.document);
+```
+
+**Why this matters:** Without a selector, Zustand doesn't know which slice of state you're using. When `mergeEnvelope()` updates `store.document`, the component won't re-render because there's no subscription on that specific property.
+
+**Files using this pattern:**
+- `NomadicLanding.tsx:400` - `storeDocument` selector for day_cards/plan_view_state reactivity
+- `NomadicLanding.tsx:136` - `storeTripInputs` selector for trip input changes
 
 ---
 

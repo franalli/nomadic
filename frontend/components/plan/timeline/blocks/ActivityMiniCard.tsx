@@ -14,10 +14,11 @@ import Image from 'next/image';
 import { useState } from 'react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
+import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
 import { type DisplayTime, getTopicColor, getSpecialistBorderColor } from './types';
+import { PreferenceAttributionBadge, type PreferenceStatus } from './PreferenceAttributionBadge';
 
 interface ActivityMiniCardProps {
   block: DayBlock;
@@ -25,6 +26,14 @@ interface ActivityMiniCardProps {
   onBook?: () => void;
   onUnassign?: () => void;
   isBooked?: boolean;
+  /** Current view mode - controls Book button visibility */
+  mode?: 'planning' | 'booking';
+  /** Preference status for attribution badge */
+  preferenceStatus?: PreferenceStatus;
+  /** Alternative tile ID when AI overrode user preference */
+  alternativeTileId?: string;
+  /** Callback to switch to alternative tile */
+  onSwitchToAlternative?: (tileId: string) => void;
 }
 
 export function ActivityMiniCard({
@@ -33,6 +42,10 @@ export function ActivityMiniCard({
   onBook,
   onUnassign,
   isBooked,
+  mode = 'planning',
+  preferenceStatus,
+  alternativeTileId,
+  onSwitchToAlternative,
 }: ActivityMiniCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const color = getTopicColor(block.specialist_type);
@@ -123,7 +136,7 @@ export function ActivityMiniCard({
         </div>
 
         <h4 className="font-semibold text-sm mt-1.5 line-clamp-2">
-          {block.activity_type || block.summary}
+          {normalizeTitle(block.activity_type || block.summary)}
         </h4>
 
         {block.price_estimate && (
@@ -131,10 +144,20 @@ export function ActivityMiniCard({
             ~${block.price_estimate.toLocaleString()}
           </p>
         )}
+
+        {/* Preference Attribution Badge */}
+        {preferenceStatus && (
+          <PreferenceAttributionBadge
+            status={preferenceStatus}
+            alternativeTileId={alternativeTileId}
+            onSwitchToAlternative={onSwitchToAlternative}
+            className="mt-2"
+          />
+        )}
       </div>
 
-      {/* Action Button (Book) - only show if not booked */}
-      {!isBooked && onBook && (
+      {/* Action Button (Book) - only show in booking mode when not booked */}
+      {mode === 'booking' && !isBooked && onBook && (
         <button
           onClick={onBook}
           className="self-center px-3 py-1.5 text-xs font-semibold bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 transition-colors shrink-0"

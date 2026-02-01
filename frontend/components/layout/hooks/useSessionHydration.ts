@@ -233,13 +233,18 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
     let cancelled = false;
 
     async function hydrateSessionDocument() {
+      console.log('[useSessionHydration] 🚀 Starting hydration...');
       try {
         setIsHydratingSnapshot(true);
+
+        // Debug: Log session state
+        console.log('[useSessionHydration] Session timestamp:', getSessionTimestamp());
+        console.log('[useSessionHydration] Is expired:', isSessionExpired());
 
         // Check for session expiration before fetching document
         // This prevents loading stale data that may cause issues
         if (isSessionExpired()) {
-          console.info('Session expired (>24 hours old), starting fresh session');
+          console.info('[useSessionHydration] ⏰ Session expired (>24 hours old), starting fresh session');
           // Clear session timestamp and notify parent
           clearSessionTimestamp();
           onSessionExpired?.();
@@ -254,14 +259,37 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
           onToast('Your previous session has expired. Starting a new trip planning session.');
           return;
         }
+        console.log('[useSessionHydration] ✅ Session not expired, proceeding to fetch...');
 
         // Fetch document from store (handles caching internally)
+        console.log('[useSessionHydration] 📡 Calling fetchDocument()...');
         const doc = await fetchDocument();
+        console.log('[useSessionHydration] 📦 Fetched doc:', {
+          hasDoc: !!doc,
+          branchesCount: doc?.branches?.length ?? 0,
+          tilesCount: Object.keys(doc?.tiles ?? {}).length,
+        });
         if (cancelled) return;
 
-        // No document or no branches - nothing to restore
-        // Set session timestamp for new sessions
-        if (!doc || !doc.branches.length) {
+        // Handle no document case
+        if (!doc) {
+          console.log('[useSessionHydration] ⚠️ No document returned, starting fresh');
+          if (getSessionTimestamp() === null) {
+            setSessionTimestamp();
+          }
+          return;
+        }
+
+        // ALWAYS restore tiles from document (even if no branches)
+        // This ensures tiles/preferences survive refresh
+        if (doc.tiles && Object.keys(doc.tiles).length > 0) {
+          console.log('[useSessionHydration] 🎯 Restoring tiles:', Object.keys(doc.tiles).length);
+          setTilesMap(doc.tiles);
+        }
+
+        // Handle no branches case - still set timestamp but don't exit early
+        if (!doc.branches.length) {
+          console.log('[useSessionHydration] ⚠️ No branches, but tiles/prefs may have been restored');
           if (getSessionTimestamp() === null) {
             setSessionTimestamp();
           }
@@ -269,8 +297,8 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
         }
 
         // Restore core state from document
+        console.log('[useSessionHydration] ✅ Restoring branches:', doc.branches.length);
         setBranches(doc.branches);
-        setTilesMap(doc.tiles);
 
         // Update session timestamp since we have a valid session to restore
         // (keeps the session alive as long as user is actively using it)
@@ -336,6 +364,7 @@ export function useSessionHydration(options: UseSessionHydrationOptions): UseSes
             if (controller.signal.aborted) return;
 
             // Update state with fetched tiles
+            console.log('[useSessionHydration] ✅ Tile fetch complete, updating state');
             setBranches(data.document.branches);
             setTilesMap(data.document.tiles);
             setTilesBranchId(fallbackBranchId);

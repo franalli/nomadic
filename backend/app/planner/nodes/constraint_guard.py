@@ -546,29 +546,33 @@ async def constraint_guard(state: GraphState) -> GraphState:
     state.metadata["has_blocking_violations"] = has_blocking
 
     # ==========================================================================
-    # ROUTE ERROR ROLLBACK (Logic Guards)
-    # If a route error is detected, revert TripPlan to previous valid state.
-    # This prevents the UI from showing invalid destinations (Rome → Rome).
+    # ROUTE ERROR HANDLING (Logic Guards)
+    # Handle route errors with targeted fixes rather than full rollback.
+    # SAME_CITY_ERROR: Clear only the origin (the erroneous field)
+    # UNKNOWN_DESTINATION_ERROR: Clear only the destination
     # ==========================================================================
-    is_route_error = any(v.category == "route" for v in violations)
-    if is_route_error:
-        log("GUARD", "🚫 ROUTE ERROR: Rolling back TripPlan to previous state")
+    same_city_error = any(v.code == "SAME_CITY_ERROR" for v in violations)
+    unknown_dest_error = any(v.code == "UNKNOWN_DESTINATION_ERROR" for v in violations)
+
+    if same_city_error:
+        # SAME_CITY_ERROR: The LLM incorrectly set origin == destination
+        # Fix: Clear only the origin, preserve the destination
+        log("GUARD", "🚫 SAME_CITY_ERROR: Clearing invalid origin (preserving destination)")
+        state.trip_plan.origin = None
+        log(
+            "GUARD",
+            f"Fixed: origin=None, dest={state.trip_plan.destination}",
+        )
+    elif unknown_dest_error:
+        # UNKNOWN_DESTINATION_ERROR: Invalid destination entered
+        # Fix: Clear the destination, preserve other fields
+        log("GUARD", "🚫 UNKNOWN_DESTINATION_ERROR: Clearing invalid destination")
         previous_inputs = state.metadata.get("trip_inputs", {})
-        if previous_inputs:
-            state.trip_plan.destination = previous_inputs.get("destination")
-            state.trip_plan.origin = previous_inputs.get("origin")
-            state.trip_plan.start_date = previous_inputs.get("start_date")
-            state.trip_plan.end_date = previous_inputs.get("end_date")
-            log(
-                "GUARD",
-                f"Rolled back to: origin={state.trip_plan.origin}, "
-                f"dest={state.trip_plan.destination}",
-            )
-        else:
-            # New session with no previous state - clear invalid fields
-            state.trip_plan.destination = None
-            state.trip_plan.origin = None
-            log("GUARD", "No previous state - cleared origin/destination")
+        state.trip_plan.destination = previous_inputs.get("destination")  # Restore previous
+        log(
+            "GUARD",
+            f"Rolled back to: dest={state.trip_plan.destination}",
+        )
 
     # Prepare violation context for Architect retry (Auto-Fix Loop)
     if has_blocking:

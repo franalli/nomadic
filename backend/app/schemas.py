@@ -167,6 +167,19 @@ class TileRefreshResponse(BaseModel):
 # =============================================================================
 
 
+class PreferenceOverride(BaseModel):
+    """User's heart preferences for AI weighting in itinerary generation."""
+
+    preferred_hotel_ids: List[str] = Field(
+        default_factory=list,
+        description="Tile IDs of hotels the user has hearted/preferred",
+    )
+    preferred_activity_ids: List[str] = Field(
+        default_factory=list,
+        description="Tile IDs of activities the user has hearted/preferred",
+    )
+
+
 class ExpandItineraryRequest(BaseModel):
     """Request to expand strategy into full itinerary (Stage 2 -> Stage 3)."""
 
@@ -182,6 +195,11 @@ class ExpandItineraryRequest(BaseModel):
     )
     tiles: Optional[Dict[str, Any]] = Field(
         default=None, description="Tiles from frontend document"
+    )
+    # User heart preferences - used to weight tile scoring
+    preferences: Optional[PreferenceOverride] = Field(
+        default=None,
+        description="User's hearted tile preferences for AI weighting",
     )
 
 
@@ -530,6 +548,11 @@ class DayBlock(BaseModel):
     requires_booking: bool = False
     booking_category: Optional[Literal["hotel", "flight", "activity"]] = None
 
+    # Preference attribution (shows why this tile was selected)
+    preference_status: Optional[Literal["user_preferred", "ai_selected", "ai_override"]] = None
+    preference_override_reason: Optional[str] = None
+    alternative_tile_id: Optional[str] = None
+
 
 class DayCard(BaseModel):
     """A single day in the itinerary (Stage 3)."""
@@ -699,6 +722,12 @@ class PlanDocumentData(BaseModel):
     needs_refresh: bool = False  # Marks S3 content as stale after constraint change
     can_expand_to_itinerary: bool = False  # True when Stage3EntryGuard passes
 
+    # ==========================================================================
+    # User Preferences (for AI weighting in itinerary generation)
+    # ==========================================================================
+    # Heart-selected tiles - 1.5x weight in tile matching
+    preferred_tile_ids: List[str] = Field(default_factory=list)
+
 
 class PlanDocumentResponse(BaseModel):
     """Response when fetching the plan document."""
@@ -729,6 +758,8 @@ class PlanDocumentPatch(BaseModel):
     selections: Optional[Dict[str, BranchSelections]] = None
     # Trip inputs to merge
     trip_inputs: Optional[DocumentTripInputsPatch | DocumentTripInputs] = None
+    # Preference updates (heart-selected tiles for AI weighting)
+    preferred_tile_ids: Optional[List[str]] = None
 
 
 # =============================================================================

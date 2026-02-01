@@ -31,6 +31,7 @@ function BookViewInner({
   savedTileIds,
   onSaveTile,
   onOpenSheet,
+  strategySections,
   className,
 }: BookViewProps) {
   return (
@@ -43,6 +44,8 @@ function BookViewInner({
         savedTileIds={savedTileIds}
         onSaveTile={onSaveTile}
         onOpenSheet={onOpenSheet}
+        strategySections={strategySections}
+        mode="booking"
       />
     </div>
   );

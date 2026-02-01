@@ -12,8 +12,10 @@
 
 import { Bed, Check, Plane, RefreshCw, Sparkles } from 'lucide-react';
 import Image from 'next/image';
+import { useCallback, useState } from 'react';
 
-import { cn } from '@/lib/utils';
+import { placeholderImageForTile } from '@/lib/placeholders';
+import { cn, normalizeTitle } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
 // =============================================================================
@@ -55,6 +57,7 @@ export function SuggestionBlock({
   id,
   className,
 }: SuggestionBlockProps) {
+  const [imageError, setImageError] = useState(false);
   const Icon = suggestionType === 'hotel' ? Bed : suggestionType === 'flight' ? Plane : Sparkles;
 
   // Color theming by type
@@ -78,8 +81,18 @@ export function SuggestionBlock({
 
   const colors = typeColors[suggestionType];
 
-  // Get image URL with fallback
-  const imageUrl = tile.image_url || '/assets/placeholder-tile.jpg';
+  // Get placeholder URL (deterministic based on tile)
+  const placeholderUrl = placeholderImageForTile(tile);
+
+  // Get image URL with fallback to Unsplash placeholder
+  const imageUrl = imageError
+    ? placeholderUrl
+    : (tile.image_url || placeholderUrl);
+
+  // Handle image load error
+  const handleImageError = useCallback(() => {
+    setImageError(true);
+  }, []);
 
   return (
     <div
@@ -148,17 +161,18 @@ export function SuggestionBlock({
               fill
               className="object-cover"
               sizes="64px"
+              onError={handleImageError}
             />
           </div>
 
           {/* Details */}
           <div className="flex-1 min-w-0">
             <h4 className="font-semibold text-sm text-zinc-200 line-clamp-1">
-              {tile.title}
+              {normalizeTitle(tile.title)}
             </h4>
             {tile.subtitle && (
               <p className="text-xs text-zinc-400 line-clamp-1 mt-0.5">
-                {tile.subtitle}
+                {normalizeTitle(tile.subtitle)}
               </p>
             )}
 

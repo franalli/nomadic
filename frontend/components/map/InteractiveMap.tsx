@@ -47,6 +47,10 @@ interface InteractiveMapProps {
   visibleLayers?: Set<string>;
   /** Highlighted day number (dims other days) */
   highlightedDay?: number | null;
+  /** Disable pan/zoom for static display (MVP) */
+  interactive?: boolean;
+  /** Hide attribution for cleaner static display */
+  showAttribution?: boolean;
 }
 
 // =============================================================================
@@ -141,6 +145,8 @@ export function InteractiveMap({
   routeGeoJson,
   visibleLayers,
   highlightedDay,
+  interactive = true,
+  showAttribution = true,
 }: InteractiveMapProps) {
   const mapRef = useRef<MapRef>(null);
 
@@ -198,16 +204,40 @@ export function InteractiveMap({
           latitude: defaultCenter.lat,
           zoom: defaultCenter.zoom,
         }}
+        style={{ width: '100%', height: '100%' }}
         mapStyle="mapbox://styles/mapbox/dark-v11"
         mapboxAccessToken={mapboxToken}
+        interactive={interactive}
+        attributionControl={showAttribution}
       >
-        <NavigationControl position="bottom-right" />
+        {/* Navigation control - only when interactive */}
+        {interactive && <NavigationControl position="bottom-right" />}
 
         {/* Route line layer */}
         {routeGeoJson && (
           <Source id="route" type="geojson" data={routeGeoJson}>
             <Layer {...routeLayerStyle} />
           </Source>
+        )}
+
+        {/* Static destination pin with pulse - shown when no POI items */}
+        {filteredItems.length === 0 && (
+          <Marker
+            longitude={defaultCenter.lng}
+            latitude={defaultCenter.lat}
+            anchor="bottom"
+          >
+            <div className="relative">
+              {/* Pulse ring animation */}
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-10 h-10 rounded-full bg-emerald-400 animate-ping opacity-20" />
+              </div>
+              {/* Pin icon */}
+              <MapPin
+                className="relative w-10 h-10 text-emerald-400 drop-shadow-[0_2px_8px_rgba(16,185,129,0.6)]"
+              />
+            </div>
+          </Marker>
         )}
 
         {/* Render markers for all items with coordinates */}
@@ -222,6 +252,9 @@ export function InteractiveMap({
             item.dayNumber !== undefined &&
             item.dayNumber !== highlightedDay;
 
+          // Specialist POIs are slightly muted (secondary to itinerary items)
+          const isSpecialistPoi = item.source === 'specialist';
+
           return (
             <Marker
               key={item.id}
@@ -234,7 +267,11 @@ export function InteractiveMap({
                 className={cn(
                   'transition-all duration-300 transform cursor-pointer',
                   isActive ? 'scale-125 z-50' : 'scale-100',
-                  isDimmed ? 'opacity-30' : 'opacity-100 hover:opacity-100'
+                  isDimmed
+                    ? 'opacity-30'
+                    : isSpecialistPoi && !isActive
+                      ? 'opacity-70 hover:opacity-100'
+                      : 'opacity-100 hover:opacity-100'
                 )}
               >
                 {/* Pin shape */}

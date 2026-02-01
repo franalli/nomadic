@@ -168,6 +168,105 @@ Info boxes should feel like a **recessed technical panel**, not a warning sign.
 
 ---
 
+## 2.5 Interaction Patterns
+
+### Heart Preference Signals
+
+Hearts indicate user preference for AI weighting, not cart additions.
+
+| State | Visual | Tailwind Classes |
+|-------|--------|------------------|
+| Unpressed | Outline heart, zinc-400 | `stroke-zinc-400 fill-transparent` |
+| Pressed | Filled heart, emerald-500, scale | `fill-emerald-500 stroke-emerald-500 scale-110` |
+| Button BG | Semi-transparent dark | `bg-black/40 backdrop-blur-sm` |
+| Focus | White ring | `focus-visible:ring-2 focus-visible:ring-white/50` |
+
+**UX Principle:** Hearts are preference signals (weight in AI), not cart additions.
+
+### Preference Bar (Sticky)
+
+Displays user's hearted tile count and progress indicator. Sticks below main header during scroll.
+
+| Property | Value |
+|----------|-------|
+| Position | `sticky top-16` (64px below main header) |
+| Background | `bg-zinc-900/80 backdrop-blur-md` |
+| Border | `border-b border-white/5` |
+| Padding | `px-4 py-2` |
+| Z-index | `z-30` |
+
+**Content:**
+```tsx
+<div className="sticky top-16 z-30 bg-zinc-900/80 backdrop-blur-md border-b border-white/5 px-4 py-2">
+  <div className="flex items-center justify-between">
+    <span className="text-sm text-zinc-400">
+      <Heart className="w-4 h-4 inline mr-1 fill-emerald-500 stroke-emerald-500" />
+      {preferredCount} preferences saved
+    </span>
+    <ProgressIndicator progress={planProgress} />
+  </div>
+</div>
+```
+
+**Visibility:** Only shown when `preferredTileIds.size > 0 || hasItinerary`
+
+### Sticky Panels
+
+Map panels use sticky positioning during timeline scroll (P3+ only).
+
+| Property | Desktop Value | Mobile Value |
+|----------|---------------|--------------|
+| Map Width | Fixed `400px`, max `35vw` | `100%` |
+| Map Height | `400px` (explicit inline) | `300px` (explicit inline) |
+| Content Width | `flex-1`, min `720px`, max `900px` | `100%` |
+| Top offset | `sticky top-20 z-10` | Non-sticky (inline) |
+| Border | `border border-border/50` | `border border-border/50` |
+| Corner | `rounded-xl overflow-hidden` | `rounded-xl overflow-hidden` |
+| Visibility | When destination is set (`!!destCoords`) | P3+ (hasItineraryContent) |
+
+**Why Fixed Map Width:**
+- 400px provides sufficient spatial awareness without dominating content
+- Content area (720px min) ensures comfortable 2-column tile grid
+- 900px max maintains readability limit
+- Fixed width prevents layout shifts during zoom/interactions
+
+**Desktop Usage (P3+):**
+```tsx
+{/* Content + fixed map layout */}
+<div className="flex gap-6">
+  <div
+    className="flex-1 min-w-0"
+    style={{ minWidth: 720, maxWidth: 900 }}
+  >
+    {/* Content: Specialists → Tiles → Timeline */}
+  </div>
+  <div className="shrink-0" style={{ width: 400, maxWidth: '35vw' }}>
+    <div className="sticky top-20 z-10">
+      {/* Explicit height wrapper ensures Mapbox initializes correctly */}
+      <div style={{ height: 400 }} className="rounded-xl overflow-hidden border border-border/50">
+        <InteractiveMap className="h-full w-full" />
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+**Mobile Usage (P3+):**
+```tsx
+{/* Inline before timeline - explicit height required */}
+<div style={{ height: 300 }} className="rounded-xl overflow-hidden border border-border/50">
+  <InteractiveMap className="h-full w-full" interactive={false} />
+</div>
+```
+
+**Important: Mapbox Height Requirements**
+- Mapbox GL requires explicit container dimensions to initialize
+- Use inline `style={{ height: N }}` instead of Tailwind classes like `h-[300px]`
+- Tailwind classes can fail when merged with `h-full` in nested components
+- The wrapper ensures correct height, inner component uses `h-full w-full`
+
+---
+
 ## 3. Usage Examples
 
 ### A. Creating a Modal
@@ -1585,7 +1684,56 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ---
 
-## 20. Logic Guards (Amber Rejection Pattern)
+## 20. NextStepBar CTA States (Command Island)
+
+The NextStepBar ("Command Island") is a sticky footer CTA that adapts its visual state based on validation.
+
+### Visual States
+
+| State | Background | Text | Shadow | Usage |
+|-------|------------|------|--------|-------|
+| **Ready** | `bg-emerald-500` | `text-white` | Emerald glow | Dates complete, ready to build |
+| **Validation Blocked** | `bg-amber-500/80` | `text-white/90` | None | Missing dates - shows action needed |
+| **Processing** | `bg-zinc-200 dark:bg-zinc-800` | `text-zinc-500` | None | Building itinerary |
+
+### Code Example
+
+```tsx
+// NextStepBar.tsx - Validation-aware button styling
+<button
+  className={cn(
+    'h-10 px-5 rounded-full font-bold text-xs tracking-wide uppercase',
+    // Ready: Green with glow
+    isActionReady &&
+      'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)]',
+    // Validation blocked: Amber indicator
+    validationBlocked &&
+      'bg-amber-500/80 text-white/90 cursor-default',
+    // Processing: Gray with spinner
+    isGenerating &&
+      'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed'
+  )}
+>
+  {validationBlocked ? validation.action : 'Build Itinerary'}
+</button>
+```
+
+### Context Display (Left Side)
+
+| Element | Valid | Incomplete |
+|---------|-------|------------|
+| **Badge** | `"X days"` (emerald) | `"needs dates"` (amber) |
+| **Date Range** | `"Feb 5 — Feb 12"` | `"Feb 5 → ?"` |
+| **Text Color** | `text-zinc-800 dark:text-white` | `text-amber-600 dark:text-amber-400` |
+
+### Implementation Reference
+
+- Component: `frontend/components/plan/NextStepBar.tsx`
+- Validation Hook: `frontend/hooks/useTripValidation.ts`
+
+---
+
+## 21. Logic Guards (Amber Rejection Pattern)
 
 **Core Philosophy:** The Architect does not crash; it rejects invalid parameters and asks for correction. We use the **"Reject & Correct"** pattern.
 
@@ -1620,3 +1768,106 @@ The Reset button allows users to start over with a fresh planning session. It mu
 ### Implementation Reference
 - SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
 - ConstraintGuard: `backend/app/planner/nodes/constraint_guard.py`
+
+---
+
+## 22. Animation & Progressive Disclosure
+
+**Core Philosophy:** UI elements appear at the right moment with coordinated animations. State transitions (P0→P3) and user interactions (first heart, build click) trigger reveals.
+
+### Timing Constants
+
+All animation timings are centralized in `frontend/lib/animation-config.ts`:
+
+| Animation | Duration | Purpose |
+|-----------|----------|---------|
+| `SPECIALIST_EXPAND` | 400ms | Height spring for card expansion |
+| `SPECIALIST_PULSE` | 1000ms | Pulse once to draw attention |
+| `TILES_FADE` | 300ms | Opacity 0→1 fade in |
+| `SELECTIONS_SLIDE` | 250ms | Slide down from top |
+| `TIMELINE_FADE` | 500ms | Fade + scroll into view |
+| `MAP_SLIDE` | 400ms | Slide right→left (desktop) |
+| `MIN_LOADING` | 600ms | Minimum loading duration |
+| `SKELETON_CROSSFADE` | 300ms | Skeleton → real content |
+
+### Spring Physics
+
+Framer Motion spring configurations for natural motion:
+
+```typescript
+SPRING_CONFIG = {
+  EXPAND: { stiffness: 300, damping: 25 },  // Card expansion - softer
+  SLIDE: { stiffness: 400, damping: 30 },   // Slide animations - snappier
+  BOUNCE: { stiffness: 500, damping: 35 },  // Buttons, badges
+}
+```
+
+### State-Based Reveals
+
+| Transition | Element | Animation |
+|------------|---------|-----------|
+| P1 → P2 | Tiles section | Fade in (300ms) |
+| P1 → P2 | NextStepBar | Slide up from bottom |
+| P2 → P3 | Timeline | Fade in + auto-scroll (500ms) |
+| P2 → P3 | Desktop map | Slide in from right (400ms, 200ms delay) |
+
+### Interaction-Based Reveals
+
+| Trigger | Element | Animation |
+|---------|---------|-----------|
+| First heart | SelectionsBar | Slide down, becomes sticky (desktop) |
+| Build click | Tiles section | Dim to 60% opacity |
+| Build complete | Timeline | Fade in, auto-scroll after 300ms |
+
+### Motion Variants
+
+Reusable Framer Motion variants:
+
+```typescript
+// Fade in from below (tiles, timeline)
+fadeInUp: {
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+}
+
+// Slide down from top (SelectionsBar)
+slideDown: {
+  initial: { y: -50, opacity: 0 },
+  animate: { y: 0, opacity: 1 },
+}
+
+// Slide up from bottom (NextStepBar)
+slideUp: {
+  initial: { y: 100, opacity: 0 },
+  animate: { y: 0, opacity: 1 },
+}
+
+// Slide in from right (Map)
+slideInRight: {
+  initial: { x: 100, opacity: 0 },
+  animate: { x: 0, opacity: 1 },
+}
+```
+
+### Mobile Optimization
+
+**Rule:** Skip complex animations on mobile for performance.
+
+- SelectionsBar: Non-sticky on mobile (scrolls with content)
+- Specialists: No auto-expand on mobile
+- Map: Hidden on mobile (drawer instead)
+- Consider `prefers-reduced-motion` for accessibility
+
+### Loading States
+
+| State | Visual | Behavior |
+|-------|--------|----------|
+| Building itinerary | Tiles dim (60% opacity) | `pointer-events-none` |
+| Loading spinner | Emerald `Loader2` | Centered in timeline area |
+| Minimum duration | 600ms | Prevents jarring flash |
+
+### Implementation Reference
+
+- Animation Config: `frontend/lib/animation-config.ts`
+- Progressive Disclosure: `frontend/components/plan/StrategyStageRenderer.tsx`
+- UX Architecture: `docs/ux_unified_architecture.md`

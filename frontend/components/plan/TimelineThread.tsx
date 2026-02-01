@@ -98,6 +98,11 @@ interface TimelineThreadProps {
   savedTileIds?: Set<string>;
   /** Use rich block rendering (S3 Itinerary View) */
   useRichBlocks?: boolean;
+  // === Unified Planning View props ===
+  /** Current view mode (planning vs booking) - controls Book button visibility */
+  mode?: 'planning' | 'booking';
+  /** Set of preferred tile IDs for attribution badges */
+  preferredTileIds?: Set<string>;
 }
 
 /**
@@ -203,6 +208,9 @@ export function TimelineThread({
   onUnassignTile,
   savedTileIds,
   useRichBlocks = false,
+  // Unified Planning View props
+  mode = 'planning',
+  preferredTileIds,
 }: TimelineThreadProps) {
   // Compute effective variant: prefer explicit variant, fall back to isDraft for backward compatibility
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
@@ -239,6 +247,9 @@ export function TimelineThread({
             time={getDisplayTime(block, blockIndex)}
             hotelName={block.hotel_name}
             details={block.logistics_details}
+            // Preference attribution for hotels
+            preferenceStatus={block.preference_status}
+            alternativeTileId={block.alternative_tile_id}
           />
         );
       }
@@ -291,18 +302,34 @@ export function TimelineThread({
 
       // 4. ACTIVITY LAYER - Rich activity cards
       const isBooked = !!block.booked_tile || !!(block.id && savedTileIds?.has(block.id));
+
+      // Compute preference status for attribution badge
+      // Priority: 1) Backend-computed status (includes AI override), 2) Local preference check
+      const tileId = block.booked_tile?.id;
+      const isUserPreferred = tileId && preferredTileIds?.has(tileId);
+      const preferenceStatus = block.preference_status
+        ?? (isUserPreferred ? 'user_preferred' as const : undefined);
+
       return (
         <ActivityMiniCard
           key={blockId}
           block={block}
           displayTime={getDisplayTime(block, blockIndex)}
           isBooked={isBooked}
-          onBook={onOpenBookingDrawer ? () => onOpenBookingDrawer(block.booking_category || 'activity') : undefined}
+          // Only show Book button in booking mode
+          onBook={mode === 'booking' && onOpenBookingDrawer
+            ? () => onOpenBookingDrawer(block.booking_category || 'activity')
+            : undefined}
           onUnassign={isBooked && block.id && onUnassignTile ? () => onUnassignTile(block.id!) : undefined}
+          mode={mode}
+          preferenceStatus={preferenceStatus}
+          alternativeTileId={block.alternative_tile_id}
+          // TODO: Wire up switch handler when we have tile replacement API
+          onSwitchToAlternative={undefined}
         />
       );
     },
-    [onOpenBookingDrawer, onUnassignTile, savedTileIds]
+    [onOpenBookingDrawer, onUnassignTile, savedTileIds, mode, preferredTileIds]
   );
 
   if (sortedDays.length === 0) {

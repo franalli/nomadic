@@ -14,6 +14,7 @@ import logging
 import uuid
 from typing import List, Optional
 
+from app.placeholders import get_placeholder_image
 from app.schemas import Tile
 from app.tools.amadeus_client import (
     AmadeusClient,
@@ -283,6 +284,13 @@ class AmadeusHotelProvider(Provider):
         # Build rating text
         rating_text = f"{hotel.rating}★" if hotel.rating else ""
 
+        # Amadeus Hotel List API doesn't return photos - use deterministic placeholder
+        # Seed with hotel_id for consistency (same hotel always gets same image)
+        image_url = hotel.photo_url or get_placeholder_image(
+            category="hotel",
+            seed=hotel.hotel_id,
+        )
+
         return Tile(
             id=f"amadeus_hotel_{hotel.id}_{uuid.uuid4().hex[:6]}",
             type="hotel",
@@ -290,7 +298,7 @@ class AmadeusHotelProvider(Provider):
             partner_product_id=hotel.hotel_id,
             title=hotel.name,
             subtitle=hotel.address or hotel.city_code,
-            image_url=hotel.photo_url,  # May be None - frontend should use fallback
+            image_url=image_url,
             price_estimate=hotel.price_per_night,
             currency=hotel.currency,
             price_basis="per_night",

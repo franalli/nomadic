@@ -11,8 +11,9 @@
 
 import { ChevronDown, ChevronUp, Heart, RefreshCw, Sparkles, Star } from 'lucide-react';
 import Image from 'next/image';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
+import { placeholderImageForTile } from '@/lib/placeholders';
 import { cn } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
@@ -52,13 +53,24 @@ export function SuggestionCard({
   className,
 }: SuggestionCardProps) {
   const [isReasoningExpanded, setIsReasoningExpanded] = useState(false);
+  const [imageError, setImageError] = useState(false);
 
   // Format price
   const price = tile.price_estimate ?? tile.total_inclusive;
   const formattedPrice = price ? `$${price.toLocaleString()}` : null;
 
-  // Get image URL with fallback
-  const imageUrl = tile.image_url || '/assets/placeholder-tile.jpg';
+  // Get placeholder URL (deterministic based on tile)
+  const placeholderUrl = placeholderImageForTile(tile);
+
+  // Get image URL with fallback to Unsplash placeholder
+  const imageUrl = imageError
+    ? placeholderUrl
+    : (tile.image_url || placeholderUrl);
+
+  // Handle image load error
+  const handleImageError = useCallback(() => {
+    setImageError(true);
+  }, []);
 
   // Compact variant - single row
   if (variant === 'compact') {
@@ -78,6 +90,7 @@ export function SuggestionCard({
             alt={tile.title}
             fill
             className="object-cover"
+            onError={handleImageError}
           />
         </div>
 
@@ -105,8 +118,8 @@ export function SuggestionCard({
           className={cn(
             'p-2 rounded-full transition-colors',
             isSaved
-              ? 'text-rose-400 bg-rose-400/10'
-              : 'text-zinc-400 hover:text-rose-400 hover:bg-zinc-700/50'
+              ? 'text-emerald-400 bg-emerald-400/10'
+              : 'text-zinc-400 hover:text-emerald-400 hover:bg-zinc-700/50'
           )}
         >
           <Heart className={cn('w-4 h-4', isSaved && 'fill-current')} />
@@ -131,6 +144,7 @@ export function SuggestionCard({
           alt={tile.title}
           fill
           className="object-cover"
+          onError={handleImageError}
         />
         {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
@@ -151,8 +165,8 @@ export function SuggestionCard({
           className={cn(
             'absolute top-3 right-3 p-2 rounded-full backdrop-blur-sm transition-colors',
             isSaved
-              ? 'text-rose-400 bg-rose-400/20'
-              : 'text-white/70 bg-black/30 hover:text-rose-400'
+              ? 'text-emerald-400 bg-emerald-400/20'
+              : 'text-white/70 bg-black/30 hover:text-emerald-400'
           )}
         >
           <Heart className={cn('w-5 h-5', isSaved && 'fill-current')} />
