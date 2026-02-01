@@ -14,6 +14,8 @@ Usage:
 
 # State Models
 from app.planner.state.schemas import (
+    # Enums
+    ConstraintSeverity,
     ExtractedSettingsFields,
     # LLM Extraction
     ExtractedTripFields,
@@ -36,6 +38,8 @@ from app.planner.state.schemas import (
 )
 
 __all__ = [
+    # Enums
+    "ConstraintSeverity",
     # Core Models
     "TripPlan",
     "TripSegment",

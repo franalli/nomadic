@@ -183,5 +183,3 @@ export function useTripValidation(): TripValidation {
     ]
   );
 }
-
-export default useTripValidation;

@@ -462,6 +462,36 @@ export function getSpecialistBorderColor(specialistType?: string): string {
 
 **Note:** These hex values are deliberately NOT Tailwind classes—they're used for inline `style` props to ensure precise color matching across the timeline.
 
+### Inline Constraint Badge Colors
+
+Activity and logistics blocks display inline constraint badges to show constraint-first optimization. These use a distinct color palette for severity levels.
+
+| Severity | Background | Border | Title | Icon Color |
+|----------|------------|--------|-------|------------|
+| `warning` | `bg-amber-50 dark:bg-amber-900/10` | `border-amber-200 dark:border-amber-800/40` | `text-amber-700 dark:text-amber-400` | Emoji |
+| `info` | `bg-blue-50 dark:bg-blue-900/10` | `border-blue-200 dark:border-blue-800/40` | `text-blue-700 dark:text-blue-400` | Emoji |
+| `success` | `bg-emerald-50 dark:bg-emerald-900/10` | `border-emerald-200 dark:border-emerald-800/40` | `text-emerald-700 dark:text-emerald-400` | Emoji |
+
+**Exception to Amber Ban:** Amber is permitted for constraint severity badges where its "caution" connotation is semantically correct (warnings, safety constraints). The general ban applies to buttons and decorative elements.
+
+**Visual Treatment:**
+```tsx
+<div className={cn(
+  'flex items-start gap-2 p-3 rounded-lg text-xs',
+  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200',
+  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200',
+  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200'
+)}>
+  <span className="text-base">{constraint.icon}</span>
+  <div>
+    <div className="font-semibold">{constraint.title}</div>
+    <div className="text-zinc-600 dark:text-zinc-400">{constraint.description}</div>
+  </div>
+</div>
+```
+
+**Implementation:** `frontend/components/plan/timeline/blocks/ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
+
 ---
 
 ## 5. Migration Checklist
@@ -840,6 +870,84 @@ The assistant is the **Infrastructure**. It should feel like part of the dashboa
 1. **Readability:** Black text on White (User) vs. Grey text on Black (Assistant) creates perfect rhythm. Your eyes instantly know who is talking.
 2. **Premium Feel:** The "Solid White" user bubble feels like a poker chip or a high-end physical key. It has weight.
 3. **Brand Alignment:** It matches the pill logic (Active = White/Black, Inactive = Glass).
+
+---
+
+## 9.A Exploration Mode Response Styling
+
+Exploration mode responses (generic travel Q&A) use enhanced markdown rendering within the assistant bubble. These responses are information-dense and require careful typography.
+
+### Content Typography
+
+| Element | Light Mode | Dark Mode | Tailwind Classes |
+|---------|------------|-----------|------------------|
+| **Section Headers** | Zinc-900, semibold | White, semibold | `font-semibold text-zinc-900 dark:text-white` |
+| **Body Text** | Zinc-700 | Zinc-300 | `text-zinc-700 dark:text-zinc-300` |
+| **Bullet Points** | Zinc-600 | Zinc-400 | `text-zinc-600 dark:text-zinc-400` |
+| **Ending Prompt** | Zinc-500, italic | Zinc-400, italic | `italic text-zinc-500 dark:text-zinc-400` |
+
+### Markdown Rendering Rules
+
+The exploration responses use markdown that must render cleanly:
+
+```tsx
+// Markdown content styling within assistant bubble
+<div className="prose prose-sm dark:prose-invert max-w-none">
+  {/* Headers: Bold labels */}
+  <strong className="text-zinc-900 dark:text-white">
+    What makes it special:
+  </strong>
+
+  {/* Lists: Compact with proper spacing */}
+  <ul className="mt-2 space-y-1 text-zinc-600 dark:text-zinc-400">
+    <li>Great for: Beach lovers, Divers</li>
+    <li>The vibe is relaxed and romantic</li>
+  </ul>
+
+  {/* Ending: Softer, inviting tone */}
+  <p className="mt-4 italic text-zinc-500 dark:text-zinc-400">
+    What else would you like to know?
+  </p>
+</div>
+```
+
+### Spacing Rules
+
+| Between | Spacing | Purpose |
+|---------|---------|---------|
+| Intro → Headers | `mt-4` (16px) | Clear separation |
+| Headers → Lists | `mt-2` (8px) | Grouped content |
+| List items | `space-y-1` (4px) | Compact but readable |
+| Content → Ending | `mt-4` (16px) | Visual break before CTA |
+
+### Suggestion Chips (Exploration Context)
+
+Exploration responses show contextual follow-up chips. These use the standard pill styling but with semantic grouping:
+
+| Chip Type | Purpose | Example |
+|-----------|---------|---------|
+| **Follow-up question** | Continue exploration | "Best romantic spots?" |
+| **Planning nudge** | Soft transition | "When to visit?" |
+| **Plan CTA** | Exit exploration | "Plan Bali trip" |
+
+**Visual distinction:**
+- Follow-up chips: `DS.pills.inactive` (zinc border)
+- Plan CTA chip: `DS.pills.active` (solid black/white) - Always rightmost
+
+```tsx
+// Exploration suggestion chips
+<div className="flex gap-2 mt-4 flex-wrap">
+  <button className={cn(DS.pills.shape, DS.pills.inactive)}>
+    Best romantic spots?
+  </button>
+  <button className={cn(DS.pills.shape, DS.pills.inactive)}>
+    When to visit?
+  </button>
+  <button className={cn(DS.pills.shape, DS.pills.active)}>
+    Plan Bali trip
+  </button>
+</div>
+```
 
 ---
 

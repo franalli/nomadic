@@ -289,5 +289,3 @@ export function useShortlist(): UseShortlistReturn {
     clear,
   };
 }
-
-export default useShortlist;

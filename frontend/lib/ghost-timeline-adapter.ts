@@ -11,18 +11,6 @@
 import type { DayBlock, DayCard, StrategySection } from '@/types/plan-envelope';
 
 /**
- * Topic colors for specialist badges in ghost timeline.
- */
-export const TOPIC_COLORS: Record<string, string> = {
-  hiking: 'bg-emerald-500/20 text-emerald-500',
-  diving: 'bg-cyan-500/20 text-cyan-500',
-  skiing: 'bg-blue-500/20 text-blue-500',
-  boating: 'bg-indigo-500/20 text-indigo-500',
-  cycling: 'bg-lime-500/20 text-lime-500',
-  local_expert: 'bg-zinc-500/20 text-zinc-500',
-};
-
-/**
  * Generate ghost day cards from specialist strategy sections.
  *
  * 1. Extract content_added from each specialist section (real blocks with coordinates)

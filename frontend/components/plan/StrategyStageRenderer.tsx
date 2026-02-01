@@ -30,6 +30,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { useMobileMode } from '@/contexts/MobileModeContext';
+import { useItineraryRegeneration } from '@/hooks/useItineraryRegeneration';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
@@ -99,12 +100,13 @@ export function computeDataDensity(
   return 'full';
 }
 
-import { Loader2 } from 'lucide-react';
+import { Bike, Compass, Loader2, Mountain, Sailboat, Snowflake, Waves } from 'lucide-react';
 
 import { BookingSection } from './BookingSection';
 import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
 import { NextStepBar } from './NextStepBar';
 import { PlanHeader } from './PlanHeader';
+import { ReadyToPlanBanner } from './ReadyToPlanBanner';
 import { SelectionsBar } from './SelectionsBar';
 import {
   REVEAL_TIMING,
@@ -127,6 +129,27 @@ import { S2StrategyView } from './stages/S2StrategyView';
 import { TimelineSkeleton } from './timeline/TimelineSkeleton';
 import { TimelineThread } from './TimelineThread';
 
+/**
+ * Get specialist icon for DNA bar display
+ */
+function getSpecialistIcon(specialistType?: string): React.ReactNode {
+  const iconClass = 'w-3 h-3';
+  switch (specialistType?.toLowerCase()) {
+    case 'diving':
+      return <Waves className={iconClass} />;
+    case 'hiking':
+      return <Mountain className={iconClass} />;
+    case 'skiing':
+      return <Snowflake className={iconClass} />;
+    case 'cycling':
+      return <Bike className={iconClass} />;
+    case 'boating':
+      return <Sailboat className={iconClass} />;
+    default:
+      return <Compass className={iconClass} />;
+  }
+}
+
 interface StrategyStageRendererProps {
   state: PlanViewState;
   viewModel: PlanViewModel;
@@ -147,7 +170,7 @@ interface StrategyStageRendererProps {
   currentSubStage?: string | null;
   /** Handler to trigger plan generation from S0 "Build plan" CTA */
   onBuildPlan?: () => void;
-  onExpandToItinerary?: () => void;
+  onExpandToItinerary?: () => Promise<void>;
   /** Callback to finalize plan and navigate to Book view */
   onFinalizePlan?: () => void;
   /** Whether finalization is in progress */
@@ -237,6 +260,21 @@ export function StrategyStageRenderer({
   // Heart preference system for SelectionsBar
   const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
   const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
+
+  // Itinerary regeneration system - auto-triggers on preference change
+  const {
+    isRegenerating: isRegenUpdating,
+    preferenceCount,
+    setExpandFn,
+  } = useItineraryRegeneration();
+
+  // Wire up the expand function for auto-regeneration
+  useEffect(() => {
+    if (onExpandToItinerary) {
+      setExpandFn(onExpandToItinerary);
+    }
+    return () => setExpandFn(null);
+  }, [onExpandToItinerary, setExpandFn]);
 
   // Get desktop state for mobile-specific rendering
   const { isDesktop } = useMobileMode();
@@ -366,6 +404,16 @@ export function StrategyStageRenderer({
 
       return (
         <div className="p-4 space-y-4">
+          {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
+          {destinationCard?.title && (viewModel.strategy_sections?.length ?? 0) > 0 && (
+            <ReadyToPlanBanner
+              destination={destinationCard.title}
+              questionsAsked={viewModel.strategy_sections?.length ?? 1}
+              onStartPlanning={() => onOpenSheet?.('dates')}
+              className="mb-2"
+            />
+          )}
+
           {/* PLANNING INTELLIGENCE HEADER */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -454,6 +502,16 @@ export function StrategyStageRenderer({
         <div className="flex flex-col lg:flex-row gap-6 p-4">
           {/* Left Column: Strategy Cards Only (no timeline) */}
           <div className="flex-1 min-w-0 space-y-4">
+            {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
+            {!hasDates && destinationCard?.title && sections.length > 0 && (
+              <ReadyToPlanBanner
+                destination={destinationCard.title}
+                questionsAsked={sections.length}
+                onStartPlanning={() => onOpenSheet?.('dates')}
+                className="mb-2"
+              />
+            )}
+
             {/* PLANNING INTELLIGENCE HEADER (SETUP mode only - before dates) */}
             {!hasDates && (
               <div className="flex items-center justify-between">
@@ -550,18 +608,38 @@ export function StrategyStageRenderer({
         >
           {/* SECTION 1: SPECIALISTS */}
           <section id="specialists-section" className="relative">
-            <S2StrategyView
-              key={`strategy-${destinationCard?.title}`}
-              viewModel={viewModel}
-              destinationCard={destinationCard}
-              onRefineAssumptions={onRefineAssumptions}
-              canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
-              pendingTopics={viewModel.pending_strategy_topics}
-              executedTopics={viewModel.executed_strategy_topics}
-              tiles={effectiveTiles}
-              tripInputs={effectiveTripInputs}
-              density={density}
-            />
+            {/* S3 (itinerary ready): Show compact DNA bar instead of full specialist cards */}
+            {hasItineraryContent && viewModel.strategy_sections && viewModel.strategy_sections.length > 0 ? (
+              <div className="flex items-center gap-2 mb-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
+                <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
+                <div className="flex gap-2 flex-wrap">
+                  {viewModel.strategy_sections.map((section) => (
+                    <button
+                      key={section.id || section.title}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs"
+                    >
+                      {getSpecialistIcon(section.specialist_type)}
+                      <span className="font-medium">{section.title}</span>
+                      <span className="text-zinc-400">({section.constraints_applied?.length || 0})</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              /* S2 (strategy ready): Show full specialist cards */
+              <S2StrategyView
+                key={`strategy-${destinationCard?.title}`}
+                viewModel={viewModel}
+                destinationCard={destinationCard}
+                onRefineAssumptions={onRefineAssumptions}
+                canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
+                pendingTopics={viewModel.pending_strategy_topics}
+                executedTopics={viewModel.executed_strategy_topics}
+                tiles={effectiveTiles}
+                tripInputs={effectiveTripInputs}
+                density={density}
+              />
+            )}
 
             {/* Regeneration overlay */}
             {isRegenerating && (
@@ -597,6 +675,8 @@ export function StrategyStageRenderer({
                   onRemovePreference={toggleTilePreference}
                   onTileClick={scrollToTile}
                   isSticky={isDesktop}
+                  isRegenerating={isRegenUpdating}
+                  activeSpecialistTypes={viewModel.strategy_sections?.map(s => s.specialist_type).filter(Boolean) as string[] || []}
                 />
               </motion.div>
             )}
@@ -666,12 +746,25 @@ export function StrategyStageRenderer({
                 id="timeline-section"
                 className="px-4 py-4"
               >
-                <TimelineThread
-                  dayCards={viewModel.day_cards ?? []}
-                  variant="draft"
-                  useRichBlocks={true}
-                  savedTileIds={savedTileIds}
-                />
+                {/* Relative wrapper for regeneration overlay */}
+                <div className="relative">
+                  <TimelineThread
+                    dayCards={viewModel.day_cards ?? []}
+                    variant="draft"
+                    useRichBlocks={true}
+                    savedTileIds={savedTileIds}
+                  />
+
+                  {/* Regeneration overlay - dims timeline during update */}
+                  {isRegenUpdating && (
+                    <div className="absolute inset-0 bg-black/50 z-10 flex items-center justify-center rounded-lg">
+                      <div className="flex items-center gap-2 text-white bg-zinc-900/80 px-4 py-2 rounded-full">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span className="text-sm">Updating with {preferenceCount} preferences...</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </motion.section>
             )}
           </AnimatePresence>
@@ -807,6 +900,7 @@ export function StrategyStageRenderer({
             <div className="relative z-[2]">{planContent}</div>
           </div>
         </div>
+
       </div>
     );
   }
@@ -910,6 +1004,7 @@ export function StrategyStageRenderer({
           </motion.div>
         )}
       </AnimatePresence>
+
     </div>
   );
 }

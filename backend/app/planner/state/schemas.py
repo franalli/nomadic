@@ -102,6 +102,11 @@ class SpecialistConstraint(BaseModel):
     parameters: Dict[str, Any] = Field(default_factory=dict)
     reason: Optional[str] = None  # Human-readable explanation
 
+    # UI display fields (for constraint visualization)
+    label: Optional[str] = None  # Short display label e.g., "24h no-fly buffer"
+    icon: Optional[str] = None  # Emoji icon e.g., "🚫"
+    buffer_hours: Optional[int] = None  # For temporal constraints e.g., 24
+
 
 class TripPlan(BaseModel):
     """

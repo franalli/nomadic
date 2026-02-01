@@ -734,8 +734,15 @@ async def trip_architect(state: GraphState) -> GraphState:
     # Extract trip fields and settings from user text
     # ==========================================================================
 
-    # Update trip plan from user text using LLM extraction
-    state.trip_plan = await _update_trip_plan_from_llm(state.trip_plan, user_text)
+    # Check if Router already extracted fields (structured output refactor)
+    # If so, skip duplicate LLM extraction - Router already populated state.trip_plan
+    if state.metadata.get("router_extracted_fields"):
+        _debug_v2("Skipping LLM extraction - Router already extracted fields")
+        # Clear the flag so future turns still extract
+        state.metadata["router_extracted_fields"] = False
+    else:
+        # Update trip plan from user text using LLM extraction
+        state.trip_plan = await _update_trip_plan_from_llm(state.trip_plan, user_text)
 
     # Detect destination pivot and clear stale state (preserves origin, dates, travelers, budget)
     _detect_and_handle_pivot(state, prev_trip_values.get("destination"))

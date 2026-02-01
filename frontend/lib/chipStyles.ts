@@ -20,22 +20,6 @@ export const chipInactive =
 export const chipActive =
   'bg-zinc-900 text-white border-zinc-900 shadow-md dark:bg-white dark:text-black dark:border-white';
 
-/** For pills on hero/banner/photo backgrounds - use WHITE bg for visibility on any photo */
-export const chipOnImage =
-  'border-slate-400/50 bg-white/85 text-slate-700 backdrop-blur-md shadow-sm hover:bg-white/95 dark:border-white/25 dark:bg-black/40 dark:text-white/85 dark:hover:bg-black/55';
-
-/** Active state for on-image pills (emerald accent on white bg) */
-export const chipOnImageActive =
-  'border-emerald-600/60 bg-white/90 text-emerald-800 backdrop-blur-md shadow-sm hover:bg-white/95 dark:border-emerald-400/50 dark:bg-black/50 dark:text-emerald-300 dark:hover:bg-black/55';
-
-/** Missing state for on-image pills (zinc dashed for subtle indication) */
-export const chipOnImageMissing =
-  'border-zinc-500/60 border-dashed bg-white/85 text-zinc-700 backdrop-blur-md shadow-sm hover:bg-white/95 dark:border-zinc-400/50 dark:bg-black/40 dark:text-zinc-300 dark:hover:bg-black/55';
-
-/** Optional state for on-image pills (subtle on white bg) */
-export const chipOnImageOptional =
-  'border-slate-400/40 bg-white/75 text-slate-600 backdrop-blur-md shadow-sm hover:bg-white/90 dark:border-white/20 dark:bg-black/35 dark:text-white/70 dark:hover:bg-black/50';
-
 /** Dropdown container styles */
 export const dropdown =
   'bg-popover text-popover-foreground border-border rounded-lg shadow-lg';

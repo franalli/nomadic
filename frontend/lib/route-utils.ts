@@ -24,12 +24,6 @@ export interface MapItem {
   source?: 'itinerary' | 'specialist';
 }
 
-export interface RouteSegment {
-  from: { lat: number; lng: number };
-  to: { lat: number; lng: number };
-  dayNumber: number;
-  label?: string;
-}
 
 // =============================================================================
 // GeoJSON Route Generation
@@ -73,35 +67,6 @@ export function generateRouteGeoJson(
       },
     ],
   };
-}
-
-/**
- * Generate route segments between consecutive days.
- * Useful for showing travel time/distance annotations.
- */
-export function generateRouteSegments(dayCards: DayCard[]): RouteSegment[] {
-  const segments: RouteSegment[] = [];
-  let prevCoord: { lat: number; lng: number } | null = null;
-  let prevDay = 0;
-
-  dayCards.forEach((card) => {
-    card.blocks.forEach((block) => {
-      if (block.coordinates) {
-        if (prevCoord && card.day_number !== prevDay) {
-          segments.push({
-            from: prevCoord,
-            to: block.coordinates,
-            dayNumber: card.day_number,
-            label: `Day ${prevDay} → Day ${card.day_number}`,
-          });
-        }
-        prevCoord = block.coordinates;
-        prevDay = card.day_number;
-      }
-    });
-  });
-
-  return segments;
 }
 
 // =============================================================================
@@ -283,46 +248,6 @@ export function extractActivityTypes(items: MapItem[]): string[] {
   return Array.from(types).sort();
 }
 
-/**
- * Get icon name for activity type (for Lucide icons).
- */
-export function getActivityIcon(type: string): string {
-  const iconMap: Record<string, string> = {
-    diving: 'Waves',
-    hiking: 'Mountain',
-    hotel: 'Building2',
-    flight: 'Plane',
-    temple: 'Landmark',
-    food: 'Utensils',
-    tour: 'Compass',
-    beach: 'Umbrella',
-    local: 'MapPin',
-    activity: 'Circle',
-  };
-
-  return iconMap[type] || 'Circle';
-}
-
-/**
- * Get color class for activity type (Tailwind).
- */
-export function getActivityColor(type: string): string {
-  const colorMap: Record<string, string> = {
-    diving: 'text-cyan-500',
-    hiking: 'text-green-500',
-    hotel: 'text-purple-500',
-    flight: 'text-blue-500',
-    temple: 'text-amber-500',
-    food: 'text-orange-500',
-    tour: 'text-indigo-500',
-    beach: 'text-yellow-500',
-    local: 'text-emerald-500',
-    activity: 'text-zinc-500',
-  };
-
-  return colorMap[type] || 'text-zinc-500';
-}
-
 // =============================================================================
 // Distance Utilities
 // =============================================================================
@@ -346,56 +271,4 @@ export function getDistanceMeters(
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c;
-}
-
-/**
- * Calculate map bounds that fit all items with padding.
- */
-export function calculateMapBounds(
-  items: MapItem[]
-): { sw: [number, number]; ne: [number, number] } | null {
-  if (items.length === 0) return null;
-
-  let minLng = Infinity;
-  let maxLng = -Infinity;
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-
-  items.forEach((item) => {
-    minLng = Math.min(minLng, item.coordinates.lng);
-    maxLng = Math.max(maxLng, item.coordinates.lng);
-    minLat = Math.min(minLat, item.coordinates.lat);
-    maxLat = Math.max(maxLat, item.coordinates.lat);
-  });
-
-  // Add 10% padding
-  const lngPadding = (maxLng - minLng) * 0.1;
-  const latPadding = (maxLat - minLat) * 0.1;
-
-  return {
-    sw: [minLng - lngPadding, minLat - latPadding],
-    ne: [maxLng + lngPadding, maxLat + latPadding],
-  };
-}
-
-/**
- * Calculate center point from map items.
- */
-export function calculateCenter(
-  items: MapItem[]
-): { lat: number; lng: number } | null {
-  if (items.length === 0) return null;
-
-  const sum = items.reduce(
-    (acc, item) => ({
-      lat: acc.lat + item.coordinates.lat,
-      lng: acc.lng + item.coordinates.lng,
-    }),
-    { lat: 0, lng: 0 }
-  );
-
-  return {
-    lat: sum.lat / items.length,
-    lng: sum.lng / items.length,
-  };
 }

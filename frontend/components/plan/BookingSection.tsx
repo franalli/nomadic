@@ -46,6 +46,44 @@ import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
 import { isGenerating } from './planStateHelpers';
 
+// Specialist keyword mappings for activity filtering
+// When a specialist is active, only show activities matching these keywords
+const SPECIALIST_KEYWORDS: Record<string, string[]> = {
+  diving: ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
+  hiking: ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
+  skiing: ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
+  surfing: ['surf', 'wave', 'beach', 'board', 'swell'],
+  climbing: ['climb', 'boulder', 'crag', 'via ferrata', 'rope'],
+  cycling: ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
+};
+
+/**
+ * Check if an activity tile matches active specialist types.
+ * When domain specialists (diving, hiking, etc.) are active, only show
+ * activities relevant to those specialists. local_expert shows all.
+ */
+function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
+  if (!specialistTypes || specialistTypes.length === 0) return true;
+
+  const category = (tile.type || '').toLowerCase();
+  const title = (tile.title || '').toLowerCase();
+  const subtitle = (tile.subtitle || '').toLowerCase();
+  const searchText = `${category} ${title} ${subtitle}`;
+
+  for (const specialist of specialistTypes) {
+    const s = specialist.toLowerCase();
+    if (s === 'local_expert') return true; // Local expert shows all activities
+
+    const keywords = SPECIALIST_KEYWORDS[s] || [];
+    for (const keyword of keywords) {
+      if (searchText.includes(keyword)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // Category types for S2 preview
 type TileCategory = 'stays' | 'flights' | 'activities';
 
@@ -302,14 +340,22 @@ export function BookingSection({
   }, [onRemoveTile]);
 
   // Group tiles by category for manifest layout (using normalized type matching)
+  // Activities are filtered by active specialists when domain specialists are present
   const tilesByCategory = useMemo(() => {
     const grouped: Record<string, Tile[]> = {};
     for (const cat of CATEGORY_CONFIG) {
       const targetType = cat.key === 'stays' ? 'hotel' : cat.key === 'flights' ? 'flight' : 'activity';
-      grouped[cat.key] = tileArray.filter(t => normalizeTileType(t.type) === targetType);
+      let categoryTiles = tileArray.filter(t => normalizeTileType(t.type) === targetType);
+
+      // Filter activities by specialist relevance when domain specialists are active
+      if (cat.key === 'activities' && activeSpecialists.length > 0) {
+        categoryTiles = categoryTiles.filter(t => activityMatchesSpecialist(t, activeSpecialists));
+      }
+
+      grouped[cat.key] = categoryTiles;
     }
     return grouped;
-  }, [tileArray]);
+  }, [tileArray, activeSpecialists]);
 
   // PLANNING mode: Show S2-style preview regardless of S2/S3 state
   // Mode is the SSoT for UI variant, not state. See docs/ux_unified_architecture.md

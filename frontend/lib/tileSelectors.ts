@@ -54,60 +54,6 @@ export function getTotalTileCount(tilesByType: TilesByType): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Individual tile type discriminators
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Check if a tile is a stay/hotel tile.
- * Matches 'hotel', 'stay', 'accommodation' in type field.
- */
-function isStayTile(tile: Tile): boolean {
-  const type = tile.type?.toLowerCase() ?? '';
-  return type.includes('hotel') || type.includes('stay') || type === 'accommodation';
-}
-
-/**
- * Check if a tile is a flight tile.
- */
-function isFlightTile(tile: Tile): boolean {
-  const type = tile.type?.toLowerCase() || '';
-  return type.includes('flight');
-}
-
-/**
- * Check if a tile is an activity tile.
- */
-function isActivityTile(tile: Tile): boolean {
-  const type = tile.type?.toLowerCase() || '';
-  return (
-    type.includes('activity') ||
-    type.includes('experience') ||
-    type.includes('tour') ||
-    type.includes('attraction')
-  );
-}
-
-/**
- * Filter tiles by category type.
- * Returns array of tiles matching the specified category.
- */
-export function filterTilesByType(
-  tiles: Record<string, Tile> | Tile[],
-  category: 'stay' | 'flight' | 'activity'
-): Tile[] {
-  const tileArray = Array.isArray(tiles) ? tiles : Object.values(tiles);
-
-  switch (category) {
-    case 'stay':
-      return tileArray.filter(isStayTile);
-    case 'flight':
-      return tileArray.filter(isFlightTile);
-    case 'activity':
-      return tileArray.filter(isActivityTile);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Tile Type Normalization
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -187,11 +133,4 @@ export function normalizeTileType(type: string | undefined | null): NormalizedTi
   // DEBUG: Log unrecognized types to help identify missing mappings
   console.warn(`[normalizeTileType] Unknown type: "${type}" → "${lower}"`);
   return 'unknown';
-}
-
-/**
- * Check if a tile matches a specific normalized category.
- */
-export function tileMatchesCategory(tile: Tile, category: NormalizedTileCategory): boolean {
-  return normalizeTileType(tile.type) === category;
 }

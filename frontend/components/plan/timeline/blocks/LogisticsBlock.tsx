@@ -19,6 +19,15 @@ import {
 } from './PreferenceAttributionBadge';
 import type { DisplayTime } from './types';
 
+/** Constraint object for inline display */
+interface ActiveConstraint {
+  id: string;
+  severity: 'warning' | 'info' | 'success';
+  icon: string;
+  title: string;
+  description: string;
+}
+
 interface LogisticsBlockProps {
   type: 'arrival' | 'departure' | 'checkin' | 'checkout';
   time?: DisplayTime;
@@ -28,6 +37,8 @@ interface LogisticsBlockProps {
   preferenceStatus?: PreferenceStatus;
   alternativeTileId?: string;
   onSwitchToAlternative?: (tileId: string) => void;
+  /** Active constraints for inline display */
+  activeConstraints?: ActiveConstraint[];
 }
 
 const CONFIG: Record<
@@ -72,6 +83,7 @@ export function LogisticsBlock({
   preferenceStatus,
   alternativeTileId,
   onSwitchToAlternative,
+  activeConstraints,
 }: LogisticsBlockProps) {
   const config = CONFIG[type];
   const Icon = config.icon;
@@ -115,6 +127,38 @@ export function LogisticsBlock({
             onSwitchToAlternative={onSwitchToAlternative}
             className="mt-2"
           />
+        )}
+
+        {/* Inline Constraint Badges */}
+        {activeConstraints && activeConstraints.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {activeConstraints.map((constraint) => (
+              <div
+                key={constraint.id}
+                className={cn(
+                  'flex items-start gap-2 p-3 rounded-lg text-xs',
+                  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
+                  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
+                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40'
+                )}
+              >
+                <span className="text-base flex-shrink-0">{constraint.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className={cn(
+                    'font-semibold mb-0.5',
+                    constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
+                    constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
+                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400'
+                  )}>
+                    {constraint.title}
+                  </div>
+                  <div className="text-zinc-600 dark:text-zinc-400">
+                    {constraint.description}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

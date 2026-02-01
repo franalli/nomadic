@@ -5,35 +5,7 @@
  */
 
 import type { Tile } from '@/types/tile';
-
-/**
- * Check if tile type is a flight.
- */
-export function isFlightType(type: string): boolean {
-  const lower = type.toLowerCase();
-  return lower.includes('flight') || lower === 'air';
-}
-
-/**
- * Check if tile type is a hotel/stay.
- */
-export function isHotelType(type: string): boolean {
-  const lower = type.toLowerCase();
-  return lower.includes('hotel') || lower.includes('stay') || lower === 'accommodation';
-}
-
-/**
- * Check if tile type is an activity.
- */
-export function isActivityType(type: string): boolean {
-  const lower = type.toLowerCase();
-  return (
-    lower.includes('activity') ||
-    lower.includes('experience') ||
-    lower.includes('tour') ||
-    lower === 'attraction'
-  );
-}
+import { isFlightType, isHotelType } from '@/lib/utils';
 
 /**
  * Extract API parameters from tile for debug preview tooltip.

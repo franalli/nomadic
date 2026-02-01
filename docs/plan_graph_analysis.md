@@ -25,16 +25,17 @@
 
 ## Architecture Overview
 
-LangGraph-based conversational trip planning system with **8 nodes**.
+LangGraph-based conversational trip planning system with **7 nodes**.
 
 | Category              | Count | Description                             |
 | --------------------- | ----- | --------------------------------------- |
 | LLM-Powered Nodes     | 4     | IntentRouter, TripArchitect, VerticalSpecialist, Synthesizer |
-| Domain Specialists    | 1     | LocalExpert (city logistics and tips) |
+| Domain Specialists    | 1     | LocalExpert (static knowledge, no LLM) |
 | Data Fetchers         | 1     | LogisticsNode (flight fetching + safety logic) |
 | Deterministic Nodes   | 1     | ConstraintGuard (pure Python validation) |
-| Itinerary Builders    | 1     | ItineraryBuilder (pure Python scheduling) |
-| **Total Nodes**       | **8** | Core graph + itinerary synthesis        |
+| **Total Nodes**       | **7** | Core graph nodes                        |
+
+> **Note:** `ItineraryBuilder` is a pure Python **service** (not a LangGraph node). It's called from the `/api/expand-itinerary` endpoint, preserving the 7-node architecture.
 
 ### Design Principles
 
@@ -48,6 +49,8 @@ LangGraph-based conversational trip planning system with **8 nodes**.
 8. **Local Expert Fallback** - Generic trips always have content via LocalExpert
 9. **Auto-Fix Loop** - ConstraintGuard can loop back to Architect once to self-correct
 10. **Itinerary Synthesis** - ItineraryBuilder is pure Python (no LLM) for deterministic scheduling
+11. **Exploration Mode** - Conversational Q&A using Local Expert knowledge before planning
+12. **Progressive Nudging** - Gradual transition from exploration to planning (1st: open, 2nd: soft nudge, 3rd+: invitation)
 
 ---
 
@@ -103,9 +106,11 @@ backend/app/planner/
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
 │  • Detects: specialist_hint (diving/hiking/skiing/cycling/boating)          │
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
+│  • EXPLORATION → Generic Q&A using Local Expert knowledge (no LLM)          │
+│  • SOFT_TRANSITION → Routes to PLANNING when dates OR activities provided   │
 │  • PLANNING + no specialist → LocalExpert (city logistics)                  │
 │  • PLANNING + specialist → VerticalSpecialist                               │
-│  ~150 tokens, ~300ms                                                        │
+│  ~150 tokens, ~300ms (0 tokens for exploration mode)                        │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
          ┌─────────────────────────┼──────────────────────────┬───────────────┐
@@ -230,12 +235,12 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 | `router` (IntentRouter) | LLM (Fast) | Intent classification | GPT-4o-mini | 150 | None |
 | `architect` (TripArchitect) | LLM (Smart) | Core planning, SSoT management | gpt-4o | Variable | Simulated |
 | `specialist` (VerticalSpecialist) | LLM (Expert) | Domain constraints + content | gpt-4o | Variable | Simulated |
-| `local_expert` (LocalExpert) | LLM/Static | City logistics concierge | GPT-4o-mini* | Variable | None |
+| `local_expert` (LocalExpert) | Static Dict | City logistics concierge | N/A (static) | N/A | None |
 | `logistics` (LogisticsNode) | Data Fetcher | Flight fetching + safety | N/A | N/A | None |
 | `guard` (ConstraintGuard) | Python | Validation (NO LLM) | N/A | N/A | None |
 | `synthesizer` (Synthesizer) | LLM (Writer) | Response generation | gpt-4o | Variable | True (astream_events) |
 
-*LocalExpert uses static knowledge by default; LLM mode controlled by `LOCAL_EXPERT_USE_LLM` env var.
+*LocalExpert uses static knowledge from `LOCAL_EXPERT_KNOWLEDGE` dictionary. No LLM calls.
 
 ### NODE_STATUS_CONFIG (UI Progress Labels)
 
@@ -263,19 +268,38 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 
 ### IntentRouter
 
-LLM-based intent classification using GPT-4o-mini.
+LLM-based intent classification AND field extraction using GPT-4o-mini with Pydantic structured output.
 
 | Classification | Trigger | Action |
 |----------------|---------|--------|
 | `GREETING` | "Hi", "Hello", "Thanks!" (no planning content) | Static response, skip architect |
 | `RESET` | "Start over", "Reset", "Begin again" | Clear state, static response |
-| `PLANNING` | Everything else (trip-related) | Pass to Specialist or LocalExpert |
+| `PLANNING` | Everything else (trip-related) | Extract fields → Pass to Specialist or LocalExpert |
 
 **Critical Rules:**
 - "Hi, I want to go to Paris" → PLANNING (has content!)
 - "No, I prefer Rome" → PLANNING (negation with alternative)
 - "Stop in Rome" → PLANNING (layover, not reset!)
 - If unsure, default to PLANNING (let architect handle it)
+
+**Structured Output Extraction (P0 Fix):**
+
+When `has_dates_in_message` is detected (via regex), the Router calls `_classify_and_extract_with_llm()` which:
+1. Uses `llm.with_structured_output(RouterOutput)` for guaranteed schema extraction
+2. Extracts dates, destination, origin, travelers, budget in ONE call
+3. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output()`
+4. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
+
+**Date Indicator Detection:**
+```python
+DATE_INDICATORS = [
+    r"\b(january|february|march|...)\b",  # Month names
+    r"\b(next week|next month|this weekend|tomorrow)\b",  # Relative dates
+    r"\b\d{1,2}[/-]\d{1,2}\b",  # Numeric patterns
+]
+```
+
+This fixes the bug where users said "I want to go diving March 1-8" but were asked for dates again.
 
 **Specialist Detection:**
 ```python
@@ -349,43 +373,58 @@ Domain expert that runs BEFORE Architect calls tools.
 - Hiking: Altitude acclimatization, proper footwear, trek recommendations
 - Skiing: Snow conditions, guide requirements, resort suggestions
 
-### LocalExpert (NEW)
+### LocalExpert
 
-The "Concierge" agent for city trips - ensures the Agent Feed is never empty.
+The "Concierge" node for city trips - ensures the Agent Feed is never empty. Uses **static knowledge** (no LLM calls).
 
-**Activation:** Default when no niche specialist (diving/hiking/skiing) is detected.
+**Activation:** Default when no niche specialist (diving/hiking/skiing) is detected. Also runs first in multi-specialist flows (Trip DNA anchor).
+
+**Implementation:** Pure dictionary lookup from `LOCAL_EXPERT_KNOWLEDGE`:
+```python
+LOCAL_EXPERT_KNOWLEDGE = {
+    "bali": LocalExpertKnowledge(...),
+    "dubai": LocalExpertKnowledge(...),
+    "paris": LocalExpertKnowledge(...),
+    # ~10 destinations with comprehensive data
+}
+
+def local_expert(state):
+    knowledge = LOCAL_EXPERT_KNOWLEDGE.get(destination.lower())
+    # No LLM call - returns static data directly
+```
 
 **Provides:**
 - Opening hours and closed days (e.g., "Louvre closed on Tuesdays")
 - Booking lead times for popular attractions
 - Transit passes and efficiency tips (e.g., "Paris Museum Pass saves €40+")
 - Cultural considerations (dining hours, tipping, dress codes)
+- Seasonality information
+- Safety and health tips
 
 **Static Knowledge Destinations:**
-- Dubai, Paris, Rome, London, Amsterdam, Tokyo, New York
+- Bali, Dubai, Paris, Rome, London, Amsterdam, Tokyo, New York, Thailand
 
-**Output Format (Pydantic Schema):**
+**Output Format (Pydantic Schema for data storage, NOT LLM extraction):**
 ```python
 class LocalConstraint(BaseModel):
-    type: str = "general"        # Flexible: opening_hours, booking_window, seasonal, cultural, safety, transport, etc.
-    description: str             # Short, actionable constraint text
-    severity: str = "info"       # Flexible: warning, info, etc.
+    type: str = "general"
+    description: str
+    severity: str = "info"
 
 class LocalRecommendation(BaseModel):
-    title: str                   # Name of pass/tip/area
-    description: str             # What is it?
-    category: str = "logistics"  # Flexible: logistics, attraction, dining, activity, general, etc.
-    logic_hook: str = ""         # Specific logistical advantage
+    title: str
+    description: str
+    category: str = "logistics"
+    logic_hook: str = ""
 
 class LocalExpertOutput(BaseModel):
     constraints: List[LocalConstraint]
     recommendations: List[LocalRecommendation]
 ```
 
-**Note:** Fields use `str` instead of `Literal` to prevent Pydantic validation errors from LLM-generated values.
-Control flow fields (e.g., IntentRouter's `intent`) remain strict `Literal` types.
+**Note:** LocalExpert uses Pydantic for **data storage** (structured knowledge), not for LLM extraction. This is different from nodes like IntentRouter that use `llm.with_structured_output()`.
 
-**Reality Check:** Includes a pre-generation check to return EMPTY recommendations if the destination is fictional or unrecognized (e.g., "Atlantis", "Mordor"). This prevents hallucination of non-existent transit systems or opening hours.
+**LLM Fallback (Exploration Mode):** When answering generic Q&A about unknown destinations, the IntentRouter may use an LLM fallback (`_llm_fallback_answer`) - but this is NOT part of LocalExpert itself.
 
 ### LogisticsNode (NEW)
 
@@ -497,23 +536,62 @@ Transforms specialist content + tiles into day-by-day timeline.
 
 **Why No LLM:** Deterministic scheduling is faster and more predictable than LLM-based generation. The specialists provide the "what", the builder provides the "when".
 
-**Algorithm (5 phases):**
+**Algorithm (6 phases):**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  ItineraryBuilder (Pure Python - No LLM)                        │
 │  Transforms specialist content + tiles into day-by-day timeline  │
 │                                                                  │
-│  Algorithm (5 phases):                                           │
+│  Algorithm (6 phases):                                           │
 │  1. Temporal Scaffolding - Create DayCard[] from dates           │
 │  2. Anchor Placement - Arrival/departure from flight tiles       │
 │  3. Buffer Injection - Safety blocks (no-fly, acclimatization)   │
 │  4. Activity Distribution - Round-robin interleaving by day      │
 │  5. Tile Matching - Hotels span all days, preferences weighted   │
+│  6. Constraint Tagging - Attach inline constraints to blocks     │
 │                                                                  │
 │  Routing: Logistics → ItineraryBuilder → Guard → Synthesizer    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Phase 6: Constraint Tagging (Inline Display)**
+
+After distributing activities, the builder tags blocks with relevant constraints for inline UI display. This makes constraint-first optimization visible to users. **Note:** Standalone buffer day cards have been removed - all safety constraints are now shown as inline badges on the relevant activity blocks.
+
+Each specialist type has its own constraint generator:
+
+**Diving Constraints:**
+- `no_fly_buffer` (warning): Applied to last dive when within 2 days of departure
+- `surface_interval` (info): Applied to all dives for safety communication
+
+**Hiking Constraints:**
+- `fitness_required` (info): Applied when `intensity == "challenging"`
+- `early_start_recommended` (info): Applied to morning activities
+
+**Skiing Constraints:**
+- `avalanche_awareness` (warning): Applied when summary contains "off-piste", "backcountry", or "freeride"
+- `advanced_terrain` (info): Applied when `intensity == "challenging"`
+
+**Surfing Constraints:**
+- `tide_timing` (info): Applied to all surfing activities
+
+**Hotel Constraints:**
+- `proximity_optimized` (success): Applied to check-in blocks, lists active specialists (e.g., "Proximity to diving, hiking activities")
+
+**Constraint Types:**
+| ID | Severity | Specialist | Description |
+|----|----------|------------|-------------|
+| `no_fly_buffer` | warning | diving | 24h before departure flight |
+| `surface_interval` | info | diving | General dive safety intervals |
+| `fitness_required` | info | hiking | Intermediate+ fitness level |
+| `early_start_recommended` | info | hiking | Morning departure recommended |
+| `avalanche_awareness` | warning | skiing | Off-piste/backcountry safety |
+| `advanced_terrain` | info | skiing | Black diamond skill level |
+| `tide_timing` | info | surfing | Check swell/tide forecast |
+| `proximity_optimized` | success | hotel | Location optimized for activities |
+
+**Frontend Rendering:** See `docs/ux_unified_architecture.md` Section I.A.2 "Inline Constraints Display"
 
 **Preference Weighting:**
 - User heart preferences passed via `PreferenceOverrideInput`
@@ -527,11 +605,95 @@ Transforms specialist content + tiles into day-by-day timeline.
 
 ---
 
+## Structured Output Usage
+
+Pydantic structured output is used for LLM nodes that need **guaranteed schema extraction**. Nodes that generate natural language or use static data do NOT use structured output.
+
+### Node-by-Node Status
+
+| Node | Uses Structured Output? | LLM Used? | Schema(s) | Purpose |
+|------|------------------------|-----------|-----------|---------|
+| **IntentRouter** | ✅ Yes | GPT-4o-mini | `RouterOutput`, `IntentClassification` | Intent + field extraction in one call |
+| **TripArchitect** | ✅ Yes | GPT-4o | `ExtractedTripFields`, `ExtractedSettingsFields` | Trip field & settings extraction |
+| **LocalExpert** | ❌ No | ❌ Static | N/A | Uses `LOCAL_EXPERT_KNOWLEDGE` dict |
+| **VerticalSpecialist** | ⚙️ Optional | GPT-4o | `SpecialistOutput` | Enable with `USE_SPECIALIST_LLM=true` env var |
+| **LogisticsNode** | ❌ No | ❌ N/A | N/A | API calls only (Amadeus, curated data) |
+| **ConstraintGuard** | ❌ No | ❌ N/A | N/A | Pure Python rule-based validation |
+| **Synthesizer** | ❌ No | GPT-4o | N/A | Free-form natural language (correct) |
+
+> **Note:** VerticalSpecialist uses hardcoded knowledge by default for consistent, fast responses. Enable `USE_SPECIALIST_LLM=true` to use LLM-generated constraints via `specialist_llm.py`. Falls back to hardcoded if LLM fails.
+
+### Design Principle
+
+**Rule of thumb:**
+- **LLM extracts structured information** → Use `.with_structured_output(Schema)` ✅
+- **LLM generates natural language** → Don't use structured output ❌
+- **No LLM (static data, APIs, validation)** → N/A ❌
+
+### RouterOutput Schema
+
+The IntentRouter uses a combined schema for intent classification + field extraction in a single LLM call:
+
+```python
+class RouterOutput(BaseModel):
+    """Combined intent classification + field extraction."""
+    intent: Literal["GREETING", "RESET", "PLANNING"]
+    destination: Optional[str] = None
+    origin: Optional[str] = None
+    start_date: Optional[str] = None  # YYYY-MM-DD format
+    end_date: Optional[str] = None    # YYYY-MM-DD format
+    duration_days: Optional[int] = None
+    adults: Optional[int] = None
+    children: Optional[int] = None
+    budget: Optional[float] = None
+    specialist_hints: Optional[List[str]] = None
+    has_dates_in_message: bool = False
+
+# Usage
+llm = ChatOpenAI(model="gpt-4o-mini")
+structured_llm = llm.with_structured_output(RouterOutput)
+result: RouterOutput = await structured_llm.ainvoke(messages)
+```
+
+**Benefits:**
+- Type-safe extraction with Pydantic validation
+- No regex parsing errors
+- Dates extracted immediately (fixes P0 bug where dates were asked twice)
+- Single LLM call instead of separate intent + extraction calls
+
+### State Population Flow
+
+```
+User: "I want to go diving March 1-8"
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  IntentRouter                                            │
+│  1. _classify_and_extract_with_llm() → RouterOutput      │
+│  2. _populate_trip_plan_from_router_output()             │
+│     - state.trip_plan.start_date = "2025-03-01"         │
+│     - state.trip_plan.end_date = "2025-03-08"           │
+│     - state.trip_plan.duration_days = 8                 │
+│  3. Set router_extracted_fields = True                   │
+└─────────────────────────────────────────────────────────┘
+                │
+                ▼
+┌─────────────────────────────────────────────────────────┐
+│  TripArchitect                                           │
+│  Checks router_extracted_fields flag                     │
+│  → Skips duplicate extraction (dates already in state)   │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Key Fix:** `TripPlan` expects dates as `Optional[str]` (YYYY-MM-DD format), not `datetime.date` objects. The Router validates the format but stores the raw string.
+
+---
+
 ## State Models
 
 ### GraphState
 
-Unified state for the 8-node architecture.
+Unified state for the 7-node architecture.
 
 ```python
 class GraphState(BaseModel):
@@ -680,6 +842,97 @@ class ItineraryBlock(BaseModel):
 | `is_buffer` | `SafetyBlock` | Rest day / acclimatization |
 | `requires_booking and not booked_tile_id` | `GhostSlot` | Unbooked placeholder |
 | Default | `ActivityMiniCard` | Rich activity card |
+
+---
+
+## Exploration Mode
+
+The IntentRouter supports **Exploration Mode** for handling generic travel questions before the user is ready to plan. This creates a conversational travel agent experience.
+
+### Question Type Detection
+
+Questions are classified into types that map to Local Expert knowledge sections:
+
+| Question Type | Keywords | Local Expert Section |
+|--------------|----------|---------------------|
+| `couples` | romantic, honeymoon | `destination_overview` |
+| `family` | kids, children | `destination_overview` |
+| `weather` | climate, rain, season | `seasonality` |
+| `safety` | dangerous, crime, security | `safety_health` |
+| `costs` | expensive, cheap, budget | `money_costs` |
+| `visa` | passport, entry, immigration | `visa_entry` |
+| `transport` | taxi, uber, scooter | `transportation` |
+| `cultural` | wear, dress, clothes | `cultural_norms` |
+| `activities` | must see, must do | `things_to_do` |
+| `accommodation` | stay, hotel, neighborhood | `neighborhoods` |
+| `scams` | rip off, tourist trap | `scams_traps` |
+| `packing` | bring, luggage, adapter | `packing` |
+| `connectivity` | sim, wifi, internet | `connectivity` |
+
+### Planning Readiness Detection
+
+```python
+PLANNING_READINESS_SIGNALS = [
+    "plan my trip", "help me plan", "let's plan", "plan this",
+    "i'm ready", "let's do it", "let's go", "book",
+    "what are my options", "show me options",
+]
+
+DATE_INDICATORS = [
+    r"\b(january|february|...)\b",  # Month names
+    r"\b(next week|next month|this weekend|tomorrow)\b",
+    r"\b\d{1,2}[/-]\d{1,2}\b",  # Date patterns
+]
+
+ACTIVITY_INDICATORS = [
+    r"\b(diving|dive|scuba|snorkel)\b",
+    r"\b(hiking|trek|climb|trail)\b",
+    r"\b(skiing|snowboard|ski)\b",
+]
+```
+
+### Intent Classification
+
+| Intent | Condition | Behavior |
+|--------|-----------|----------|
+| `ready` | Explicit planning signal OR (date AND activity) | Continue to PLANNING flow |
+| `soft_transition` | Has date OR activity | **Routes to PLANNING** (dates/activities = actionable input) |
+| `exploring` | Generic question, no planning signals | Comprehensive answer + "What else?" |
+
+### Progressive Nudging
+
+| Question # | Response Ending |
+|-----------|-----------------|
+| 1 | "What else would you like to know?" |
+| 2 | "When are you thinking of going?" (soft nudge) |
+| 3+ | "I can help plan your trip when you're ready..." |
+
+### Conversation State Tracking
+
+```python
+state.metadata["exploration_mode"] = True
+state.metadata["generic_question_count"] = 2
+state.metadata["last_destination_context"] = "Bali"
+state.metadata["short_circuit_type"] = "exploration"  # or "soft_transition"
+```
+
+### Example Flow
+
+```
+User: "Is Bali fun for couples?"
+→ Intent: exploring, destination: Bali, qtype: couples
+→ Returns comprehensive answer from LOCAL_EXPERT_KNOWLEDGE["bali"]["destination_overview"]
+→ Ending: "What else would you like to know?"
+
+User: "What's the weather like?"
+→ Intent: exploring, destination: Bali (from context), qtype: weather
+→ Returns seasonality answer
+→ Ending: "When are you thinking of going?" (question #2 = soft nudge)
+
+User: "Maybe February and we want to dive"
+→ Intent: ready (has date AND activity)
+→ Continues to normal PLANNING flow with specialists
+```
 
 ---
 
@@ -1089,16 +1342,52 @@ Phase 3: Buffer Injection
 ├─ Rest days (acclimatization for altitude)
 └─ Placed by constraint severity (BLOCKING first)
 
-Phase 4: Activity Distribution
-├─ Round-robin interleaving across specialists
+Phase 4: Activity Distribution (with Preference Weighting)
+├─ Normalize activity IDs for frontend/backend matching
+├─ Weight activities by user preferences (is_user_preferred flag)
+├─ Sort: preferred activities first, then round-robin interleaving
 ├─ Max 2-3 activities per day
 ├─ Respect day capacity (11 usable hours)
-└─ Alternate for variety (dive → hike → dive)
+├─ Alternate for variety (dive → hike → dive)
+└─ Set preference_status on blocks ('user_preferred' | null)
 
 Phase 5: Tile Matching
 ├─ Hotels span all days
 ├─ Activities matched to day blocks
-└─ Flights attached to arrival/departure
+├─ Flights attached to arrival/departure
+└─ Hotel preference attribution (user_preferred metadata)
+
+Phase 6: Constraint Tagging (Inline Display)
+├─ Tag blocks with relevant constraints for frontend display
+├─ Diving constraints:
+│   ├─ no_fly_buffer: Applied to last dive before departure
+│   └─ surface_interval: Between consecutive dive days
+├─ Constraint structure: { id, severity, icon, title, description }
+└─ Stored in block.active_constraints[]
+```
+
+### Preference Weighting Implementation
+
+**ID Normalization:**
+```python
+def _normalize_activity_id(self, activity: ActivityBlock) -> str:
+    """Generate consistent ID for matching across frontend/backend."""
+    if activity.tile_id:
+        return activity.tile_id
+    title = activity.title or activity.source or ""
+    return title.lower().replace(" ", "_").replace("'", "").replace("-", "_")
+```
+
+**Priority Sorting:**
+```python
+# Weight activities by preference before distribution
+for activity in activities:
+    activity_id = self._normalize_activity_id(activity)
+    is_preferred = self.preferences.is_activity_preferred(activity_id)
+    activity.is_user_preferred = is_preferred
+
+# Sort: preferred first
+activities.sort(key=lambda a: (0 if a.is_user_preferred else 1))
 ```
 
 ### Constraint Severity Hierarchy
@@ -1110,6 +1399,22 @@ Multi-specialist trips require conflict resolution when constraints clash.
 | **BLOCKING** | 24h no-fly (diving), visa requirements, permits | Always wins |
 | **STRONG** | Best weather timing, equipment availability, opening hours | Negotiates |
 | **SOFT** | Scenic routes, photo opportunities, early starts | Defers |
+
+### Timezone Handling Infrastructure
+
+The itinerary builder includes timezone infrastructure for cross-timezone constraint calculations:
+
+**Available Helpers:**
+- `get_destination_utc_offset(destination)` - Returns UTC offset for common destinations
+- `normalize_to_destination_tz(dt, destination)` - Converts datetime to destination local time
+- `calculate_hours_between(time1, time2, destination, use_timezone)` - Calculates hours with optional timezone normalization
+
+**Current Status:** MVP assumes all times are in destination local timezone. This is correct for most dive trip scenarios where:
+- Dive times are local
+- Flight departure times shown in local time by airlines
+- Users think in local time
+
+**Enable Full Timezone Support:** Set `use_timezone=True` in `calculate_hours_between()` for cross-timezone flight calculations.
 
 **Resolution Example:**
 ```

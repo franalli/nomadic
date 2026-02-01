@@ -154,6 +154,10 @@ type DocumentState = {
   toggleTilePreference: (tileId: string) => void;
   clearPreferences: () => void;
 
+  // Regeneration tracking - preferences used in last expand-itinerary call
+  lastGeneratedPreferences: Set<string>;
+  markPreferencesAsApplied: () => void;
+
   // Cart state (for BOOKING mode)
   cartTileIds: Set<string>;
   addToCart: (tileId: string) => void;
@@ -241,6 +245,8 @@ const initialState = {
   isPlanFinalized: false,
   // Heart preference system
   preferredTileIds: new Set<string>(),
+  // Regeneration tracking
+  lastGeneratedPreferences: new Set<string>(),
   // Cart state
   cartTileIds: new Set<string>(),
 };
@@ -1019,11 +1025,32 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   // Heart preference actions (PLANNING mode - preference signals for AI weighting)
   // Persisted to DB via PATCH /api/document, hydrated from API response
   toggleTilePreference: (tileId: string) => {
-    const { preferredTileIds, version } = get();
+    const { preferredTileIds, version, document } = get();
+    const tiles = document?.tiles ?? {};
     const newSet = new Set(preferredTileIds);
+
+    // Get the type of tile being toggled
+    const tile = tiles[tileId];
+    const tileType = (tile?.type || '').toLowerCase();
+    const isHotel = tileType === 'hotel' || tileType === 'stay' || tileType === 'accommodation';
+
     if (newSet.has(tileId)) {
+      // Un-hearting: just remove
       newSet.delete(tileId);
     } else {
+      // Hearting: enforce single-select for hotels
+      // Hotels are "your base" - only one can be preferred at a time
+      // Activities remain multi-select (distributed across days)
+      if (isHotel) {
+        // Clear any existing hotel preferences
+        for (const existingId of newSet) {
+          const existingTile = tiles[existingId];
+          const existingType = (existingTile?.type || '').toLowerCase();
+          if (existingType === 'hotel' || existingType === 'stay' || existingType === 'accommodation') {
+            newSet.delete(existingId);
+          }
+        }
+      }
       newSet.add(tileId);
     }
     // Optimistic update
@@ -1065,6 +1092,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
   },
 
+  // Regeneration tracking - sync lastGeneratedPreferences after expand-itinerary completes
+  markPreferencesAsApplied: () => {
+    const { preferredTileIds } = get();
+    console.log('[documentStore] Marking preferences as applied:', preferredTileIds.size);
+    set({ lastGeneratedPreferences: new Set(preferredTileIds) });
+  },
+
   // Cart actions (for BOOKING mode)
   addToCart: (tileId: string) => {
     const { cartTileIds } = get();
@@ -1099,6 +1133,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       activeView: 'planning',
       isPlanFinalized: false,
       preferredTileIds: new Set(),
+      lastGeneratedPreferences: new Set(),
       cartTileIds: new Set(),
     });
   },

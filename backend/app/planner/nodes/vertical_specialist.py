@@ -19,7 +19,15 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.placeholders import get_activity_image
+
+# Optional LLM-based constraint generation
+from app.planner.nodes.specialist_llm import (
+    convert_llm_output_to_state,
+    generate_specialist_output_with_llm,
+    is_llm_specialist_enabled,
+)
 from app.planner.state import (
+    ConstraintSeverity,
     GraphState,
     ItineraryBlock,
     SpecialistConstraint,
@@ -38,12 +46,20 @@ DIVING_KNOWLEDGE = {
             rule="min_24h_buffer_after_dive",
             applies_to="flights",
             reason="Flying within 24 hours of diving risks decompression sickness",
+            label="24h no-fly buffer",
+            icon="🚫",
+            buffer_hours=24,
+            severity=ConstraintSeverity.BLOCKING,
         ),
         SpecialistConstraint(
             type="temporal",
             rule="min_18h_surface_interval",
             applies_to="flights",
             reason="Minimum 18h recommended before flying after single dive",
+            label="18h surface interval",
+            icon="⏰",
+            buffer_hours=18,
+            severity=ConstraintSeverity.STRONG,
         ),
         SpecialistConstraint(
             type="safety",
@@ -51,6 +67,9 @@ DIVING_KNOWLEDGE = {
             applies_to="activities",
             parameters={"max_depth_without_cert": 18},
             reason="Dives below 18m require Advanced Open Water certification",
+            label="Certification required",
+            icon="📜",
+            severity=ConstraintSeverity.BLOCKING,
         ),
     ],
     "top_destinations": {
@@ -143,12 +162,19 @@ HIKING_KNOWLEDGE = {
             applies_to="activities",
             parameters={"max_daily_elevation_gain": 500},
             reason="Gain no more than 500m per day above 3000m to prevent altitude sickness",
+            label="Altitude acclimatization",
+            icon="🏔️",
+            buffer_hours=48,
+            severity=ConstraintSeverity.STRONG,
         ),
         SpecialistConstraint(
             type="equipment",
             rule="proper_footwear_required",
             applies_to="activities",
             reason="Hiking boots required for mountain trails",
+            label="Footwear required",
+            icon="🥾",
+            severity=ConstraintSeverity.SOFT,
         ),
     ],
     "top_destinations": {
@@ -190,12 +216,18 @@ SKIING_KNOWLEDGE = {
             rule="check_snow_conditions",
             applies_to="activities",
             reason="Verify snow conditions and avalanche reports before backcountry skiing",
+            label="Check snow conditions",
+            icon="🏔️",
+            severity=ConstraintSeverity.STRONG,
         ),
         SpecialistConstraint(
             type="certification",
             rule="guide_required_offpiste",
             applies_to="activities",
             reason="Certified guide required for off-piste skiing",
+            label="Guide required",
+            icon="🎿",
+            severity=ConstraintSeverity.BLOCKING,
         ),
     ],
     "top_destinations": {
@@ -801,27 +833,11 @@ class VerticalSpecialist:
             duration = 5
 
         if self.topic == "diving" and duration >= 3:
-            # Add no-fly buffer on the day before departure
-            no_fly_day = duration - 1
-            blocks.append(
-                ItineraryBlock(
-                    day=no_fly_day,
-                    title="No-Fly Interval",
-                    description=(
-                        "Surface interval before flight. Light activities only - no diving."
-                    ),
-                    type="buffer",
-                    is_buffer=True,
-                    buffer_type="no_fly",
-                    buffer_reason=(
-                        "PADI Standard: 24h surface interval required before flying after diving"
-                    ),
-                    source_specialist="diving",
-                    safety_notes=(
-                        "Decompression sickness risk if flying within 24 hours of diving"
-                    ),
-                )
-            )
+            # No-fly buffer is now shown as INLINE CONSTRAINT on the last dive activity
+            # (see itinerary_builder._apply_constraints_to_blocks)
+            # No standalone buffer block needed - keeps timeline cleaner while
+            # still communicating the safety rule via inline badges.
+            pass
 
         elif self.topic == "hiking":
             # For high-altitude destinations, add acclimatization day
@@ -931,7 +947,40 @@ class VerticalSpecialist:
         _debug_v2(f"[SPECIALIST] total all_blocks: {len(all_blocks)}")
 
         # STEP 3: Build constraints list
-        constraints = self.get_constraints()
+        # Try LLM-based generation if enabled, with fallback to hardcoded knowledge
+        constraints = []
+        llm_enhancements = []
+        llm_critique = None
+
+        if is_llm_specialist_enabled():
+            _debug_v2("[SPECIALIST] LLM generation enabled, attempting async call...")
+            try:
+                import asyncio
+
+                # Generate constraints via LLM
+                llm_output = asyncio.get_event_loop().run_until_complete(
+                    generate_specialist_output_with_llm(self.topic, state)
+                )
+
+                if llm_output:
+                    # Convert LLM output to state format
+                    llm_state_output = convert_llm_output_to_state(llm_output, self.topic)
+                    constraints = llm_state_output.constraints
+                    llm_enhancements = llm_state_output.enhancements or []
+                    llm_critique = llm_state_output.critique
+                    _debug_v2(
+                        f"[SPECIALIST] LLM generated {len(constraints)} constraints, "
+                        f"{len(llm_enhancements)} enhancements"
+                    )
+                else:
+                    _debug_v2("[SPECIALIST] LLM returned None, using hardcoded knowledge")
+                    constraints = self.get_constraints()
+            except Exception as e:
+                _debug_v2(f"[SPECIALIST] LLM generation failed: {e}, using hardcoded knowledge")
+                constraints = self.get_constraints()
+        else:
+            # Use hardcoded knowledge (default path)
+            constraints = self.get_constraints()
 
         # If caveat, inject as first constraint (warning)
         if status == "caveat" and reason:
@@ -945,14 +994,20 @@ class VerticalSpecialist:
                 ),
             )
 
+        # Use LLM-generated critique/enhancements if available, otherwise use hardcoded
+        final_critique = llm_critique if llm_critique else self.critique_plan(state)
+        final_enhancements = (
+            llm_enhancements if llm_enhancements else self.generate_enhancements(state)
+        )
+
         return SpecialistOutput(
             feasibility_status=status,
             feasibility_reason=reason if status == "caveat" else None,
             alternative_suggestion=alternative,
             constraints=constraints,
             content_blocks=all_blocks,
-            critique=self.critique_plan(state),
-            enhancements=self.generate_enhancements(state),
+            critique=final_critique,
+            enhancements=final_enhancements,
         )
 
 

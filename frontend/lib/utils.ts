@@ -75,6 +75,7 @@ export function normalizeTitle(title: string | null | undefined): string {
 
 const FLIGHT_TYPE_KEYWORDS = ['flight', 'air', 'fare', 'plane'] as const;
 const ACTIVITY_TYPE_KEYWORDS = ['activity', 'experience', 'tour', 'excursion', 'ticket', 'event'] as const;
+const HOTEL_TYPE_KEYWORDS = ['hotel', 'stay', 'accommodation'] as const;
 
 /**
  * Check if a tile type string represents a flight.
@@ -90,6 +91,14 @@ export const isFlightType = (type: string): boolean => {
 export const isActivityType = (type: string): boolean => {
   const lower = type.toLowerCase();
   return ACTIVITY_TYPE_KEYWORDS.some((keyword) => lower.includes(keyword));
+};
+
+/**
+ * Check if a tile type string represents a hotel/stay.
+ */
+export const isHotelType = (type: string): boolean => {
+  const lower = type.toLowerCase();
+  return HOTEL_TYPE_KEYWORDS.some((keyword) => lower.includes(keyword));
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

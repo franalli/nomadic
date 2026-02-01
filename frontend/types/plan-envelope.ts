@@ -701,6 +701,15 @@ export interface DayBlock {
   preference_status?: 'user_preferred' | 'ai_selected' | 'ai_override';
   preference_override_reason?: string; // Why AI overrode user preference
   alternative_tile_id?: string; // ID of user's preferred tile if AI overrode
+
+  // === NEW: Inline constraint badges (shows applied constraints) ===
+  active_constraints?: Array<{
+    id: string;
+    severity: 'warning' | 'info' | 'success';
+    icon: string;
+    title: string;
+    description: string;
+  }>;
 }
 
 /**

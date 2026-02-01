@@ -741,7 +741,11 @@ export function NomadicLanding() {
     try {
       // Get current document state for context
       const currentDoc = documentStore.document;
-      const preferredTileIds = documentStore.preferredTileIds;
+
+      // FIX: Read LIVE state from store to avoid stale closure
+      // documentStore.preferredTileIds is captured at render time, but we need
+      // the current value when this callback actually executes
+      const preferredTileIds = useDocumentStore.getState().preferredTileIds;
 
       // Build preferences from heart state
       const tiles = currentDoc?.tiles ?? {};
@@ -749,7 +753,7 @@ export function NomadicLanding() {
       const preferredActivityIds: string[] = [];
 
       // Debug: Log raw preference state BEFORE categorization
-      console.log('[expand-itinerary] 💜 Raw preferences:', {
+      console.log('[expand-itinerary] 💜 Raw preferences (LIVE READ):', {
         preferredTileIds: Array.from(preferredTileIds),
         preferredTileIds_size: preferredTileIds.size,
         tilesKeys: Object.keys(tiles).slice(0, 5),
@@ -850,6 +854,8 @@ export function NomadicLanding() {
           console.debug('[expand-itinerary] Generation complete');
           setUiGeneration(null);
           setLastGenerationError(null);
+          // Sync preferences to track which were used in this generation
+          documentStore.markPreferencesAsApplied();
         } else if (event.type === 'error') {
           console.error('[expand-itinerary] Error received:', event.message);
           setLastGenerationError(event.message || 'Failed to generate itinerary');

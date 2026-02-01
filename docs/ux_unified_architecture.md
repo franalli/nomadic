@@ -151,7 +151,8 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| SelectionsBar | `components/plan/SelectionsBar.tsx` | Horizontal carousel of hearted tiles (sticky on desktop) |
+| SelectionsBar | `components/plan/SelectionsBar.tsx` | Grouped carousel of hearted tiles (Stays + Activities sections) |
+| useItineraryRegeneration | `hooks/useItineraryRegeneration.ts` | Auto-regeneration on preference change (1.5s debounce) |
 
 ### Progressive Disclosure Rules
 
@@ -307,15 +308,31 @@ Users can heart tiles to signal preference to the AI. Hearts are preference sign
 | Unpressed | Outline heart, zinc-400 | Click to prefer |
 | Pressed | Filled heart, emerald-500, scale animation | Click to unprefer |
 
+### Selection Behavior by Tile Type
+
+| Type | Behavior | Rationale |
+|------|----------|-----------|
+| **Hotels** | Single-select (radio) | Hotel is "your base" - one preferred stay per trip |
+| **Activities** | Multi-select (checkbox) | Activities distributed across days |
+
+**Hotel single-select:** When hearting a new hotel, any previously hearted hotel is automatically cleared. This prevents confusion where users heart 3 hotels expecting all to be used, but builder can only assign one.
+
+**Implementation:** `toggleTilePreference()` checks tile type. If hotel/stay/accommodation, clears existing hotel preferences before adding new one.
+
 ### Data Flow
 1. User hearts tiles via `SuggestionCard`, `TileCard`, or `BookableCard`
 2. All heart clicks route through `useShortlist` hook → `toggleTilePreference()`
-3. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document`
-4. On page refresh, `fetchDocument()` hydrates `preferredTileIds` from DB
-5. `useShortlist` syncs local metadata (category, isPrimary) from hydrated IDs
-6. On "Build Itinerary" click, preferences extracted and categorized by tile type
-7. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
-8. Timeline shows attribution badge: "You preferred this" on check-in blocks
+3. For hotels: clears existing hotel preference (single-select enforcement)
+4. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document`
+5. On page refresh, `fetchDocument()` hydrates `preferredTileIds` from DB
+6. `useShortlist` syncs local metadata (category, isPrimary) from hydrated IDs
+7. On "Build Itinerary" click OR auto-regen trigger (1.5s after preference change):
+   - Preferences read via `useDocumentStore.getState().preferredTileIds` (live read)
+   - Categorized by tile type and sent to backend
+8. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
+9. Timeline shows attribution badge: "You preferred this" on check-in blocks
+
+**Important (Stale Closure Fix):** `proceedWithItineraryGeneration` reads preferences via `useDocumentStore.getState()` at call time, not from React state captured at render time. This ensures the latest hearted tiles are always sent.
 
 ### Itinerary Generation with Preferences
 
@@ -325,10 +342,11 @@ When user clicks "Build Itinerary", preferences flow to backend:
 ┌─────────────────────────────────────────────────────────────────┐
 │  Frontend: NomadicLanding.tsx (proceedWithItineraryGeneration)  │
 │                                                                  │
-│  1. Read preferredTileIds from documentStore                     │
+│  1. Read preferredTileIds via useDocumentStore.getState()        │
+│     (LIVE READ - avoids stale closure from React render)         │
 │  2. Categorize by tile.type:                                     │
-│     - hotel/stay/accommodation → preferred_hotel_ids             │
-│     - activity/experience/tour → preferred_activity_ids          │
+│     - hotel/stay/accommodation → preferred_hotel_ids (max 1)     │
+│     - activity/experience/tour → preferred_activity_ids (multi)  │
 │  3. POST /api/expand-itinerary { preferences: {...} }            │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -367,9 +385,218 @@ Frontend categorizes tiles by type (case-insensitive):
 | Activities | `activity`, `experience`, `tour`, `attraction`, `excursion`, `ticket`, `event` |
 | Flights | `flight` (not currently used in preferences) |
 
-### Preference Timing
+### Auto-Regeneration (Live Reactivity)
 
-**Important:** Preferences are snapshot at itinerary generation time. Hearts added AFTER generation don't automatically update the itinerary. User must regenerate to apply new preferences.
+When preferences change after an itinerary exists, the itinerary **automatically regenerates**. No manual "Update" button - full auto-reactivity.
+
+```
+User hearts new hotel → 1.5s debounce → Auto-regenerate → Timeline updates
+```
+
+**Why auto-regen:**
+- Consistent with plan updates (live reactivity throughout app)
+- No hidden state or manual sync needed
+- Clear feedback via overlay
+- Debounce prevents thrashing on rapid preference changes
+
+**Components:**
+- `SelectionsBar` - Shows "Updating..." indicator during regeneration (no manual button)
+- `useItineraryRegeneration` - Hook managing auto-regeneration with debounce
+- Timeline overlay - Dims timeline during update
+
+**State tracking:**
+- `documentStore.preferredTileIds` - Current preferences
+- `documentStore.lastGeneratedPreferences` - Preferences used in last generation
+- `hasPreferenceChanges()` - Computed: true if sets differ
+
+**Auto-regeneration flow:**
+1. User generates itinerary (preferences snapshot to `lastGeneratedPreferences`)
+2. User hearts a new hotel → previous hotel cleared (single-select) → `preferredTileIds` changes
+3. `hasPreferenceChanges()` returns true → 1.5s debounce timer starts
+4. After debounce → `onExpandToItinerary()` called automatically with live preferences
+5. Scroll position preserved during regeneration
+6. On success → `markPreferencesAsApplied()` syncs preferences
+
+**Debounce behavior:**
+- 1.5 second delay before triggering regeneration
+- Resets on each preference change
+- Prevents API thrashing when user explores multiple options
+- Cost: ~$0.002/regen (acceptable for demo)
+
+**Timeline overlay:** During regeneration, existing timeline dims with "Updating with N preferences..." overlay.
+
+**Attribution badges:** After regeneration, `PreferenceAttributionBadge` shows:
+- "You preferred this" - user-preferred hotel was selected
+- "AI selected" + "Switch" button - AI overrode user preference
+
+### SelectionsBar Grouped Layout
+
+SelectionsBar displays hearted tiles grouped by type AND by specialist with semantic structure:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 💚 YOUR SELECTIONS  3   [Updating...]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ STAY (1)
+ ┌──────┐
+ │ img  │  Four Seasons
+ └──────┘
+ ────────────────────────────────────
+ DIVING (1)
+ ┌──────┐
+ │ img  │  Crystal Bay
+ └──────┘
+ ────────────────────────────────────
+ HIKING (1)
+ ┌──────┐
+ │ img  │  Mount Batur
+ └──────┘
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+**Groups:**
+| Group | Label | Behavior |
+|-------|-------|----------|
+| Stays | "STAY (n)" | Single-select (max 1) |
+| Activities | Grouped by specialist (e.g., "DIVING (n)", "HIKING (n)") | Multi-select |
+
+**Visual rules:**
+- Empty groups don't render
+- Each group has its own horizontal scroll
+- Compact thumbnails (80×56px) for density
+- "Updating..." indicator shows during auto-regeneration
+- Activities are grouped by detected specialist type for visual clarity
+
+### Specialist Filtering (Domain Mode)
+
+When domain specialists (diving, hiking, skiing, surfing, etc.) are active, both SelectionsBar and BookingSection filter activities to show only specialist-relevant items. Hotels always pass through.
+
+**Keyword Mappings:**
+```typescript
+const SPECIALIST_KEYWORDS: Record<string, string[]> = {
+  diving: ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
+  hiking: ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
+  skiing: ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
+  surfing: ['surf', 'wave', 'beach', 'board', 'swell'],
+  climbing: ['climb', 'boulder', 'crag', 'via ferrata', 'rope'],
+  cycling: ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
+};
+```
+
+**Filtering Logic:**
+```typescript
+function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
+  if (isHotelType(tile.type)) return true;  // Hotels always show
+  if (!specialistTypes || specialistTypes.length === 0) return true;  // No filter
+
+  const category = (tile.category || tile.type || '').toLowerCase();
+  const title = (tile.title || '').toLowerCase();
+
+  for (const specialist of specialistTypes) {
+    if (specialist === 'local_expert') return true;  // General: allow all
+    const keywords = SPECIALIST_KEYWORDS[specialist] || [];
+    for (const keyword of keywords) {
+      if (category.includes(keyword) || title.includes(keyword)) return true;
+    }
+  }
+  return false;
+}
+```
+
+**Where Applied:**
+- `SelectionsBar.tsx`: Filters hearted activities by specialist before grouping
+- `BookingSection.tsx`: Filters activity tiles in `tilesByCategory` when specialists are active
+
+**Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" in the tile browser or SelectionsBar creates expectation mismatch. Users heart generic activities but the timeline shows diving content. Filtering ensures both components show only items that can appear in the specialist timeline.
+
+### Inline Constraints Display (S3 View)
+
+Activity and logistics blocks display inline constraint badges to show constraint-first optimization. This makes the builder's constraint enforcement visible to users.
+
+**Visual Example:**
+```
+┌─────────────────────────────────────┐
+│ 🌊 EVENING  diving  ⏱ 3.0h          │
+│ Crystal Bay                         │
+│                                     │
+│ ┌─────────────────────────────────┐ │
+│ │ ℹ️ Dive Safety                  │ │
+│ │    Scheduled with appropriate   │ │
+│ │    surface intervals            │ │
+│ └─────────────────────────────────┘ │
+│                                     │
+│ ┌─────────────────────────────────┐ │
+│ │ ⚠️ 24h No-Fly Buffer            │ │
+│ │    Day 8 departure requires     │ │
+│ │    finishing diving by 2pm      │ │
+│ └─────────────────────────────────┘ │
+│                                     │
+│ ❤️ You preferred this               │
+└─────────────────────────────────────┘
+```
+
+**Constraint Structure:**
+```typescript
+interface ActiveConstraint {
+  id: string;                           // Unique ID (e.g., "no_fly_buffer")
+  severity: 'warning' | 'info' | 'success';
+  icon: string;                         // Emoji (⚠️, ℹ️, ✅)
+  title: string;                        // Short label
+  description: string;                  // Context-specific explanation
+}
+```
+
+**Severity Colors:**
+| Severity | Use Case | Light BG | Border |
+|----------|----------|----------|--------|
+| `warning` | Safety constraints (24h no-fly) | `bg-amber-50` | `border-amber-200` |
+| `info` | Informational (surface interval) | `bg-blue-50` | `border-blue-200` |
+| `success` | Positive (constraint satisfied) | `bg-emerald-50` | `border-emerald-200` |
+
+**Implementation:** `frontend/components/plan/timeline/blocks/ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
+
+See `docs/design-system.md` Section 4 "Inline Constraint Badge Colors" for full Tailwind classes.
+
+### Trip DNA Bar (S3 View)
+
+In S3 (itinerary ready), full specialist strategy cards are replaced with a compact "Trip DNA" bar. This preserves specialist context without taking up timeline real estate.
+
+**Visual Layout:**
+```
+┌──────────────────────────────────────────────────────────────┐
+│ TRIP DNA:  [🌊 Diving (3)]  [🏝️ Local Expert (5)]           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+- **S2 (strategy ready):** Full specialist cards with expandable constraint lists
+- **S3 (itinerary ready):** Compact DNA bar with pill buttons per specialist
+- Pill shows: icon + title + constraint count
+- Click: Currently visual indicator only (no modal)
+
+**Implementation:**
+```tsx
+{hasItineraryContent && viewModel.strategy_sections?.length > 0 ? (
+  // S3: Compact DNA bar
+  <div className="flex items-center gap-2 mb-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60">
+    <span className="text-xs uppercase font-semibold text-zinc-500">Trip DNA:</span>
+    <div className="flex gap-2 flex-wrap">
+      {viewModel.strategy_sections.map((section) => (
+        <button key={section.id} className="...">
+          {getSpecialistIcon(section.specialist_type)}
+          <span>{section.title}</span>
+          <span>({section.constraints_applied?.length || 0})</span>
+        </button>
+      ))}
+    </div>
+  </div>
+) : (
+  // S2: Full specialist cards
+  <S2StrategyView ... />
+)}
+```
+
+**File:** `frontend/components/plan/StrategyStageRenderer.tsx`
 
 ### Architecture (Consolidated)
 ```
@@ -392,7 +619,9 @@ Frontend categorizes tiles by type (case-insensitive):
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  documentStore (state/documentStore.ts)                   │   │
 │  │  - preferredTileIds: Set<string>                          │   │
+│  │  - lastGeneratedPreferences: Set<string> (for regen)      │   │
 │  │  - toggleTilePreference() → PATCH /api/document           │   │
+│  │  - markPreferencesAsApplied() → syncs sets                │   │
 │  │  - fetchDocument() → hydrates preferredTileIds from DB    │   │
 │  └──────────────────────────────────────────────────────────┘   │
 │                           │                                      │
@@ -406,7 +635,8 @@ Frontend categorizes tiles by type (case-insensitive):
 ```
 
 ### Storage
-- **Zustand state:** `documentStore.preferredTileIds: Set<string>`
+- **Zustand state:** `documentStore.preferredTileIds: Set<string>` - current preferences
+- **Zustand state:** `documentStore.lastGeneratedPreferences: Set<string>` - preferences at last generation
 - **Local metadata:** `useShortlist.itemsMetadata: Map<id, {category, isPrimary}>`
 - **Database:** `plan_documents.document.preferred_tile_ids[]` (survives refresh)
 
@@ -746,6 +976,116 @@ All complex responses must follow the "Islands" format to ensure scannability.
 * Use Double Line Breaks between islands.
 * **Bold** key variables (Dates, Places, Prices).
 * Use standard Markdown.
+
+---
+
+## IV.A Exploration Mode Response Format
+
+When users ask generic travel questions (before planning), the system enters **Exploration Mode**. These responses have a distinct format optimized for information delivery and natural conversation flow.
+
+### Response Structure
+
+**Exploration responses use 3 parts:**
+
+1. **The Answer:** Comprehensive, factual answer (4-5 sentences with bullet points)
+2. **The Ending:** Progressive nudge based on question count
+3. **Suggestion Chips:** Contextual follow-up questions + "Plan trip" CTA
+
+### Markdown Formatting Rules
+
+| Element | Format | Example |
+|---------|--------|---------|
+| **Section headers** | `**Bold:**` | `**Best time to visit:**` |
+| **Key facts** | Bullet points with `-` | `- Great for: Beach lovers, Divers` |
+| **Destination name** | Capitalized | `Bali`, not `bali` |
+| **Numbers/prices** | Inline with units | `$50-80/day`, `7-10 days` |
+| **Lists in context** | Comma-separated | `Apr, May, Jun, Jul, Aug, Sep` |
+| **Paragraph breaks** | Double newline `\n\n` | Between answer sections |
+
+### Question-Based Endings
+
+| Question # | Ending Style | Example |
+|-----------|--------------|---------|
+| 1st | Open exploration | "What else would you like to know?" |
+| 2nd | Soft nudge | "When are you thinking of going?" |
+| 3rd+ | Planning invitation | "I can help plan your trip when you're ready. Just let me know your dates!" |
+
+### Example Exploration Response
+
+```markdown
+Bali is fantastic for couples! Island of the Gods where ancient traditions meet surf culture.
+
+**What makes it special:**
+
+- Great for: Beach lovers, Divers, Culture seekers
+- The vibe is relaxed and romantic
+- Most couples spend 7-10 days to experience everything
+
+What else would you like to know?
+```
+
+### Suggestion Chips by Question Type
+
+| Question Type | Chip 1 | Chip 2 | Chip 3 |
+|--------------|--------|--------|--------|
+| `couples` | "Best romantic spots?" | "When to visit?" | "Plan {destination} trip" |
+| `weather` | "What to pack?" | "Best activities?" | "Plan {destination} trip" |
+| `safety` | "Health tips?" | "What to avoid?" | "Plan {destination} trip" |
+| `costs` | "Is it worth it?" | "Budget tips?" | "Plan {destination} trip" |
+| `activities` | "Hidden gems?" | "What to skip?" | "Plan {destination} trip" |
+
+### Soft Transition → Planning (Priority Rule)
+
+**Input parameters have highest priority.** When users provide actionable input (dates OR activities), the system routes directly to PLANNING mode instead of asking more exploration questions:
+
+| User Input | Action |
+|------------|--------|
+| `"bali Mar 1-9"` (destination + dates) | → Routes to PLANNING with `local_expert` |
+| `"bali diving"` (destination + activity) | → Routes to PLANNING with `diving` specialist |
+| `"bali"` (destination only) | → Exploration response (needs more info) |
+
+**Flow:**
+```
+soft_transition + (dates OR activities) → PLANNING mode immediately
+soft_transition + neither → Exploration response (ask for dates/activities)
+```
+
+This ensures users who provide concrete parameters aren't blocked by exploration questions.
+
+### Planning Readiness Detection
+
+Exploration mode exits when user provides actionable parameters:
+
+| Signal Type | Examples | Action |
+|-------------|----------|--------|
+| **Dates provided** | "bali Mar 1-9", "next week" | → Enter PLANNING mode (local_expert) |
+| **Activity provided** | "bali diving", "hiking trip" | → Enter PLANNING mode (specialist) |
+| **Both provided** | "diving in February", "hiking next month" | → Enter PLANNING mode (specialist) |
+| **Explicit signal** | "plan my trip", "help me plan" | → Enter PLANNING mode |
+
+### Implementation Reference
+
+**Backend:** `intent_router.py` - `generate_comprehensive_answer()`, `_format_section_answer()`
+**State tracking:** `state.metadata["short_circuit_type"] = "exploration"` or `"soft_transition"`
+
+### UI Components for Exploration → Planning Transition
+
+Two frontend components support the exploration-to-planning UX flow:
+
+| Component | Location | Trigger | Purpose |
+|-----------|----------|---------|---------|
+| `ExplorationProgress` | `ChatPanel.tsx` | 3+ user questions | Shows question count badge + "Plan now" CTA above input bar |
+| `ReadyToPlanBanner` | `StrategyStageRenderer.tsx` | Ghost/Bridge mode + no dates | Full-width banner prompting user to set dates |
+
+**ExplorationProgress:**
+- Renders above chat input when `userMessageCount >= 3`
+- Shows "Ready to plan!" badge with question count
+- "Plan now" button sends "Let's plan my trip!"
+
+**ReadyToPlanBanner:**
+- Renders in ghost/bridge mode when destination is set but dates are not
+- Gradient banner with dismiss capability
+- "Start planning" button opens dates sheet
 
 ---
 
@@ -1283,14 +1623,31 @@ Used in Bridge Mode when user has intent but no dates/tiles. The goal is **maxim
 
 #### B. Compact Mode ("Trip DNA Bar")
 
-Used in Full Mode when tiles exist. The goal is to **get out of the way** so booking tiles are prominent.
+Used in Full Mode when tiles exist, and **always in S3 (itinerary ready)**. The goal is to **get out of the way** so the timeline and booking tiles are prominent.
 
 * **Height:** `h-14` (~56px)
-* **Layout:** `flex items-center gap-3`
-* **Thumbnail:** `w-10 h-10 rounded-lg`
-* **Text:** Title + one-liner truncated
-* **Badge:** Constraint count (`bg-amber-100 dark:bg-amber-900/30 text-amber-700`)
-* **Interaction:** Clickable. Opens `BottomSheet` with full details.
+* **Layout:** `flex items-center gap-2` with horizontal scroll for multiple specialists
+* **Structure:** Label "Trip DNA:" + specialist pills
+* **Specialist Pill:** Icon + title + constraint count badge
+* **Background:** `bg-zinc-50 dark:bg-white/[0.02] border border-zinc-200 dark:border-white/5`
+* **Interaction:** Clickable pills (future: opens `BottomSheet` with full details)
+
+**S3 Rendering Rule:**
+```tsx
+// StrategyStageRenderer.tsx - Section 1: Specialists
+{hasItineraryContent && strategySections.length > 0 ? (
+  <TripDNABar sections={strategySections} />
+) : (
+  <S2StrategyView ... /> // Full specialist cards
+)}
+```
+
+**DNA Bar Visual:**
+```
+┌──────────────────────────────────────────────────────┐
+│ Trip DNA:  [🌊 Diving (3)] [🏔️ Hiking (2)] [🧭 Local Expert (5)] │
+└──────────────────────────────────────────────────────┘
+```
 
 **Self-Contained Expansion:** The `StrategyHero` component internally manages its own expansion state via `useState`. When clicked, it opens a `BottomSheet` containing:
 1. Hero image with specialist badge
@@ -1782,11 +2139,61 @@ The S3 Itinerary View (after plan finalization) transforms from raw data dumps i
 | Type | Component | Visual | Purpose |
 |------|-----------|--------|---------|
 | Arrival/Departure | `LogisticsBlock` | Border-l-4, icon, time | Hard times (flights) |
-| Check-in/out | `LogisticsBlock` | Key icon, hotel name | Accommodation logistics |
+| Check-in/out | `LogisticsBlock` | Key icon, hotel name, inline constraints | Accommodation logistics |
 | Safety Buffer | `SafetyBlock` | Red zone, "No Flights until" | Constraint visualization |
-| Activity | `ActivityMiniCard` | Thumbnail, duration, book button | Rich activity display |
+| Activity | `ActivityMiniCard` | Thumbnail, duration, inline constraints, book button | Rich activity display |
 | Unbooked | `GhostSlot` | Dashed border, "Select X" | Booking prompt |
 | Empty Day | `FreeDayCard` | "Free Day" with browse CTA | Spontaneous exploration |
+
+#### C.1 Inline Constraints
+
+Timeline blocks display contextual constraint badges directly within the card. This makes constraint-first optimization **visible** to users.
+
+**Visual Example:**
+```
+┌─────────────────────────────────────┐
+│ 🌊 MORNING  diving  ⏱ 3.0h          │
+│ Crystal Bay                         │
+│                                     │
+│ ┌─────────────────────────────────┐ │
+│ │ ⚠️ 24h No-Fly Buffer            │ │
+│ │    Day 8 departure requires     │ │
+│ │    finishing diving by 2pm      │ │
+│ └─────────────────────────────────┘ │
+│                                     │
+│ ❤️ You preferred this               │
+└─────────────────────────────────────┘
+```
+
+**Constraint Severities:**
+
+| Severity | Background | Border | Title Color | Use Case |
+|----------|------------|--------|-------------|----------|
+| `warning` | `bg-amber-50` | `border-amber-200` | `text-amber-700` | Safety constraints (no-fly buffer) |
+| `info` | `bg-blue-50` | `border-blue-200` | `text-blue-700` | Informational (surface interval) |
+| `success` | `bg-emerald-50` | `border-emerald-200` | `text-emerald-700` | Positive confirmations |
+
+**Constraint Data Structure (from backend):**
+```typescript
+interface ActiveConstraint {
+  id: string;                    // 'no_fly_buffer', 'surface_interval'
+  severity: 'warning' | 'info' | 'success';
+  icon: string;                  // Emoji: '⚠️', 'ℹ️', '✅'
+  title: string;                 // '24h No-Fly Buffer'
+  description: string;           // Contextual explanation
+}
+
+// In DayBlockOutput
+active_constraints: ActiveConstraint[]
+```
+
+**Diving-Specific Constraints:**
+- `no_fly_buffer`: Applied to last dive before departure (24h rule)
+- `surface_interval`: Shown between consecutive dive days (18h rule)
+
+**Integration:**
+- Backend: `itinerary_builder.py::_apply_constraints_to_blocks()`
+- Frontend: `ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
 
 **Component Files:**
 ```

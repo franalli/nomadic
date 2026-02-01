@@ -5,8 +5,8 @@ Backend services module.
 Contains pure Python services that don't require LLM calls.
 """
 
+from app.planner.state import ConstraintSeverity
 from app.services.itinerary_builder import (
-    ConstraintSeverity,
     DayBlockOutput,
     DayCardOutput,
     ItineraryBuilder,

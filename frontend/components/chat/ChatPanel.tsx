@@ -2,7 +2,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowUp, RotateCcw } from 'lucide-react';
+import { ArrowUp, RotateCcw, Sparkles } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -15,6 +15,7 @@ import {
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { ExplorationProgress } from '@/components/plan/ExplorationProgress';
 import {
   ActivitiesSheet,
   FlightsSheet,
@@ -1097,6 +1098,17 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       .filter((m) => m.role === 'user')
       .at(-1)?.id ?? null;
 
+    // Count user messages for exploration progress indicator
+    const userMessageCount = messages.filter((m) => m.role === 'user').length;
+
+    // Exploration mode: user has destination, asked questions, but no dates/plan yet
+    const isExplorationMode = Boolean(
+      hasDestination &&
+      !hasDates &&
+      !hasBranches &&
+      userMessageCount > 0
+    );
+
     useImperativeHandle(
       ref,
       () => ({
@@ -1482,32 +1494,60 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               key={`suggestions-container-${effectiveSuggestions.length}`}
               className="flex flex-wrap justify-center gap-2 pt-3 pb-1 px-2"
             >
-              {effectiveSuggestions.map((suggestion, idx) => (
-                <button
-                  key={`sugg-${suggestion.slice(0, 20)}-${idx}`}
-                  type="button"
-                  onClick={() => {
-                    // Track suggestion click for analytics (fire-and-forget)
-                    trackSuggestionClick(suggestion, idx);
-                    // Pass suggestion_clicked to enable LQA echo in backend
-                    sendMessageCore(suggestion, { suggestionClicked: suggestion });
-                  }}
-                  className={cn(
-                    'px-4 py-2 rounded-lg',
-                    'bg-white dark:bg-transparent',
-                    'border border-zinc-200 dark:border-white/10',
-                    'shadow-[0_2px_4px_rgba(0,0,0,0.02)]',
-                    'text-xs font-bold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide',
-                    'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-md',
-                    'dark:hover:border-white/30 dark:hover:text-white',
-                    'transition-all active:scale-95',
-                    'max-w-full truncate'
-                  )}
-                >
-                  {suggestion}
-                </button>
-              ))}
+              {effectiveSuggestions.map((suggestion, idx) => {
+                // Detect planning-trigger suggestions (e.g., "Plan Bali trip", "Let's plan it")
+                const isPlanningTrigger = /\bplan\b/i.test(suggestion) || suggestion.toLowerCase().includes("let's plan");
+
+                return (
+                  <button
+                    key={`sugg-${suggestion.slice(0, 20)}-${idx}`}
+                    type="button"
+                    onClick={() => {
+                      // Track suggestion click for analytics (fire-and-forget)
+                      trackSuggestionClick(suggestion, idx);
+                      // Pass suggestion_clicked to enable LQA echo in backend
+                      sendMessageCore(suggestion, { suggestionClicked: suggestion });
+                    }}
+                    className={cn(
+                      'px-4 py-2 rounded-lg',
+                      'text-xs font-bold uppercase tracking-wide',
+                      'transition-all active:scale-95',
+                      'max-w-full truncate',
+                      // Planning trigger chips: emerald highlight to draw attention
+                      isPlanningTrigger ? [
+                        'bg-emerald-50 dark:bg-emerald-950/30',
+                        'border border-emerald-500/40 dark:border-emerald-500/30',
+                        'text-emerald-700 dark:text-emerald-400',
+                        'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
+                        'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
+                        'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
+                      ] : [
+                        'bg-white dark:bg-transparent',
+                        'border border-zinc-200 dark:border-white/10',
+                        'shadow-[0_2px_4px_rgba(0,0,0,0.02)]',
+                        'text-zinc-600 dark:text-zinc-400',
+                        'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-md',
+                        'dark:hover:border-white/30 dark:hover:text-white',
+                      ]
+                    )}
+                  >
+                    {/* Sparkle icon for planning triggers */}
+                    {isPlanningTrigger && <Sparkles className="w-3 h-3 mr-1.5 inline-block" />}
+                    {suggestion}
+                  </button>
+                );
+              })}
             </div>
+          )}
+
+          {/* Exploration Progress - shows after 3+ questions during exploration mode */}
+          {isExplorationMode && userMessageCount >= 3 && !isLoading && (
+            <ExplorationProgress
+              questionCount={userMessageCount}
+              destination={destination}
+              onPlanNow={() => sendMessageCore("Let's plan my trip!")}
+              className="mx-4 mb-3"
+            />
           )}
 
           {/* Action Bar: Unified Capsule Design with "Living Void" Effect */}

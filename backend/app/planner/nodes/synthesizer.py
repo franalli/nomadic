@@ -272,8 +272,13 @@ def generate_suggested_replies(state: GraphState) -> List[str]:
     Generate context-aware suggestion chips.
 
     Always returns exactly 3 suggestions.
-    Priority: Rejection > Missing Fields > Specialist > Default
+    Priority: Exploration > Rejection > Missing Fields > Specialist > Default
     """
+    # PRIORITY 0: Exploration mode - use pre-computed suggestions from router
+    short_circuit_type = state.metadata.get("short_circuit_type")
+    if short_circuit_type in ("exploration", "soft_transition"):
+        return state.suggested_replies  # Pre-computed by router
+
     suggestions = []
     plan = state.trip_plan
 
@@ -560,10 +565,17 @@ async def synthesizer(state: GraphState) -> GraphState:
             message = output.message
             log("SYNTH", "Using template (LLM failed)")
     else:
-        # Use templates for simple responses (greetings, pre-core)
-        output = synth.generate_response(state)
-        message = output.message
-        log("SYNTH", "Using template (no LLM needed)")
+        # Check if we have a pre-computed response from router (exploration mode)
+        short_circuit_type = state.metadata.get("short_circuit_type")
+        if short_circuit_type in ("exploration", "soft_transition"):
+            # Use the pre-computed response from router - already in state.last_summary
+            message = state.last_summary
+            log("SYNTH", f"Using pre-computed {short_circuit_type} response ({len(message)} chars)")
+        else:
+            # Use templates for simple responses (greetings, pre-core)
+            output = synth.generate_response(state)
+            message = output.message
+            log("SYNTH", "Using template (no LLM needed)")
 
     # Wait for image fetch to complete before returning (safety check)
     await image_task

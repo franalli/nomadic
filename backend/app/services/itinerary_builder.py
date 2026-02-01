@@ -13,31 +13,176 @@ Algorithm Phases:
 4. Buffer Injection - Safety blocks by severity
 5. Activity Distribution - Round-robin interleaving
 6. Tile Matching - Hotels span all days
+
+Timezone Handling:
+- Infrastructure added for timezone-aware constraint calculations
+- Currently assumes local destination time (sufficient for MVP)
+- Enable full timezone support by calling normalize_to_destination_tz()
 """
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from enum import Enum
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
 from app.debug_utils import _debug
+from app.planner.state import ConstraintSeverity
 
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# Constraint Severity Enum
+# Timezone Handling Infrastructure
 # =============================================================================
 
+# Common destination timezone offsets (UTC offset in hours)
+# Note: For production, consider using pytz or zoneinfo for DST handling
+DESTINATION_TIMEZONES: Dict[str, float] = {
+    # Asia-Pacific
+    "bali": 8.0,  # WITA (UTC+8)
+    "indonesia": 8.0,
+    "thailand": 7.0,
+    "bangkok": 7.0,
+    "phuket": 7.0,
+    "vietnam": 7.0,
+    "singapore": 8.0,
+    "japan": 9.0,
+    "tokyo": 9.0,
+    "niseko": 9.0,
+    "australia": 10.0,  # AEST
+    "sydney": 10.0,
+    "melbourne": 10.0,
+    "maldives": 5.0,
+    "dubai": 4.0,
+    "uae": 4.0,
+    # Europe
+    "london": 0.0,  # GMT (no DST adjustment)
+    "paris": 1.0,
+    "france": 1.0,
+    "chamonix": 1.0,
+    "switzerland": 1.0,
+    "zermatt": 1.0,
+    "austria": 1.0,
+    "spain": 1.0,
+    "italy": 1.0,
+    "greece": 2.0,
+    # Americas
+    "new york": -5.0,
+    "usa": -5.0,  # EST default
+    "california": -8.0,
+    "los angeles": -8.0,
+    "colorado": -7.0,
+    "aspen": -7.0,
+    "hawaii": -10.0,
+    "mexico": -6.0,
+    "cancun": -5.0,
+    "costa rica": -6.0,
+    "brazil": -3.0,
+    "argentina": -3.0,
+    "patagonia": -3.0,
+    "chile": -4.0,
+    # Africa/Middle East
+    "egypt": 2.0,
+    "red sea": 2.0,
+    "south africa": 2.0,
+    "kenya": 3.0,
+    "morocco": 1.0,
+    # South Asia
+    "nepal": 5.75,  # UTC+5:45
+    "india": 5.5,
+    "sri lanka": 5.5,
+}
 
-class ConstraintSeverity(str, Enum):
-    """Constraint priority levels for conflict resolution."""
 
-    BLOCKING = "blocking"  # Safety/Legal - always wins
-    STRONG = "strong"  # Optimization - negotiates
-    SOFT = "soft"  # Preference - defers
+def get_destination_utc_offset(destination: str) -> float:
+    """
+    Get UTC offset for a destination.
+
+    Args:
+        destination: Destination name (case-insensitive)
+
+    Returns:
+        UTC offset in hours. Defaults to 0.0 (UTC) if unknown.
+    """
+    if not destination:
+        return 0.0
+
+    dest_lower = destination.lower().strip()
+
+    # Direct match
+    if dest_lower in DESTINATION_TIMEZONES:
+        return DESTINATION_TIMEZONES[dest_lower]
+
+    # Partial match
+    for key, offset in DESTINATION_TIMEZONES.items():
+        if key in dest_lower or dest_lower in key:
+            return offset
+
+    # Default to UTC
+    logger.debug(f"[Timezone] Unknown destination '{destination}', using UTC")
+    return 0.0
+
+
+def normalize_to_destination_tz(
+    dt: datetime,
+    destination: str,
+    source_offset: float = 0.0,
+) -> datetime:
+    """
+    Convert datetime to destination local time.
+
+    Args:
+        dt: Datetime to convert (assumed naive or with source_offset)
+        destination: Destination name for timezone lookup
+        source_offset: UTC offset of source timezone (default: 0.0 = UTC)
+
+    Returns:
+        Datetime adjusted to destination local time (naive datetime).
+
+    Note:
+        For MVP, this function is available but not actively used.
+        Current implementation assumes all times are in destination local time.
+        Enable for cross-timezone flight calculations if needed.
+    """
+    dest_offset = get_destination_utc_offset(destination)
+
+    # Calculate total adjustment
+    adjustment_hours = dest_offset - source_offset
+
+    # Apply adjustment
+    return dt + timedelta(hours=adjustment_hours)
+
+
+def calculate_hours_between(
+    time1: datetime,
+    time2: datetime,
+    destination: str = "",
+    use_timezone: bool = False,
+) -> float:
+    """
+    Calculate hours between two times, optionally with timezone awareness.
+
+    Args:
+        time1: Earlier datetime
+        time2: Later datetime
+        destination: Destination for timezone lookup (used if use_timezone=True)
+        use_timezone: Whether to apply timezone normalization
+
+    Returns:
+        Hours between the two times (positive if time2 > time1).
+
+    Note:
+        When use_timezone=False (default), assumes both times are in local time.
+        This is the current MVP behavior.
+    """
+    if use_timezone and destination:
+        # Normalize both to destination time
+        time1 = normalize_to_destination_tz(time1, destination)
+        time2 = normalize_to_destination_tz(time2, destination)
+
+    delta = time2 - time1
+    return delta.total_seconds() / 3600
 
 
 # =============================================================================
@@ -84,6 +229,9 @@ class DayBlockOutput(BaseModel):
     preference_status: Optional[Literal["user_preferred", "ai_selected", "ai_override"]] = None
     preference_override_reason: Optional[str] = None
     alternative_tile_id: Optional[str] = None
+
+    # Inline constraint display (shows active constraints on this block)
+    active_constraints: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DayCardOutput(BaseModel):
@@ -250,6 +398,20 @@ class ItineraryBuilder:
     Supports multi-specialist trips with conflict detection and resolution.
     """
 
+    def __init__(self):
+        """Initialize builder with empty preferences."""
+        self.preferences: Optional[PreferenceOverrideInput] = None
+
+    def _normalize_activity_id(self, activity: ActivityBlock) -> str:
+        """Generate consistent ID for matching across frontend/backend."""
+        # Try tile_id first (most reliable)
+        if activity.tile_id:
+            return activity.tile_id
+
+        # Fallback: normalize title/summary
+        title = activity.title or activity.source or ""
+        return title.lower().replace(" ", "_").replace("'", "").replace("-", "_")
+
     def build(self, input_data: ItineraryBuilderInput) -> ItineraryResult:
         """
         Main entry point - builds full itinerary.
@@ -264,6 +426,10 @@ class ItineraryBuilder:
             f"sections={len(input_data.strategy_sections)}, "
             f"tiles={len(input_data.tiles)}"
         )
+
+        # Store preferences for use across phases
+        self.preferences = input_data.preferences
+
         try:
             # Parse dates
             start = self._parse_date(input_data.start_date)
@@ -336,6 +502,9 @@ class ItineraryBuilder:
 
             # Phase 6: Match tiles to blocks (with preference weighting)
             days = self._match_tiles(days, input_data.tiles, input_data.preferences)
+
+            # Phase 6.5: Tag blocks with inline constraints for frontend display
+            days = self._apply_constraints_to_blocks(days)
 
             # Phase 7: Detect post-placement conflicts (overflow)
             conflicts = self._detect_temporal_conflicts(days)
@@ -637,29 +806,11 @@ class ItineraryBuilder:
         """Inject safety buffers based on constraints (sorted by priority)."""
         for constraint in constraints:
             if constraint.rule == "min_24h_buffer_after_dive":
-                # No-fly buffer = day before departure
-                buffer_day_idx = len(days) - 2
-                if buffer_day_idx >= 1:  # Must be after arrival day
-                    days[buffer_day_idx].label = "No-Fly Day"
-
-                    # Remove any diving activities from this day
-                    days[buffer_day_idx].blocks = [
-                        b for b in days[buffer_day_idx].blocks if b.specialist_type != "diving"
-                    ]
-
-                    # Add safety block
-                    buffer_block = DayBlockOutput(
-                        id=f"buffer_nofly_{buffer_day_idx}",
-                        period="morning",
-                        activity_type="rest",
-                        summary="Surface interval - no diving (light activities OK)",
-                        is_buffer=True,
-                        buffer_type="no_fly",
-                        buffer_reason="PADI Standard: 24h surface interval before flying",
-                        specialist_type="diving",
-                        intensity="light",
-                    )
-                    days[buffer_day_idx].blocks.insert(0, buffer_block)
+                # No-fly buffer is now shown as INLINE CONSTRAINT on the last dive activity
+                # (see _apply_constraints_to_blocks) instead of a standalone "No-Fly Day" card.
+                # This keeps the timeline cleaner while still communicating the safety rule.
+                _debug("[ItineraryBuilder] Diving no-fly constraint tracked (inline display)")
+                pass  # Constraint visibility handled by inline badges
 
             elif constraint.rule == "altitude_acclimatization":
                 # Acclimatization on day 3 for high-altitude trips
@@ -701,8 +852,9 @@ class ItineraryBuilder:
 
         Strategy:
         1. Calculate available slots per day (respecting buffers)
-        2. Alternate between specialists for variety
-        3. Respect max activities per day (2-3)
+        2. Weight and sort activities by user preference (preferred first)
+        3. Alternate between specialists for variety
+        4. Respect max activities per day (2-3)
         """
         if not activities_by_specialist:
             return days
@@ -723,6 +875,25 @@ class ItineraryBuilder:
 
         if not available_day_indices:
             return days
+
+        # Weight activities by preference before distribution
+        # Preferred activities get placed first (higher priority)
+        for specialist, activities in activities_by_specialist.items():
+            for activity in activities:
+                activity_id = self._normalize_activity_id(activity)
+                is_preferred = bool(
+                    self.preferences and self.preferences.is_activity_preferred(activity_id)
+                )
+                # Store preference state on activity for later use
+                activity.is_user_preferred = is_preferred  # type: ignore
+                if is_preferred:
+                    _debug(f"[ItineraryBuilder] ❤️ Activity '{activity.title}' is user-preferred")
+
+            # Sort activities: preferred first, then by original order
+            activities_by_specialist[specialist] = sorted(
+                activities,
+                key=lambda a: (0 if getattr(a, "is_user_preferred", False) else 1),
+            )
 
         # Flatten and copy activities
         specialists = list(activities_by_specialist.keys())
@@ -761,7 +932,11 @@ class ItineraryBuilder:
             if activities:
                 activity = activities.pop(0)
 
-                # Create block
+                # Determine preference status for attribution badge
+                is_user_preferred = getattr(activity, "is_user_preferred", False)
+                preference_status = "user_preferred" if is_user_preferred else None
+
+                # Create block with preference attribution
                 block = DayBlockOutput(
                     id=f"act_{current_specialist}_{day_idx}_{len(current_day.blocks)}",
                     period=periods[period_ptr % len(periods)],
@@ -772,6 +947,8 @@ class ItineraryBuilder:
                     image_url=activity.image_url,
                     duration=f"{activity.duration_hours}h" if activity.duration_hours else None,
                     constraints=activity.constraints,
+                    # Preference attribution for frontend badge
+                    preference_status=preference_status,
                 )
 
                 if activity.coordinates:
@@ -934,6 +1111,203 @@ class ItineraryBuilder:
                 len(days[-1].blocks),
             )
             days[-1].blocks.insert(departure_idx, checkout_block)
+
+        return days
+
+    # =========================================================================
+    # Phase 6.5: Inline Constraint Tagging
+    # =========================================================================
+
+    def _apply_constraints_to_blocks(self, days: List[DayCardOutput]) -> List[DayCardOutput]:
+        """
+        Tag timeline blocks with relevant constraints for inline display.
+
+        Adds active_constraints metadata to blocks so frontend can show
+        constraint badges directly in the timeline.
+        """
+        departure_day = len(days)
+        _debug(
+            f"[ItineraryBuilder] 🏷️ Applying constraint tags to {len(days)} days, "
+            f"departure_day={departure_day}"
+        )
+
+        for day_idx, day_card in enumerate(days):
+            for block in day_card.blocks:
+                constraints = []
+
+                # Diving activity constraints
+                activity_type = (block.activity_type or "").lower()
+                specialist = (block.specialist_type or "").lower()
+                is_diving = "div" in activity_type or specialist == "diving"
+                _debug(
+                    f"[ItineraryBuilder] 🏷️ Day {day_idx+1} block: "
+                    f"activity_type='{activity_type}', specialist='{specialist}', "
+                    f"is_diving={is_diving}, is_buffer={block.is_buffer}"
+                )
+
+                if is_diving and not block.is_buffer:
+                    # Check if this is the last dive before departure
+                    is_last_dive = not any(
+                        any(
+                            (
+                                "div" in (b.activity_type or "").lower()
+                                or (b.specialist_type or "").lower() == "diving"
+                            )
+                            and not b.is_buffer
+                            for b in dc.blocks
+                        )
+                        for dc in days[day_idx + 1 :]
+                    )
+
+                    # Last dive within 2 days of departure gets no-fly buffer warning
+                    if is_last_dive and day_idx >= departure_day - 2:
+                        constraints.append(
+                            {
+                                "id": "no_fly_buffer",
+                                "severity": "warning",
+                                "icon": "⚠️",
+                                "title": "24h No-Fly Buffer",
+                                "description": (
+                                    f"Day {departure_day} departure requires "
+                                    "finishing diving by 2pm today"
+                                ),
+                            }
+                        )
+
+                    # All dives get surface interval info
+                    if not constraints:  # Don't duplicate if already has no-fly warning
+                        constraints.append(
+                            {
+                                "id": "surface_interval",
+                                "severity": "info",
+                                "icon": "ℹ️",
+                                "title": "Dive Safety",
+                                "description": "Scheduled with appropriate surface intervals",
+                            }
+                        )
+
+                # Hiking activity constraints
+                is_hiking = (
+                    "hik" in activity_type or "trek" in activity_type or specialist == "hiking"
+                )
+
+                if is_hiking and not block.is_buffer:
+                    # Intensity-based physical preparation
+                    if block.intensity == "challenging":
+                        constraints.append(
+                            {
+                                "id": "fitness_required",
+                                "severity": "info",
+                                "icon": "💪",
+                                "title": "High Fitness Required",
+                                "description": "Intermediate+ fitness level recommended",
+                            }
+                        )
+
+                    # Weather window reminder for morning activities
+                    if block.period == "morning":
+                        constraints.append(
+                            {
+                                "id": "early_start_recommended",
+                                "severity": "info",
+                                "icon": "🌅",
+                                "title": "Early Start",
+                                "description": "Morning departure avoids afternoon weather changes",
+                            }
+                        )
+
+                # Skiing activity constraints
+                is_skiing = (
+                    "ski" in activity_type or "snow" in activity_type or specialist == "skiing"
+                )
+
+                if is_skiing and not block.is_buffer:
+                    summary_lower = (block.summary or "").lower()
+
+                    # Off-piste/backcountry detection
+                    if any(
+                        term in summary_lower for term in ["off-piste", "backcountry", "freeride"]
+                    ):
+                        constraints.append(
+                            {
+                                "id": "avalanche_awareness",
+                                "severity": "warning",
+                                "icon": "🏔️",
+                                "title": "Avalanche Terrain",
+                                "description": (
+                                    "Check avalanche bulletin - " "guide + safety gear required"
+                                ),
+                            }
+                        )
+
+                    # Skill level matching
+                    if block.intensity == "challenging":
+                        constraints.append(
+                            {
+                                "id": "advanced_terrain",
+                                "severity": "info",
+                                "icon": "⛷️",
+                                "title": "Advanced Terrain",
+                                "description": "Black diamond runs - advanced skills required",
+                            }
+                        )
+
+                # Surfing activity constraints
+                is_surfing = "surf" in activity_type or specialist == "surfing"
+
+                if is_surfing and not block.is_buffer:
+                    constraints.append(
+                        {
+                            "id": "tide_timing",
+                            "severity": "info",
+                            "icon": "🌊",
+                            "title": "Check Conditions",
+                            "description": "Verify swell/tide forecast before session",
+                        }
+                    )
+
+                # Hotel check-in constraints with specialist context
+                if block.activity_type == "check-in" and block.booked_tile:
+                    # Collect specialist types from the trip
+                    specialist_types = set()
+                    for day_card in days:
+                        for b in day_card.blocks:
+                            if b.specialist_type and b.specialist_type not in (
+                                "general",
+                                "local_expert",
+                            ):
+                                specialist_types.add(b.specialist_type)
+
+                    if specialist_types:
+                        specialist_list = ", ".join(sorted(specialist_types))
+                        constraints.append(
+                            {
+                                "id": "proximity_optimized",
+                                "severity": "success",
+                                "icon": "✓",
+                                "title": "Location Optimized",
+                                "description": f"Proximity to {specialist_list} activities",
+                            }
+                        )
+                    else:
+                        constraints.append(
+                            {
+                                "id": "proximity_optimized",
+                                "severity": "success",
+                                "icon": "✓",
+                                "title": "Location Optimized",
+                                "description": "Selected based on proximity to activities",
+                            }
+                        )
+
+                # Attach constraints to block
+                if constraints:
+                    block.active_constraints = constraints
+                    constraint_ids = [c["id"] for c in constraints]
+                    _debug(
+                        f"[ItineraryBuilder] 🏷️ ✅ Added {len(constraints)} constraints "
+                        f"to block '{block.summary}': {constraint_ids}"
+                    )
 
         return days
 

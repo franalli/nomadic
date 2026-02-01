@@ -25,7 +25,7 @@ export function getActiveSpecialists(
  * Format specialist list for display.
  * @example "diving + hiking" or "diving" or empty string
  */
-export function formatSpecialistPhrase(specialists: string[]): string {
+function formatSpecialistPhrase(specialists: string[]): string {
   if (specialists.length === 0) return '';
   if (specialists.length === 1) return specialists[0];
   return specialists.join(' + ');

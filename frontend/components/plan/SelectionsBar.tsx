@@ -2,17 +2,18 @@
  * SelectionsBar
  *
  * Horizontal carousel showing tiles the user has hearted (preferred).
- * Provides live preview of selections before itinerary generation.
- * Becomes sticky after scroll threshold.
+ * Groups selections by type: Stays (single-select) and Activities (multi-select).
+ * Auto-regeneration happens in background - no manual Update button needed.
  *
  * @see docs/ux_unified_architecture.md - Unified Planning View
  */
 
 'use client';
 
-import { Heart, X } from 'lucide-react';
+import { Heart, Loader2, X } from 'lucide-react';
+import { useMemo } from 'react';
 
-import { cn } from '@/lib/utils';
+import { cn, isHotelType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
 export interface SelectionsBarProps {
@@ -28,6 +29,124 @@ export interface SelectionsBarProps {
   isSticky?: boolean;
   /** Additional className */
   className?: string;
+  /** Whether regeneration is in progress (shows spinner) */
+  isRegenerating?: boolean;
+  /** Active specialist types for filtering (e.g., ['diving', 'local_expert']) */
+  activeSpecialistTypes?: string[];
+}
+
+/** Tile card component - reused for both groups */
+function TileCard({
+  tile,
+  onTileClick,
+  onRemovePreference,
+}: {
+  tile: Tile;
+  onTileClick: (id: string) => void;
+  onRemovePreference: (id: string) => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onTileClick(tile.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onTileClick(tile.id);
+        }
+      }}
+      className="flex-shrink-0 snap-start group relative text-left cursor-pointer"
+    >
+      {/* Thumbnail */}
+      <div className="w-20 h-14 rounded-lg overflow-hidden bg-zinc-800 ring-1 ring-white/10">
+        {tile.image_url ? (
+          <img
+            src={tile.image_url}
+            alt={tile.title}
+            className="w-full h-full object-cover transition-transform group-hover:scale-105"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-zinc-600">
+            <Heart className="h-4 w-4" />
+          </div>
+        )}
+      </div>
+
+      {/* Title */}
+      <span className="block text-[11px] mt-1 truncate w-20 text-zinc-300 group-hover:text-white transition-colors">
+        {tile.title}
+      </span>
+
+      {/* Remove button - shows on hover */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemovePreference(tile.id);
+        }}
+        className={cn(
+          'absolute -top-1 -right-1 w-4 h-4 rounded-full',
+          'bg-zinc-800 border border-zinc-700 hover:bg-red-600 hover:border-red-600',
+          'flex items-center justify-center',
+          'opacity-0 group-hover:opacity-100 transition-all duration-150',
+          'focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500'
+        )}
+        aria-label={`Remove ${tile.title} from selections`}
+      >
+        <X className="w-2.5 h-2.5 text-zinc-400 group-hover:text-white" />
+      </button>
+    </div>
+  );
+}
+
+/** Specialist keyword mappings for activity filtering and grouping */
+const SPECIALIST_KEYWORDS: Record<string, string[]> = {
+  diving: ['div', 'scuba', 'snorkel', 'reef', 'underwater', 'wreck'],
+  hiking: ['hik', 'trek', 'trail', 'climb', 'summit', 'mountain'],
+  skiing: ['ski', 'snow', 'slope', 'piste', 'powder', 'chairlift', 'gondola'],
+  surfing: ['surf', 'wave', 'beach', 'board', 'swell'],
+  climbing: ['climb', 'boulder', 'crag', 'via ferrata', 'rope'],
+  cycling: ['cycl', 'bike', 'biking', 'pedal', 'mtb'],
+};
+
+/** Check if activity category matches specialist type */
+function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boolean {
+  if (isHotelType(tile.type)) return true;
+  if (!specialistTypes || specialistTypes.length === 0) return true;
+
+  const category = (tile.type || '').toLowerCase();
+  const title = (tile.title || '').toLowerCase();
+
+  for (const specialist of specialistTypes) {
+    const s = specialist.toLowerCase();
+    if (s === 'local_expert') return true;
+
+    const keywords = SPECIALIST_KEYWORDS[s] || [];
+    for (const keyword of keywords) {
+      if (category.includes(keyword) || title.includes(keyword)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Detect which specialist type a tile belongs to */
+function detectSpecialistType(tile: Tile, activeSpecialists: string[]): string {
+  const category = (tile.type || '').toLowerCase();
+  const title = (tile.title || '').toLowerCase();
+
+  for (const specialist of activeSpecialists) {
+    const s = specialist.toLowerCase();
+    const keywords = SPECIALIST_KEYWORDS[s] || [];
+    for (const keyword of keywords) {
+      if (category.includes(keyword) || title.includes(keyword)) {
+        return specialist;
+      }
+    }
+  }
+  return 'activities';
 }
 
 export function SelectionsBar({
@@ -37,15 +156,52 @@ export function SelectionsBar({
   onTileClick,
   isSticky = false,
   className,
+  isRegenerating = false,
+  activeSpecialistTypes = [],
 }: SelectionsBarProps) {
-  // Filter to get only preferred tiles that exist
-  // Safety: handle case where tiles might be undefined or empty
-  const preferredTiles = Array.from(preferredTileIds)
-    .map((id) => tiles?.[id])
-    .filter(Boolean);
+  // Check if we have domain-specific specialists (diving, hiking, etc.)
+  const hasDomainSpecialist = activeSpecialistTypes.some(
+    s => s.toLowerCase() !== 'local_expert'
+  );
+
+  // Filter and group preferred tiles by type and specialist
+  const { staySelections, activitySelectionsBySpecialist, filteredOutCount: _filteredOutCount, totalCount } = useMemo(() => {
+    const stays: Tile[] = [];
+    const bySpecialist: Record<string, Tile[]> = {};
+    let filteredOut = 0;
+
+    for (const id of preferredTileIds) {
+      const tile = tiles?.[id];
+      if (!tile) continue;
+
+      if (isHotelType(tile.type)) {
+        stays.push(tile);
+      } else {
+        // Filter activities by specialist relevance when domain specialists are active
+        if (hasDomainSpecialist && !activityMatchesSpecialist(tile, activeSpecialistTypes)) {
+          filteredOut++;
+          continue;
+        }
+
+        // Group by specialist type for display
+        const specialistType = detectSpecialistType(tile, activeSpecialistTypes);
+        if (!bySpecialist[specialistType]) {
+          bySpecialist[specialistType] = [];
+        }
+        bySpecialist[specialistType].push(tile);
+      }
+    }
+
+    return {
+      staySelections: stays,
+      activitySelectionsBySpecialist: bySpecialist,
+      filteredOutCount: filteredOut,
+      totalCount: stays.length + Object.values(bySpecialist).flat().length,
+    };
+  }, [preferredTileIds, tiles, activeSpecialistTypes, hasDomainSpecialist]);
 
   // Empty state - show hint to heart tiles
-  if (preferredTiles.length === 0) {
+  if (totalCount === 0) {
     return (
       <div
         className={cn(
@@ -69,79 +225,64 @@ export function SelectionsBar({
       )}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 mb-3">
+      <div className="flex items-center gap-2 mb-2">
         <Heart className="h-3.5 w-3.5 text-emerald-500 fill-emerald-500" />
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Your Selections
         </h3>
         <span className="text-xs px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">
-          {preferredTiles.length}
+          {totalCount}
         </span>
+
+        {/* Auto-updating indicator - shows when regeneration in progress */}
+        {isRegenerating && (
+          <div className="ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-800/80 text-zinc-300">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Updating...</span>
+          </div>
+        )}
       </div>
 
-      {/* Horizontal scroll carousel */}
-      <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-1 -mx-1 px-1 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
-        {preferredTiles.map((tile) => (
-          <div
-            key={tile.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onTileClick(tile.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onTileClick(tile.id);
-              }
-            }}
-            className="flex-shrink-0 snap-start group relative text-left cursor-pointer"
-          >
-            {/* Thumbnail */}
-            <div className="w-24 h-16 rounded-lg overflow-hidden bg-zinc-800 ring-1 ring-white/10">
-              {tile.image_url ? (
-                <img
-                  src={tile.image_url}
-                  alt={tile.title}
-                  className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                  <Heart className="h-5 w-5" />
-                </div>
-              )}
+      {/* Grouped selections */}
+      <div className="space-y-2">
+        {/* Stays group (single-select) */}
+        {staySelections.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">
+              Stay ({staySelections.length})
             </div>
-
-            {/* Title */}
-            <span className="block text-xs mt-1.5 truncate w-24 text-zinc-300 group-hover:text-white transition-colors">
-              {tile.title}
-            </span>
-
-            {/* Price (if available) */}
-            {tile.price_estimate && (
-              <span className="block text-[10px] text-zinc-500">
-                {tile.currency === 'USD' ? '$' : tile.currency}
-                {tile.price_estimate.toLocaleString()}
-              </span>
-            )}
-
-            {/* Remove button - shows on hover */}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemovePreference(tile.id);
-              }}
-              className={cn(
-                'absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full',
-                'bg-zinc-800 border border-zinc-700 hover:bg-red-600 hover:border-red-600',
-                'flex items-center justify-center',
-                'opacity-0 group-hover:opacity-100 transition-all duration-150',
-                'focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500'
-              )}
-              aria-label={`Remove ${tile.title} from selections`}
-            >
-              <X className="w-3 h-3 text-zinc-400 group-hover:text-white" />
-            </button>
+            <div className="flex gap-2 overflow-x-auto snap-x snap-mandatory pb-1 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+              {staySelections.map((tile) => (
+                <TileCard
+                  key={tile.id}
+                  tile={tile}
+                  onTileClick={onTileClick}
+                  onRemovePreference={onRemovePreference}
+                />
+              ))}
+            </div>
           </div>
+        )}
+
+        {/* Activities grouped by specialist */}
+        {Object.entries(activitySelectionsBySpecialist).map(([specialist, specialistTiles]) => (
+          specialistTiles.length > 0 && (
+            <div key={specialist}>
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500 mb-1.5">
+                {specialist.charAt(0).toUpperCase() + specialist.slice(1)} ({specialistTiles.length})
+              </div>
+              <div className="flex gap-2 overflow-x-auto snap-x snap-mandatory pb-1 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+                {specialistTiles.map((tile) => (
+                  <TileCard
+                    key={tile.id}
+                    tile={tile}
+                    onTileClick={onTileClick}
+                    onRemovePreference={onRemovePreference}
+                  />
+                ))}
+              </div>
+            </div>
+          )
         ))}
       </div>
     </div>

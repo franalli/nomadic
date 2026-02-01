@@ -73,7 +73,8 @@
       "Bash(git mv:*)",
       "Bash(netstat:*)",
       "Bash(taskkill:*)",
-      "Bash(cmd //c \"taskkill /PID 114792 /F\")"
+      "Bash(cmd //c \"taskkill /PID 114792 /F\")",
+      "Bash(timeout:*)"
     ],
     "deny": [],
     "ask": []

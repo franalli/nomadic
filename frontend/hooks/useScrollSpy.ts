@@ -54,5 +54,3 @@ export function useScrollSpy(
 
   return activeId;
 }
-
-export default useScrollSpy;

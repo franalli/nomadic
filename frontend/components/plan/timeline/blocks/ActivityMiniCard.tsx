@@ -145,6 +145,44 @@ export function ActivityMiniCard({
           </p>
         )}
 
+        {/* Inline Constraint Badges */}
+        {block.active_constraints && block.active_constraints.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {block.active_constraints.map((constraint: {
+              id: string;
+              severity: 'warning' | 'info' | 'success';
+              icon: string;
+              title: string;
+              description: string;
+            }) => (
+              <div
+                key={constraint.id}
+                className={cn(
+                  'flex items-start gap-2 p-3 rounded-lg text-xs',
+                  constraint.severity === 'warning' && 'bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40',
+                  constraint.severity === 'info' && 'bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800/40',
+                  constraint.severity === 'success' && 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800/40'
+                )}
+              >
+                <span className="text-base flex-shrink-0">{constraint.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className={cn(
+                    'font-semibold mb-0.5',
+                    constraint.severity === 'warning' && 'text-amber-700 dark:text-amber-400',
+                    constraint.severity === 'info' && 'text-blue-700 dark:text-blue-400',
+                    constraint.severity === 'success' && 'text-emerald-700 dark:text-emerald-400'
+                  )}>
+                    {constraint.title}
+                  </div>
+                  <div className="text-zinc-600 dark:text-zinc-400">
+                    {constraint.description}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Preference Attribution Badge */}
         {preferenceStatus && (
           <PreferenceAttributionBadge

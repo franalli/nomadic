@@ -145,33 +145,3 @@ export function getTravelersSummary(
 
   return parts.length > 0 ? parts.join(', ') : undefined;
 }
-
-/**
- * Generates a compact summary string for budget.
- * Example: "$5,000" or "EUR 3,000"
- */
-export function getBudgetSummary(
-  budget?: number | null,
-  currency?: string | null
-): string | undefined {
-  if (!budget) return undefined;
-
-  const currencySymbols: Record<string, string> = {
-    USD: '$',
-    EUR: '\u20AC',
-    GBP: '\u00A3',
-    CAD: 'C$',
-    AUD: 'A$',
-    JPY: '\u00A5',
-  };
-
-  const symbol = currencySymbols[currency || 'USD'] || `${currency} `;
-  const formatted = budget.toLocaleString();
-
-  // For currencies with prefix symbols
-  if (['$', '\u20AC', '\u00A3', '\u00A5'].includes(symbol) || symbol.endsWith('$')) {
-    return `${symbol}${formatted}`;
-  }
-
-  return `${symbol}${formatted}`;
-}

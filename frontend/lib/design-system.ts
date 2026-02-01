@@ -255,14 +255,3 @@ export const DS = {
     text: 'text-sm text-zinc-600 dark:text-zinc-400',
   },
 } as const;
-
-/**
- * Helper to conditionally apply DS classes
- */
-export function dsClass(
-  condition: boolean,
-  activeClass: string,
-  inactiveClass: string = ''
-): string {
-  return condition ? activeClass : inactiveClass;
-}

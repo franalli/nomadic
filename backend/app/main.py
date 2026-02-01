@@ -1632,6 +1632,13 @@ async def graph_plan_stream_endpoint(
                 elif event["type"] == "complete":
                     logger.debug(f"[{request_id}] Stream complete after {token_count} tokens")
                     final_result = event["data"]
+                elif event["type"] == "error":
+                    # Forward graph errors to frontend with actual message
+                    error_msg = event.get("message", "Unknown graph error")
+                    logger.error(f"[{request_id}] Graph error: {error_msg}")
+                    error_payload = json.dumps({"type": "error", "message": error_msg})
+                    yield f"event: error\ndata: {error_payload}\n\n"
+                    return
 
             if final_result is None:
                 error_payload = json.dumps({"type": "error", "message": "No result from graph"})
@@ -2645,10 +2652,20 @@ async def expand_itinerary_endpoint(
                 # Convert API preferences to builder input format
                 preferences_input = None
                 if req.preferences:
-                    preferences_input = PreferenceOverrideInput(
-                        preferred_hotel_ids=req.preferences.preferred_hotel_ids,
-                        preferred_activity_ids=req.preferences.preferred_activity_ids,
+                    hotel_ids = req.preferences.preferred_hotel_ids or []
+                    activity_ids = req.preferences.preferred_activity_ids or []
+                    _debug(
+                        f"🎯 [expand-itinerary] Preferences received: "
+                        f"hotels={len(hotel_ids)}, activities={len(activity_ids)}"
                     )
+                    _debug(f"🎯 [expand-itinerary] Hotel IDs: {hotel_ids}")
+                    _debug(f"🎯 [expand-itinerary] Activity IDs: {activity_ids}")
+                    preferences_input = PreferenceOverrideInput(
+                        preferred_hotel_ids=hotel_ids,
+                        preferred_activity_ids=activity_ids,
+                    )
+                else:
+                    _debug("🎯 [expand-itinerary] No preferences in request")
 
                 # Validate dates - require both start and end for multi-day trips
                 start_date = trip_inputs_data.get("start_date")

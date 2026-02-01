@@ -941,9 +941,12 @@ async def run_turn_streaming(
         }
 
     except Exception as e:
-        logger.error(f"Streaming execution failed: {e}")
+        import traceback
+
+        error_traceback = traceback.format_exc()
+        logger.error(f"Streaming execution failed: {e}\n{error_traceback}")
         # Emit error event but don't re-raise to ensure generator completes cleanly
-        yield {"type": "error", "message": str(e)}
+        yield {"type": "error", "message": f"{type(e).__name__}: {str(e)}"}
 
 
 def _compute_plan_view_state(state: GraphState) -> str:
