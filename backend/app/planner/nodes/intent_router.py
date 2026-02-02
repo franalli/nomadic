@@ -303,23 +303,6 @@ SPECIALIST_PATTERNS = {
 }
 
 
-def detect_specialist_from_text(text: str) -> Optional[str]:
-    """
-    Detect specialist type from user text.
-
-    Returns specialist type string if detected, None otherwise.
-    Used for adding specialists to existing plans.
-    """
-    text_lower = text.lower()
-
-    for specialist_type, patterns in SPECIALIST_PATTERNS.items():
-        for pattern in patterns:
-            if re.search(pattern, text_lower):
-                return specialist_type
-
-    return None
-
-
 def get_new_specialists_from_text(text: str, existing_specialists: List[str]) -> List[str]:
     """
     Get list of NEW specialists mentioned in text that aren't already in the plan.
@@ -759,7 +742,7 @@ async def _classify_and_extract_with_llm(
     user_text: str, state: "GraphState"
 ) -> Tuple[RouterOutput, dict]:
     """
-    Classify intent AND extract trip fields in one LLM call.
+    Classify intent AND extract trip fields in one LLM call with L1 caching.
 
     This is the new unified extraction that replaces the old pattern of:
     1. Router: classify intent only
@@ -767,10 +750,35 @@ async def _classify_and_extract_with_llm(
 
     Now Router does both, eliminating the duplicate extraction bug.
 
+    Caching strategy:
+    - Only caches self-contained queries (no context dependencies)
+    - Key includes today_date for relative date resolution
+    - 1h TTL (conversational context is short-lived)
+
     Returns tuple of (RouterOutput, token_usage_dict).
     """
     from datetime import datetime
 
+    from app.services.router_cache import get_cached_extraction, set_cached_extraction
+
+    today = datetime.now()
+    today_date = today.strftime("%Y-%m-%d")
+
+    # =========================================================================
+    # CACHE CHECK
+    # =========================================================================
+    cached = get_cached_extraction(user_text, today_date)
+    if cached is not None:
+        try:
+            output = RouterOutput.model_validate(cached)
+            logger.debug(f"[ROUTER] Cache HIT: intent={output.intent}, dest={output.destination}")
+            return output, {}  # Empty token_usage for cache hit
+        except Exception as e:
+            logger.debug(f"[ROUTER] Cache deserialize failed: {e}")
+
+    # =========================================================================
+    # CACHE MISS - LLM CALL
+    # =========================================================================
     try:
         llm = _get_router_extraction_llm()
 
@@ -778,11 +786,10 @@ async def _classify_and_extract_with_llm(
         structured_llm = llm.with_structured_output(RouterOutput, include_raw=True)
 
         # Format prompt with current date context
-        today = datetime.now()
         current_year = today.year
         prompt = ROUTER_EXTRACTION_PROMPT.format(
             user_message=user_text,
-            today_date=today.strftime("%Y-%m-%d"),
+            today_date=today_date,
             current_year=current_year,
         )
 
@@ -800,6 +807,12 @@ async def _classify_and_extract_with_llm(
             f"dest={parsed.destination}, dates={parsed.start_date}->{parsed.end_date}, "
             f"has_dates={parsed.has_dates_in_message}, planning_ready={parsed.planning_ready}"
         )
+
+        # =====================================================================
+        # CACHE WRITE (only if self-contained query)
+        # =====================================================================
+        set_cached_extraction(user_text, today_date, parsed.model_dump())
+
         return parsed, token_usage
 
     except Exception as e:
@@ -1445,7 +1458,15 @@ async def intent_router(state: GraphState) -> GraphState:
     The panic button (/reset, stop, clear) is handled in run_turn BEFORE
     the graph is invoked, so we don't need to check for it here.
     """
-    from app.debug_utils import _debug_v2_node_end, _debug_v2_node_start
+    from app.debug_utils import (
+        _debug_node_end,
+        _debug_node_start,
+        _debug_node_timer_end,
+        _debug_node_timer_start,
+    )
+
+    # Start timing this node execution
+    _debug_node_timer_start("router")
 
     # Get user message from last message
     user_text = ""
@@ -1454,7 +1475,7 @@ async def intent_router(state: GraphState) -> GraphState:
         if hasattr(last_msg, "content"):
             user_text = last_msg.content
 
-    _debug_v2_node_start(
+    _debug_node_start(
         "router",
         "🧭",
         user_text=user_text[:80] if user_text else "",
@@ -1582,7 +1603,7 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.ui_events.append("SPECIALIST_ACTIVE")
                     log("ROUTER", f"[READY] Specialists queue: {all_specialists}")
 
-                _debug_v2_node_end(
+                _debug_node_end(
                     "router",
                     "🧭",
                     intent="PLANNING_READY",
@@ -1616,7 +1637,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 state.metadata["short_circuit_type"] = "exploration"
                 state.metadata["awaiting_dates"] = True
 
-                _debug_v2_node_end(
+                _debug_node_end(
                     "router",
                     "🧭",
                     intent="AWAITING_DATES",
@@ -1658,7 +1679,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             log("ROUTER", f"[EXPLORATION] Returning exploration response (question #{count})")
 
-            _debug_v2_node_end(
+            _debug_node_end(
                 "router",
                 "🧭",
                 intent="EXPLORATION",
@@ -1731,7 +1752,7 @@ async def intent_router(state: GraphState) -> GraphState:
                 state.metadata["short_circuit_response"] = False
                 state.metadata["exploration_mode"] = False
 
-                _debug_v2_node_end(
+                _debug_node_end(
                     "router",
                     "🧭",
                     intent="SOFT_TRANSITION→PLANNING",
@@ -1804,7 +1825,7 @@ async def intent_router(state: GraphState) -> GraphState:
 
             log("ROUTER", "[SOFT_TRANSITION] Returning soft transition response")
 
-            _debug_v2_node_end(
+            _debug_node_end(
                 "router",
                 "🧭",
                 intent="SOFT_TRANSITION",
@@ -1845,7 +1866,7 @@ async def intent_router(state: GraphState) -> GraphState:
         state.metadata["short_circuit_response"] = True
         state.metadata["router_output"] = classification.model_dump()
 
-        _debug_v2_node_end(
+        _debug_node_end(
             "router",
             "🧭",
             intent="GREETING",
@@ -1862,7 +1883,7 @@ async def intent_router(state: GraphState) -> GraphState:
         state.metadata["short_circuit_response"] = True
         state.metadata["router_output"] = classification.model_dump()
 
-        _debug_v2_node_end(
+        _debug_node_end(
             "router",
             "🧭",
             intent="RESET",
@@ -2009,7 +2030,7 @@ async def intent_router(state: GraphState) -> GraphState:
     else:
         state.pending_specialists = []
 
-    _debug_v2_node_end(
+    _debug_node_timer_end(
         "router",
         "🧭",
         intent=state.intent,

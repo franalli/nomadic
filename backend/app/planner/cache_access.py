@@ -38,6 +38,9 @@ class CacheHandle:
 # Global registry of cache handles (populated by init_cache_handles)
 _cache_handles: Dict[CacheName, CacheHandle] = {}
 
+# Initialization flag to guard against access before init
+_initialized = False
+
 # Lock for protecting _cache_counters updates
 _cache_counters_lock = threading.Lock()
 
@@ -62,7 +65,7 @@ def init_cache_handles(
     Returns:
         Dict of CacheName -> CacheHandle
     """
-    global _cache_handles
+    global _cache_handles, _initialized
 
     _cache_handles = {
         "follow_up": CacheHandle(cache_obj=follow_up_cache, name="follow_up"),
@@ -73,11 +76,21 @@ def init_cache_handles(
         "tile": CacheHandle(cache_obj=tile_cache, name="tile"),
     }
 
+    _initialized = True
     return _cache_handles
 
 
 def get_cache_handle(name: CacheName) -> Optional[CacheHandle]:
-    """Get a cache handle by name."""
+    """
+    Get a cache handle by name.
+
+    Raises:
+        RuntimeError: If called before init_cache_handles()
+    """
+    if not _initialized:
+        raise RuntimeError(
+            f"Cache '{name}' accessed before initialization. " "Call init_cache_handles() first."
+        )
     return _cache_handles.get(name)
 
 

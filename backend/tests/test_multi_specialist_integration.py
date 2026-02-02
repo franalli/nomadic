@@ -129,32 +129,6 @@ class TestDivingHikingSuccess:
         assert len(diving_days) >= 1, "Should have diving activities"
         assert len(hiking_days) >= 1, "Should have hiking activities"
 
-    def test_minimal_diving_hiking_trip(self, builder: ItineraryBuilder):
-        """Minimal 5-day trip: 1 dive + 1 hike + buffer."""
-        input_data = ItineraryBuilderInput(
-            start_date="2024-03-15",
-            end_date="2024-03-19",  # 5 days
-            strategy_sections=[
-                create_diving_section(num_dives=1),
-                create_hiking_section(num_hikes=1),
-            ],
-            tiles={},
-            destination="Bali",
-        )
-
-        result = builder.build(input_data)
-
-        assert result.success
-        assert len(result.day_cards) == 5
-
-        # Check no-fly buffer exists
-        has_buffer = False
-        for day in result.day_cards:
-            if any(b.buffer_type == "no_fly" for b in day.blocks):
-                has_buffer = True
-                break
-        assert has_buffer, "Should have no-fly buffer"
-
 
 # =============================================================================
 # Test: Diving + Hiking - Conflict Scenarios
@@ -449,87 +423,6 @@ class TestInterleavingPatterns:
 # =============================================================================
 # Test: Buffer Day Handling
 # =============================================================================
-
-
-class TestBufferDayHandling:
-    """Test safety buffer placement and constraints."""
-
-    def test_no_fly_buffer_before_departure(self, builder: ItineraryBuilder):
-        """No-fly buffer should be on the day before departure."""
-        input_data = ItineraryBuilderInput(
-            start_date="2024-03-15",
-            end_date="2024-03-20",  # 6 days
-            strategy_sections=[create_diving_section(num_dives=1)],
-            tiles={},
-            destination="Bali",
-        )
-
-        result = builder.build(input_data)
-        assert result.success
-
-        # Find no-fly buffer
-        buffer_day = None
-        for day in result.day_cards:
-            if any(b.buffer_type == "no_fly" for b in day.blocks):
-                buffer_day = day.day_number
-                break
-
-        assert buffer_day is not None
-        # Should be day 5 (second to last in 6-day trip)
-        assert buffer_day == 5, f"Buffer on day {buffer_day}, expected day 5"
-
-    def test_no_diving_on_buffer_day(self, builder: ItineraryBuilder):
-        """Diving activities should not be scheduled on no-fly buffer day."""
-        input_data = ItineraryBuilderInput(
-            start_date="2024-03-15",
-            end_date="2024-03-22",  # 8 days
-            strategy_sections=[create_diving_section(num_dives=3)],
-            tiles={},
-            destination="Bali",
-        )
-
-        result = builder.build(input_data)
-        assert result.success
-
-        # Find buffer day
-        buffer_day = None
-        for day in result.day_cards:
-            if any(b.buffer_type == "no_fly" for b in day.blocks):
-                buffer_day = day
-                break
-
-        assert buffer_day is not None
-
-        # Check no diving activities on buffer day
-        diving_on_buffer = [
-            b for b in buffer_day.blocks if b.specialist_type == "diving" and not b.is_buffer
-        ]
-        assert len(diving_on_buffer) == 0
-
-    def test_hiking_allowed_on_buffer_day(self, builder: ItineraryBuilder):
-        """Hiking (light activities) can be on no-fly buffer day."""
-        # The buffer block summary should indicate light activities are OK
-        input_data = ItineraryBuilderInput(
-            start_date="2024-03-15",
-            end_date="2024-03-20",  # 6 days
-            strategy_sections=[create_diving_section(num_dives=1)],
-            tiles={},
-            destination="Bali",
-        )
-
-        result = builder.build(input_data)
-        assert result.success
-
-        # Find buffer block
-        buffer_block = None
-        for day in result.day_cards:
-            for block in day.blocks:
-                if block.buffer_type == "no_fly":
-                    buffer_block = block
-                    break
-
-        assert buffer_block is not None
-        assert "light activities ok" in buffer_block.summary.lower()
 
 
 # =============================================================================

@@ -12,7 +12,7 @@ DEBUG modes (set in .env or environment):
 Both demo and full modes use the same colorized rich output for agent-level
 logs (log, log_phase, log_tokens, log_complete). The difference is:
 - demo: includes configurable delay (RICH_DEMO_DELAY_MS) for video recording
-- full: no delay, plus verbose _debug/_debug_v2 statements
+- full: no delay, plus verbose _debug/_debug_log statements
 
 All functions are non-fatal - they silently catch errors to prevent
 debug code from crashing production.
@@ -270,7 +270,7 @@ def _truncate(value: Any, max_len: int = 100) -> str:
         return "<unserializable>"
 
 
-def _debug_graph_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
+def _debug_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
     """Log node start with inputs. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
@@ -281,7 +281,7 @@ def _debug_graph_node_start(node_name: str, emoji: str, **inputs: Any) -> None:
         pass
 
 
-def _debug_graph_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
+def _debug_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
     """Log node end with outputs. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
@@ -292,8 +292,8 @@ def _debug_graph_node_end(node_name: str, emoji: str, **outputs: Any) -> None:
         pass
 
 
-def _debug_graph(message: str, **kwargs: Any) -> None:
-    """General graph debug message. Only shown in full mode."""
+def _debug_log(message: str, **kwargs: Any) -> None:
+    """General debug message. Only shown in full mode."""
     if get_debug_mode() != "full":
         return
     try:
@@ -303,10 +303,80 @@ def _debug_graph(message: str, **kwargs: Any) -> None:
         pass
 
 
-# Backward compatibility aliases
-_debug_v2_node_start = _debug_graph_node_start
-_debug_v2_node_end = _debug_graph_node_end
-_debug_v2 = _debug_graph
+# =============================================================================
+# NODE TIMING UTILITIES
+# =============================================================================
+
+# Global dict to track node start times
+_node_start_times: dict[str, float] = {}
+
+
+def _debug_node_timer_start(node_name: str) -> None:
+    """Start timing a node. Call at node entry."""
+    _node_start_times[node_name] = time.time()
+
+
+def _debug_node_timer_end(node_name: str, emoji: str = "", **outputs: Any) -> None:
+    """
+    End timing and log node duration.
+    Call at node exit (replaces _debug_node_end for timed nodes).
+    """
+    if get_debug_mode() != "full":
+        return
+    try:
+        start_time = _node_start_times.pop(node_name, None)
+        if start_time:
+            duration_ms = (time.time() - start_time) * 1000
+            outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())
+            _safe_print(
+                f"[DEBUG] {emoji} {node_name.upper()} END | "
+                f"duration={duration_ms:.0f}ms | {outputs_str}"
+            )
+        else:
+            # No start time recorded, just log outputs
+            outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in outputs.items())
+            _safe_print(f"[DEBUG] {emoji} {node_name.upper()} END | {outputs_str}")
+    except Exception:
+        pass
+
+
+class NodeTimer:
+    """
+    Context manager for timing node execution.
+
+    Usage:
+        with NodeTimer("specialist", "🤿") as timer:
+            # node code
+            timer.set_outputs(activities=3, constraints=2)
+    """
+
+    def __init__(self, node_name: str, emoji: str = ""):
+        self.node_name = node_name
+        self.emoji = emoji
+        self.start_time: float = 0
+        self.outputs: dict[str, Any] = {}
+
+    def __enter__(self) -> "NodeTimer":
+        self.start_time = time.time()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if get_debug_mode() != "full":
+            return
+        try:
+            duration_ms = (time.time() - self.start_time) * 1000
+            outputs_str = " ".join(f"{k}={_truncate(v)}" for k, v in self.outputs.items())
+            status = "ERROR" if exc_type else "COMPLETE"
+            _safe_print(
+                f"[DEBUG] {self.emoji} {self.node_name.upper()} {status} | "
+                f"duration={duration_ms:.0f}ms | {outputs_str}"
+            )
+        except Exception:
+            pass
+
+    def set_outputs(self, **kwargs: Any) -> None:
+        """Set outputs to be logged at node end."""
+        self.outputs.update(kwargs)
 
 
 def _debug(message: str, **kwargs: Any) -> None:

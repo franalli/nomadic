@@ -9,7 +9,7 @@
 
 'use client';
 
-import { ChevronDown, ChevronUp, Heart, RefreshCw, Sparkles, Star } from 'lucide-react';
+import { ChevronDown, ChevronUp, Heart, RefreshCw, Settings, Sparkles, Star } from 'lucide-react';
 import Image from 'next/image';
 import { useCallback, useState } from 'react';
 
@@ -33,6 +33,8 @@ interface SuggestionCardProps {
   onViewAlternatives?: () => void;
   /** Callback for tile details */
   onDetailsClick?: (tile: Tile) => void;
+  /** Callback to open stays settings sheet (for hotel tiles) */
+  onOpenStaysSettings?: () => void;
   /** Compact or expanded variant */
   variant?: 'compact' | 'expanded';
   className?: string;
@@ -49,6 +51,7 @@ export function SuggestionCard({
   onSave,
   onViewAlternatives,
   onDetailsClick,
+  onOpenStaysSettings,
   variant = 'expanded',
   className,
 }: SuggestionCardProps) {
@@ -112,6 +115,20 @@ export function SuggestionCard({
           <div className="text-sm font-medium text-zinc-300">{formattedPrice}</div>
         )}
 
+        {/* Settings gear for hotel tiles */}
+        {onOpenStaysSettings && (tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenStaysSettings();
+            }}
+            className="p-2 rounded-full transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50"
+            aria-label="Hotel preferences"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        )}
+
         {/* Save button */}
         <button
           onClick={() => onSave?.(tile)}
@@ -159,18 +176,34 @@ export function SuggestionCard({
           </div>
         </div>
 
-        {/* Save button */}
-        <button
-          onClick={() => onSave?.(tile)}
-          className={cn(
-            'absolute top-3 right-3 p-2 rounded-full backdrop-blur-sm transition-colors',
-            isSaved
-              ? 'text-emerald-400 bg-emerald-400/20'
-              : 'text-white/70 bg-black/30 hover:text-emerald-400'
+        {/* Top-right action buttons */}
+        <div className="absolute top-3 right-3 flex items-center gap-1.5">
+          {/* Settings gear for hotel tiles */}
+          {onOpenStaysSettings && (tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenStaysSettings();
+              }}
+              className="p-2 rounded-full backdrop-blur-sm transition-colors text-white/70 bg-black/30 hover:text-zinc-200 hover:bg-black/50"
+              aria-label="Hotel preferences"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
           )}
-        >
-          <Heart className={cn('w-5 h-5', isSaved && 'fill-current')} />
-        </button>
+          {/* Save button */}
+          <button
+            onClick={() => onSave?.(tile)}
+            className={cn(
+              'p-2 rounded-full backdrop-blur-sm transition-colors',
+              isSaved
+                ? 'text-emerald-400 bg-emerald-400/20'
+                : 'text-white/70 bg-black/30 hover:text-emerald-400'
+            )}
+          >
+            <Heart className={cn('w-5 h-5', isSaved && 'fill-current')} />
+          </button>
+        </div>
 
         {/* Title overlay */}
         <div className="absolute bottom-0 left-0 right-0 p-3">

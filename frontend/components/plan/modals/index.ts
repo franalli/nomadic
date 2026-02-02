@@ -5,7 +5,7 @@
  */
 
 export { AlternativesModal } from './AlternativesModal';
-export { ConflictResolutionModal } from './ConflictResolutionModal';
 export type { Conflict, Resolution } from './ConflictResolutionModal';
-export { RegenerateConfirmModal } from './RegenerateConfirmModal';
+export { ConflictResolutionModal } from './ConflictResolutionModal';
 export type { RegenerateConfirmModalProps } from './RegenerateConfirmModal';
+export { RegenerateConfirmModal } from './RegenerateConfirmModal';

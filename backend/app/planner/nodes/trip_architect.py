@@ -225,7 +225,7 @@ def _resolve_flexible_dates(plan: TripPlan, user_text: str, metadata: dict) -> T
     The engine cannot run on 'flexible' - we need concrete dates for API queries.
     Defaults to: Start Date = Today + 30 days, Duration = 7 days
     """
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_log
 
     text_lower = user_text.lower()
     if not any(kw in text_lower for kw in FLEXIBLE_DATE_KEYWORDS):
@@ -243,7 +243,7 @@ def _resolve_flexible_dates(plan: TripPlan, user_text: str, metadata: dict) -> T
     if datetime.fromisoformat(default_start) > now:
         plan.start_date = default_start
         plan.end_date = default_end
-        _debug_v2(f"Auto-resolved flexible dates: {default_start} to {default_end}")
+        _debug_log(f"Auto-resolved flexible dates: {default_start} to {default_end}")
 
         # Flag for synthesizer to explain the default
         metadata["flexible_date_resolved"] = True
@@ -274,11 +274,11 @@ def _auto_toggle_flights(
     We set extracted_settings which gets merged into trip_inputs.booking_types
     during _v2_result_to_v1_format conversion (plan_graph_v2.py lines 866-877).
     """
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_log
 
     # 1. Respect explicit user preference in THIS turn
     if extracted_settings.get("flights_toggle") is not None:
-        _debug_v2(f"Flights: user explicit = {extracted_settings.get('flights_toggle')}")
+        _debug_log(f"Flights: user explicit = {extracted_settings.get('flights_toggle')}")
         return
 
     current_origin = plan.origin
@@ -289,7 +289,7 @@ def _auto_toggle_flights(
         metadata.setdefault("extracted_settings", {})
         metadata["extracted_settings"]["flights_toggle"] = "suggested"
         metadata["auto_toggle_flights"] = {"action": "enabled", "origin": current_origin}
-        _debug_v2(f"Flights auto-toggled to 'suggested' (origin: {current_origin})")
+        _debug_log(f"Flights auto-toggled to 'suggested' (origin: {current_origin})")
 
     # 3. Origin removed → disable flights
     elif not current_origin and prev_origin:
@@ -297,7 +297,7 @@ def _auto_toggle_flights(
         metadata.setdefault("extracted_settings", {})
         metadata["extracted_settings"]["flights_toggle"] = "off"
         metadata["auto_toggle_flights"] = {"action": "disabled", "prev_origin": prev_origin}
-        _debug_v2("Flights auto-toggled to 'off' (origin cleared)")
+        _debug_log("Flights auto-toggled to 'off' (origin cleared)")
 
 
 async def _update_trip_plan_from_llm(
@@ -309,7 +309,7 @@ async def _update_trip_plan_from_llm(
 
     This replaces the old regex-based _update_trip_plan_from_text().
     """
-    from app.debug_utils import _debug_v2
+    from app.debug_utils import _debug_log
 
     extracted, token_usage = await _extract_fields_with_llm(user_text, plan)
 
@@ -328,25 +328,25 @@ async def _update_trip_plan_from_llm(
     # Title-case place names for proper display (LLM may return lowercase)
     if extracted.destination:
         plan.destination = extracted.destination.title()
-        _debug_v2(f"LLM extracted destination: {extracted.destination}")
+        _debug_log(f"LLM extracted destination: {extracted.destination}")
 
     if extracted.origin:
         plan.origin = extracted.origin.title()
-        _debug_v2(f"LLM extracted origin: {extracted.origin}")
+        _debug_log(f"LLM extracted origin: {extracted.origin}")
 
     if extracted.start_date:
         plan.start_date = extracted.start_date
-        _debug_v2(f"LLM extracted start_date: {extracted.start_date}")
+        _debug_log(f"LLM extracted start_date: {extracted.start_date}")
 
     if extracted.end_date:
         plan.end_date = extracted.end_date
-        _debug_v2(f"LLM extracted end_date: {extracted.end_date}")
+        _debug_log(f"LLM extracted end_date: {extracted.end_date}")
     elif extracted.duration_days and extracted.start_date:
         # Calculate end date from duration
         try:
             start = datetime.fromisoformat(extracted.start_date)
             plan.end_date = (start + timedelta(days=extracted.duration_days)).strftime("%Y-%m-%d")
-            _debug_v2(
+            _debug_log(
                 f"LLM calculated end_date from duration: {plan.end_date} "
                 f"({extracted.duration_days} days)"
             )
@@ -356,20 +356,20 @@ async def _update_trip_plan_from_llm(
     if extracted.adults:
         plan.adults = extracted.adults
         plan.travelers = extracted.adults + (extracted.children or plan.children)
-        _debug_v2(f"LLM extracted adults: {extracted.adults}")
+        _debug_log(f"LLM extracted adults: {extracted.adults}")
 
     if extracted.children is not None:
         plan.children = extracted.children
         plan.travelers = plan.adults + extracted.children
-        _debug_v2(f"LLM extracted children: {extracted.children}")
+        _debug_log(f"LLM extracted children: {extracted.children}")
 
     if extracted.budget:
         plan.budget = extracted.budget
-        _debug_v2(f"LLM extracted budget: {extracted.budget}")
+        _debug_log(f"LLM extracted budget: {extracted.budget}")
 
     if extracted.trip_type:
         plan.trip_type = extracted.trip_type
-        _debug_v2(f"LLM extracted trip_type: {extracted.trip_type}")
+        _debug_log(f"LLM extracted trip_type: {extracted.trip_type}")
 
     return plan
 
@@ -678,9 +678,17 @@ async def trip_architect(state: GraphState) -> GraphState:
     """
     import logging
 
-    from app.debug_utils import _debug_v2, _debug_v2_node_end, _debug_v2_node_start
+    from app.debug_utils import (
+        _debug_log,
+        _debug_node_start,
+        _debug_node_timer_end,
+        _debug_node_timer_start,
+    )
 
     logger = logging.getLogger(__name__)
+
+    # Start timing this node execution
+    _debug_node_timer_start("architect")
 
     # Get user message
     user_text = ""
@@ -705,7 +713,7 @@ async def trip_architect(state: GraphState) -> GraphState:
         # Clear previous tiles so we can fetch new ones with corrections
         state.tiles = {}
 
-    _debug_v2_node_start(
+    _debug_node_start(
         "architect",
         "🏛️",
         intent=state.intent,
@@ -737,7 +745,7 @@ async def trip_architect(state: GraphState) -> GraphState:
     # Check if Router already extracted fields (structured output refactor)
     # If so, skip duplicate LLM extraction - Router already populated state.trip_plan
     if state.metadata.get("router_extracted_fields"):
-        _debug_v2("Skipping LLM extraction - Router already extracted fields")
+        _debug_log("Skipping LLM extraction - Router already extracted fields")
         # Clear the flag so future turns still extract
         state.metadata["router_extracted_fields"] = False
     else:
@@ -762,7 +770,7 @@ async def trip_architect(state: GraphState) -> GraphState:
                     settings_tokens.get("completion_tokens", 0),
                     settings_tokens.get("total_tokens", 0),
                 )
-            _debug_v2(f"Extracted settings: {extracted_dict}")
+            _debug_log(f"Extracted settings: {extracted_dict}")
 
     # Resolve flexible dates to concrete dates
     state.trip_plan = _resolve_flexible_dates(state.trip_plan, user_text, state.metadata)
@@ -807,7 +815,7 @@ async def trip_architect(state: GraphState) -> GraphState:
     if turn_applied_fields:
         state.metadata["turn_applied_fields"] = turn_applied_fields
         state.metadata["prev_trip_values_snapshot"] = prev_trip_values
-        _debug_v2(f"Fields changed this turn: {turn_applied_fields}")
+        _debug_log(f"Fields changed this turn: {turn_applied_fields}")
 
     # DEBUG: Print trip_plan after extraction
     from app.debug_utils import log
@@ -825,7 +833,7 @@ async def trip_architect(state: GraphState) -> GraphState:
     mode = architect.determine_mode(state)
     state.metadata["architect_mode"] = mode
 
-    _debug_v2(f"🏛️ ARCHITECT mode={mode}")
+    _debug_log(f"🏛️ ARCHITECT mode={mode}")
 
     if mode == "pre_core":
         # S0: Inspiration mode
@@ -845,7 +853,7 @@ async def trip_architect(state: GraphState) -> GraphState:
             state.last_summary = "Great destination! When are you planning to go?"
         else:
             state.last_summary = "Let's nail down a few more details for your trip."
-        _debug_v2(f"🏛️ ARCHITECT missing_fields={missing}")
+        _debug_log(f"🏛️ ARCHITECT missing_fields={missing}")
 
     else:
         # Planning mode
@@ -853,19 +861,19 @@ async def trip_architect(state: GraphState) -> GraphState:
         intent = state.intent or "general"
         if architect.should_fetch_tiles(state, intent):
             state.ui_events.append("TILES_LOADING")
-            _debug_v2("🏛️ ARCHITECT fetching tiles...")
+            _debug_log("🏛️ ARCHITECT fetching tiles...")
             tiles = architect.fetch_tiles_for_plan(state)
             state.tiles = tiles
             state.ui_events.append("TILES_READY")
             tile_counts = {k: len(v) for k, v in tiles.items()}
-            _debug_v2(f"🏛️ ARCHITECT tiles fetched: {tile_counts}")
+            _debug_log(f"🏛️ ARCHITECT tiles fetched: {tile_counts}")
 
         response = architect.generate_planning_response(state, user_text)
         state.last_summary = response
         state.active_agent_id = "architect"
         state.trip_plan.status = "planning"
 
-    _debug_v2_node_end(
+    _debug_node_timer_end(
         "architect",
         "🏛️",
         mode=mode,

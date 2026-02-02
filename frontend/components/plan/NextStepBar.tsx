@@ -9,7 +9,7 @@
 'use client';
 
 import { CheckCircle2, Loader2, Sparkles } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useTripValidation } from '@/hooks/useTripValidation';
 import { cn } from '@/lib/utils';
@@ -50,6 +50,16 @@ export function NextStepBar({
 }: NextStepBarProps) {
   // Click lock to prevent double-clicks
   const [isClickLocked, setIsClickLocked] = useState(false);
+  const clickLockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup click lock timer on unmount
+  useEffect(() => {
+    return () => {
+      if (clickLockTimerRef.current) {
+        clearTimeout(clickLockTimerRef.current);
+      }
+    };
+  }, []);
 
   // Read tripInputs from same store as chips - no prop drilling
   const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
@@ -122,7 +132,10 @@ export function NextStepBar({
     }
 
     // Backup unlock after 2s (normally cleared by generation state change)
-    setTimeout(() => setIsClickLocked(false), 2000);
+    if (clickLockTimerRef.current) {
+      clearTimeout(clickLockTimerRef.current);
+    }
+    clickLockTimerRef.current = setTimeout(() => setIsClickLocked(false), 2000);
   };
 
   const buttonConfig = {

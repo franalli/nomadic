@@ -503,9 +503,9 @@ async def synthesizer(state: GraphState) -> GraphState:
 
     from langchain_core.messages import AIMessage
 
-    from app.debug_utils import _debug_graph_node_end, _debug_graph_node_start
+    from app.debug_utils import _debug_node_end, _debug_node_start
 
-    _debug_graph_node_start(
+    _debug_node_start(
         "synthesizer",
         "📝",
         mode=state.metadata.get("architect_mode"),
@@ -526,7 +526,7 @@ async def synthesizer(state: GraphState) -> GraphState:
         state.ui_events.append("SPECIALIST_PREVIEW_READY")
         # Keep suggested_replies unchanged
 
-        _debug_graph_node_end(
+        _debug_node_end(
             "synthesizer",
             "📝",
             speculative=True,
@@ -545,40 +545,48 @@ async def synthesizer(state: GraphState) -> GraphState:
 
     from app.debug_utils import log, log_tokens
 
-    if use_llm:
-        # Use LLM for complex planning responses
-        logger.debug("Using LLM synthesis for response generation")
-        log("SYNTH", "Generating LLM response...")
-        llm_response, token_usage = await synthesize_with_llm(state)
-        if llm_response:
-            message = llm_response
-            if token_usage:
-                log_tokens(
-                    "SYNTH",
-                    token_usage.get("prompt_tokens", 0),
-                    token_usage.get("completion_tokens", 0),
-                    token_usage.get("total_tokens", 0),
-                )
+    try:
+        if use_llm:
+            # Use LLM for complex planning responses
+            logger.debug("Using LLM synthesis for response generation")
+            log("SYNTH", "Generating LLM response...")
+            llm_response, token_usage = await synthesize_with_llm(state)
+            if llm_response:
+                message = llm_response
+                if token_usage:
+                    log_tokens(
+                        "SYNTH",
+                        token_usage.get("prompt_tokens", 0),
+                        token_usage.get("completion_tokens", 0),
+                        token_usage.get("total_tokens", 0),
+                    )
+            else:
+                # Fallback to template
+                output = synth.generate_response(state)
+                message = output.message
+                log("SYNTH", "Using template (LLM failed)")
         else:
-            # Fallback to template
-            output = synth.generate_response(state)
-            message = output.message
-            log("SYNTH", "Using template (LLM failed)")
-    else:
-        # Check if we have a pre-computed response from router (exploration mode)
-        short_circuit_type = state.metadata.get("short_circuit_type")
-        if short_circuit_type in ("exploration", "soft_transition"):
-            # Use the pre-computed response from router - already in state.last_summary
-            message = state.last_summary
-            log("SYNTH", f"Using pre-computed {short_circuit_type} response ({len(message)} chars)")
+            # Check if we have a pre-computed response from router (exploration mode)
+            short_circuit_type = state.metadata.get("short_circuit_type")
+            if short_circuit_type in ("exploration", "soft_transition"):
+                # Use the pre-computed response from router - already in state.last_summary
+                message = state.last_summary
+                log("SYNTH", f"Pre-computed {short_circuit_type} ({len(message)} chars)")
+            else:
+                # Use templates for simple responses (greetings, pre-core)
+                output = synth.generate_response(state)
+                message = output.message
+                log("SYNTH", "Using template (no LLM needed)")
+    finally:
+        # Always wait for image fetch task to complete or cancel it
+        if not image_task.done():
+            image_task.cancel()
+            try:
+                await image_task
+            except asyncio.CancelledError:
+                pass
         else:
-            # Use templates for simple responses (greetings, pre-core)
-            output = synth.generate_response(state)
-            message = output.message
-            log("SYNTH", "Using template (no LLM needed)")
-
-    # Wait for image fetch to complete before returning (safety check)
-    await image_task
+            await image_task
 
     # Generate suggestion chips (always template-based for consistency)
     suggested_replies = generate_suggested_replies(state)
@@ -611,7 +619,7 @@ async def synthesizer(state: GraphState) -> GraphState:
         "used_llm": use_llm,
     }
 
-    _debug_graph_node_end(
+    _debug_node_end(
         "synthesizer",
         "📝",
         response_len=len(message),

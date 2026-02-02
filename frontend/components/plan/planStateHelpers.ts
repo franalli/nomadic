@@ -5,7 +5,7 @@
  * Data-driven via envelope.generation, not state-inferred.
  */
 
-import type { GenerationState,PlanViewState } from '@/types/plan-envelope';
+import type { GenerationState, PlanViewState } from '@/types/plan-envelope';
 
 // Re-export for convenience
 export type { GenerationState };
@@ -75,6 +75,51 @@ export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structur
 }
 
 /**
+ * Should auto-trigger itinerary generation? (Path A UX)
+ *
+ * Auto-trigger when:
+ * - S2_STRATEGY_READY (strategy complete)
+ * - Multi-specialist trip (2+ specialists executed)
+ * - Has valid dates (start + end)
+ * - Not currently generating
+ *
+ * @see docs/ux_unified_architecture.md - Path A: Auto-trigger Flow
+ */
+export function shouldAutoTriggerItinerary(
+  state: PlanViewState,
+  executedTopics: string[] | undefined,
+  hasDates: boolean,
+  generation?: GenerationState | null,
+  hasItineraryContent?: boolean
+): boolean {
+  // Must be in S2_STRATEGY_READY state
+  if (state !== 'S2_STRATEGY_READY') return false;
+
+  // Must not be currently generating
+  if (isGenerating(generation)) return false;
+
+  // Must have dates set
+  if (!hasDates) return false;
+
+  // Must be multi-specialist (2+ topics executed)
+  const topicCount = executedTopics?.length ?? 0;
+  if (topicCount < 2) return false;
+
+  // Must not already have itinerary content
+  if (hasItineraryContent) return false;
+
+  return true;
+}
+
+/**
+ * Is this a multi-specialist trip?
+ * Used for UI variations (auto-trigger vs manual button).
+ */
+export function isMultiSpecialistTrip(executedTopics: string[] | undefined): boolean {
+  return (executedTopics?.length ?? 0) >= 2;
+}
+
+/**
  * Get next action for NextStepBar (null = no CTA).
  * Compute ONCE in parent and pass to NextStepBar to avoid flicker.
  *
@@ -87,6 +132,7 @@ export function getStageFromState(state: PlanViewState): 'bootstrap' | 'structur
 export function getNextAction(
   state: PlanViewState,
   generation?: GenerationState | null,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _hasTripContext?: boolean // Deprecated: validation now handled by NextStepBar
 ): 'expand_itinerary' | 'finalize_plan' | null {
   if (isGenerating(generation)) return null;

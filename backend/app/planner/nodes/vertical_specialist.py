@@ -14,18 +14,17 @@ Flow: Router → Specialist → Architect
 The Specialist runs BEFORE the Architect calls tools.
 """
 
+import json
 import os
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from pydantic import BaseModel
 
 from app.placeholders import get_activity_image
 
 # Optional LLM-based constraint generation
-from app.planner.nodes.specialist_llm import (
-    convert_llm_output_to_state,
-    generate_specialist_output_with_llm,
-    is_llm_specialist_enabled,
-)
 from app.planner.state import (
     ConstraintSeverity,
     GraphState,
@@ -35,245 +34,561 @@ from app.planner.state import (
 )
 
 # =============================================================================
-# Specialist Domain Knowledge
+# LLM Specialist System Prompts (Zero-Template Architecture)
 # =============================================================================
 
-# Diving domain knowledge
-DIVING_KNOWLEDGE = {
-    "constraints": [
-        SpecialistConstraint(
-            type="temporal",
-            rule="min_24h_buffer_after_dive",
-            applies_to="flights",
-            reason="Flying within 24 hours of diving risks decompression sickness",
-            label="24h no-fly buffer",
-            icon="🚫",
-            buffer_hours=24,
-            severity=ConstraintSeverity.BLOCKING,
-        ),
-        SpecialistConstraint(
-            type="temporal",
-            rule="min_18h_surface_interval",
-            applies_to="flights",
-            reason="Minimum 18h recommended before flying after single dive",
-            label="18h surface interval",
-            icon="⏰",
-            buffer_hours=18,
-            severity=ConstraintSeverity.STRONG,
-        ),
-        SpecialistConstraint(
-            type="safety",
-            rule="advanced_cert_required_for_deep",
-            applies_to="activities",
-            parameters={"max_depth_without_cert": 18},
-            reason="Dives below 18m require Advanced Open Water certification",
-            label="Certification required",
-            icon="📜",
-            severity=ConstraintSeverity.BLOCKING,
-        ),
-    ],
-    "top_destinations": {
-        "bali": [
-            {
-                "title": "USAT Liberty Wreck",
-                "description": (
-                    "One of the most accessible wrecks in the world, " "perfect for all levels"
-                ),
-                "type": "activity",
-                "skill_level": "beginner",
-                "logic_hook": "Shore entry - no boat needed, 5am for best visibility",
-            },
-            {
-                "title": "Manta Point Nusa Penida",
-                "description": "High chance of manta ray encounters year-round",
-                "type": "activity",
-                "skill_level": "intermediate",
-                "logic_hook": "Currents can be strong - intermediate+ recommended",
-            },
-            {
-                "title": "Crystal Bay",
-                "description": "Famous for Mola Mola (sunfish) sightings July-October",
-                "type": "activity",
-                "skill_level": "advanced",
-                "logic_hook": "Mola season Jul-Oct only - plan timing accordingly",
-            },
-        ],
-        "maldives": [
-            {
-                "title": "Hanifaru Bay",
-                "description": "UNESCO biosphere for manta feeding aggregations",
-                "type": "activity",
-                "skill_level": "intermediate",
-                "logic_hook": "Best Jun-Nov during SW monsoon plankton bloom",
-            },
-            {
-                "title": "Maaya Thila",
-                "description": "Night diving with white-tip reef sharks",
-                "type": "activity",
-                "skill_level": "advanced",
-                "logic_hook": "Night dive - bring torch, sharks active after sunset",
-            },
-        ],
-        "egypt": [
-            {
-                "title": "SS Thistlegorm",
-                "description": "World-famous WWII wreck with trucks and motorcycles",
-                "type": "activity",
-                "skill_level": "intermediate",
-                "logic_hook": "Best visited at dawn - fewer divers",
-            },
-            {
-                "title": "Ras Mohammed",
-                "description": "Pristine coral walls and big fish action",
-                "type": "activity",
-                "skill_level": "beginner",
-                "logic_hook": "Morning dives best for calm conditions",
-            },
-        ],
-        "dubai": [
-            {
-                "title": "Deep Dive Dubai",
-                "description": (
-                    "World's deepest pool at 60m with a sunken city theme. "
-                    "Perfect for year-round diving regardless of weather."
-                ),
-                "type": "activity",
-                "skill_level": "intermediate",
-                "logic_hook": "Indoor facility - Summer safe, AC controlled",
-            },
-            {
-                "title": "Jumeirah Scuba Diving",
-                "description": (
-                    "Shore diving at Jumeirah Beach with artificial reefs and marine life."
-                ),
-                "type": "activity",
-                "skill_level": "beginner",
-                "logic_hook": "No boat needed - shore entry",
-            },
-        ],
-    },
+SPECIALIST_SYSTEM_PROMPTS: Dict[str, str] = {
+    "diving": """You are a PADI-certified dive master planning safe dive trips.
+
+ROLE: Generate feasibility assessment, real dive sites, and safety constraints.
+
+CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
+1. NO-FLY TIME: 24h minimum after diving before flying
+2. NO ALTITUDE: No activities above 2500m within 24h of diving
+3. CERTIFICATION: Open Water = 18m max depth, Advanced = 30m max depth
+4. SURFACE INTERVALS: Minimum 18h between multi-day diving
+
+ACTIVITY GENERATION:
+- Generate 2-4 REAL dive sites based on trip duration
+- Include depth_meters and certification_required for each dive
+- Add logic_hook (practical tip) for each activity
+- Consider seasonality and water conditions
+
+OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+    "hiking": """You are a certified mountain guide planning hiking expeditions.
+
+ROLE: Generate feasibility assessment, real trails, and safety constraints.
+
+CRITICAL SAFETY RULES:
+1. ALTITUDE ACCLIMATIZATION: Max 500m elevation gain per day above 3000m (STRONG)
+2. WEATHER WINDOWS: Morning starts recommended for mountain hikes
+3. CROSS-DOMAIN: High-altitude hiking (>2500m) requires 24h buffer before/after diving
+
+ACTIVITY GENERATION:
+- Generate 2-4 REAL hiking trails based on trip duration
+- Include elevation_meters and distance_km for each hike
+- Add difficulty progression (easier trails first)
+- Consider fitness requirements and acclimatization needs
+
+OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+    "skiing": """You are a certified ski instructor planning ski trips.
+
+ROLE: Generate feasibility assessment, real ski areas, and safety constraints.
+
+CRITICAL SAFETY RULES:
+1. AVALANCHE CHECK: Required for off-piste/backcountry (BLOCKING)
+2. GUIDE REQUIRED: Certified guide mandatory for off-piste terrain (BLOCKING)
+3. SKILL PROGRESSION: Match terrain to skill level
+
+SEASONALITY:
+- Northern Hemisphere: December-April
+- Southern Hemisphere: June-September
+- Indoor facilities: Year-round
+
+ACTIVITY GENERATION:
+- Generate 2-4 REAL ski runs/areas based on trip duration
+- Include vertical_meters and run_difficulty for each
+- Flag off-piste activities with guide requirement
+- Consider snow conditions and resort quality
+
+OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+    "surfing": """You are a certified surf coach planning surf trips.
+
+ROLE: Generate feasibility assessment, real surf breaks, and safety constraints.
+
+CRITICAL SAFETY RULES:
+1. TIDE/SWELL CHECK: Required before each session (STRONG)
+2. RIP CURRENT AWARENESS: Briefing required for unfamiliar breaks
+3. BOARD SIZE: Match to skill level
+
+ACTIVITY GENERATION:
+- Generate 2-4 REAL surf breaks based on trip duration
+- Include wave_height range and best tide conditions
+- Add skill level requirements
+- Consider seasonal swell patterns
+
+OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+    "cycling": """You are a cycling guide planning cycling trips.
+
+ROLE: Generate feasibility assessment, real routes, and safety constraints.
+
+CRITICAL SAFETY RULES:
+1. TRAFFIC SAFETY: Helmet required, high-visibility gear recommended
+2. HYDRATION: Water stops every 20-30km in hot climates
+3. BIKE FIT: Proper sizing essential for multi-day rides
+
+ACTIVITY GENERATION:
+- Generate 2-4 REAL cycling routes based on trip duration
+- Include distance_km and elevation_meters for each ride
+- Add surface type (road, gravel, MTB)
+- Consider traffic levels and road quality
+
+OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
 }
 
-HIKING_KNOWLEDGE = {
-    "constraints": [
-        SpecialistConstraint(
-            type="safety",
-            rule="altitude_acclimatization",
-            applies_to="activities",
-            parameters={"max_daily_elevation_gain": 500},
-            reason="Gain no more than 500m per day above 3000m to prevent altitude sickness",
-            label="Altitude acclimatization",
-            icon="🏔️",
-            buffer_hours=48,
-            severity=ConstraintSeverity.STRONG,
-        ),
-        SpecialistConstraint(
-            type="equipment",
-            rule="proper_footwear_required",
-            applies_to="activities",
-            reason="Hiking boots required for mountain trails",
-            label="Footwear required",
-            icon="🥾",
-            severity=ConstraintSeverity.SOFT,
-        ),
-    ],
-    "top_destinations": {
-        "patagonia": [
-            {
-                "title": "Torres del Paine W Trek",
-                "description": "Iconic 5-day trek through glaciers and granite spires",
-                "type": "activity",
-                "skill_level": "intermediate",
-            },
-            {
-                "title": "Fitz Roy Summit Approach",
-                "description": "Day hike to the base of the famous peaks",
-                "type": "activity",
-                "skill_level": "beginner",
-            },
-        ],
-        "nepal": [
-            {
-                "title": "Everest Base Camp",
-                "description": "Classic 12-14 day trek to the roof of the world",
-                "type": "activity",
-                "skill_level": "intermediate",
-            },
-            {
-                "title": "Annapurna Circuit",
-                "description": "Diverse landscapes from jungle to high desert",
-                "type": "activity",
-                "skill_level": "advanced",
-            },
-        ],
-    },
-}
 
-SKIING_KNOWLEDGE = {
-    "constraints": [
-        SpecialistConstraint(
-            type="temporal",
-            rule="check_snow_conditions",
-            applies_to="activities",
-            reason="Verify snow conditions and avalanche reports before backcountry skiing",
-            label="Check snow conditions",
-            icon="🏔️",
-            severity=ConstraintSeverity.STRONG,
-        ),
-        SpecialistConstraint(
-            type="certification",
-            rule="guide_required_offpiste",
-            applies_to="activities",
-            reason="Certified guide required for off-piste skiing",
-            label="Guide required",
-            icon="🎿",
-            severity=ConstraintSeverity.BLOCKING,
-        ),
-    ],
-    "top_destinations": {
-        "chamonix": [
-            {
-                "title": "Vallée Blanche",
-                "description": "Legendary 20km off-piste descent from Aiguille du Midi",
-                "type": "activity",
-                "skill_level": "advanced",
-            },
-            {
-                "title": "Les Grands Montets",
-                "description": "Steep terrain with incredible Mont Blanc views",
-                "type": "activity",
-                "skill_level": "intermediate",
-            },
-        ],
-        "japan": [
-            {
-                "title": "Niseko Powder",
-                "description": "Legendary Japanese powder snow",
-                "type": "activity",
-                "skill_level": "intermediate",
-            },
-            {
-                "title": "Hakuba Valley",
-                "description": "1998 Olympics venue with varied terrain",
-                "type": "activity",
-                "skill_level": "beginner",
-            },
-        ],
-    },
-}
+# =============================================================================
+# LLM Specialist Output Schema (for structured output)
+# =============================================================================
 
-# Map topic to knowledge
-SPECIALIST_KNOWLEDGE = {
-    "diving": DIVING_KNOWLEDGE,
-    "hiking": HIKING_KNOWLEDGE,
-    "skiing": SKIING_KNOWLEDGE,
-    "cycling": {"constraints": [], "top_destinations": {}},
-    "boating": {"constraints": [], "top_destinations": {}},
-}
+
+class LLMActivity(BaseModel):
+    """Activity generated by LLM specialist."""
+
+    title: str
+    description: str = ""
+    location: Optional[str] = None
+    duration_hours: float = 3.0
+    difficulty: str = "beginner"  # beginner, intermediate, advanced
+    # Topic-specific
+    depth_meters: Optional[int] = None
+    elevation_meters: Optional[int] = None
+    distance_km: Optional[float] = None
+    certification_required: Optional[str] = None
+    vertical_meters: Optional[int] = None
+    logic_hook: Optional[str] = None
+
+
+class LLMConstraint(BaseModel):
+    """Constraint generated by LLM specialist."""
+
+    constraint_id: str  # e.g., "no_fly_24h"
+    constraint_type: str = "blocking"  # blocking, strong, soft
+    applies_to_categories: List[str] = []
+    buffer_hours: Optional[int] = None
+    reason: str = ""
+    label: Optional[str] = None
+    icon: Optional[str] = None
+
+
+class LLMSpecialistOutput(BaseModel):
+    """Complete output from LLM specialist call."""
+
+    feasibility_status: str = "feasible"  # feasible, infeasible, conditional
+    feasibility_reason: Optional[str] = None
+    activities: List[LLMActivity] = []
+    constraints: List[LLMConstraint] = []
+
+
+# =============================================================================
+# LLM Specialist Generation
+# =============================================================================
+
+
+async def generate_all_specialists_parallel(
+    topics: List[str],
+    destination: str,
+    trip_plan: Any,
+    db: Optional[Any] = None,  # AsyncSession for persistent caching
+) -> Dict[str, Optional[LLMSpecialistOutput]]:
+    """
+    Run all specialist LLM calls in parallel.
+
+    Performance optimization: 8-12s sequential → 4-6s parallel.
+    Returns dict mapping topic -> LLMSpecialistOutput (or None on failure).
+
+    Args:
+        db: Optional AsyncSession for L1+L2 persistent caching.
+            If provided, results are cached to PostgreSQL (7-day TTL).
+
+    Note: Cache operations are done BEFORE and AFTER parallel execution to avoid
+    SQLAlchemy concurrent session errors. The db session is NOT passed to parallel
+    tasks - instead we do batch lookup/write with the session sequentially.
+    """
+    import asyncio
+
+    from app.debug_utils import _debug_log
+
+    if not topics:
+        return {}
+
+    _debug_log(f"[LLM_SPECIALIST] Starting PARALLEL generation for {topics}")
+
+    output: Dict[str, Optional[LLMSpecialistOutput]] = {}
+    topics_needing_llm: List[str] = []
+
+    # =========================================================================
+    # STEP 1: Batch cache lookup (sequential, single session)
+    # =========================================================================
+    if db is not None:
+        from app.services.specialist_cache import get_cached_specialist_output
+
+        for topic in topics:
+            try:
+                cached = await get_cached_specialist_output(
+                    db=db,
+                    topic=topic,
+                    destination=destination,
+                    start_date=trip_plan.start_date,
+                    end_date=trip_plan.end_date,
+                )
+                if cached is not None:
+                    try:
+                        output[topic] = LLMSpecialistOutput.model_validate(cached)
+                        status = output[topic].feasibility_status
+                        _debug_log(f"[LLM_SPECIALIST] CACHE HIT: {topic} ({status})")
+                        continue
+                    except Exception as e:
+                        _debug_log(f"[LLM_SPECIALIST] Cache deserialize failed for {topic}: {e}")
+            except Exception as e:
+                _debug_log(f"[LLM_SPECIALIST] Cache lookup failed for {topic}: {e}")
+
+            topics_needing_llm.append(topic)
+    else:
+        topics_needing_llm = list(topics)
+
+    # =========================================================================
+    # STEP 2: Parallel LLM calls (no db passed - avoid concurrent session)
+    # =========================================================================
+    if topics_needing_llm:
+        _debug_log(f"[LLM_SPECIALIST] Cache MISS for {topics_needing_llm}, calling LLM")
+
+        # Create tasks WITHOUT db (cache write happens after)
+        tasks = [
+            generate_specialist_output_llm(topic, destination, trip_plan, db=None)
+            for topic in topics_needing_llm
+        ]
+
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=45.0,
+            )
+        except asyncio.TimeoutError:
+            _debug_log("[LLM_SPECIALIST] PARALLEL timeout - cancelling remaining tasks")
+            # Cancel all tasks that are still running to prevent orphaned coroutines
+            for task in tasks:
+                if isinstance(task, asyncio.Task) and not task.done():
+                    task.cancel()
+            # Wait briefly for cancellation to complete
+            pending = [t for t in tasks if isinstance(t, asyncio.Task)]
+            await asyncio.gather(*pending, return_exceptions=True)
+            for topic in topics_needing_llm:
+                output[topic] = None
+            return output
+
+        # Map results and collect for batch cache write
+        llm_results: Dict[str, LLMSpecialistOutput] = {}
+        for topic, result in zip(topics_needing_llm, results, strict=False):
+            if isinstance(result, Exception):
+                _debug_log(f"[LLM_SPECIALIST] {topic} failed in parallel: {result}")
+                output[topic] = None
+            else:
+                output[topic] = result
+                if result is not None:
+                    llm_results[topic] = result
+
+        # =====================================================================
+        # STEP 3: Batch cache write (sequential, single session)
+        # =====================================================================
+        if db is not None and llm_results:
+            from app.services.specialist_cache import set_cached_specialist_output
+
+            for topic, llm_output in llm_results.items():
+                try:
+                    await set_cached_specialist_output(
+                        db=db,
+                        topic=topic,
+                        destination=destination,
+                        start_date=trip_plan.start_date,
+                        end_date=trip_plan.end_date,
+                        output=llm_output.model_dump(),
+                    )
+                except Exception as e:
+                    _debug_log(f"[LLM_SPECIALIST] Cache write failed for {topic}: {e}")
+
+    success_count = sum(1 for r in output.values() if r is not None)
+    _debug_log(f"[LLM_SPECIALIST] PARALLEL complete: {success_count}/{len(topics)} succeeded")
+
+    return output
+
+
+async def generate_specialist_output_llm(
+    topic: str,
+    destination: str,
+    trip_plan: Any,
+    db: Optional[Any] = None,  # AsyncSession for persistent caching
+) -> Optional[LLMSpecialistOutput]:
+    """
+    Single LLM call generates feasibility + activities + constraints.
+
+    Uses topic-aware system prompt from SPECIALIST_SYSTEM_PROMPTS.
+    Returns None on failure (caller should use hardcoded fallback).
+
+    Args:
+        db: Optional AsyncSession for L1+L2 persistent caching.
+            If provided, checks cache before LLM call and writes after success.
+    """
+    from app.debug_utils import _debug_log
+
+    # =========================================================================
+    # CACHE CHECK: L1 (memory) → L2 (PostgreSQL)
+    # =========================================================================
+    if db is not None:
+        try:
+            from app.services.specialist_cache import get_cached_specialist_output
+
+            cached = await get_cached_specialist_output(
+                db=db,
+                topic=topic,
+                destination=destination,
+                start_date=trip_plan.start_date,
+                end_date=trip_plan.end_date,
+            )
+
+            if cached is not None:
+                try:
+                    output = LLMSpecialistOutput.model_validate(cached)
+                    _debug_log(
+                        f"[LLM_SPECIALIST] CACHE HIT: {topic} in {destination} "
+                        f"(status={output.feasibility_status})"
+                    )
+                    return output
+                except Exception as e:
+                    _debug_log(f"[LLM_SPECIALIST] Cache deserialize failed: {e}")
+        except Exception as e:
+            _debug_log(f"[LLM_SPECIALIST] Cache lookup error: {e}")
+
+    system_prompt = SPECIALIST_SYSTEM_PROMPTS.get(topic)
+    if not system_prompt:
+        # Unknown specialist - return None to trigger fallback
+        _debug_log(f"[LLM_SPECIALIST] No system prompt for topic '{topic}', using fallback")
+        return None
+
+    # Calculate trip duration
+    duration_days = 5  # Default
+    if trip_plan.start_date and trip_plan.end_date:
+        from datetime import datetime
+
+        try:
+            start = datetime.strptime(str(trip_plan.start_date), "%Y-%m-%d")
+            end = datetime.strptime(str(trip_plan.end_date), "%Y-%m-%d")
+            duration_days = (end - start).days + 1
+        except ValueError:
+            pass
+
+    user_prompt = f"""Plan {topic} activities for {destination}.
+
+TRIP DETAILS:
+- Dates: {trip_plan.start_date} to {trip_plan.end_date} ({duration_days} days)
+- Travelers: {trip_plan.adults} adults, {trip_plan.children} children
+- Activity days available: {max(1, duration_days - 2)} (excluding arrival/departure)
+
+REQUIRED OUTPUT (JSON):
+{{
+  "feasibility_status": "feasible" | "infeasible" | "conditional",
+  "feasibility_reason": "explanation if not feasible",
+  "activities": [
+    {{
+      "title": "Real site/trail/run name",
+      "description": "Brief description",
+      "location": "Specific location",
+      "duration_hours": 3.0,
+      "difficulty": "beginner|intermediate|advanced",
+      "depth_meters": 18,  // diving only
+      "elevation_meters": 1200,  // hiking only
+      "distance_km": 8.5,  // hiking/cycling only
+      "certification_required": "Open Water",  // diving only
+      "vertical_meters": 800,  // skiing only
+      "logic_hook": "Pro tip for this activity"
+    }}
+  ],
+  "constraints": [
+    {{
+      "constraint_id": "no_fly_24h",
+      "constraint_type": "blocking|strong|soft",
+      "applies_to_categories": ["flights", "hiking"],
+      "buffer_hours": 24,
+      "reason": "Why this constraint exists",
+      "label": "24h No-Fly Buffer",
+      "icon": "🚫"
+    }}
+  ]
+}}
+
+IMPORTANT:
+- Use REAL sites/trails/runs - no made-up names
+- Generate 2-4 activities based on available days
+- Include cross-domain constraints explicitly (e.g., diving affects hiking)
+- For infeasible destinations (e.g., diving in landlocked areas), return infeasible status"""
+
+    try:
+        from langchain_openai import ChatOpenAI
+
+        llm = ChatOpenAI(model=os.getenv("SPECIALIST_MODEL", "gpt-4o"), temperature=0.2)
+        structured_llm = llm.with_structured_output(LLMSpecialistOutput)
+
+        _debug_log(f"[LLM_SPECIALIST] Calling LLM for {topic} in {destination}")
+
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        output = await structured_llm.ainvoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+        )
+
+        _debug_log(
+            f"[LLM_SPECIALIST] Success: status={output.feasibility_status}, "
+            f"activities={len(output.activities)}, constraints={len(output.constraints)}"
+        )
+
+        # =====================================================================
+        # CACHE WRITE: Store successful LLM output to L1 + L2
+        # =====================================================================
+        if db is not None:
+            try:
+                from app.services.specialist_cache import set_cached_specialist_output
+
+                await set_cached_specialist_output(
+                    db=db,
+                    topic=topic,
+                    destination=destination,
+                    start_date=trip_plan.start_date,
+                    end_date=trip_plan.end_date,
+                    output=output.model_dump(),
+                )
+            except Exception as cache_err:
+                _debug_log(f"[LLM_SPECIALIST] Cache write failed (non-fatal): {cache_err}")
+
+        return output
+
+    except Exception as e:
+        _debug_log(f"[LLM_SPECIALIST] Error generating output: {e}")
+        return None
+
+
+def _get_minimal_safety_constraints(topic: str) -> List[SpecialistConstraint]:
+    """
+    Get minimal hardcoded safety constraints as fallback.
+
+    Used when LLM generation fails to ensure critical safety rules are present.
+    """
+    if topic == "diving":
+        return [
+            SpecialistConstraint(
+                constraint_id="no_fly_24h",
+                type="temporal",
+                rule="min_24h_buffer_after_dive",
+                severity=ConstraintSeverity.BLOCKING,
+                applies_to_categories=["flights"],
+                buffer_hours=24,
+                reason="Flying within 24h of diving risks decompression sickness",
+                label="24h No-Fly Buffer",
+                icon="🚫",
+            ),
+        ]
+    elif topic == "hiking":
+        return [
+            SpecialistConstraint(
+                constraint_id="altitude_acclimatization",
+                type="safety",
+                rule="altitude_acclimatization",
+                severity=ConstraintSeverity.STRONG,
+                applies_to_categories=["activities"],
+                reason="Max 500m elevation gain per day above 3000m",
+                label="Altitude Acclimatization",
+                icon="🏔️",
+            ),
+        ]
+    elif topic == "skiing":
+        return [
+            SpecialistConstraint(
+                constraint_id="avalanche_check",
+                type="safety",
+                rule="check_snow_conditions",
+                severity=ConstraintSeverity.BLOCKING,
+                applies_to_categories=["activities"],
+                reason="Check avalanche bulletin before off-piste skiing",
+                label="Avalanche Check Required",
+                icon="🏔️",
+            ),
+        ]
+    return []
+
+
+def _migrate_legacy_constraints(
+    constraints: List[SpecialistConstraint],
+) -> List[SpecialistConstraint]:
+    """
+    Add constraint_id to legacy constraints from hardcoded system.
+
+    Ensures backward compatibility when mixing old and new constraint formats.
+    """
+    for c in constraints:
+        if not c.constraint_id:
+            c.constraint_id = c.rule  # Use rule as fallback ID
+    return constraints
+
+
+def convert_llm_output_to_specialist_output(
+    llm_output: LLMSpecialistOutput,
+    topic: str,
+    destination: str,
+) -> SpecialistOutput:
+    """
+    Convert LLM output to SpecialistOutput format for the graph.
+
+    Maps LLMActivity -> ItineraryBlock and LLMConstraint -> SpecialistConstraint.
+    """
+    from app.placeholders import get_activity_image
+
+    # Convert activities to ItineraryBlocks
+    content_blocks: List[ItineraryBlock] = []
+    for i, activity in enumerate(llm_output.activities):
+        image_url = get_activity_image(topic, destination, activity.title)
+        content_blocks.append(
+            ItineraryBlock(
+                day=i + 2,  # Start from day 2 (day 1 is arrival)
+                title=activity.title,
+                description=activity.description,
+                type="activity",
+                source_specialist=topic,
+                skill_level=activity.difficulty,
+                logic_hook=activity.logic_hook,
+                image_url=image_url,
+                duration_hours=activity.duration_hours,
+                location=activity.location,
+            )
+        )
+
+    # Convert constraints to SpecialistConstraints
+    constraints: List[SpecialistConstraint] = []
+    severity_map = {
+        "blocking": ConstraintSeverity.BLOCKING,
+        "strong": ConstraintSeverity.STRONG,
+        "soft": ConstraintSeverity.SOFT,
+    }
+    for llm_constraint in llm_output.constraints:
+        severity = severity_map.get(
+            llm_constraint.constraint_type.lower(), ConstraintSeverity.STRONG
+        )
+        constraints.append(
+            SpecialistConstraint(
+                constraint_id=llm_constraint.constraint_id,
+                type="safety",  # Default type
+                rule=llm_constraint.constraint_id,
+                severity=severity,
+                applies_to_categories=llm_constraint.applies_to_categories,
+                buffer_hours=llm_constraint.buffer_hours,
+                reason=llm_constraint.reason,
+                label=llm_constraint.label,
+                icon=llm_constraint.icon,
+            )
+        )
+
+    return SpecialistOutput(
+        feasibility_status=llm_output.feasibility_status,
+        feasibility_reason=llm_output.feasibility_reason,
+        constraints=constraints,
+        content_blocks=content_blocks,
+    )
 
 
 # =============================================================================
 # Feasibility Data (Geographic/Physical Constraints)
+# Used for fast pre-checks before LLM calls
 # =============================================================================
 
 SKIING_FEASIBILITY = {
@@ -410,6 +725,84 @@ FEASIBILITY_DATA = {
 }
 
 
+# =============================================================================
+# LLM Feasibility Check (for unknown destinations)
+# =============================================================================
+
+
+class FeasibilityCheck(BaseModel):
+    """LLM response for feasibility check."""
+
+    possible: bool
+    reason: str
+
+
+def _check_feasibility_llm(topic: str, destination: str) -> FeasibilityCheck:
+    """
+    LLM determines if activity is geographically possible.
+
+    Uses GPT-4o-mini for fast, cheap checks (~$0.0001, ~200ms).
+    Falls open on error (assumes possible) to avoid false negatives.
+    """
+    from app.debug_utils import _debug_log
+
+    try:
+        from langchain_openai import ChatOpenAI
+
+        llm = ChatOpenAI(
+            model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),  # Quick feasibility check
+            temperature=0,
+            max_tokens=100,
+        )
+
+        prompt = f"""Is {topic} activity possible in {destination}?
+
+Rules:
+- Diving requires coastline, large lakes, or dedicated dive facilities
+- Skiing requires mountains with reliable snow or indoor ski facilities
+- Hiking requires terrain suitable for walking trails
+- Surfing requires ocean waves
+
+Be strict. Landlocked cities cannot have diving. Alpine towns without coast cannot have diving.
+
+Respond JSON only: {{"possible": true/false, "reason": "brief"}}"""
+
+        response = llm.invoke(prompt)
+        content = response.content.strip()
+
+        # Parse JSON response
+        # Handle potential markdown code blocks
+        if content.startswith("```"):
+            content = content.split("```")[1]
+            if content.startswith("json"):
+                content = content[4:]
+            content = content.strip()
+
+        result = FeasibilityCheck(**json.loads(content))
+        _debug_log(
+            f"[FEASIBILITY_LLM] {topic} in {destination}: "
+            f"possible={result.possible}, reason={result.reason}"
+        )
+        return result
+
+    except Exception as e:
+        _debug_log(f"[FEASIBILITY_LLM] Error checking {topic} in {destination}: {e}")
+        # Fail open - assume possible if LLM fails
+        return FeasibilityCheck(possible=True, reason="Unknown, proceeding")
+
+
+@lru_cache(maxsize=1000)
+def get_feasibility_llm(topic: str, destination: str) -> Tuple[bool, str]:
+    """
+    Cached LLM feasibility check.
+
+    Cache key: f"{topic}:{destination}" (implicit via lru_cache)
+    Returns: (possible, reason)
+    """
+    result = _check_feasibility_llm(topic, destination)
+    return (result.possible, result.reason)
+
+
 def check_feasibility(
     topic: str,
     destination: str,
@@ -417,20 +810,29 @@ def check_feasibility(
     """
     Check if activity is feasible at destination.
 
+    Uses a two-tier approach:
+    1. Fast hardcoded checks for known destinations
+    2. LLM fallback for unknown destinations (cached)
+
     Returns:
         (status, reason, alternative_suggestion) tuple where:
         - status: "feasible" | "caveat" | "infeasible"
         - reason: Human-readable explanation (or None)
         - alternative_suggestion: Suggested alternative (or None)
     """
+    from app.debug_utils import _debug_log
 
     dest_lower = (destination or "").lower()
+
+    # Skip empty destinations
+    if not dest_lower:
+        return ("feasible", None, None)
 
     data = FEASIBILITY_DATA.get(topic)
     if not data:
         return ("feasible", None, None)
 
-    # Check infeasible locations
+    # TIER 1: Check hardcoded infeasible locations (fast)
     for location in data.get("infeasible", []):
         if location in dest_lower:
             return (
@@ -439,7 +841,7 @@ def check_feasibility(
                 _suggest_alternative(topic),
             )
 
-    # Check caveat locations
+    # TIER 1: Check hardcoded caveat locations (fast)
     for location, caveat_msg in data.get("caveat", {}).items():
         if location in dest_lower:
             return (
@@ -447,6 +849,32 @@ def check_feasibility(
                 caveat_msg,
                 None,
             )
+
+    # TIER 1: Check hardcoded feasible locations for skiing
+    # (Skip LLM for known ski destinations)
+    if topic == "skiing" and "feasible" in data:
+        for location in data.get("feasible", []):
+            if location in dest_lower:
+                return ("feasible", None, None)
+
+    # TIER 2: LLM check for unknown destinations
+    # Only run for activities with geographic constraints (diving, skiing)
+    # Hiking is generally possible everywhere, so skip LLM for it
+    if topic in ["diving", "skiing"]:
+        _debug_log(f"[FEASIBILITY] LLM check for {topic} in {destination}")
+        possible, reason = get_feasibility_llm(topic, destination)
+
+        if not possible:
+            return (
+                "infeasible",
+                f"{topic.title()} is not available in {destination}. {reason}",
+                _suggest_alternative(topic),
+            )
+
+        # If LLM says possible but with nuance, treat as caveat
+        # (e.g., "possible but limited" scenarios)
+        if possible and "limited" in reason.lower():
+            return ("caveat", reason, None)
 
     return ("feasible", None, None)
 
@@ -470,25 +898,25 @@ class VerticalSpecialist:
     """
     Domain specialist that injects constraints AND content.
 
-    Key difference from old architecture:
-    - Returns BOTH safety constraints AND itinerary suggestions
-    - Runs BEFORE Architect calls tools (Constraint Injector pattern)
+    NEW ARCHITECTURE (Zero-Template LLM):
+    - Primary: LLM generates activities + constraints via generate_specialist_output_llm()
+    - Fallback: _get_minimal_safety_constraints() provides critical safety rules
+
+    Key insight: Returns BOTH safety constraints AND itinerary suggestions.
+    Runs BEFORE Architect calls tools (Constraint Injector pattern).
     """
 
     def __init__(self, topic: str):
         self.topic = topic
-        self.knowledge = SPECIALIST_KNOWLEDGE.get(
-            topic, {"constraints": [], "top_destinations": {}}
-        )
         self.debug = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 
     def get_constraints(self) -> List[SpecialistConstraint]:
-        """Get domain-specific constraints.
+        """Get domain-specific constraints (fallback only).
 
-        Returns a COPY of the constraints list to avoid mutating
-        the original SPECIALIST_KNOWLEDGE when caveats are inserted.
+        In the new LLM architecture, constraints come from generate_specialist_output_llm().
+        This method is only used as fallback when LLM fails.
         """
-        return list(self.knowledge.get("constraints", []))
+        return _get_minimal_safety_constraints(self.topic)
 
     def _calculate_activity_days(self, state: GraphState) -> int:
         """
@@ -570,11 +998,11 @@ class VerticalSpecialist:
         1. Curated content from demo_curation.py (has images for hero destinations)
         2. Hardcoded knowledge (fallback for non-hero destinations)
         """
-        from app.debug_utils import _debug_v2
+        from app.debug_utils import _debug_log
 
         # Guard: return empty if no destination (prevents false matches)
         if not destination:
-            _debug_v2("[SPECIALIST] get_content_for_destination: No destination, returning empty")
+            _debug_log("[SPECIALIST] get_content_for_destination: No destination, returning empty")
             return []
 
         # Normalize destination name for lookup
@@ -582,13 +1010,15 @@ class VerticalSpecialist:
 
         # Extra safety: return empty if destination is effectively empty
         if not dest_lower:
-            _debug_v2("[SPECIALIST] get_content_for_destination: Empty dest_lower, returning empty")
+            _debug_log(
+                "[SPECIALIST] get_content_for_destination: Empty dest_lower, returning empty"
+            )
             return []
 
         # Calculate available activity days from trip dates
         max_activities = self._calculate_activity_days(state) if state else 3
         print(f"[SPECIALIST DEBUG] get_content_for_destination: max_activities={max_activities}")
-        _debug_v2(f"[SPECIALIST] get_content_for_destination: max_activities={max_activities}")
+        _debug_log(f"[SPECIALIST] get_content_for_destination: max_activities={max_activities}")
 
         # For very short trips (no activity days), return empty
         if max_activities <= 0:
@@ -596,11 +1026,13 @@ class VerticalSpecialist:
                 "[SPECIALIST DEBUG] get_content_for_destination: "
                 "TRIP TOO SHORT - returning empty list!"
             )
-            _debug_v2("[SPECIALIST] get_content_for_destination: " "Trip too short for activities")
+            _debug_log("[SPECIALIST] get_content_for_destination: " "Trip too short for activities")
             return []
 
-        # PRIORITY 1: Check for curated content (includes images)
-        _debug_v2(
+        # Check for curated content (includes images) - used for demo destinations
+        # NOTE: In the new LLM architecture, activities primarily come from LLM.
+        # This method is called as fallback only when LLM fails.
+        _debug_log(
             f"[SPECIALIST] get_content_for_destination: "
             f"Looking up curated content for '{dest_lower}'"
         )
@@ -610,39 +1042,17 @@ class VerticalSpecialist:
                 f"[SPECIALIST DEBUG] Returning {len(curated_blocks)} "
                 f"curated blocks (max was {max_activities})"
             )
-            _debug_v2(
+            _debug_log(
                 f"[SPECIALIST] get_content_for_destination: "
                 f"Found {len(curated_blocks)} curated blocks (limited to {max_activities})"
             )
             return curated_blocks
 
-        # PRIORITY 2: Fall back to hardcoded knowledge
-        destinations = self.knowledge.get("top_destinations", {})
-        for dest_key, activities in destinations.items():
-            # Require meaningful match (not empty string matching everything)
-            if len(dest_lower) >= 3 and (dest_key in dest_lower or dest_lower in dest_key):
-                blocks = []
-                # Limit to available activity days
-                for i, activity in enumerate(activities[:max_activities]):
-                    # Use curated image if available, otherwise generate Unsplash fallback
-                    image_url = activity.get("image") or get_activity_image(
-                        self.topic, destination, activity["title"]
-                    )
-                    blocks.append(
-                        ItineraryBlock(
-                            day=i + 2,  # Start from day 2 (day 1 is arrival)
-                            title=activity["title"],
-                            description=activity["description"],
-                            type=activity.get("type", "activity"),
-                            source_specialist=self.topic,
-                            skill_level=activity.get("skill_level"),
-                            logic_hook=activity.get("logic_hook"),  # Pro tip for UI
-                            image_url=image_url,  # Curated or Unsplash fallback
-                            coordinates=activity.get("coordinates"),  # [lng, lat] for Mapbox
-                        )
-                    )
-                return blocks
-
+        # No curated content found - return empty (LLM is primary source now)
+        _debug_log(
+            f"[SPECIALIST] get_content_for_destination: "
+            f"No curated content for '{dest_lower}', returning empty (LLM is primary source)"
+        )
         return []
 
     def _get_curated_content(
@@ -654,40 +1064,40 @@ class VerticalSpecialist:
         Returns ItineraryBlocks with images for hero destinations.
         Limited to max_activities based on trip duration.
         """
-        from app.debug_utils import _debug_v2
+        from app.debug_utils import _debug_log
 
         try:
             from app.data.demo_curation import DEMO_MANIFEST, is_hero_destination
 
-            _debug_v2(
+            _debug_log(
                 f"[SPECIALIST] _get_curated_content: "
                 f"destination='{destination}', topic='{self.topic}', max={max_activities}"
             )
 
             is_hero = is_hero_destination(destination)
-            _debug_v2(f"[SPECIALIST] is_hero_destination('{destination}') = {is_hero}")
+            _debug_log(f"[SPECIALIST] is_hero_destination('{destination}') = {is_hero}")
 
             if not is_hero:
-                _debug_v2("[SPECIALIST] NOT a hero destination, returning empty")
+                _debug_log("[SPECIALIST] NOT a hero destination, returning empty")
                 return []
 
-            _debug_v2("[SPECIALIST] IS a hero destination, fetching curated content")
+            _debug_log("[SPECIALIST] IS a hero destination, fetching curated content")
             manifest = DEMO_MANIFEST.get(destination.lower().strip(), {})
             specialist_content = manifest.get("specialist_content", {})
-            _debug_v2(f"[SPECIALIST] specialist_content keys: {list(specialist_content.keys())}")
+            _debug_log(f"[SPECIALIST] specialist_content keys: {list(specialist_content.keys())}")
 
             # Get activities for this specialist type
             activities = specialist_content.get(self.topic, [])
-            _debug_v2(f"[SPECIALIST] activities for topic '{self.topic}': {len(activities)}")
+            _debug_log(f"[SPECIALIST] activities for topic '{self.topic}': {len(activities)}")
 
             if not activities:
-                _debug_v2("[SPECIALIST] No activities found, returning empty")
+                _debug_log("[SPECIALIST] No activities found, returning empty")
                 return []
 
             blocks = []
             # Limit to max_activities based on trip duration
             for i, activity in enumerate(activities[:max_activities]):
-                _debug_v2(
+                _debug_log(
                     f"[SPECIALIST] Creating block: {activity.get('title')}, "
                     f"image={bool(activity.get('image'))}"
                 )
@@ -705,7 +1115,7 @@ class VerticalSpecialist:
                     )
                 )
 
-            _debug_v2(
+            _debug_log(
                 f"[SPECIALIST] Returning {len(blocks)} curated blocks (max was {max_activities})"
             )
             return blocks
@@ -881,34 +1291,143 @@ class VerticalSpecialist:
         """
         Generate the complete specialist output.
 
-        Returns BOTH constraints AND content, including:
-        - Feasibility check (can return early if infeasible)
-        - Bookend blocks (arrival/departure)
-        - Safety buffer blocks (no-fly, acclimatization)
-        - Activity content blocks
+        NEW ARCHITECTURE (Zero-Template LLM):
+        1. Check for cached parallel LLM results (from generate_all_specialists_parallel)
+        2. If not cached, try LLM generation
+        3. If LLM fails, fall back to hardcoded knowledge
+
+        Returns BOTH constraints AND content.
         """
-        from app.debug_utils import _debug_v2
+        from app.debug_utils import _debug_log
 
         destination = state.trip_plan.destination or ""
 
         # DEBUG: Log input state
-        _debug_v2(
+        _debug_log(
             f"[SPECIALIST] generate_output called: "
             f"topic={self.topic}, destination='{destination}'"
         )
-        _debug_v2(
+        _debug_log(
             f"[SPECIALIST] trip_plan: start_date={state.trip_plan.start_date}, "
             f"end_date={state.trip_plan.end_date}"
         )
 
-        # STEP 1: Check feasibility FIRST (Constraint Engine pattern)
+        # =====================================================================
+        # STEP 0: Check for cached parallel LLM results (PERFORMANCE OPTIMIZATION)
+        # =====================================================================
+        parallel_results = state.metadata.get("parallel_llm_results", {})
+        cached_result = parallel_results.get(self.topic)
+        llm_output: Optional[LLMSpecialistOutput] = None
+
+        if cached_result is not None:
+            # Deserialize from dict (cached results are stored via model_dump())
+            try:
+                llm_output = LLMSpecialistOutput.model_validate(cached_result)
+                _debug_log(
+                    f"[SPECIALIST] Using CACHED parallel result for {self.topic}: "
+                    f"status={llm_output.feasibility_status}, "
+                    f"activities={len(llm_output.activities)}"
+                )
+            except Exception as e:
+                _debug_log(f"[SPECIALIST] Failed to deserialize cached result: {e}")
+                llm_output = None
+        else:
+            # =====================================================================
+            # STEP 1: Try LLM-based generation (fallback if not parallel)
+            # =====================================================================
+            use_llm = self.topic in SPECIALIST_SYSTEM_PROMPTS
+
+            if use_llm and destination:
+                _debug_log(f"[SPECIALIST] Trying LLM generation for {self.topic} in {destination}")
+                try:
+                    import asyncio
+
+                    # Try to get or create event loop
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # We're in an async context, use run_coroutine_threadsafe
+
+                            future = asyncio.run_coroutine_threadsafe(
+                                generate_specialist_output_llm(
+                                    self.topic, destination, state.trip_plan
+                                ),
+                                loop,
+                            )
+                            llm_output = future.result(timeout=30)
+                        else:
+                            llm_output = loop.run_until_complete(
+                                generate_specialist_output_llm(
+                                    self.topic, destination, state.trip_plan
+                                )
+                            )
+                    except RuntimeError:
+                        # No event loop, create one
+                        llm_output = asyncio.run(
+                            generate_specialist_output_llm(self.topic, destination, state.trip_plan)
+                        )
+                except Exception as e:
+                    _debug_log(f"[SPECIALIST] LLM generation failed: {e}, using hardcoded fallback")
+
+        # =====================================================================
+        # STEP 1.5: Process LLM output (cached or fresh)
+        # =====================================================================
+        if llm_output:
+            _debug_log(
+                f"[SPECIALIST] LLM SUCCESS: status={llm_output.feasibility_status}, "
+                f"activities={len(llm_output.activities)}, "
+                f"constraints={len(llm_output.constraints)}"
+            )
+
+            # Handle infeasible from LLM
+            if llm_output.feasibility_status == "infeasible":
+                return SpecialistOutput(
+                    feasibility_status="infeasible",
+                    feasibility_reason=llm_output.feasibility_reason,
+                    alternative_suggestion=_suggest_alternative(self.topic),
+                    constraints=[],
+                    content_blocks=[],
+                    critique=None,
+                    enhancements=[],
+                )
+
+            # Convert LLM output to SpecialistOutput format
+            converted = convert_llm_output_to_specialist_output(llm_output, self.topic, destination)
+
+            # Add bookends (arrival/departure) - always deterministic
+            bookends = self.generate_bookends(state)
+            all_blocks = bookends + converted.content_blocks
+            all_blocks.sort(key=lambda b: b.day)
+
+            # Add safety buffers
+            safety_buffers = self.generate_safety_buffers(state)
+            all_blocks.extend(safety_buffers)
+            all_blocks.sort(key=lambda b: b.day)
+
+            # Migrate any legacy constraints
+            constraints = _migrate_legacy_constraints(converted.constraints)
+
+            return SpecialistOutput(
+                feasibility_status=llm_output.feasibility_status,
+                feasibility_reason=llm_output.feasibility_reason,
+                constraints=constraints,
+                content_blocks=all_blocks,
+                critique=None,
+                enhancements=self.generate_enhancements(state),
+            )
+
+        # =====================================================================
+        # STEP 2: FALLBACK - Use hardcoded knowledge (legacy path)
+        # =====================================================================
+        _debug_log(f"[SPECIALIST] Using hardcoded fallback for {self.topic}")
+
+        # Check feasibility using hardcoded data
         status, reason, alternative = check_feasibility(self.topic, destination)
-        _debug_v2(
+        _debug_log(
             f"[SPECIALIST] feasibility: status={status}, reason={reason[:50] if reason else None}"
         )
 
         if status == "infeasible":
-            # Return empty output with infeasible status - no content generated
             return SpecialistOutput(
                 feasibility_status="infeasible",
                 feasibility_reason=reason,
@@ -919,74 +1438,33 @@ class VerticalSpecialist:
                 enhancements=[],
             )
 
-        # STEP 2: Collect all content blocks in order
+        # Collect all content blocks
         all_blocks: List[ItineraryBlock] = []
 
-        # 2a. Bookends (arrival/departure)
+        # Bookends (arrival/departure)
         bookends = self.generate_bookends(state)
-        _debug_v2(f"[SPECIALIST] bookends: {len(bookends)} blocks")
         all_blocks.extend(bookends)
 
-        # 2b. Safety buffers (no-fly, acclimatization)
+        # Safety buffers
         safety_buffers = self.generate_safety_buffers(state)
-        _debug_v2(f"[SPECIALIST] safety_buffers: {len(safety_buffers)} blocks")
         all_blocks.extend(safety_buffers)
 
-        # 2c. Activity content (respects trip duration)
+        # Activity content from hardcoded knowledge
         activity_content = self.get_content_for_destination(destination, state)
-        _debug_v2(f"[SPECIALIST] activity_content: {len(activity_content)} blocks")
-        for block in activity_content:
-            _debug_v2(
-                f"[SPECIALIST]   - {block.title}, "
-                f"is_buffer={block.is_buffer}, image={bool(block.image_url)}"
-            )
         all_blocks.extend(activity_content)
 
         # Sort by day
         all_blocks.sort(key=lambda b: b.day)
-        _debug_v2(f"[SPECIALIST] total all_blocks: {len(all_blocks)}")
 
-        # STEP 3: Build constraints list
-        # Try LLM-based generation if enabled, with fallback to hardcoded knowledge
-        constraints = []
-        llm_enhancements = []
-        llm_critique = None
-
-        if is_llm_specialist_enabled():
-            _debug_v2("[SPECIALIST] LLM generation enabled, attempting async call...")
-            try:
-                import asyncio
-
-                # Generate constraints via LLM
-                llm_output = asyncio.get_event_loop().run_until_complete(
-                    generate_specialist_output_with_llm(self.topic, state)
-                )
-
-                if llm_output:
-                    # Convert LLM output to state format
-                    llm_state_output = convert_llm_output_to_state(llm_output, self.topic)
-                    constraints = llm_state_output.constraints
-                    llm_enhancements = llm_state_output.enhancements or []
-                    llm_critique = llm_state_output.critique
-                    _debug_v2(
-                        f"[SPECIALIST] LLM generated {len(constraints)} constraints, "
-                        f"{len(llm_enhancements)} enhancements"
-                    )
-                else:
-                    _debug_v2("[SPECIALIST] LLM returned None, using hardcoded knowledge")
-                    constraints = self.get_constraints()
-            except Exception as e:
-                _debug_v2(f"[SPECIALIST] LLM generation failed: {e}, using hardcoded knowledge")
-                constraints = self.get_constraints()
-        else:
-            # Use hardcoded knowledge (default path)
-            constraints = self.get_constraints()
+        # Get hardcoded constraints and migrate them
+        constraints = _migrate_legacy_constraints(self.get_constraints())
 
         # If caveat, inject as first constraint (warning)
         if status == "caveat" and reason:
             constraints.insert(
                 0,
                 SpecialistConstraint(
+                    constraint_id="feasibility_caveat",
                     type="safety",
                     rule="feasibility_caveat",
                     applies_to="activities",
@@ -994,20 +1472,14 @@ class VerticalSpecialist:
                 ),
             )
 
-        # Use LLM-generated critique/enhancements if available, otherwise use hardcoded
-        final_critique = llm_critique if llm_critique else self.critique_plan(state)
-        final_enhancements = (
-            llm_enhancements if llm_enhancements else self.generate_enhancements(state)
-        )
-
         return SpecialistOutput(
             feasibility_status=status,
             feasibility_reason=reason if status == "caveat" else None,
             alternative_suggestion=alternative,
             constraints=constraints,
             content_blocks=all_blocks,
-            critique=final_critique,
-            enhancements=final_enhancements,
+            critique=self.critique_plan(state),
+            enhancements=self.generate_enhancements(state),
         )
 
 
@@ -1096,7 +1568,16 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     2. Routing sees pending_specialists not empty → routes back here
     3. Subsequent runs: active_specialist is None, we pop from pending_specialists
     """
-    from app.debug_utils import _debug_v2, _debug_v2_node_end, _debug_v2_node_start, log
+    from app.debug_utils import (
+        _debug_log,
+        _debug_node_start,
+        _debug_node_timer_end,
+        _debug_node_timer_start,
+        log,
+    )
+
+    # Start timing this node execution
+    _debug_node_timer_start("specialist")
 
     # MULTI-SPECIALIST SUPPORT: Pop from pending if active_specialist is not set
     # On first run, router sets active_specialist. On loop iterations, we pop from pending.
@@ -1112,10 +1593,49 @@ async def vertical_specialist(state: GraphState) -> GraphState:
 
     if not topic:
         # No specialist needed - pass through
-        _debug_v2("🤿 SPECIALIST skipped (no active specialist)")
+        _debug_log("🤿 SPECIALIST skipped (no active specialist)")
         return state
 
-    _debug_v2_node_start(
+    # =========================================================================
+    # SELECTIVE REGENERATION: Check if cached output can be reused
+    # =========================================================================
+    # If strategy_sections already contains this specialist's output AND
+    # destination hasn't changed since last generation, skip LLM call.
+    # This is the node-level cache awareness for selective regeneration.
+    # @see docs/plan_graph_analysis.md - Selective Regeneration
+    #
+    existing_sections = state.metadata.get("strategy_sections", [])
+    cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
+
+    if cached_section:
+        # Check if destination matches cached section
+        cached_destination = cached_section.get("subtitle")  # subtitle = destination
+        current_destination = state.trip_plan.destination
+
+        if cached_destination and cached_destination == current_destination:
+            _debug_log(
+                f"🤿 SPECIALIST [{topic}] Cache HIT: Reusing cached output "
+                f"(destination={current_destination})"
+            )
+
+            # Still need to track execution for downstream nodes
+            state.metadata["last_executed_specialist"] = topic
+            state.active_specialist = None  # Clear for multi-specialist support
+
+            _debug_node_timer_end(
+                "specialist",
+                "🤿",
+                topic=topic,
+                cache_hit=True,
+            )
+            return state  # No-op, output already in state
+
+        _debug_log(
+            f"🤿 SPECIALIST [{topic}] Cache MISS: destination changed "
+            f"({cached_destination} -> {current_destination})"
+        )
+
+    _debug_node_start(
         "specialist",
         "🤿",
         topic=topic,
@@ -1123,20 +1643,20 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     )
 
     # DEBUG: Log full trip plan state
-    _debug_v2(
+    _debug_log(
         f"[SPECIALIST] FULL STATE: start_date={state.trip_plan.start_date}, "
         f"end_date={state.trip_plan.end_date}"
     )
-    _debug_v2(
+    _debug_log(
         f"[SPECIALIST] FULL STATE: adults={state.trip_plan.adults}, "
         f"children={state.trip_plan.children}"
     )
     tiles_count = sum(len(v) for v in state.tiles.values()) if state.tiles else 0
-    _debug_v2(f"[SPECIALIST] FULL STATE: tiles_count={tiles_count}")
+    _debug_log(f"[SPECIALIST] FULL STATE: tiles_count={tiles_count}")
     existing_sections = [
         s.get("specialist_type") for s in state.metadata.get("strategy_sections", [])
     ]
-    _debug_v2(f"[SPECIALIST] FULL STATE: existing_strategy_sections={existing_sections}")
+    _debug_log(f"[SPECIALIST] FULL STATE: existing_strategy_sections={existing_sections}")
 
     log("SPECIALIST", f"{topic.title()} Specialist activated")
     log("SPECIALIST", f"Destination from trip_plan: '{state.trip_plan.destination}'")
@@ -1149,6 +1669,107 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     # Verify destination is set - critical for correct content
     if not state.trip_plan.destination:
         log("SPECIALIST", "⚠️ WARNING: No destination set in trip_plan!")
+
+    # =========================================================================
+    # PARALLEL LLM OPTIMIZATION: Trigger parallel generation on first specialist
+    # =========================================================================
+    # If this is the first specialist call AND there are multiple specialists,
+    # generate all LLM outputs in parallel and cache them for subsequent calls.
+    # This reduces wall time from 8-12s (sequential) to 4-6s (parallel).
+    #
+    # NEW: Pass database session for L1+L2 persistent caching (7-day TTL).
+    #
+    if "parallel_llm_results" not in state.metadata:
+        # Collect all specialists that need processing
+        all_specialists = [topic] + list(state.pending_specialists)
+
+        if len(all_specialists) > 1:
+            _debug_log(
+                f"[SPECIALIST] PARALLEL TRIGGER: {len(all_specialists)} specialists "
+                f"detected ({all_specialists}), running in parallel"
+            )
+
+            # Get database session for persistent caching
+            from app.db import _get_async_session_factory
+
+            async_session_factory = _get_async_session_factory()
+
+            async with async_session_factory() as db:
+                # Run all LLM calls in parallel with persistent caching
+                parallel_results = await generate_all_specialists_parallel(
+                    topics=all_specialists,
+                    destination=state.trip_plan.destination,
+                    trip_plan=state.trip_plan,
+                    db=db,  # Pass session for L1+L2 caching
+                )
+
+            # Cache results for this and subsequent specialist calls
+            state.metadata["parallel_llm_results"] = {
+                k: v.model_dump() if v else None for k, v in parallel_results.items()
+            }
+
+            _debug_log(f"[SPECIALIST] PARALLEL COMPLETE: Cached {len(parallel_results)} results")
+        else:
+            # Single specialist - use same cache path as parallel for consistency
+            _debug_log(f"[SPECIALIST] Single specialist '{topic}' - using cached LLM path")
+
+            from app.db import _get_async_session_factory
+            from app.services.specialist_cache import (
+                get_cached_specialist_output,
+            )
+
+            async_session_factory = _get_async_session_factory()
+            cached_result = None
+            llm_result = None
+
+            try:
+                async with async_session_factory() as db:
+                    # STEP 1: Check cache
+                    _debug_log(
+                        f"[SPECIALIST_CACHE] Looking up cache for {topic} "
+                        f"in {state.trip_plan.destination}"
+                    )
+                    cached_result = await get_cached_specialist_output(
+                        db=db,
+                        topic=topic,
+                        destination=state.trip_plan.destination,
+                        start_date=state.trip_plan.start_date,
+                        end_date=state.trip_plan.end_date,
+                    )
+
+                    if cached_result:
+                        _debug_log(f"[SPECIALIST_CACHE] ✅ HIT for {topic} - skipping LLM")
+                        state.metadata["parallel_llm_results"] = {topic: cached_result}
+                    else:
+                        _debug_log(f"[SPECIALIST_CACHE] ❌ MISS for {topic} - calling LLM")
+
+                        # STEP 2: Call LLM with db session for cache write
+                        llm_result = await generate_specialist_output_llm(
+                            topic=topic,
+                            destination=state.trip_plan.destination,
+                            trip_plan=state.trip_plan,
+                            db=db,  # Pass db for cache write
+                        )
+
+                        if llm_result:
+                            _debug_log(
+                                f"[SPECIALIST_CACHE] LLM success for {topic}: "
+                                f"status={llm_result.feasibility_status}, "
+                                f"activities={len(llm_result.activities)}"
+                            )
+                            state.metadata["parallel_llm_results"] = {
+                                topic: llm_result.model_dump()
+                            }
+                        else:
+                            _debug_log(
+                                f"[SPECIALIST_CACHE] LLM returned None for {topic} "
+                                "- will use fallback"
+                            )
+                            state.metadata["parallel_llm_results"] = {}
+
+            except Exception as e:
+                _debug_log(f"[SPECIALIST_CACHE] Error: {e}")
+                state.metadata["parallel_llm_results"] = {}
 
     # Create specialist for this topic
     specialist = VerticalSpecialist(topic)
@@ -1186,7 +1807,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             f"{output.alternative_suggestion or 'Consider a different destination.'}"
         )
 
-        _debug_v2_node_end(
+        _debug_node_timer_end(
             "specialist",
             "🤿",
             topic=topic,
@@ -1295,17 +1916,17 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         executed.append(topic)
         state.metadata["executed_strategy_topics"] = executed
 
-    _debug_v2(f"Strategy section created for {topic} with {len(content_added)} recommendations")
+    _debug_log(f"Strategy section created for {topic} with {len(content_added)} recommendations")
     reason_preview = output.feasibility_reason[:50] if output.feasibility_reason else None
-    _debug_v2(
+    _debug_log(
         f"  feasibility_status={output.feasibility_status}, " f"feasibility_reason={reason_preview}"
     )
-    _debug_v2(
+    _debug_log(
         f"  constraints_count={len(output.constraints)}, "
         f"content_blocks_count={len(output.content_blocks)}"
     )
-    _debug_v2(f"  content_added titles: {[c.get('title') for c in content_added]}")
-    _debug_v2(f"  content_added has images: {[bool(c.get('image_url')) for c in content_added]}")
+    _debug_log(f"  content_added titles: {[c.get('title') for c in content_added]}")
+    _debug_log(f"  content_added has images: {[bool(c.get('image_url')) for c in content_added]}")
 
     # Generate specialist message for UI
     if output.content_blocks:
@@ -1318,7 +1939,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             f"I've also noted {len(output.constraints)} safety considerations.{caveat_note}"
         )
 
-    _debug_v2_node_end(
+    _debug_node_timer_end(
         "specialist",
         "🤿",
         topic=topic,

@@ -38,13 +38,12 @@ import type { GenerationState, PlanViewState, StrategySection, ViewMode } from '
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
 
-import { AlternativesModal } from './modals/AlternativesModal';
-import { SuggestionCard } from './tiles/SuggestionCard';
-import { BookableCard, type PartnerPrice } from './tiles/BookableCard';
-
 import { CategorySection } from './booking/CategorySection';
 import { CheckoutSidebar } from './booking/CheckoutSidebar';
+import { AlternativesModal } from './modals/AlternativesModal';
 import { isGenerating } from './planStateHelpers';
+import { BookableCard, type PartnerPrice } from './tiles/BookableCard';
+import { SuggestionCard } from './tiles/SuggestionCard';
 
 // Specialist keyword mappings for activity filtering
 // When a specialist is active, only show activities matching these keywords
@@ -134,12 +133,15 @@ export interface BookingSectionProps {
   onCartToggle?: (tile: Tile) => void;
   /** Strategy sections for contextual headers (specialist-aware) */
   strategySections?: StrategySection[];
+  /** Callback to open stays/hotel settings sheet (for hotel gear icons) */
+  onOpenStaysSettings?: () => void;
 }
 
 export function BookingSection({
   state,
   tiles: propTiles,
   generation,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   hasStrategyContent: _hasStrategyContent, // Deprecated: mode is now SSoT, not state
   savedTileIds = new Set(),
   onSaveTile,
@@ -154,6 +156,7 @@ export function BookingSection({
   cartTileIds = new Set(),
   onCartToggle,
   strategySections,
+  onOpenStaysSettings,
 }: BookingSectionProps) {
   // FIX: Live subscription to tiles - ensures updates even if parent doesn't re-render
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
@@ -474,6 +477,7 @@ export function BookingSection({
                         onSave={handleSaveClick}
                         onViewAlternatives={() => handleViewAlternatives(tile)}
                         onDetailsClick={handleDetailsClick}
+                        onOpenStaysSettings={onOpenStaysSettings}
                         variant="compact"
                       />
                     ) : (

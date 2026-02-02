@@ -9,8 +9,8 @@
 
 'use client';
 
-import { Bed, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Bed, Landmark, MapPin, Mountain, Plane, Utensils, Waves } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 

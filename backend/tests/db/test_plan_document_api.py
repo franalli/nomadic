@@ -420,11 +420,12 @@ def test_apply_planner_update_cascades_trip_inputs_to_primary_branch():
         assert non_primary_branch.currency == "USD"
 
 
-def test_apply_planner_update_handles_cleared_destination():
-    """Test that apply_planner_update correctly handles cleared destination.
+def test_apply_planner_update_preserves_destination_when_null():
+    """Test that apply_planner_update preserves existing destination when LLM returns None.
 
-    When the user clears the destination, the trip_inputs.destination should become
-    None and the primary branch should also have None destination.
+    Planner updates are designed to preserve existing values when None is passed,
+    preventing accidental clearing. To clear destination, use apply_user_patch_sync
+    which detects explicit nulls from the patch model.
     """
     from app.crud_document import apply_planner_update_sync, get_document_data
     from app.schemas import DocumentTripInputs
@@ -445,10 +446,10 @@ def test_apply_planner_update_handles_cleared_destination():
         assert primary_branch.destination == "Nice"
         assert data.trip_inputs.destination == "Nice"
 
-        # Apply planner update with cleared destination
-        # (simulates user clearing destination)
+        # Apply planner update with destination=None
+        # (simulates LLM not returning destination field)
         new_trip_inputs = DocumentTripInputs(
-            destination=None,  # User cleared destination
+            destination=None,  # LLM didn't return destination
             origin="London",
             start_date=None,
             end_date=None,
@@ -456,7 +457,7 @@ def test_apply_planner_update_handles_cleared_destination():
             children=None,
             requires_assistance=None,
             budget=None,
-            missing_fields=["destination", "start_date"],  # Only required fields
+            missing_fields=["destination", "start_date"],
         )
 
         doc = apply_planner_update_sync(
@@ -464,19 +465,19 @@ def test_apply_planner_update_handles_cleared_destination():
             doc=doc,
             trip_context_id=seed["trip_context_id"],
             trip_inputs=new_trip_inputs,
-            branches=None,  # No new branches from LLM
+            branches=None,
             tiles=None,
         )
 
-        # Verify trip_inputs has no destination
+        # Verify destination is PRESERVED (not cleared) - this is the correct behavior
+        # for planner updates where None means "not provided" not "clear it"
         data = get_document_data(doc)
-        assert data.trip_inputs.destination is None, "trip_inputs.destination should be None"
-
-        # Verify PRIMARY branch destination is also None
-        primary_branch = next(b for b in data.branches if b.is_primary)
         assert (
-            primary_branch.destination is None
-        ), "Primary branch destination should be None when user clears it"
+            data.trip_inputs.destination == "Nice"
+        ), "Destination should be preserved when LLM returns None"
+
+        # Origin should be updated since it was explicitly set
+        assert data.trip_inputs.origin == "London"
 
 
 def test_merge_trip_inputs_replace_mode_handles_cleared_destination():
@@ -557,7 +558,8 @@ def test_merge_trip_inputs_explicit_null_clears_origin():
     )
 
     assert result.origin is None, "Origin should be cleared when in explicit_nulls"
-    assert "origin" in result.missing_fields, "Origin should be in missing_fields"
+    # Note: origin is OPTIONAL, so it's not tracked in missing_fields
+    # Only destination and start_date are required fields
 
 
 def test_merge_trip_inputs_llm_null_preserves_origin():
@@ -693,7 +695,8 @@ def test_apply_user_patch_clears_origin():
         data = get_document_data(updated_doc)
 
         assert data.trip_inputs.origin is None, "Origin should be cleared"
-        assert "origin" in data.trip_inputs.missing_fields
+        # Note: origin is OPTIONAL, so it's not tracked in missing_fields
+        # Only destination and start_date are required fields
 
 
 # =============================================================================
@@ -704,8 +707,8 @@ def test_apply_user_patch_clears_origin():
 def test_apply_user_patch_clears_destination():
     """Test that apply_user_patch correctly handles destination clearing.
 
-    When a user clears the destination from the UI via explicit_nulls,
-    the PATCH should set destination to None.
+    When a user sets destination=None in the patch, it's auto-detected as
+    an explicit null (via model_fields_set) and cleared.
     """
     from app.crud_document import apply_user_patch_sync, get_document_data
     from app.schemas import DocumentTripInputsPatch, PlanDocumentPatch
@@ -736,11 +739,12 @@ def test_apply_user_patch_clears_destination():
         updated_doc = apply_user_patch_sync(db, doc=doc, patch=patch)
         data = get_document_data(updated_doc)
 
-        # Destination should remain unchanged when incoming is None (not in explicit_nulls)
-        # To actually clear it, the field must be in explicit_nulls set
+        # Destination is cleared because setting destination=None in the patch
+        # adds it to explicit_nulls (auto-detected via model_fields_set)
         assert (
-            data.trip_inputs.destination == "Nice"
-        ), "Destination preserved when None without explicit_nulls"
+            data.trip_inputs.destination is None
+        ), "Destination should be cleared when explicitly set to None in patch"
+        assert "destination" in data.trip_inputs.missing_fields
 
 
 def test_apply_user_patch_cascades_destination_change_to_branch():

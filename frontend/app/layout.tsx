@@ -2,6 +2,7 @@ import './globals.css';
 
 import type { ReactNode } from 'react';
 
+import { MapboxErrorSuppressor } from '@/components/map/MapboxErrorSuppressor';
 import { ConsentManager } from '@/components/nomadic/consent-manager';
 import { Providers } from '@/components/providers/Providers';
 
@@ -22,9 +23,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Skip to main content
         </a>
         <Providers>
-          <main id="main-content" role="main">
-            {children}
-          </main>
+          {/* Suppress known Mapbox timing errors before they reach error overlay */}
+          <MapboxErrorSuppressor>
+            <main id="main-content" role="main">
+              {children}
+            </main>
+          </MapboxErrorSuppressor>
         </Providers>
         <ConsentManager />
         {/* Toast portal target */}

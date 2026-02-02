@@ -259,7 +259,8 @@ export type PlanViewState =
   | 'S2_BLOCKED'       // -> P1_ENRICHED (handled by data checks)
   | 'S3_ITINERARY_READY' // -> P3_FINALIZED
   | 'S3_EDITING'       // -> P3_EDITING
-  | 'S3_BLOCKED';      // -> P3_BLOCKED
+  | 'S3_BLOCKED'       // -> P3_BLOCKED
+  | 'S3_PARTIAL_CONFLICT'; // Partial timeline with unschedulable blocks
 
 /**
  * Normalize legacy S* values to new P* values.
@@ -279,6 +280,8 @@ export function normalizePlanViewState(state: PlanViewState): PlanViewState {
       return 'P3_EDITING';
     case 'S3_BLOCKED':
       return 'P3_BLOCKED';
+    case 'S3_PARTIAL_CONFLICT':
+      return 'P3_BLOCKED'; // Partial timeline shown with conflict banner
     default:
       return state; // Already a P* value
   }
@@ -710,6 +713,10 @@ export interface DayBlock {
     title: string;
     description: string;
   }>;
+
+  // === NEW: Unschedulable marker (for partial timeline) ===
+  unschedulable?: boolean;
+  unschedulable_reason?: string;
 }
 
 /**

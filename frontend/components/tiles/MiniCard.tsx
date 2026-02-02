@@ -12,7 +12,7 @@
 
 'use client';
 
-import { ChevronDown, Code2, Heart, Star } from 'lucide-react';
+import { ChevronDown, Code2, Heart, Settings, Star } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { Skeleton } from '@/components/ui/skeleton';
@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/tooltip';
 import { placeholderImageForTile } from '@/lib/placeholders';
 import { getDeepLinkParams } from '@/lib/tileUtils';
-import { cn, isFlightType } from '@/lib/utils';
+import { cn, isFlightType, isHotelType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
 
 export interface MiniCardProps {
@@ -33,6 +33,8 @@ export interface MiniCardProps {
   /** Callback when card is clicked (opens modal) */
   onDetailsClick?: (tile: Tile) => void;
   onSaveClick?: (tile: Tile) => void;
+  /** Callback to open category-wide stays/hotel settings sheet */
+  onOpenStaysSettings?: () => void;
 }
 
 /**
@@ -158,6 +160,7 @@ export const MiniCard = memo(function MiniCard({
   isSaved = false,
   onDetailsClick,
   onSaveClick,
+  onOpenStaysSettings,
 }: MiniCardProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -238,6 +241,24 @@ export const MiniCard = memo(function MiniCard({
               !imageLoaded && 'opacity-0'
             )}
           />
+          {/* Settings gear for hotel/stay tiles */}
+          {onOpenStaysSettings && isHotelType(tile.type || '') && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenStaysSettings();
+              }}
+              className={cn(
+                'absolute bottom-1 right-1 p-1 rounded',
+                'bg-black/60 hover:bg-black/80 backdrop-blur-sm',
+                'transition-colors'
+              )}
+              aria-label="Hotel settings"
+            >
+              <Settings className="h-3 w-3 text-zinc-300" />
+            </button>
+          )}
         </div>
 
         {/* Content */}

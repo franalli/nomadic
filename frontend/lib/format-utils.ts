@@ -5,33 +5,10 @@
  * They may have different semantics than similar functions elsewhere (e.g., plan-transform.ts).
  */
 
-/**
- * Parse a date string (ISO format yyyy-MM-dd) into a Date object.
- * Returns null if invalid.
- *
- * IMPORTANT: Uses manual parsing to avoid timezone issues.
- * new Date("2026-01-31") interprets as UTC midnight, which in local time
- * can appear as the previous day. We parse components directly to create
- * a local midnight date.
- */
-function parseDate(dateStr: string | null | undefined): Date | null {
-  if (!dateStr) return null;
+import { parseISODateLocal } from './date-utils';
 
-  // Parse ISO date format (yyyy-MM-dd) as local time
-  const parts = dateStr.split('-');
-  if (parts.length === 3) {
-    const year = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10);
-    const day = parseInt(parts[2], 10);
-    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
-      return new Date(year, month - 1, day); // month is 0-indexed
-    }
-  }
-
-  // Fallback for other formats
-  const date = new Date(dateStr);
-  return isNaN(date.getTime()) ? null : date;
-}
+// Use centralized date parser to avoid timezone issues
+const parseDate = parseISODateLocal;
 
 /**
  * Format date range for pill display.

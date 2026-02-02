@@ -507,57 +507,68 @@ export function streamGraphPlan(
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
-        const { done, value } = await reader.read();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
 
-        if (done) {
-          break;
-        }
+          if (done) {
+            break;
+          }
 
-        // Decode the chunk and add to buffer
-        buffer += decoder.decode(value, { stream: true });
+          // Decode the chunk and add to buffer
+          buffer += decoder.decode(value, { stream: true });
 
-        // Process complete SSE events from the buffer
-        const lines = buffer.split('\n');
-        buffer = '';
+          // Process complete SSE events from the buffer
+          const lines = buffer.split('\n');
+          buffer = '';
 
-        let currentEvent = '';
-        let currentData = '';
+          let currentEvent = '';
+          let currentData = '';
 
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            currentData = line.slice(6);
-          } else if (line === '' && currentData) {
-            // Empty line signals end of event
-            try {
-              const parsed = JSON.parse(currentData) as SSEEvent;
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              currentData = line.slice(6);
+            } else if (line === '' && currentData) {
+              // Empty line signals end of event
+              try {
+                const parsed = JSON.parse(currentData) as SSEEvent;
 
-              if (parsed.type === 'token') {
-                callbacks.onToken(parsed.data);
-              } else if (parsed.type === 'node_status') {
-                callbacks.onNodeStatus?.(parsed.data);
-              } else if (parsed.type === 'complete') {
-                callbacks.onComplete(parsed.data);
-              } else if (parsed.type === 'error') {
-                callbacks.onError(new Error(parsed.message));
+                // Wrap callbacks in try-catch to prevent unhandled errors from leaving reader open
+                try {
+                  if (parsed.type === 'token') {
+                    callbacks.onToken(parsed.data);
+                  } else if (parsed.type === 'node_status') {
+                    callbacks.onNodeStatus?.(parsed.data);
+                  } else if (parsed.type === 'complete') {
+                    callbacks.onComplete(parsed.data);
+                  } else if (parsed.type === 'error') {
+                    callbacks.onError(new Error(parsed.message));
+                  }
+                } catch (callbackError) {
+                  console.error('[SSE] Callback error:', callbackError);
+                  // Don't rethrow - continue processing stream
+                }
+              } catch {
+                // Ignore parse errors for incomplete data
               }
-            } catch {
-              // Ignore parse errors for incomplete data
+              currentEvent = '';
+              currentData = '';
+            } else if (line !== '') {
+              // Incomplete line, add back to buffer
+              buffer += line + '\n';
             }
-            currentEvent = '';
-            currentData = '';
-          } else if (line !== '') {
-            // Incomplete line, add back to buffer
-            buffer += line + '\n';
+          }
+
+          // Keep any remaining incomplete data in the buffer
+          if (currentData) {
+            buffer = `event: ${currentEvent}\ndata: ${currentData}`;
           }
         }
-
-        // Keep any remaining incomplete data in the buffer
-        if (currentData) {
-          buffer = `event: ${currentEvent}\ndata: ${currentData}`;
-        }
+      } finally {
+        // Ensure reader is released even if callbacks throw
+        reader.releaseLock();
       }
     })
     .catch((error) => {

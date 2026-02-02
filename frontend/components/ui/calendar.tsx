@@ -2,7 +2,7 @@
 
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import * as React from 'react';
-import { DayPicker, type DayButtonProps } from 'react-day-picker';
+import { type DayButtonProps,DayPicker } from 'react-day-picker';
 
 import { cn } from '@/lib/utils';
 
@@ -20,6 +20,7 @@ const navButtonClass = cn(
 );
 
 // Custom DayButton with explicit priority-based styling (no CSS specificity issues)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function CustomDayButton({ day, modifiers, className, ...props }: DayButtonProps) {
   const isRangeStart = modifiers?.range_start;
   const isRangeEnd = modifiers?.range_end;

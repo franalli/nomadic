@@ -16,10 +16,11 @@
 8. [Specialist Domain Knowledge](#specialist-domain-knowledge)
 9. [Constraint Validation](#constraint-validation)
 10. [Caching Architecture](#caching-architecture)
-11. [Prompt File Mapping](#prompt-file-mapping)
-12. [Streaming Architecture](#streaming-architecture)
-13. [Tile Service Architecture](#tile-service-architecture)
-14. [Booking Provider Interface](#booking-provider-interface-scaffolding)
+11. [Selective Regeneration](#selective-regeneration)
+12. [Prompt File Mapping](#prompt-file-mapping)
+13. [Streaming Architecture](#streaming-architecture)
+14. [Tile Service Architecture](#tile-service-architecture)
+15. [Booking Provider Interface](#booking-provider-interface-scaffolding)
 
 ---
 
@@ -357,7 +358,7 @@ See `ux_unified_architecture.md` Section III.A for full specification.
 
 ### VerticalSpecialist
 
-Domain expert that runs BEFORE Architect calls tools.
+Domain expert that runs BEFORE Architect calls tools. **Uses LLM-first architecture with hardcoded fallback.**
 
 **Key Insight:** Returns BOTH constraints AND content.
 
@@ -368,10 +369,142 @@ Domain expert that runs BEFORE Architect calls tools.
 | `critique` | string | Review of current plan |
 | `enhancements` | string[] | "Book dive shop in advance" |
 
-**Domain Knowledge:**
-- Diving: Flight buffers, certification requirements, top sites
-- Hiking: Altitude acclimatization, proper footwear, trek recommendations
-- Skiing: Snow conditions, guide requirements, resort suggestions
+#### LLM-First Architecture (Zero-Template System)
+
+**Implementation:** Single LLM call per specialist generates feasibility + activities + constraints.
+
+```python
+SPECIALIST_SYSTEM_PROMPTS = {
+    "diving": """You are a PADI-certified dive master planning safe dive trips.
+CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
+1. NO-FLY TIME: 24h minimum after diving before flying
+2. NO ALTITUDE: No activities above 2500m within 24h of diving...""",
+
+    "hiking": """You are a certified mountain guide planning hiking expeditions.
+Focus: elevation gain, acclimatization (max 500m/day above 3000m)....""",
+
+    "skiing": """You are a certified ski instructor planning ski trips.
+Focus: avalanche risk, skill progression, snow conditions...""",
+}
+
+async def generate_specialist_output_llm(topic, destination, trip_plan):
+    """Single LLM call generates feasibility + activities + constraints."""
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.2)
+    return await llm.with_structured_output(LLMSpecialistOutput).ainvoke(...)
+```
+
+**Fallback Mechanism:** If LLM fails (parse error, timeout), falls back to minimal safety constraints:
+```python
+def _get_minimal_safety_constraints(topic: str) -> List[SpecialistConstraint]:
+    """Hardcoded fallback when LLM fails - safety over features."""
+    if topic == "diving":
+        return [SpecialistConstraint(
+            constraint_id="no_fly_24h",
+            type="temporal",
+            rule="24h_no_fly_after_diving",
+            severity=ConstraintSeverity.BLOCKING,
+            ...
+        )]
+```
+
+**Domain Knowledge (LLM-Generated):**
+- Diving: Flight buffers, certification requirements, real dive sites
+- Hiking: Altitude acclimatization, elevation data, trail recommendations
+- Skiing: Snow conditions, avalanche awareness, resort suggestions
+
+#### LLM Feasibility Layer
+
+Geographic feasibility checking for unknown destinations (e.g., "diving in Chamonix").
+
+**Two-Tier Architecture:**
+1. **Hardcoded List (Fast):** ~400 known destination/activity combinations
+2. **LLM Fallback (Cached):** GPT-4o-mini check for unknown destinations
+
+```python
+# Tier 1: Hardcoded check (0ms)
+if destination in DIVING_FEASIBILITY["infeasible"]:
+    return ("infeasible", "Diving not available", alternative)
+
+# Tier 2: LLM check (200ms, cached)
+possible, reason = get_feasibility_llm("diving", "Chamonix")
+# LLM determines: landlocked alpine town → diving impossible
+```
+
+**LLM Prompt:**
+```
+Is {topic} activity possible in {destination}?
+
+Rules:
+- Diving requires coastline, large lakes, or dedicated dive facilities
+- Skiing requires mountains with reliable snow or indoor ski facilities
+- Hiking requires terrain suitable for walking trails
+
+Respond JSON: {"possible": true/false, "reason": "brief"}
+```
+
+**Caching:** `@lru_cache(maxsize=1000)` - cache key is `f"{topic}:{destination}"`
+
+**Cost:** ~$0.0001 per check, ~200ms latency (first call only)
+
+**Fail-Open Policy:** If LLM fails, assume possible. False positives (user discovers no dive sites) are acceptable; false negatives (blocking valid destinations) break UX.
+
+**Frontend Handling:** S2StrategyView renders infeasible specialists with:
+- Red border and "Unavailable" badge
+- `feasibility_reason` message
+- `alternative_suggestion` (e.g., "Consider Bali, Red Sea, or Maldives")
+
+#### Parallel LLM Execution (Multi-Specialist Optimization)
+
+When multiple specialists are queued (e.g., "diving and hiking in Bali"), the system uses parallel LLM execution to reduce latency from ~8-12s (sequential) to ~4-6s (parallel).
+
+**Implementation:**
+```python
+async def generate_all_specialists_parallel(
+    topics: List[str],
+    destination: str,
+    trip_plan: TripPlan,
+) -> Dict[str, Optional[LLMSpecialistOutput]]:
+    """Run all specialist LLM calls in parallel using asyncio.gather()."""
+
+    async def safe_generate(topic: str) -> Tuple[str, Optional[LLMSpecialistOutput]]:
+        try:
+            result = await generate_specialist_output_llm(topic, destination, trip_plan)
+            return (topic, result)
+        except Exception as e:
+            _debug_log(f"[SPECIALIST] Parallel call failed for {topic}: {e}")
+            return (topic, None)
+
+    tasks = [safe_generate(topic) for topic in topics]
+    results = await asyncio.gather(*tasks)
+    return {topic: output for topic, output in results}
+```
+
+**Cache Strategy:**
+- Results are cached in `state.metadata["parallel_llm_results"]` as serialized dicts
+- Subsequent specialist node calls deserialize cached results using `LLMSpecialistOutput.model_validate()`
+- **Multi-specialist:** First specialist triggers parallel fetch for all; others use in-memory cache
+- **Single specialist:** Uses L1+L2 database cache directly (same path as parallel, ensures cache hits across sessions)
+
+**Debug Output (DEBUG=full):**
+```
+# Multi-specialist (parallel)
+[DEBUG] [SPECIALIST] PARALLEL TRIGGER: 2 specialists detected
+[DEBUG] 🤿 SPECIALIST END | duration=8432ms | topic=diving feasibility=feasible activities=3
+[DEBUG] 🥾 SPECIALIST END | duration=10ms | topic=hiking (cached)
+
+# Single specialist (L1+L2 cache)
+[DEBUG] [SPECIALIST] Single specialist 'diving' - using cached LLM path
+[DEBUG] [SPECIALIST_CACHE] Looking up cache for diving in Bali
+[DEBUG] [SPECIALIST_CACHE] ✅ HIT for diving - skipping LLM
+[DEBUG] 🤿 SPECIALIST END | duration=10ms | topic=diving
+```
+
+**Performance Impact:**
+| Scenario | Cold (no cache) | Warm (L2 hit) | Hot (L1 hit) |
+|----------|-----------------|---------------|--------------|
+| 1 specialist | ~5s (LLM) | ~50ms (DB) | ~10ms (memory) |
+| 2 specialists | ~5s (parallel) | ~100ms | ~20ms |
+| 3 specialists | ~6s (parallel) | ~150ms | ~30ms |
 
 ### LocalExpert
 
@@ -601,7 +734,111 @@ Each specialist type has its own constraint generator:
 **Conflict Detection:**
 - Temporal capacity (>11h activities per day)
 - Constraint clash (diving + high-altitude hiking same day)
+- Cross-domain constraint clash (diving + hiking within 24h buffer via `no_altitude_after_dive`)
 - Insufficient days for planned activities
+
+**Cross-Domain Constraints:** The `no_altitude_after_dive` constraint (BLOCKING severity) prevents scheduling high-altitude hiking/trekking/mountaineering within 24 hours of diving activities. Validated in `_detect_early_conflicts()`.
+
+#### Constraint Alias Normalization
+
+LLMs generate constraint names with natural variation (e.g., `"no_altitude_24h"`, `"altitude_buffer"`, `"no-altitude-after-diving"`). The builder normalizes these via **alias mapping** to ensure robust constraint detection regardless of LLM phrasing.
+
+**Location:** `backend/app/services/itinerary_builder.py` (lines ~186-210)
+
+```python
+CONSTRAINT_ALIASES: Dict[str, List[str]] = {
+    "no_altitude_after_dive": [
+        "no_altitude_24h", "altitude_buffer", "no_altitude_after_diving",
+        "altitude_restriction_after_dive",
+    ],
+    "min_24h_buffer_after_dive": [
+        "no_fly_24h", "flight_buffer_24h", "no_fly_after_diving",
+        "24h_no_fly_after_diving", "no_fly_buffer",
+    ],
+    "surface_interval": ["min_18h_surface_interval", "dive_surface_interval"],
+}
+
+def _find_constraint(
+    constraints: List["MergedConstraint"],
+    canonical_rule: str,
+) -> Optional["MergedConstraint"]:
+    """Find constraint by canonical rule name or any of its aliases."""
+    aliases = CONSTRAINT_ALIASES.get(canonical_rule, [])
+    all_names = [canonical_rule] + aliases
+    for c in constraints:
+        rule_lower = c.rule.lower().replace("-", "_").replace(" ", "_")
+        for name in all_names:
+            if rule_lower == name.lower() or name.lower() in rule_lower:
+                return c
+    return None
+```
+
+**Design Principle:** Builder defines canonical IDs → LLM outputs flexible natural language → Builder normalizes for detection. This inverts the typical approach where LLM must match exact constraint names.
+
+**Matching Strategy:**
+1. Exact match on canonical name
+2. Exact match on any alias
+3. Partial match (alias contained in rule name)
+4. Case-insensitive with `-`/`_`/` ` normalization
+
+**Usage in Conflict Detection:**
+```python
+# Instead of: if any(c.rule == "no_altitude_after_dive" for c in constraints)
+# Use: if _find_constraint(constraints, "no_altitude_after_dive")
+
+altitude_constraint = _find_constraint(constraints, "no_altitude_after_dive")
+nofly_constraint = _find_constraint(constraints, "min_24h_buffer_after_dive")
+```
+
+### Partial Timeline (Conflict Visualization)
+
+When conflicts are detected, the builder returns a **partial schedule** showing what CAN be scheduled, with unschedulable activities marked.
+
+**Backend Implementation:**
+```python
+class DayBlockOutput(BaseModel):
+    # ... existing fields
+    unschedulable: bool = False
+    unschedulable_reason: Optional[str] = None
+
+def _build_partial_schedule(self, days, primary_specialist, activities, constraints):
+    """Build partial timeline with schedulable activities + unschedulable markers."""
+    # Place primary specialist activities
+    days = self._place_anchors(days, {}, None)
+    days = self._inject_safety_buffers(days, constraints)
+
+    # Mark other specialists as unschedulable
+    for specialist, acts in activities.items():
+        if specialist != primary_specialist:
+            for activity in acts:
+                unschedulable_block = DayBlockOutput(
+                    summary=activity.title,
+                    specialist_type=specialist,
+                    unschedulable=True,
+                    unschedulable_reason=f"Requires 24h buffer after {primary_specialist}",
+                )
+                days[-2].blocks.append(unschedulable_block)
+    return days
+```
+
+**Frontend Rendering:**
+- Unschedulable blocks show with `opacity-60`, dashed amber border
+- "Cannot schedule" warning badge with AlertTriangle icon
+- Activity title shown with strikethrough
+- `unschedulable_reason` displayed as italic amber text
+
+**SSE Envelope:**
+```python
+yield format_sse({
+    "type": "envelope",
+    "plan_view_state": "S3_PARTIAL_CONFLICT",
+    "day_cards": [d.dict() for d in partial_days],  # Partial schedule
+    "conflicts": [c.dict() for c in conflicts],
+    "resolutions": [r.dict() for r in resolutions],
+})
+```
+
+**UX Flow:** Partial timeline auto-renders when `conflicts.length > 0 && day_cards.length > 0`. No extra "Show partial" click needed - user sees schedulable activities + grayed unschedulable markers inline. ConflictResolutionBanner shows only `extend_dates` and `remove_specialist` options.
 
 ---
 
@@ -616,12 +853,12 @@ Pydantic structured output is used for LLM nodes that need **guaranteed schema e
 | **IntentRouter** | ✅ Yes | GPT-4o-mini | `RouterOutput`, `IntentClassification` | Intent + field extraction in one call |
 | **TripArchitect** | ✅ Yes | GPT-4o | `ExtractedTripFields`, `ExtractedSettingsFields` | Trip field & settings extraction |
 | **LocalExpert** | ❌ No | ❌ Static | N/A | Uses `LOCAL_EXPERT_KNOWLEDGE` dict |
-| **VerticalSpecialist** | ⚙️ Optional | GPT-4o | `SpecialistOutput` | Enable with `USE_SPECIALIST_LLM=true` env var |
+| **VerticalSpecialist** | ✅ Yes | GPT-4o | `LLMSpecialistOutput`, `LLMActivity`, `LLMConstraint` | LLM-first with fallback |
 | **LogisticsNode** | ❌ No | ❌ N/A | N/A | API calls only (Amadeus, curated data) |
 | **ConstraintGuard** | ❌ No | ❌ N/A | N/A | Pure Python rule-based validation |
 | **Synthesizer** | ❌ No | GPT-4o | N/A | Free-form natural language (correct) |
 
-> **Note:** VerticalSpecialist uses hardcoded knowledge by default for consistent, fast responses. Enable `USE_SPECIALIST_LLM=true` to use LLM-generated constraints via `specialist_llm.py`. Falls back to hardcoded if LLM fails.
+> **Note:** VerticalSpecialist uses **LLM-first architecture** by default. Single LLM call generates feasibility + activities + constraints. Falls back to minimal safety constraints if LLM fails (parse error, timeout).
 
 ### Design Principle
 
@@ -768,18 +1005,53 @@ class TripPlan(BaseModel):
     vibe: Optional[str]       # "adventure", "relaxation", etc.
 ```
 
+### Activity (LLM-Generated)
+
+Rich activity model with topic-specific optional fields. Generated by `generate_specialist_output_llm()`.
+
+```python
+class Activity(BaseModel):
+    title: str
+    description: str = ""
+    location: Optional[str] = None
+    duration_hours: float = 3.0
+    difficulty: Literal["beginner", "intermediate", "advanced"] = "beginner"
+
+    # Scheduling hints (LLM can suggest)
+    day: Optional[int] = None
+    period: Optional[Literal["morning", "afternoon", "evening"]] = None
+
+    # Topic-specific optional fields
+    depth_meters: Optional[int] = None           # diving
+    certification_required: Optional[str] = None # diving
+    elevation_meters: Optional[int] = None       # hiking
+    distance_km: Optional[float] = None          # hiking
+    trail_type: Optional[str] = None             # hiking
+    vertical_meters: Optional[int] = None        # skiing
+    run_difficulty: Optional[str] = None         # skiing
+
+    # Extension point
+    topic_metadata: Dict[str, Any] = Field(default_factory=dict)
+```
+
 ### SpecialistConstraint
 
 Constraint injected by VerticalSpecialist.
 
 ```python
 class SpecialistConstraint(BaseModel):
+    constraint_id: str = ""      # Unique ID: "no_fly_24h", "altitude_buffer"
     type: Literal["temporal", "safety", "equipment", "certification", "budget"]
     rule: str                    # e.g., "min_24h_buffer_after_dive"
     severity: ConstraintSeverity = ConstraintSeverity.STRONG  # Priority for conflicts
-    applies_to: Optional[str]    # "flights", "activities", etc.
+    applies_to: Optional[str]    # DEPRECATED: Use applies_to_categories
+    applies_to_categories: List[str] = []  # Cross-domain targeting (e.g., ["hiking", "flights"])
     parameters: Dict[str, Any]   # e.g., {"max_depth_without_cert": 18}
     reason: Optional[str]        # Human-readable explanation
+    # UI display fields
+    label: Optional[str] = None  # Short display label
+    icon: Optional[str] = None   # Emoji icon
+    buffer_hours: Optional[int] = None  # For temporal constraints
 
 class ConstraintSeverity(str, Enum):
     """Constraint priority for multi-specialist conflict resolution."""
@@ -790,6 +1062,8 @@ class ConstraintSeverity(str, Enum):
 
 **Note:** Uses `Literal` because constraints are created by code (not LLM-generated).
 Compare with `LocalConstraint` which uses `str` for LLM-generated content.
+
+**Cross-Domain Constraints:** The `applies_to_categories` field enables constraints from one specialist to affect another (e.g., diving's `no_altitude_after_dive` targets hiking activities).
 
 ### ItineraryBlock
 
@@ -1057,11 +1331,12 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 ### Diving
 
 **Constraints:**
-| Rule | Type | Reason |
-|------|------|--------|
-| `min_24h_buffer_after_dive` | temporal | Decompression sickness risk |
-| `min_18h_surface_interval` | temporal | Minimum before single dive |
-| `advanced_cert_required_for_deep` | safety | Dives below 18m need AOW |
+| Rule | Type | Reason | Cross-Domain |
+|------|------|--------|--------------|
+| `min_24h_buffer_after_dive` | temporal | Decompression sickness risk | flights |
+| `min_18h_surface_interval` | temporal | Minimum before single dive | flights |
+| `advanced_cert_required_for_deep` | safety | Dives below 18m need AOW | activities |
+| `no_altitude_after_dive` | safety | Altitude >2500m within 24h increases DCS risk | hiking, trekking, mountaineering, skiing |
 
 **Top Destinations:**
 - Bali: USAT Liberty Wreck, Manta Point Nusa Penida, Crystal Bay
@@ -1077,6 +1352,8 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 | `altitude_acclimatization` | safety | Max 500m/day above 3000m |
 | `proper_footwear_required` | equipment | Hiking boots for mountain trails |
 
+**Note:** Hiking is affected by diving's `no_altitude_after_dive` constraint (one-directional: diving → hiking).
+
 **Top Destinations:**
 - Patagonia: Torres del Paine W Trek, Fitz Roy Summit Approach
 - Nepal: Everest Base Camp, Annapurna Circuit
@@ -1088,6 +1365,8 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 |------|------|--------|
 | `check_snow_conditions` | temporal | Verify avalanche reports |
 | `guide_required_offpiste` | certification | Certified guide for off-piste |
+
+**Note:** Skiing is affected by diving's `no_altitude_after_dive` constraint (one-directional: diving → skiing).
 
 **Top Destinations:**
 - Chamonix: Vallee Blanche, Les Grands Montets
@@ -1117,6 +1396,7 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 | Specialist | 24h surface interval (diving) | info | |
 | Specialist | Altitude warning (hiking) | info | |
 | Specialist | Certification required | warning | |
+| Specialist | No altitude after diving (cross-domain) | info | ItineraryBuilder enforces |
 
 ### Landlocked Countries (Partial List)
 
@@ -1128,10 +1408,20 @@ Switzerland, Austria, Czech Republic, Hungary, Nepal, Mongolia, Bolivia, Rwanda,
 
 ### Cache Implementations
 
+**Planner Caches (Session-Scoped):**
 | Cache | Class | Max Size | TTL | Key Components | Purpose |
 |-------|-------|----------|-----|----------------|---------|
 | `ResponseCache` | `CacheNode` | 200 | 3600s | node_name, core_fields_hash, follow_up_hash | Reuse responses |
 | `TileCache` | `CacheNode` | 100 | 300s | session_id, tile_type, query_hash | Cache tile API results |
+
+**Two-Tier LLM/API Caches (Cross-Session):**
+| Cache | Service File | L1 Size | L1 TTL | L2 TTL | Key Format | Purpose |
+|-------|-------------|---------|--------|--------|------------|---------|
+| Specialist | `specialist_cache.py` | 128 | 1h | 7 days | `specialist:{topic}:{dest}:{month}:{duration}` | LLM outputs |
+| Tile | `tile_cache.py` | 256 | 24h | 24h | `tiles:{provider}:{type}:{dest}:{dates}` | Provider API data |
+| Router | `router_cache.py` | 500 | 1h | N/A | `SHA256({text}:{date})` | NL extraction |
+
+**Database Table:** `response_cache` with `cache_type` column for filtering (values: `'specialist'`, `'tiles'`).
 
 ### Cache Invalidation Triggers
 
@@ -1179,6 +1469,306 @@ Two-tier cache for destination images.
 2. Database cache (persistent)
 3. Unsplash API (fresh fetch)
 4. Picsum fallback (deterministic seed-based)
+
+### Specialist LLM Cache
+
+Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for repeated destination/activity queries.
+
+**Service:** `backend/app/services/specialist_cache.py`
+
+**Tier 1: In-Memory TTLCache (Thread-Safe)**
+- Storage: `cachetools.TTLCache` with `RLock` for thread safety
+- Separate `_stats_lock` RLock for hit/miss counters (prevents counter race conditions)
+- Max size: 128 entries
+- TTL: 1 hour
+- Key format: `specialist:{topic}:{destination}:{month}:{duration}`
+
+**Tier 2: Database Cache**
+- Table: `response_cache` (filtered by `cache_type = 'specialist'`)
+- TTL: 7 days
+- Primary Key: `cache_key` (VARCHAR 256)
+- Storage: JSONB for `LLMSpecialistOutput.model_dump()`
+
+**Cache Key Components:**
+| Component | Example | Purpose |
+|-----------|---------|---------|
+| topic | `diving` | Specialist type |
+| destination | `bali` | Normalized lowercase |
+| month | `2025-02` | Seasonal context |
+| duration | `14` | Trip length affects activity count |
+
+**Lookup Order:**
+1. L1 in-memory (thread-safe) → ~1ms
+2. L2 PostgreSQL → ~50ms (promotes to L1 on hit)
+3. LLM API call → ~5s (writes to both layers)
+
+**Admin Endpoints:**
+- `GET /api/admin/specialist-cache-stats` - Hit/miss statistics
+- `POST /api/admin/clear-specialist-cache` - Clear both layers
+
+**Integration Points:**
+- Multi-specialist: `generate_all_specialists_parallel()` - batch cache lookup/write
+- Single specialist: `vertical_specialist()` - direct L1+L2 lookup before `generate_specialist_output_llm()`
+
+### Tile Data Cache
+
+Two-tier cache for hotel/activity provider data. Reduces API calls and improves response time for repeated searches.
+
+**Service:** `backend/app/services/tile_cache.py`
+
+**Tier 1: In-Memory TTLCache (Thread-Safe)**
+- Storage: `cachetools.TTLCache` with `RLock` for thread safety
+- Max size: 256 entries
+- TTL: 24 hours
+- Key format: `tiles:{provider}:{type}:{dest}:{start_date}:{end_date}`
+
+**Tier 2: Database Cache**
+- Table: `response_cache` (filtered by `cache_type = 'tiles'`)
+- TTL: 24 hours
+- Storage: JSONB array of tile dicts
+
+**Cache Key Components:**
+| Component | Example | Purpose |
+|-----------|---------|---------|
+| provider | `amadeus`, `curated` | Data source |
+| type | `hotel`, `activity` | Tile vertical |
+| dest | `bali` | Normalized lowercase |
+| dates | `2025-02-01:2025-02-14` | Search date range |
+
+**Why 24h TTL:** Hotel prices and availability change daily, but not hourly. 24h balances freshness vs hit rate.
+
+**Admin Endpoints:**
+- `GET /api/admin/tile-cache-stats` - Hit/miss statistics
+- `POST /api/admin/clear-tile-cache` - Clear both layers
+
+**Integration Point:** `logistics_node.py` → `_search_hotels_and_activities()`
+
+### Router Extraction Cache
+
+L1-only cache for IntentRouter NL extraction results. Only caches self-contained queries to prevent cross-conversation pollution.
+
+**Service:** `backend/app/services/router_cache.py`
+
+**Tier 1: In-Memory TTLCache (Thread-Safe)**
+- Storage: `cachetools.TTLCache` with `RLock`
+- Max size: 500 entries
+- TTL: 1 hour
+- Key format: `SHA256({normalized_text}:{today_date})[:32]`
+
+**No L2:** Conversational context is short-lived; L2 would have low hit rate.
+
+**CRITICAL: Context-Dependency Detection**
+
+Queries that reference conversation context are NOT cached to prevent bugs:
+
+| Query | Cacheable | Reason |
+|-------|-----------|--------|
+| "I want to go diving in Bali Feb 1-14" | ✅ Yes | Self-contained |
+| "Show me diving there" | ❌ No | "there" depends on context |
+| "I want that one" | ❌ No | "that" depends on context |
+| "Same dates as before" | ❌ No | "same" depends on context |
+
+**Context Words Detected:** `there`, `that`, `this`, `it`, `them`, `same`, `again`, `too`, `also`
+
+**Why Key Includes Date:** Relative dates like "next Friday" resolve differently depending on when asked.
+
+**Admin Endpoints:**
+- `GET /api/admin/router-cache-stats` - Hit/miss/skipped statistics
+- `POST /api/admin/clear-router-cache` - Clear cache
+
+**Integration Point:** `intent_router.py` → `_classify_and_extract_with_llm()`
+
+---
+
+## Selective Regeneration
+
+Selective regeneration minimizes LLM calls when trip inputs change by computing the minimum required execution path based on which fields changed.
+
+### Core Principle
+
+```
+Changed Fields Detection → Strategy Computation → Selective Execution → Cache Update
+```
+
+### Strategy Tiers (Lowest to Highest Cost)
+
+| Strategy | Trigger Fields | Execution Path | Est. Time | LLM Calls |
+|----------|---------------|----------------|-----------|-----------|
+| **BUILDER** | `preferred_tile_ids`, `origin` | ItineraryBuilder only | ~100ms | None |
+| **LOGISTICS** | `adults`, `children`, `budget`, `flight_settings`, `hotel_settings`, `activity_skill_level` | LogisticsNode → Builder | ~500ms | None (API calls only) |
+| **SPECIALISTS** | `start_date`, `end_date`, `activity_categories` | Specialists → Logistics → Builder | ~3-8s | Yes |
+| **FULL** | `destination` | Full graph re-execution | ~10-15s | Yes |
+
+### Field-to-Strategy Mapping
+
+```python
+# backend/app/services/regen_strategy.py
+FIELD_IMPACT: Dict[str, RegenStrategy] = {
+    # FULL - destination changes invalidate everything
+    "destination": RegenStrategy.FULL,
+    # SPECIALISTS - dates affect seasonal context and activity capacity
+    "dates": RegenStrategy.SPECIALISTS,
+    # SPECIALISTS - activity categories trigger specialist detection
+    "activity_categories": RegenStrategy.SPECIALISTS,
+    # LOGISTICS - affects tile availability/pricing, not recommendations
+    "travelers": RegenStrategy.LOGISTICS,
+    "budget": RegenStrategy.LOGISTICS,
+    "flight_settings": RegenStrategy.LOGISTICS,
+    "hotel_settings": RegenStrategy.LOGISTICS,
+    "activity_skill_level": RegenStrategy.LOGISTICS,
+    # BUILDER - only affects itinerary structure, reuse cached tiles
+    "origin": RegenStrategy.BUILDER,
+}
+```
+
+**Why dates trigger SPECIALISTS:** Seasonal context affects specialist recommendations. "Bali diving March" vs "Bali diving November" (monsoon season) produces different activity recommendations.
+
+**Why activity_categories trigger SPECIALISTS:** Changing from general exploration to diving/hiking/skiing triggers specialist detection in IntentRouter, requiring new LLM-generated recommendations.
+
+**Why settings trigger LOGISTICS:** Flight/hotel/activity settings affect tile filtering (direct flights, star ratings, skill levels) but don't invalidate specialist knowledge - we filter from cached tiles.
+
+### Backend Implementation
+
+#### On-Demand Field Hash Computation (main.py, regen_strategy.py)
+
+Field hashes are computed on-demand at the `/api/expand-itinerary` endpoint by comparing the document's stored `trip_inputs` against the incoming request:
+
+```python
+# In expand_itinerary endpoint (main.py)
+# Compute previous field hashes from document's stored trip_inputs
+prev_trip_inputs = (
+    doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {}
+)
+previous_hashes = compute_field_hashes(prev_trip_inputs)
+
+# Compute current field hashes from request trip_inputs
+current_hashes = compute_field_hashes(trip_inputs_data)
+
+# Detect which fields changed
+changed_fields = {
+    k for k in current_hashes
+    if current_hashes[k] != previous_hashes.get(k)
+}
+strategy = compute_strategy(changed_fields)
+```
+
+**Why on-demand instead of stored:** The `Session` model tracks authentication (tokens, expiry) while the `Document` model stores trip state. Computing hashes on-demand from `Document.trip_inputs` avoids schema changes and keeps the change detection logic centralized in the endpoint.
+
+#### Strategy Computation (regen_strategy.py)
+
+```python
+def compute_strategy(changed_fields: Set[str]) -> RegenStrategy:
+    """Most conservative strategy wins."""
+    if not changed_fields:
+        return RegenStrategy.BUILDER  # Preferences may have changed
+
+    # Priority order: FULL > SPECIALISTS > LOGISTICS > BUILDER
+    for strategy in STRATEGY_PRIORITY:
+        if strategy in [FIELD_IMPACT.get(f) for f in changed_fields]:
+            return strategy
+
+    return RegenStrategy.BUILDER
+```
+
+#### Node-Level Cache Awareness
+
+Each node checks if cached output can be reused before executing:
+
+**VerticalSpecialist & LocalExpert:**
+```python
+# Check if cached section exists with matching destination
+existing_sections = state.metadata.get("strategy_sections", [])
+cached_section = next(
+    (s for s in existing_sections if s.get("specialist_type") == topic), None
+)
+if cached_section and destination_unchanged:
+    log(f"[{topic}] Cache HIT: Reusing cached output")
+    return state  # No-op, skip LLM call
+```
+
+**LogisticsNode:**
+```python
+# Check if tiles exist for current destination
+if state.tiles.get("hotels") and tiles_destination == current_destination:
+    log("LOGISTICS", "Cache HIT: Reusing cached tiles")
+    return state  # No-op, skip tile fetching
+```
+
+### Frontend Implementation (useItineraryRegeneration.ts)
+
+The hook tracks both preferences AND trip inputs for change detection, using stable stringification to handle nested settings objects:
+
+```typescript
+// Stable JSON stringification for consistent hashing
+// Ensures objects with different key orders produce the same hash
+function stableStringify(obj: unknown): string {
+  if (obj === null || obj === undefined) return '';
+  if (typeof obj !== 'object') return String(obj);
+  if (Array.isArray(obj)) {
+    return JSON.stringify(obj.map(stableStringify).sort());
+  }
+  const sortedKeys = Object.keys(obj).sort();
+  const sortedObj = {};
+  for (const key of sortedKeys) {
+    sortedObj[key] = stableStringify(obj[key]);
+  }
+  return JSON.stringify(sortedObj);
+}
+
+// Hash trip inputs for change detection (including settings)
+const tripInputsHash = useMemo(() => {
+  if (!tripInputs) return '';
+  const activitySettings = tripInputs.activity_settings || {};
+  return JSON.stringify({
+    destination: tripInputs.destination,
+    start_date: tripInputs.start_date,
+    end_date: tripInputs.end_date,
+    adults: tripInputs.adults,
+    children: tripInputs.children,
+    budget: tripInputs.budget,
+    origin: tripInputs.origin,
+    // Settings fields use stable stringification for consistent hashing
+    flight_settings: stableStringify(tripInputs.flight_settings),
+    hotel_settings: stableStringify(tripInputs.hotel_settings),
+    activity_categories: stableStringify(activitySettings.categories),
+    activity_skill_level: activitySettings.skill_level || '',
+  });
+}, [tripInputs]);
+
+// Combined change detection
+const hasChanges = hasPreferenceChanges || hasTripInputChanges;
+```
+
+### Performance Impact
+
+| Scenario | Without Selective Regen | With Selective Regen | Savings |
+|----------|------------------------|----------------------|---------|
+| Heart a tile | ~10s (full graph) | ~100ms (BUILDER) | 99% |
+| Change origin | ~10s (full graph) | ~100ms (BUILDER) | 99% |
+| Change travelers | ~10s (full graph) | ~500ms (LOGISTICS) | 95% |
+| Change hotel stars | ~10s (full graph) | ~500ms (LOGISTICS) | 95% |
+| Change flight settings | ~10s (full graph) | ~500ms (LOGISTICS) | 95% |
+| Change skill level | ~10s (full graph) | ~500ms (LOGISTICS) | 95% |
+| Change dates | ~10s (full graph) | ~6s (SPECIALISTS) | 40% |
+| Add activity category | ~10s (full graph) | ~6s (SPECIALISTS) | 40% |
+| Change destination | ~10s (full graph) | ~10s (FULL) | 0% |
+
+### Debug Logging
+
+When `DEBUG=full`, selective regeneration logs its decisions:
+
+```
+[DEBUG] 🔄 [expand-itinerary] Selective Regen: strategy=builder, changed={'origin'}
+[DEBUG] 🤿 SPECIALIST [diving] Cache HIT: Reusing cached output
+[DEBUG] ✈️ LOGISTICS Cache HIT: Reusing cached tiles
+
+[DEBUG] 🔄 [expand-itinerary] Selective Regen: strategy=logistics, changed={'hotel_settings'}
+[DEBUG] 🤿 SPECIALIST [diving] Cache HIT: Reusing cached output
+[DEBUG] ✈️ LOGISTICS Cache MISS: Re-fetching tiles with new settings
+
+[DEBUG] 🔄 [expand-itinerary] Selective Regen: strategy=specialists, changed={'activity_categories'}
+[DEBUG] 🤿 SPECIALIST [hiking] NEW: Generating recommendations
+```
 
 ---
 
@@ -1476,6 +2066,41 @@ When debugging S2 → S3 transitions, trace these logs in terminal:
 [DEBUG] 📤 [expand-itinerary] Emitting envelope          # Sending to frontend
 ```
 
+#### Node Timing (Performance Debugging)
+
+When `DEBUG=full`, each LangGraph node logs its execution duration:
+
+```
+[DEBUG] 🧭 ROUTER START | message=diving and hiking bali march 1-5
+[DEBUG] 🧭 ROUTER END | duration=892ms | intent=PLANNING specialist_hints=['diving', 'hiking']
+[DEBUG] 🌍 LOCAL_EXPERT END | duration=12ms | destination=Bali
+[DEBUG] 🤿 SPECIALIST END | duration=8432ms | topic=diving feasibility=feasible activities=3
+[DEBUG] 🥾 SPECIALIST END | duration=10ms | topic=hiking (cached from parallel)
+[DEBUG] ✈️ LOGISTICS END | duration=234ms | flights=4 hotels=3
+[DEBUG] 📝 SYNTHESIZER END | duration=1823ms | tokens=412
+```
+
+**Timing Functions (in `debug_utils.py`):**
+
+| Function | Purpose |
+|----------|---------|
+| `_debug_node_timer_start(node_name)` | Start timing (call at node entry) |
+| `_debug_node_timer_end(node_name, emoji, **outputs)` | End timing and log duration |
+| `NodeTimer(node_name, emoji)` | Context manager for automatic timing |
+
+**Usage:**
+```python
+# Manual timing
+_debug_node_timer_start("specialist")
+# ... node code ...
+_debug_node_timer_end("specialist", "🤿", topic=topic, activities=len(activities))
+
+# Context manager
+with NodeTimer("synthesizer", "📝") as timer:
+    # ... node code ...
+    timer.set_outputs(tokens=token_count)
+```
+
 **Early Return Detection:**
 - If 🔥 log is missing, check for `❌ [expand-itinerary]` logs indicating:
   - Missing end_date
@@ -1539,10 +2164,17 @@ class Resolution(BaseModel):
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
+| `/api/admin/cache-stats` | GET | Unified stats for all caches (specialist, tile, router) |
+| `/api/admin/specialist-cache-stats` | GET | Specialist cache hit/miss statistics |
+| `/api/admin/tile-cache-stats` | GET | Tile cache hit/miss statistics |
+| `/api/admin/router-cache-stats` | GET | Router cache hit/miss/skipped statistics |
+| `/api/admin/clear-specialist-cache` | POST | Clear specialist L1 + L2 |
+| `/api/admin/clear-tile-cache` | POST | Clear tile L1 + L2 |
+| `/api/admin/clear-router-cache` | POST | Clear router L1 only |
 | `/api/admin/clear-validation-cache` | POST | Clear validation caches |
 | `/api/admin/fresh-start` | POST | Clear validation + response caches |
 | `/api/admin/clear-all-checkpoints` | POST | Clear ALL LangGraph checkpoints |
-| `/api/admin/clear-all-caches` | POST | Comprehensive clear of ALL caches |
+| `/api/admin/clear-all-caches` | POST | Comprehensive clear of ALL caches (includes L1+L2 for specialist, tile, router) |
 
 ---
 
@@ -1587,13 +2219,31 @@ This ensures tiles have consistent images and data regardless of how they were f
 
 ### Settings-Aware Tile Filtering
 
-| Setting Type | Filter Applied |
-|--------------|----------------|
-| `hotel_settings.min_stars` | `rating >= min_stars` |
-| `hotel_settings.amenities` | Must include all requested amenities |
-| `flight_settings.cabin_class` | Filter by cabin type |
-| `flight_settings.direct_only` | Exclude layover flights |
-| `activity_settings.categories` | Filter by activity type |
+Both `curated_provider.py` and `amadeus_provider.py` apply filters from `SearchContext`:
+
+| Setting Type | Filter Applied | Budget Allocation |
+|--------------|----------------|-------------------|
+| `budget` (hotels) | `tile.price_estimate <= budget * 0.40` | 40% |
+| `budget` (activities) | `tile.price_estimate <= budget * 0.30` | 30% |
+| `budget` (flights) | `tile.price_estimate <= budget * 0.30` | 30% |
+| `hotel_settings.min_stars` | `tile.rating >= min_stars` (fallback: `meta.stars`) | - |
+| `flight_settings.direct_only` | `tile.meta.stops == 0` | - |
+| `activity_settings.skill_level` | `tile_skill_level <= user_skill_level` | - |
+
+**Skill Level Filtering Logic:**
+```python
+# Order: beginner < intermediate < advanced
+# User "intermediate" sees: beginner + intermediate tiles
+# User "advanced" sees: all tiles
+skill_order = ["beginner", "intermediate", "advanced"]
+tile_idx = skill_order.index(tile_skill)
+user_idx = skill_order.index(user_skill)
+return tile_idx <= user_idx
+```
+
+**Implementation Files:**
+- `backend/app/tile_service/curated_provider.py::search()` - Budget, stars, skill filtering
+- `backend/app/tile_service/amadeus_provider.py::_search_async()` - Budget filtering post-API
 
 ---
 
@@ -1715,6 +2365,7 @@ from app.planner import (
 | `P1_ENRICHED` | Specialists run, strategy sections present | Strategy cards visible |
 | `P2_LOGISTICS` | Tiles fetched, suggestions available | Full dashboard |
 | `P3_FINALIZED` | Itinerary validated, ready to book | Complete itinerary |
+| `S3_PARTIAL_CONFLICT` | Conflict detected, partial schedule shown | Partial timeline with unschedulable blocks |
 
 ### Two-Mode Frontend System
 

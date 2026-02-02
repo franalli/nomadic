@@ -13,18 +13,19 @@
  * @see docs/ux_unified_architecture.md for specification
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useScrollSpy } from './useScrollSpy';
 import {
+  combineMapItems,
+  extractActivityTypes,
   extractMapItemsFromDayCards,
   extractMapItemsFromSections,
-  combineMapItems,
   generateRouteGeoJson,
-  extractActivityTypes,
   type MapItem,
 } from '@/lib/route-utils';
 import type { DayCard, StrategySection } from '@/types/plan-envelope';
+
+import { useScrollSpy } from './useScrollSpy';
 
 // =============================================================================
 // Types
@@ -96,6 +97,16 @@ export function useMapSync({
   // === Local State ===
   const [hoveredDay, setHoveredDay] = useState<number | null>(null);
   const [visibleLayers, setVisibleLayers] = useState<Set<string>>(new Set());
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup highlight timer on unmount
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
+    };
+  }, []);
 
   // === Extract Map Items ===
   const allMapItems = useMemo((): MapItem[] => {
@@ -119,7 +130,7 @@ export function useMapSync({
 
   // === Initialize Visible Layers ===
   // Show all layers by default when types change
-  useMemo(() => {
+  useEffect(() => {
     if (visibleLayers.size === 0 && availableTypes.length > 0) {
       setVisibleLayers(new Set(availableTypes));
     }
@@ -186,10 +197,16 @@ export function useMapSync({
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
+      // Clear any existing highlight timer
+      if (highlightTimerRef.current) {
+        clearTimeout(highlightTimerRef.current);
+      }
+
       // Add highlight effect
       element.classList.add('ring-2', 'ring-emerald-500', 'transition-all');
-      setTimeout(() => {
+      highlightTimerRef.current = setTimeout(() => {
         element.classList.remove('ring-2', 'ring-emerald-500');
+        highlightTimerRef.current = null;
       }, 2000);
     }
   }, []);

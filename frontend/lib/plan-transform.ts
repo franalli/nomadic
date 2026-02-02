@@ -6,6 +6,12 @@
 import type { DocumentTripInputs } from '@/types/document';
 import type { Tile } from '@/types/tile';
 
+import {
+  addDays,
+  getDayOfWeek,
+  parseISODateLocal as parseDate,
+} from './date-utils';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Segment Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,28 +34,6 @@ export interface DayData {
   date: Date | null;
   segments: Segment[];
   notes?: string;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Date Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-function getDayOfWeek(date: Date): string {
-  return DAY_NAMES[date.getDay()];
-}
-
-function parseDate(dateStr: string | null | undefined): Date | null {
-  if (!dateStr) return null;
-  const date = new Date(dateStr);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

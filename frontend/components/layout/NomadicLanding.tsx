@@ -15,12 +15,17 @@ import { useLocalBookingSettings } from '@/components/layout/hooks/useLocalBooki
 import { useTripInputsEditor } from '@/components/layout/hooks/useTripInputsEditor';
 import { SplitLayoutView } from '@/components/layout/SplitLayoutView';
 import { BookingSection } from '@/components/plan/BookingSection';
+import type { ConflictData, ConflictResolution } from '@/components/plan/ConflictResolutionBanner';
 import type { GenerationState } from '@/components/plan/planStateHelpers';
+import { shouldAutoTriggerItinerary } from '@/components/plan/planStateHelpers';
 import {
+  ActivitiesSheet,
   BudgetSheet,
   DatesSheet,
   DestinationSheet,
+  FlightsSheet,
   OriginSheet,
+  StaysSheet,
   TravelersSheet,
 } from '@/components/plan/sheets';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
@@ -33,6 +38,7 @@ import { useShortlist } from '@/hooks/useShortlist';
 import { useSpecialistDeepLink } from '@/hooks/useSpecialistDeepLink';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
 import { apiFetch, fetchDestinationImage } from '@/lib/api';
+import { parseISODateLocal } from '@/lib/date-utils';
 import type { SpecialistType } from '@/lib/specialistLinkParser';
 import { createStreamParser, type StreamEvent } from '@/lib/streamParser';
 import { formatDateForDisplay } from '@/lib/utils';
@@ -41,24 +47,6 @@ import { DEFAULT_TRIP_INPUTS, useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import type { ToastType } from '@/types/hooks';
 import type { PlanState, PlanViewModel, PlanViewState } from '@/types/plan-envelope';
-
-/**
- * Parse ISO date string (yyyy-MM-dd) as local midnight.
- * Avoids timezone issues where new Date("2026-01-26") is interpreted as UTC.
- */
-function parseISODateLocal(dateStr: string | null | undefined): Date | null {
-  if (!dateStr) return null;
-  const parts = dateStr.split('-');
-  if (parts.length === 3) {
-    const year = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10);
-    const day = parseInt(parts[2], 10);
-    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
-      return new Date(year, month - 1, day);
-    }
-  }
-  return null;
-}
 
 // Receipt data type for showing "Updated: X, Y · Undo" after freeform extraction
 interface ChangeReceiptData {
@@ -169,6 +157,15 @@ export function NomadicLanding() {
   // Used to show placeholder AgentCards immediately while backend processes
   const [localPendingTopics, setLocalPendingTopics] = useState<string[]>([]);
 
+  // Activity settings sheet - opened from gear icons on specialist cards
+  const [gearActivitiesSheetOpen, setGearActivitiesSheetOpen] = useState(false);
+
+  // Stays settings sheet - opened from gear icons on hotel/check-in blocks
+  const [gearStaysSheetOpen, setGearStaysSheetOpen] = useState(false);
+
+  // Flights settings sheet - opened from gear icons on flight blocks
+  const [gearFlightsSheetOpen, setGearFlightsSheetOpen] = useState(false);
+
   // Derive tripInputs from store (with defaults)
   const tripInputs: DocumentTripInputs = useMemo(() => {
     if (!storeTripInputs) return DEFAULT_TRIP_INPUTS;
@@ -190,6 +187,9 @@ export function NomadicLanding() {
   const [uiGeneration, setUiGeneration] = useState<GenerationState | null>(null);
   const [lastGenerationError, setLastGenerationError] = useState<string | null>(null);
 
+  // Conflict state for Path A UX - shows conflict resolution banner when ItineraryBuilder fails
+  const [conflictData, setConflictData] = useState<ConflictData | null>(null);
+
   const [chatKey, setChatKey] = useState(0);
   const chatPanelContainerRef = useRef<HTMLDivElement | null>(null);
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
@@ -205,6 +205,7 @@ export function NomadicLanding() {
     handleUpdateFlightSettings,
     handleUpdateHotelSettings,
     handleUpdateTransportSettings,
+    handleUpdateActivitySettings,
     handleAddActivity,
     handleRemoveActivity,
   } = useLocalBookingSettings(storeTripInputs, addToast);
@@ -219,7 +220,7 @@ export function NomadicLanding() {
   const [destinationImageUrl, setDestinationImageUrl] = useState<string | null>(null);
   const lastFetchedDestination = useRef<string | null>(null);
 
-  // Fetch destination image when destination changes
+  // Fetch destination image when destination changes (with AbortController)
   useEffect(() => {
     const destination = tripInputs.destination;
     if (!destination || destination === lastFetchedDestination.current) return;
@@ -227,16 +228,24 @@ export function NomadicLanding() {
     lastFetchedDestination.current = destination;
     setDestinationImageUrl(null); // Clear while loading
 
+    const controller = new AbortController();
+
+    // Note: fetchDestinationImage uses apiFetch which doesn't accept signal yet,
+    // so we check abort status after the fetch completes
     fetchDestinationImage(destination)
       .then((res) => {
-        // Only update if this is still the current destination
-        if (lastFetchedDestination.current === destination) {
+        // Only update if not aborted and this is still the current destination
+        if (!controller.signal.aborted && lastFetchedDestination.current === destination) {
           setDestinationImageUrl(res.image_url);
         }
       })
       .catch((err) => {
-        console.warn('Failed to fetch destination image:', err);
+        if (!controller.signal.aborted) {
+          console.warn('Failed to fetch destination image:', err);
+        }
       });
+
+    return () => controller.abort();
   }, [tripInputs.destination]);
 
   // Branch manager hook - manages branches, tiles, and generating state
@@ -275,6 +284,8 @@ export function NomadicLanding() {
     // Clear local UI generation state
     setUiGeneration(null);
     setLastGenerationError(null);
+    // Clear conflict state
+    setConflictData(null);
     // Clear receipt data
     setReceiptData(null);
     previousTripInputsRef.current = null;
@@ -857,9 +868,56 @@ export function NomadicLanding() {
           // Sync preferences to track which were used in this generation
           documentStore.markPreferencesAsApplied();
         } else if (event.type === 'error') {
-          console.error('[expand-itinerary] Error received:', event.message);
-          setLastGenerationError(event.message || 'Failed to generate itinerary');
+          // Check if this is a conflict error (Path A UX)
+          try {
+            const parsed = JSON.parse(event.message || '{}');
+            if (parsed.error === 'CONSTRAINT_CONFLICT' && parsed.conflicts) {
+              console.debug('[expand-itinerary] Conflict detected, showing partial timeline');
+              // Convert backend conflict to ConflictData format
+              const conflict = parsed.conflicts[0];
+              // Keep original backend actions - frontend now supports them
+              const resolutions = (parsed.resolutions || []).map((r: {
+                action: string;
+                description: string;
+                new_duration?: number;
+                keep_specialist?: string;
+                feasibility?: string;
+              }) => ({
+                action: r.action as 'extend_dates' | 'extend_trip' | 'remove_specialist' | 'reduce_activities',
+                label: r.description,
+                description: r.description,
+                new_duration: r.new_duration,
+                keep_specialist: r.keep_specialist,
+                feasibility: r.feasibility,
+              }));
+              setConflictData({
+                type: conflict.type || 'constraint_clash',
+                message: conflict.message || 'Constraint conflict detected',
+                specialists: conflict.specialists || [],
+                resolutions: resolutions.length > 0 ? resolutions : undefined,
+              });
+              // Store partial day_cards if present (auto-render partial timeline)
+              if (parsed.day_cards && parsed.day_cards.length > 0) {
+                console.debug(`[expand-itinerary] Storing ${parsed.day_cards.length} partial day cards`);
+                documentStore.mergeEnvelope({
+                  day_cards: parsed.day_cards,
+                  plan_view_state: 'S3_PARTIAL_CONFLICT',
+                });
+              }
+              setLastGenerationError(null); // Clear error - conflict banner handles it
+            } else {
+              console.error('[expand-itinerary] Error received:', event.message);
+              setLastGenerationError(event.message || 'Failed to generate itinerary');
+              setConflictData(null);
+            }
+          } catch {
+            console.error('[expand-itinerary] Error received:', event.message);
+            setLastGenerationError(event.message || 'Failed to generate itinerary');
+            setConflictData(null);
+          }
         }
+        // Note: 'conflict' event type would be handled here if backend supports it
+        // Currently conflicts are returned via error events with CONSTRAINT_CONFLICT code
       });
 
       while (true) {
@@ -882,6 +940,58 @@ export function NomadicLanding() {
       }
     }
   }, [storeDocument, shortlist.savedTileIds, documentStore]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PATH A: Auto-Trigger Itinerary for Multi-Specialist Trips
+  // ─────────────────────────────────────────────────────────────────────────────
+  // When S2_STRATEGY_READY + multi-specialist + hasDates, auto-generate itinerary
+  // This removes the need for "Build Itinerary" button in multi-specialist flows
+  // @see docs/ux_unified_architecture.md - Path A: Auto-trigger Flow
+
+  // Track if we've already auto-triggered to prevent infinite loops
+  const hasAutoTriggeredRef = useRef(false);
+
+  // Check if itinerary content exists
+  const hasItineraryContent = (storeDocument?.day_cards?.length ?? 0) > 0;
+
+  // Reset auto-trigger flag when trip changes (new session or significant state change)
+  useEffect(() => {
+    // Reset when entering a new planning cycle (no itinerary content yet)
+    if (!storeDocument?.day_cards?.length) {
+      hasAutoTriggeredRef.current = false;
+    }
+  }, [storeDocument?.day_cards?.length]);
+
+  // Auto-trigger effect
+  useEffect(() => {
+    // Skip if already triggered
+    if (hasAutoTriggeredRef.current) return;
+
+    // Check auto-trigger conditions
+    const shouldAutoTrigger = shouldAutoTriggerItinerary(
+      planViewState,
+      storeDocument?.executed_strategy_topics,
+      hasDates,
+      uiGeneration,
+      hasItineraryContent
+    );
+
+    if (shouldAutoTrigger) {
+      console.log('[NomadicLanding] 🚀 Auto-triggering itinerary generation (Path A)');
+      hasAutoTriggeredRef.current = true;
+      // Use setTimeout to avoid triggering during render
+      setTimeout(() => {
+        proceedWithItineraryGeneration();
+      }, 500); // Small delay for UX (let tiles settle)
+    }
+  }, [
+    planViewState,
+    storeDocument?.executed_strategy_topics,
+    hasDates,
+    uiGeneration,
+    hasItineraryContent,
+    proceedWithItineraryGeneration,
+  ]);
 
   // Handler for expanding to itinerary - validation gates before generation
   // "Assume & Refine" philosophy: Backend auto-selects recommended stay if none saved
@@ -938,6 +1048,157 @@ export function NomadicLanding() {
   const handleBuildPlan = useCallback(() => {
     chatPanelRef.current?.sendMessage?.(GENERATE_PLAN_TRIGGER);
   }, []);
+
+  // Handler for conflict resolution (Path A UX)
+  // User selects how to resolve the constraint conflict
+  const handleResolveConflict = useCallback(async (resolution: ConflictResolution) => {
+    console.log('[NomadicLanding] 🔧 Resolving conflict:', resolution.action);
+
+    // Clear conflict state
+    setConflictData(null);
+    // Reset auto-trigger flag to allow re-generation
+    hasAutoTriggeredRef.current = false;
+
+    switch (resolution.action) {
+      case 'extend_dates': {
+        // Use backend's new_duration to calculate new end date
+        const startDate = storeDocument?.trip_inputs?.start_date;
+        const newDuration = resolution.new_duration;
+        if (startDate && newDuration) {
+          const endDateStr = addDaysUTC(startDate, newDuration - 1);
+          await documentStore.commitTripInputs({ end_date: endDateStr });
+          addToast(`Trip extended to ${newDuration} days`, 'success');
+        } else {
+          // Fallback: open date picker
+          addToast('Adjust your dates to fit all activities', 'info');
+        }
+        // Auto-trigger will re-fire due to state change
+        break;
+      }
+      case 'remove_specialist': {
+        // Backend suggests which specialist to keep - call remove-specialist endpoint
+        const keepSpecialist = resolution.keep_specialist || conflictData?.specialists[0];
+        if (!keepSpecialist) {
+          addToast('Unable to determine which activity to focus on', 'error');
+          break;
+        }
+
+        // Generate runId for this operation (also serves as idempotency key)
+        const runId = crypto.randomUUID();
+
+        // Start generation in documentStore
+        const abortController = documentStore.startGeneration(runId);
+        setUiGeneration({ active: true, stage: 'itinerary' });
+        setLastGenerationError(null);
+
+        try {
+          // Get current document state
+          const currentDoc = documentStore.document;
+          const tiles = currentDoc?.tiles ?? {};
+
+          // Build preferences (filtered to kept specialist if needed)
+          const preferredTileIds = useDocumentStore.getState().preferredTileIds;
+          const preferredHotelIds: string[] = [];
+          const preferredActivityIds: string[] = [];
+          for (const tileId of preferredTileIds) {
+            const tile = tiles[tileId];
+            const tileType = (tile?.type || '').toLowerCase();
+            if (tileType === 'hotel' || tileType === 'stay') {
+              preferredHotelIds.push(tileId);
+            } else if (['activity', 'experience', 'tour'].includes(tileType)) {
+              preferredActivityIds.push(tileId);
+            }
+          }
+
+          const response = await apiFetch('/api/remove-specialist', {
+            method: 'POST',
+            body: JSON.stringify({
+              idempotency_key: runId,
+              keep_specialist: keepSpecialist,
+              remove_hearted_tiles: false, // Keep hearted tiles for now
+              trip_inputs: currentDoc?.trip_inputs,
+              strategy_sections: currentDoc?.strategy_sections,
+              tiles: currentDoc?.tiles,
+              preferences:
+                preferredHotelIds.length > 0 || preferredActivityIds.length > 0
+                  ? {
+                      preferred_hotel_ids: preferredHotelIds,
+                      preferred_activity_ids: preferredActivityIds,
+                    }
+                  : undefined,
+            }),
+            signal: abortController.signal,
+          });
+
+          if (!response.ok) {
+            throw new Error(`Remove specialist failed: ${response.status}`);
+          }
+
+          // Process NDJSON streaming response
+          const reader = response.body?.getReader();
+          if (!reader) {
+            throw new Error('No response body');
+          }
+
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const event = JSON.parse(line);
+                console.debug('[remove-specialist] Received event:', event.type, event);
+
+                if (event.type === 'envelope') {
+                  documentStore.mergeEnvelope(event.plan_envelope);
+                } else if (event.type === 'progress') {
+                  setUiGeneration({
+                    active: true,
+                    stage: event.stage || 'itinerary',
+                    message: event.message,
+                    pct: event.pct,
+                  });
+                } else if (event.type === 'done') {
+                  console.debug('[remove-specialist] Complete');
+                  setUiGeneration(null);
+                  setLastGenerationError(null);
+                  addToast(`Focused on ${keepSpecialist}`, 'success');
+                } else if (event.type === 'error') {
+                  console.error('[remove-specialist] Error:', event.message);
+                  setUiGeneration(null);
+                  setLastGenerationError(event.message);
+                  addToast('Failed to regenerate plan', 'error');
+                }
+              } catch {
+                // Ignore parse errors for incomplete lines
+              }
+            }
+          }
+        } catch (error) {
+          if ((error as DOMException)?.name === 'AbortError') {
+            console.log('[remove-specialist] Aborted');
+          } else {
+            console.error('[remove-specialist] Error:', error);
+            setLastGenerationError(String(error));
+            addToast('Failed to regenerate plan', 'error');
+          }
+          setUiGeneration(null);
+        } finally {
+          documentStore.abortGeneration();
+        }
+        break;
+      }
+      // Note: 'show_partial' removed - partial timeline auto-renders when conflicts exist
+    }
+  }, [storeDocument?.trip_inputs?.start_date, documentStore, addToast, addDaysUTC, conflictData, setUiGeneration, setLastGenerationError]);
 
   // Handler for "Finalize & Unlock Booking" CTA (The Bridge)
   // Sets plan as finalized and navigates to Book view
@@ -1061,6 +1322,7 @@ export function NomadicLanding() {
       onUpdateBookingTypes={handleUpdateBookingTypes}
       onUpdateFlightSettings={handleUpdateFlightSettings}
       onUpdateHotelSettings={handleUpdateHotelSettings}
+      onUpdateActivitySettings={handleUpdateActivitySettings}
       onUpdateTransportSettings={handleUpdateTransportSettings}
       onAddActivity={handleAddActivity}
       onRemoveActivity={handleRemoveActivity}
@@ -1112,6 +1374,11 @@ export function NomadicLanding() {
       hasMinimumSelections={hasMinimumSelections}
       isRegenerating={isRegenerating}
       onSelectNights={handleSelectNights}
+      conflictData={conflictData}
+      onResolveConflict={handleResolveConflict}
+      onOpenActivitySettings={() => setGearActivitiesSheetOpen(true)}
+      onOpenStaysSettings={() => setGearStaysSheetOpen(true)}
+      onOpenFlightsSettings={() => setGearFlightsSheetOpen(true)}
     />
   );
 
@@ -1266,6 +1533,59 @@ export function NomadicLanding() {
           }).format(amount);
           addToast(`Budget: ${formatted}`, 'confirmation');
         }}
+      />
+
+      {/* Activity settings sheet - opened from gear icons on specialist cards */}
+      <ActivitiesSheet
+        open={gearActivitiesSheetOpen}
+        onOpenChange={setGearActivitiesSheetOpen}
+        enabled={true}
+        settings={tripInputs.activity_settings || { categories: [], skill_level: null }}
+        hasDestination={hasDestination}
+        onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
+        onSaveSettings={async (settings) => {
+          await documentStore.commitTripInputs({ activity_settings: settings });
+          setGearActivitiesSheetOpen(false);
+          addToast('Activity preferences saved', 'confirmation');
+        }}
+      />
+
+      {/* Stays settings sheet - opened from gear icons on hotel/check-in blocks */}
+      <StaysSheet
+        open={gearStaysSheetOpen}
+        onOpenChange={setGearStaysSheetOpen}
+        enabled={true}
+        settings={tripInputs.hotel_settings || { min_stars: 0, amenities: [] }}
+        hasDestination={hasDestination}
+        hasDates={hasDates}
+        onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
+        onSaveSettings={async (settings) => {
+          await documentStore.commitTripInputs({ hotel_settings: settings });
+          setGearStaysSheetOpen(false);
+          addToast('Hotel preferences saved', 'confirmation');
+        }}
+        onOpenDestination={() => openSheet('destination')}
+        onOpenDates={() => openSheet('dates')}
+      />
+
+      {/* Flights settings sheet - opened from gear icons on arrival/departure blocks */}
+      <FlightsSheet
+        open={gearFlightsSheetOpen}
+        onOpenChange={setGearFlightsSheetOpen}
+        enabled={true}
+        settings={tripInputs.flight_settings || { round_trip: true, cabin_class: 'economy', direct_only: false }}
+        hasOrigin={hasOrigin}
+        hasDestination={hasDestination}
+        hasDates={hasDates}
+        onToggle={() => {}} // No-op - toggle handled by module toggle in ChatPanel
+        onSaveSettings={async (settings) => {
+          await documentStore.commitTripInputs({ flight_settings: settings });
+          setGearFlightsSheetOpen(false);
+          addToast('Flight preferences saved', 'confirmation');
+        }}
+        onOpenOrigin={() => openSheet('origin')}
+        onOpenDestination={() => openSheet('destination')}
+        onOpenDates={() => openSheet('dates')}
       />
     </>
   );

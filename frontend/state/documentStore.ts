@@ -128,6 +128,37 @@ export type LLMUpdatableField =
   | 'transport_settings.train'
   | 'transport_settings.bus';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Commit Mutex
+// ─────────────────────────────────────────────────────────────────────────────
+// Prevents concurrent commit operations using a Promise-based lock.
+// This avoids race conditions between the isCommitting check and set.
+let _commitLock: Promise<void> | null = null;
+
+async function acquireCommitLock(): Promise<boolean> {
+  if (_commitLock) {
+    // Another commit is in progress
+    return false;
+  }
+  let release: () => void;
+  _commitLock = new Promise((resolve) => {
+    release = resolve;
+  });
+  // Return a release function to be called when done
+  (acquireCommitLock as { release?: () => void }).release = () => {
+    _commitLock = null;
+    release!();
+  };
+  return true;
+}
+
+function releaseCommitLock(): void {
+  const release = (acquireCommitLock as { release?: () => void }).release;
+  if (release) {
+    release();
+  }
+}
+
 type DocumentState = {
   // Document data
   version: number;
@@ -444,12 +475,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // Trip input actions
   commitTripInputs: async (updates: DocumentTripInputsPatch): Promise<boolean> => {
-    let { document, version, isCommitting } = get();
-
-    // Prevent concurrent commits - if already committing, skip this request
-    if (isCommitting) {
+    // Atomic lock acquisition - prevents concurrent commits via Promise-based mutex
+    const acquired = await acquireCommitLock();
+    if (!acquired) {
+      // Another commit is in progress
       return false;
     }
+
+    let { document, version } = get();
 
     // If no document exists yet, create a minimal document structure
     // This allows users to set trip inputs via sheets before sending a chat message
@@ -466,151 +499,156 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set({ document, version });
     }
 
-    // Mark as committing to prevent concurrent requests
+    // Mark as committing (for UI feedback)
     set({ isCommitting: true });
 
-    // Store previous state for rollback
-    const previousTripInputs = document.trip_inputs;
+    try {
+      // Store previous state for rollback
+      const previousTripInputs = document.trip_inputs;
 
-    // Optimistically update trip inputs - let backend be authoritative for missing_fields
-    // We don't compute missing_fields here; the backend recomputes it on every PATCH response
-    const updatedTripInputs: DocumentTripInputs = {
-      ...document.trip_inputs,
-      ...updates,
-      // Keep current missing_fields until backend responds with authoritative value
-      missing_fields: document.trip_inputs.missing_fields ?? [],
-    };
-
-    // Optimistically update the store
-    set({
-      document: {
-        ...document,
-        trip_inputs: updatedTripInputs,
-      },
-    });
-
-    // Helper to attempt PATCH with given version
-    const attemptPatch = async (patchVersion: number): Promise<PlanDocumentResponse> => {
-      const patch: PlanDocumentPatch = {
-        version: patchVersion,
-        trip_inputs: updates,
+      // Optimistically update trip inputs - let backend be authoritative for missing_fields
+      // We don't compute missing_fields here; the backend recomputes it on every PATCH response
+      const updatedTripInputs: DocumentTripInputs = {
+        ...document.trip_inputs,
+        ...updates,
+        // Keep current missing_fields until backend responds with authoritative value
+        missing_fields: document.trip_inputs.missing_fields ?? [],
       };
 
-      const res = await apiFetch('/api/document', {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) {
-        throw new Error(`${res.status}`);
-      }
-      return res.json();
-    };
-
-    // Send to backend
-    try {
-      const response = await attemptPatch(version);
-
-      // Get current document to preserve strategy fields
-      // Strategy fields come from graph SSE response, not persisted in DB
-      // PATCH response doesn't include them, so we must preserve them
-      const currentDoc = get().document;
-
-      // Update with backend response, but preserve strategy fields from current state
-      set({
-        version: response.version,
-        updatedBy: response.updated_by,
-        updatedAt: response.updated_at,
-        document: {
-          ...response.document,
-          // Preserve strategy fields from graph (not persisted in DB)
-          strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
-          executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
-          pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
-          plan_view_state: currentDoc?.plan_view_state ?? response.document.plan_view_state,
-          // Also preserve tiles which may come from graph
-          tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
-            ? currentDoc.tiles
-            : response.document.tiles,
-        },
-        isCommitting: false,
-        error: null,
-      });
-
-      return true;
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '';
-
-      // Handle 409 Conflict (version mismatch) - refetch and retry once
-      if (errorMessage.includes('409')) {
-        try {
-          // Fetch fresh document state
-          const freshRes = await apiFetch('/api/document');
-          if (!freshRes.ok) {
-            throw new Error('Failed to refresh document');
-          }
-          const freshResponse: PlanDocumentResponse = await freshRes.json();
-
-          // Retry with fresh version
-          const retryResponse = await attemptPatch(freshResponse.version);
-
-          // Get current document to preserve strategy fields
-          const currentDocRetry = get().document;
-
-          // Update with retry response, preserving strategy fields
-          set({
-            version: retryResponse.version,
-            updatedBy: retryResponse.updated_by,
-            updatedAt: retryResponse.updated_at,
-            document: {
-              ...retryResponse.document,
-              // Preserve strategy fields from graph (not persisted in DB)
-              strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
-              executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
-              pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
-              plan_view_state: currentDocRetry?.plan_view_state ?? retryResponse.document.plan_view_state,
-              tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
-                ? currentDocRetry.tiles
-                : retryResponse.document.tiles,
-            },
-            isCommitting: false,
-            error: null,
-          });
-
-          return true;
-        } catch (retryErr) {
-          // Retry failed - rollback
-          set({
-            document: {
-              ...document,
-              trip_inputs: previousTripInputs,
-            },
-            isCommitting: false,
-            error: retryErr instanceof Error ? retryErr.message : 'Failed to update trip inputs',
-          });
-          return false;
-        }
-      }
-
-      // Handle 404 (document doesn't exist on backend yet) - keep local state
-      // The document will be created when user sends first chat message via graph_plan
-      // We don't rollback because the user should see their changes in the UI
-      if (errorMessage.includes('404')) {
-        set({ isCommitting: false, error: null });
-        // Return true because the local state was updated successfully
-        // Backend sync will happen when document is created
-        return true;
-      }
-
-      // Other non-409 errors - rollback
+      // Optimistically update the store
       set({
         document: {
           ...document,
-          trip_inputs: previousTripInputs,
+          trip_inputs: updatedTripInputs,
         },
-        isCommitting: false,
-        error: errorMessage || 'Failed to update trip inputs',
       });
-      return false;
+
+      // Helper to attempt PATCH with given version
+      const attemptPatch = async (patchVersion: number): Promise<PlanDocumentResponse> => {
+        const patch: PlanDocumentPatch = {
+          version: patchVersion,
+          trip_inputs: updates,
+        };
+
+        const res = await apiFetch('/api/document', {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        });
+        if (!res.ok) {
+          throw new Error(`${res.status}`);
+        }
+        return res.json();
+      };
+
+      // Send to backend
+      try {
+        const response = await attemptPatch(version);
+
+        // Get current document to preserve strategy fields
+        // Strategy fields come from graph SSE response, not persisted in DB
+        // PATCH response doesn't include them, so we must preserve them
+        const currentDoc = get().document;
+
+        // Update with backend response, but preserve strategy fields from current state
+        set({
+          version: response.version,
+          updatedBy: response.updated_by,
+          updatedAt: response.updated_at,
+          document: {
+            ...response.document,
+            // Preserve strategy fields from graph (not persisted in DB)
+            strategy_sections: currentDoc?.strategy_sections ?? response.document.strategy_sections,
+            executed_strategy_topics: currentDoc?.executed_strategy_topics ?? response.document.executed_strategy_topics,
+            pending_strategy_topics: currentDoc?.pending_strategy_topics ?? response.document.pending_strategy_topics,
+            plan_view_state: currentDoc?.plan_view_state ?? response.document.plan_view_state,
+            // Also preserve tiles which may come from graph
+            tiles: currentDoc?.tiles && Object.keys(currentDoc.tiles).length > 0
+              ? currentDoc.tiles
+              : response.document.tiles,
+          },
+          isCommitting: false,
+          error: null,
+        });
+
+        return true;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : '';
+
+        // Handle 409 Conflict (version mismatch) - refetch and retry once
+        if (errorMessage.includes('409')) {
+          try {
+            // Fetch fresh document state
+            const freshRes = await apiFetch('/api/document');
+            if (!freshRes.ok) {
+              throw new Error('Failed to refresh document');
+            }
+            const freshResponse: PlanDocumentResponse = await freshRes.json();
+
+            // Retry with fresh version
+            const retryResponse = await attemptPatch(freshResponse.version);
+
+            // Get current document to preserve strategy fields
+            const currentDocRetry = get().document;
+
+            // Update with retry response, preserving strategy fields
+            set({
+              version: retryResponse.version,
+              updatedBy: retryResponse.updated_by,
+              updatedAt: retryResponse.updated_at,
+              document: {
+                ...retryResponse.document,
+                // Preserve strategy fields from graph (not persisted in DB)
+                strategy_sections: currentDocRetry?.strategy_sections ?? retryResponse.document.strategy_sections,
+                executed_strategy_topics: currentDocRetry?.executed_strategy_topics ?? retryResponse.document.executed_strategy_topics,
+                pending_strategy_topics: currentDocRetry?.pending_strategy_topics ?? retryResponse.document.pending_strategy_topics,
+                plan_view_state: currentDocRetry?.plan_view_state ?? retryResponse.document.plan_view_state,
+                tiles: currentDocRetry?.tiles && Object.keys(currentDocRetry.tiles).length > 0
+                  ? currentDocRetry.tiles
+                  : retryResponse.document.tiles,
+              },
+              isCommitting: false,
+              error: null,
+            });
+
+            return true;
+          } catch (retryErr) {
+            // Retry failed - rollback
+            set({
+              document: {
+                ...document,
+                trip_inputs: previousTripInputs,
+              },
+              isCommitting: false,
+              error: retryErr instanceof Error ? retryErr.message : 'Failed to update trip inputs',
+            });
+            return false;
+          }
+        }
+
+        // Handle 404 (document doesn't exist on backend yet) - keep local state
+        // The document will be created when user sends first chat message via graph_plan
+        // We don't rollback because the user should see their changes in the UI
+        if (errorMessage.includes('404')) {
+          set({ isCommitting: false, error: null });
+          // Return true because the local state was updated successfully
+          // Backend sync will happen when document is created
+          return true;
+        }
+
+        // Other non-409 errors - rollback
+        set({
+          document: {
+            ...document,
+            trip_inputs: previousTripInputs,
+          },
+          isCommitting: false,
+          error: errorMessage || 'Failed to update trip inputs',
+        });
+        return false;
+      }
+    } finally {
+      // Always release the commit lock
+      releaseCommitLock();
     }
   },
 

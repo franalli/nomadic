@@ -28,6 +28,8 @@ export interface BookingDrawerProps {
   onSave?: (tile: Tile) => void;
   /** Callback when drawer is closed */
   onClose: () => void;
+  /** Callback to open stays/hotel settings sheet */
+  onOpenStaysSettings?: () => void;
 }
 
 const CATEGORY_LABELS = {
@@ -61,6 +63,7 @@ export function BookingDrawer({
   savedTileIds = new Set(),
   onSave,
   onClose,
+  onOpenStaysSettings,
 }: BookingDrawerProps) {
   if (!category) return null;
 
@@ -105,6 +108,7 @@ export function BookingDrawer({
                 onSave?.(t);
                 onClose();
               }}
+              onOpenStaysSettings={category === 'hotel' ? onOpenStaysSettings : undefined}
             />
           ))}
 

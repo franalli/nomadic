@@ -1,4 +1,4 @@
-import { Check, Heart, MapPin, Star } from 'lucide-react';
+import { Check, Heart, MapPin, Settings, Star } from 'lucide-react';
 import {
   type KeyboardEvent,
   memo,
@@ -36,6 +36,8 @@ type TileCardProps = {
   onSelectionToast?: (message: string) => void;
   /** Whether this tile was saved/shortlisted (show "Saved" badge) */
   isSaved?: boolean;
+  /** Callback to open category-wide stays/hotel settings sheet */
+  onOpenStaysSettings?: () => void;
 };
 
 /**
@@ -102,6 +104,7 @@ export const TileCard = memo(function TileCard({
   onToggleSelect,
   onSelectionToast,
   isSaved = false,
+  onOpenStaysSettings,
 }: TileCardProps) {
   // Heart preference system - connects to Zustand store with sessionStorage persistence
   const isPreferred = useTilePreference(tile.id);
@@ -265,6 +268,34 @@ export const TileCard = memo(function TileCard({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+
+        {/* Settings gear for hotel/stay tiles - opens category-wide StaysSheet */}
+        {onOpenStaysSettings && (tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    'absolute right-12 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full transition-all touch-manipulation',
+                    'bg-black/40 backdrop-blur-sm hover:bg-black/60',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-white/50'
+                  )}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenStaysSettings();
+                  }}
+                  aria-label="Hotel settings"
+                >
+                  <Settings className="h-4 w-4 text-zinc-300" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="text-xs">
+                Hotel preferences
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
 
         {/* Preferred badge (top-left, emerald pill with heart icon) */}
         {isPreferred && (

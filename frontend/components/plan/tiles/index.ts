@@ -6,8 +6,7 @@
  * - BookableCard: BOOKING mode - shows price comparison, "Book Now"
  */
 
-export { SuggestionCard } from './SuggestionCard';
-export type { default as SuggestionCardProps } from './SuggestionCard';
-
-export { BookableCard } from './BookableCard';
 export type { PartnerPrice } from './BookableCard';
+export { BookableCard } from './BookableCard';
+export type { default as SuggestionCardProps } from './SuggestionCard';
+export { SuggestionCard } from './SuggestionCard';

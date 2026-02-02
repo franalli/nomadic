@@ -86,7 +86,11 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── itinerary_builder.py  # Itinerary construction
+│   │   ├── itinerary_builder.py  # Itinerary construction + constraint alias normalization
+│   │   ├── regen_strategy.py     # Selective regeneration strategy computation
+│   │   ├── router_cache.py       # Thread-safe L1 cache for router extraction (context-aware)
+│   │   ├── specialist_cache.py   # Thread-safe L1+L2 cache for specialist LLM outputs
+│   │   ├── tile_cache.py         # Thread-safe L1+L2 cache for tile provider data (24h TTL)
 │   │   ├── unsplash.py           # Unsplash image service
 │   │   └── unsplash_queries.py   # Unsplash query helpers
 │   │
@@ -121,19 +125,30 @@ backend/
 │       ├── 8ef3b6a8e5c1_trip_context_parents_and_session_prefs.py
 │       ├── add_variant_to_unsplash_cache.py
 │       ├── ae0f06f2c384_remove_legacy_tables.py
-│       └── c1f8e8bf9d21_chat_messages_table.py
+│       ├── c1f8e8bf9d21_chat_messages_table.py
+│       ├── 0347ceb87559_add_response_cache_table.py  # Specialist LLM cache
+│       └── add_cache_type_column.py                  # cache_type column for multi-tier caching
 │
 ├── scripts/
 │   └── check_ssot_violations.py  # SSOT validation script
 │
 ├── tests/
-│   ├── conftest.py             # Pytest fixtures
-│   ├── llm_stub.py             # LLM mock for testing
-│   ├── test_architecture.py    # Architecture tests
-│   ├── test_demo_dataset.py    # Demo data tests
-│   ├── test_hash_ban.py        # Hash ban tests
-│   ├── test_import_contract.py # Import contract tests
-│   ├── test_plan_schema.py     # Plan schema tests
+│   ├── conftest.py                       # Pytest fixtures
+│   ├── llm_stub.py                       # LLM mock for testing
+│   ├── test_architecture.py              # Architecture tests
+│   ├── test_cross_domain_constraints.py  # Cross-domain constraint tests (Part 0)
+│   ├── test_conflict_resolution.py       # Conflict resolution & constraint alias tests
+│   ├── test_llm_feasibility.py           # LLM geographic feasibility tests
+│   ├── test_demo_dataset.py              # Demo data tests
+│   ├── test_hash_ban.py                  # Hash ban tests
+│   ├── test_import_contract.py           # Import contract tests
+│   ├── test_itinerary_builder.py         # Itinerary builder tests
+│   ├── test_multi_specialist_integration.py  # Multi-specialist tests
+│   ├── test_plan_schema.py               # Plan schema tests
+│   ├── test_router_cache.py              # Router cache tests (context-dependency detection)
+│   ├── test_specialist_cache.py          # Specialist LLM cache tests (thread safety, L1/L2)
+│   ├── test_specialist_structured.py     # Specialist structured output tests
+│   ├── test_tile_cache.py                # Tile cache tests (L1/L2, thread safety)
 │   └── db/
 │       └── test_plan_document_api.py
 │
@@ -222,11 +237,13 @@ frontend/
 │   ├── plan/                   # Plan view components
 │   │   ├── index.ts
 │   │   ├── BookingSection.tsx
+│   │   ├── ConflictResolutionBanner.tsx  # Path A: Conflict resolution options for constraint clashes
 │   │   ├── CoreChip.tsx
 │   │   ├── DaySection.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── DocumentHeader.tsx
 │   │   ├── GlassCommandBar.tsx
+│   │   ├── ItineraryProgressIndicator.tsx  # Path A: Auto-generation progress display
 │   │   ├── NextStepBar.tsx
 │   │   ├── NextStepPanel.tsx
 │   │   ├── OnboardingChips.tsx

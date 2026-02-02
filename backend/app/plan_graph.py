@@ -21,6 +21,7 @@ Usage:
     result = await run_turn(user_message, session_state)
 """
 
+import hashlib
 import logging
 import os
 from datetime import datetime
@@ -234,6 +235,29 @@ def _trip_plan_to_trip_inputs(plan: TripPlan) -> Dict[str, Any]:
     }
 
 
+def _field_hash(value: str) -> str:
+    """Stable hash for selective regeneration change detection."""
+    return hashlib.sha256((value or "").encode()).hexdigest()[:12]
+
+
+def _compute_field_hashes(trip_plan: TripPlan) -> Dict[str, str]:
+    """
+    Compute field hashes for selective regeneration strategy.
+
+    These hashes allow the expand-itinerary endpoint to detect which
+    fields changed and compute the minimum regeneration strategy.
+
+    @see docs/plan_graph_analysis.md - Selective Regeneration
+    """
+    return {
+        "destination": _field_hash(trip_plan.destination or ""),
+        "dates": _field_hash(f"{trip_plan.start_date or ''}|{trip_plan.end_date or ''}"),
+        "travelers": _field_hash(f"{trip_plan.adults or 1}|{trip_plan.children or 0}"),
+        "budget": _field_hash(str(trip_plan.budget or "")),
+        "origin": _field_hash(trip_plan.origin or ""),
+    }
+
+
 def _state_to_session_state(state: GraphState) -> Dict[str, Any]:
     """Convert GraphState to session_state dict for persistence."""
     # Keep tiles in CATEGORY format for state restoration
@@ -254,6 +278,8 @@ def _state_to_session_state(state: GraphState) -> Dict[str, Any]:
             # Persist for constraint change detection
             "last_constraint_hash": state.last_constraint_hash,
         },
+        # NEW: Field hashes for selective regeneration strategy
+        "field_hashes": _compute_field_hashes(state.trip_plan),
     }
 
 
@@ -261,10 +287,10 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
     """Restore GraphState from session_state dict."""
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from app.debug_utils import _debug_graph
+    from app.debug_utils import _debug_log
 
     if not session_state:
-        _debug_graph("_restore_graph_state: No session_state provided, returning empty state")
+        _debug_log("_restore_graph_state: No session_state provided, returning empty state")
         return GraphState()
 
     state = GraphState()
@@ -306,7 +332,7 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
     # DEBUG: Log what strategy_sections we're restoring
     incoming_sections = metadata.get("strategy_sections", [])
     restored_sections = state.metadata.get("strategy_sections", [])
-    _debug_graph(
+    _debug_log(
         f"_restore_graph_state: Incoming strategy_sections={len(incoming_sections)}, "
         f"Restored={len(restored_sections)}, "
         f"types={[s.get('specialist_type') for s in incoming_sections]}"
@@ -334,7 +360,7 @@ def route_after_router(
     If destination is NOT extracted yet, route to Architect FIRST.
     Architect extracts destination, then route_after_architect() sends to specialists.
     """
-    from app.debug_utils import _debug_graph
+    from app.debug_utils import _debug_log
 
     # Short-circuit responses (GREETING/RESET) skip to synthesizer
     if state.metadata.get("short_circuit_response"):
@@ -347,7 +373,7 @@ def route_after_router(
     # Specialists without destination produce generic/empty content.
     # @see trace: "LOCAL_EXPERT Skipped - no destination set"
     if state.active_specialist and not has_destination:
-        _debug_graph(
+        _debug_log(
             f"Specialists queued ({state.active_specialist}) but no destination - "
             "routing to architect first for extraction"
         )
@@ -387,13 +413,13 @@ def route_after_specialist(
     - If booking intent: Specialist → Logistics → Architect (fetch tiles)
     - If general intent: Specialist → Architect (extract fields, no tiles)
     """
-    from app.debug_utils import _debug_graph
+    from app.debug_utils import _debug_log
 
     # Check if there are more specialists to process
     # NOTE: We just peek, we don't pop - the specialist node handles that
     if state.pending_specialists:
         next_specialist = state.pending_specialists[0]
-        _debug_graph(
+        _debug_log(
             f"Multi-specialist routing: next='{next_specialist}', "
             f"queue_len={len(state.pending_specialists)}"
         )
@@ -407,7 +433,7 @@ def route_after_specialist(
     # SPECULATIVE: Skip logistics (fetching prices) and architect (planning)
     # Go straight to synthesizer to emit the preview cards.
     if state.intent == "speculative":
-        _debug_graph("Specialist done, routing to synthesizer (speculative intent - preload only)")
+        _debug_log("Specialist done, routing to synthesizer (speculative intent - preload only)")
         return "synthesizer"
 
     # Check if this is a "booking" intent (Build Plan button) or just general chat
@@ -440,20 +466,20 @@ def route_after_specialist(
 
         # Log flight limitation if no origin
         if not has_origin:
-            _debug_graph(
+            _debug_log(
                 f"Specialist done, routing to logistics ({reason}) - "
                 "note: flights disabled, no origin"
             )
         else:
-            _debug_graph(f"Specialist done, routing to logistics ({reason})")
+            _debug_log(f"Specialist done, routing to logistics ({reason})")
         return "logistics"
 
     # Log skip reason for debugging
     if has_dates and not has_destination:
-        _debug_graph("Specialist done, skipping logistics (no destination set)")
+        _debug_log("Specialist done, skipping logistics (no destination set)")
 
     # General intent without dates - skip tile fetching, go to architect for extraction
-    _debug_graph("Specialist done, skipping logistics, routing to architect (no dates)")
+    _debug_log("Specialist done, skipping logistics, routing to architect (no dates)")
     return "architect"
 
 
@@ -480,7 +506,7 @@ def route_after_architect(
     2. Specialists generate content → Logistics (if dates) or Guard
     3. OR: Architect extracts dates → Logistics → Architect (second pass) → Guard
     """
-    from app.debug_utils import _debug_graph
+    from app.debug_utils import _debug_log
 
     has_destination = bool(state.trip_plan.destination)
     has_origin = bool(state.trip_plan.origin)
@@ -495,13 +521,13 @@ def route_after_architect(
     # @see route_after_router - defers specialists when destination is missing
     if has_destination and state.active_specialist:
         if state.active_specialist == "local_expert":
-            _debug_graph(
+            _debug_log(
                 f"Architect done, dispatching deferred local_expert "
                 f"(destination={state.trip_plan.destination})"
             )
             return "local_expert"
         else:
-            _debug_graph(
+            _debug_log(
                 f"Architect done, dispatching deferred specialist={state.active_specialist} "
                 f"(destination={state.trip_plan.destination})"
             )
@@ -519,7 +545,7 @@ def route_after_architect(
     )
 
     if needs_local_expert:
-        _debug_graph(
+        _debug_log(
             f"Architect done, routing to local_expert "
             f"(destination={state.trip_plan.destination}, local_expert_ran={local_expert_ran})"
         )
@@ -532,17 +558,17 @@ def route_after_architect(
     can_fetch_logistics = has_destination and not logistics_attempted
     if has_dates and not has_tiles and not is_speculative and can_fetch_logistics:
         if not has_origin:
-            _debug_graph(
+            _debug_log(
                 "Architect done, routing to logistics "
                 "(dates+destination set, hotels only - no origin)"
             )
         else:
-            _debug_graph("Architect done, routing to logistics (dates set, no tiles yet)")
+            _debug_log("Architect done, routing to logistics (dates set, no tiles yet)")
         return "logistics"
 
     # Skip logistics if no destination - can't search anything
     if has_dates and not has_tiles and not has_destination:
-        _debug_graph("Architect done, skipping logistics (no destination set)")
+        _debug_log("Architect done, skipping logistics (no destination set)")
 
     # Fall through to existing guard logic
     return _should_run_guard(state)
@@ -1027,7 +1053,7 @@ def _format_result(
     original_session_state: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Format result state for main.py response."""
-    from app.debug_utils import _debug_graph
+    from app.debug_utils import _debug_log
     from app.planner.state import trip_plan_is_ready
 
     trip_inputs = _trip_plan_to_trip_inputs(state.trip_plan)
@@ -1114,13 +1140,13 @@ def _format_result(
 
     # DEBUG: Log existing sections
     section_types = [s.get("specialist_type") for s in strategy_sections]
-    _debug_graph(
+    _debug_log(
         f"_format_result: BEFORE - {len(strategy_sections)} sections, " f"types={section_types}"
     )
     for s in strategy_sections:
         content_count = len(s.get("content_added", []))
         constraint_count = len(s.get("constraints_applied", []))
-        _debug_graph(
+        _debug_log(
             f"  Section '{s.get('specialist_type')}': "
             f"content_added={content_count}, constraints={constraint_count}"
         )
@@ -1130,7 +1156,7 @@ def _format_result(
     last_specialist = state.metadata.get("last_executed_specialist")
     specialist_type = state.active_specialist or last_specialist or "general"
 
-    _debug_graph(
+    _debug_log(
         f"_format_result: active_specialist={state.active_specialist}, "
         f"last_specialist={last_specialist}, specialist_type={specialist_type}"
     )
@@ -1151,7 +1177,7 @@ def _format_result(
             specialist_type == "general" and last_specialist
         )  # Don't create general if specialist ran
     )
-    _debug_graph(
+    _debug_log(
         f"_format_result: needs_section={needs_section} "
         f"(flattened_tiles={bool(flattened_tiles)})"
     )
@@ -1577,13 +1603,13 @@ def _format_result(
     # DEBUG: Log what strategy_sections we're saving for next turn
     final_sections = state.metadata["strategy_sections"]
     saved_types = [s.get("specialist_type") for s in final_sections]
-    _debug_graph(
+    _debug_log(
         f"_format_result: Saving {len(final_sections)} "
         f"strategy_sections to session_state, types={saved_types}"
     )
     # Enhanced tracing: verify anchor rule was applied
     if saved_types and saved_types[0] not in ("local_expert", "general"):
-        _debug_graph(
+        _debug_log(
             f"⚠️ WARNING: Anchor rule violation! First section is '{saved_types[0]}', "
             f"expected 'local_expert' or 'general'"
         )

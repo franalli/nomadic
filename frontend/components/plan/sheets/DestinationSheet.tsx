@@ -57,11 +57,19 @@ function DestinationSheetInner({
 
   // Focus input when opened
   useEffect(() => {
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
+
     if (open) {
       setSearchValue(value || '');
       // Small delay to ensure the sheet has animated in
-      setTimeout(() => inputRef.current?.focus(), 100);
+      focusTimer = setTimeout(() => inputRef.current?.focus(), 100);
     }
+
+    return () => {
+      if (focusTimer) {
+        clearTimeout(focusTimer);
+      }
+    };
   }, [open, value]);
 
   // Handle save

@@ -12,6 +12,7 @@ import { ArrowRight, ChevronUp, Map } from 'lucide-react';
 import React, { useCallback, useState } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
+import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
 import { MapLayerFilter } from '@/components/map/MapLayerFilter';
 import { BookingDrawer } from '@/components/plan/booking/BookingDrawer';
 import { DestinationMapPlaceholder } from '@/components/plan/DestinationMapPlaceholder';
@@ -50,6 +51,8 @@ interface S3ItineraryViewProps {
   onSaveTile?: (tile: Tile) => void;
   /** Callback when user unassigns a tile from a block */
   onUnassignTile?: (blockId: string) => void;
+  /** Callback to open stays/hotel settings sheet */
+  onOpenStaysSettings?: () => void;
 }
 
 function OverviewCard({ overview }: { overview: ItineraryOverview }) {
@@ -78,6 +81,7 @@ export function S3ItineraryView({
   savedTileIds,
   onSaveTile,
   onUnassignTile,
+  onOpenStaysSettings,
 }: S3ItineraryViewProps) {
   const { day_cards = [], itinerary_overview, itinerary_assumptions, strategy_sections } = viewModel;
   const [expandedDay, setExpandedDay] = React.useState<number | null>(null);
@@ -242,17 +246,19 @@ export function S3ItineraryView({
   // Interactive mode (with POIs): full scrollytelling experience
   const mapContent = hasMapItems || destinationCoords ? (
     <div className="relative h-full">
-      <InteractiveMap
-        items={mapItems}
-        activeItemId={activeBlockId}
-        defaultCenter={mapCenter}
-        onMarkerClick={handleMarkerClick}
-        routeGeoJson={routeGeoJson}
-        visibleLayers={visibleLayers}
-        highlightedDay={hoveredDay}
-        interactive={hasMapItems} // Static when no POIs, interactive when there are
-        showAttribution={false} // Clean UI for MVP
-      />
+      <MapErrorBoundary className="h-full">
+        <InteractiveMap
+          items={mapItems}
+          activeItemId={activeBlockId}
+          defaultCenter={mapCenter}
+          onMarkerClick={handleMarkerClick}
+          routeGeoJson={routeGeoJson}
+          visibleLayers={visibleLayers}
+          highlightedDay={hoveredDay}
+          interactive={hasMapItems} // Static when no POIs, interactive when there are
+          showAttribution={false} // Clean UI for MVP
+        />
+      </MapErrorBoundary>
       {/* Layer filter - positioned at top-left of map (only when interactive) */}
       {hasMapItems && availableTypes.length > 1 && (
         <div className="absolute top-3 left-3 z-10">
@@ -377,6 +383,7 @@ export function S3ItineraryView({
         savedTileIds={savedTileIds}
         onSave={onSaveTile}
         onClose={handleCloseBookingDrawer}
+        onOpenStaysSettings={onOpenStaysSettings}
       />
     </>
   );

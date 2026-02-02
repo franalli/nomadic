@@ -112,7 +112,14 @@ class AmadeusFlightProvider(Provider):
         )
 
         # Convert to tiles
-        return [self._offer_to_tile(offer, ctx) for offer in offers]
+        tiles = [self._offer_to_tile(offer, ctx) for offer in offers]
+
+        # Apply budget filter if set (flights get ~30% of total budget)
+        if ctx.budget:
+            flight_limit = ctx.budget * 0.30
+            tiles = [t for t in tiles if not t.price_estimate or t.price_estimate <= flight_limit]
+
+        return tiles
 
     def _resolve_airport_code(self, location: Optional[str]) -> Optional[str]:
         """Resolve a location to an airport code."""
@@ -265,7 +272,14 @@ class AmadeusHotelProvider(Provider):
         )
 
         # Convert to tiles
-        return [self._hotel_to_tile(hotel, ctx) for hotel in hotels]
+        tiles = [self._hotel_to_tile(hotel, ctx) for hotel in hotels]
+
+        # Apply budget filter if set (hotels get ~40% of total budget)
+        if ctx.budget:
+            hotel_limit = ctx.budget * 0.40
+            tiles = [t for t in tiles if not t.price_estimate or t.price_estimate <= hotel_limit]
+
+        return tiles
 
     def _resolve_city_code(self, destination: Optional[str]) -> Optional[str]:
         """Resolve a destination to a city IATA code."""

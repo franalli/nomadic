@@ -56,10 +56,18 @@ function OriginSheetInner({
 
   // Focus input when opened
   useEffect(() => {
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
+
     if (open) {
       setSearchValue(value || '');
-      setTimeout(() => inputRef.current?.focus(), 100);
+      focusTimer = setTimeout(() => inputRef.current?.focus(), 100);
     }
+
+    return () => {
+      if (focusTimer) {
+        clearTimeout(focusTimer);
+      }
+    };
   }, [open, value]);
 
   // Handle save

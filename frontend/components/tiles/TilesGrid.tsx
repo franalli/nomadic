@@ -75,6 +75,8 @@ type TilesGridProps = {
   onSelectionToast?: (message: string) => void;
   /** Set of tile IDs that were saved/shortlisted (show first with badge) */
   savedTileIds?: Set<string>;
+  /** Callback to open category-wide stays/hotel settings sheet */
+  onOpenStaysSettings?: () => void;
 };
 
 // Default number of tiles to show before "View All" expansion
@@ -92,6 +94,7 @@ export const TilesGrid = memo(function TilesGrid({
   onRetry,
   onSelectionToast,
   savedTileIds = new Set(),
+  onOpenStaysSettings,
 }: TilesGridProps) {
   const [activeTab, setActiveTab] = useState<TileTabKey>(forcedTab ?? 'stays');
   const [isExpanded, setIsExpanded] = useState(false);
@@ -261,6 +264,7 @@ export const TilesGrid = memo(function TilesGrid({
               onToggleSelect={() => onTileToggle?.(tile, effectiveTab)}
               onSelectionToast={onSelectionToast}
               isSaved={savedTileIds.has(tile.id)}
+              onOpenStaysSettings={effectiveTab === 'stays' ? onOpenStaysSettings : undefined}
             />
           ))
         )}

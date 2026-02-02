@@ -186,6 +186,64 @@ def calculate_hours_between(
 
 
 # =============================================================================
+# Constraint Rule Normalization
+# =============================================================================
+# LLM may output constraint rules with various naming conventions.
+# Builder normalizes to canonical rules for consistent detection.
+
+CONSTRAINT_ALIASES: Dict[str, List[str]] = {
+    # Cross-domain: diving + altitude conflict
+    "no_altitude_after_dive": [
+        "no_altitude_24h",
+        "altitude_buffer",
+        "no_altitude_after_diving",
+        "altitude_restriction_after_dive",
+    ],
+    # Diving: no-fly buffer
+    "min_24h_buffer_after_dive": [
+        "no_fly_24h",
+        "flight_buffer_24h",
+        "no_fly_after_diving",
+        "24h_no_fly_after_diving",
+        "no_fly_buffer",
+    ],
+    # Surface interval
+    "surface_interval": [
+        "min_18h_surface_interval",
+        "dive_surface_interval",
+    ],
+}
+
+
+def _find_constraint(
+    constraints: List["MergedConstraint"],
+    canonical_rule: str,
+) -> Optional["MergedConstraint"]:
+    """
+    Find constraint by canonical rule name or any of its aliases.
+
+    This provides fuzzy matching for LLM-generated constraint rules,
+    ensuring detection survives prompt/model variations.
+
+    Args:
+        constraints: List of merged constraints
+        canonical_rule: The canonical rule name to search for
+
+    Returns:
+        Matching constraint or None
+    """
+    aliases = CONSTRAINT_ALIASES.get(canonical_rule, [])
+    all_names = [canonical_rule] + aliases
+
+    for c in constraints:
+        rule_lower = c.rule.lower().replace("-", "_").replace(" ", "_")
+        for name in all_names:
+            if rule_lower == name.lower() or name.lower() in rule_lower:
+                return c
+    return None
+
+
+# =============================================================================
 # Input/Output Types
 # =============================================================================
 
@@ -232,6 +290,10 @@ class DayBlockOutput(BaseModel):
 
     # Inline constraint display (shows active constraints on this block)
     active_constraints: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # Unschedulable marker (for partial timeline when conflicts occur)
+    unschedulable: bool = False
+    unschedulable_reason: Optional[str] = None
 
 
 class DayCardOutput(BaseModel):
@@ -351,6 +413,7 @@ class ItineraryBuilderInput:
 # Rules that block entire days
 BLOCKING_RULES = {
     "min_24h_buffer_after_dive",
+    "no_altitude_after_dive",  # Cross-domain: diving → hiking
     "altitude_acclimatization",
     "equipment_drying",
     "post_surgery_recovery",
@@ -366,6 +429,7 @@ MAX_BLOCKS_PER_DAY = 3
 CONSTRAINT_SEVERITY_MAP = {
     # Blocking (Safety/Legal)
     "min_24h_buffer_after_dive": ConstraintSeverity.BLOCKING,
+    "no_altitude_after_dive": ConstraintSeverity.BLOCKING,  # Cross-domain: diving → hiking
     "decompression_stop": ConstraintSeverity.BLOCKING,
     "altitude_limit": ConstraintSeverity.BLOCKING,
     "visa_requirement": ConstraintSeverity.BLOCKING,
@@ -478,13 +542,52 @@ class ItineraryBuilder:
             merged_constraints = self._merge_constraints(constraints)
 
             # Phase 2b: Check for irreconcilable conflicts early
-            early_conflicts = self._detect_early_conflicts(days, activities, merged_constraints)
+            # Returns both conflicts AND partial schedule showing what CAN be scheduled
+            early_conflicts, partial_days = self._detect_early_conflicts(
+                days,
+                activities,
+                merged_constraints,
+                input_data.tiles,
+                input_data.origin,
+            )
             if early_conflicts:
                 resolutions = self._generate_resolutions(early_conflicts, len(days))
+                _debug(
+                    f"[ItineraryBuilder] ⚠️ Conflict detected: {len(early_conflicts)} conflicts, "
+                    f"returning partial schedule with {len(partial_days)} day cards"
+                )
+                # Detailed conflict trace for debugging
+                for i, conflict in enumerate(early_conflicts):
+                    sev = (
+                        conflict.severity.value
+                        if hasattr(conflict.severity, "value")
+                        else conflict.severity
+                    )
+                    _debug(
+                        f"[ItineraryBuilder] CONFLICT[{i}]: type={conflict.type} "
+                        f"severity={sev} specialists={conflict.specialists}"
+                    )
+                    _debug(f"[ItineraryBuilder] CONFLICT[{i}] message: {conflict.message}")
+                # Trace partial day_cards structure
+                for day in partial_days:
+                    scheduled = [
+                        b.summary for b in day.blocks if not getattr(b, "unschedulable", False)
+                    ]
+                    unschedulable = [
+                        f"{b.summary} ({b.unschedulable_reason})"
+                        for b in day.blocks
+                        if getattr(b, "unschedulable", False)
+                    ]
+                    if scheduled or unschedulable:
+                        _debug(
+                            f"[ItineraryBuilder] Day {day.day_number}: "
+                            f"scheduled={scheduled} unschedulable={unschedulable}"
+                        )
                 return ItineraryResult(
                     success=False,
                     conflicts=early_conflicts,
                     resolutions=resolutions,
+                    day_cards=partial_days,  # Return partial schedule
                     error="CONSTRAINT_CONFLICT",
                 )
 
@@ -664,7 +767,7 @@ class ItineraryBuilder:
         return merged
 
     # =========================================================================
-    # Phase 2b: Early Conflict Detection
+    # Phase 2b: Early Conflict Detection + Partial Schedule
     # =========================================================================
 
     def _detect_early_conflicts(
@@ -672,10 +775,28 @@ class ItineraryBuilder:
         days: List[DayCardOutput],
         activities_by_specialist: Dict[str, List[ActivityBlock]],
         constraints: List[MergedConstraint],
-    ) -> List[Conflict]:
-        """Detect conflicts before placement that are irreconcilable."""
+        tiles: Dict[str, Any],
+        origin: Optional[str],
+    ) -> Tuple[List[Conflict], List[DayCardOutput]]:
+        """
+        Detect conflicts before placement that are irreconcilable.
+
+        NEW: Returns partial schedule showing what CAN be scheduled,
+        with unschedulable activities marked.
+
+        Returns:
+            Tuple of (conflicts, partial_days) where partial_days is
+            a schedule with schedulable activities placed and
+            unschedulable activities marked with unschedulable=True.
+        """
         conflicts = []
+        partial_days: List[DayCardOutput] = []
         total_days = len(days)
+
+        # Trace incoming constraints for debugging
+        _debug(f"[ItineraryBuilder] _detect_early_conflicts: {len(constraints)} merged constraints")
+        for c in constraints:
+            _debug(f"[ItineraryBuilder] Constraint: rule={c.rule} severity={c.severity}")
 
         # Calculate required days for each specialist
         total_activity_days = 0
@@ -684,11 +805,59 @@ class ItineraryBuilder:
         for _specialist, activities in activities_by_specialist.items():
             total_activity_days += len(activities)
 
-        # Check for diving no-fly buffer
-        for c in constraints:
-            if c.rule == "min_24h_buffer_after_dive":
-                buffer_days = 1
-                break
+        # Check for diving no-fly buffer (with alias support)
+        nofly_constraint = _find_constraint(constraints, "min_24h_buffer_after_dive")
+        if nofly_constraint:
+            buffer_days = 1
+            _debug(f"[ItineraryBuilder] No-fly constraint found: rule={nofly_constraint.rule}")
+
+        # Cross-domain check: diving + high-altitude activity conflict
+        diving_present = "diving" in activities_by_specialist
+        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing"]
+        altitude_specialists_present = [
+            spec for spec in altitude_activities if spec in activities_by_specialist
+        ]
+
+        cross_domain_conflict = False
+        if diving_present and altitude_specialists_present:
+            # Check for no_altitude_after_dive constraint (with alias support)
+            _debug(
+                f"[ItineraryBuilder] Cross-domain check: diving={diving_present} "
+                f"altitude_specialists={altitude_specialists_present}"
+            )
+            altitude_constraint = _find_constraint(constraints, "no_altitude_after_dive")
+            alt_msg = (
+                f"FOUND (rule={altitude_constraint.rule})" if altitude_constraint else "NOT FOUND"
+            )
+            _debug(f"[ItineraryBuilder] no_altitude_after_dive constraint: {alt_msg}")
+            if altitude_constraint:
+                # Need additional buffer day between diving and high-altitude activities
+                diving_days = len(activities_by_specialist.get("diving", []))
+                altitude_days = sum(
+                    len(activities_by_specialist.get(spec, [])) for spec in altitude_activities
+                )
+                altitude_buffer = 1  # 24h buffer between diving and altitude
+
+                # Account for arrival/departure days
+                usable_days = total_days - 2
+
+                # Calculate required days for diving + buffer + altitude activities
+                required_for_combo = diving_days + altitude_buffer + altitude_days
+                if required_for_combo > usable_days:
+                    cross_domain_conflict = True
+                    conflicts.append(
+                        Conflict(
+                            type="constraint_clash",
+                            severity=ConstraintSeverity.BLOCKING,
+                            specialists=["diving"] + altitude_specialists_present,
+                            message=(
+                                f"Cannot fit diving ({diving_days} days) + 24h buffer + "
+                                f"altitude activities ({altitude_days} days) "
+                                f"in {usable_days} activity days. "
+                                f"Need {required_for_combo} days."
+                            ),
+                        )
+                    )
 
         # Account for arrival/departure days
         usable_days = total_days - 2  # First and last day are partial
@@ -709,7 +878,95 @@ class ItineraryBuilder:
                 )
             )
 
-        return conflicts
+        # Build partial schedule if conflicts detected
+        if conflicts:
+            partial_days = self._build_partial_schedule(
+                days=days,
+                activities_by_specialist=activities_by_specialist,
+                constraints=constraints,
+                tiles=tiles,
+                origin=origin,
+                cross_domain_conflict=cross_domain_conflict,
+                diving_present=diving_present,
+            )
+
+        return conflicts, partial_days
+
+    def _build_partial_schedule(
+        self,
+        days: List[DayCardOutput],
+        activities_by_specialist: Dict[str, List[ActivityBlock]],
+        constraints: List[MergedConstraint],
+        tiles: Dict[str, Any],
+        origin: Optional[str],
+        cross_domain_conflict: bool,
+        diving_present: bool,
+    ) -> List[DayCardOutput]:
+        """
+        Build partial timeline with schedulable activities + unschedulable markers.
+
+        Strategy:
+        - If cross-domain conflict (diving + altitude), schedule diving first
+        - Mark altitude activities as unschedulable with reason
+        - Always include arrival/departure anchors
+        """
+        import copy
+
+        # Make a copy of days to avoid mutating original
+        partial_days = copy.deepcopy(days)
+
+        # Place anchors (arrival/departure)
+        partial_days = self._place_anchors(partial_days, tiles, origin)
+
+        # Inject safety buffers
+        partial_days = self._inject_safety_buffers(partial_days, constraints)
+
+        # Determine primary specialist (priority: diving > hiking > skiing > other)
+        primary_specialist = None
+        altitude_activities = ["hiking", "trekking", "mountaineering", "skiing"]
+
+        if cross_domain_conflict and diving_present:
+            # Diving takes priority in cross-domain conflicts
+            primary_specialist = "diving"
+        elif activities_by_specialist:
+            # Pick first specialist with activities
+            primary_specialist = next(iter(activities_by_specialist.keys()))
+
+        # Schedule primary specialist activities
+        if primary_specialist and primary_specialist in activities_by_specialist:
+            primary_activities = {primary_specialist: activities_by_specialist[primary_specialist]}
+            partial_days = self._distribute_activities(partial_days, primary_activities)
+
+        # Mark other specialists as unschedulable
+        for specialist, activities in activities_by_specialist.items():
+            if specialist == primary_specialist:
+                continue
+
+            # Determine reason based on conflict type
+            if cross_domain_conflict and specialist in altitude_activities:
+                reason = f"Requires 24h buffer after diving - extend trip to include {specialist}"
+            else:
+                reason = f"Insufficient days to schedule {specialist} activities"
+
+            # Add unschedulable blocks to the partial schedule
+            for activity in activities:
+                unschedulable_block = DayBlockOutput(
+                    id=f"unschedulable_{specialist}_{activity.title[:15].replace(' ', '_')}",
+                    period="afternoon",
+                    activity_type="unschedulable",
+                    summary=activity.title,
+                    specialist_type=specialist,
+                    is_buffer=False,
+                    intensity=activity.intensity,
+                    image_url=activity.image_url,
+                    unschedulable=True,
+                    unschedulable_reason=reason,
+                )
+                # Add to second-to-last day (before departure)
+                if len(partial_days) >= 2:
+                    partial_days[-2].blocks.append(unschedulable_block)
+
+        return partial_days
 
     # =========================================================================
     # Phase 3: Anchor Placement

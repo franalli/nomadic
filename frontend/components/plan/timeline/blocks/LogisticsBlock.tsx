@@ -9,7 +9,7 @@
 
 'use client';
 
-import { DoorOpen, Key, PlaneLanding, PlaneTakeoff, type LucideIcon } from 'lucide-react';
+import { DoorOpen, Key, type LucideIcon,PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
 
 import { cn, normalizeTitle } from '@/lib/utils';
 
@@ -39,6 +39,10 @@ interface LogisticsBlockProps {
   onSwitchToAlternative?: (tileId: string) => void;
   /** Active constraints for inline display */
   activeConstraints?: ActiveConstraint[];
+  /** Callback to open stays/hotel settings sheet (for check-in blocks) */
+  onOpenStaysSettings?: () => void;
+  /** Callback to open flights settings sheet (for arrival/departure blocks) */
+  onOpenFlightsSettings?: () => void;
 }
 
 const CONFIG: Record<
@@ -84,6 +88,8 @@ export function LogisticsBlock({
   alternativeTileId,
   onSwitchToAlternative,
   activeConstraints,
+  onOpenStaysSettings,
+  onOpenFlightsSettings,
 }: LogisticsBlockProps) {
   const config = CONFIG[type];
   const Icon = config.icon;
@@ -94,11 +100,46 @@ export function LogisticsBlock({
   return (
     <div
       className={cn(
-        'flex items-center gap-3 p-3 rounded-lg border-l-4',
+        'group relative flex items-center gap-3 p-3 rounded-lg border-l-4',
         config.borderColor,
         config.bgColor
       )}
     >
+      {/* Settings gear for check-in blocks (hotels) - always visible */}
+      {type === 'checkin' && onOpenStaysSettings && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenStaysSettings();
+          }}
+          className={cn(
+            'absolute top-2 right-2 p-1.5 rounded-lg transition-all',
+            'bg-black/10 hover:bg-black/20 dark:bg-white/10 dark:hover:bg-white/20'
+          )}
+          aria-label="Hotel settings"
+        >
+          <Settings className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
+        </button>
+      )}
+
+      {/* Settings gear for flight blocks (arrival/departure) - always visible */}
+      {(type === 'arrival' || type === 'departure') && onOpenFlightsSettings && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenFlightsSettings();
+          }}
+          className={cn(
+            'absolute top-2 right-2 p-1.5 rounded-lg transition-all',
+            'bg-black/10 hover:bg-black/20 dark:bg-white/10 dark:hover:bg-white/20'
+          )}
+          aria-label="Flight settings"
+        >
+          <Settings className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
+        </button>
+      )}
       <Icon className={cn('w-5 h-5 shrink-0', config.iconColor)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">

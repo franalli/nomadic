@@ -152,7 +152,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | Component | File | Purpose |
 |-----------|------|---------|
 | SelectionsBar | `components/plan/SelectionsBar.tsx` | Grouped carousel of hearted tiles (Stays + Activities sections) |
-| useItineraryRegeneration | `hooks/useItineraryRegeneration.ts` | Auto-regeneration on preference change (1.5s debounce) |
+| useItineraryRegeneration | `hooks/useItineraryRegeneration.ts` | Auto-regeneration on preference OR trip input change (1.5s debounce, selective regeneration) |
 
 ### Progressive Disclosure Rules
 
@@ -408,14 +408,32 @@ User hearts new hotel → 1.5s debounce → Auto-regenerate → Timeline updates
 - `documentStore.preferredTileIds` - Current preferences
 - `documentStore.lastGeneratedPreferences` - Preferences used in last generation
 - `hasPreferenceChanges()` - Computed: true if sets differ
+- `tripInputsHash` - Stable JSON hash of trip inputs including:
+  - Core fields: destination, dates, travelers, budget, origin
+  - Settings: flight_settings, hotel_settings, activity_settings (categories, skill_level)
+- `lastTripInputsHashRef` - Hash used in last generation
+- `hasTripInputChanges()` - Computed: true if trip inputs changed
 
 **Auto-regeneration flow:**
-1. User generates itinerary (preferences snapshot to `lastGeneratedPreferences`)
-2. User hearts a new hotel → previous hotel cleared (single-select) → `preferredTileIds` changes
-3. `hasPreferenceChanges()` returns true → 1.5s debounce timer starts
-4. After debounce → `onExpandToItinerary()` called automatically with live preferences
-5. Scroll position preserved during regeneration
-6. On success → `markPreferencesAsApplied()` syncs preferences
+1. User generates itinerary (preferences + tripInputsHash snapshot)
+2. User hearts a new hotel OR changes trip inputs/settings → triggers change detection
+3. `hasChanges = hasPreferenceChanges || hasTripInputChanges` → 1.5s debounce timer starts
+4. After debounce → `onExpandToItinerary()` called automatically
+5. Backend computes **selective regeneration strategy** based on changed fields:
+   - `BUILDER` (~100ms): Preference/origin changes only → ItineraryBuilder
+   - `LOGISTICS` (~500ms): Traveler/budget/settings changes → LogisticsNode + Builder
+     - Includes: flight_settings, hotel_settings, activity_skill_level
+   - `SPECIALISTS` (~6s): Date/category changes → Specialists + Logistics + Builder
+     - Includes: activity_categories (triggers specialist detection)
+   - `FULL` (~10s): Destination changes → Full graph execution
+6. Scroll position preserved during regeneration
+7. On success → `markPreferencesAsApplied()` + `lastTripInputsHashRef` updated
+
+**Selective regeneration (backend):**
+- @see `docs/plan_graph_analysis.md` Section 11 - Selective Regeneration
+- Field hashes computed on-demand from document's `trip_inputs` (not stored separately)
+- Node-level cache awareness (specialists/logistics skip if cached output valid)
+- Strategy computation: most conservative strategy wins when multiple fields change
 
 **Debounce behavior:**
 - 1.5 second delay before triggering regeneration
@@ -1287,9 +1305,14 @@ The planning session survives page refreshes via database persistence. All sessi
 - `id`: Primary key
 - `session_id`: Foreign key to sessions table
 - `document`: JSONB column containing `PlanDocumentData`
-- `version`: Optimistic locking counter
+- `version`: Optimistic locking counter (enforced on PATCH - returns 409 if stale)
 - `updated_by`: "user" | "planner"
 - `updated_at`: Timestamp
+
+**Concurrency Protection:**
+- Frontend uses Promise-based mutex to prevent concurrent PATCH requests
+- Backend validates `patch.version == doc.version` before applying changes
+- On 409 Conflict, frontend refetches document and retries once
 
 ### Full Document Structure (`PlanDocumentData`)
 
@@ -1585,6 +1608,117 @@ buttonText: validationBlocked ? validation.action : 'Build Itinerary'
 ```
 
 **Invariant:** The CTA is ALWAYS visible and clickable in S2_STRATEGY_READY state. When dates are missing, clicking opens the calendar rather than being disabled.
+
+#### Path A: Auto-Trigger for Multi-Specialist Trips
+
+For multi-specialist trips (diving + hiking, skiing + hiking, etc.), the itinerary generation **auto-triggers** when dates are set. This removes the need for a manual "Build Itinerary" click.
+
+**Auto-Trigger Conditions:**
+1. `plan_view_state === 'S2_STRATEGY_READY'` (strategy complete)
+2. `executed_strategy_topics.length >= 2` (multi-specialist)
+3. `hasDates === true` (start + end date set)
+4. `!isGenerating` (not currently generating)
+5. `!hasItineraryContent` (no existing itinerary)
+
+**Implementation:**
+```typescript
+// planStateHelpers.ts
+export function shouldAutoTriggerItinerary(
+  state: PlanViewState,
+  executedTopics: string[] | undefined,
+  hasDates: boolean,
+  generation?: GenerationState | null,
+  hasItineraryContent?: boolean
+): boolean {
+  if (state !== 'S2_STRATEGY_READY') return false;
+  if (isGenerating(generation)) return false;
+  if (!hasDates) return false;
+  if ((executedTopics?.length ?? 0) < 2) return false;
+  if (hasItineraryContent) return false;
+  return true;
+}
+
+// NomadicLanding.tsx
+useEffect(() => {
+  if (shouldAutoTrigger) {
+    hasAutoTriggeredRef.current = true;
+    setTimeout(() => proceedWithItineraryGeneration(), 500);
+  }
+}, [planViewState, executedTopics, hasDates, ...]);
+```
+
+**Why Multi-Specialist Only:**
+- Single-specialist trips (diving only) may have simple constraints - user may want to explore tiles first
+- Multi-specialist trips (diving + hiking) have complex constraint interactions - user benefits from seeing the constraint-validated timeline immediately
+- The 24h altitude buffer between diving and hiking is best understood through the visual timeline
+
+**UX Flow:**
+```
+User: "Plan diving and hiking Bali March 1-5"
+       ↓
+[S2_STRATEGY_READY] Tiles appear + Strategy cards visible
+       ↓
+[Auto-detect] 2+ specialists + dates set
+       ↓
+[Auto-trigger] ItineraryBuilder runs (500ms delay for UX)
+       ↓
+[Show Progress] ItineraryProgressIndicator appears
+       ↓
+[Success] Timeline appears with constraint buffers
+   OR
+[Conflict] ConflictResolutionBanner shows options
+```
+
+**UI Components:**
+
+1. **ItineraryProgressIndicator** - Shows generation progress
+   - States: `analyzing`, `checking`, `building`, `success`, `error`
+   - Message: "Analyzing diving + hiking requirements..."
+   - Progress bar animation
+
+2. **ConflictResolutionBanner** - Shows when constraints can't fit
+   - Message: "Cannot fit diving + 24h buffer + hiking in 5 days"
+   - **Partial timeline auto-renders:** When `conflicts.length > 0 && day_cards.length > 0`, timeline displays immediately showing schedulable activities + grayed unschedulable markers. No extra "Show partial" click needed.
+   - Resolution options:
+     - "Extend to 8 days" → Updates dates, retriggers generation
+     - "Focus on diving" → Calls `/api/remove-specialist` endpoint
+   - **Unschedulable block styling:**
+     - `opacity-60` with dashed amber border (`border-2 border-dashed border-amber-500/50`)
+     - "Cannot schedule" warning badge with AlertTriangle icon
+     - Activity title shown with strikethrough
+     - `unschedulable_reason` displayed as italic amber text
+
+**Remove Specialist API (`POST /api/remove-specialist`):**
+
+Used when user chooses "Focus on [specialist]" resolution.
+
+```typescript
+// Request
+{
+  idempotency_key: string,      // UUID for deduplication
+  keep_specialist: string,      // e.g., "diving"
+  remove_hearted_tiles: boolean, // Whether to remove hearted tiles from other specialists
+  trip_inputs: {...},           // Current document state
+  strategy_sections: [...],     // Current sections
+  tiles: {...},                 // Current tiles
+  preferences: {...}            // User's hearted tile preferences
+}
+
+// Response: NDJSON stream (same format as expand-itinerary)
+{"type": "progress", "stage": "itinerary", "message": "Focusing on diving...", "pct": 10}
+{"type": "envelope", "plan_envelope": {...}}  // Contains filtered strategy_sections
+{"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+```
+
+**Flow:**
+1. Frontend calls `/api/remove-specialist?keep_specialist=diving`
+2. Backend filters `strategy_sections` → keeps only diving + general
+3. Backend re-runs `ItineraryBuilder` → success (no more conflict)
+4. Frontend receives new timeline via envelope event
+5. Toast: "Focused on diving" ✓
+
+**Single-Specialist Behavior:**
+For single-specialist trips, the standard `NextStepBar` with "Build Itinerary" button remains visible. Users manually trigger generation.
 
 ### 3. Button Separation Rationale
 
@@ -2190,9 +2324,13 @@ active_constraints: ActiveConstraint[]
 **Diving-Specific Constraints:**
 - `no_fly_buffer`: Applied to last dive before departure (24h rule)
 - `surface_interval`: Shown between consecutive dive days (18h rule)
+- `no_altitude_after_dive`: Cross-domain constraint preventing high-altitude activities (hiking/skiing >2500m) within 24h of diving
+
+**Cross-Domain Constraint Notes:**
+The `no_altitude_after_dive` constraint is emitted by the diving specialist but targets hiking/skiing activities. This is enforced in the `ItineraryBuilder._detect_early_conflicts()` method, which detects when a trip is too short to accommodate both diving and high-altitude activities with the required 24h buffer.
 
 **Integration:**
-- Backend: `itinerary_builder.py::_apply_constraints_to_blocks()`
+- Backend: `itinerary_builder.py::_apply_constraints_to_blocks()`, `_detect_early_conflicts()`
 - Frontend: `ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
 
 **Component Files:**
@@ -2200,11 +2338,39 @@ active_constraints: ActiveConstraint[]
 frontend/components/plan/timeline/blocks/
 ├── index.ts              # Barrel export
 ├── types.ts              # DisplayTime, TimeSlot, getDisplayTime()
-├── LogisticsBlock.tsx    # Arrival/departure/check-in
+├── LogisticsBlock.tsx    # Arrival/departure/check-in + gear icons
 ├── SafetyBlock.tsx       # No-fly/rest-day constraints
 ├── ActivityMiniCard.tsx  # Rich activity with context menu
 ├── GhostSlot.tsx         # Unbooked placeholder
 └── FreeDayCard.tsx       # Empty day state
+```
+
+**Settings Gear Icons:**
+
+Gear icons provide quick access to category-wide settings sheets from timeline blocks and tile cards:
+
+| Block/Card Type | Gear Location | Opens Sheet | Callback Prop |
+|-----------------|---------------|-------------|---------------|
+| `AgentCard` (diving/hiking/skiing/cycling/sailing) | Header right | `ActivitiesSheet` | `onOpenActivitySettings` |
+| `SuggestionCard` (hotel) | Image top-right, beside heart | `StaysSheet` | `onOpenStaysSettings` |
+| `LogisticsBlock` (arrival/departure) | Top-right | `FlightsSheet` | `onOpenFlightsSettings` |
+| `LogisticsBlock` (check-in) | Top-right | `StaysSheet` | `onOpenStaysSettings` |
+| `TileCard` (hotel) | Image overlay, beside heart | `StaysSheet` | `onOpenStaysSettings` |
+| `MiniCard` (hotel) | Thumbnail corner | `StaysSheet` | `onOpenStaysSettings` |
+
+**Behavior:**
+- Gear icons are **always visible** for discoverability
+- Click triggers sheet open → user adjusts settings → sheet closes → auto-regen triggers
+- Settings changes propagate via `documentStore.commitTripInputs()`
+- Changes trigger `LOGISTICS` strategy regen (~500ms, no LLM)
+
+**Visual:**
+```
+┌─────────────────────────────────────┐
+│ ✈️ Arrival       [⚙️]  ← always visible│
+│ 08:00 AM                            │
+│ Direct from SFO                     │
+└─────────────────────────────────────┘
 ```
 
 #### D. Time Display

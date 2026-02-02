@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
-from app.debug_utils import _debug_graph, _debug_graph_node_end, _debug_graph_node_start, log
+from app.debug_utils import _debug_log, _debug_node_end, _debug_node_start, log
 from app.planner.state.schemas import GraphState
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
@@ -47,7 +47,7 @@ async def logistics_node(state: GraphState) -> GraphState:
     plan = state.trip_plan
 
     # DEBUG: Node start
-    _debug_graph_node_start(
+    _debug_node_start(
         "logistics",
         "✈️",
         destination=plan.destination,
@@ -55,13 +55,49 @@ async def logistics_node(state: GraphState) -> GraphState:
         dates=f"{plan.start_date} to {plan.end_date}",
     )
 
+    # ==========================================================================
+    # SELECTIVE REGENERATION: Check if cached tiles can be reused
+    # Logistics tiles are destination + travelers + budget dependent
+    # @see docs/plan_graph_analysis.md - Selective Regeneration Strategy
+    # ==========================================================================
+    has_cached_tiles = bool(
+        state.tiles.get("hotels") or state.tiles.get("activities") or state.tiles.get("flights")
+    )
+
+    if has_cached_tiles:
+        # Check if destination is the same (tiles are destination-specific)
+        cached_destination = state.metadata.get("tiles_destination")
+        current_destination = plan.destination
+
+        if cached_destination and cached_destination == current_destination:
+            log("LOGISTICS", f"Cache HIT: Reusing cached tiles for {current_destination}")
+            _debug_log(
+                f"Tiles cache hit - hotels={len(state.tiles.get('hotels', []))}, "
+                f"activities={len(state.tiles.get('activities', []))}, "
+                f"flights={len(state.tiles.get('flights', []))}"
+            )
+            _debug_node_end(
+                "logistics",
+                "✈️",
+                status="cache_hit",
+                hotels=len(state.tiles.get("hotels", [])),
+                activities=len(state.tiles.get("activities", [])),
+                flights=len(state.tiles.get("flights", [])),
+            )
+            # Mark as attempted for downstream routing
+            state.metadata["logistics_attempted"] = True
+            return state
+
+    # Store current destination for future cache checks
+    state.metadata["tiles_destination"] = plan.destination
+
     # Mark that logistics has been attempted (prevents infinite loop in route_after_architect)
     state.metadata["logistics_attempted"] = True
 
     # Skip if missing required fields
     if not plan.destination or not plan.start_date:
         log("LOGISTICS", "Skipping - no destination or dates")
-        _debug_graph_node_end("logistics", "✈️", status="skipped", reason="missing_fields")
+        _debug_node_end("logistics", "✈️", status="skipped", reason="missing_fields")
         return state
 
     # Resolve airport codes for flights (flights need origin, hotels/activities don't)
@@ -83,7 +119,7 @@ async def logistics_node(state: GraphState) -> GraphState:
             f"[Logistics] No origin, skipped flights. "
             f"Hotels/activities tiles: {hotels_count} + {activities_count}"
         )
-        _debug_graph_node_end(
+        _debug_node_end(
             "logistics",
             "✈️",
             status="partial",
@@ -94,7 +130,7 @@ async def logistics_node(state: GraphState) -> GraphState:
         return state
 
     log("LOGISTICS", f"Searching flights: {origin_code} -> {dest_code}")
-    _debug_graph(
+    _debug_log(
         f"Flight search params: origin={origin_code}, dest={dest_code}, "
         f"date={plan.end_date or plan.start_date}"
     )
@@ -117,20 +153,20 @@ async def logistics_node(state: GraphState) -> GraphState:
         )
         raw_flights = _curated_to_amadeus_format(curated_flights, plan.end_date or plan.start_date)
         flight_source = "curated"
-        _debug_graph(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
+        _debug_log(f"Curated flights: {[f.get('carrier_name') for f in curated_flights]}")
     else:
         # Use mock flights for non-curated destinations
         log("LOGISTICS", f"Using mock flights for {plan.destination}")
         raw_flights = _get_mock_flights(plan.end_date or plan.start_date)
         flight_source = "mock"
-        _debug_graph(f"Mock provider returned {len(raw_flights)} flights")
+        _debug_log(f"Mock provider returned {len(raw_flights)} flights")
 
     # 2. DETECT CONSTRAINTS
     # Check if diving specialist added a "no fly" or "24h" rule
     has_diving_safety_rule = _has_diving_constraints(state)
     if has_diving_safety_rule:
         log("LOGISTICS", "Diving safety constraints detected", data="applying 24h no-fly rule")
-        _debug_graph("Will calculate surface interval for each flight")
+        _debug_log("Will calculate surface interval for each flight")
 
     # 3. PROCESS & SANITIZE
     processed_options = []
@@ -193,12 +229,12 @@ async def logistics_node(state: GraphState) -> GraphState:
 
         except Exception as e:
             logger.warning(f"[Logistics] Skipping malformed offer: {e}")
-            _debug_graph(f"Malformed offer skipped: {e}")
+            _debug_log(f"Malformed offer skipped: {e}")
             continue
 
     # Log sanitization summary
     if sanitized_carriers:
-        _debug_graph(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
+        _debug_log(f"Sanitized carriers: {', '.join(sanitized_carriers)}")
 
     # 4. STORE IN STATE - Write to state.tiles["flights"] for frontend display
     state.tiles["flights"] = processed_options
@@ -223,7 +259,7 @@ async def logistics_node(state: GraphState) -> GraphState:
     logger.info(f"[Logistics] Found {len(processed_options)} flight options")
 
     # DEBUG: Node end
-    _debug_graph_node_end(
+    _debug_node_end(
         "logistics",
         "✈️",
         flights=len(processed_options),
@@ -267,101 +303,171 @@ def _tile_to_dict(tile) -> Dict[str, Any]:
 
 async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     """
-    Search for hotels and activities.
+    Search for hotels and activities with L1+L2 caching.
 
     Provider routing strategy (consistent with tile_service):
     1. Curated destinations (Dubai, Rome, Chamonix) → CuratedProvider (4K images, prices)
     2. Non-curated + Amadeus enabled → AmadeusHotelProvider (real names, placeholder images)
     3. Fallback → MockProviders
 
+    Caching strategy:
+    - Check cache before provider calls
+    - Store raw results in cache (filter post-retrieval)
+    - 24h TTL for tile data (prices change daily)
+
     @see docs/ux_unified_architecture.md Section XIII - Tile Provider Architecture
-
-    CRITICAL: This runs independently of flight search.
-    Hotels/Activities only need destination + dates, not origin.
     """
-    _debug_graph(f"Searching hotels/activities for {plan.destination}...")
+    from app.db import _get_async_session_factory
+    from app.services.tile_cache import get_cached_tiles, set_cached_tiles
 
-    # Build search context from trip_plan
-    ctx = SearchContext(
-        destination=plan.destination,
-        origin=plan.origin,  # May be None - that's OK for hotels/activities
-        start_date=str(plan.start_date) if plan.start_date else None,
-        end_date=str(plan.end_date) if plan.end_date else None,
-        adults=plan.adults or 1,
-        children=plan.children or 0,
-        currency="USD",
-        verticals=["hotel", "activity"],
-        max_results_per_vertical=5,
-    )
+    _debug_log(f"Searching hotels/activities for {plan.destination}...")
 
-    # Check for curated destination (hero destinations for demo)
+    # Determine provider and cache key parameters
     dest_key = plan.destination.lower().strip() if plan.destination else ""
     curated_manifest = DEMO_MANIFEST.get(dest_key, {})
+    provider = "curated" if curated_manifest else "amadeus"
 
-    hotel_tiles = []
-    activity_tiles = []
+    start_date = str(plan.start_date) if plan.start_date else ""
+    end_date = str(plan.end_date) if plan.end_date else ""
 
-    if curated_manifest:
-        # Use CuratedProvider for hero destinations
-        log(
-            "LOGISTICS",
-            f"Using CuratedProvider for {plan.destination}",
-            data="curated destination",
+    # Get database session for caching
+    async_session_factory = _get_async_session_factory()
+
+    async with async_session_factory() as db:
+        # =====================================================================
+        # HOTELS CACHE CHECK
+        # =====================================================================
+        cached_hotels = await get_cached_tiles(
+            db, provider, "hotel", plan.destination, start_date, end_date
         )
-        _debug_graph(f"Curated destination detected: {dest_key}")
 
-        curated_provider = CuratedProvider(dest_key)
-        all_tiles = curated_provider.search(ctx)
-
-        # Separate by type
-        for tile in all_tiles:
-            if tile.type == "hotel":
-                hotel_tiles.append(tile)
-            elif tile.type == "activity":
-                activity_tiles.append(tile)
-    else:
-        # 2. AMADEUS SECOND - Real hotel names with placeholder images
-        from app.config import settings
-
-        if settings.use_amadeus_provider:
+        if cached_hotels:
+            _debug_log(f"[TILE_CACHE] Hotels HIT: {len(cached_hotels)} hotels from cache")
             log(
                 "LOGISTICS",
-                f"Using Amadeus for hotels in {plan.destination}",
-                data="real hotel names",
+                f"Hotels cache HIT for {plan.destination}",
+                data=f"{len(cached_hotels)} hotels",
             )
-            _debug_graph("Non-curated destination, using AmadeusHotelProvider")
-
-            from app.tile_service.amadeus_provider import AmadeusHotelProvider
-
-            hotel_provider = AmadeusHotelProvider()
-            hotel_tiles = hotel_provider.search(ctx)
+            hotel_dicts = cached_hotels
         else:
-            # 3. MOCK FALLBACK - Development/offline mode
+            _debug_log(f"[TILE_CACHE] Hotels MISS - fetching from {provider}")
+
+            # Build search context
+            ctx = SearchContext(
+                destination=plan.destination,
+                origin=plan.origin,
+                start_date=start_date or None,
+                end_date=end_date or None,
+                adults=plan.adults or 1,
+                children=plan.children or 0,
+                currency="USD",
+                verticals=["hotel", "activity"],
+                max_results_per_vertical=5,
+            )
+
+            hotel_tiles = []
+
+            if curated_manifest:
+                log(
+                    "LOGISTICS",
+                    f"Using CuratedProvider for {plan.destination}",
+                    data="curated destination",
+                )
+                curated_provider = CuratedProvider(dest_key)
+                all_tiles = curated_provider.search(ctx)
+                hotel_tiles = [t for t in all_tiles if t.type == "hotel"]
+            else:
+                from app.config import settings
+
+                if settings.use_amadeus_provider:
+                    log(
+                        "LOGISTICS",
+                        f"Using Amadeus for hotels in {plan.destination}",
+                        data="real hotel names",
+                    )
+                    from app.tile_service.amadeus_provider import AmadeusHotelProvider
+
+                    hotel_provider = AmadeusHotelProvider()
+                    hotel_tiles = hotel_provider.search(ctx)
+                else:
+                    log(
+                        "LOGISTICS",
+                        f"Using MockProviders for {plan.destination}",
+                        data="amadeus disabled",
+                    )
+                    hotel_provider = MockHotelProvider()
+                    hotel_tiles = hotel_provider.search(ctx)
+
+            # Convert to dicts and cache
+            hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
+
+            if hotel_dicts:
+                await set_cached_tiles(
+                    db, provider, "hotel", plan.destination, start_date, end_date, hotel_dicts
+                )
+
+        # =====================================================================
+        # ACTIVITIES CACHE CHECK
+        # =====================================================================
+        cached_activities = await get_cached_tiles(
+            db, provider, "activity", plan.destination, start_date, end_date
+        )
+
+        if cached_activities:
+            _debug_log(
+                f"[TILE_CACHE] Activities HIT: {len(cached_activities)} activities from cache"
+            )
             log(
                 "LOGISTICS",
-                f"Using MockProviders for {plan.destination}",
-                data="amadeus disabled",
+                f"Activities cache HIT for {plan.destination}",
+                data=f"{len(cached_activities)} activities",
             )
-            _debug_graph("Amadeus disabled, using MockHotelProvider")
+            activity_dicts = cached_activities
+        else:
+            _debug_log(f"[TILE_CACHE] Activities MISS - fetching from {provider}")
 
-            hotel_provider = MockHotelProvider()
-            hotel_tiles = hotel_provider.search(ctx)
+            # Build search context if not already built
+            if "ctx" not in locals():
+                ctx = SearchContext(
+                    destination=plan.destination,
+                    origin=plan.origin,
+                    start_date=start_date or None,
+                    end_date=end_date or None,
+                    adults=plan.adults or 1,
+                    children=plan.children or 0,
+                    currency="USD",
+                    verticals=["hotel", "activity"],
+                    max_results_per_vertical=5,
+                )
 
-        # Activities always use Mock (no Amadeus activities API)
-        activity_provider = MockActivityProvider()
-        activity_tiles = activity_provider.search(ctx)
+            activity_tiles = []
 
-    # Convert to dicts for state storage
-    hotel_dicts = [_tile_to_dict(tile) for tile in hotel_tiles]
-    activity_dicts = [_tile_to_dict(tile) for tile in activity_tiles]
+            if curated_manifest:
+                # Curated activities from same provider call
+                curated_provider = CuratedProvider(dest_key)
+                all_tiles = curated_provider.search(ctx)
+                activity_tiles = [t for t in all_tiles if t.type == "activity"]
+            else:
+                # Activities always use Mock (no Amadeus activities API)
+                activity_provider = MockActivityProvider()
+                activity_tiles = activity_provider.search(ctx)
 
+            # Convert to dicts and cache
+            activity_dicts = [_tile_to_dict(tile) for tile in activity_tiles]
+
+            if activity_dicts:
+                await set_cached_tiles(
+                    db, provider, "activity", plan.destination, start_date, end_date, activity_dicts
+                )
+
+    # Store in state
     state.tiles["hotels"] = hotel_dicts
     log("LOGISTICS", f"Found {len(hotel_dicts)} hotels for {plan.destination}")
-    _debug_graph(f"Hotels found: {len(hotel_dicts)}")
+    _debug_log(f"Hotels found: {len(hotel_dicts)}")
 
     state.tiles["activities"] = activity_dicts
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
-    _debug_graph(f"Activities found: {len(activity_dicts)}")
+    _debug_log(f"Activities found: {len(activity_dicts)}")
 
     # Update booking summary
     booking_summary = state.metadata.get("booking_summary", {})
@@ -426,25 +532,6 @@ def _calculate_diving_safety(flight_time_str: str) -> tuple[str, bool]:
         return f"✅ Safe: {int(buffer_hours)}h buffer", True
     else:
         return f"⚠️ Risky: Only {int(buffer_hours)}h buffer", False
-
-
-def _offer_to_dict(offer) -> Dict[str, Any]:
-    """Convert FlightOffer object to Amadeus-like dict."""
-    return {
-        "id": offer.id,
-        "price": {"total": str(offer.price)},
-        "itineraries": [
-            {
-                "segments": [
-                    {
-                        "carrierCode": offer.carrier_code,
-                        "departure": {"at": offer.departure_time.isoformat()},
-                        "duration": offer.duration,
-                    }
-                ]
-            }
-        ],
-    }
 
 
 def _curated_to_amadeus_format(curated_flights: List[Dict], date_str: str) -> List[Dict]:

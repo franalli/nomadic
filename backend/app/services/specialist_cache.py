@@ -1,0 +1,326 @@
+"""
+Thread-safe two-tier caching for Vertical Specialist LLM outputs.
+
+L1: In-memory TTLCache with RLock (1h TTL, 128 entries) - hot path
+L2: PostgreSQL response_cache (7d TTL) - warm persistence across restarts
+
+Cache key format: specialist:{topic}:{destination}:{month}:{duration}
+
+Usage:
+    from app.services.specialist_cache import (
+        get_cached_specialist_output,
+        set_cached_specialist_output,
+    )
+
+    # In vertical_specialist.py
+    cached = await get_cached_specialist_output(db, topic, dest, start, end)
+    if cached:
+        return LLMSpecialistOutput.model_validate(cached)
+
+    # After LLM call
+    await set_cached_specialist_output(db, topic, dest, start, end, output.model_dump())
+"""
+
+import logging
+from datetime import UTC, datetime, timedelta
+from threading import RLock
+from typing import Optional
+
+from cachetools import TTLCache
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Configuration
+# =============================================================================
+L1_TTL_SECONDS = 3600  # 1 hour
+L1_MAX_SIZE = 128
+L2_TTL_DAYS = 7
+
+# =============================================================================
+# L1: Thread-safe in-memory cache
+# =============================================================================
+_cache_lock = RLock()
+_stats_lock = RLock()
+_specialist_cache: TTLCache = TTLCache(maxsize=L1_MAX_SIZE, ttl=L1_TTL_SECONDS)
+
+# Hit/miss counters for observability
+_cache_stats = {
+    "l1_hits": 0,
+    "l1_misses": 0,
+    "l2_hits": 0,
+    "l2_misses": 0,
+    "writes": 0,
+}
+
+
+def _increment_stat(key: str) -> None:
+    """Thread-safe stats increment."""
+    with _stats_lock:
+        _cache_stats[key] += 1
+
+
+def _cache_get(key: str) -> Optional[dict]:
+    """Thread-safe L1 cache get."""
+    with _cache_lock:
+        return _specialist_cache.get(key)
+
+
+def _cache_set(key: str, value: dict) -> None:
+    """Thread-safe L1 cache set."""
+    with _cache_lock:
+        _specialist_cache[key] = value
+
+
+def _specialist_cache_key(
+    topic: str, destination: str, start_date: Optional[str], end_date: Optional[str]
+) -> str:
+    """
+    Generate stable cache key: specialist:{topic}:{dest}:{month}:{duration}
+
+    Key components:
+    - topic: "diving", "hiking", "skiing", etc.
+    - destination: normalized lowercase, stripped
+    - month: "2025-02" (seasonality matters for activities)
+    - duration: trip length in days (affects activity count)
+
+    Example: "specialist:diving:bali:2025-02:14"
+    """
+    dest_normalized = destination.lower().strip() if destination else "unknown"
+    month = start_date[:7] if start_date else "unknown"  # "2025-02"
+
+    duration_days = 5  # default
+    if start_date and end_date:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            duration_days = (end - start).days + 1
+        except ValueError:
+            pass
+
+    return f"specialist:{topic}:{dest_normalized}:{month}:{duration_days}"
+
+
+# =============================================================================
+# Cache Operations (Async)
+# =============================================================================
+
+
+async def get_cached_specialist_output(
+    db: AsyncSession,
+    topic: str,
+    destination: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> Optional[dict]:
+    """
+    Get cached specialist output: L1 → L2 fallback.
+
+    Args:
+        db: Async database session
+        topic: Specialist type ("diving", "hiking", etc.)
+        destination: Trip destination
+        start_date: Trip start date (YYYY-MM-DD)
+        end_date: Trip end date (YYYY-MM-DD)
+
+    Returns:
+        Cached dict (LLMSpecialistOutput.model_dump()) or None if not found
+    """
+    global _cache_stats
+
+    # Import here to avoid circular imports
+    from app.db_models import ResponseCache
+
+    cache_key = _specialist_cache_key(topic, destination, start_date, end_date)
+
+    # L1: Thread-safe memory check
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        _increment_stat("l1_hits")
+        logger.debug(f"[SPECIALIST_CACHE] L1 HIT: {cache_key}")
+        return cached
+
+    _increment_stat("l1_misses")
+
+    # L2: Database check
+    try:
+        result = await db.execute(
+            select(ResponseCache)
+            .where(ResponseCache.cache_key == cache_key)
+            .where(ResponseCache.cache_type == "specialist")
+            .where(ResponseCache.expires_at > datetime.now(UTC))
+        )
+        row = result.scalar_one_or_none()
+
+        if row:
+            _increment_stat("l2_hits")
+            logger.info(f"[SPECIALIST_CACHE] L2 HIT: {cache_key}")
+
+            # Promote to L1
+            _cache_set(cache_key, row.response_json)
+
+            # Update hit counter atomically to prevent lost updates
+            stmt = (
+                update(ResponseCache)
+                .where(ResponseCache.cache_key == cache_key)
+                .values(
+                    hit_count=ResponseCache.hit_count + 1,
+                    last_hit_at=datetime.now(UTC),
+                )
+            )
+            await db.execute(stmt)
+            await db.commit()
+
+            return row.response_json
+
+        _increment_stat("l2_misses")
+        logger.debug(f"[SPECIALIST_CACHE] L2 MISS: {cache_key}")
+        return None
+
+    except Exception as e:
+        logger.warning(f"[SPECIALIST_CACHE] L2 lookup failed: {e}")
+        return None
+
+
+async def set_cached_specialist_output(
+    db: AsyncSession,
+    topic: str,
+    destination: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+    output: dict,
+) -> None:
+    """
+    Cache specialist output to both L1 and L2.
+
+    Args:
+        db: Async database session
+        topic: Specialist type
+        destination: Trip destination
+        start_date: Trip start date
+        end_date: Trip end date
+        output: LLMSpecialistOutput.model_dump() dict
+    """
+    global _cache_stats
+
+    # Import here to avoid circular imports
+    from app.db_models import ResponseCache
+
+    cache_key = _specialist_cache_key(topic, destination, start_date, end_date)
+    expires_at = datetime.now(UTC) + timedelta(days=L2_TTL_DAYS)
+
+    # L1: Thread-safe write
+    _cache_set(cache_key, output)
+
+    # L2: Upsert to database
+    try:
+        stmt = pg_insert(ResponseCache).values(
+            cache_key=cache_key,
+            cache_type="specialist",
+            response_json=output,
+            created_at=datetime.now(UTC),
+            expires_at=expires_at,
+            hit_count=0,
+            last_hit_at=None,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["cache_key"],
+            set_={
+                "response_json": output,
+                "created_at": datetime.now(UTC),
+                "expires_at": expires_at,
+            },
+        )
+        await db.execute(stmt)
+        await db.commit()
+
+        _increment_stat("writes")
+        logger.info(f"[SPECIALIST_CACHE] Cached: {cache_key} (expires: {expires_at.date()})")
+
+    except Exception as e:
+        logger.warning(f"[SPECIALIST_CACHE] L2 write failed: {e}")
+        await db.rollback()
+
+
+# =============================================================================
+# Admin Functions
+# =============================================================================
+
+
+def get_cache_stats() -> dict:
+    """Return cache statistics for observability."""
+    with _cache_lock:
+        l1_size = len(_specialist_cache)
+    with _stats_lock:
+        stats_copy = dict(_cache_stats)
+    return {
+        **stats_copy,
+        "l1_size": l1_size,
+        "l1_maxsize": L1_MAX_SIZE,
+        "l1_ttl_seconds": L1_TTL_SECONDS,
+        "l2_ttl_days": L2_TTL_DAYS,
+    }
+
+
+def clear_memory_cache() -> int:
+    """Clear L1 memory cache. Returns count of cleared entries."""
+    with _cache_lock:
+        count = len(_specialist_cache)
+        _specialist_cache.clear()
+    logger.info(f"[SPECIALIST_CACHE] Cleared L1: {count} entries")
+    return count
+
+
+async def clear_db_cache(db: AsyncSession) -> int:
+    """Clear all L2 cache entries. Returns count deleted."""
+    from app.db_models import ResponseCache
+
+    try:
+        result = await db.execute(delete(ResponseCache))
+        await db.commit()
+        deleted = result.rowcount
+        logger.info(f"[SPECIALIST_CACHE] Cleared L2: {deleted} entries")
+        return deleted
+    except Exception as e:
+        logger.warning(f"[SPECIALIST_CACHE] Clear L2 failed: {e}")
+        await db.rollback()
+        return 0
+
+
+async def cleanup_expired(db: AsyncSession) -> int:
+    """
+    Remove expired L2 entries.
+
+    Run via lifespan shutdown or scheduled job.
+    """
+    from app.db_models import ResponseCache
+
+    try:
+        result = await db.execute(
+            delete(ResponseCache).where(ResponseCache.expires_at < datetime.now(UTC))
+        )
+        await db.commit()
+        deleted = result.rowcount
+        if deleted:
+            logger.info(f"[SPECIALIST_CACHE] Cleaned up {deleted} expired entries")
+        return deleted
+    except Exception as e:
+        logger.warning(f"[SPECIALIST_CACHE] Cleanup failed: {e}")
+        await db.rollback()
+        return 0
+
+
+def reset_stats() -> None:
+    """Reset hit/miss counters (useful for testing)."""
+    global _cache_stats
+    with _stats_lock:
+        _cache_stats = {
+            "l1_hits": 0,
+            "l1_misses": 0,
+            "l2_hits": 0,
+            "l2_misses": 0,
+            "writes": 0,
+        }

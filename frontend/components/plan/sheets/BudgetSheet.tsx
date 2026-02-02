@@ -69,12 +69,20 @@ function BudgetSheetInner({
 
   // Reset when opened
   useEffect(() => {
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
+
     if (open) {
       setAmount(initialAmount?.toString() || '');
       setCurrency(initialCurrency);
       setBudgetType(initialBudgetType);
-      setTimeout(() => inputRef.current?.focus(), 100);
+      focusTimer = setTimeout(() => inputRef.current?.focus(), 100);
     }
+
+    return () => {
+      if (focusTimer) {
+        clearTimeout(focusTimer);
+      }
+    };
   }, [open, initialAmount, initialCurrency, initialBudgetType]);
 
   // Get currency symbol

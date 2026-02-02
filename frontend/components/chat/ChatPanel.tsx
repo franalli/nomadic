@@ -338,6 +338,8 @@ interface ChatPanelProps {
   onUpdateFlightSettings?: (settings: Partial<FlightSettings>) => void;
   /** Update hotel settings callback */
   onUpdateHotelSettings?: (settings: Partial<HotelSettings>) => void;
+  /** Update activity settings callback */
+  onUpdateActivitySettings?: (settings: Partial<ActivitySettings>) => void;
   /** Update transport settings callback */
   onUpdateTransportSettings?: (settings: Partial<TransportSettings>) => void;
   /** Add activity callback */
@@ -413,6 +415,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onUpdateBookingTypes,
       onUpdateFlightSettings,
       onUpdateHotelSettings,
+      onUpdateActivitySettings,
       onUpdateTransportSettings: _onUpdateTransportSettings,
       onAddActivity: _onAddActivity,
       onRemoveActivity: _onRemoveActivity,
@@ -1721,9 +1724,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             }
             toast(enabled ? 'Activities included' : 'Activities removed');
           }}
-          onSaveSettings={(_settings) => {
-            // Activity settings update would go through a callback similar to others
-            void _settings;
+          onSaveSettings={(settings) => {
+            onUpdateActivitySettings?.(settings);
             toast('Activity preferences saved');
           }}
           onOpenDestination={() => {

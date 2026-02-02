@@ -9,7 +9,7 @@
 
 'use client';
 
-import { Check, Circle, MapPin, Calendar, Plane } from 'lucide-react';
+import { Calendar, Check, Circle, MapPin, Plane } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import type { PlanningPhase } from '@/types/plan-envelope';

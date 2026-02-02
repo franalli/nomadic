@@ -2,6 +2,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
+  AlertTriangle,
   Bed,
   Camera,
   MapPin,
@@ -18,15 +19,15 @@ import { useCallback, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import type { DayBlock, DayCard } from '@/types/plan-envelope';
 
-import { InlineDatePrompt } from './timeline/InlineDatePrompt';
 import {
   ActivityMiniCard,
   FreeDayCard,
+  getDisplayTime,
   GhostSlot,
   LogisticsBlock,
   SafetyBlock,
-  getDisplayTime,
 } from './timeline/blocks';
+import { InlineDatePrompt } from './timeline/InlineDatePrompt';
 
 // =============================================================================
 // Timeline Variant System (Grand Unification)
@@ -103,6 +104,10 @@ interface TimelineThreadProps {
   mode?: 'planning' | 'booking';
   /** Set of preferred tile IDs for attribution badges */
   preferredTileIds?: Set<string>;
+  /** Callback to open stays/hotel settings sheet */
+  onOpenStaysSettings?: () => void;
+  /** Callback to open flights settings sheet */
+  onOpenFlightsSettings?: () => void;
 }
 
 /**
@@ -211,6 +216,8 @@ export function TimelineThread({
   // Unified Planning View props
   mode = 'planning',
   preferredTileIds,
+  onOpenStaysSettings,
+  onOpenFlightsSettings,
 }: TimelineThreadProps) {
   // Compute effective variant: prefer explicit variant, fall back to isDraft for backward compatibility
   const effectiveVariant: TimelineVariant = variant ?? (isDraft ? 'draft' : 'real');
@@ -233,6 +240,7 @@ export function TimelineThread({
             type={block.buffer_type}
             time={getDisplayTime(block, blockIndex)}
             details={block.logistics_details}
+            onOpenFlightsSettings={onOpenFlightsSettings}
           />
         );
       }
@@ -250,6 +258,7 @@ export function TimelineThread({
             // Preference attribution for hotels
             preferenceStatus={block.preference_status}
             alternativeTileId={block.alternative_tile_id}
+            onOpenStaysSettings={onOpenStaysSettings}
           />
         );
       }
@@ -329,7 +338,7 @@ export function TimelineThread({
         />
       );
     },
-    [onOpenBookingDrawer, onUnassignTile, savedTileIds, mode, preferredTileIds]
+    [onOpenBookingDrawer, onUnassignTile, savedTileIds, mode, preferredTileIds, onOpenStaysSettings, onOpenFlightsSettings]
   );
 
   if (sortedDays.length === 0) {
@@ -468,6 +477,7 @@ export function TimelineThread({
                   const BlockIcon = getIconForBlock(block);
                   const isBlockSafety = block.is_buffer || !!block.buffer_type;
                   const isActiveBlock = activeBlockId === blockId;
+                  const isUnschedulable = block.unschedulable === true;
 
                   return (
                     <div
@@ -475,31 +485,43 @@ export function TimelineThread({
                       id={`timeline-item-${blockId}`}
                       data-map-id={blockId}
                       className={cn(
-                        'rounded-xl border p-4 transition-all',
-                        isBlockSafety
-                          ? 'bg-zinc-500/5 border-zinc-500/20'
-                          : isActiveBlock
-                            ? 'scale-[1.02] border-emerald-500/50 shadow-lg bg-card'
-                            : 'bg-card border-border hover:border-primary/50 hover:shadow-md'
+                        'rounded-xl border p-4 transition-all relative',
+                        isUnschedulable
+                          ? 'bg-zinc-100/50 dark:bg-zinc-900/30 border-dashed border-amber-500/50 opacity-60'
+                          : isBlockSafety
+                            ? 'bg-zinc-500/5 border-zinc-500/20'
+                            : isActiveBlock
+                              ? 'scale-[1.02] border-emerald-500/50 shadow-lg bg-card'
+                              : 'bg-card border-border hover:border-primary/50 hover:shadow-md'
                       )}
                     >
+                      {/* Unschedulable warning banner */}
+                      {isUnschedulable && (
+                        <div className="absolute -top-2 left-3 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/30">
+                          <AlertTriangle className="w-3 h-3 text-amber-500" />
+                          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">Cannot schedule</span>
+                        </div>
+                      )}
+
                       <div className="flex items-start gap-3">
                         <div
                           className={cn(
                             'flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center',
-                            isBlockSafety
-                              ? 'bg-zinc-500/10 text-zinc-500'
-                              : 'bg-muted text-muted-foreground'
+                            isUnschedulable
+                              ? 'bg-amber-500/10 text-amber-500'
+                              : isBlockSafety
+                                ? 'bg-zinc-500/10 text-zinc-500'
+                                : 'bg-muted text-muted-foreground'
                           )}
                         >
-                          <BlockIcon className="w-4 h-4" />
+                          {isUnschedulable ? <AlertTriangle className="w-4 h-4" /> : <BlockIcon className="w-4 h-4" />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span
                               className={cn(
                                 'text-xs font-medium uppercase tracking-wide',
-                                isBlockSafety ? 'text-zinc-500' : 'text-muted-foreground'
+                                isUnschedulable ? 'text-amber-500' : isBlockSafety ? 'text-zinc-500' : 'text-muted-foreground'
                               )}
                             >
                               {block.period}
@@ -519,7 +541,11 @@ export function TimelineThread({
                           <p
                             className={cn(
                               'mt-1 font-medium',
-                              isBlockSafety ? 'text-zinc-600 dark:text-zinc-400' : 'text-foreground'
+                              isUnschedulable
+                                ? 'line-through text-zinc-500'
+                                : isBlockSafety
+                                  ? 'text-zinc-600 dark:text-zinc-400'
+                                  : 'text-foreground'
                             )}
                           >
                             {block.activity_type || block.summary}
@@ -527,6 +553,13 @@ export function TimelineThread({
                           <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
                             {block.summary}
                           </p>
+
+                          {/* Unschedulable reason */}
+                          {isUnschedulable && block.unschedulable_reason && (
+                            <p className="mt-1.5 text-xs text-amber-600/80 dark:text-amber-400/70 italic">
+                              {block.unschedulable_reason}
+                            </p>
+                          )}
 
                           {/* Specialist constraint pills */}
                           {block.constraints && block.constraints.length > 0 && (

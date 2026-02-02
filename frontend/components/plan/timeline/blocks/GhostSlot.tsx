@@ -9,7 +9,7 @@
 
 'use client';
 
-import { Building, Plane, Plus, Sparkles, type LucideIcon } from 'lucide-react';
+import { Building, type LucideIcon,Plane, Plus, Sparkles } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 

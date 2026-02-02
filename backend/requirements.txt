@@ -32,3 +32,4 @@ claude-agent-sdk==0.1.19
 scikit-image==0.26.0
 opensimplex==0.4.5.1
 rich==14.3.1
+redis==7.1.0

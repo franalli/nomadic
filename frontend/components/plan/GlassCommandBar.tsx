@@ -4,8 +4,8 @@ import { CheckCircle2, Lock } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import type { ViewName } from '@/hooks/useViewNavigation';
-import type { ViewMode, PlanningPhase } from '@/types/plan-envelope';
 import { cn } from '@/lib/utils';
+import type { PlanningPhase,ViewMode } from '@/types/plan-envelope';
 
 // =============================================================================
 // Types
@@ -72,6 +72,7 @@ export function GlassCommandBar({
   activeMode,
   onModeNavigate,
   canViewBooking,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   planningPhase: _planningPhase,
   planningProgress,
   // Legacy props

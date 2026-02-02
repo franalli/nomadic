@@ -17,6 +17,7 @@ import logging
 import os
 import random
 import time
+from threading import RLock
 from typing import Any, Literal, Optional
 
 from cachetools import TTLCache
@@ -59,6 +60,10 @@ _rate_counter_cache: TTLCache = TTLCache(
     ttl=settings.validation_rate_limit_window,
 )
 
+# Thread-safety lock for all validation caches
+# Required because FastAPI may run requests in thread pool executors
+_validation_cache_lock = RLock()
+
 
 def clear_validation_caches() -> int:
     """
@@ -75,21 +80,22 @@ def clear_validation_caches() -> int:
 
     Returns the total number of cache entries cleared.
     """
-    total_cleared = (
-        len(_validation_cache)
-        + len(_negative_cache)
-        + len(_split_cache)
-        + len(_prompt_cache)
-        + len(_fallback_cache)
-        + len(_rate_counter_cache)
-    )
+    with _validation_cache_lock:
+        total_cleared = (
+            len(_validation_cache)
+            + len(_negative_cache)
+            + len(_split_cache)
+            + len(_prompt_cache)
+            + len(_fallback_cache)
+            + len(_rate_counter_cache)
+        )
 
-    _validation_cache.clear()
-    _negative_cache.clear()
-    _split_cache.clear()
-    _prompt_cache.clear()
-    _fallback_cache.clear()
-    _rate_counter_cache.clear()
+        _validation_cache.clear()
+        _negative_cache.clear()
+        _split_cache.clear()
+        _prompt_cache.clear()
+        _fallback_cache.clear()
+        _rate_counter_cache.clear()
 
     return total_cleared
 
@@ -156,15 +162,17 @@ def _cache_key(field_type: str, value: str) -> str:
 def _build_prompt(field_type: str, normalized_value: str) -> str:
     """Render or reuse the minimal validation prompt."""
     cache_key = _cache_key(field_type, normalized_value)
-    cached_prompt = _prompt_cache.get(cache_key)
-    if cached_prompt is not None:
-        return cached_prompt
+    with _validation_cache_lock:
+        cached_prompt = _prompt_cache.get(cache_key)
+        if cached_prompt is not None:
+            return cached_prompt
 
     prompt = _LOCATION_PROMPT.format(
         field_type=field_type,
         value=normalized_value,
     )
-    _prompt_cache[cache_key] = prompt
+    with _validation_cache_lock:
+        _prompt_cache[cache_key] = prompt
     return prompt
 
 
@@ -173,8 +181,9 @@ def _check_rate_limit(session_id: Optional[str]) -> Optional[str]:
     if not settings.validation_rate_limit_enabled or not session_id:
         return None
 
-    count = _rate_counter_cache.get(session_id, 0) + 1
-    _rate_counter_cache[session_id] = count
+    with _validation_cache_lock:
+        count = _rate_counter_cache.get(session_id, 0) + 1
+        _rate_counter_cache[session_id] = count
 
     if count > settings.validation_rate_limit_max_requests:
         return "Too many validation attempts. Please try again later."
@@ -364,27 +373,28 @@ def validate_input(
             reason=rate_limit_reason,
         )
 
-    # Check cache
+    # Check cache (thread-safe)
     cache_key = _cache_key(field_type, normalized_value)
-    cached = _validation_cache.get(cache_key)
-    if cached is not None:
-        return ValidationResult(**cached)
+    with _validation_cache_lock:
+        cached = _validation_cache.get(cache_key)
+        if cached is not None:
+            return ValidationResult(**cached)
 
-    if settings.validation_negative_cache_enabled:
-        negative_reason = _negative_cache.get(cache_key)
-        if negative_reason is not None:
-            return ValidationResult(
-                corrected_values=[],
-                is_valid=False,
-                reason=negative_reason,
-            )
+        if settings.validation_negative_cache_enabled:
+            negative_reason = _negative_cache.get(cache_key)
+            if negative_reason is not None:
+                return ValidationResult(
+                    corrected_values=[],
+                    is_valid=False,
+                    reason=negative_reason,
+                )
 
-    # Destination splitting cache (case-insensitive key)
-    split_key = normalized_value.lower()
-    if field_type == "destination":
-        split_cached = _split_cache.get(split_key)
-        if split_cached is not None:
-            return ValidationResult(**split_cached)
+        # Destination splitting cache (case-insensitive key)
+        split_key = normalized_value.lower()
+        if field_type == "destination":
+            split_cached = _split_cache.get(split_key)
+            if split_cached is not None:
+                return ValidationResult(**split_cached)
 
     # Build prompt based on field type
     prompt = _build_prompt(field_type, normalized_value)
@@ -428,15 +438,16 @@ def validate_input(
     )
 
     # Cache only valid results (typos should be re-validated)
-    if is_valid:
-        result_dict = result.to_dict()
-        _validation_cache[cache_key] = result_dict
-        _fallback_cache[cache_key] = result_dict
+    with _validation_cache_lock:
+        if is_valid:
+            result_dict = result.to_dict()
+            _validation_cache[cache_key] = result_dict
+            _fallback_cache[cache_key] = result_dict
 
-        if field_type == "destination" and len(result.corrected_values) > 1:
-            _split_cache[split_key] = result_dict
-    elif settings.validation_negative_cache_enabled:
-        _negative_cache[cache_key] = reason or "Invalid input"
+            if field_type == "destination" and len(result.corrected_values) > 1:
+                _split_cache[split_key] = result_dict
+        elif settings.validation_negative_cache_enabled:
+            _negative_cache[cache_key] = reason or "Invalid input"
 
     return result
 
@@ -483,27 +494,28 @@ async def validate_input_async(
             reason=rate_limit_reason,
         )
 
-    # Check cache (sync - caches are in-memory)
+    # Check cache (thread-safe - caches are in-memory)
     cache_key = _cache_key(field_type, normalized_value)
-    cached = _validation_cache.get(cache_key)
-    if cached is not None:
-        return ValidationResult(**cached)
+    with _validation_cache_lock:
+        cached = _validation_cache.get(cache_key)
+        if cached is not None:
+            return ValidationResult(**cached)
 
-    if settings.validation_negative_cache_enabled:
-        negative_reason = _negative_cache.get(cache_key)
-        if negative_reason is not None:
-            return ValidationResult(
-                corrected_values=[],
-                is_valid=False,
-                reason=negative_reason,
-            )
+        if settings.validation_negative_cache_enabled:
+            negative_reason = _negative_cache.get(cache_key)
+            if negative_reason is not None:
+                return ValidationResult(
+                    corrected_values=[],
+                    is_valid=False,
+                    reason=negative_reason,
+                )
 
-    # Destination splitting cache
-    split_key = normalized_value.lower()
-    if field_type == "destination":
-        split_cached = _split_cache.get(split_key)
-        if split_cached is not None:
-            return ValidationResult(**split_cached)
+        # Destination splitting cache
+        split_key = normalized_value.lower()
+        if field_type == "destination":
+            split_cached = _split_cache.get(split_key)
+            if split_cached is not None:
+                return ValidationResult(**split_cached)
 
     # Build prompt
     prompt = _build_prompt(field_type, normalized_value)
@@ -544,16 +556,17 @@ async def validate_input_async(
         reason=reason,
     )
 
-    # Cache only valid results
-    if is_valid:
-        result_dict = result.to_dict()
-        _validation_cache[cache_key] = result_dict
-        _fallback_cache[cache_key] = result_dict
+    # Cache only valid results (thread-safe)
+    with _validation_cache_lock:
+        if is_valid:
+            result_dict = result.to_dict()
+            _validation_cache[cache_key] = result_dict
+            _fallback_cache[cache_key] = result_dict
 
-        if field_type == "destination" and len(result.corrected_values) > 1:
-            _split_cache[split_key] = result_dict
-    elif settings.validation_negative_cache_enabled:
-        _negative_cache[cache_key] = reason or "Invalid input"
+            if field_type == "destination" and len(result.corrected_values) > 1:
+                _split_cache[split_key] = result_dict
+        elif settings.validation_negative_cache_enabled:
+            _negative_cache[cache_key] = reason or "Invalid input"
 
     return result
 
@@ -626,18 +639,19 @@ def prewarm_cache() -> int:
     count = 0
 
     # Pre-populate destinations (valid for both origin and destination)
-    for dest in common_destinations:
-        for field_type in ("origin", "destination"):
-            cache_key = _cache_key(field_type, dest)
-            if cache_key not in _validation_cache:
-                entry = {
-                    "corrected_values": [dest],
-                    "is_valid": True,
-                    "reason": None,
-                }
-                _validation_cache[cache_key] = entry
-                _fallback_cache[cache_key] = entry
-                count += 1
+    with _validation_cache_lock:
+        for dest in common_destinations:
+            for field_type in ("origin", "destination"):
+                cache_key = _cache_key(field_type, dest)
+                if cache_key not in _validation_cache:
+                    entry = {
+                        "corrected_values": [dest],
+                        "is_valid": True,
+                        "reason": None,
+                    }
+                    _validation_cache[cache_key] = entry
+                    _fallback_cache[cache_key] = entry
+                    count += 1
 
     return count
 
@@ -652,33 +666,35 @@ def clear_cache(preserve_rate_limiting: bool = True) -> int:
 
     Returns the number of entries that were cleared across caches.
     """
-    count = (
-        len(_validation_cache)
-        + len(_negative_cache)
-        + len(_split_cache)
-        + len(_prompt_cache)
-        + len(_fallback_cache)
-    )
-    _validation_cache.clear()
-    _negative_cache.clear()
-    _split_cache.clear()
-    _prompt_cache.clear()
-    _fallback_cache.clear()
+    with _validation_cache_lock:
+        count = (
+            len(_validation_cache)
+            + len(_negative_cache)
+            + len(_split_cache)
+            + len(_prompt_cache)
+            + len(_fallback_cache)
+        )
+        _validation_cache.clear()
+        _negative_cache.clear()
+        _split_cache.clear()
+        _prompt_cache.clear()
+        _fallback_cache.clear()
 
-    if not preserve_rate_limiting:
-        count += len(_rate_counter_cache)
-        _rate_counter_cache.clear()
+        if not preserve_rate_limiting:
+            count += len(_rate_counter_cache)
+            _rate_counter_cache.clear()
 
     return count
 
 
 def cache_stats() -> dict[str, int]:
     """Return a snapshot of validation cache sizes."""
-    return {
-        "positive": len(_validation_cache),
-        "negative": len(_negative_cache),
-        "split": len(_split_cache),
-        "prompt": len(_prompt_cache),
-        "fallback": len(_fallback_cache),
-        "rate_counters": len(_rate_counter_cache),
-    }
+    with _validation_cache_lock:
+        return {
+            "positive": len(_validation_cache),
+            "negative": len(_negative_cache),
+            "split": len(_split_cache),
+            "prompt": len(_prompt_cache),
+            "fallback": len(_fallback_cache),
+            "rate_counters": len(_rate_counter_cache),
+        }

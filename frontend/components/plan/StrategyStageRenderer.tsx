@@ -25,10 +25,11 @@
 
 'use client';
 
-import { motion, AnimatePresence } from 'framer-motion';
+import { AnimatePresence,motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { InteractiveMap } from '@/components/map/InteractiveMap';
+import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { useItineraryRegeneration } from '@/hooks/useItineraryRegeneration';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
@@ -48,8 +49,8 @@ import type { DocumentTripInputs } from '@/types/document';
 import {
   computePlanningPhase,
   computePlanningProgress,
-  normalizePlanViewState,
   type DestinationCard,
+  normalizePlanViewState,
   type PlanViewModel,
   type PlanViewState,
   type ViewMode,
@@ -102,26 +103,31 @@ export function computeDataDensity(
 
 import { Bike, Compass, Loader2, Mountain, Sailboat, Snowflake, Waves } from 'lucide-react';
 
-import { BookingSection } from './BookingSection';
-import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
-import { NextStepBar } from './NextStepBar';
-import { PlanHeader } from './PlanHeader';
-import { ReadyToPlanBanner } from './ReadyToPlanBanner';
-import { SelectionsBar } from './SelectionsBar';
 import {
   REVEAL_TIMING,
   SPRING_CONFIG,
 } from '@/lib/animation-config';
+
+import { BookingSection } from './BookingSection';
+import { type ConflictData, type ConflictResolution,ConflictResolutionBanner } from './ConflictResolutionBanner';
+import { DestinationMapPlaceholder } from './DestinationMapPlaceholder';
+import { ItineraryProgressIndicator, type ProgressStage } from './ItineraryProgressIndicator';
+import { NextStepBar } from './NextStepBar';
+// Unified Planning View: Only S2StrategyView is used (specialist cards)
+// Legacy stage views removed - timeline lives in Section 4, not embedded in stage content
+// import { S1FramingView } from './stages/S1FramingView';
+// import { S2BlockedView } from './stages/S2BlockedView';
+import { OriginPromptCard } from './OriginPromptCard';
+import { PlanHeader } from './PlanHeader';
 import {
   type GenerationState,
   getNextAction,
   getStageFromState,
   isGenerating,
+  isMultiSpecialistTrip,
 } from './planStateHelpers';
-// Unified Planning View: Only S2StrategyView is used (specialist cards)
-// Legacy stage views removed - timeline lives in Section 4, not embedded in stage content
-// import { S1FramingView } from './stages/S1FramingView';
-// import { S2BlockedView } from './stages/S2BlockedView';
+import { ReadyToPlanBanner } from './ReadyToPlanBanner';
+import { SelectionsBar } from './SelectionsBar';
 import { S2StrategyView } from './stages/S2StrategyView';
 // import { S3BlockedView } from './stages/S3BlockedView';
 // import { S3EditingView } from './stages/S3EditingView';
@@ -207,6 +213,16 @@ interface StrategyStageRendererProps {
   onSelectNights?: (nights: number) => void;
   /** Two-mode system: explicit mode override (if not using view navigation) */
   mode?: ViewMode;
+  /** Conflict data from ItineraryBuilder (Path A) */
+  conflictData?: ConflictData | null;
+  /** Callback when user selects a conflict resolution */
+  onResolveConflict?: (resolution: ConflictResolution) => void;
+  /** Callback to open activity settings sheet (for specialist gear icons) */
+  onOpenActivitySettings?: () => void;
+  /** Callback to open stays/hotel settings sheet (for hotel gear icons) */
+  onOpenStaysSettings?: () => void;
+  /** Callback to open flights settings sheet (for flight gear icons) */
+  onOpenFlightsSettings?: () => void;
 }
 
 // renderStageContent - REMOVED for Unified Planning View
@@ -247,6 +263,11 @@ export function StrategyStageRenderer({
   isRegenerating = false,
   onSelectNights,
   mode: explicitMode,
+  conflictData,
+  onResolveConflict,
+  onOpenActivitySettings,
+  onOpenStaysSettings,
+  onOpenFlightsSettings,
 }: StrategyStageRendererProps) {
   // onReset reserved for future use (E_RESET event)
   void _onReset;
@@ -317,11 +338,36 @@ export function StrategyStageRenderer({
   const currentStage = getStageFromState(state);
   const generating = isGenerating(generation);
 
+  // =========================================================================
+  // PATH A: Multi-Specialist Auto-Trigger Detection
+  // =========================================================================
+  // When multi-specialist trip is in S2 + has dates, we auto-trigger instead
+  // of showing the "Build Itinerary" button. Show progress indicator instead.
+  const isMultiSpecialist = isMultiSpecialistTrip(viewModel.executed_strategy_topics);
+  const shouldShowAutoProgress = isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates && generating;
+  const shouldShowConflictBanner = conflictData != null;
+
+  // Hide NextStepBar when:
+  // 1. Multi-specialist trip in S2 (auto-trigger handles it)
+  // 2. Conflict banner is showing
+  // NextStepBar still shows for single-specialist trips (manual trigger)
+  const hideNextStepBar = (isMultiSpecialist && state === 'S2_STRATEGY_READY' && hasDates) || shouldShowConflictBanner;
+
+  // Compute progress stage for indicator
+  const progressStage: ProgressStage = useMemo(() => {
+    if (!generating) return 'success';
+    const stage = generation?.stage;
+    if (stage === 'itinerary') return 'building';
+    // Check for constraint-related stages (may come from backend)
+    if (stage === 'structure' || stage === 'strategy') return 'checking';
+    return 'analyzing';
+  }, [generating, generation?.stage]);
+
   // Compute streaming state for disabling pills
   const isStreaming = generating || isCommitting || isExpandingItinerary;
 
   // View navigation - two-mode system (PLANNING + BOOKING)
-  const { activeMode, canViewBooking, activeView, canViewSetup, canViewPlan, canViewBook: _canViewBook } = useViewNavigation();
+  const { activeMode, canViewBooking, activeView, canViewSetup, canViewPlan } = useViewNavigation();
 
   // Two-mode system: use activeMode from hook, allow explicit override
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
@@ -439,6 +485,7 @@ export function StrategyStageRenderer({
             tripInputs={effectiveTripInputs}
             density="ghost"
             autoExpandOnLoad={false} // Cards stay collapsed in SETUP
+            onOpenActivitySettings={onOpenActivitySettings}
           />
 
           {/* GHOST TIMELINE (preview of activities) */}
@@ -450,6 +497,8 @@ export function StrategyStageRenderer({
             startDate={effectiveTripInputs?.start_date ?? null}
             onSelectNights={onSelectNights}
             onOpenDatePicker={() => onOpenSheet?.('dates')}
+            onOpenStaysSettings={onOpenStaysSettings}
+            onOpenFlightsSettings={onOpenFlightsSettings}
           />
           <div className="text-center pt-4 pb-8">
             <p className="text-sm text-muted-foreground">
@@ -539,6 +588,7 @@ export function StrategyStageRenderer({
               tripInputs={effectiveTripInputs}
               density="bridge"
               autoExpandOnLoad={hasDates} // SETUP = collapsed, PLAN = brief auto-expand
+              onOpenActivitySettings={onOpenActivitySettings}
             />
           </div>
 
@@ -547,12 +597,14 @@ export function StrategyStageRenderer({
             {/* Explicit height wrapper ensures Mapbox initializes correctly */}
             <div style={{ height: 400 }} className="rounded-xl overflow-hidden sticky top-4">
               {bridgeMapItems.length > 0 ? (
-                <InteractiveMap
-                  items={bridgeMapItems}
-                  activeItemId={null}
-                  defaultCenter={bridgeMapCenter}
-                  className="h-full w-full"
-                />
+                <MapErrorBoundary className="h-full w-full">
+                  <InteractiveMap
+                    items={bridgeMapItems}
+                    activeItemId={null}
+                    defaultCenter={bridgeMapCenter}
+                    className="h-full w-full"
+                  />
+                </MapErrorBoundary>
               ) : (
                 <DestinationMapPlaceholder
                   destination={destinationCard?.title || 'Destination'}
@@ -638,6 +690,7 @@ export function StrategyStageRenderer({
                 tiles={effectiveTiles}
                 tripInputs={effectiveTripInputs}
                 density={density}
+                onOpenActivitySettings={onOpenActivitySettings}
               />
             )}
 
@@ -651,6 +704,22 @@ export function StrategyStageRenderer({
               </div>
             )}
           </section>
+
+          {/* ORIGIN PROMPT - shows after specialists when origin not set */}
+          {state === 'S2_STRATEGY_READY' &&
+            effectiveTripInputs?.destination &&
+            effectiveTripInputs?.start_date &&
+            effectiveTripInputs?.end_date &&
+            !effectiveTripInputs?.origin &&
+            (viewModel.executed_strategy_topics?.length ?? 0) >= 2 && (
+              <div className="px-4 mb-4">
+                <OriginPromptCard
+                  onSetOrigin={(origin) => {
+                    useDocumentStore.getState().commitTripInputs({ origin });
+                  }}
+                />
+              </div>
+            )}
 
           {/* SELECTIONS BAR - slides in when user has hearted tiles */}
           <AnimatePresence>
@@ -706,6 +775,7 @@ export function StrategyStageRenderer({
                 hasDates={!!effectiveTripInputs?.start_date}
                 mode={effectiveMode}
                 strategySections={viewModel.strategy_sections}
+                onOpenStaysSettings={onOpenStaysSettings}
               />
               </motion.section>
             )}
@@ -717,12 +787,14 @@ export function StrategyStageRenderer({
               {/* Explicit height wrapper ensures Mapbox initializes correctly */}
               <div style={{ height: 300 }} className="rounded-xl overflow-hidden border border-border/50">
                 {destCoords ? (
-                  <InteractiveMap
-                    items={[]}
-                    activeItemId={null}
-                    defaultCenter={mapCenter}
-                    className="h-full w-full"
-                  />
+                  <MapErrorBoundary className="h-full w-full">
+                    <InteractiveMap
+                      items={[]}
+                      activeItemId={null}
+                      defaultCenter={mapCenter}
+                      className="h-full w-full"
+                    />
+                  </MapErrorBoundary>
                 ) : (
                   <DestinationMapPlaceholder
                     destination={destinationCard?.title || 'Destination'}
@@ -753,6 +825,8 @@ export function StrategyStageRenderer({
                     variant="draft"
                     useRichBlocks={true}
                     savedTileIds={savedTileIds}
+                    onOpenStaysSettings={onOpenStaysSettings}
+                    onOpenFlightsSettings={onOpenFlightsSettings}
                   />
 
                   {/* Regeneration overlay - dims timeline during update */}
@@ -792,12 +866,14 @@ export function StrategyStageRenderer({
               <div className="sticky top-20 z-10">
                 {/* Explicit height wrapper ensures Mapbox initializes correctly */}
                 <div style={{ height: 400 }} className="rounded-xl overflow-hidden border border-border/50">
-                  <InteractiveMap
-                    items={destinationMarker}
-                    activeItemId={null}
-                    defaultCenter={mapCenter}
-                    className="h-full w-full"
-                  />
+                  <MapErrorBoundary className="h-full w-full">
+                    <InteractiveMap
+                      items={destinationMarker}
+                      activeItemId={null}
+                      defaultCenter={mapCenter}
+                      className="h-full w-full"
+                    />
+                  </MapErrorBoundary>
                 </div>
               </div>
             </motion.div>
@@ -847,8 +923,9 @@ export function StrategyStageRenderer({
       hasDates={!!effectiveTripInputs?.start_date}
       mode="booking" // Book view is always in booking mode
       strategySections={viewModel.strategy_sections}
+      onOpenStaysSettings={onOpenStaysSettings}
     />
-  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile, effectiveTripInputs?.start_date]);
+  ), [state, effectiveTiles, generation, viewModel.strategy_sections, savedTileIds, onSaveTile, effectiveTripInputs?.start_date, onOpenStaysSettings]);
 
   // MOBILE: Simplified layout - no absolute positioning layer system
   // Desktop uses layers to preserve scroll position across view switches
@@ -978,8 +1055,58 @@ export function StrategyStageRenderer({
       </div>
 
       {/* Sticky footer - slides up, only shown in PLANNING mode, hidden on mobile */}
-      <AnimatePresence>
-        {nextAction && effectiveMode === 'planning' && (
+      <AnimatePresence mode="wait">
+        {/* PATH A: Auto-Progress Indicator for multi-specialist trips */}
+        {shouldShowAutoProgress && effectiveMode === 'planning' && (
+          <motion.div
+            key="progress-indicator"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            transition={{
+              type: 'spring',
+              stiffness: SPRING_CONFIG.SLIDE.stiffness,
+              damping: SPRING_CONFIG.SLIDE.damping,
+            }}
+            className="sticky bottom-6 z-40 w-full justify-center pointer-events-none mt-8 hidden lg:flex"
+          >
+            <div className="pointer-events-auto w-fit mx-auto max-w-md">
+              <ItineraryProgressIndicator
+                stage={progressStage}
+                specialists={viewModel.executed_strategy_topics ?? []}
+                progress={generation?.pct}
+                message={generation?.message}
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {/* PATH A: Conflict Resolution Banner */}
+        {shouldShowConflictBanner && effectiveMode === 'planning' && (
+          <motion.div
+            key="conflict-banner"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            transition={{
+              type: 'spring',
+              stiffness: SPRING_CONFIG.SLIDE.stiffness,
+              damping: SPRING_CONFIG.SLIDE.damping,
+            }}
+            className="sticky bottom-6 z-40 w-full justify-center pointer-events-none mt-8 hidden lg:flex"
+          >
+            <div className="pointer-events-auto w-fit mx-auto max-w-lg">
+              <ConflictResolutionBanner
+                conflict={conflictData!}
+                currentDays={effectiveTripInputs?.trip_duration ?? undefined}
+                onResolve={(resolution) => onResolveConflict?.(resolution)}
+              />
+            </div>
+          </motion.div>
+        )}
+
+        {/* Standard NextStepBar for single-specialist trips */}
+        {nextAction && effectiveMode === 'planning' && !hideNextStepBar && (
           <motion.div
             key="next-step-bar"
             initial={{ y: 80, opacity: 0 }}

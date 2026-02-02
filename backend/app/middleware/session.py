@@ -23,7 +23,7 @@ CSRF Protection:
 import secrets
 from typing import Callable
 
-from fastapi import Request, Response
+from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp
@@ -138,7 +138,7 @@ def get_session_from_request(request: Request) -> str:
     """
     session_id = getattr(request.state, "session_id", None)
     if not session_id:
-        raise ValueError("Session middleware not configured or session missing")
+        raise HTTPException(status_code=401, detail="Session missing or expired")
     return session_id
 
 

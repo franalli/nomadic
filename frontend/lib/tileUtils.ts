@@ -4,8 +4,8 @@
  * Helper functions for working with tiles.
  */
 
-import type { Tile } from '@/types/tile';
 import { isFlightType, isHotelType } from '@/lib/utils';
+import type { Tile } from '@/types/tile';
 
 /**
  * Extract API parameters from tile for debug preview tooltip.

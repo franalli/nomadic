@@ -19,6 +19,49 @@ from app.schemas import Tile
 from .models import SearchContext
 from .provider_base import Provider
 
+# =============================================================================
+# Filtering Helpers
+# =============================================================================
+
+
+def _within_budget(tile: Tile, hotel_limit: float, activity_limit: float) -> bool:
+    """Check if tile is within budget allocation (40% hotels, 30% activities)."""
+    if tile.type == "hotel" and tile.price_estimate:
+        return tile.price_estimate <= hotel_limit
+    if tile.type == "activity" and tile.price_estimate:
+        return tile.price_estimate <= activity_limit
+    return True
+
+
+def _matches_skill(tile: Tile, user_skill: Optional[str]) -> bool:
+    """Check if activity skill level matches user's skill or below."""
+    if tile.type != "activity" or not user_skill:
+        return True
+    tile_skill = (tile.meta or {}).get("skill_level") or (tile.meta or {}).get(
+        "difficulty", "beginner"
+    )
+    if not tile_skill:
+        return True
+    skill_order = ["beginner", "intermediate", "advanced"]
+    try:
+        tile_idx = skill_order.index(tile_skill.lower())
+        user_idx = skill_order.index(user_skill.lower())
+        return tile_idx <= user_idx
+    except ValueError:
+        return True  # Unknown skill level, don't filter
+
+
+def _matches_stars(tile: Tile, min_stars: int) -> bool:
+    """Check if hotel meets minimum star rating."""
+    if tile.type != "hotel" or min_stars <= 0:
+        return True
+    stars = (tile.meta or {}).get("stars", 0)
+    if not stars:
+        # Check rating as fallback (4.0+ = 4 stars, etc.)
+        rating = tile.rating or 0
+        stars = int(rating)
+    return stars >= min_stars
+
 
 class CuratedProvider(Provider):
     """
@@ -47,6 +90,7 @@ class CuratedProvider(Provider):
         Search for curated tiles.
 
         Returns curated hotels and activities, with optional live flights.
+        Applies budget/skill/stars filters from trip settings.
         """
         tiles: List[Tile] = []
 
@@ -80,6 +124,34 @@ class CuratedProvider(Provider):
         # For now, skip flights in curated provider - they'll come from Amadeus
         # if "flight" in ctx.verticals or not ctx.verticals:
         #     pass  # Live flights from Amadeus
+
+        # =================================================================
+        # Apply Filters from Trip Settings
+        # =================================================================
+
+        # Budget filter (40% for hotels, 30% for activities)
+        if ctx.budget:
+            hotel_limit = ctx.budget * 0.4
+            activity_limit = ctx.budget * 0.3
+            tiles = [t for t in tiles if _within_budget(t, hotel_limit, activity_limit)]
+
+        # Skill level filter from activity_settings
+        activity_settings = getattr(ctx, "activity_settings", None) or {}
+        if isinstance(activity_settings, dict):
+            skill_level = activity_settings.get("skill_level")
+        else:
+            skill_level = None
+        if skill_level:
+            tiles = [t for t in tiles if _matches_skill(t, skill_level)]
+
+        # Star rating filter from hotel_settings
+        hotel_settings = getattr(ctx, "hotel_settings", None) or {}
+        if isinstance(hotel_settings, dict):
+            min_stars = hotel_settings.get("min_stars", 0)
+        else:
+            min_stars = 0
+        if min_stars and min_stars > 0:
+            tiles = [t for t in tiles if _matches_stars(t, min_stars)]
 
         return tiles
 

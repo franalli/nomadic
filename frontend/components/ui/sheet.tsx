@@ -200,4 +200,4 @@ function SheetClose({ className }: { className?: string }) {
   );
 }
 
-export { Sheet, SheetContent, SheetHeader, SheetTitle, SheetClose };
+export { Sheet, SheetClose,SheetContent, SheetHeader, SheetTitle };

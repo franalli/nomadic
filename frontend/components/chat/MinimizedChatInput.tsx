@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { Loader2, Send } from 'lucide-react';
-import { memo, useCallback, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
@@ -85,6 +85,16 @@ function MinimizedChatInputInner({
   const { activeTab, isDesktop } = useMobileMode();
   const [inputValue, setInputValue] = useState('');
   const [showSentToast, setShowSentToast] = useState(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
 
   // Only show on mobile when NOT on chat tab
   const shouldShow = !isDesktop && activeTab !== 'chat';
@@ -104,7 +114,10 @@ function MinimizedChatInputInner({
 
       // Show sent toast
       setShowSentToast(true);
-      setTimeout(() => setShowSentToast(false), 2000);
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+      }
+      toastTimerRef.current = setTimeout(() => setShowSentToast(false), 2000);
     },
     [inputValue, disabled, isProcessing, onSendMessage]
   );

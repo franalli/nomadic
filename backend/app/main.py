@@ -116,6 +116,7 @@ from app.schemas import (  # noqa: E402
     PlanDocumentResponse,
     PlanViewState,
     ReadinessItem,
+    RemoveSpecialistRequest,
     StrategySection,
     Tile,
     TileRefreshRequest,
@@ -123,6 +124,13 @@ from app.schemas import (  # noqa: E402
     TilesSearchRequest,
     TripInputValidationRequest,
     TripInputValidationResponse,
+)
+from app.services.regen_strategy import (  # noqa: E402
+    RegenStrategy,
+    compute_field_hashes,
+    compute_strategy,
+    detect_changed_fields,
+    get_strategy_description,
 )
 from app.services.unsplash import (  # noqa: E402
     clear_db_cache as clear_unsplash_db_cache,
@@ -786,8 +794,37 @@ async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
     unsplash_db_count = await clear_unsplash_db_cache(db)
     results["caches_cleared"]["unsplash_database"] = unsplash_db_count
 
-    # 5. Summary
-    total = planner_cleared + unsplash_memory_count + unsplash_db_count
+    # 5. Clear Specialist LLM cache (L1 + L2)
+    from app.services.specialist_cache import clear_db_cache as clear_specialist_db
+    from app.services.specialist_cache import clear_memory_cache as clear_specialist_memory
+
+    specialist_memory_count = clear_specialist_memory()
+    specialist_db_count = await clear_specialist_db(db)
+    results["caches_cleared"]["specialist_memory"] = specialist_memory_count
+    results["caches_cleared"]["specialist_database"] = specialist_db_count
+
+    # 6. Clear Tile cache (L1 + L2)
+    from app.services.tile_cache import clear_memory_cache as clear_tile_memory
+
+    tile_memory_count = clear_tile_memory()
+    results["caches_cleared"]["tile_memory"] = tile_memory_count
+
+    # 7. Clear Router cache (L1 only)
+    from app.services.router_cache import clear_cache as clear_router_cache
+
+    router_count = clear_router_cache()
+    results["caches_cleared"]["router_memory"] = router_count
+
+    # 8. Summary
+    total = (
+        planner_cleared
+        + unsplash_memory_count
+        + unsplash_db_count
+        + specialist_memory_count
+        + specialist_db_count
+        + tile_memory_count
+        + router_count
+    )
     results["total_entries_cleared"] = total
     results["before"] = {
         "validation": before_validation,
@@ -803,6 +840,214 @@ async def admin_clear_all_caches(db: AsyncSession = async_db_dependency):
     }
 
     return results
+
+
+# =============================================================================
+# Specialist Cache Admin Endpoints
+# =============================================================================
+
+
+@app.get("/api/admin/specialist-cache-stats")
+async def admin_specialist_cache_stats(db: AsyncSession = async_db_dependency):
+    """
+    Get specialist LLM cache statistics for observability.
+
+    Returns L1 (memory) and L2 (database) hit/miss counts, sizes, and TTLs.
+    """
+    from sqlalchemy import func, select
+
+    from app.db_models import ResponseCache
+    from app.services.specialist_cache import get_cache_stats
+
+    stats = get_cache_stats()
+
+    # Add L2 database stats
+    try:
+        total_result = await db.execute(select(func.count()).select_from(ResponseCache))
+        stats["l2_entries"] = total_result.scalar() or 0
+
+        total_hits = await db.execute(
+            select(func.sum(ResponseCache.hit_count)).select_from(ResponseCache)
+        )
+        stats["l2_total_hits"] = total_hits.scalar() or 0
+    except Exception:
+        stats["l2_entries"] = "error"
+        stats["l2_total_hits"] = "error"
+
+    return stats
+
+
+@app.post("/api/admin/clear-specialist-cache")
+async def admin_clear_specialist_cache(db: AsyncSession = async_db_dependency):
+    """
+    Clear both L1 (memory) and L2 (database) specialist caches.
+
+    Use for development/debugging when you want fresh LLM calls.
+    """
+    from app.services.specialist_cache import clear_db_cache, clear_memory_cache
+
+    l1_cleared = clear_memory_cache()
+    l2_cleared = await clear_db_cache(db)
+
+    return {
+        "cleared": {
+            "l1_memory": l1_cleared,
+            "l2_database": l2_cleared,
+        },
+        "total": l1_cleared + l2_cleared,
+    }
+
+
+# =============================================================================
+# Tile Cache Admin Endpoints
+# =============================================================================
+
+
+@app.get("/api/admin/tile-cache-stats")
+async def admin_tile_cache_stats(db: AsyncSession = async_db_dependency):
+    """
+    Get tile data cache statistics for observability.
+
+    Returns L1 (memory) and L2 (database) hit/miss counts, sizes, and TTLs.
+    """
+    from sqlalchemy import func, select
+
+    from app.db_models import ResponseCache
+    from app.services.tile_cache import get_cache_stats
+
+    stats = get_cache_stats()
+
+    # Add L2 database stats
+    try:
+        total_result = await db.execute(
+            select(func.count())
+            .select_from(ResponseCache)
+            .where(ResponseCache.cache_type == "tiles")
+        )
+        stats["l2_entries"] = total_result.scalar() or 0
+    except Exception:
+        stats["l2_entries"] = "error"
+
+    return stats
+
+
+@app.post("/api/admin/clear-tile-cache")
+async def admin_clear_tile_cache(db: AsyncSession = async_db_dependency):
+    """
+    Clear both L1 (memory) and L2 (database) tile caches.
+
+    Use for development/debugging when you want fresh provider data.
+    """
+    from sqlalchemy import delete
+
+    from app.db_models import ResponseCache
+    from app.services.tile_cache import clear_memory_cache
+
+    l1_cleared = clear_memory_cache()
+
+    # Clear L2 (tiles only)
+    result = await db.execute(delete(ResponseCache).where(ResponseCache.cache_type == "tiles"))
+    await db.commit()
+    l2_cleared = result.rowcount
+
+    return {
+        "cleared": {
+            "l1_memory": l1_cleared,
+            "l2_database": l2_cleared,
+        },
+        "total": l1_cleared + l2_cleared,
+    }
+
+
+# =============================================================================
+# Router Cache Admin Endpoints
+# =============================================================================
+
+
+@app.get("/api/admin/router-cache-stats")
+async def admin_router_cache_stats():
+    """
+    Get router extraction cache statistics for observability.
+
+    Note: Router cache is L1-only (no database persistence).
+    Shows hits, misses, and skipped context-dependent queries.
+    """
+    from app.services.router_cache import get_cache_stats
+
+    return get_cache_stats()
+
+
+@app.post("/api/admin/clear-router-cache")
+async def admin_clear_router_cache():
+    """
+    Clear router extraction cache (L1 memory only).
+
+    Use for development/debugging when you want fresh extractions.
+    """
+    from app.services.router_cache import clear_cache
+
+    count = clear_cache()
+
+    return {
+        "cleared": {
+            "l1_memory": count,
+        },
+        "total": count,
+    }
+
+
+# =============================================================================
+# Unified Cache Stats Endpoint
+# =============================================================================
+
+
+@app.get("/api/admin/cache-stats")
+async def admin_all_cache_stats(db: AsyncSession = async_db_dependency):
+    """
+    Get all cache statistics in one call.
+
+    Returns stats for:
+    - Specialist cache (L1 + L2)
+    - Tile cache (L1 + L2)
+    - Router cache (L1 only)
+    """
+    from sqlalchemy import func, select
+
+    from app.db_models import ResponseCache
+    from app.services import router_cache, specialist_cache, tile_cache
+
+    # Specialist stats
+    specialist_stats = specialist_cache.get_cache_stats()
+    try:
+        specialist_count = await db.execute(
+            select(func.count())
+            .select_from(ResponseCache)
+            .where(ResponseCache.cache_type == "specialist")
+        )
+        specialist_stats["l2_entries"] = specialist_count.scalar() or 0
+    except Exception:
+        specialist_stats["l2_entries"] = "error"
+
+    # Tile stats
+    tile_stats = tile_cache.get_cache_stats()
+    try:
+        tiles_count = await db.execute(
+            select(func.count())
+            .select_from(ResponseCache)
+            .where(ResponseCache.cache_type == "tiles")
+        )
+        tile_stats["l2_entries"] = tiles_count.scalar() or 0
+    except Exception:
+        tile_stats["l2_entries"] = "error"
+
+    # Router stats (L1 only)
+    router_stats = router_cache.get_cache_stats()
+
+    return {
+        "specialist": specialist_stats,
+        "tiles": tile_stats,
+        "router": router_stats,
+    }
 
 
 @app.post("/api/tiles/click")
@@ -2203,6 +2448,13 @@ async def patch_plan_document(
     if not doc:
         raise HTTPException(status_code=404, detail="No plan document for this session")
 
+    # Optimistic locking: reject if client's version is stale
+    if patch.version != doc.version:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version mismatch: client={patch.version}, server={doc.version}",
+        )
+
     # Apply the patch using CRDT merge
     updated_doc = await apply_user_patch(db, doc=doc, patch=patch)
 
@@ -2617,6 +2869,39 @@ async def expand_itinerary_endpoint(
                 # since we build itinerary directly instead of via planner graph.
                 # Kept as comment for reference if needed in future.
 
+                # =================================================================
+                # SELECTIVE REGENERATION: Detect strategy based on changed fields
+                # =================================================================
+                # Compute previous field hashes from document's stored trip_inputs
+                # (field_hashes are computed from trip_inputs, not stored separately)
+                prev_trip_inputs = doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {}
+                previous_hashes = compute_field_hashes(prev_trip_inputs)
+
+                # Compute current field hashes from request trip_inputs
+                current_hashes = compute_field_hashes(trip_inputs_data)
+
+                # Detect which fields changed
+                changed_fields = detect_changed_fields(previous_hashes, current_hashes)
+
+                # Compute the regeneration strategy
+                regen_strategy = compute_strategy(changed_fields)
+
+                _debug(
+                    f"🔄 [expand-itinerary] Selective Regen: "
+                    f"strategy={regen_strategy.value}, changed={changed_fields}"
+                )
+
+                # For BUILDER strategy, we're already doing the right thing (ItineraryBuilder only)
+                # For LOGISTICS/SPECIALISTS/FULL, the frontend would need to trigger graph execution
+                # Currently this endpoint only handles BUILDER - log warning for other strategies
+                if regen_strategy != RegenStrategy.BUILDER:
+                    _debug(
+                        f"⚠️ [expand-itinerary] {get_strategy_description(regen_strategy)} "
+                        f"- fields changed: {changed_fields}. "
+                        f"Note: This endpoint only rebuilds itinerary; "
+                        f"tiles/specialists use cached values from last graph run."
+                    )
+
                 tiles_count = len(req.tiles) if req.tiles else 0
                 _debug(
                     f"📊 [expand-itinerary] Input data: "
@@ -2751,14 +3036,40 @@ async def expand_itinerary_endpoint(
                     yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
                     return
 
-                # Handle conflicts - return error response with resolutions
+                # Handle conflicts - return error response with resolutions AND partial schedule
                 if not itinerary_result.success:
                     if itinerary_result.conflicts:
+                        # NEW: Include partial day_cards in conflict response
+                        # Partial schedule shows what CAN be scheduled + unschedulable markers
+                        partial_day_cards = (
+                            [dc.model_dump() for dc in itinerary_result.day_cards]
+                            if itinerary_result.day_cards
+                            else []
+                        )
+                        _debug(
+                            f"⚠️ [expand-itinerary] Conflict with partial schedule: "
+                            f"conflicts={len(itinerary_result.conflicts)}, "
+                            f"partial_day_cards={len(partial_day_cards)}"
+                        )
+
+                        # Emit partial schedule envelope FIRST (so frontend can render it)
+                        if partial_day_cards:
+                            partial_envelope = {
+                                "day_cards": partial_day_cards,
+                                "plan_view_state": "S3_PARTIAL_CONFLICT",
+                            }
+                            partial_event = ExpandItineraryStreamEvent(
+                                type="envelope",
+                                plan_envelope=partial_envelope,
+                            )
+                            yield json.dumps(partial_event.model_dump(exclude_none=True)) + "\n"
+
                         # Emit conflict response for frontend to handle
                         conflict_data = {
                             "error": "CONSTRAINT_CONFLICT",
                             "conflicts": [c.model_dump() for c in itinerary_result.conflicts],
                             "resolutions": [r.model_dump() for r in itinerary_result.resolutions],
+                            "day_cards": partial_day_cards,  # Include in conflict data too
                         }
                         event = ExpandItineraryStreamEvent(
                             type="error",
@@ -2876,6 +3187,324 @@ async def expand_itinerary_endpoint(
                 logger.exception(f"Error in expand-itinerary: {e}")
                 event = ExpandItineraryStreamEvent(
                     type="error", message=str(e) or "Failed to generate itinerary"
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+    return StreamingResponse(
+        generate_ndjson(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# =============================================================================
+# Remove Specialist Endpoint (Conflict Resolution - Focus on One)
+# =============================================================================
+
+
+@app.post("/api/remove-specialist")
+async def remove_specialist_endpoint(
+    request: Request,
+    req: RemoveSpecialistRequest,
+):
+    """
+    Remove specialists and regenerate itinerary (conflict resolution).
+
+    When ItineraryBuilder detects a constraint conflict (e.g., diving + hiking
+    in 4 days), user can choose "Focus on diving". This endpoint:
+    1. Removes other specialists from executed_strategy_topics
+    2. Filters strategy_sections to keep only the kept specialist
+    3. Clears day_cards (they'll be regenerated)
+    4. Re-runs ItineraryBuilder with the simplified plan
+
+    Streams NDJSON events (same format as expand-itinerary):
+        {"type": "progress", "stage": "itinerary", "message": "...", "pct": 30}
+        {"type": "envelope", "plan_envelope": {...}}
+        {"type": "done", "plan_view_state": "S3_ITINERARY_READY"}
+        {"type": "error", "message": "..."}
+    """
+    # Check idempotency
+    if _check_idempotency(req.idempotency_key):
+
+        async def duplicate_response():
+            event = ExpandItineraryStreamEvent(
+                type="error",
+                message="Duplicate request - specialist removal already in progress",
+            )
+            yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+        return StreamingResponse(
+            duplicate_response(),
+            media_type="application/x-ndjson",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    session_id = get_session_from_request(request)
+
+    async def generate_ndjson():
+        """Generator that yields NDJSON events for specialist removal + regeneration."""
+        session_factory = _get_async_session_factory()
+        async with session_factory() as db:
+            try:
+                session = await get_session_by_token(db, session_id)
+                if not session:
+                    event = ExpandItineraryStreamEvent(type="error", message="Session not found")
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
+
+                doc = await get_document(db, session=session)
+                if not doc:
+                    event = ExpandItineraryStreamEvent(
+                        type="error", message="No plan document found"
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
+
+                doc_data = get_document_data(doc)
+                _debug(f"✅ [remove-specialist] Keeping: {req.keep_specialist}")
+
+                # Emit progress: starting
+                event = ExpandItineraryStreamEvent(
+                    type="progress",
+                    stage="itinerary",
+                    message=f"Focusing on {req.keep_specialist}...",
+                    pct=10,
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+                # Get trip inputs - use frontend-provided or fall back to DB
+                trip_inputs_data = (
+                    req.trip_inputs
+                    if req.trip_inputs
+                    else (doc_data.trip_inputs.model_dump() if doc_data.trip_inputs else {})
+                )
+
+                # Filter strategy_sections to keep only the specified specialist
+                strategy_sections_data = (
+                    req.strategy_sections
+                    if req.strategy_sections
+                    else (
+                        [s.model_dump() for s in doc_data.strategy_sections]
+                        if doc_data.strategy_sections
+                        else []
+                    )
+                )
+
+                # Filter to kept specialist
+                kept_specialist = req.keep_specialist.lower()
+                filtered_sections = [
+                    s
+                    for s in strategy_sections_data
+                    if s.get("specialist_type", "").lower() == kept_specialist
+                    or s.get("specialist_type", "").lower() == "general"
+                ]
+
+                _debug(
+                    f"📊 [remove-specialist] Filtered sections: "
+                    f"{len(strategy_sections_data)} -> {len(filtered_sections)}"
+                )
+
+                if not filtered_sections:
+                    event = ExpandItineraryStreamEvent(
+                        type="error",
+                        message=f"No strategy sections found for {req.keep_specialist}",
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
+
+                # Emit progress: filtering complete
+                event = ExpandItineraryStreamEvent(
+                    type="progress",
+                    stage="itinerary",
+                    message="Building simplified timeline...",
+                    pct=30,
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+                # Filter tiles to kept specialist if requested
+                tiles_data = req.tiles or {}
+                if req.remove_hearted_tiles:
+                    # Filter out tiles from removed specialists
+                    # For now, tiles don't have specialist_type, so we keep all
+                    # Future: filter based on tile.source_specialist if available
+                    pass
+
+                # Build itinerary using ItineraryBuilder
+                from app.services.itinerary_builder import (
+                    ItineraryBuilder,
+                    ItineraryBuilderInput,
+                    PreferenceOverrideInput,
+                )
+
+                # Convert API preferences to builder input format
+                preferences_input = None
+                if req.preferences:
+                    preferences_input = PreferenceOverrideInput(
+                        preferred_hotel_ids=req.preferences.preferred_hotel_ids or [],
+                        preferred_activity_ids=req.preferences.preferred_activity_ids or [],
+                    )
+
+                # Validate dates
+                start_date = trip_inputs_data.get("start_date")
+                end_date = trip_inputs_data.get("end_date")
+
+                if start_date and not end_date:
+                    event = ExpandItineraryStreamEvent(
+                        type="error",
+                        message=json.dumps(
+                            {
+                                "error": "MISSING_END_DATE",
+                                "message": "Add return date to see itinerary",
+                            }
+                        ),
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
+
+                builder = ItineraryBuilder()
+                builder_input = ItineraryBuilderInput(
+                    start_date=start_date,
+                    end_date=end_date,
+                    strategy_sections=filtered_sections,
+                    tiles=tiles_data,
+                    destination=trip_inputs_data.get("destination"),
+                    origin=trip_inputs_data.get("origin"),
+                    preferences=preferences_input,
+                )
+
+                try:
+                    itinerary_result = builder.build(builder_input)
+                    _debug(
+                        f"✅ [remove-specialist] Builder result: "
+                        f"success={itinerary_result.success}, "
+                        f"day_cards={len(itinerary_result.day_cards)}"
+                    )
+                except Exception as e:
+                    logger.exception(f"Itinerary builder failed: {e}")
+                    event = ExpandItineraryStreamEvent(
+                        type="error", message=f"Itinerary generation failed: {str(e)}"
+                    )
+                    yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                    return
+
+                # Handle any remaining conflicts
+                if not itinerary_result.success:
+                    if itinerary_result.conflicts:
+                        # Include partial day_cards in conflict response
+                        partial_day_cards = (
+                            [dc.model_dump() for dc in itinerary_result.day_cards]
+                            if itinerary_result.day_cards
+                            else []
+                        )
+                        conflict_data = {
+                            "error": "CONSTRAINT_CONFLICT",
+                            "conflicts": [c.model_dump() for c in itinerary_result.conflicts],
+                            "resolutions": [r.model_dump() for r in itinerary_result.resolutions],
+                            "day_cards": partial_day_cards,
+                        }
+                        event = ExpandItineraryStreamEvent(
+                            type="error",
+                            message=json.dumps(conflict_data),
+                        )
+                        yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                        return
+                    else:
+                        event = ExpandItineraryStreamEvent(
+                            type="error",
+                            message=itinerary_result.error or "Itinerary generation failed",
+                        )
+                        yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+                        return
+
+                # Emit progress: finalizing
+                event = ExpandItineraryStreamEvent(
+                    type="progress",
+                    stage="itinerary",
+                    message="Finalizing itinerary...",
+                    pct=80,
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+                # Build envelope update with filtered topics
+                filtered_topics = [kept_specialist]
+                new_plan_view_state = "S3_ITINERARY_READY"
+
+                plan_envelope = {
+                    "day_cards": [dc.model_dump() for dc in itinerary_result.day_cards],
+                    "itinerary_overview": (
+                        itinerary_result.overview.model_dump()
+                        if itinerary_result.overview
+                        else None
+                    ),
+                    "strategy_sections": filtered_sections,
+                    "executed_strategy_topics": filtered_topics,
+                    "plan_view_state": new_plan_view_state,
+                }
+
+                # Emit envelope update
+                _debug(
+                    f"📤 [remove-specialist] Emitting envelope: "
+                    f"day_cards={len(plan_envelope.get('day_cards', []))}"
+                )
+                event = ExpandItineraryStreamEvent(
+                    type="envelope",
+                    plan_envelope=plan_envelope,
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+                # Persist to document
+                try:
+                    from app.schemas import DocumentTripInputs
+
+                    trip_inputs_obj = None
+                    if trip_inputs_data:
+                        trip_inputs_obj = DocumentTripInputs.model_validate(trip_inputs_data)
+
+                    trip_context = await get_latest_trip_context_for_session(db, session=session)
+                    trip_context_id = trip_context.id if trip_context else 0
+
+                    day_card_objs = None
+                    if plan_envelope.get("day_cards"):
+                        from app.schemas import DayCard
+
+                        day_card_objs = [
+                            DayCard(**dc) if isinstance(dc, dict) else dc
+                            for dc in plan_envelope["day_cards"]
+                        ]
+
+                    strategy_section_objs = None
+                    if filtered_sections:
+                        strategy_section_objs = [
+                            StrategySection(**s) if isinstance(s, dict) else s
+                            for s in filtered_sections
+                        ]
+
+                    await apply_planner_update(
+                        db,
+                        doc=doc,
+                        trip_context_id=trip_context_id,
+                        trip_inputs=trip_inputs_obj,
+                        plan_view_state=new_plan_view_state,
+                        day_cards=day_card_objs,
+                        strategy_sections=strategy_section_objs,
+                        executed_strategy_topics=filtered_topics,
+                        can_expand_to_itinerary=True,
+                    )
+                    await db.commit()
+                except Exception as e:
+                    logger.warning(f"Failed to persist specialist removal: {e}")
+
+                # Emit done
+                event = ExpandItineraryStreamEvent(
+                    type="done",
+                    plan_view_state=new_plan_view_state,
+                )
+                yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
+
+            except Exception as e:
+                logger.exception(f"Error in remove-specialist: {e}")
+                event = ExpandItineraryStreamEvent(
+                    type="error", message=str(e) or "Failed to remove specialist"
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 

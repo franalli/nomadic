@@ -267,6 +267,18 @@ def check_specialist_constraints(
                         )
                     )
 
+        elif constraint.rule == "no_altitude_after_dive":
+            # Cross-domain constraint: diving → hiking
+            # Detailed validation happens in ItineraryBuilder
+            violations.append(
+                ConstraintViolation(
+                    code="ALTITUDE_AFTER_DIVE_WARNING",
+                    message="High-altitude activities must be scheduled 24h+ after diving",
+                    severity="info",
+                    category="specialist",
+                )
+            )
+
     return violations
 
 
@@ -507,9 +519,9 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
     Pure Python validation - no LLM calls.
     """
-    from app.debug_utils import _debug_graph_node_end, _debug_graph_node_start
+    from app.debug_utils import _debug_node_end, _debug_node_start
 
-    _debug_graph_node_start(
+    _debug_node_start(
         "guard",
         "🛡️",
         destination=state.trip_plan.destination,
@@ -586,7 +598,7 @@ async def constraint_guard(state: GraphState) -> GraphState:
     if violations:
         state.ui_events.append("CONSTRAINT_VIOLATED")
 
-    _debug_graph_node_end(
+    _debug_node_end(
         "guard",
         "🛡️",
         violations_count=len(violations),

@@ -210,3 +210,31 @@ class UnsplashImageCache(Base):
     cached_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
+
+
+class ResponseCache(Base):
+    """
+    Generic response cache for LLM outputs and API data.
+
+    Used by specialist_cache.py and tile_cache.py for two-tier caching (L1 memory + L2 database).
+
+    Cache types:
+    - 'specialist': Vertical specialist LLM outputs (7 day TTL)
+    - 'tiles': Tile data from Amadeus/curated providers (24h TTL)
+
+    Key formats:
+    - specialist: "specialist:{topic}:{destination}:{month}:{duration}"
+    - tiles: "tiles:{provider}:{type}:{dest}:{start_date}:{end_date}"
+    """
+
+    __tablename__ = "response_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    cache_type: Mapped[str] = mapped_column(String(50), nullable=False, default="specialist")
+    response_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_hit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

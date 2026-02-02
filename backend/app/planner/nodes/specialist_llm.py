@@ -145,7 +145,7 @@ async def generate_specialist_output_with_llm(
         )
 
         # Create LLM with structured output
-        llm = ChatOpenAI(model="gpt-4o", temperature=0.1)
+        llm = ChatOpenAI(model=os.getenv("SPECIALIST_MODEL", "gpt-4o"), temperature=0.1)
         structured_llm = llm.with_structured_output(LLMSpecialistOutput)
 
         # Generate output

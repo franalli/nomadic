@@ -25,6 +25,7 @@ import {
   Mountain,
   Plug,
   Sailboat,
+  Settings,
   ShieldCheck,
   Snowflake,
   Sparkles,
@@ -184,6 +185,8 @@ interface S2StrategyViewProps {
    * @default true for bridge density, false for ghost density
    */
   autoExpandOnLoad?: boolean;
+  /** Callback to open activity settings sheet (for specialist gear icons) */
+  onOpenActivitySettings?: () => void;
 }
 
 // =============================================================================
@@ -446,9 +449,11 @@ interface AgentCardProps {
   status: AgentStatus;
   /** Whether trip dates are set (for showing "add dates" hint) */
   hasDates?: boolean;
+  /** Callback to open activity settings sheet (for specialist cards) */
+  onOpenSettings?: () => void;
 }
 
-function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: AgentCardProps) {
+function AgentCard({ section, isExpanded, onToggle, status, hasDates = true, onOpenSettings }: AgentCardProps) {
   const cardRef = React.useRef<HTMLDivElement>(null);
 
   // Scroll card into view when expanded (prevents jumping to wrong location)
@@ -546,18 +551,46 @@ function AgentCard({ section, isExpanded, onToggle, status, hasDates = true }: A
               </span>
             )}
           </div>
-          {/* Chevron with circular touch target - hide if infeasible */}
+          {/* Right side: Settings gear (specialists only) + Chevron */}
           {!isInfeasible && (
-            <div className={cn(
-              "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
-              "bg-zinc-50 hover:bg-zinc-100 dark:bg-white/5 dark:hover:bg-white/10",
-              "transition-all duration-200"
-            )}>
-              <ChevronDown className={cn(
-                "w-4 h-4 transition-transform duration-200",
-                "text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
-                isExpanded && "rotate-180"
-              )} />
+            <div className="flex items-center gap-1.5">
+              {/* Settings gear - only for specialist cards */}
+              {onOpenSettings && ['diving', 'hiking', 'skiing', 'cycling', 'sailing'].includes(topic) && (
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenSettings();
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.stopPropagation();
+                      onOpenSettings();
+                    }
+                  }}
+                  className={cn(
+                    "w-8 h-8 rounded-full flex items-center justify-center shrink-0 cursor-pointer",
+                    "bg-zinc-100 hover:bg-zinc-200 dark:bg-white/5 dark:hover:bg-white/10",
+                    "transition-all duration-200"
+                  )}
+                  title="Activity settings"
+                >
+                  <Settings className="w-4 h-4 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300" />
+                </div>
+              )}
+              {/* Chevron with circular touch target */}
+              <div className={cn(
+                "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
+                "bg-zinc-50 hover:bg-zinc-100 dark:bg-white/5 dark:hover:bg-white/10",
+                "transition-all duration-200"
+              )}>
+                <ChevronDown className={cn(
+                  "w-4 h-4 transition-transform duration-200",
+                  "text-zinc-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400",
+                  isExpanded && "rotate-180"
+                )} />
+              </div>
             </div>
           )}
         </div>
@@ -903,6 +936,8 @@ interface StrategyStackProps {
   tiles?: Record<string, Tile>;
   /** Whether trip dates are set (for showing "add dates" hint) */
   hasDates?: boolean;
+  /** Callback to open activity settings sheet (for specialist gear icons) */
+  onOpenActivitySettings?: () => void;
 }
 
 function StrategyStack({
@@ -911,6 +946,7 @@ function StrategyStack({
   executedTopics,
   tiles = {},
   hasDates = true,
+  onOpenActivitySettings,
 }: StrategyStackProps) {
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [showAll, setShowAll] = React.useState(false);
@@ -1018,6 +1054,7 @@ function StrategyStack({
               }
               status={status}
               hasDates={hasDates}
+              onOpenSettings={onOpenActivitySettings}
             />
           );
         })
@@ -1102,6 +1139,7 @@ export function S2StrategyView({
   density,
   expandSpecialistType,
   autoExpandOnLoad,
+  onOpenActivitySettings,
 }: S2StrategyViewProps) {
   // FIX: Use store values with prop fallback for reactivity
   const tripInputs = useTripInputsWithFallback(propTripInputs);
@@ -1117,13 +1155,6 @@ export function S2StrategyView({
 
   // Check if dates are set
   const hasDates = Boolean(tripInputs?.start_date && tripInputs?.end_date);
-
-  // Empty state - parent (StrategyStageRenderer) handles the empty case
-  // This prevents duplicate skeletons and allows Bridge Mode to work correctly
-  // @see docs/ux_unified_architecture.md - Grand Unification
-  if (strategy_sections.length === 0 && pendingTopics.length === 0) {
-    return null;
-  }
 
   // Compute variant from density
   // 'full' density (Plan Mode with tiles) = compact cards (Trip DNA Bar)
@@ -1143,6 +1174,7 @@ export function S2StrategyView({
 
   // =========================================================================
   // ACCORDION STATE MANAGEMENT (for Bridge Mode)
+  // All hooks MUST be called unconditionally before any early return
   // =========================================================================
 
   // Track which cards are expanded (by section ID)
@@ -1205,6 +1237,8 @@ export function S2StrategyView({
 
   // Chat-triggered expansion: expand a specific specialist card
   useEffect(() => {
+    let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+
     if (expandSpecialistType && variant === 'accordion') {
       // Find the section with this specialist type
       const section = strategy_sections.find(s => s.specialist_type === expandSpecialistType);
@@ -1217,7 +1251,7 @@ export function S2StrategyView({
         });
 
         // Scroll to the card (smooth scroll)
-        setTimeout(() => {
+        scrollTimer = setTimeout(() => {
           const card = document.querySelector(`[data-specialist="${expandSpecialistType}"]`);
           if (card) {
             card.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1225,6 +1259,12 @@ export function S2StrategyView({
         }, 100);
       }
     }
+
+    return () => {
+      if (scrollTimer) {
+        clearTimeout(scrollTimer);
+      }
+    };
   }, [expandSpecialistType, variant, strategy_sections]);
 
   // Handle expansion change for a single card
@@ -1244,6 +1284,14 @@ export function S2StrategyView({
   const handleCollapseAll = useCallback(() => {
     setExpandedIds(new Set());
   }, []);
+
+  // Empty state - parent (StrategyStageRenderer) handles the empty case
+  // This prevents duplicate skeletons and allows Bridge Mode to work correctly
+  // @see docs/ux_unified_architecture.md - Grand Unification
+  // NOTE: This early return MUST come AFTER all hooks
+  if (strategy_sections.length === 0 && pendingTopics.length === 0) {
+    return null;
+  }
 
   return (
     <div className={cn('flex flex-col', useMagazineStyle ? 'gap-2' : 'p-4 space-y-4')}>
@@ -1317,6 +1365,7 @@ export function S2StrategyView({
             executedTopics={resolvedExecutedTopics}
             tiles={tiles}
             hasDates={hasDates}
+            onOpenActivitySettings={onOpenActivitySettings}
           />
         </>
       )}

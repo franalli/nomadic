@@ -9,7 +9,7 @@
 
 'use client';
 
-import { CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, MoreVertical, RefreshCw, Sparkles, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 import { useState } from 'react';
 
@@ -17,8 +17,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn, normalizeTitle } from '@/lib/utils';
 import type { DayBlock } from '@/types/plan-envelope';
 
-import { type DisplayTime, getTopicColor, getSpecialistBorderColor } from './types';
 import { PreferenceAttributionBadge, type PreferenceStatus } from './PreferenceAttributionBadge';
+import { type DisplayTime, getSpecialistBorderColor,getTopicColor } from './types';
 
 interface ActivityMiniCardProps {
   block: DayBlock;
@@ -49,6 +49,7 @@ export function ActivityMiniCard({
 }: ActivityMiniCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const color = getTopicColor(block.specialist_type);
+  const isUnschedulable = block.unschedulable === true;
 
   // Dynamic color classes - using template literals for Tailwind scanning
   const bgColorClass = {
@@ -83,9 +84,22 @@ export function ActivityMiniCard({
 
   return (
     <div
-      className="group relative flex gap-3 p-3 bg-white dark:bg-zinc-800/50 rounded-xl border hover:shadow-md transition-shadow"
-      style={{ borderLeftWidth: '4px', borderLeftColor: borderColor }}
+      className={cn(
+        'group relative flex gap-3 p-3 rounded-xl border transition-shadow',
+        isUnschedulable
+          ? 'bg-zinc-100/50 dark:bg-zinc-900/30 border-dashed border-amber-500/50 opacity-60'
+          : 'bg-white dark:bg-zinc-800/50 hover:shadow-md'
+      )}
+      style={isUnschedulable ? undefined : { borderLeftWidth: '4px', borderLeftColor: borderColor }}
     >
+      {/* Unschedulable Warning Banner */}
+      {isUnschedulable && (
+        <div className="absolute -top-2 left-3 flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/30">
+          <AlertTriangle className="w-3 h-3 text-amber-500" />
+          <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">Cannot schedule</span>
+        </div>
+      )}
+
       {/* Thumbnail */}
       {block.image_url ? (
         <div className="relative w-20 h-20 rounded-lg overflow-hidden shrink-0">
@@ -135,11 +149,21 @@ export function ActivityMiniCard({
           )}
         </div>
 
-        <h4 className="font-semibold text-sm mt-1.5 line-clamp-2">
+        <h4 className={cn(
+          'font-semibold text-sm mt-1.5 line-clamp-2',
+          isUnschedulable && 'line-through text-zinc-500'
+        )}>
           {normalizeTitle(block.activity_type || block.summary)}
         </h4>
 
-        {block.price_estimate && (
+        {/* Unschedulable reason */}
+        {isUnschedulable && block.unschedulable_reason && (
+          <p className="text-xs text-amber-600/80 dark:text-amber-400/70 mt-1 italic">
+            {block.unschedulable_reason}
+          </p>
+        )}
+
+        {block.price_estimate && !isUnschedulable && (
           <p className="text-xs text-muted-foreground mt-1">
             ~${block.price_estimate.toLocaleString()}
           </p>

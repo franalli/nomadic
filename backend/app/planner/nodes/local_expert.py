@@ -1337,6 +1337,26 @@ async def local_expert(state: GraphState) -> GraphState:
 
     log("LOCAL_EXPERT", f"Activated for {plan.destination}")
 
+    # ==========================================================================
+    # SELECTIVE REGENERATION: Check if cached output can be reused
+    # @see docs/plan_graph_analysis.md - Selective Regeneration Strategy
+    # ==========================================================================
+    existing_sections = state.metadata.get("strategy_sections", [])
+    cached_section = next(
+        (s for s in existing_sections if s.get("specialist_type") == "local_expert"), None
+    )
+
+    if cached_section:
+        # Check if destination matches (local_expert caches are destination-specific)
+        # The title format is "{destination} Trip Overview"
+        cached_title = cached_section.get("title", "")
+        current_destination = plan.destination
+        if cached_title and current_destination and current_destination in cached_title:
+            log("LOCAL_EXPERT", f"Cache HIT: Reusing cached output for {current_destination}")
+            state.metadata["last_executed_specialist"] = "local_expert"
+            state.active_specialist = None
+            return state  # No-op, output already in state from session restore
+
     try:
         return await _run_local_expert(state, plan, log)
     except Exception as e:
@@ -1546,10 +1566,10 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
     # ==========================================================================
 
     # DEBUG: Log incoming strategy_sections
-    from app.debug_utils import _debug_graph
+    from app.debug_utils import _debug_log
 
     incoming_sections = state.metadata.get("strategy_sections", [])
-    _debug_graph(
+    _debug_log(
         f"local_expert: BEFORE update - {len(incoming_sections)} sections, "
         f"types={[s.get('specialist_type') for s in incoming_sections]}"
     )
@@ -1566,7 +1586,7 @@ Travelers: {plan.adults} adults{f', {plan.children} children' if plan.children e
 
     # DEBUG: Log outgoing strategy_sections
     outgoing_sections = state.metadata.get("strategy_sections", [])
-    _debug_graph(
+    _debug_log(
         f"local_expert: AFTER update - {len(outgoing_sections)} sections, "
         f"types={[s.get('specialist_type') for s in outgoing_sections]}"
     )

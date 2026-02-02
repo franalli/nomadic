@@ -14,6 +14,8 @@ Usage:
 
 # State Models
 from app.planner.state.schemas import (
+    # Core models
+    Activity,
     # Enums
     ConstraintSeverity,
     ExtractedSettingsFields,
@@ -27,7 +29,6 @@ from app.planner.state.schemas import (
     # Output models
     SpecialistOutput,
     SynthesizerOutput,
-    # Core models
     TripPlan,
     TripSegment,
     UIEvent,
@@ -41,6 +42,7 @@ __all__ = [
     # Enums
     "ConstraintSeverity",
     # Core Models
+    "Activity",
     "TripPlan",
     "TripSegment",
     "ItineraryBlock",
