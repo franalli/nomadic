@@ -303,11 +303,12 @@ def _auto_toggle_flights(
 async def _update_trip_plan_from_llm(
     plan: TripPlan,
     user_text: str,
-) -> TripPlan:
+) -> tuple[TripPlan, dict]:
     """
     Update trip plan using LLM-extracted fields.
 
     This replaces the old regex-based _update_trip_plan_from_text().
+    Returns tuple of (updated_plan, token_usage_dict).
     """
     from app.debug_utils import _debug_log
 
@@ -371,7 +372,7 @@ async def _update_trip_plan_from_llm(
         plan.trip_type = extracted.trip_type
         _debug_log(f"LLM extracted trip_type: {extracted.trip_type}")
 
-    return plan
+    return plan, token_usage
 
 
 def _detect_and_handle_pivot(state: "GraphState", old_destination: str | None) -> bool:
@@ -677,8 +678,10 @@ async def trip_architect(state: GraphState) -> GraphState:
     The "General Agent" that manages the trip plan.
     """
     import logging
+    import time
 
     from app.debug_utils import (
+        CompactLogger,
         _debug_log,
         _debug_node_start,
         _debug_node_timer_end,
@@ -689,6 +692,11 @@ async def trip_architect(state: GraphState) -> GraphState:
 
     # Start timing this node execution
     _debug_node_timer_start("architect")
+    node_start_time = time.time()
+
+    # Initialize compact logger with request metrics
+    metrics = state.metadata.get("_metrics")
+    clog = CompactLogger("architect", metrics=metrics)
 
     # Get user message
     user_text = ""
@@ -722,6 +730,9 @@ async def trip_architect(state: GraphState) -> GraphState:
         constraints_count=len(state.trip_plan.constraints),
     )
 
+    # Compact logging: node start
+    clog.node_start("ARCHITECT", intent=state.intent, dest=state.trip_plan.destination)
+
     architect = TripArchitect()
 
     # ==========================================================================
@@ -750,7 +761,15 @@ async def trip_architect(state: GraphState) -> GraphState:
         state.metadata["router_extracted_fields"] = False
     else:
         # Update trip plan from user text using LLM extraction
-        state.trip_plan = await _update_trip_plan_from_llm(state.trip_plan, user_text)
+        state.trip_plan, field_tokens = await _update_trip_plan_from_llm(state.trip_plan, user_text)
+        # Compact logging: LLM call for field extraction
+        if field_tokens:
+            clog.llm_call(
+                model=EXTRACTION_MODEL,
+                prompt_tokens=field_tokens.get("prompt_tokens", 0),
+                completion_tokens=field_tokens.get("completion_tokens", 0),
+                purpose="field_extraction",
+            )
 
     # Detect destination pivot and clear stale state (preserves origin, dates, travelers, budget)
     _detect_and_handle_pivot(state, prev_trip_values.get("destination"))
@@ -769,6 +788,13 @@ async def trip_architect(state: GraphState) -> GraphState:
                     settings_tokens.get("prompt_tokens", 0),
                     settings_tokens.get("completion_tokens", 0),
                     settings_tokens.get("total_tokens", 0),
+                )
+                # Compact logging: LLM call for settings extraction
+                clog.llm_call(
+                    model=EXTRACTION_MODEL,
+                    prompt_tokens=settings_tokens.get("prompt_tokens", 0),
+                    completion_tokens=settings_tokens.get("completion_tokens", 0),
+                    purpose="settings_extraction",
                 )
             _debug_log(f"Extracted settings: {extracted_dict}")
 
@@ -881,6 +907,16 @@ async def trip_architect(state: GraphState) -> GraphState:
         status=state.trip_plan.status,
         tiles_count=sum(len(v) for v in state.tiles.values()),
         response_len=len(state.last_summary or ""),
+    )
+
+    # Compact logging: node end
+    duration_ms = int((time.time() - node_start_time) * 1000)
+    clog.node_end(
+        "ARCHITECT",
+        duration_ms,
+        mode=mode,
+        dest=state.trip_plan.destination,
+        tiles=sum(len(v) for v in state.tiles.values()),
     )
 
     return state

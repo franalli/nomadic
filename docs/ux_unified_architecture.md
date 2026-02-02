@@ -152,7 +152,8 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | Component | File | Purpose |
 |-----------|------|---------|
 | SelectionsBar | `components/plan/SelectionsBar.tsx` | Grouped carousel of hearted tiles (Stays + Activities sections) |
-| useItineraryRegeneration | `hooks/useItineraryRegeneration.ts` | Auto-regeneration on preference OR trip input change (1.5s debounce, selective regeneration) |
+| useItineraryRegeneration | `hooks/useItineraryRegeneration.ts` | Auto-regeneration on preference OR trip input change (2s debounce, visual countdown, bypass button) |
+| RegenerationStatus | `components/RegenerationStatus.tsx` | Floating indicator showing debounce countdown and regenerating state |
 
 ### Progressive Disclosure Rules
 
@@ -387,21 +388,24 @@ Frontend categorizes tiles by type (case-insensitive):
 
 ### Auto-Regeneration (Live Reactivity)
 
-When preferences change after an itinerary exists, the itinerary **automatically regenerates**. No manual "Update" button - full auto-reactivity.
+When preferences change after an itinerary exists, the itinerary **automatically regenerates**. No manual "Update" button - full auto-reactivity with visual feedback.
 
 ```
-User hearts new hotel → 1.5s debounce → Auto-regenerate → Timeline updates
+User hearts new hotel → 2s countdown appears → Auto-regenerate → Timeline updates
+                        └─ User can click "Generate Now" to bypass
 ```
 
 **Why auto-regen:**
 - Consistent with plan updates (live reactivity throughout app)
 - No hidden state or manual sync needed
-- Clear feedback via overlay
+- Clear feedback via floating indicator with countdown
 - Debounce prevents thrashing on rapid preference changes
+- Bypass button for impatient users who want immediate results
 
 **Components:**
+- `RegenerationStatus` - Floating indicator (bottom-right) showing countdown and regenerating state
 - `SelectionsBar` - Shows "Updating..." indicator during regeneration (no manual button)
-- `useItineraryRegeneration` - Hook managing auto-regeneration with debounce
+- `useItineraryRegeneration` - Hook managing auto-regeneration with 2s debounce, countdown, and race condition protection
 - Timeline overlay - Dims timeline during update
 
 **State tracking:**
@@ -417,8 +421,10 @@ User hearts new hotel → 1.5s debounce → Auto-regenerate → Timeline updates
 **Auto-regeneration flow:**
 1. User generates itinerary (preferences + tripInputsHash snapshot)
 2. User hearts a new hotel OR changes trip inputs/settings → triggers change detection
-3. `hasChanges = hasPreferenceChanges || hasTripInputChanges` → 1.5s debounce timer starts
-4. After debounce → `onExpandToItinerary()` called automatically
+3. `hasChanges = hasPreferenceChanges || hasTripInputChanges` → 2s debounce timer starts + countdown shown
+4. User can either:
+   - Wait for countdown → `onExpandToItinerary()` called automatically
+   - Click "Generate Now" → bypass debounce, regenerate immediately
 5. Backend computes **selective regeneration strategy** based on changed fields:
    - `BUILDER` (~100ms): Preference/origin changes only → ItineraryBuilder
    - `LOGISTICS` (~500ms): Traveler/budget/settings changes → LogisticsNode + Builder
@@ -436,10 +442,19 @@ User hearts new hotel → 1.5s debounce → Auto-regenerate → Timeline updates
 - Strategy computation: most conservative strategy wins when multiple fields change
 
 **Debounce behavior:**
-- 1.5 second delay before triggering regeneration
-- Resets on each preference change
+- 2 second delay before triggering regeneration (increased from 1.5s for better UX)
+- Resets on each preference/input change (visual countdown resets)
 - Prevents API thrashing when user explores multiple options
+- "Generate Now" bypass button for users who want immediate results
+- Race condition protection via `isExecutingRegenRef` mutex
 - Cost: ~$0.002/regen (acceptable for demo)
+
+**Visual feedback (RegenerationStatus component):**
+- Fixed position bottom-right (`z-50`)
+- Shows "Planning updates in Ns..." with countdown during debounce
+- Shows "Regenerating plan..." with spinner during regeneration
+- "Generate Now" button visible during countdown phase
+- Auto-hides when not pending/regenerating
 
 **Timeline overlay:** During regeneration, existing timeline dims with "Updating with N preferences..." overlay.
 
@@ -2533,6 +2548,59 @@ clearCart: () => void;
 // Selector hooks
 useCartTileIds(): Set<string>
 useCartActions(): { addToCart, removeFromCart, clearCart }
+```
+
+#### E.1 Destination Change Handling (v3.3)
+
+When the user changes destination, stale content must be cleared to avoid confusion. This is handled in TWO code paths in `documentStore.ts`:
+
+**1. `mergeEnvelope()` - Streaming updates from SSE:**
+```typescript
+// Detect destination change
+const prevDest = currentDoc.trip_inputs?.destination?.toLowerCase().trim();
+const newDest = envelope.trip_inputs?.destination?.toLowerCase().trim();
+const destinationChanged = prevDest && newDest && prevDest !== newDest;
+
+if (destinationChanged) {
+  console.log(`[mergeEnvelope] 🌍 Destination changed: "${prevDest}" → "${newDest}"`);
+  // Clear chat messages
+  useChatStore.getState().resetChat();
+  // Tiles: REPLACE (not merge)
+  tilesToMerge = envelope.tiles;
+  // Strategy sections: REPLACE (not merge)
+  sectionsToMerge = envelope.strategy_sections;
+  // Day cards: CLEAR (if not in envelope)
+  dayCardsToMerge = envelope.day_cards ?? [];
+}
+```
+
+**2. `setFromPlanResponse()` - Full API response:**
+```typescript
+// Same destination change detection
+if (destinationChanged) {
+  useChatStore.getState().resetChat();
+  // Clear day_cards to prevent stale itinerary
+  const finalDayCards = (destinationChanged || viewStateReverted) ? [] : response.document.day_cards;
+}
+```
+
+**View State Revert Handling:**
+When view state goes from S3_ITINERARY_READY → S2_STRATEGY_READY, day_cards are cleared:
+```typescript
+const viewStateReverted = currentDoc.plan_view_state === 'S3_ITINERARY_READY' &&
+  envelope.plan_view_state === 'S2_STRATEGY_READY';
+if (viewStateReverted) {
+  dayCardsToMerge = [];
+}
+```
+
+**Debug Logs (expected sequence):**
+```
+[documentStore.mergeEnvelope] 🌍 Destination changed: "bali" → "london"
+[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)
+[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (destination changed)
+[documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)
+[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (destination changed)
 ```
 
 #### F. BookingSection Mode Awareness

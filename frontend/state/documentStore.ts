@@ -184,10 +184,19 @@ type DocumentState = {
   preferredTileIds: Set<string>;
   toggleTilePreference: (tileId: string) => void;
   clearPreferences: () => void;
+  // Track pending preference PATCH to ensure persistence before regen
+  pendingPreferencePatch: Promise<void> | null;
+  awaitPreferencePatch: () => Promise<void>;
 
   // Regeneration tracking - preferences used in last expand-itinerary call
   lastGeneratedPreferences: Set<string>;
   markPreferencesAsApplied: () => void;
+
+  // Regeneration UI state (shared across components)
+  isRegenerating: boolean;
+  isPending: boolean;
+  remainingSeconds: number;
+  setRegenerationState: (state: { isRegenerating?: boolean; isPending?: boolean; remainingSeconds?: number }) => void;
 
   // Cart state (for BOOKING mode)
   cartTileIds: Set<string>;
@@ -276,8 +285,13 @@ const initialState = {
   isPlanFinalized: false,
   // Heart preference system
   preferredTileIds: new Set<string>(),
+  pendingPreferencePatch: null,
   // Regeneration tracking
   lastGeneratedPreferences: new Set<string>(),
+  // Regeneration UI state (shared across components)
+  isRegenerating: false,
+  isPending: false,
+  remainingSeconds: 0,
   // Cart state
   cartTileIds: new Set<string>(),
 };
@@ -818,6 +832,33 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc, llmUpdatedFields } = get();
     const primaryBranch = response.document.branches.find((b) => b.is_primary);
 
+    // ============================================================
+    // DESTINATION CHANGE DETECTION (same as mergeEnvelope)
+    // ============================================================
+    const prevDestination = currentDoc?.trip_inputs?.destination?.toLowerCase().trim();
+    const newDestination = response.document.trip_inputs?.destination?.toLowerCase().trim();
+    const destinationChanged = prevDestination && newDestination && prevDestination !== newDestination;
+
+    if (destinationChanged) {
+      console.log(
+        `[documentStore.setFromPlanResponse] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
+      );
+      // Clear chat messages on destination change
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { useChatStore } = require('./chatStore');
+      useChatStore.getState().resetChat();
+      console.log('[documentStore.setFromPlanResponse] 💬 Chat: CLEARED (destination changed)');
+    }
+
+    // Detect view state revert (S3 → S2)
+    const prevViewState = currentDoc?.plan_view_state;
+    const newViewState = response.document.plan_view_state;
+    const viewStateReverted = prevViewState === 'S3_ITINERARY_READY' && newViewState === 'S2_STRATEGY_READY';
+
+    if (viewStateReverted) {
+      console.log(`[documentStore.setFromPlanResponse] 🔄 View state reverted: ${prevViewState} → ${newViewState}`);
+    }
+
     // DEBUG: Log document state when setting
     console.log('[documentStore] setFromPlanResponse:', {
       strategy_sections_count: response.document.strategy_sections?.length ?? 0,
@@ -826,6 +867,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       executed_strategy_topics: response.document.executed_strategy_topics,
       tiles_count: Object.keys(response.document.tiles ?? {}).length,
       tiles_keys: Object.keys(response.document.tiles ?? {}),
+      destinationChanged,
+      viewStateReverted,
     });
 
     // Merge locally-set trip_inputs with response
@@ -875,6 +918,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ? new Set(responsePreferences)
       : currentPreferences;
 
+    // Clear day_cards if destination changed or view state reverted (prevent stale itinerary)
+    const finalDayCards = (destinationChanged || viewStateReverted)
+      ? []
+      : response.document.day_cards;
+
+    if (destinationChanged || viewStateReverted) {
+      console.log('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (destination changed or view reverted)');
+    }
+
     set({
       version: response.version,
       updatedBy: response.updated_by,
@@ -882,6 +934,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       document: {
         ...response.document,
         trip_inputs: mergedTripInputs,
+        day_cards: finalDayCards,
       },
       selectedBranchId:
         get().selectedBranchId ||
@@ -897,51 +950,114 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
+    // Detect destination change
+    const prevDestination = currentDoc.trip_inputs?.destination?.toLowerCase().trim();
+    const newDestination = envelope.trip_inputs?.destination?.toLowerCase().trim();
+    const destinationChanged = prevDestination && newDestination && prevDestination !== newDestination;
+
+    if (destinationChanged) {
+      console.log(
+        `[documentStore.mergeEnvelope] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
+      );
+      // Clear chat messages on destination change (import chatStore at top of file)
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { useChatStore } = require('./chatStore');
+      useChatStore.getState().resetChat();
+      console.log('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
+    }
+
+    // Detect plan view state revert (S3 → S2) - happens when backend says "start fresh"
+    const viewStateReverted =
+      currentDoc.plan_view_state === 'S3_ITINERARY_READY' &&
+      envelope.plan_view_state === 'S2_STRATEGY_READY';
+
+    if (viewStateReverted) {
+      console.log('[documentStore.mergeEnvelope] 🔄 View state reverted: S3 → S2');
+    }
+
     // DEBUG: Log what's in the envelope
     console.log('[documentStore.mergeEnvelope] 📥 Received envelope:', {
       hasTiles: envelope.tiles !== undefined,
       tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
-      hasDayCards: envelope.day_cards !== undefined,
-      dayCardsCount: envelope.day_cards?.length ?? 0,
-      plan_view_state: envelope.plan_view_state,
-      envelopeKeys: Object.keys(envelope),
+      destinationChanged,
+      viewStateReverted,
     });
 
+    // Compute tile merge strategy BEFORE building updatedDoc
+    let tilesToMerge: Record<string, unknown> | undefined;
+
+    if (envelope.tiles !== undefined) {
+      if (destinationChanged) {
+        // Destination changed: REPLACE tiles (even if empty)
+        tilesToMerge = envelope.tiles;
+        console.log('[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (destination changed)');
+      } else if (Object.keys(envelope.tiles).length > 0) {
+        // Same destination + non-empty: MERGE
+        tilesToMerge = envelope.tiles;
+        console.log('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
+      } else {
+        // Same destination + empty: SKIP (preserve existing)
+        tilesToMerge = undefined;
+        console.log('[documentStore.mergeEnvelope] ⏭️ Tiles: SKIPPED (empty envelope)');
+      }
+    }
+
+    // Compute strategy merge strategy (similar to tiles)
+    let sectionsToMerge: unknown[] | undefined;
+
+    if (envelope.strategy_sections !== undefined) {
+      if (destinationChanged) {
+        // Destination changed: REPLACE strategy sections (even if empty)
+        sectionsToMerge = envelope.strategy_sections;
+        console.log('[documentStore.mergeEnvelope] 📝 Strategy: REPLACED (destination changed)');
+      } else {
+        // Same destination: merge/update
+        sectionsToMerge = envelope.strategy_sections;
+        console.log('[documentStore.mergeEnvelope] 📝 Strategy: MERGED (same destination)');
+      }
+    }
+
+    // Compute day_cards merge strategy (similar to tiles)
+    // On destination change OR view state revert: CLEAR existing day_cards to prevent stale itinerary
+    let dayCardsToMerge: unknown[] | undefined;
+
+    if (envelope.day_cards !== undefined) {
+      // If day_cards explicitly provided, use them
+      dayCardsToMerge = envelope.day_cards;
+      console.log(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
+    } else if (destinationChanged || viewStateReverted) {
+      // Destination changed OR view state reverted: CLEAR day_cards
+      dayCardsToMerge = [];
+      console.log('[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (destination changed or view reverted)');
+    }
+
     // Merge envelope fields into current document
-    // Only update fields that are present in the envelope
     const updatedDoc: PlanDocumentData = {
       ...currentDoc,
       // Plan view state fields
       ...(envelope.plan_view_state !== undefined && { plan_view_state: envelope.plan_view_state }),
-      ...(envelope.strategy_sections !== undefined && { strategy_sections: envelope.strategy_sections }),
+      ...(sectionsToMerge !== undefined && { strategy_sections: sectionsToMerge }),
       ...(envelope.open_decisions !== undefined && { open_decisions: envelope.open_decisions }),
       ...(envelope.itinerary_overview !== undefined && { itinerary_overview: envelope.itinerary_overview }),
-      ...(envelope.day_cards !== undefined && { day_cards: envelope.day_cards }),
+      ...(dayCardsToMerge !== undefined && { day_cards: dayCardsToMerge }),
       ...(envelope.itinerary_assumptions !== undefined && { itinerary_assumptions: envelope.itinerary_assumptions }),
       ...(envelope.needs_refresh !== undefined && { needs_refresh: envelope.needs_refresh }),
       ...(envelope.can_expand_to_itinerary !== undefined && { can_expand_to_itinerary: envelope.can_expand_to_itinerary }),
       // Generation state
       ...(envelope.generation !== undefined && { generation: envelope.generation }),
-      // Tiles: Only update if envelope has non-empty tiles
-      // This prevents intermediate SSE states from wiping cached tiles during regeneration
-      ...(envelope.tiles !== undefined &&
-        Object.keys(envelope.tiles).length > 0 && { tiles: envelope.tiles }),
+      // Tiles: Apply computed merge strategy
+      ...(tilesToMerge !== undefined && { tiles: tilesToMerge }),
+      // Update trip_inputs if present
+      ...(envelope.trip_inputs !== undefined && {
+        trip_inputs: { ...currentDoc.trip_inputs, ...envelope.trip_inputs },
+      }),
     };
 
-    // DEBUG: Log tile merge behavior
-    const envelopeTileCount = envelope.tiles ? Object.keys(envelope.tiles).length : 0;
-    const preservedTiles = envelope.tiles !== undefined && envelopeTileCount === 0;
-    console.log('[documentStore.mergeEnvelope] Tiles:', {
-      envelopeTileCount,
-      preservedTiles,
+    // DEBUG: Log final tile state
+    console.log('[documentStore.mergeEnvelope] Final tiles:', {
+      previousCount: Object.keys(currentDoc.tiles ?? {}).length,
+      envelopeCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
       finalCount: Object.keys(updatedDoc.tiles ?? {}).length,
-    });
-
-    // DEBUG: Log final document state after merge
-    console.log('[documentStore.mergeEnvelope] 📤 Updated document:', {
-      plan_view_state: updatedDoc.plan_view_state,
-      dayCardsCount: updatedDoc.day_cards?.length ?? 0,
-      tilesCount: Object.keys(updatedDoc.tiles ?? {}).length,
     });
 
     set({
@@ -1094,23 +1210,63 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     // Optimistic update
     set({ preferredTileIds: newSet });
 
-    // Sync to backend (fire-and-forget, preferences are not critical path)
-    const patch = {
-      version,
-      preferred_tile_ids: Array.from(newSet),
+    // Sync to backend - track pending PATCH to ensure persistence before regen
+    // Handles 409 conflicts by refetching version and retrying
+    const patchPreferences = async (): Promise<void> => {
+      const attemptPatch = async (patchVersion: number): Promise<Response> => {
+        const patchData = {
+          version: patchVersion,
+          preferred_tile_ids: Array.from(newSet),
+        };
+        console.log('[documentStore] 💜 PATCH preferences:', patchData);
+        return apiFetch('/api/document', {
+          method: 'PATCH',
+          body: JSON.stringify(patchData),
+        });
+      };
+
+      try {
+        let res = await attemptPatch(version);
+
+        // Handle 409 Conflict (version mismatch) - refetch and retry once
+        if (res.status === 409) {
+          console.warn('[documentStore] 💜 Version conflict (409), refetching and retrying...');
+          const freshRes = await apiFetch('/api/document');
+          if (freshRes.ok) {
+            const freshDoc = await freshRes.json();
+            set({ version: freshDoc.version });
+            res = await attemptPatch(freshDoc.version);
+          }
+        }
+
+        if (res.ok) {
+          const responseData = await res.json();
+          set({ version: responseData.version });
+          console.log('[documentStore] 💜 PATCH success, new version:', responseData.version);
+        } else {
+          console.error('[documentStore] 💜 PATCH failed:', res.status);
+        }
+      } catch (err) {
+        console.error('[documentStore] 💜 PATCH error:', err);
+      }
     };
-    console.log('[documentStore] 💜 PATCH preferences:', patch);
-    apiFetch('/api/document', {
-      method: 'PATCH',
-      body: JSON.stringify(patch),
-    })
-      .then((res) => {
-        console.log('[documentStore] 💜 PATCH response:', res.status);
-      })
-      .catch((err) => {
-        console.warn('[documentStore] Failed to sync preferences:', err);
-        // Don't revert - preferences will sync on next successful PATCH
-      });
+
+    const patchPromise = patchPreferences().finally(() => {
+      if (get().pendingPreferencePatch === patchPromise) {
+        set({ pendingPreferencePatch: null });
+      }
+    });
+
+    set({ pendingPreferencePatch: patchPromise });
+  },
+
+  // Wait for any pending preference PATCH to complete
+  // Called by useItineraryRegeneration before triggering regen
+  awaitPreferencePatch: async () => {
+    const { pendingPreferencePatch } = get();
+    if (pendingPreferencePatch) {
+      await pendingPreferencePatch;
+    }
   },
 
   clearPreferences: () => {
@@ -1135,6 +1291,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { preferredTileIds } = get();
     console.log('[documentStore] Marking preferences as applied:', preferredTileIds.size);
     set({ lastGeneratedPreferences: new Set(preferredTileIds) });
+  },
+
+  // Regeneration UI state setter (shared across components)
+  setRegenerationState: (state) => {
+    set({
+      ...(state.isRegenerating !== undefined && { isRegenerating: state.isRegenerating }),
+      ...(state.isPending !== undefined && { isPending: state.isPending }),
+      ...(state.remainingSeconds !== undefined && { remainingSeconds: state.remainingSeconds }),
+    });
   },
 
   // Cart actions (for BOOKING mode)
@@ -1172,6 +1337,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       isPlanFinalized: false,
       preferredTileIds: new Set(),
       lastGeneratedPreferences: new Set(),
+      isRegenerating: false,
+      isPending: false,
+      remainingSeconds: 0,
       cartTileIds: new Set(),
     });
   },

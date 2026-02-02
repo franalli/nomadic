@@ -29,6 +29,55 @@ from .provider_base import Provider
 logger = logging.getLogger(__name__)
 
 
+def _normalize_city_for_amadeus(city: str) -> str:
+    """
+    Remove country/region suffixes that break Amadeus city code lookup.
+    Safety net for when router normalization doesn't fully work.
+    """
+    if not city:
+        return city
+
+    city = city.strip()
+
+    # Remove common country suffixes (case-insensitive)
+    suffixes = [
+        ", France",
+        ", FR",
+        ", Italy",
+        ", IT",
+        ", Spain",
+        ", ES",
+        ", USA",
+        ", US",
+        ", United States",
+        ", UK",
+        ", United Kingdom",
+        ", Germany",
+        ", DE",
+        ", Japan",
+        ", JP",
+        ", Thailand",
+        ", TH",
+        ", Indonesia",
+        ", ID",
+        ", UAE",
+        ", United Arab Emirates",
+        ", Australia",
+        ", AU",
+        ", Canada",
+        ", CA",
+        ", Mexico",
+        ", MX",
+    ]
+
+    for suffix in suffixes:
+        if city.lower().endswith(suffix.lower()):
+            city = city[: -len(suffix)].strip()
+            break
+
+    return city
+
+
 class AmadeusFlightProvider(Provider):
     """
     Flight provider using Amadeus Flight Offers Search API.
@@ -126,12 +175,18 @@ class AmadeusFlightProvider(Provider):
         if not location:
             return None
 
+        # Normalize location name (strip country suffixes)
+        normalized = _normalize_city_for_amadeus(location)
+
+        if normalized != location:
+            logger.info(f"[AMADEUS] Normalized location: '{location}' → '{normalized}'")
+
         # Check if already an airport code (3 letters)
-        if len(location) == 3 and location.isalpha():
-            return location.upper()
+        if len(normalized) == 3 and normalized.isalpha():
+            return normalized.upper()
 
         # Try city-to-airport mapping
-        return city_to_airport_code(location)
+        return city_to_airport_code(normalized)
 
     def _offer_to_tile(self, offer: FlightOffer, ctx: SearchContext) -> Tile:
         """Convert a FlightOffer to a Tile."""
@@ -286,12 +341,18 @@ class AmadeusHotelProvider(Provider):
         if not destination:
             return None
 
+        # Normalize city name (strip country suffixes like ", France")
+        normalized = _normalize_city_for_amadeus(destination)
+
+        if normalized != destination:
+            logger.info(f"[AMADEUS] Normalized destination: '{destination}' → '{normalized}'")
+
         # Check if already a code (3 letters)
-        if len(destination) == 3 and destination.isalpha():
-            return destination.upper()
+        if len(normalized) == 3 and normalized.isalpha():
+            return normalized.upper()
 
         # Use airport code as city code (often the same)
-        return city_to_airport_code(destination)
+        return city_to_airport_code(normalized)
 
     def _hotel_to_tile(self, hotel: HotelOffer, ctx: SearchContext) -> Tile:
         """Convert a HotelOffer to a Tile."""

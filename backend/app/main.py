@@ -1178,8 +1178,6 @@ async def graph_plan_endpoint(
     # --- Initialize or merge trip_inputs ---
     # CRITICAL: Always merge req.trip_inputs into session_state to ensure
     # the latest frontend values (destination, dates, etc.) are used.
-    # Track if request provided trip_inputs (used later to skip document hydration)
-    has_request_trip_inputs = bool(req.trip_inputs)
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
@@ -1253,11 +1251,25 @@ async def graph_plan_endpoint(
         if document_data:
             if document_data.branches:
                 session_state["branches"] = [b.model_dump() for b in document_data.branches]
-            # CRITICAL: Only hydrate trip_inputs from document if request didn't provide them
-            # Otherwise, the stale document values would overwrite the fresh request values
-            # This is needed for regeneration when user changes dates/destination in UI
-            if document_data.trip_inputs and not has_request_trip_inputs:
-                session_state["trip_inputs"] = document_data.trip_inputs.model_dump()
+            # CRITICAL FIX: Always use document trip_inputs as BASELINE,
+            # then merge request on top. This ensures fields set via settings panel
+            # (origin, flight_settings, etc.) are preserved when the chat request
+            # only has partial trip_inputs.
+            # @see docs/plan_graph_analysis.md - Origin sync for flight fetching
+            if document_data.trip_inputs:
+                doc_inputs = document_data.trip_inputs.model_dump()
+                session_inputs = session_state.get("trip_inputs", {})
+                # Document values as baseline, session (request) values override
+                merged = {
+                    **doc_inputs,
+                    **{k: v for k, v in session_inputs.items() if v is not None},
+                }
+                session_state["trip_inputs"] = normalize_trip_inputs(merged)
+                logger.debug(
+                    f"[{request_id}] Merged trip_inputs: doc.origin={doc_inputs.get('origin')}, "
+                    f"session.origin={session_inputs.get('origin')}, "
+                    f"final.origin={session_state['trip_inputs'].get('origin')}"
+                )
     except HTTPException:
         raise  # Re-raise HTTP exceptions (like version conflict)
     except Exception as e:
@@ -1740,8 +1752,6 @@ async def graph_plan_stream_endpoint(
     # CRITICAL: Always merge req.trip_inputs into session_state to ensure
     # the latest frontend values (destination, dates, etc.) are used.
     # This fixes the bug where Setup mode had stale/empty destination.
-    # Track if request provided trip_inputs (used later to skip document hydration)
-    has_request_trip_inputs = bool(req.trip_inputs)
     if "trip_inputs" not in session_state:
         raw_inputs = dict(req.trip_inputs) if req.trip_inputs else {}
         session_state["trip_inputs"] = normalize_trip_inputs(raw_inputs)
@@ -1830,12 +1840,26 @@ async def graph_plan_stream_endpoint(
                 if document_data:
                     if document_data.branches:
                         session_state["branches"] = [b.model_dump() for b in document_data.branches]
-                    # CRITICAL: Only hydrate trip_inputs from document if request
-                    # didn't provide them. Otherwise, stale document values would
-                    # overwrite the fresh request values
-                    # This is needed for regeneration when user changes dates/destination in UI
-                    if document_data.trip_inputs and not has_request_trip_inputs:
-                        session_state["trip_inputs"] = document_data.trip_inputs.model_dump()
+                    # CRITICAL FIX: Always use document trip_inputs as BASELINE,
+                    # then merge request on top. This ensures fields set via settings
+                    # panel (origin, flight_settings, etc.) are preserved when the
+                    # chat request only has partial trip_inputs.
+                    # @see docs/plan_graph_analysis.md - Origin sync for flight fetching
+                    if document_data.trip_inputs:
+                        doc_inputs = document_data.trip_inputs.model_dump()
+                        session_inputs = session_state.get("trip_inputs", {})
+                        # Document values as baseline, session (request) values override
+                        merged = {
+                            **doc_inputs,
+                            **{k: v for k, v in session_inputs.items() if v is not None},
+                        }
+                        session_state["trip_inputs"] = normalize_trip_inputs(merged)
+                        logger.debug(
+                            f"[{request_id}] Merged trip_inputs: "
+                            f"doc.origin={doc_inputs.get('origin')}, "
+                            f"session.origin={session_inputs.get('origin')}, "
+                            f"final.origin={session_state['trip_inputs'].get('origin')}"
+                        )
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to load document for session: {e}")
 
@@ -2145,9 +2169,11 @@ async def graph_plan_stream_endpoint(
                 response_document.needs_refresh = False
                 response_document.can_expand_to_itinerary = True
 
-            # Apply graph tiles if present
+            # Apply graph tiles if present - ALWAYS replace DB tiles with fresh graph tiles
+            # FIX: Changed from `if graph_tiles and not response_document.tiles` to `if graph_tiles`
+            # This ensures destination changes get fresh tiles instead of keeping old DB tiles
             graph_tiles = graph_document.get("tiles", {})
-            if graph_tiles and not response_document.tiles:
+            if graph_tiles:
                 response_document.tiles = {
                     tile_id: (
                         Tile.model_validate(tile_data) if isinstance(tile_data, dict) else tile_data

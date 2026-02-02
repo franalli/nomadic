@@ -349,3 +349,131 @@ class TestL2DatabaseCache:
         )
         await async_db_session.commit()
         clear_memory_cache()
+
+
+# =============================================================================
+# Parallel Cache Invalidation Tests
+# =============================================================================
+
+
+class TestParallelCacheInvalidation:
+    """
+    Test in-memory parallel_llm_results cache invalidation on context changes.
+
+    When destination or month changes, the parallel_llm_results cache must be
+    invalidated to prevent stale specialist content (e.g., Bali dive sites
+    appearing for a New York trip).
+
+    These tests simulate the invalidation logic from vertical_specialist.py.
+    """
+
+    def test_parallel_cache_invalidated_on_destination_change(self):
+        """Changing destination should invalidate parallel_llm_results."""
+        # Simulate state with cached Bali data
+        metadata = {
+            "parallel_llm_results": {"diving": {"cached": "bali_data"}},
+            "_last_specialist_key": "bali:2026-02",
+            "current_specialist_topic": "diving",
+        }
+        trip_plan_destination = "New York"
+        trip_plan_start_date = "2026-02-01"
+
+        # Simulate the invalidation check from vertical_specialist.py
+        cached_key = metadata.get("_last_specialist_key", "")
+        current_dest = (trip_plan_destination or "").lower().strip()
+        current_month = trip_plan_start_date[:7] if trip_plan_start_date else "no-dates"
+        current_key = f"{current_dest}:{current_month}"
+
+        assert cached_key == "bali:2026-02"
+        assert current_key == "new york:2026-02"
+        assert cached_key != current_key, "Cache key should change when destination changes"
+
+        # Verify cache would be cleared
+        if cached_key != current_key:
+            metadata.pop("parallel_llm_results", None)
+        assert "parallel_llm_results" not in metadata, "Cache should be cleared"
+
+    def test_parallel_cache_invalidated_on_month_change(self):
+        """Changing month should invalidate parallel_llm_results (seasonal content)."""
+        # Simulate state with cached February data
+        metadata = {
+            "parallel_llm_results": {"diving": {"cached": "feb_rainy_season_data"}},
+            "_last_specialist_key": "bali:2026-02",
+        }
+        trip_plan_destination = "Bali"
+        trip_plan_start_date = "2026-08-01"  # Changed to August (dry season)
+
+        # Simulate the invalidation check
+        cached_key = metadata.get("_last_specialist_key", "")
+        current_dest = (trip_plan_destination or "").lower().strip()
+        current_month = trip_plan_start_date[:7] if trip_plan_start_date else "no-dates"
+        current_key = f"{current_dest}:{current_month}"
+
+        assert cached_key == "bali:2026-02"
+        assert current_key == "bali:2026-08"
+        assert cached_key != current_key, "Cache key should change when month changes"
+
+        # Verify cache would be cleared
+        if cached_key != current_key:
+            metadata.pop("parallel_llm_results", None)
+        assert "parallel_llm_results" not in metadata, "Cache should be cleared"
+
+    def test_parallel_cache_preserved_when_unchanged(self):
+        """Same destination+month should NOT invalidate cache."""
+        # Simulate state with cached data
+        metadata = {
+            "parallel_llm_results": {"diving": {"cached": "bali_data"}},
+            "_last_specialist_key": "bali:2026-02",
+        }
+        trip_plan_destination = "Bali"
+        trip_plan_start_date = "2026-02-15"  # Same month, different day
+
+        # Simulate the invalidation check
+        cached_key = metadata.get("_last_specialist_key", "")
+        current_dest = (trip_plan_destination or "").lower().strip()
+        current_month = trip_plan_start_date[:7] if trip_plan_start_date else "no-dates"
+        current_key = f"{current_dest}:{current_month}"
+
+        assert cached_key == current_key, "Cache key should be unchanged"
+
+        # Verify cache is NOT cleared
+        assert "parallel_llm_results" in metadata, "Cache should be preserved"
+        assert metadata["parallel_llm_results"]["diving"]["cached"] == "bali_data"
+
+    def test_cache_invalidation_with_no_dates(self):
+        """Cache should use 'no-dates' fallback when start_date is missing."""
+        metadata = {
+            "parallel_llm_results": {"diving": {"cached": "old_data"}},
+            "_last_specialist_key": "bali:no-dates",
+        }
+        trip_plan_destination = "Bali"
+        trip_plan_start_date = "2026-02-01"  # Now has dates
+
+        # Simulate the invalidation check
+        cached_key = metadata.get("_last_specialist_key", "")
+        current_dest = (trip_plan_destination or "").lower().strip()
+        current_month = trip_plan_start_date[:7] if trip_plan_start_date else "no-dates"
+        current_key = f"{current_dest}:{current_month}"
+
+        assert cached_key == "bali:no-dates"
+        assert current_key == "bali:2026-02"
+        assert cached_key != current_key, "Adding dates should trigger invalidation"
+
+    def test_cache_key_is_case_insensitive(self):
+        """Cache key destination should be case-insensitive."""
+        metadata = {
+            "parallel_llm_results": {"diving": {"cached": "data"}},
+            "_last_specialist_key": "bali:2026-02",
+        }
+
+        # Same destination, different case
+        trip_plan_destination = "BALI"
+        trip_plan_start_date = "2026-02-01"
+
+        cached_key = metadata.get("_last_specialist_key", "")
+        current_dest = (trip_plan_destination or "").lower().strip()
+        current_month = trip_plan_start_date[:7] if trip_plan_start_date else "no-dates"
+        current_key = f"{current_dest}:{current_month}"
+
+        assert cached_key == current_key, "Case should not affect cache key match"
+        assert "parallel_llm_results" in metadata, "Cache should be preserved"

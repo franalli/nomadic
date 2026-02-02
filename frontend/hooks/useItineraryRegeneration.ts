@@ -9,12 +9,12 @@
 
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useDocumentStore } from '@/state/documentStore';
 
 /** Debounce delay before triggering regeneration (ms) */
-const AUTO_REGEN_DEBOUNCE_MS = 1500;
+const AUTO_REGEN_DEBOUNCE_MS = 2000;
 
 /**
  * Stable JSON stringification for consistent hashing.
@@ -39,12 +39,18 @@ function stableStringify(obj: unknown): string {
 export interface UseItineraryRegenerationReturn {
   /** Whether regeneration is currently in progress */
   isRegenerating: boolean;
+  /** Whether debounce is pending (waiting to trigger regeneration) */
+  isPending: boolean;
+  /** Countdown seconds until regeneration triggers */
+  remainingSeconds: number;
   /** Number of current preferences */
   preferenceCount: number;
   /** Set the expand function for auto-regen to call */
   setExpandFn: (fn: (() => Promise<void>) | null) => void;
   /** Manual regeneration trigger */
   confirmRegeneration: (expandFn: () => Promise<void>) => Promise<void>;
+  /** Bypass debounce and trigger regeneration immediately */
+  triggerImmediateRegeneration: () => void;
 }
 
 export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
@@ -53,13 +59,20 @@ export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
   const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
   const lastGeneratedPreferences = useDocumentStore((s) => s.lastGeneratedPreferences);
   const markPreferencesAsApplied = useDocumentStore((s) => s.markPreferencesAsApplied);
+  const awaitPreferencePatch = useDocumentStore((s) => s.awaitPreferencePatch);
   // NEW: Track trip inputs for selective regeneration
   const tripInputs = useDocumentStore((s) => s.document?.trip_inputs);
 
-  // Local state
-  const [isRegenerating, setIsRegenerating] = useState(false);
+  // Regeneration UI state from store (shared across all components using this hook)
+  const isRegenerating = useDocumentStore((s) => s.isRegenerating);
+  const isPending = useDocumentStore((s) => s.isPending);
+  const remainingSeconds = useDocumentStore((s) => s.remainingSeconds);
+  const setRegenerationState = useDocumentStore((s) => s.setRegenerationState);
+
+  // Refs for timers and scroll position
   const expandFnRef = useRef<(() => Promise<void>) | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollPositionRef = useRef<number>(0);
 
   // Track if this is the initial mount (skip auto-regen on first render)
@@ -68,15 +81,21 @@ export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
   const lastTripInputsHashRef = useRef<string>('');
   // Track mounted state to prevent state updates after unmount
   const isMountedRef = useRef(true);
+  // RACE CONDITION FIX: Guard against double regeneration
+  // Prevents both debounce timer and immediate trigger from running simultaneously
+  const isExecutingRegenRef = useRef(false);
 
   // Cleanup on unmount
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      // Cancel any pending debounce timer
+      // Cancel any pending timers
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
+      }
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
       }
     };
   }, []);
@@ -174,24 +193,74 @@ export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
 
     console.log('[useItineraryRegeneration] ✅ Starting debounce timer');
 
-    // Clear existing timer
+    // Clear existing timers (debounce reset on rapid changes)
     if (debounceTimerRef.current) {
+      console.log('[useItineraryRegeneration] 🔄 Input changed during debounce - resetting timer');
       clearTimeout(debounceTimerRef.current);
     }
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+    }
+
+    // Start pending state + countdown
+    if (isMountedRef.current) {
+      setRegenerationState({ isPending: true, remainingSeconds: Math.ceil(AUTO_REGEN_DEBOUNCE_MS / 1000) });
+    }
+
+    // Countdown timer (updates every second)
+    countdownTimerRef.current = setInterval(() => {
+      if (isMountedRef.current) {
+        const current = useDocumentStore.getState().remainingSeconds;
+        const next = current - 1;
+        if (next <= 0 && countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+        setRegenerationState({ remainingSeconds: Math.max(0, next) });
+      }
+    }, 1000);
 
     // Debounce regeneration to prevent thrashing on rapid preference changes
     debounceTimerRef.current = setTimeout(async () => {
       console.log('[useItineraryRegeneration] ⏰ Debounce timer fired, calling expand');
-      if (!expandFnRef.current) {
-        console.log('[useItineraryRegeneration] ❌ No expandFn available');
+
+      // RACE CONDITION GUARD: Check if another regeneration is already executing
+      // This can happen if triggerImmediateRegeneration was called right as this timer fired
+      if (isExecutingRegenRef.current) {
+        console.log('[useItineraryRegeneration] ⏭️ Skipping - regeneration already in progress (race avoided)');
+        if (isMountedRef.current) {
+          setRegenerationState({ isPending: false, remainingSeconds: 0 });
+        }
         return;
       }
+
+      // Clear countdown timer
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+
+      if (!expandFnRef.current) {
+        console.log('[useItineraryRegeneration] ❌ No expandFn available');
+        if (isMountedRef.current) {
+          setRegenerationState({ isPending: false, remainingSeconds: 0 });
+        }
+        return;
+      }
+
+      // Set execution guard BEFORE any async work
+      isExecutingRegenRef.current = true;
 
       // Save scroll position
       scrollPositionRef.current = window.scrollY;
 
-      if (isMountedRef.current) setIsRegenerating(true);
+      if (isMountedRef.current) {
+        setRegenerationState({ isPending: false, remainingSeconds: 0, isRegenerating: true });
+      }
       try {
+        // Wait for any pending preference PATCH to complete before regen
+        // This ensures the backend has the latest preferences
+        await awaitPreferencePatch();
         await expandFnRef.current();
         if (isMountedRef.current) {
           markPreferencesAsApplied();
@@ -200,8 +269,10 @@ export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
           console.log('[useItineraryRegeneration] ✅ Regeneration complete');
         }
       } finally {
+        // Clear execution guard
+        isExecutingRegenRef.current = false;
         if (isMountedRef.current) {
-          setIsRegenerating(false);
+          setRegenerationState({ isRegenerating: false });
           // Restore scroll position
           window.scrollTo({ top: scrollPositionRef.current, behavior: 'smooth' });
         }
@@ -212,17 +283,29 @@ export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
     };
     // hasChanges already captures hasPreferenceChanges and hasTripInputChanges
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preferredTileIds, tripInputsHash, hasItinerary, hasChanges, isRegenerating, markPreferencesAsApplied]);
+  }, [preferredTileIds, tripInputsHash, hasItinerary, hasChanges, isRegenerating, markPreferencesAsApplied, awaitPreferencePatch]);
 
   // Manual regeneration trigger
   const confirmRegeneration = useCallback(
     async (expandFn: () => Promise<void>) => {
+      // RACE CONDITION GUARD: Prevent concurrent regenerations
+      if (isExecutingRegenRef.current) {
+        console.log('[useItineraryRegeneration] ⏭️ confirmRegeneration skipped - already executing');
+        return;
+      }
+      isExecutingRegenRef.current = true;
+
       scrollPositionRef.current = window.scrollY;
-      setIsRegenerating(true);
+      setRegenerationState({ isRegenerating: true });
       try {
+        // Wait for any pending preference PATCH to complete before regen
+        await awaitPreferencePatch();
         await expandFn();
         if (isMountedRef.current) {
           markPreferencesAsApplied();
@@ -230,19 +313,59 @@ export function useItineraryRegeneration(): UseItineraryRegenerationReturn {
           lastTripInputsHashRef.current = tripInputsHash;
         }
       } finally {
+        // Clear execution guard
+        isExecutingRegenRef.current = false;
         if (isMountedRef.current) {
-          setIsRegenerating(false);
+          setRegenerationState({ isRegenerating: false });
           window.scrollTo({ top: scrollPositionRef.current, behavior: 'smooth' });
         }
       }
     },
-    [markPreferencesAsApplied, tripInputsHash]
+    [awaitPreferencePatch, markPreferencesAsApplied, tripInputsHash, setRegenerationState]
   );
+
+  // Bypass debounce and trigger regeneration immediately
+  const triggerImmediateRegeneration = useCallback(() => {
+    console.log('[useItineraryRegeneration] ⚡ Immediate bypass triggered');
+
+    // RACE CONDITION GUARD: Check if regeneration is already executing
+    // This prevents double regeneration if debounce timer callback already started
+    if (isExecutingRegenRef.current) {
+      console.log('[useItineraryRegeneration] ⏭️ Skipping immediate - regeneration already in progress');
+      return;
+    }
+
+    // Cancel debounce + countdown timers
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+
+    // Reset pending state
+    if (isMountedRef.current) {
+      setRegenerationState({ isPending: false, remainingSeconds: 0 });
+    }
+
+    // Execute immediately if expand function is available
+    if (expandFnRef.current) {
+      // Use confirmRegeneration to handle the actual regeneration
+      confirmRegeneration(expandFnRef.current);
+    } else {
+      console.log('[useItineraryRegeneration] ❌ No expandFn available for immediate trigger');
+    }
+  }, [confirmRegeneration, setRegenerationState]);
 
   return {
     isRegenerating,
+    isPending,
+    remainingSeconds,
     preferenceCount: preferredTileIds.size,
     setExpandFn,
     confirmRegeneration,
+    triggerImmediateRegeneration,
   };
 }

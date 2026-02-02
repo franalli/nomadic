@@ -824,7 +824,11 @@ async def run_turn_streaming(
     Yields:
         Stream events for SSE
     """
+    import time
+
     from langchain_core.messages import HumanMessage
+
+    from app.debug_utils import CompactLogger, RequestMetrics
 
     # PANIC BUTTON - non-LLM kill switch (must be first!)
     if _is_panic_command(user_message):
@@ -834,11 +838,17 @@ async def run_turn_streaming(
         yield {"type": "complete", "data": reset_response}
         return
 
+    # Initialize request metrics for token tracking (compact logging mode)
+    metrics = RequestMetrics(start_time=time.time())
+
     # Get compiled graph
     graph = get_or_create_graph()
 
     # Restore state from session
     state = _restore_graph_state(session_state)
+
+    # Store metrics in state for nodes to access
+    state.metadata["_metrics"] = metrics
 
     # Add user message
     state.messages.append(HumanMessage(content=user_message))
@@ -960,6 +970,10 @@ async def run_turn_streaming(
             strategy_sections=len(final_result.get("document", {}).get("strategy_sections", [])),
             view_state=final_result.get("document", {}).get("plan_view_state", "unknown"),
         )
+
+        # Compact logging: emit request summary with token tracking and cost
+        clog = CompactLogger("graph", metrics=metrics)
+        clog.request_summary()
 
         yield {
             "type": "complete",

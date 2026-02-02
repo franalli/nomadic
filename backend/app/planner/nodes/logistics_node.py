@@ -20,11 +20,18 @@ Key responsibilities:
 """
 
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from app.data.demo_curation import CARRIER_MAP, DEMO_MANIFEST
-from app.debug_utils import _debug_log, _debug_node_end, _debug_node_start, log
+from app.debug_utils import (
+    CompactLogger,
+    _debug_log,
+    _debug_node_end,
+    _debug_node_start,
+    log,
+)
 from app.planner.state.schemas import GraphState
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
@@ -45,6 +52,11 @@ async def logistics_node(state: GraphState) -> GraphState:
     3. Applies 24h safety logic if diving constraints exist.
     """
     plan = state.trip_plan
+    node_start_time = time.time()
+
+    # Initialize compact logger with request metrics
+    metrics = state.metadata.get("_metrics")
+    clog = CompactLogger("logistics", metrics=metrics)
 
     # DEBUG: Node start
     _debug_node_start(
@@ -54,6 +66,9 @@ async def logistics_node(state: GraphState) -> GraphState:
         origin=plan.origin,
         dates=f"{plan.start_date} to {plan.end_date}",
     )
+
+    # Compact logging: node start
+    clog.node_start("LOGISTICS", dest=plan.destination, origin=plan.origin or "None")
 
     # ==========================================================================
     # SELECTIVE REGENERATION: Check if cached tiles can be reused
@@ -86,6 +101,17 @@ async def logistics_node(state: GraphState) -> GraphState:
             )
             # Mark as attempted for downstream routing
             state.metadata["logistics_attempted"] = True
+
+            # Compact logging: cache hit
+            clog.event("cache_hit", "Tiles (all categories)", dest=current_destination)
+            duration_ms = int((time.time() - node_start_time) * 1000)
+            clog.node_end(
+                "LOGISTICS",
+                duration_ms,
+                status="cache_hit",
+                hotels=len(state.tiles.get("hotels", [])),
+                activities=len(state.tiles.get("activities", [])),
+            )
             return state
 
     # Store current destination for future cache checks
@@ -94,38 +120,93 @@ async def logistics_node(state: GraphState) -> GraphState:
     # Mark that logistics has been attempted (prevents infinite loop in route_after_architect)
     state.metadata["logistics_attempted"] = True
 
+    # ==========================================================================
+    # DIAGNOSTIC LOGGING - Track origin sync (Issue 6 investigation)
+    # ==========================================================================
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    trip_inputs_origin = trip_inputs.get("origin")
+    booking_types = trip_inputs.get("booking_types", {})
+    flights_enabled = booking_types.get("flights") != "off"
+
+    _debug_log(f"[LOGISTICS] trip_plan.origin={plan.origin!r}")
+    _debug_log(f"[LOGISTICS] metadata.trip_inputs.origin={trip_inputs_origin!r}")
+    _debug_log(f"[LOGISTICS] trip_inputs keys: {list(trip_inputs.keys())}")
+    _debug_log(f"[LOGISTICS] flights_enabled={flights_enabled}")
+
+    # Check for origin mismatch (reveals where sync breaks)
+    if trip_inputs_origin and not plan.origin:
+        logger.warning(
+            f"[LOGISTICS] ⚠️ ORIGIN MISMATCH: trip_inputs has '{trip_inputs_origin}' "
+            f"but trip_plan.origin is empty! Check _restore_graph_state sync in plan_graph.py"
+        )
+
+    # Skip flights if disabled in settings (even if origin exists)
+    if not flights_enabled:
+        _debug_log("[LOGISTICS] ⏭️ Skipping flights - disabled in settings")
+    # ==========================================================================
+
     # Skip if missing required fields
     if not plan.destination or not plan.start_date:
         log("LOGISTICS", "Skipping - no destination or dates")
         _debug_node_end("logistics", "✈️", status="skipped", reason="missing_fields")
+        # Compact logging: skipped
+        duration_ms = int((time.time() - node_start_time) * 1000)
+        clog.node_end("LOGISTICS", duration_ms, status="skipped", reason="missing_fields")
         return state
 
     # Resolve airport codes for flights (flights need origin, hotels/activities don't)
     origin_code = _city_to_code(plan.origin or "")
     dest_code = _city_to_code(plan.destination)
-    can_search_flights = bool(origin_code and dest_code)
+    # Can only search flights if: codes resolved + flights not disabled in settings
+    can_search_flights = bool(origin_code and dest_code) and flights_enabled
 
     # CRITICAL FIX: Always search for hotels/activities even without origin
     # Hotels and activities only need destination + dates
     # @see docs/ux_unified_architecture.md - Enable tile search without origin
     await _search_hotels_and_activities(state, plan)
 
-    # Skip flight search if missing origin
+    # Skip flight search if disabled or missing origin
     if not can_search_flights:
-        log("LOGISTICS", "Skipping flights (no origin) - hotels/activities searched")
+        # Determine the specific reason for skipping
+        if not flights_enabled:
+            skip_reason = "flights_disabled_in_settings"
+            log("LOGISTICS", "Skipping flights - disabled in settings")
+        elif not plan.origin:
+            skip_reason = "no_origin_for_flights"
+            log("LOGISTICS", "Skipping flights (no origin) - hotels/activities searched")
+            # Extra diagnostic if trip_inputs has origin but trip_plan doesn't
+            if trip_inputs_origin:
+                _debug_log(
+                    f"[LOGISTICS] 🔍 trip_inputs.origin='{trip_inputs_origin}' but "
+                    f"trip_plan.origin is empty - sync bug detected!"
+                )
+        else:
+            skip_reason = "airport_code_resolution_failed"
+            log("LOGISTICS", "Skipping flights - could not resolve airport codes")
+
         hotels_count = len(state.tiles.get("hotels", []))
         activities_count = len(state.tiles.get("activities", []))
         logger.info(
-            f"[Logistics] No origin, skipped flights. "
+            f"[Logistics] Skipped flights ({skip_reason}). "
             f"Hotels/activities tiles: {hotels_count} + {activities_count}"
         )
         _debug_node_end(
             "logistics",
             "✈️",
             status="partial",
-            reason="no_origin_for_flights",
+            reason=skip_reason,
             hotels=len(state.tiles.get("hotels", [])),
             activities=len(state.tiles.get("activities", [])),
+        )
+        # Compact logging: partial (flights skipped)
+        clog.event("constraint", "Flights skipped", reason=skip_reason)
+        duration_ms = int((time.time() - node_start_time) * 1000)
+        clog.node_end(
+            "LOGISTICS",
+            duration_ms,
+            status="partial",
+            hotels=hotels_count,
+            activities=activities_count,
         )
         return state
 
@@ -266,6 +347,16 @@ async def logistics_node(state: GraphState) -> GraphState:
         safe=safe_count,
         unsafe=unsafe_count,
         source=flight_source,
+    )
+
+    # Compact logging: node end with all tiles
+    duration_ms = int((time.time() - node_start_time) * 1000)
+    clog.node_end(
+        "LOGISTICS",
+        duration_ms,
+        flights=len(processed_options),
+        hotels=len(state.tiles.get("hotels", [])),
+        activities=len(state.tiles.get("activities", [])),
     )
 
     return state

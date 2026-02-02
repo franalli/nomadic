@@ -75,7 +75,8 @@
       "Bash(taskkill:*)",
       "Bash(cmd //c \"taskkill /PID 114792 /F\")",
       "Bash(timeout:*)",
-      "Bash(npx --yes eslint:*)"
+      "Bash(npx --yes eslint:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []

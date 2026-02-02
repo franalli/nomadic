@@ -1568,13 +1568,44 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     2. Routing sees pending_specialists not empty → routes back here
     3. Subsequent runs: active_specialist is None, we pop from pending_specialists
     """
+    import time
+
     from app.debug_utils import (
+        CompactLogger,
         _debug_log,
         _debug_node_start,
         _debug_node_timer_end,
         _debug_node_timer_start,
         log,
     )
+
+    # Start timing this node
+    node_start_time = time.time()
+
+    # Initialize compact logger with request metrics
+    metrics = state.metadata.get("_metrics")
+    clog = CompactLogger("specialist", metrics=metrics)
+
+    # =========================================================================
+    # FIRST THING: Invalidate stale cache if destination OR month changed
+    # Must happen before ANY other logic for multi-specialist loops
+    # =========================================================================
+    cached_key = state.metadata.get("_last_specialist_key", "")
+    current_dest = (state.trip_plan.destination or "").lower().strip()
+    current_month = state.trip_plan.start_date[:7] if state.trip_plan.start_date else "no-dates"
+    current_key = f"{current_dest}:{current_month}"
+
+    if cached_key and cached_key != current_key:
+        _debug_log(
+            f"[SPECIALIST] Context changed ({cached_key} → {current_key}), "
+            "invalidating parallel_llm_results"
+        )
+        state.metadata.pop("parallel_llm_results", None)
+    else:
+        _debug_log(f"[SPECIALIST] Context unchanged ({current_key}), preserving cache")
+
+    # Store current key for next comparison
+    state.metadata["_last_specialist_key"] = current_key
 
     # Start timing this node execution
     _debug_node_timer_start("specialist")
@@ -1594,7 +1625,13 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     if not topic:
         # No specialist needed - pass through
         _debug_log("🤿 SPECIALIST skipped (no active specialist)")
+        # Compact logging: skipped
+        duration_ms = int((time.time() - node_start_time) * 1000)
+        clog.node_end("SPECIALIST", duration_ms, status="skipped", reason="no_active_specialist")
         return state
+
+    # Compact logging: node start
+    clog.node_start("SPECIALIST", topic=topic, dest=state.trip_plan.destination)
 
     # =========================================================================
     # SELECTIVE REGENERATION: Check if cached output can be reused
@@ -1628,6 +1665,11 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                 topic=topic,
                 cache_hit=True,
             )
+
+            # Compact logging: cache hit
+            clog.event("cache_hit", f"Specialist ({topic})", dest=current_destination)
+            duration_ms = int((time.time() - node_start_time) * 1000)
+            clog.node_end("SPECIALIST", duration_ms, topic=topic, status="cache_hit")
             return state  # No-op, output already in state
 
         _debug_log(
@@ -1815,6 +1857,10 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             reason=output.feasibility_reason,
         )
 
+        # Compact logging: infeasible
+        duration_ms = int((time.time() - node_start_time) * 1000)
+        clog.node_end("SPECIALIST", duration_ms, topic=topic, status="infeasible")
+
         state.metadata["last_executed_specialist"] = topic  # Track for downstream nodes
         state.active_specialist = None  # Clear for multi-specialist support
         return state
@@ -1946,6 +1992,17 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         constraints_added=len(output.constraints),
         content_blocks_added=len(output.content_blocks),
         critique=output.critique[:50] if output.critique else None,
+    )
+
+    # Compact logging: success
+    duration_ms = int((time.time() - node_start_time) * 1000)
+    clog.node_end(
+        "SPECIALIST",
+        duration_ms,
+        topic=topic,
+        status=output.feasibility_status,
+        constraints=len(output.constraints),
+        activities=len(output.content_blocks),
     )
 
     # Track for downstream nodes (synthesizer, _v2_result_to_v1_format)

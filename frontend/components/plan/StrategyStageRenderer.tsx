@@ -297,6 +297,10 @@ export function StrategyStageRenderer({
     return () => setExpandFn(null);
   }, [onExpandToItinerary, setExpandFn]);
 
+  // Unified regeneration state - combine plan regen (prop) and itinerary regen (hook)
+  // Shows overlay when EITHER is regenerating, locks UI during any regeneration
+  const isAnyRegenerating = isRegenerating || isRegenUpdating;
+
   // Get desktop state for mobile-specific rendering
   const { isDesktop } = useMobileMode();
 
@@ -694,12 +698,14 @@ export function StrategyStageRenderer({
               />
             )}
 
-            {/* Regeneration overlay */}
-            {isRegenerating && (
+            {/* Regeneration overlay - unified for plan AND itinerary regeneration */}
+            {isAnyRegenerating && (
               <div className="absolute inset-0 z-10 flex items-start justify-center pt-20 bg-background/60 backdrop-blur-[1px]">
                 <div className="flex flex-col items-center gap-3 rounded-lg bg-card/90 px-6 py-4 shadow-lg border border-border">
                   <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  <p className="text-sm font-medium text-muted-foreground">Updating plan...</p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    {isRegenUpdating ? 'Updating itinerary...' : 'Updating plan...'}
+                  </p>
                 </div>
               </div>
             )}

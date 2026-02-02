@@ -5,14 +5,16 @@ PR-E: Debug Utilities Module
 Consolidated debug logging for the planning graph.
 
 DEBUG modes (set in .env or environment):
-- DEBUG=off   - Zero output (production)
-- DEBUG=demo  - Rich colorized agent-level logs only (for videos, with delay)
-- DEBUG=full  - Rich colorized logs + verbose V2 DEBUG statements (no delay)
+- DEBUG=off     - Zero output (production)
+- DEBUG=demo    - Rich colorized agent-level logs only (for videos, with delay)
+- DEBUG=full    - Rich colorized logs + verbose V2 DEBUG statements (no delay)
+- DEBUG=compact - Structured compact logs with token tracking (recommended for dev)
 
 Both demo and full modes use the same colorized rich output for agent-level
 logs (log, log_phase, log_tokens, log_complete). The difference is:
 - demo: includes configurable delay (RICH_DEMO_DELAY_MS) for video recording
 - full: no delay, plus verbose _debug/_debug_log statements
+- compact: structured symbol-prefixed logs with token/cost tracking
 
 All functions are non-fatal - they silently catch errors to prevent
 debug code from crashing production.
@@ -20,9 +22,11 @@ debug code from crashing production.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 from rich.console import Console
 from rich.theme import Theme
@@ -58,10 +62,10 @@ _console = Console(theme=_THEME)
 def get_debug_mode() -> str:
     """Get current debug mode from environment.
 
-    Returns: 'demo', 'full', or 'off'
+    Returns: 'demo', 'full', 'compact', or 'off'
     """
     mode = os.getenv("DEBUG", "off").lower().strip()
-    if mode in ("demo", "full"):
+    if mode in ("demo", "full", "compact"):
         return mode
     # Legacy support
     if os.getenv("RICH_DEMO_LOGS", "0") == "1":
@@ -76,6 +80,279 @@ def _get_demo_delay() -> float:
     if get_debug_mode() != "demo":
         return 0.0
     return float(os.getenv("RICH_DEMO_DELAY_MS", "100")) / 1000.0
+
+
+# =============================================================================
+# TOKEN TRACKING DATA CLASSES
+# =============================================================================
+
+
+@dataclass
+class TokenUsage:
+    """Track token usage for LLM calls."""
+
+    prompt: int = 0
+    completion: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.prompt + self.completion
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            prompt=self.prompt + other.prompt,
+            completion=self.completion + other.completion,
+        )
+
+    def __str__(self) -> str:
+        return f"p={self.prompt} c={self.completion} tot={self.total}"
+
+
+@dataclass
+class RequestMetrics:
+    """Track metrics for entire graph execution."""
+
+    start_time: float
+    node_tokens: Dict[str, TokenUsage] = field(default_factory=dict)
+    node_durations: Dict[str, int] = field(default_factory=dict)
+    model_usage: Dict[str, TokenUsage] = field(default_factory=dict)
+
+    @property
+    def total_tokens(self) -> TokenUsage:
+        """Sum tokens across all nodes."""
+        result = TokenUsage()
+        for usage in self.node_tokens.values():
+            result = result + usage
+        return result
+
+    def add_model_usage(self, model: str, usage: TokenUsage) -> None:
+        """Track usage per model."""
+        if model not in self.model_usage:
+            self.model_usage[model] = TokenUsage()
+        self.model_usage[model] = self.model_usage[model] + usage
+
+
+# =============================================================================
+# COMPACT LOGGER CLASS
+# =============================================================================
+
+
+class CompactLogger:
+    """Structured, compact logging with token tracking for DEBUG=compact mode."""
+
+    SYMBOLS = {
+        "cache_hit": "✅",
+        "cache_miss": "❌",
+        "llm_call": "🤖",
+        "api_call": "🌐",
+        "constraint": "⚖️",
+        "specialist": "🎯",
+        "tokens": "🔢",
+    }
+
+    MODEL_PRICING = {  # Per 1M tokens (USD)
+        "gpt-4o": {"prompt": 2.50, "completion": 10.00},
+        "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
+    }
+
+    # Cost thresholds from environment
+    COST_WARNING_THRESHOLD = float(os.getenv("COST_THRESHOLD_WARNING", "0.10"))
+    COST_CRITICAL_THRESHOLD = float(os.getenv("COST_THRESHOLD_CRITICAL", "1.00"))
+
+    def __init__(self, name: str, metrics: Optional[RequestMetrics] = None):
+        self.logger = logging.getLogger(f"app.{name}")
+        self._is_compact = get_debug_mode() == "compact"
+        self.metrics = metrics
+        self.current_node_tokens = TokenUsage()
+
+    def node_start(self, node: str, **kwargs: Any) -> None:
+        """Log node entry (only in compact mode)."""
+        if not self._is_compact:
+            return
+        try:
+            params = self._format_params(kwargs)
+            _safe_print(f"▶ {node:12s} | {params}")
+            self.current_node_tokens = TokenUsage()
+        except Exception:
+            pass
+
+    def node_end(self, node: str, duration_ms: int, **kwargs: Any) -> None:
+        """Log node exit (only in compact mode)."""
+        if not self._is_compact:
+            # Still track metrics even if not in compact mode
+            if self.metrics:
+                self.metrics.node_tokens[node] = self.current_node_tokens
+                self.metrics.node_durations[node] = duration_ms
+            return
+        try:
+            params = self._format_params(kwargs)
+            if self.current_node_tokens.total > 0:
+                params += f" | 🔢 {self.current_node_tokens}"
+            _safe_print(f"✓ {node:12s} | {duration_ms:4d}ms | {params}")
+            if self.metrics:
+                self.metrics.node_tokens[node] = self.current_node_tokens
+                self.metrics.node_durations[node] = duration_ms
+        except Exception:
+            pass
+
+    def llm_call(
+        self, model: str, prompt_tokens: int, completion_tokens: int, **kwargs: Any
+    ) -> None:
+        """Log LLM call with token usage."""
+        usage = TokenUsage(prompt=prompt_tokens, completion=completion_tokens)
+        self.current_node_tokens = self.current_node_tokens + usage
+        if self.metrics:
+            self.metrics.add_model_usage(model, usage)
+        if not self._is_compact:
+            return
+        try:
+            cost = self._calculate_cost(model, usage)
+            params = self._format_params(kwargs)
+            if params:
+                params = f" {params}"
+            _safe_print(
+                f"  🤖 {model:20s} | "
+                f"p={prompt_tokens:4d} c={completion_tokens:4d} tot={usage.total:4d} "
+                f"${cost:.4f}{params}"
+            )
+        except Exception:
+            pass
+
+    def llm_call_from_response(self, response: Any, purpose: str = "") -> None:
+        """Log LLM call directly from LangChain response object."""
+        try:
+            metadata = response.response_metadata
+            usage = metadata.get("token_usage", {})
+            model = metadata.get("model_name", "unknown")
+            self.llm_call(
+                model=model,
+                prompt_tokens=usage.get("prompt_tokens", 0),
+                completion_tokens=usage.get("completion_tokens", 0),
+                purpose=purpose,
+            )
+        except Exception:
+            pass
+
+    def event(self, category: str, message: str, **kwargs: Any) -> None:
+        """Log an event (only in compact mode)."""
+        if not self._is_compact:
+            return
+        try:
+            symbol = self.SYMBOLS.get(category, "•")
+            params = self._format_params(kwargs)
+            _safe_print(f"  {symbol} {message:40s} | {params}")
+        except Exception:
+            pass
+
+    def state_change(self, label: str, old: Any, new: Any) -> None:
+        """Log state transitions (only in compact mode)."""
+        if not self._is_compact:
+            return
+        if old != new:
+            try:
+                status = "(CHANGED)" if old and new else "(SET)"
+                _safe_print(f"🔄 {label:20s} | {old} → {new} {status}")
+            except Exception:
+                pass
+
+    def batch_update(self, label: str, updates: Dict[str, Any]) -> None:
+        """Log multiple fields in one line (only in compact mode)."""
+        if not self._is_compact:
+            return
+        try:
+            params = self._format_params(updates)
+            _safe_print(f"📝 {label:20s} | {params}")
+        except Exception:
+            pass
+
+    def critical(self, message: str) -> None:
+        """Log critical events (always outputs regardless of mode)."""
+        try:
+            _safe_print(f"⚠️  {message}")
+        except Exception:
+            pass
+
+    def separator(self, title: str = "") -> None:
+        """Visual section divider (only in compact mode)."""
+        if not self._is_compact:
+            return
+        try:
+            if title:
+                _safe_print(f"\n{'─' * 20} {title} {'─' * 20}")
+            else:
+                _safe_print("─" * 60)
+        except Exception:
+            pass
+
+    def request_summary(self) -> None:
+        """Log cumulative metrics with cost alerts (only in compact mode)."""
+        if not self._is_compact or not self.metrics:
+            return
+        try:
+            total = self.metrics.total_tokens
+            duration = sum(self.metrics.node_durations.values())
+
+            # Calculate total cost
+            total_cost = 0.0
+            for model, usage in self.metrics.model_usage.items():
+                total_cost += self._calculate_cost(model, usage)
+
+            self.separator("REQUEST SUMMARY")
+            _safe_print(
+                f"🔢 TOKENS          | "
+                f"p={total.prompt:5d} c={total.completion:5d} tot={total.total:5d} "
+                f"${total_cost:.4f}"
+            )
+
+            # Cost threshold alerts
+            if total_cost > self.COST_CRITICAL_THRESHOLD:
+                self.critical(
+                    f"High cost request: ${total_cost:.2f}! "
+                    f"(threshold: ${self.COST_CRITICAL_THRESHOLD})"
+                )
+            elif total_cost > self.COST_WARNING_THRESHOLD:
+                _safe_print(
+                    f"⚠️  Elevated cost: ${total_cost:.4f} "
+                    f"(threshold: ${self.COST_WARNING_THRESHOLD})"
+                )
+
+            _safe_print(f"⏱️  DURATION        | {duration:5d}ms ({duration / 1000:.2f}s)")
+
+            # Per-model breakdown
+            if len(self.metrics.model_usage) > 1:
+                _safe_print("📊 MODEL BREAKDOWN:")
+                for model, usage in self.metrics.model_usage.items():
+                    cost = self._calculate_cost(model, usage)
+                    _safe_print(
+                        f"  • {model:20s} | p={usage.prompt:4d} c={usage.completion:4d} ${cost:.4f}"
+                    )
+        except Exception:
+            pass
+
+    def _calculate_cost(self, model: str, usage: TokenUsage) -> float:
+        """Calculate cost in USD for token usage."""
+        if model not in self.MODEL_PRICING:
+            return 0.0
+        pricing = self.MODEL_PRICING[model]
+        prompt_cost = (usage.prompt / 1_000_000) * pricing["prompt"]
+        completion_cost = (usage.completion / 1_000_000) * pricing["completion"]
+        return prompt_cost + completion_cost
+
+    @staticmethod
+    def _format_params(params: Dict[str, Any]) -> str:
+        """Format parameters as key=value pairs."""
+        items = []
+        for k, v in params.items():
+            if v is None:
+                continue
+            try:
+                v_str = str(v)
+                if len(v_str) > 40:
+                    v_str = v_str[:37] + "..."
+                items.append(f"{k}={v_str}")
+            except Exception:
+                items.append(f"{k}=<error>")
+        return " ".join(items)
 
 
 # =============================================================================

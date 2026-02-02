@@ -34,25 +34,43 @@ logger = logging.getLogger(__name__)
 
 def _compute_constraint_hash(trip_plan: TripPlan, trip_inputs: dict) -> str:
     """
-    Generate a stable hash of inputs that affect feasibility/pricing.
+    Hash inputs that affect SPECIALIST output (not just pricing/filtering).
 
-    Used to detect when constraints have changed and specialists need to re-run.
+    Includes:
+    - destination (different locations = different recommendations)
+    - start_date month only (seasonal conditions)
+    - activities (different topics = different specialists)
+    - origin (ONLY if flights enabled - affects no-fly constraints)
 
-    Hash includes: destination, origin, dates, travelers, budget, activity categories.
-    This matches the frontend hash in usePlanRegeneration.ts.
+    Excludes:
+    - adults/children (only affects capacity/pricing)
+    - budget (only affects filtering)
+    - full dates (only month matters for seasonal)
     """
     # Sort categories to ensure ["a", "b"] == ["b", "a"]
     activity_cats = sorted(trip_inputs.get("activity_settings", {}).get("categories", []))
 
+    # Check if flights are enabled
+    booking_types = trip_inputs.get("booking_types", {})
+    flights_enabled = booking_types.get("flights") != "off"
+
     hash_payload = {
         "dest": (trip_plan.destination or "").lower().strip(),
-        "origin": (trip_plan.origin or "").lower().strip(),  # Match frontend hash
-        "dates": f"{trip_plan.start_date}|{trip_plan.end_date}",
-        "pax": f"{trip_plan.adults}|{trip_plan.children}",
-        "budget": str(trip_plan.budget),
+        "month": (trip_plan.start_date or "")[:7],  # YYYY-MM only (seasonal)
         "activities": activity_cats,
     }
-    return hashlib.md5(json.dumps(hash_payload, sort_keys=True).encode()).hexdigest()
+
+    # Only include origin if flights enabled (affects diving no-fly constraints)
+    if flights_enabled and trip_plan.origin:
+        hash_payload["origin"] = trip_plan.origin.lower().strip()
+
+    hash_str = json.dumps(hash_payload, sort_keys=True)
+    computed_hash = hashlib.md5(hash_str.encode()).hexdigest()
+
+    logger.debug(f"[REACTIVITY] Hash components: {hash_payload}")
+    logger.debug(f"[REACTIVITY] Computed hash: {computed_hash[:8]}")
+
+    return computed_hash
 
 
 def _clear_stale_specialist_content(state: GraphState) -> None:
@@ -688,8 +706,14 @@ Classify the user message into ONE of:
 ## Task 2: Field Extraction (for PLANNING intent)
 
 Extract ANY trip-related fields mentioned:
-- **destination**: City or country (e.g., "Bali", "Thailand", "Dubai")
-- **origin**: Origin city for flights if mentioned
+- **destination**: Extract PRIMARY CITY NAME ONLY, without country/region qualifiers
+  - Remove country suffixes: "Paris, France" → "Paris", "Bali, Indonesia" → "Bali"
+  - Remove state/province: "New York, NY" → "New York"
+  - Use English names: "Roma" → "Rome", "München" → "Munich"
+  - Expand abbreviations: "NYC" → "New York", "LA" → "Los Angeles"
+  - For country-only queries, use primary city: "Indonesia" → "Bali", "UAE" → "Dubai"
+  - Edge cases to keep as-is: "Mexico City", "Kansas City", "Washington DC"
+- **origin**: Same normalization rules as destination
 - **start_date**: Convert to YYYY-MM-DD format. Examples:
   - "March 1" → "{current_year}-03-01"
   - "next Friday" → calculate from today
@@ -712,7 +736,12 @@ Set these boolean flags:
 
 ## Specialist Detection
 
-Include all matching specialists: diving, hiking, skiing, cycling, boating
+Include all matching specialists (use CANONICAL lowercase names):
+- "scuba diving", "scuba", "dive", "snorkeling" → "diving"
+- "trekking", "trek", "climbing", "trail" → "hiking"
+- "snowboarding", "ski", "slopes" → "skiing"
+- "biking", "bicycle", "bike tour" → "cycling"
+- "sailing", "yacht", "cruise" → "boating"
 
 ## User Message
 "{user_message}"
@@ -736,6 +765,147 @@ def _get_router_extraction_llm() -> ChatOpenAI:
         temperature=0,  # Deterministic extraction
         max_tokens=400,  # Need more tokens for field extraction
     )
+
+
+# =============================================================================
+# Field Normalization Helpers
+# =============================================================================
+
+
+def _normalize_city_name(city: str) -> str:
+    """
+    Fallback normalization for city names extracted by LLM.
+
+    Ensures consistent cache keys by:
+    - Removing country/state suffixes (", USA", ", Indonesia", etc.)
+    - Expanding common abbreviations (NYC → New York)
+
+    The LLM prompt also instructs extraction without qualifiers,
+    but this provides a safety net for edge cases.
+    """
+    if not city:
+        return city
+
+    city = city.strip()
+
+    # Remove common country/state suffixes (case-insensitive)
+    suffixes = [
+        ", USA",
+        ", US",
+        ", United States",
+        ", America",
+        ", Indonesia",
+        ", ID",
+        ", France",
+        ", FR",
+        ", Italy",
+        ", IT",
+        ", Thailand",
+        ", TH",
+        ", UK",
+        ", United Kingdom",
+        ", England",
+        ", Spain",
+        ", ES",
+        ", Japan",
+        ", JP",
+        ", Australia",
+        ", AU",
+        ", Mexico",
+        ", MX",
+        ", Canada",
+        ", CA",
+        ", Germany",
+        ", DE",
+        ", UAE",
+        ", United Arab Emirates",
+        ", NY",
+        ", CA",
+        ", TX",
+        ", FL",  # US states
+    ]
+
+    for suffix in suffixes:
+        if city.lower().endswith(suffix.lower()):
+            city = city[: -len(suffix)].strip()
+            break
+
+    # Handle known abbreviations
+    abbreviations = {
+        "NYC": "New York",
+        "LA": "Los Angeles",
+        "SF": "San Francisco",
+        "DC": "Washington DC",  # Disambiguate from Washington state
+        "PHILLY": "Philadelphia",
+    }
+
+    return abbreviations.get(city.upper(), city)
+
+
+def _validate_extraction(extracted: dict, today_date: str) -> dict:
+    """
+    Validate and clean LLM-extracted trip data.
+
+    Ensures:
+    - Dates are valid ISO 8601 format (YYYY-MM-DD)
+    - Date range is logical (end >= start)
+    - Activity categories are lowercase
+    - Traveler counts are positive integers
+    - Destinations/origins are normalized
+
+    Args:
+        extracted: Raw extraction from LLM
+        today_date: Current date for context
+
+    Returns:
+        Cleaned/validated extraction dict
+    """
+    from datetime import datetime
+
+    # Validate date format (must be YYYY-MM-DD)
+    for date_field in ["start_date", "end_date"]:
+        if extracted.get(date_field):
+            try:
+                datetime.strptime(extracted[date_field], "%Y-%m-%d")
+            except ValueError:
+                logger.warning(f"Invalid {date_field} format: {extracted[date_field]}")
+                extracted[date_field] = None
+
+    # Validate date logic (end >= start)
+    if extracted.get("start_date") and extracted.get("end_date"):
+        start = datetime.strptime(extracted["start_date"], "%Y-%m-%d")
+        end = datetime.strptime(extracted["end_date"], "%Y-%m-%d")
+        if end < start:
+            logger.warning("end_date before start_date, swapping")
+            extracted["start_date"], extracted["end_date"] = (
+                extracted["end_date"],
+                extracted["start_date"],
+            )
+
+    # Normalize activity categories to lowercase
+    if extracted.get("activity_categories"):
+        extracted["activity_categories"] = [
+            cat.lower().strip() for cat in extracted["activity_categories"]
+        ]
+
+    # Normalize specialist_hints to lowercase (if present)
+    if extracted.get("specialist_hints"):
+        extracted["specialist_hints"] = [
+            hint.lower().strip() for hint in extracted["specialist_hints"]
+        ]
+
+    # Ensure traveler counts are positive integers
+    if extracted.get("adults") is not None:
+        extracted["adults"] = max(1, int(extracted.get("adults") or 1))
+    if extracted.get("children") is not None:
+        extracted["children"] = max(0, int(extracted.get("children") or 0))
+
+    # Normalize destination/origin (safety net for LLM variations)
+    for field in ["destination", "origin"]:
+        if extracted.get(field):
+            extracted[field] = _normalize_city_name(extracted[field])
+
+    return extracted
 
 
 async def _classify_and_extract_with_llm(
@@ -801,6 +971,14 @@ async def _classify_and_extract_with_llm(
         token_usage = {}
         if hasattr(raw, "response_metadata"):
             token_usage = raw.response_metadata.get("token_usage", {})
+
+        # =====================================================================
+        # VALIDATE & NORMALIZE EXTRACTED FIELDS
+        # Ensures consistent cache keys (e.g., "Bali, Indonesia" → "Bali")
+        # =====================================================================
+        parsed_dict = parsed.model_dump()
+        validated_dict = _validate_extraction(parsed_dict, today_date)
+        parsed = RouterOutput.model_validate(validated_dict)
 
         logger.debug(
             f"Router extraction: intent={parsed.intent}, "
@@ -1458,7 +1636,10 @@ async def intent_router(state: GraphState) -> GraphState:
     The panic button (/reset, stop, clear) is handled in run_turn BEFORE
     the graph is invoked, so we don't need to check for it here.
     """
+    import time
+
     from app.debug_utils import (
+        CompactLogger,
         _debug_node_end,
         _debug_node_start,
         _debug_node_timer_end,
@@ -1467,6 +1648,11 @@ async def intent_router(state: GraphState) -> GraphState:
 
     # Start timing this node execution
     _debug_node_timer_start("router")
+    node_start_time = time.time()
+
+    # Initialize compact logger with request metrics
+    metrics = state.metadata.get("_metrics")
+    clog = CompactLogger("router", metrics=metrics)
 
     # Get user message from last message
     user_text = ""
@@ -1481,6 +1667,32 @@ async def intent_router(state: GraphState) -> GraphState:
         user_text=user_text[:80] if user_text else "",
         current_specialist=state.active_specialist,
     )
+
+    # Compact logging: node start
+    clog.node_start("ROUTER", user_text=user_text[:30] if user_text else "")
+
+    # ==========================================================================
+    # DIAGNOSTIC LOGGING - Track origin sync (Issue 6 investigation)
+    # ==========================================================================
+    from app.debug_utils import _debug_log
+
+    trip_inputs = state.metadata.get("trip_inputs", {})
+    trip_inputs_origin = trip_inputs.get("origin")
+    _debug_log(f"[ROUTER] trip_plan.origin={state.trip_plan.origin!r}")
+    _debug_log(f"[ROUTER] metadata.trip_inputs.origin={trip_inputs_origin!r}")
+
+    # Check for origin mismatch at graph entry point
+    if trip_inputs_origin and not state.trip_plan.origin:
+        logger.warning(
+            f"[ROUTER] ⚠️ ORIGIN MISMATCH: metadata.trip_inputs.origin='{trip_inputs_origin}' "
+            f"but trip_plan.origin is empty! State restoration may have failed."
+        )
+        # FIX: Sync origin from trip_inputs to trip_plan if missing
+        state.trip_plan.origin = trip_inputs_origin
+        _debug_log(
+            f"[ROUTER] ✅ Fixed: Synced origin from trip_inputs "
+            f"to trip_plan: '{trip_inputs_origin}'"
+        )
 
     # Try exact match first (no LLM cost, instant response)
     classification = _check_exact_match_greeting(user_text)
@@ -1535,6 +1747,13 @@ async def intent_router(state: GraphState) -> GraphState:
                         token_usage.get("prompt_tokens", 0),
                         token_usage.get("completion_tokens", 0),
                         token_usage.get("total_tokens", 0),
+                    )
+                    # Compact logging: LLM call
+                    clog.llm_call(
+                        model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                        prompt_tokens=token_usage.get("prompt_tokens", 0),
+                        completion_tokens=token_usage.get("completion_tokens", 0),
+                        purpose="opportunistic_extraction",
                     )
 
                 # Immediately persist to state.trip_plan
@@ -1602,6 +1821,12 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.active_agent_id = all_specialists[0]
                     state.ui_events.append("SPECIALIST_ACTIVE")
                     log("ROUTER", f"[READY] Specialists queue: {all_specialists}")
+
+                # CRITICAL: Set constraint hash for future change detection
+                # This ensures subsequent destination changes trigger tile clearing
+                trip_inputs = state.metadata.get("trip_inputs", {})
+                state.last_constraint_hash = _compute_constraint_hash(state.trip_plan, trip_inputs)
+                log("ROUTER", f"[READY] Constraint hash set: {state.last_constraint_hash[:8]}")
 
                 _debug_node_end(
                     "router",
@@ -1851,8 +2076,16 @@ async def intent_router(state: GraphState) -> GraphState:
                 token_usage.get("completion_tokens", 0),
                 token_usage.get("total_tokens", 0),
             )
+            # Compact logging: LLM call
+            clog.llm_call(
+                model=os.getenv("ROUTER_MODEL", "gpt-4o-mini"),
+                prompt_tokens=token_usage.get("prompt_tokens", 0),
+                completion_tokens=token_usage.get("completion_tokens", 0),
+                purpose="intent_classification",
+            )
         else:
             log("ROUTER", "No LLM call (exact match or error)")
+            clog.event("cache_hit", "Intent (exact match)")
         log(
             "ROUTER",
             f"Intent: {classification.intent}",
@@ -2036,6 +2269,16 @@ async def intent_router(state: GraphState) -> GraphState:
         intent=state.intent,
         specialist=state.active_specialist,
         confidence=classification.confidence,
+    )
+
+    # Compact logging: node end with timing
+    duration_ms = int((time.time() - node_start_time) * 1000)
+    clog.node_end(
+        "ROUTER",
+        duration_ms,
+        intent=state.intent,
+        dest=state.trip_plan.destination,
+        specialist=state.active_specialist,
     )
 
     return state

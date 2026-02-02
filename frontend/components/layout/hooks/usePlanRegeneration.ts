@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { useDocumentTripInputs } from '@/state/documentStore';
+import { useDocumentStore, useDocumentTripInputs } from '@/state/documentStore';
 import type { DocumentTripInputs, PlanStatus } from '@/types/document';
 
 /**
  * Debounce delay for plan regeneration (ms).
- * Prevents thrashing when user makes multiple rapid changes.
+ * Aligned with useItineraryRegeneration for consistent UX.
+ * @see docs/plan_graph_analysis.md - Debounce with Visual Feedback
  */
-const REGENERATION_DEBOUNCE_MS = 500;
+const REGENERATION_DEBOUNCE_MS = 2000;
 
 /**
  * Identifies what triggered a regeneration.
@@ -105,6 +106,10 @@ export function usePlanRegeneration(
   const [isRegenerating, setIsRegenerating] = useState(false);
   const lastHashRef = useRef<string | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Use shared regeneration state from documentStore for visual feedback
+  const setRegenerationState = useDocumentStore((s) => s.setRegenerationState);
 
   // Memoize the constraint hash - now uses store-based tripInputs
   // Returns empty string if no inputs yet (prevents regeneration before plan exists)
@@ -121,6 +126,8 @@ export function usePlanRegeneration(
 
     setIsRegenerating(true);
     setPlanStatus('updating');
+    // Set shared regeneration state for visual feedback
+    setRegenerationState({ isRegenerating: true, isPending: false, remainingSeconds: 0 });
 
     try {
       await onRegenerate(cause);
@@ -131,15 +138,18 @@ export function usePlanRegeneration(
       // On error, reset status to ready since regeneration failed
       setIsRegenerating(false);
       setPlanStatus('ready');
+      setRegenerationState({ isRegenerating: false });
       throw error;
     }
-  }, [isRegenerating, onRegenerate]);
+  }, [isRegenerating, onRegenerate, setRegenerationState]);
 
   // Signal that regeneration is complete (data has arrived)
   const markRegenerationComplete = useCallback(() => {
     setIsRegenerating(false);
     setPlanStatus('ready');
-  }, []);
+    // Also clear the shared regeneration state
+    setRegenerationState({ isRegenerating: false, isPending: false, remainingSeconds: 0 });
+  }, [setRegenerationState]);
 
   // Watch for constraint changes
   useEffect(() => {
@@ -171,14 +181,45 @@ export function usePlanRegeneration(
       // Mark plan as stale immediately
       setPlanStatus('stale');
 
-      // Cancel pending regeneration
+      // Cancel pending regeneration and countdown
       if (debounceTimerRef.current) {
+        console.log('[usePlanRegeneration] 🔄 Constraint changed during debounce - resetting timer');
         clearTimeout(debounceTimerRef.current);
       }
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
+
+      // Start visual feedback (shared with useItineraryRegeneration via documentStore)
+      setRegenerationState({
+        isPending: true,
+        remainingSeconds: Math.ceil(REGENERATION_DEBOUNCE_MS / 1000),
+      });
+
+      // Countdown timer (updates every second)
+      countdownTimerRef.current = setInterval(() => {
+        const current = useDocumentStore.getState().remainingSeconds;
+        const next = current - 1;
+        if (next <= 0 && countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+        setRegenerationState({ remainingSeconds: Math.max(0, next) });
+      }, 1000);
 
       // Schedule debounced regeneration (auto_on_change - constraint UI changes)
       debounceTimerRef.current = setTimeout(() => {
         console.log('[usePlanRegeneration] Triggering regeneration after debounce');
+
+        // Clear countdown timer
+        if (countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+        }
+
+        // Reset pending state, set regenerating
+        setRegenerationState({ isPending: false, remainingSeconds: 0 });
+
         lastHashRef.current = currentHash;
         triggerRegenerate('auto_on_change');
       }, REGENERATION_DEBOUNCE_MS);
@@ -188,8 +229,11 @@ export function usePlanRegeneration(
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
     };
-  }, [currentHash, hasBranches, triggerRegenerate, tripInputs?.start_date, tripInputs?.end_date]);
+  }, [currentHash, hasBranches, triggerRegenerate, tripInputs?.start_date, tripInputs?.end_date, setRegenerationState]);
 
   // Reset status (e.g., when manually refreshing)
   const resetStatus = useCallback(() => {

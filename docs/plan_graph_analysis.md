@@ -291,6 +291,33 @@ When `has_dates_in_message` is detected (via regex), the Router calls `_classify
 3. Populates `state.trip_plan` immediately via `_populate_trip_plan_from_router_output()`
 4. Sets `router_extracted_fields = True` flag for TripArchitect to skip duplicate extraction
 
+**Field Normalization (Cache Key Consistency):**
+
+Extracted fields are validated and normalized to ensure consistent cache keys:
+
+```python
+def _validate_extraction(extracted: dict, today_date: str) -> dict:
+    # Normalize destination/origin (remove country suffixes)
+    # "Bali, Indonesia" → "Bali"
+    # "NYC" → "New York"
+    for field in ["destination", "origin"]:
+        if extracted.get(field):
+            extracted[field] = _normalize_city_name(extracted[field])
+
+    # Validate date format (must be YYYY-MM-DD)
+    # Swap if end < start
+
+    # Normalize activities to lowercase
+    # "Scuba Diving" → "diving"
+
+    return extracted
+```
+
+The LLM prompt also instructs canonical extraction:
+- Destinations: "Paris, France" → "Paris"
+- Abbreviations: "NYC" → "New York", "LA" → "Los Angeles"
+- Edge cases kept: "Mexico City", "Kansas City", "Washington DC"
+
 **Date Indicator Detection:**
 ```python
 DATE_INDICATORS = [
@@ -1431,6 +1458,8 @@ Switzerland, Austria, Czech Republic, Hungary, Nepal, Mongolia, Bolivia, Rwanda,
 | `end_date` change | tile |
 | `adults/children` change | tile |
 | Strategy topic switch | response |
+| Destination change | `parallel_llm_results` (session) |
+| Month change | `parallel_llm_results` (session) |
 | Session timeout | All |
 
 ### Validation Cache (Origin/Destination Verification)
@@ -1509,6 +1538,40 @@ Two-tier cache for VerticalSpecialist LLM outputs. Reduces LLM calls by ~86% for
 **Integration Points:**
 - Multi-specialist: `generate_all_specialists_parallel()` - batch cache lookup/write
 - Single specialist: `vertical_specialist()` - direct L1+L2 lookup before `generate_specialist_output_llm()`
+
+#### Session-Level Cache (`parallel_llm_results`)
+
+In addition to L1+L2 caches, specialist outputs are cached in `state.metadata["parallel_llm_results"]` within a single graph execution. This prevents duplicate LLM calls when multiple specialists run in the same turn.
+
+**Problem Solved:** When destination or dates change mid-session, the session cache could return stale content (e.g., Bali dive sites for a New York trip).
+
+**Invalidation Logic (at TOP of `vertical_specialist()`):**
+
+```python
+# Track context changes by destination + month
+cached_key = state.metadata.get("_last_specialist_key", "")
+current_dest = (state.trip_plan.destination or "").lower().strip()
+current_month = state.trip_plan.start_date[:7] if state.trip_plan.start_date else "no-dates"
+current_key = f"{current_dest}:{current_month}"
+
+if cached_key and cached_key != current_key:
+    _debug_log(f"[SPECIALIST] Context changed ({cached_key} → {current_key}), invalidating")
+    state.metadata.pop("parallel_llm_results", None)
+
+state.metadata["_last_specialist_key"] = current_key
+```
+
+**Why `destination:month`:**
+- Destination change: Different location = different content
+- Month change: Different season = different recommendations (rainy vs dry season)
+- Matches L1+L2 cache key format for consistency
+
+**Invalidation Triggers:**
+| Change | Example | Result |
+|--------|---------|--------|
+| Destination | `bali:2026-02` → `new york:2026-02` | Cache cleared |
+| Month | `bali:2026-02` → `bali:2026-08` | Cache cleared |
+| Day only | `bali:2026-02` → `bali:2026-02` | Cache preserved |
 
 ### Tile Data Cache
 
@@ -1737,6 +1800,83 @@ const tripInputsHash = useMemo(() => {
 
 // Combined change detection
 const hasChanges = hasPreferenceChanges || hasTripInputChanges;
+```
+
+### Debounce with Visual Feedback (v3.2)
+
+The hook provides visual feedback during the debounce period and a bypass button for impatient users:
+
+**Configuration:**
+- `AUTO_REGEN_DEBOUNCE_MS = 2000` (2 seconds, increased from 1.5s)
+
+**States exposed:**
+- `isPending` - true during countdown (debounce waiting)
+- `isRegenerating` - true during actual regeneration
+- `remainingSeconds` - countdown (2, 1, 0)
+- `triggerImmediateRegeneration()` - bypass debounce, regenerate now
+
+**Visual component (`RegenerationStatus.tsx`):**
+- Fixed position bottom-right corner
+- Shows "Planning updates in Ns..." during countdown
+- Shows "Regenerating plan..." during regeneration
+- "Generate Now" button to bypass debounce
+
+**Race condition protection:**
+```typescript
+// isExecutingRegenRef prevents double regeneration if:
+// 1. Debounce timer fires at exact same time as "Generate Now" click
+// 2. Multiple rapid bypass clicks
+// 3. Component receives concurrent trigger requests
+const isExecutingRegenRef = useRef(false);
+
+// Both debounce callback and triggerImmediateRegeneration check this:
+if (isExecutingRegenRef.current) {
+  console.log('Skipping - regeneration already in progress (race avoided)');
+  return;
+}
+isExecutingRegenRef.current = true;
+try {
+  await regenerate();
+} finally {
+  isExecutingRegenRef.current = false;
+}
+```
+
+### Origin Sync for Flight Fetching (v3.3)
+
+The origin field set via the settings panel (PATCH `/api/document`) must be properly synced to the graph state when users trigger chat or regeneration. Without proper sync, flights won't be fetched even when origin is set.
+
+**Root Cause (Fixed):**
+The chat API was merging request `trip_inputs` BEFORE loading the document, causing document-stored fields (like origin) to be lost when the request had partial `trip_inputs`.
+
+**Fix Pattern:**
+```python
+# In main.py chat endpoints (both regular and streaming)
+# Always use document trip_inputs as BASELINE, then merge request on top
+if document_data.trip_inputs:
+    doc_inputs = document_data.trip_inputs.model_dump()
+    session_inputs = session_state.get("trip_inputs", {})
+    # Document values as baseline, session (request) values override
+    merged = {**doc_inputs, **{k: v for k, v in session_inputs.items() if v is not None}}
+    session_state["trip_inputs"] = normalize_trip_inputs(merged)
+```
+
+**Defensive Check in IntentRouter:**
+```python
+# If origin mismatch detected at graph entry, sync from trip_inputs
+trip_inputs = state.metadata.get("trip_inputs", {})
+trip_inputs_origin = trip_inputs.get("origin")
+if trip_inputs_origin and not state.trip_plan.origin:
+    logger.warning(f"ORIGIN MISMATCH: Syncing from trip_inputs")
+    state.trip_plan.origin = trip_inputs_origin
+```
+
+**Diagnostic Logging (LogisticsNode):**
+```
+[LOGISTICS] trip_plan.origin='Rome'
+[LOGISTICS] metadata.trip_inputs.origin='Rome'
+[LOGISTICS] flights_enabled=True
+[LOGISTICS] ✈️ Fetching flights: Rome → London
 ```
 
 ### Performance Impact

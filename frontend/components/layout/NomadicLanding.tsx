@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StartupSequence } from '@/components/animations/StartupSequence';
 import { ChatPanel, type ChatPanelHandle } from '@/components/chat/ChatPanel';
 import { FloatingBuildButton } from '@/components/layout/FloatingBuildButton';
+import { RegenerationStatus } from '@/components/RegenerationStatus';
 import {
   type PlanResultPayload,
   useBranchManager,
@@ -951,6 +952,10 @@ export function NomadicLanding() {
   // Track if we've already auto-triggered to prevent infinite loops
   const hasAutoTriggeredRef = useRef(false);
 
+  // Track isRegenerating via ref to prevent callback cascade
+  // (reading from ref avoids adding isRegenerating to useCallback deps)
+  const isRegeneratingRef = useRef(false);
+
   // Check if itinerary content exists
   const hasItineraryContent = (storeDocument?.day_cards?.length ?? 0) > 0;
 
@@ -961,6 +966,11 @@ export function NomadicLanding() {
       hasAutoTriggeredRef.current = false;
     }
   }, [storeDocument?.day_cards?.length]);
+
+  // Sync isRegenerating state to ref (prevents callback cascade when isRegenerating changes)
+  useEffect(() => {
+    isRegeneratingRef.current = isRegenerating;
+  }, [isRegenerating]);
 
   // Auto-trigger effect
   useEffect(() => {
@@ -997,7 +1007,8 @@ export function NomadicLanding() {
   // "Assume & Refine" philosophy: Backend auto-selects recommended stay if none saved
   const handleExpandToItinerary = useCallback(async () => {
     // GATE 0: Don't expand if plan is currently regenerating (race condition prevention)
-    if (isRegenerating) {
+    // Read from ref to avoid adding isRegenerating to deps (prevents callback cascade)
+    if (isRegeneratingRef.current) {
       addToast('Plan is updating, please wait...', 'info');
       return;
     }
@@ -1019,7 +1030,7 @@ export function NomadicLanding() {
     // All gates passed - proceed with itinerary generation
     // Backend auto-selects recommended stay if none saved (no modal needed)
     await proceedWithItineraryGeneration();
-  }, [storeDocument, addToast, proceedWithItineraryGeneration, isRegenerating]);
+  }, [storeDocument, addToast, proceedWithItineraryGeneration]);
 
   // Handle quick pick from InlineDatePrompt
   const handleSelectNights = useCallback(
@@ -1447,6 +1458,9 @@ export function NomadicLanding() {
           isGenerating={isGenerating}
           hasEverHadPlan={hasEverHadPlan}
         />
+
+        {/* Regeneration Status - shows debounce countdown and regenerating state */}
+        <RegenerationStatus />
       </div>
 
       {/* Destructive action confirmation - when clicking Setup from Plan/Book */}
