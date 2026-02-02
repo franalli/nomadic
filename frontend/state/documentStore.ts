@@ -20,7 +20,8 @@ import type {
   TransportSettings,
   UpdatedBy,
 } from '@/types/document';
-import type { StrategySection } from '@/types/plan-envelope';
+import type { DayCard, StrategySection } from '@/types/plan-envelope';
+import type { Tile } from '@/types/tile';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Default Settings
@@ -984,7 +985,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
 
     // Compute tile merge strategy BEFORE building updatedDoc
-    let tilesToMerge: Record<string, unknown> | undefined;
+    let tilesToMerge: Record<string, Tile> | undefined;
 
     if (envelope.tiles !== undefined) {
       if (destinationChanged) {
@@ -1003,7 +1004,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // Compute strategy merge strategy (similar to tiles)
-    let sectionsToMerge: unknown[] | undefined;
+    let sectionsToMerge: StrategySection[] | undefined;
 
     if (envelope.strategy_sections !== undefined) {
       if (destinationChanged) {
@@ -1019,7 +1020,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
     // Compute day_cards merge strategy (similar to tiles)
     // On destination change OR view state revert: CLEAR existing day_cards to prevent stale itinerary
-    let dayCardsToMerge: unknown[] | undefined;
+    let dayCardsToMerge: DayCard[] | undefined;
 
     if (envelope.day_cards !== undefined) {
       // If day_cards explicitly provided, use them
