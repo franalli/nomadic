@@ -715,24 +715,37 @@ Transforms specialist content + tiles into day-by-day timeline.
 
 **Why No LLM:** Deterministic scheduling is faster and more predictable than LLM-based generation. The specialists provide the "what", the builder provides the "when".
 
-**Algorithm (6 phases):**
+**Algorithm (8 phases):**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  ItineraryBuilder (Pure Python - No LLM)                        │
 │  Transforms specialist content + tiles into day-by-day timeline  │
 │                                                                  │
-│  Algorithm (6 phases):                                           │
-│  1. Temporal Scaffolding - Create DayCard[] from dates           │
-│  2. Anchor Placement - Arrival/departure from flight tiles       │
-│  3. Buffer Injection - Safety blocks (no-fly, acclimatization)   │
-│  4. Activity Distribution - Round-robin interleaving by day      │
-│  5. Tile Matching - Hotels span all days, preferences weighted   │
-│  6. Constraint Tagging - Attach inline constraints to blocks     │
+│  Algorithm (8 phases):                                           │
+│  1.   Temporal Scaffolding - Create DayCard[] from dates         │
+│  2.   Anchor Placement - Arrival/departure from flight tiles     │
+│  3.   Buffer Injection - Safety blocks (no-fly, acclimatization) │
+│  4.   Activity Distribution - Round-robin interleaving by day    │
+│  5.   Free Day Placeholders - Add placeholders for empty days    │
+│  5.25 Preferred Activity Placement - Fill free days with hearts  │
+│  6.   Tile Matching - Hotels span all days, preferences weighted │
+│  7.   Constraint Tagging - Attach inline constraints to blocks   │
 │                                                                  │
 │  Routing: Logistics → ItineraryBuilder → Guard → Synthesizer    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Phase 5.25: Preferred Activity Placement**
+
+After creating free day placeholders, the builder populates free days with user-preferred activities (hearted tiles). This ensures hearted activities appear in the itinerary:
+
+1. Collects preferred tiles from `preferences.preferred_activity_ids` (ordered by user preference)
+2. Finds free days (days with only FreeDay placeholder, skipping arrival/departure)
+3. Replaces FreeDay placeholders with activity blocks from preferred tiles
+4. If more preferred activities than free days, extras are dropped (no conflicts created)
+
+Activity blocks created this way have `preference_status: "user_preferred"` for UI attribution.
 
 **Phase 6: Constraint Tagging (Inline Display)**
 

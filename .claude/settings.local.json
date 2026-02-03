@@ -76,7 +76,9 @@
       "Bash(cmd //c \"taskkill /PID 114792 /F\")",
       "Bash(timeout:*)",
       "Bash(npx --yes eslint:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(copy:*)",
+      "Bash(Copy-Item \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\public\\\\nomadic_logo.png\" \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\app\\\\icon.png\")"
     ],
     "deny": [],
     "ask": []

@@ -356,11 +356,15 @@ export function useManualRegeneration(
 
   console.log('[useManualRegeneration] 📤 Returning:', { hasChanges, isRefreshing });
 
-  return {
-    hasChanges,
-    isRefreshing,
-    regenerate,
-    markValidated,
-    resetState,
-  };
+  // Memoize return object to prevent consumers from re-rendering when values haven't changed
+  return useMemo(
+    () => ({
+      hasChanges,
+      isRefreshing,
+      regenerate,
+      markValidated,
+      resetState,
+    }),
+    [hasChanges, isRefreshing, regenerate, markValidated, resetState]
+  );
 }

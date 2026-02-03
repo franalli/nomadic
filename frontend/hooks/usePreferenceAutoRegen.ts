@@ -91,6 +91,14 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
         }
       }
 
+      // Debug: Log preference payload for visibility
+      console.log('[usePreferenceAutoRegen] 💜 Preferences payload:', {
+        preferredTileIds: Array.from(prefs),
+        preferred_hotel_ids: hotelIds,
+        preferred_activity_ids: activityIds,
+        tilesCount: document?.tiles ? Object.keys(document.tiles).length : 0,
+      });
+
       const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
         body: JSON.stringify({

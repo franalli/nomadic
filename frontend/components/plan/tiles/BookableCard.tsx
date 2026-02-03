@@ -141,6 +141,7 @@ export function BookableCard({
           src={imageUrl}
           alt={tile.title}
           fill
+          sizes="(max-width: 768px) 100vw, 300px"
           className="object-cover"
           onError={handleImageError}
         />

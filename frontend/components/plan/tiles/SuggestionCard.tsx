@@ -92,6 +92,7 @@ export function SuggestionCard({
             src={imageUrl}
             alt={tile.title}
             fill
+            sizes="48px"
             className="object-cover"
             onError={handleImageError}
           />
@@ -160,6 +161,7 @@ export function SuggestionCard({
           src={imageUrl}
           alt={tile.title}
           fill
+          sizes="(max-width: 768px) 100vw, 300px"
           className="object-cover"
           onError={handleImageError}
         />

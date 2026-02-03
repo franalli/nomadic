@@ -359,13 +359,18 @@ When user clicks RefreshButton FAB (or auto-regen triggers), preferences flow to
 │  Backend: ItineraryBuilder (services/itinerary_builder.py)       │
 │                                                                  │
 │  1. PreferenceOverrideInput receives hotel/activity IDs          │
-│  2. Hotel selection: preferred tiles get 1.5x score boost        │
-│  3. Sort by: is_preferred (desc), adjusted_score (desc)          │
-│  4. Set preference_status on DayBlockOutput:                     │
+│  2. Phase 5.25: Preferred activities fill free days:             │
+│     - Collects tiles from preferred_activity_ids (user order)    │
+│     - Finds free days (days with only FreeDay placeholder)       │
+│     - Replaces placeholders with preferred activity blocks       │
+│     - Drops extras if more activities than free days             │
+│  3. Hotel selection: preferred tiles get 1.5x score boost        │
+│  4. Sort by: is_preferred (desc), adjusted_score (desc)          │
+│  5. Set preference_status on DayBlockOutput:                     │
 │     - "user_preferred": Selected tile was hearted                │
 │     - "ai_selected": AI chose without user preference            │
 │     - "ai_override": AI chose different tile over user's pick    │
-│  5. alternative_tile_id: User's preferred tile if AI overrode    │
+│  6. alternative_tile_id: User's preferred tile if AI overrode    │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
