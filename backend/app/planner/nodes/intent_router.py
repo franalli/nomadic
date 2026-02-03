@@ -2133,6 +2133,11 @@ async def intent_router(state: GraphState) -> GraphState:
         state.intent = "speculative"
     elif is_generate_trigger:
         state.intent = "booking"
+        # FORCE clear tiles on GENERATE_PLAN_NOW (Refresh button)
+        # This ensures fresh tile fetch even if hash comparison fails
+        state.tiles = {}
+        state.metadata["tiles_destination"] = None
+        logger.info("[Router] 🔥 GENERATE_PLAN_NOW - forced tile cache clear")
     else:
         state.intent = "general"
     state.metadata["short_circuit_response"] = False

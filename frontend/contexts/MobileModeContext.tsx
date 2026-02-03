@@ -10,14 +10,11 @@ import React, {
   useState,
 } from 'react';
 
-import { useDocumentStore } from '@/state/documentStore';
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type MobileMode = 'planner' | 'plan';
-export type MobileTab = 'chat' | 'plan' | 'book';
 
 interface MobileModeContextValue {
   /** Current mobile mode ('planner' or 'plan'). Only relevant when isDesktop is false. */
@@ -28,16 +25,6 @@ interface MobileModeContextValue {
   switchToPlan: () => void;
   /** Switch to Planner Mode (mobile only). Restores Plan scroll position on next switch. */
   switchToPlanner: () => void;
-
-  // 3-Tab Navigation System
-  /** Current active tab on mobile ('chat' | 'plan' | 'book') */
-  activeTab: MobileTab;
-  /** Set the active tab on mobile */
-  setActiveTab: (tab: MobileTab) => void;
-  /** Whether the Plan tab has unread updates (shows badge) */
-  planTabHasUpdate: boolean;
-  /** Set whether Plan tab has unread updates */
-  setPlanTabHasUpdate: (hasUpdate: boolean) => void;
 
   // Setup Drawer
   /** Whether the setup drawer is open (mobile header accordion) */
@@ -61,19 +48,6 @@ const MobileModeContext = createContext<MobileModeContextValue | null>(null);
 const DESKTOP_BREAKPOINT = 1024; // lg breakpoint in Tailwind
 const MEDIA_QUERY = `(min-width: ${DESKTOP_BREAKPOINT}px)`;
 
-// Mapping between mobile tabs and document views (for bi-directional sync)
-// Document store uses two-mode system: 'planning' | 'booking'
-// Mobile uses three tabs: 'chat' | 'plan' | 'book'
-const TAB_TO_VIEW: Record<MobileTab, 'planning' | 'booking'> = {
-  chat: 'planning',
-  plan: 'planning',
-  book: 'booking',
-};
-const VIEW_TO_TAB: Record<'planning' | 'booking', MobileTab> = {
-  planning: 'plan',  // Default to plan tab for planning mode
-  booking: 'book',
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Provider
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,29 +56,18 @@ interface MobileModeProviderProps {
   children: React.ReactNode;
   /** Optional: Override initial mode for testing */
   initialMode?: MobileMode;
-  /** Optional: Override initial tab for testing */
-  initialTab?: MobileTab;
 }
 
 export function MobileModeProvider({
   children,
   initialMode = 'planner',
-  initialTab = 'chat',
 }: MobileModeProviderProps) {
   // Default to desktop for SSR to avoid hydration mismatch
   const [isDesktop, setIsDesktop] = useState(true);
   const [mode, setMode] = useState<MobileMode>(initialMode);
 
-  // 3-Tab Navigation State
-  const [activeTab, setActiveTabState] = useState<MobileTab>(initialTab);
-  const [planTabHasUpdate, setPlanTabHasUpdate] = useState(false);
-
   // Setup Drawer State
   const [isSetupDrawerOpen, setIsSetupDrawerOpen] = useState(false);
-
-  // Document store - for bi-directional view sync
-  const documentActiveView = useDocumentStore((s) => s.activeView);
-  const setDocumentActiveView = useDocumentStore((s) => s.setActiveView);
 
   // Store Plan View scroll position for restoration
   const planScrollPositionRef = useRef(0);
@@ -128,21 +91,9 @@ export function MobileModeProvider({
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
 
-  // Bi-directional sync: documentStore.activeView → mobile activeTab
-  useEffect(() => {
-    const targetTab = VIEW_TO_TAB[documentActiveView];
-    // SAFETY GUARD: Only update if strictly different to prevent feedback loop
-    if (targetTab && targetTab !== activeTab) {
-      setActiveTabState(targetTab);
-      // Also sync legacy mode
-      setMode(targetTab === 'chat' ? 'planner' : 'plan');
-    }
-  }, [documentActiveView, activeTab]);
-
-  // Switch to Plan Mode (legacy - also sets activeTab)
+  // Switch to Plan Mode
   const switchToPlan = useCallback(() => {
     setMode('plan');
-    setActiveTabState('plan');
 
     // Restore scroll position after render
     requestAnimationFrame(() => {
@@ -153,7 +104,7 @@ export function MobileModeProvider({
     });
   }, []);
 
-  // Switch to Planner Mode (legacy - also sets activeTab)
+  // Switch to Planner Mode
   const switchToPlanner = useCallback(() => {
     // Capture current Plan scroll position before switching
     const planView = document.querySelector('[data-testid="plan-view"]');
@@ -162,37 +113,7 @@ export function MobileModeProvider({
     }
 
     setMode('planner');
-    setActiveTabState('chat');
   }, []);
-
-  // Set active tab (3-tab system) - also syncs legacy mode and document store
-  const setActiveTab = useCallback((tab: MobileTab) => {
-    // Capture scroll position when leaving plan/book
-    if (activeTab === 'plan' || activeTab === 'book') {
-      const planView = document.querySelector('[data-testid="plan-view"]');
-      if (planView) {
-        planScrollPositionRef.current = planView.scrollTop;
-      }
-    }
-
-    setActiveTabState(tab);
-
-    // Sync to document store (bi-directional sync)
-    setDocumentActiveView(TAB_TO_VIEW[tab]);
-
-    // Sync legacy mode: chat -> planner, plan/book -> plan
-    setMode(tab === 'chat' ? 'planner' : 'plan');
-
-    // Restore scroll when entering plan tab
-    if (tab === 'plan') {
-      requestAnimationFrame(() => {
-        const planView = document.querySelector('[data-testid="plan-view"]');
-        if (planView && planScrollPositionRef.current > 0) {
-          planView.scrollTop = planScrollPositionRef.current;
-        }
-      });
-    }
-  }, [activeTab, setDocumentActiveView]);
 
   // Setup Drawer Controls
   const toggleSetupDrawer = useCallback(() => {
@@ -213,11 +134,6 @@ export function MobileModeProvider({
       isDesktop,
       switchToPlan,
       switchToPlanner,
-      // 3-Tab Navigation
-      activeTab,
-      setActiveTab,
-      planTabHasUpdate,
-      setPlanTabHasUpdate,
       // Setup Drawer
       isSetupDrawerOpen,
       toggleSetupDrawer,
@@ -228,9 +144,6 @@ export function MobileModeProvider({
       isDesktop,
       switchToPlan,
       switchToPlanner,
-      activeTab,
-      setActiveTab,
-      planTabHasUpdate,
       isSetupDrawerOpen,
       toggleSetupDrawer,
       closeSetupDrawer,
@@ -293,34 +206,4 @@ export function useIsPlannerMode(): boolean {
 export function useIsPlanMode(): boolean {
   const { mode, isDesktop } = useMobileMode();
   return !isDesktop && mode === 'plan';
-}
-
-/**
- * Returns true if the specified tab is currently active on mobile.
- * Always false on desktop (all content visible in split view).
- */
-export function useIsActiveTab(tab: MobileTab): boolean {
-  const { activeTab, isDesktop } = useMobileMode();
-  return !isDesktop && activeTab === tab;
-}
-
-/**
- * Returns true if currently on Chat tab on mobile.
- */
-export function useIsChatTab(): boolean {
-  return useIsActiveTab('chat');
-}
-
-/**
- * Returns true if currently on Plan tab on mobile.
- */
-export function useIsPlanTab(): boolean {
-  return useIsActiveTab('plan');
-}
-
-/**
- * Returns true if currently on Book tab on mobile.
- */
-export function useIsBookTab(): boolean {
-  return useIsActiveTab('book');
 }

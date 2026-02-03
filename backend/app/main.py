@@ -262,6 +262,10 @@ def _build_strategy_sections(metadata: dict) -> list:
                     title=s.get("title", ""),
                     subtitle=s.get("subtitle"),
                     specialist_type=s.get("specialist_type"),
+                    # Feasibility fields for filtering infeasible specialists
+                    feasibility_status=s.get("feasibility_status"),
+                    feasibility_reason=s.get("feasibility_reason"),
+                    alternative_suggestion=s.get("alternative_suggestion"),
                     one_liner=s.get("one_liner"),
                     principles=s.get("principles", [])[:4],
                     must_dos=s.get("must_dos", [])[:5],
@@ -2823,6 +2827,10 @@ async def expand_itinerary_endpoint(
     the injected session is closed. Instead, we create a fresh session inside
     the generator using the session factory.
     """
+    # DEBUG: Log received destination for diagnostics
+    received_dest = req.trip_inputs.get("destination") if req.trip_inputs else "NO_TRIP_INPUTS"
+    logger.info(f"[API expand-itinerary] Received destination: {received_dest}")
+
     # Check idempotency - return early if duplicate request
     if _check_idempotency(req.idempotency_key):
 

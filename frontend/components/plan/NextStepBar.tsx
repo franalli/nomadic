@@ -1,51 +1,39 @@
 /**
  * NextStepBar
  *
- * "Command Island" - Sticky footer that centers inside the scroll container.
+ * "Command Island" - Sticky footer for finalizing the plan.
  * Uses sticky positioning to naturally respect the panel layout.
  * Place this at the bottom of your scrollable content area.
+ *
+ * NOTE: expand_itinerary action is now handled by RefreshButton FAB.
+ * This component only handles finalize_plan action.
  */
 
 'use client';
 
-import { CheckCircle2, Loader2, Sparkles } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
-import { useTripValidation } from '@/hooks/useTripValidation';
 import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { PlanViewState } from '@/types/plan-envelope';
 
-import type { GenerationState } from './planStateHelpers';
-
 export interface NextStepBarProps {
   state: PlanViewState;
-  generation?: GenerationState | null;
   /** Pre-computed next action from getNextAction() - avoids flicker */
   nextAction: 'expand_itinerary' | 'finalize_plan' | null;
-  onExpandToItinerary?: () => void;
   /** Callback to finalize plan and navigate to Book view */
   onFinalizePlan?: () => void;
-  /** Callback to open dates sheet when dates are missing */
-  onOpenDates?: () => void;
   /** Whether plan finalization is in progress */
   isFinalizing?: boolean;
-  /** Last error for inline retry (itinerary generation only) */
-  lastError?: string | null;
-  onRetry?: () => void;
   className?: string;
 }
 
 export function NextStepBar({
   state,
-  generation,
   nextAction,
-  onExpandToItinerary,
   onFinalizePlan,
-  onOpenDates,
   isFinalizing = false,
-  lastError,
-  onRetry,
   className,
 }: NextStepBarProps) {
   // Click lock to prevent double-clicks
@@ -63,11 +51,6 @@ export function NextStepBar({
 
   // Read tripInputs from same store as chips - no prop drilling
   const tripInputs = useDocumentStore((state) => state.document?.trip_inputs);
-
-  // Unified validation state
-  const validation = useTripValidation();
-
-  const isGeneratingItinerary = generation?.active && generation?.stage === 'itinerary';
 
   // Format date range for display (handles incomplete and single-day trips)
   const dateDisplay = (() => {
@@ -97,70 +80,42 @@ export function NextStepBar({
     return { range: `${startStr} → ?`, days: null, incomplete: true };
   })();
 
-  // Reset click lock when generation completes
+  // Reset click lock when finalization completes
   useEffect(() => {
-    if (!generation?.active) {
+    if (!isFinalizing) {
       setIsClickLocked(false);
     }
-  }, [generation?.active]);
+  }, [isFinalizing]);
 
-  // Don't render if no action
+  // Don't render if no action or if action is expand_itinerary (handled by RefreshButton FAB)
   if (state === 'S2_STRATEGY_READY' && !nextAction) {
     return null;
   }
 
   if (!nextAction) return null;
 
-  // Validation-aware state (computed before handlers)
-  const validationBlocked = nextAction === 'expand_itinerary' && !validation.valid;
+  // RefreshButton FAB handles expand_itinerary - NextStepBar only handles finalize_plan
+  if (nextAction === 'expand_itinerary') {
+    return null;
+  }
 
   const handleClick = () => {
     if (isClickLocked) return;
 
-    // If validation is blocked, open the dates sheet instead
-    if (validationBlocked) {
-      onOpenDates?.();
-      return;
-    }
-
     setIsClickLocked(true);
+    onFinalizePlan?.();
 
-    if (nextAction === 'expand_itinerary') {
-      onExpandToItinerary?.();
-    } else if (nextAction === 'finalize_plan') {
-      onFinalizePlan?.();
-    }
-
-    // Backup unlock after 2s (normally cleared by generation state change)
+    // Backup unlock after 2s (normally cleared by isFinalizing state change)
     if (clickLockTimerRef.current) {
       clearTimeout(clickLockTimerRef.current);
     }
     clickLockTimerRef.current = setTimeout(() => setIsClickLocked(false), 2000);
   };
 
-  const buttonConfig = {
-    expand_itinerary: {
-      // Show validation action when blocked, otherwise normal flow
-      buttonText: isGeneratingItinerary
-        ? 'Building...'
-        : validationBlocked
-          ? validation.action
-          : 'Build Itinerary',
-      icon: isGeneratingItinerary ? Loader2 : Sparkles,
-      // Disabled only when generating or click-locked (NOT when validation blocked - that's clickable)
-      disabled: isGeneratingItinerary || isClickLocked,
-    },
-    finalize_plan: {
-      buttonText: isFinalizing ? 'Scanning...' : 'Finalize & Book',
-      icon: isFinalizing ? Loader2 : CheckCircle2,
-      disabled: isFinalizing || isClickLocked,
-    },
-  };
-
-  const config = buttonConfig[nextAction];
-  const Icon = config.icon;
-  // Action is ready when not generating, not finalizing, AND validation passes (for expand)
-  const isActionReady = !isGeneratingItinerary && !isFinalizing && !validationBlocked;
+  const buttonText = isFinalizing ? 'Scanning...' : 'Finalize & Book';
+  const Icon = isFinalizing ? Loader2 : CheckCircle2;
+  const isDisabled = isFinalizing || isClickLocked;
+  const isActionReady = !isFinalizing;
 
   return (
     <div
@@ -218,7 +173,7 @@ export function NextStepBar({
         {/* RIGHT: Action Button */}
         <button
           onClick={handleClick}
-          disabled={config.disabled}
+          disabled={isDisabled}
           className={cn(
             'h-10 px-5 rounded-full',
             'flex items-center gap-2',
@@ -227,61 +182,21 @@ export function NextStepBar({
             // Ready state: Green with localized glow
             isActionReady &&
               'bg-emerald-500 hover:bg-emerald-400 text-white shadow-[0_0_15px_-3px_rgba(16,185,129,0.4)] active:scale-95',
-            // Validation blocked: Amber CTA - clickable to open dates
-            validationBlocked &&
-              'bg-amber-500 hover:bg-amber-400 text-white shadow-[0_0_15px_-3px_rgba(245,158,11,0.4)] active:scale-95 cursor-pointer',
-            // Processing states
-            (isGeneratingItinerary || isFinalizing) &&
+            // Processing state
+            isFinalizing &&
               'bg-zinc-200 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 cursor-not-allowed'
           )}
         >
-          <span>{config.buttonText}</span>
+          <span>{buttonText}</span>
           <Icon
             className={cn(
               'w-3.5 h-3.5',
-              (isGeneratingItinerary || isFinalizing) && 'animate-spin',
+              isFinalizing && 'animate-spin',
               isActionReady && 'animate-pulse'
             )}
           />
         </button>
       </div>
-
-      {/* Error retry - floats below */}
-      {nextAction === 'expand_itinerary' && lastError && (
-        <div className="absolute top-full mt-2 left-0 right-0 flex justify-center pointer-events-auto">
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-red-500/10 border border-red-500/20">
-            <span className="text-xs text-red-400">
-              {(() => {
-                // Parse structured error messages from backend
-                try {
-                  const parsed = JSON.parse(lastError);
-                  if (parsed.error === 'MISSING_END_DATE') {
-                    return 'Add return date to see itinerary';
-                  }
-                  if (parsed.error === 'TRIP_TOO_SHORT') {
-                    return 'Trip must be at least 2 days';
-                  }
-                  if (parsed.error === 'CONSTRAINT_CONFLICT') {
-                    return parsed.message || 'Activity constraints cannot fit in trip';
-                  }
-                  return parsed.message || lastError;
-                } catch {
-                  return lastError;
-                }
-              })()}
-            </span>
-            {onRetry && (
-              <button
-                onClick={onRetry}
-                className="text-xs text-red-400 underline hover:text-red-300"
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

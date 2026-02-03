@@ -784,13 +784,36 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const sendMessageCore = useCallback(
       async (messageText: string, options?: { suggestionClicked?: string }) => {
         const trimmed = messageText.trim();
-        if (!trimmed || isLoading) return;
+
+        // Check for generate trigger FIRST (before isLoading guard)
+        const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
+
+        // DEBUG: Log all sendMessage calls
+        console.log('[ChatPanel] sendMessageCore called', {
+          message: trimmed.slice(0, 50),
+          isGenerateTrigger,
+          isLoading,
+          destination: useDocumentStore.getState().document?.trip_inputs?.destination,
+        });
+
+        // For regeneration triggers, we MUST process even if currently loading
+        // This allows REFRESH to interrupt ongoing operations
+        if (isGenerateTrigger && isLoading) {
+          console.log('[ChatPanel] ⚠️ Forcing regeneration trigger despite isLoading=true');
+          // Abort any ongoing stream before starting new one
+          if (abortStreamRef.current) {
+            console.log('[ChatPanel] 🛑 Aborting previous stream');
+            abortStreamRef.current();
+            abortStreamRef.current = null;
+          }
+          // Don't return - let it through
+        } else if (!trimmed || isLoading) {
+          console.log('[ChatPanel] ⏭️ Skipping - empty or loading');
+          return;
+        }
 
         // Reset Smart Loader for new message
         setActiveStatus(null);
-
-        // Check for generate trigger - either the explicit trigger or "Build plan" suggestion chip
-        const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
 
         // Set trigger context for action classification
         // This helps classify the node_status events that follow
@@ -853,13 +876,30 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         }
 
         // Use SSE streaming for real-time token display
+        const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
         const body: Parameters<typeof streamGraphPlan>[0] = {
           message: trimmed,
           session_state: sessionState ?? undefined,
           // Pass suggestion_clicked when user clicked a suggestion chip
           // This enables LQA suggestion echo in the backend
           suggestion_clicked: options?.suggestionClicked,
+          // CRITICAL: For regeneration triggers, pass current frontend trip_inputs
+          // This ensures backend uses the latest destination/dates, not cached state
+          // Fixes race condition where user changes destination then clicks Refresh
+          ...(isGenerateTrigger && {
+            trip_inputs: currentTripInputs ?? undefined,
+          }),
         };
+
+        // DEBUG: Log API payload for regeneration triggers
+        if (isGenerateTrigger) {
+          console.log('[ChatPanel] 📤 Sending GENERATE_PLAN_TRIGGER to API', {
+            destination: body.trip_inputs?.destination,
+            start_date: body.trip_inputs?.start_date,
+            end_date: body.trip_inputs?.end_date,
+            hasTripInputs: !!body.trip_inputs,
+          });
+        }
 
         // Create a promise that resolves when streaming completes
         await new Promise<void>((resolve) => {

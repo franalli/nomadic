@@ -30,13 +30,13 @@ const HIGHLIGHT_DURATION_MS = 2000;
  * navigateToSpecialist('diving'); // Scrolls to Diving Specialist card
  */
 export function useSpecialistDeepLink() {
-  const { setActiveTab, isDesktop } = useMobileMode();
+  const { switchToPlan, isDesktop } = useMobileMode();
 
   const navigateToSpecialist = useCallback(
     (specialistType: SpecialistType) => {
-      // On mobile, switch to Plan tab first
+      // On mobile, switch to Plan mode first
       if (!isDesktop) {
-        setActiveTab('plan');
+        switchToPlan();
       }
 
       // Wait for tab transition animation, then scroll
@@ -64,7 +64,7 @@ export function useSpecialistDeepLink() {
         }
       }, isDesktop ? 0 : TAB_TRANSITION_DELAY_MS);
     },
-    [setActiveTab, isDesktop]
+    [switchToPlan, isDesktop]
   );
 
   return { navigateToSpecialist };

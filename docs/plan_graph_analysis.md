@@ -276,6 +276,25 @@ LLM-based intent classification AND field extraction using GPT-4o-mini with Pyda
 | `GREETING` | "Hi", "Hello", "Thanks!" (no planning content) | Static response, skip architect |
 | `RESET` | "Start over", "Reset", "Begin again" | Clear state, static response |
 | `PLANNING` | Everything else (trip-related) | Extract fields → Pass to Specialist or LocalExpert |
+| `GENERATE_PLAN_NOW` | "GENERATE_PLAN_TRIGGER" (frontend Refresh button) | Force clear tiles → Full regeneration |
+
+**GENERATE_PLAN_NOW Handling (Refresh Button):**
+
+When the frontend Refresh button triggers `GENERATE_PLAN_NOW`:
+```python
+# intent_router.py - forced tile cache clear
+elif is_generate_trigger:
+    state.intent = "booking"
+    # FORCE clear tiles - ensures fresh tiles for new destination
+    state.tiles = {}
+    state.metadata["tiles_destination"] = None
+    logger.info("[Router] 🔥 GENERATE_PLAN_NOW - forced tile cache clear")
+```
+
+This ensures that when a user changes destination (e.g., Bali → Paris) and clicks Refresh:
+1. Old Bali tiles are cleared immediately
+2. LogisticsNode fetches fresh Paris tiles
+3. Frontend receives new tiles, not cached stale data
 
 **Critical Rules:**
 - "Hi, I want to go to Paris" → PLANNING (has content!)

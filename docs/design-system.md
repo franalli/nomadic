@@ -462,6 +462,32 @@ export function getSpecialistBorderColor(specialistType?: string): string {
 
 **Note:** These hex values are deliberately NOT Tailwind classes—they're used for inline `style` props to ensure precise color matching across the timeline.
 
+#### Trip DNA Bar
+
+The Trip DNA bar shows a compact summary of activated specialists. It appears BELOW the specialist accordion cards and ABOVE the itinerary.
+
+**Layout Order (StrategyStageRenderer):**
+1. Specialist Analysis (collapsed accordion cards) - S2StrategyView
+2. Trip DNA bar (compact badges)
+3. Day-by-day Itinerary
+
+**Styling:**
+```tsx
+<div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
+  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
+  <div className="flex gap-2 flex-wrap">
+    {/* Specialist badge pills */}
+    <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs">
+      {getSpecialistIcon(section.specialist_type)}
+      <span className="font-medium">{section.title}</span>
+      <span className="text-zinc-400">({section.constraints_applied?.length || 0})</span>
+    </button>
+  </div>
+</div>
+```
+
+**Visibility:** Always visible when `strategy_sections.length > 0` (before AND after refresh).
+
 ### Inline Constraint Badge Colors
 
 Activity and logistics blocks display inline constraint badges to show constraint-first optimization. These use a distinct color palette for severity levels.
@@ -1838,6 +1864,113 @@ The NextStepBar ("Command Island") is a sticky footer CTA that adapts its visual
 
 - Component: `frontend/components/plan/NextStepBar.tsx`
 - Validation Hook: `frontend/hooks/useTripValidation.ts`
+
+---
+
+## 20.5 RefreshButton FAB (Amber Regeneration Trigger)
+
+The RefreshButton is a Floating Action Button (FAB) that appears when trip inputs change, signaling that a plan refresh is needed.
+
+### Design Philosophy
+
+**Problem:** Users change trip inputs (destination, dates, settings) but the current plan reflects old data. The user needs a clear, high-visibility trigger to regenerate the plan with new inputs.
+
+**Solution:** An Amber gradient FAB that appears only when inputs have changed, using portal rendering to escape scroll containers and position at a fixed screen location.
+
+> **Note:** Amber is intentionally used here for semantic "attention needed" states. This is an exception to the "BANNED Colors" rule in Section 4, similar to Logic Guards.
+
+### Visual Specifications
+
+| Property | Value |
+|----------|-------|
+| **Position** | `fixed bottom-24 right-6` |
+| **Z-Index** | `z-50` (above map controls) |
+| **Size** | `min-w-[160px] h-14 px-6` (pill badge) |
+| **Shape** | `rounded-full` |
+| **Background** | `bg-gradient-to-r from-amber-500 to-orange-500` |
+| **Text** | `text-white font-bold text-sm` |
+| **Shadow** | `shadow-2xl shadow-amber-500/50` |
+| **Animation** | `animate-pulse` (attention-grabbing) |
+
+### Visual States
+
+| State | Styling | Behavior |
+|-------|---------|----------|
+| **Active (hasChanges)** | Amber gradient + pulse | Clickable, triggers regeneration |
+| **Refreshing** | `bg-zinc-600 cursor-not-allowed` | Shows spinner, disabled |
+| **Hidden** | Not rendered | No changes pending |
+
+### Code Example
+
+```tsx
+// RefreshButton.tsx - Portal-based FAB
+export function RefreshButton({ hasChanges, isRefreshing, onRefresh }: Props) {
+  if (!hasChanges || isRefreshing) return null;
+
+  return createPortal(
+    <button
+      onClick={onRefresh}
+      className={cn(
+        'fixed bottom-24 right-6 z-50',
+        'min-w-[160px] h-14 px-6 rounded-full',
+        'bg-gradient-to-r from-amber-500 to-orange-500',
+        'text-white font-bold text-sm',
+        'shadow-2xl shadow-amber-500/50',
+        'animate-pulse',
+        'flex items-center justify-center gap-2',
+        'transition-all duration-200',
+        'hover:scale-105 active:scale-95'
+      )}
+    >
+      <RefreshCw className="w-5 h-5" />
+      <span>REFRESH PLAN</span>
+    </button>,
+    document.body
+  );
+}
+```
+
+### Hook Integration
+
+The RefreshButton is powered by `useManualRegeneration` hook:
+
+```tsx
+// useManualRegeneration.ts - Trip input change detection
+const { hasChanges, isRefreshing, regenerate, resetState } = useManualRegeneration({
+  onFullRegenerate: () => chatPanelRef.current?.handleSendMessage('GENERATE_PLAN_TRIGGER'),
+  onAfterRegenerate: handleExpandToItinerary,
+});
+```
+
+**State tracking:**
+- `computeTripInputsHash()` - Stable JSON hash of destination, dates, settings
+- `lastValidatedHashRef` - Hash after last successful regeneration
+- `hasChanges` - `currentHash !== lastValidatedHashRef`
+- `isRefreshingRef` - Mutex preventing double-clicks
+
+### Why This Works
+
+1. **High Visibility:** Amber gradient stands out against map backgrounds where emerald would blend.
+2. **Portal Rendering:** Escapes scroll containers, ensures consistent screen position.
+3. **Clear Intent:** "REFRESH PLAN" text leaves no ambiguity about the action.
+4. **Pulse Animation:** Draws attention to pending changes.
+5. **Single Trigger:** Only one button can trigger regeneration (no duplicate CTAs).
+
+### Relationship to NextStepBar
+
+| Component | Action | When Visible |
+|-----------|--------|--------------|
+| **RefreshButton FAB** | `expand_itinerary` (regeneration) | When trip inputs change |
+| **NextStepBar** | `finalize_plan` (booking) | S3_ITINERARY_READY only |
+
+**Invariant:** RefreshButton is the ONLY trigger for plan regeneration. NextStepBar only handles finalization.
+
+### Implementation Reference
+
+- Component: `frontend/components/RefreshButton.tsx`
+- Overlay: `frontend/components/RefreshOverlay.tsx`
+- Hook: `frontend/hooks/useManualRegeneration.ts`
+- UX Flow: `docs/ux_unified_architecture.md` (Regeneration Flow section)
 
 ---
 

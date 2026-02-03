@@ -46,20 +46,59 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
   };
 
   // Add CSRF token for unsafe methods
+  let csrfToken: string | null = null;
   if (isUnsafeMethod(options?.method)) {
-    const csrfToken = getCsrfToken();
+    csrfToken = getCsrfToken();
     if (csrfToken) {
       (headers as Record<string, string>)['X-CSRF-Token'] = csrfToken;
     }
   }
 
-  const res = await fetch(url, {
-    ...options,
-    credentials: 'include', // Always include cookies
-    headers,
+  // DEBUG: Log request details
+  console.log('[apiFetch] 📡 Request:', {
+    url,
+    method: options?.method || 'GET',
+    hasCSRFToken: !!csrfToken,
+    hasSignal: !!options?.signal,
+    signalAborted: options?.signal?.aborted,
   });
 
-  return res;
+  // CRITICAL DEBUG: Check signal state right before fetch
+  if (options?.signal?.aborted) {
+    console.error('[apiFetch] ⛔ SIGNAL ALREADY ABORTED BEFORE FETCH!');
+    console.error('[apiFetch] ⛔ This will cause "Failed to fetch" error');
+    throw new DOMException('Signal already aborted', 'AbortError');
+  }
+
+  console.log('[apiFetch] 🚀 About to call fetch()...');
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      credentials: 'include', // Always include cookies
+      headers,
+    });
+    console.log('[apiFetch] ✅ fetch() returned successfully');
+
+    console.log('[apiFetch] ✅ Response:', { url, status: res.status, ok: res.ok });
+    return res;
+  } catch (error) {
+    // DEBUG: Log detailed error info (Error objects don't serialize well)
+    const err = error as Error;
+    console.error('[apiFetch] ❌ Fetch FAILED:');
+    console.error('  URL:', url);
+    console.error('  Method:', options?.method || 'GET');
+    console.error('  Has CSRF:', !!csrfToken);
+    console.error('  Has Signal:', !!options?.signal);
+    console.error('  Signal Aborted:', options?.signal?.aborted);
+    console.error('  Error Name:', err?.name);
+    console.error('  Error Message:', err?.message);
+    console.error('  Error Stack:', err?.stack);
+    if (err?.name === 'AbortError') {
+      console.error('  ⚠️ REQUEST WAS ABORTED - Check AbortController');
+    }
+    throw error;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

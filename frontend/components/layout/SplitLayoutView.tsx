@@ -6,30 +6,24 @@ import React, { memo } from 'react';
 
 import { MobileModeHeader } from '@/components/layout/MobileModeHeader';
 import { MobilePlanFooter } from '@/components/layout/MobilePlanFooter';
-import { MobileTabBar } from '@/components/layout/MobileTabBar';
 import { useMobileMode } from '@/contexts/MobileModeContext';
 import { cn } from '@/lib/utils';
 import type { PlanState } from '@/types/plan-envelope';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Animation Variants (per spec: 260ms slide, 240ms reverse)
+// Animation Variants
 // ─────────────────────────────────────────────────────────────────────────────
 
 const mobileSlideVariants = {
-  // Chat tab (leftmost - slide in from left)
-  chatEnter: { x: -12, opacity: 0.96 },
-  chatCenter: { x: 0, opacity: 1 },
-  chatExit: { x: -12, opacity: 0.96 },
+  // Planner mode (slide in from left)
+  plannerEnter: { x: -12, opacity: 0.96 },
+  plannerCenter: { x: 0, opacity: 1 },
+  plannerExit: { x: -12, opacity: 0.96 },
 
-  // Plan tab (center - slide in from right for chat, left for book)
+  // Plan mode (slide in from right)
   planEnter: { x: 12, opacity: 0.96 },
   planCenter: { x: 0, opacity: 1 },
   planExit: { x: 12, opacity: 0.96 },
-
-  // Book tab (rightmost - slide in from right)
-  bookEnter: { x: 12, opacity: 0.96 },
-  bookCenter: { x: 0, opacity: 1 },
-  bookExit: { x: 12, opacity: 0.96 },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,7 +35,7 @@ export interface SplitLayoutViewProps {
   plannerContent: React.ReactNode;
   /** Content for the right panel (Plan View: StrategyStageRenderer) */
   planViewContent: React.ReactNode;
-  /** Content for the Book tab (BookingSection) */
+  /** Content for the Book tab (BookingSection) - rendered in plan view on mobile */
   bookContent?: React.ReactNode;
   /** Current plan state for status display */
   planState?: PlanState;
@@ -55,16 +49,10 @@ export interface SplitLayoutViewProps {
   onSendMessage?: (message: string) => void;
   /** Whether message is being processed (for minimized input) */
   isProcessing?: boolean;
-  /** Whether Plan tab is unlocked (plan has been generated) */
+  /** Whether Plan tab is unlocked (plan has been generated) - kept for API compat */
   planTabEnabled?: boolean;
-  /** Whether the Book tab has content and should be enabled */
+  /** Whether the Book tab has content - kept for API compat */
   bookTabEnabled?: boolean;
-  /** Whether dates have been set (determines CTA button type) */
-  hasDates?: boolean;
-  /** Whether to show the CTA button in the footer */
-  showCta?: boolean;
-  /** Handler for "Create Itinerary" CTA button */
-  onBuildItinerary?: () => void;
   /** Handler for "Select Dates" CTA button */
   onSelectDates?: () => void;
 }
@@ -80,9 +68,9 @@ export interface SplitLayoutViewProps {
  * - Left: Planner panel (TripDetailsForm + ChatPanel), scrollable
  * - Right: Plan View (StrategyStageRenderer), always visible
  *
- * Mobile (<lg): Single surface with mode switching
+ * Mobile (<lg): Two-mode switching (no tabs)
  * - Planner Mode: Shows planner content only
- * - Plan Mode: Shows plan view only
+ * - Plan Mode: Shows plan view with single-scroll progressive disclosure
  * - Animated transitions between modes
  */
 export const SplitLayoutView = memo(function SplitLayoutView({
@@ -91,19 +79,18 @@ export const SplitLayoutView = memo(function SplitLayoutView({
   bookContent,
   planState = 'INCOMPLETE',
   headerContent,
-  hasDestination: _hasDestination = false, // Reserved for future topo background control
+  hasDestination: _hasDestination = false,
   onReset,
   onSendMessage,
   isProcessing = false,
-  planTabEnabled = false,
-  bookTabEnabled = false,
-  hasDates = false,
-  showCta = false,
-  onBuildItinerary,
+  planTabEnabled: _planTabEnabled = false,
+  bookTabEnabled: _bookTabEnabled = false,
   onSelectDates,
 }: SplitLayoutViewProps) {
-  void _hasDestination; // Silence unused variable warning - reserved for future topo background control
-  const { activeTab, isDesktop } = useMobileMode();
+  void _hasDestination; // Reserved for future topo background control
+  void _planTabEnabled; // Kept for API compat - tabs removed
+  void _bookTabEnabled; // Kept for API compat - tabs removed
+  const { mode, isDesktop } = useMobileMode();
 
   return (
     <div className="flex flex-col min-h-[100dvh] lg:min-h-screen lg:pt-0">
@@ -189,22 +176,22 @@ export const SplitLayoutView = memo(function SplitLayoutView({
         )}
 
         {/* ─────────────────────────────────────────────────────────────────── */}
-        {/* Mobile Layout: 3-Tab Switching (<lg) */}
+        {/* Mobile Layout: Two-Mode Switching (<lg) - No Tabs */}
         {/* ─────────────────────────────────────────────────────────────────── */}
         {!isDesktop && (
           <>
             <AnimatePresence mode="wait">
-              {activeTab === 'chat' && (
+              {mode === 'planner' && (
                 <motion.main
-                  key="mobile-chat"
+                  key="mobile-planner"
                   className={cn(
                     'flex-1 overflow-y-auto p-4 lg:hidden bg-[var(--theme-panel)]',
                     'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
-                    'pb-[calc(var(--mobile-tab-bar-height,68px)+env(safe-area-inset-bottom))]' // Space for tab bar
+                    'pb-[calc(env(safe-area-inset-bottom)+16px)]' // Safe area + breathing room
                   )}
-                  initial="chatEnter"
-                  animate="chatCenter"
-                  exit="chatExit"
+                  initial="plannerEnter"
+                  animate="plannerCenter"
+                  exit="plannerExit"
                   variants={mobileSlideVariants}
                   transition={{ duration: 0.24, ease: 'easeOut' }}
                   aria-label="Trip planner"
@@ -213,15 +200,15 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                 </motion.main>
               )}
 
-              {activeTab === 'plan' && (
+              {mode === 'plan' && (
                 <motion.main
                   key="mobile-plan"
                   id="plan-panel"
                   className={cn(
-                    // Use h-full + min-h-0 to let inner StrategyStageRenderer handle its own scroll
-                    'flex-1 h-full min-h-0 lg:hidden rightCanvas',
+                    // Single-scroll container for progressive disclosure
+                    'flex-1 h-full min-h-0 lg:hidden rightCanvas overflow-y-auto',
                     'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
-                    'pb-[calc(var(--mobile-tab-bar-height,68px)+env(safe-area-inset-bottom)+120px)]' // Space for MobilePlanFooter + tab bar
+                    'pb-[calc(env(safe-area-inset-bottom)+140px)]' // Space for MobilePlanFooter
                   )}
                   initial="planEnter"
                   animate="planCenter"
@@ -231,44 +218,28 @@ export const SplitLayoutView = memo(function SplitLayoutView({
                   aria-label="Your trip plan"
                   data-testid="plan-view"
                 >
-                  {planViewContent}
-                </motion.main>
-              )}
-
-              {activeTab === 'book' && (
-                <motion.main
-                  key="mobile-book"
-                  className={cn(
-                    'flex-1 overflow-y-auto p-4 lg:hidden rightCanvas',
-                    'pt-[calc(var(--mobile-header-height,48px)+env(safe-area-inset-top))]', // Space for fixed header
-                    'pb-[200px]' // Space for MobilePlanFooter (input + tab bar)
-                  )}
-                  initial="bookEnter"
-                  animate="bookCenter"
-                  exit="bookExit"
-                  variants={mobileSlideVariants}
-                  transition={{ duration: 0.26, ease: 'easeOut' }}
-                  aria-label="Booking options"
-                >
-                  {bookContent}
+                  {/* Single-scroll progressive disclosure: plan content + booking */}
+                  <div className="flex flex-col gap-6">
+                    {planViewContent}
+                    {/* Booking section integrated into single scroll */}
+                    {bookContent && (
+                      <section className="px-4 pb-4" aria-label="Booking options">
+                        {bookContent}
+                      </section>
+                    )}
+                  </div>
                 </motion.main>
               )}
             </AnimatePresence>
 
-            {/* Mobile Plan Footer - CTA + Input, visible on Plan/Book tabs */}
+            {/* Mobile Plan Footer - Command input, visible in plan mode */}
             {onSendMessage && (
               <MobilePlanFooter
-                hasDates={hasDates}
-                showCta={showCta}
-                onBuildItinerary={onBuildItinerary ?? (() => {})}
                 onSelectDates={onSelectDates ?? (() => {})}
                 onSendMessage={onSendMessage}
                 isProcessing={isProcessing}
               />
             )}
-
-            {/* Mobile Tab Bar */}
-            <MobileTabBar planTabEnabled={planTabEnabled} bookTabEnabled={bookTabEnabled} />
           </>
         )}
       </div>

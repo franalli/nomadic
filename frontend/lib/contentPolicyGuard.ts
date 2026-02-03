@@ -35,7 +35,8 @@ const FORBIDDEN_STAGE_1_2 = [
   'from €',
   'per person',
   'Book now',
-  'Reserve',
+  // NOTE: "Reserve" removed - too generic, appears in specialist tips
+  // (e.g., "Reserve your spot early"). Keep "Book now" for actual CTAs.
   'Checkout',
   'Top 10',
   'Best places',
@@ -224,8 +225,10 @@ export function enforceRightViewPolicy(
     }
 
     // No booking-specific prices or CTAs in S3 itinerary
+    // NOTE: "Reserve" removed - too generic, appears in legitimate tile descriptions
+    // (e.g., "Reserve a table", "Reserve your spot"). Keep "Book now" for CTAs.
     const content = JSON.stringify(viewModel);
-    const forbiddenS3 = ['$/night', '€/night', 'AED/night', 'Book now', 'Reserve'];
+    const forbiddenS3 = ['$/night', '€/night', 'AED/night', 'Book now'];
     for (const forbidden of forbiddenS3) {
       if (content.includes(forbidden)) {
         throw new ContentPolicyError(

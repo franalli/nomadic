@@ -216,6 +216,9 @@ type DocumentState = {
   hasAllRequiredFields: () => boolean;
 
   // Trip input actions
+  /** Sync update trip inputs locally (no API call). Used for immediate state updates. */
+  updateTripInputs: (updates: Partial<DocumentTripInputs>) => void;
+  /** Async commit trip inputs to backend with validation. */
   commitTripInputs: (updates: DocumentTripInputsPatch) => Promise<boolean>;
 
   // Actions
@@ -253,8 +256,8 @@ type DocumentState = {
   clearSpeculativeContent: () => void;
 
   // Streaming robustness actions
-  /** Start a new generation run - returns AbortController for the caller */
-  startGeneration: (runId: string) => AbortController;
+  /** Start a new generation run - returns AbortController for the caller, or null if already running */
+  startGeneration: (runId: string) => AbortController | null;
   /** Abort the current generation (if any) */
   abortGeneration: () => void;
   /** Check if a runId is the current run (ignore late events from stale runs) */
@@ -489,6 +492,48 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   // Trip input actions
+
+  // Sync update trip inputs locally (no API call)
+  // Used for immediate state updates before validation completes
+  updateTripInputs: (updates) => {
+    console.log('[documentStore] 🔄 updateTripInputs CALLED with:', updates);
+    const { document } = get();
+    if (!document) {
+      console.warn('[documentStore] updateTripInputs: No document exists yet');
+      return;
+    }
+
+    const previousDestination = document.trip_inputs?.destination;
+    const newDestination = updates.destination;
+
+    // Log destination change for debugging (tiles cleared by backend on GENERATE_PLAN_NOW)
+    if (newDestination && newDestination !== previousDestination) {
+      console.log('[documentStore] 📍 Destination changed (tiles kept until Refresh):', {
+        from: previousDestination,
+        to: newDestination,
+      });
+    }
+
+    set({
+      document: {
+        ...document,
+        trip_inputs: {
+          ...document.trip_inputs,
+          ...updates,
+        },
+        // NOTE: Tiles NOT cleared here - backend clears on GENERATE_PLAN_NOW (Refresh)
+      },
+    });
+
+    // SYNC: Zustand set() completes before next line executes
+    console.log('[documentStore] 📝 Trip inputs updated (sync):', {
+      updatedFields: Object.keys(updates),
+      previousDestination,
+      newDestination: newDestination || 'unchanged',
+      currentDestination: get().document?.trip_inputs?.destination,
+    });
+  },
+
   commitTripInputs: async (updates: DocumentTripInputsPatch): Promise<boolean> => {
     // Atomic lock acquisition - prevents concurrent commits via Promise-based mutex
     const acquired = await acquireCommitLock();
@@ -845,7 +890,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         `[documentStore.setFromPlanResponse] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
       );
       // Clear chat messages on destination change
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+
       const { useChatStore } = require('./chatStore');
       useChatStore.getState().resetChat();
       console.log('[documentStore.setFromPlanResponse] 💬 Chat: CLEARED (destination changed)');
@@ -951,6 +996,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
+    // DEBUG: Log envelope structure for diagnostics
+    console.log('[DEBUG mergeEnvelope] Envelope structure:', {
+      has_trip_inputs: !!envelope.trip_inputs,
+      trip_inputs_destination: envelope.trip_inputs?.destination,
+      has_tiles: !!envelope.tiles,
+      tiles_count: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
+      current_destination: currentDoc.trip_inputs?.destination,
+    });
+
     // Detect destination change
     const prevDestination = currentDoc.trip_inputs?.destination?.toLowerCase().trim();
     const newDestination = envelope.trip_inputs?.destination?.toLowerCase().trim();
@@ -961,7 +1015,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         `[documentStore.mergeEnvelope] 🌍 Destination changed: "${prevDestination}" → "${newDestination}"`
       );
       // Clear chat messages on destination change (import chatStore at top of file)
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+
       const { useChatStore } = require('./chatStore');
       useChatStore.getState().resetChat();
       console.log('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
@@ -1137,14 +1191,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // Streaming robustness actions
   startGeneration: (runId: string) => {
-    // Abort any existing generation first
-    const { abortController: existingController } = get();
+    // ATOMIC CHECK: If there's already a running generation, don't start a new one
+    // This prevents race conditions where two calls both pass the guard check
+    const { currentRunId: existingRunId, abortController: existingController } = get();
+
+    if (existingRunId && existingController && !existingController.signal.aborted) {
+      // Already running - return null to signal caller should not proceed
+      console.log('[documentStore] ⚠️ startGeneration REJECTED - already running:', existingRunId);
+      return null;
+    }
+
+    // Abort any existing (stale) generation
     if (existingController) {
+      console.log('[documentStore] 🔄 Aborting stale controller');
       existingController.abort();
     }
 
     // Create new controller for this run
     const controller = new AbortController();
+    console.log('[documentStore] ✅ startGeneration ACCEPTED:', runId);
     set({
       currentRunId: runId,
       abortController: controller,
@@ -1262,7 +1327,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   // Wait for any pending preference PATCH to complete
-  // Called by useItineraryRegeneration before triggering regen
+  // Called by usePreferenceAutoRegen before triggering regen
   awaitPreferencePatch: async () => {
     const { pendingPreferencePatch } = get();
     if (pendingPreferencePatch) {

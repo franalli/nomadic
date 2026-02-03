@@ -15,7 +15,7 @@
 
 'use client';
 
-import { ArrowRight, ChevronLeft, Loader2 } from 'lucide-react';
+import { ArrowRight, ChevronLeft, Loader2, RefreshCw } from 'lucide-react';
 import React from 'react';
 
 import { GlassCommandBar } from '@/components/plan/GlassCommandBar';
@@ -48,6 +48,12 @@ export interface PlanHeaderProps {
   onOpenSheet?: (sheet: SheetType) => void;
   /** Whether streaming/generation is in progress (disables pills) */
   isStreaming?: boolean;
+  /** Whether trip inputs have changed since last regeneration */
+  hasInputChanges?: boolean;
+  /** Whether regeneration is in progress */
+  isRefreshing?: boolean;
+  /** Callback when refresh button is clicked */
+  onRefresh?: () => void;
   /** Callback when Setup stage is clicked (navigate back to setup/config) */
   onSetupClick?: () => void;
   /** Callback when Plan stage is clicked (navigate to plan view) */
@@ -96,6 +102,9 @@ export function PlanHeader({
   tripInputs: propTripInputs,
   onOpenSheet,
   isStreaming = false,
+  hasInputChanges = false,
+  isRefreshing = false,
+  onRefresh,
   onSetupClick,
   onPlanClick,
   onBookClick,
@@ -112,6 +121,15 @@ export function PlanHeader({
   useModeIndicator = false,
   onModeChange,
 }: PlanHeaderProps) {
+  // DEBUG: Log refresh-related props
+  console.log('[PlanHeader] 🔍 Props received:', {
+    hasInputChanges,
+    isRefreshing,
+    hasOnRefresh: !!onRefresh,
+    planViewState,
+    destination: propTripInputs?.destination,
+  });
+
   // FIX: Header needs to update immediately when dates change in store
   const tripInputs = useTripInputsWithFallback(propTripInputs);
 
@@ -164,6 +182,15 @@ export function PlanHeader({
   // Check if we should show pills (S1+ with tripInputs and handler)
   const showPills =
     planViewState !== 'S0_BOOTSTRAP' && tripInputs && onOpenSheet;
+
+  // DEBUG: Log showPills computation
+  console.log('[PlanHeader] 📊 showPills:', {
+    showPills,
+    planViewState,
+    hasTripInputs: !!tripInputs,
+    hasOnOpenSheet: !!onOpenSheet,
+    shouldShowRefresh: (hasInputChanges || isRefreshing) && !!onRefresh,
+  });
 
   // Format date range for collapsed view (must be before early return to maintain hook order)
   const startDate = tripInputs?.start_date;
@@ -327,15 +354,48 @@ export function PlanHeader({
               )}
             </div>
 
-            {/* Pills - INSIDE the postcard, above gradient overlay */}
+            {/* Pills + Refresh - INSIDE the postcard, above gradient overlay */}
             {showPills && (
-              <div className="absolute bottom-3 left-4 right-4 z-20">
-                <TripSummaryPills
-                  tripInputs={tripInputs}
-                  onOpenSheet={onOpenSheet}
-                  disabled={isStreaming}
-                  variant="onImage"
-                />
+              <div className="absolute bottom-3 left-4 right-4 z-20 flex items-center gap-2">
+                <div className="flex-1 min-w-0">
+                  <TripSummaryPills
+                    tripInputs={tripInputs}
+                    onOpenSheet={onOpenSheet}
+                    disabled={isStreaming}
+                    variant="onImage"
+                  />
+                </div>
+                {/* Inline Refresh Button - shown when inputs changed or refreshing */}
+                {(hasInputChanges || isRefreshing) && onRefresh && (
+                  <button
+                    onClick={() => {
+                      console.log('[PlanHeader] 🖱️ Refresh button clicked', { hasInputChanges, isRefreshing, hasOnRefresh: !!onRefresh });
+                      onRefresh();
+                    }}
+                    disabled={isRefreshing || !hasInputChanges}
+                    aria-label={isRefreshing ? 'Refreshing...' : 'Refresh plan'}
+                    className={`
+                      flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full
+                      text-xs font-semibold transition-all duration-200
+                      ${isRefreshing
+                        ? 'bg-zinc-200/90 text-zinc-600 cursor-wait'
+                        : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/30 hover:scale-105 active:scale-95 animate-pulse'
+                      }
+                    `}
+                  >
+                    {isRefreshing ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Refreshing</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Refresh</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             )}
           </div>

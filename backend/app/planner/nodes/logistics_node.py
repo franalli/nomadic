@@ -114,6 +114,19 @@ async def logistics_node(state: GraphState) -> GraphState:
             )
             return state
 
+        # Destination changed - INVALIDATE cached tiles
+        if cached_destination and cached_destination != current_destination:
+            log("LOGISTICS", f"Cache INVALIDATE: {cached_destination} → {current_destination}")
+            _debug_log(
+                f"Destination changed - clearing cached tiles "
+                f"(hotels={len(state.tiles.get('hotels', []))}, "
+                f"activities={len(state.tiles.get('activities', []))})"
+            )
+            # Clear stale tiles
+            state.tiles = {"hotels": [], "activities": [], "flights": []}
+            state.metadata["tiles_destination"] = None
+            clog.event("cache_invalidate", f"{cached_destination} → {current_destination}")
+
     # Store current destination for future cache checks
     state.metadata["tiles_destination"] = plan.destination
 

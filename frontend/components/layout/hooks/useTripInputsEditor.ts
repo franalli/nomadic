@@ -347,6 +347,9 @@ export function useTripInputsEditor(
   const pendingTravelersUpdate = useRef<{ adults?: number | null; children?: number | null }>({});
   const travelersDebounceTimer = useRef<NodeJS.Timeout | null>(null);
 
+  // Ref to store previous destination for race-safe revert on validation failure
+  const prevDestinationRef = useRef<string | null>(null);
+
   // Debounced commit function for travelers
   const commitTravelersUpdate = useCallback(async () => {
     const updates = pendingTravelersUpdate.current;
@@ -434,19 +437,26 @@ export function useTripInputsEditor(
       // Clear any previous validation error for this field
       setValidationError(null);
 
-      // Show pending value immediately (not stored anywhere)
-      setPendingDestination(trimmedDestination);
+      // Capture previous value BEFORE update (for race-safe revert)
+      prevDestinationRef.current = tripInputs.destination ?? null;
+
+      // SYNC: Write to store immediately (before validation)
+      // This ensures RefreshButton sees the new value instantly
+      documentStore.updateTripInputs({ destination: trimmedDestination });
+
+      // Clear pending/input state
+      setPendingDestination(null);
       setDestinationInput('');
 
-      // Start validation
+      // Validate in background (revert if invalid)
       setValidationLoading('destination');
 
       try {
         const result = await validateTripInput('destination', trimmedDestination);
 
         if (!result.is_valid) {
-          // Invalid destination - discard pending value and show inline error
-          setPendingDestination(null);
+          // Invalid destination - revert store to captured previous value (race-safe)
+          documentStore.updateTripInputs({ destination: prevDestinationRef.current });
           const errorMsg = result.reason || 'This doesn\'t appear to be a valid destination.';
           setValidationError({ field: 'destination', message: errorMsg });
           onToast(`Invalid destination: ${errorMsg}`, 'error');
@@ -454,25 +464,26 @@ export function useTripInputsEditor(
           return;
         }
 
-        // Use the first corrected value (single destination only)
+        // Apply correction if needed
         const correctedValue = result.corrected_values[0] || trimmedDestination;
+        if (correctedValue !== trimmedDestination) {
+          documentStore.updateTripInputs({ destination: correctedValue });
+        }
 
+        // Persist to backend
         const success = await documentStore.commitTripInputs({ destination: correctedValue });
 
         if (!success) {
-          setPendingDestination(null);
           onToast('Failed to set destination. Please try again.', 'error');
           setValidationLoading(null);
           return;
         }
 
-        // Clear pending value (now stored in document)
-        setPendingDestination(null);
         setValidationLoading(null);
-
         onToast(`Destination set to "${correctedValue}" 📍`, 'confirmation');
       } catch {
-        setPendingDestination(null);
+        // Revert on error
+        documentStore.updateTripInputs({ destination: prevDestinationRef.current });
         onToast('Validation failed. Please try again.', 'error');
         setValidationLoading(null);
       }

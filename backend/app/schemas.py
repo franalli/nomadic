@@ -498,6 +498,11 @@ class StrategySection(BaseModel):
     subtitle: Optional[str] = None  # e.g., "Dubai Trip"
     specialist_type: Optional[str] = None  # e.g., "hiking", "diving", "general"
 
+    # Feasibility state (from Constraint Engine) - used to filter infeasible specialists
+    feasibility_status: Optional[str] = None  # "feasible" | "caveat" | "infeasible"
+    feasibility_reason: Optional[str] = None  # e.g., "Pool diving only in Paris"
+    alternative_suggestion: Optional[str] = None  # e.g., "Consider Bali, Red Sea, or Maldives"
+
     # Collapsed state
     one_liner: Optional[str] = None  # max 60 chars
     principles: List[str] = Field(default_factory=list)  # max 4 items, 50 chars each

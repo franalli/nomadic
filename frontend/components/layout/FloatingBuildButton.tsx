@@ -70,10 +70,10 @@ function FloatingBuildButtonInner({
   hasEverHadPlan = false,
   className,
 }: FloatingBuildButtonProps) {
-  const { isDesktop, activeTab } = useMobileMode();
+  const { isDesktop, mode } = useMobileMode();
 
-  // Only show on mobile, in chat tab
-  if (isDesktop || activeTab !== 'chat') {
+  // Only show on mobile when in planner mode (chat visible)
+  if (isDesktop || mode !== 'planner') {
     return null;
   }
 

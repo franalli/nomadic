@@ -82,7 +82,7 @@ function MinimizedChatInputInner({
   disabled = false,
   className,
 }: MinimizedChatInputProps) {
-  const { activeTab, isDesktop } = useMobileMode();
+  const { mode, isDesktop } = useMobileMode();
   const [inputValue, setInputValue] = useState('');
   const [showSentToast, setShowSentToast] = useState(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,8 +96,8 @@ function MinimizedChatInputInner({
     };
   }, []);
 
-  // Only show on mobile when NOT on chat tab
-  const shouldShow = !isDesktop && activeTab !== 'chat';
+  // Only show on mobile when in plan mode (not in planner/chat mode)
+  const shouldShow = !isDesktop && mode === 'plan';
 
   const handleSubmit = useCallback(
     (e?: React.FormEvent) => {

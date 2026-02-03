@@ -166,6 +166,19 @@ CSRF_EXEMPT_PATHS = {
 CSRF_HEADER_NAME = "X-CSRF-Token"
 
 
+def _get_cors_headers(request: Request) -> dict:
+    """Get CORS headers for error responses based on request origin."""
+    origin = request.headers.get("origin", "")
+    # Only allow known origins (localhost for dev)
+    allowed_origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    if origin in allowed_origins:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+        }
+    return {}
+
+
 class CSRFMiddleware(BaseHTTPMiddleware):
     """
     CSRF protection using double-submit cookie pattern.
@@ -198,12 +211,16 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         if request.url.path in CSRF_EXEMPT_PATHS:
             return await call_next(request)
 
+        # Get CORS headers for error responses
+        cors_headers = _get_cors_headers(request)
+
         # Get CSRF token from cookie
         csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
         if not csrf_cookie:
             return JSONResponse(
                 status_code=403,
                 content={"detail": "CSRF cookie missing"},
+                headers=cors_headers,
             )
 
         # Get CSRF token from header
@@ -212,6 +229,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=403,
                 content={"detail": "CSRF token header missing"},
+                headers=cors_headers,
             )
 
         # Compare using constant-time comparison to prevent timing attacks
@@ -219,6 +237,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=403,
                 content={"detail": "CSRF token mismatch"},
+                headers=cors_headers,
             )
 
         # CSRF check passed

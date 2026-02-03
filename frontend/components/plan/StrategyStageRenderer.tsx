@@ -28,10 +28,11 @@
 import { AnimatePresence,motion } from 'framer-motion';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { useToast } from '@/components/ui/toast';
+
 import { InteractiveMap } from '@/components/map/InteractiveMap';
 import { MapErrorBoundary } from '@/components/map/MapErrorBoundary';
 import { useMobileMode } from '@/contexts/MobileModeContext';
-import { useItineraryRegeneration } from '@/hooks/useItineraryRegeneration';
 import { useScrollCollapse } from '@/hooks/useScrollCollapse';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { useViewNavigation } from '@/hooks/useViewNavigation';
@@ -156,6 +157,26 @@ function getSpecialistIcon(specialistType?: string): React.ReactNode {
   }
 }
 
+/**
+ * Get alternative destination suggestions for infeasible specialists
+ */
+function getAlternativeDestinations(specialistType?: string): string {
+  switch (specialistType?.toLowerCase()) {
+    case 'diving':
+      return 'Consider Bali, Red Sea, or Maldives.';
+    case 'skiing':
+      return 'Consider Alps, Aspen, or Hokkaido.';
+    case 'hiking':
+      return 'Consider Nepal, Patagonia, or Swiss Alps.';
+    case 'surfing':
+      return 'Consider Bali, Hawaii, or Portugal.';
+    case 'boating':
+      return 'Consider Greece, Croatia, or Caribbean.';
+    default:
+      return 'Try a different destination.';
+  }
+}
+
 interface StrategyStageRendererProps {
   state: PlanViewState;
   viewModel: PlanViewModel;
@@ -223,6 +244,12 @@ interface StrategyStageRendererProps {
   onOpenStaysSettings?: () => void;
   /** Callback to open flights settings sheet (for flight gear icons) */
   onOpenFlightsSettings?: () => void;
+  /** Whether trip inputs have changed since last regeneration (for inline refresh button) */
+  hasInputChanges?: boolean;
+  /** Whether regeneration is in progress (for inline refresh button) */
+  isRefreshing?: boolean;
+  /** Callback when refresh button is clicked (for inline refresh button) */
+  onRefresh?: () => void;
 }
 
 // renderStageContent - REMOVED for Unified Planning View
@@ -248,8 +275,8 @@ export function StrategyStageRenderer({
   isFinalizing = false,
   onReset: _onReset,
   onRefineAssumptions,
-  lastError,
-  onRetry,
+  lastError: _lastError,
+  onRetry: _onRetry,
   savedTileIds = new Set(),
   onSaveTile,
   tripInputs,
@@ -268,9 +295,21 @@ export function StrategyStageRenderer({
   onOpenActivitySettings,
   onOpenStaysSettings,
   onOpenFlightsSettings,
+  hasInputChanges = false,
+  isRefreshing = false,
+  onRefresh,
 }: StrategyStageRendererProps) {
-  // onReset reserved for future use (E_RESET event)
+  // DEBUG: Log refresh props received
+  console.log('[StrategyStageRenderer] 🔍 Refresh props received:', {
+    hasInputChanges,
+    isRefreshing,
+    hasOnRefresh: !!onRefresh,
+  });
+
+  // Unused props reserved for future use
   void _onReset;
+  void _lastError;
+  void _onRetry;
 
   // FIX: Subscribe to store to catch updates even if parent doesn't re-render
   // Priority: Store (Live) > Props (Parent passed)
@@ -282,22 +321,11 @@ export function StrategyStageRenderer({
   const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
   const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
 
-  // Itinerary regeneration system - auto-triggers on preference change
-  const {
-    isRegenerating: isRegenUpdating,
-    preferenceCount,
-    setExpandFn,
-  } = useItineraryRegeneration();
+  // Regeneration state from document store (managed by useManualRegeneration/usePreferenceAutoRegen)
+  const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
+  const preferenceCount = preferredTileIds.size;
 
-  // Wire up the expand function for auto-regeneration
-  useEffect(() => {
-    if (onExpandToItinerary) {
-      setExpandFn(onExpandToItinerary);
-    }
-    return () => setExpandFn(null);
-  }, [onExpandToItinerary, setExpandFn]);
-
-  // Unified regeneration state - combine plan regen (prop) and itinerary regen (hook)
+  // Unified regeneration state - combine plan regen (prop) and itinerary regen (store)
   // Shows overlay when EITHER is regenerating, locks UI during any regeneration
   const isAnyRegenerating = isRegenerating || isRegenUpdating;
 
@@ -336,6 +364,43 @@ export function StrategyStageRenderer({
     }
     prevHasItineraryRef.current = hasItineraryContent;
   }, [hasItineraryContent]);
+
+  // Toast for infeasible specialists
+  const { toast } = useToast();
+  const prevInfeasibleRef = useRef<Set<string>>(new Set());
+
+  // Show toast when specialists become infeasible or caveat (e.g., diving in Paris)
+  useEffect(() => {
+    const infeasibleSections = (viewModel.strategy_sections ?? []).filter(
+      section => section.feasibility_status === 'infeasible' || section.feasibility_status === 'caveat'
+    );
+
+    // Check for new infeasible sections
+    const newInfeasible = infeasibleSections.filter(
+      section => !prevInfeasibleRef.current.has(section.specialist_type ?? section.title)
+    );
+
+    if (newInfeasible.length > 0) {
+      const destination = effectiveTripInputs?.destination ?? destinationCard?.title ?? 'this destination';
+
+      newInfeasible.forEach(section => {
+        const specialistName = section.title || section.specialist_type || 'Activity';
+        const alternatives = getAlternativeDestinations(section.specialist_type);
+
+        toast(
+          `${specialistName} unavailable in ${destination}. ${alternatives}`,
+          { type: 'warning', duration: 5000 }
+        );
+
+        console.log(`[StrategyStageRenderer] ⚠️ Infeasible specialist toast: ${specialistName} in ${destination}`);
+      });
+    }
+
+    // Update ref with current infeasible sections
+    prevInfeasibleRef.current = new Set(
+      infeasibleSections.map(s => s.specialist_type ?? s.title)
+    );
+  }, [viewModel.strategy_sections, effectiveTripInputs?.destination, destinationCard?.title, toast]);
 
   // hasTripContext = canGeneratePlan (destination + dates set)
   const nextAction = getNextAction(state, generation, canGeneratePlan);
@@ -442,12 +507,21 @@ export function StrategyStageRenderer({
     // Cards are collapsed by default in SETUP mode - user can expand to see details
     // This ensures constraint visibility BEFORE date selection (core value prop)
     if (density === 'ghost') {
+      // Filter out infeasible specialists for ghost mode too
+      const ghostFeasibleSections = (viewModel.strategy_sections ?? []).filter(
+        section => section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat'
+      );
+      const ghostFilteredViewModel: PlanViewModel = {
+        ...viewModel,
+        strategy_sections: ghostFeasibleSections,
+      };
+
       const tripDuration = effectiveTripInputs?.trip_duration ?? 5;
-      const ghostDayCards = generateGhostDayCards(viewModel.strategy_sections, tripDuration);
+      const ghostDayCards = generateGhostDayCards(ghostFeasibleSections, tripDuration);
       const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
 
-      // Count constraints across all specialists for the header badge
-      const totalConstraints = (viewModel.strategy_sections ?? []).reduce(
+      // Count constraints across feasible specialists for the header badge
+      const totalConstraints = ghostFeasibleSections.reduce(
         (acc, s) => acc + (s.constraints_applied?.length ?? 0),
         0
       );
@@ -455,10 +529,10 @@ export function StrategyStageRenderer({
       return (
         <div className="p-4 space-y-4">
           {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
-          {destinationCard?.title && (viewModel.strategy_sections?.length ?? 0) > 0 && (
+          {destinationCard?.title && ghostFeasibleSections.length > 0 && (
             <ReadyToPlanBanner
               destination={destinationCard.title}
-              questionsAsked={viewModel.strategy_sections?.length ?? 1}
+              questionsAsked={ghostFeasibleSections.length}
               onStartPlanning={() => onOpenSheet?.('dates')}
               className="mb-2"
             />
@@ -481,7 +555,7 @@ export function StrategyStageRenderer({
 
           {/* SPECIALIST CARDS (collapsed by default in SETUP mode) */}
           <S2StrategyView
-            viewModel={viewModel}
+            viewModel={ghostFilteredViewModel}
             destinationCard={destinationCard}
             pendingTopics={viewModel.pending_strategy_topics}
             executedTopics={viewModel.executed_strategy_topics}
@@ -518,7 +592,14 @@ export function StrategyStageRenderer({
     // Show Strategy Cards (expert recommendations) + Map only
     // @see docs/ux_unified_architecture.md Section VII - Bridge Mode
     if (density === 'bridge') {
-      const sections = viewModel.strategy_sections ?? [];
+      // Filter out infeasible specialists for bridge mode
+      const sections = (viewModel.strategy_sections ?? []).filter(
+        section => section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat'
+      );
+      const bridgeFilteredViewModel: PlanViewModel = {
+        ...viewModel,
+        strategy_sections: sections,
+      };
       const mapPOIs = extractPOIsFromSections(sections);
 
       // Get destination coordinates for map center
@@ -584,7 +665,7 @@ export function StrategyStageRenderer({
 
             {/* Strategy Cards - collapsed in SETUP (no dates), auto-expand in PLAN (has dates) */}
             <S2StrategyView
-              viewModel={viewModel}
+              viewModel={bridgeFilteredViewModel}
               destinationCard={destinationCard}
               pendingTopics={viewModel.pending_strategy_topics}
               executedTopics={viewModel.executed_strategy_topics}
@@ -628,6 +709,46 @@ export function StrategyStageRenderer({
     // Mobile: Inline map between tiles and timeline
     // @see docs/ux_unified_architecture.md - Unified Planning View
 
+    // DEBUG: Log S3 rendering state with full detail
+    console.log('[StrategyStageRenderer] 🎯 Rendering FULL density mode');
+    console.log('[StrategyStageRenderer] Current state:', state);
+    console.log('[StrategyStageRenderer] 🔬 RAW strategy_sections:', JSON.stringify(viewModel.strategy_sections, null, 2));
+
+    // Check each section's feasibility_status
+    (viewModel.strategy_sections ?? []).forEach((section, idx) => {
+      console.log(`[StrategyStageRenderer] Section ${idx}:`, {
+        title: section.title,
+        specialist_type: section.specialist_type,
+        feasibility_status: section.feasibility_status,
+        hasFeasibilityStatus: 'feasibility_status' in section
+      });
+    });
+
+    // Filter out infeasible specialists (e.g., diving in Paris)
+    // Backend marks feasibility_status='infeasible'|'caveat' when specialist doesn't apply
+    const feasibleSections = (viewModel.strategy_sections ?? []).filter(section => {
+      const isFeasible = section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat';
+      console.log(`[StrategyStageRenderer] ${section.title}: feasibility_status=${section.feasibility_status}, keeping=${isFeasible}`);
+      return isFeasible;
+    });
+    console.log('[StrategyStageRenderer] ✅ Filtered:', feasibleSections.length, 'of', viewModel.strategy_sections?.length ?? 0);
+
+    // Create a filtered viewModel for S2StrategyView (only feasible specialists)
+    const filteredViewModel: PlanViewModel = {
+      ...viewModel,
+      strategy_sections: feasibleSections,
+    };
+
+    if (state === 'S3_ITINERARY_READY') {
+      console.log('[StrategyStageRenderer] 🎯 S3_ITINERARY_READY: Showing Accordion + BookingSection + Timeline');
+      console.log('[StrategyStageRenderer] Feasible specialists:', feasibleSections.map(s => ({
+        title: s.title,
+        specialist_type: s.specialist_type,
+        feasibility_status: s.feasibility_status,
+        constraints: s.constraints_applied?.length ?? 0
+      })));
+    }
+
     // Get destination coordinates for map (used in P3+ only)
     const destCoords = getDestinationCoords(destinationCard?.title);
     const mapCenter = destCoords
@@ -664,38 +785,40 @@ export function StrategyStageRenderer({
         >
           {/* SECTION 1: SPECIALISTS */}
           <section id="specialists-section" className="relative">
-            {/* S3 (itinerary ready): Show compact DNA bar instead of full specialist cards */}
-            {hasItineraryContent && viewModel.strategy_sections && viewModel.strategy_sections.length > 0 ? (
-              <div className="flex items-center gap-2 mb-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
-                <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
-                <div className="flex gap-2 flex-wrap">
-                  {viewModel.strategy_sections.map((section) => (
-                    <button
-                      key={section.id || section.title}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs"
-                    >
-                      {getSpecialistIcon(section.specialist_type)}
-                      <span className="font-medium">{section.title}</span>
-                      <span className="text-zinc-400">({section.constraints_applied?.length || 0})</span>
-                    </button>
-                  ))}
+            {/* ALWAYS show specialist cards + Trip DNA bar when feasible sections exist */}
+            {feasibleSections.length > 0 && (
+              <>
+                {/* Specialist cards - always visible (ABOVE) */}
+                <S2StrategyView
+                  key={`strategy-${destinationCard?.title}`}
+                  viewModel={filteredViewModel}
+                  destinationCard={destinationCard}
+                  onRefineAssumptions={onRefineAssumptions}
+                  canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
+                  pendingTopics={viewModel.pending_strategy_topics}
+                  executedTopics={viewModel.executed_strategy_topics}
+                  tiles={effectiveTiles}
+                  tripInputs={effectiveTripInputs}
+                  density={density}
+                  onOpenActivitySettings={onOpenActivitySettings}
+                />
+                {/* Trip DNA bar - always visible (BELOW specialist cards) */}
+                <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
+                  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
+                  <div className="flex gap-2 flex-wrap">
+                    {feasibleSections.map((section) => (
+                      <button
+                        key={section.id || section.title}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs"
+                      >
+                        {getSpecialistIcon(section.specialist_type)}
+                        <span className="font-medium">{section.title}</span>
+                        <span className="text-zinc-400">({section.constraints_applied?.length || 0})</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              /* S2 (strategy ready): Show full specialist cards */
-              <S2StrategyView
-                key={`strategy-${destinationCard?.title}`}
-                viewModel={viewModel}
-                destinationCard={destinationCard}
-                onRefineAssumptions={onRefineAssumptions}
-                canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
-                pendingTopics={viewModel.pending_strategy_topics}
-                executedTopics={viewModel.executed_strategy_topics}
-                tiles={effectiveTiles}
-                tripInputs={effectiveTripInputs}
-                density={density}
-                onOpenActivitySettings={onOpenActivitySettings}
-              />
+              </>
             )}
 
             {/* Regeneration overlay - unified for plan AND itinerary regeneration */}
@@ -967,6 +1090,10 @@ export function StrategyStageRenderer({
           mode={effectiveMode}
           planningPhase={planningPhase}
           progress={planningProgress}
+          // Inline refresh button props
+          hasInputChanges={hasInputChanges}
+          isRefreshing={isRefreshing}
+          onRefresh={onRefresh}
         />
 
         {/* Content - direct render, scrollable */}
@@ -1019,6 +1146,10 @@ export function StrategyStageRenderer({
         mode={effectiveMode}
         planningPhase={planningPhase}
         progress={planningProgress}
+        // Inline refresh button props
+        hasInputChanges={hasInputChanges}
+        isRefreshing={isRefreshing}
+        onRefresh={onRefresh}
       />
 
       {/* View container - relative positioning for absolute views */}
@@ -1127,12 +1258,7 @@ export function StrategyStageRenderer({
           >
             <NextStepBar
               state={state}
-              generation={generation}
               nextAction={nextAction}
-              onExpandToItinerary={onExpandToItinerary}
-              onOpenDates={() => onOpenSheet?.('dates')}
-              lastError={lastError}
-              onRetry={onRetry}
             />
           </motion.div>
         )}
