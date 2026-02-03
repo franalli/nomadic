@@ -13,7 +13,7 @@
  *
  * Layout:
  * ┌─────────────────────────────┐
- * │ PlanHeader (sticky top)     │  ← Hero + GlassCommandBar
+ * │ PlanHeader (sticky top)     │  ← Hero + StatusBadge
  * ├─────────────────────────────┤
  * │ StageBody (scrollable)      │  ← Stage views render content here
  * │   - S0: Ghost timeline      │     (No form - Zero-UI)
@@ -48,8 +48,6 @@ import { cn } from '@/lib/utils';
 import { useDocumentStore } from '@/state/documentStore';
 import type { DocumentTripInputs } from '@/types/document';
 import {
-  computePlanningPhase,
-  computePlanningProgress,
   type DestinationCard,
   normalizePlanViewState,
   type PlanViewModel,
@@ -102,7 +100,7 @@ export function computeDataDensity(
   return 'full';
 }
 
-import { Bike, Compass, Loader2, Mountain, Sailboat, Snowflake, Waves } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import {
   REVEAL_TIMING,
@@ -135,27 +133,6 @@ import { S2StrategyView } from './stages/S2StrategyView';
 // import { S3ItineraryView } from './stages/S3ItineraryView';
 import { TimelineSkeleton } from './timeline/TimelineSkeleton';
 import { TimelineThread } from './TimelineThread';
-
-/**
- * Get specialist icon for DNA bar display
- */
-function getSpecialistIcon(specialistType?: string): React.ReactNode {
-  const iconClass = 'w-3 h-3';
-  switch (specialistType?.toLowerCase()) {
-    case 'diving':
-      return <Waves className={iconClass} />;
-    case 'hiking':
-      return <Mountain className={iconClass} />;
-    case 'skiing':
-      return <Snowflake className={iconClass} />;
-    case 'cycling':
-      return <Bike className={iconClass} />;
-    case 'boating':
-      return <Sailboat className={iconClass} />;
-    default:
-      return <Compass className={iconClass} />;
-  }
-}
 
 /**
  * Get alternative destination suggestions for infeasible specialists
@@ -220,14 +197,6 @@ interface StrategyStageRendererProps {
   isCommitting?: boolean;
   /** Whether user has ever had a plan generated (for CTA label) */
   hasEverHadPlan?: boolean;
-  /** Stage navigation: Setup click handler */
-  onSetupClick?: () => void;
-  /** Stage navigation: Plan click handler */
-  onPlanClick?: () => void;
-  /** Stage navigation: Book click handler */
-  onBookClick?: () => void;
-  /** Whether user has minimum selections to enable Book stage */
-  hasMinimumSelections?: boolean;
   /** Whether plan is currently regenerating due to constraint changes */
   isRegenerating?: boolean;
   /** Called when user selects a quick pick nights option from inline date prompt */
@@ -283,10 +252,6 @@ export function StrategyStageRenderer({
   onOpenSheet,
   isCommitting = false,
   hasEverHadPlan = false,
-  onSetupClick,
-  onPlanClick,
-  onBookClick,
-  hasMinimumSelections = false,
   isRegenerating = false,
   onSelectNights,
   mode: explicitMode,
@@ -436,19 +401,10 @@ export function StrategyStageRenderer({
   const isStreaming = generating || isCommitting || isExpandingItinerary;
 
   // View navigation - two-mode system (PLANNING + BOOKING)
-  const { activeMode, canViewBooking, activeView, canViewSetup, canViewPlan } = useViewNavigation();
+  const { activeMode, canViewBooking: _canViewBooking, activeView: _activeView, canViewSetup: _canViewSetup, canViewPlan: _canViewPlan } = useViewNavigation();
 
   // Two-mode system: use activeMode from hook, allow explicit override
   const effectiveMode: ViewMode = explicitMode ?? activeMode;
-
-  // Compute planning phase for ModeIndicator
-  // Note: hasItineraryContent is computed above with auto-scroll logic
-  const planningPhase = computePlanningPhase(
-    effectiveTripInputs,
-    hasItineraryContent,
-    hasMinimumSelections
-  );
-  const planningProgress = computePlanningProgress(planningPhase);
 
   // =========================================================================
   // UNIFIED PLANNING VIEW - Preferences & Scroll State
@@ -802,7 +758,7 @@ export function StrategyStageRenderer({
                   density={density}
                   onOpenActivitySettings={onOpenActivitySettings}
                 />
-                {/* Trip DNA bar - always visible (BELOW specialist cards) */}
+                {/* Trip DNA bar - HIDDEN for MVP
                 <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
                   <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
                   <div className="flex gap-2 flex-wrap">
@@ -818,6 +774,7 @@ export function StrategyStageRenderer({
                     ))}
                   </div>
                 </div>
+                */}
               </>
             )}
 
@@ -1075,22 +1032,7 @@ export function StrategyStageRenderer({
           tripInputs={effectiveTripInputs}
           onOpenSheet={onOpenSheet}
           isStreaming={isStreaming}
-          onSetupClick={onSetupClick}
-          onPlanClick={onPlanClick}
-          onBookClick={onBookClick}
-          hasMinimumSelections={hasMinimumSelections}
           isCollapsed={isCollapsed}
-          // Legacy props for GlassCommandBar fallback (deprecated)
-          activeView={activeView}
-          canViewSetup={canViewSetup}
-          canViewPlan={canViewPlan}
-          canViewBook={canViewBooking}
-          // Two-mode system (PLANNING + BOOKING)
-          useModeIndicator={true}
-          mode={effectiveMode}
-          planningPhase={planningPhase}
-          progress={planningProgress}
-          // Inline refresh button props
           hasInputChanges={hasInputChanges}
           isRefreshing={isRefreshing}
           onRefresh={onRefresh}
@@ -1131,22 +1073,7 @@ export function StrategyStageRenderer({
         tripInputs={effectiveTripInputs}
         onOpenSheet={onOpenSheet}
         isStreaming={isStreaming}
-        onSetupClick={onSetupClick}
-        onPlanClick={onPlanClick}
-        onBookClick={onBookClick}
-        hasMinimumSelections={hasMinimumSelections}
         isCollapsed={!isDesktop && isCollapsed}
-        // Legacy props for GlassCommandBar fallback (deprecated)
-        activeView={activeView}
-        canViewSetup={canViewSetup}
-        canViewPlan={canViewPlan}
-        canViewBook={canViewBooking}
-        // Two-mode system (PLANNING + BOOKING)
-        useModeIndicator={true}
-        mode={effectiveMode}
-        planningPhase={planningPhase}
-        progress={planningProgress}
-        // Inline refresh button props
         hasInputChanges={hasInputChanges}
         isRefreshing={isRefreshing}
         onRefresh={onRefresh}

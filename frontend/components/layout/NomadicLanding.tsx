@@ -31,7 +31,6 @@ import {
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { RefreshOverlay } from '@/components/RefreshOverlay';
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/components/ui/toast';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
 import { useManualRegeneration } from '@/hooks/useManualRegeneration';
@@ -136,7 +135,7 @@ export function NomadicLanding() {
   const { activeSheet, openSheet, closeSheet } = useSheetManager();
 
   // View navigation - decoupled from plan_view_state
-  const { navigateTo, hasLeftSetup, finalizePlan, canViewPlan, activeView } = useViewNavigation();
+  const { navigateTo, hasLeftSetup: _hasLeftSetup, finalizePlan, canViewPlan, activeView } = useViewNavigation();
 
   // ChatPanel ref - defined early so regeneration can trigger via it
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
@@ -302,9 +301,6 @@ export function NomadicLanding() {
 
   // Shortlist hook - manages user's saved tiles in S2
   const shortlist = useShortlist();
-
-  // Confirmation dialog for destructive Setup click (from Plan/Book mode)
-  const [setupConfirmDialogOpen, setSetupConfirmDialogOpen] = useState(false);
 
   // Destination image state - fetched from Unsplash when destination changes
   const [destinationImageUrl, setDestinationImageUrl] = useState<string | null>(null);
@@ -688,7 +684,7 @@ export function NomadicLanding() {
       if (!isDesktop) {
         switchToPlan(); // Mobile uses tab switching
       }
-      // Desktop: Update activeView in store (drives GlassCommandBar)
+      // Desktop: Update activeView in store
       setActiveView('planning');
     }
   }, [isDesktop, planViewState, switchToPlan, setActiveView]);
@@ -1419,60 +1415,6 @@ export function NomadicLanding() {
     chatPanelRef.current?.sendMessage?.(message);
   }, []);
 
-  // Stage navigation handlers for interactive stepper tabs
-  // Setup: Navigate to Setup view (only allowed before planning)
-  const handleSetupClick = useCallback(() => {
-    // If plan exists, Setup is locked - show confirmation dialog as fallback
-    if (hasLeftSetup) {
-      setSetupConfirmDialogOpen(true);
-    } else {
-      // No plan yet - navigate to Setup view
-      navigateTo('setup');
-      if (!isDesktop) {
-        switchToPlanner();
-      }
-    }
-  }, [hasLeftSetup, navigateTo, isDesktop, switchToPlanner]);
-
-  // Confirmed setup action - open sheet for editing (Setup is locked after planning)
-  const handleConfirmedSetupNavigation = useCallback(() => {
-    // Open destination sheet for editing core constraints
-    openSheet('destination');
-    setSetupConfirmDialogOpen(false);
-  }, [openSheet]);
-
-  // Plan: Navigate to Plan view
-  const handlePlanClick = useCallback(() => {
-    if (navigateTo('plan')) {
-      if (!isDesktop) {
-        switchToPlan();
-      }
-    }
-  }, [navigateTo, isDesktop, switchToPlan]);
-
-  // Book: Navigate to Book view
-  const handleBookClick = useCallback(() => {
-    if (navigateTo('book')) {
-      if (!isDesktop) {
-        // Mobile: switch to book tab (handled by MobileModeContext sync)
-      }
-    }
-  }, [navigateTo, isDesktop]);
-
-  // Compute minimum selections for Book stage gating (1 flight + 1 hotel)
-  const hasMinimumSelections = useMemo(() => {
-    const savedTiles = Array.from(shortlist.savedTileIds);
-    const hasHotel = savedTiles.some((id) => {
-      const tile = tiles[id];
-      return tile?.type === 'hotel' || tile?.type === 'stay';
-    });
-    const hasFlight = savedTiles.some((id) => {
-      const tile = tiles[id];
-      return tile?.type === 'flight';
-    });
-    return hasHotel && hasFlight;
-  }, [shortlist.savedTileIds, tiles]);
-
   // Planner content (left panel): ChatPanel (primary funnel with refinements inside)
   const plannerContent = (
     <ChatPanel
@@ -1574,10 +1516,6 @@ export function NomadicLanding() {
       isCommitting={isCommitting}
       onOpenSheet={openSheet}
       hasEverHadPlan={hasEverHadPlan}
-      onSetupClick={handleSetupClick}
-      onPlanClick={handlePlanClick}
-      onBookClick={handleBookClick}
-      hasMinimumSelections={hasMinimumSelections}
       isRegenerating={isRegenerating}
       onSelectNights={handleSelectNights}
       conflictData={conflictData}
@@ -1659,18 +1597,6 @@ export function NomadicLanding() {
         {/* Full-screen overlay during refresh */}
         <RefreshOverlay isRefreshing={isRefreshing} />
       </div>
-
-      {/* Destructive action confirmation - when clicking Setup from Plan/Book */}
-      <ConfirmDialog
-        isOpen={setupConfirmDialogOpen}
-        onClose={() => setSetupConfirmDialogOpen(false)}
-        onConfirm={handleConfirmedSetupNavigation}
-        title="Edit trip details?"
-        description="Changing dates or destination will reset your current itinerary. Any saved selections will need to be re-added."
-        confirmLabel="Edit Details"
-        cancelLabel="Keep Plan"
-        variant="destructive"
-      />
 
       {/* Trip input sheets - shared between header pills and chat panel */}
       {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}

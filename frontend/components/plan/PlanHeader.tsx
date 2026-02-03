@@ -15,17 +15,16 @@
 
 'use client';
 
-import { ArrowRight, ChevronLeft, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowRight, Loader2, RefreshCw } from 'lucide-react';
 import React from 'react';
 
-import { GlassCommandBar } from '@/components/plan/GlassCommandBar';
-import { ModeIndicator } from '@/components/plan/PlanningProgress';
+import { StatusBadge } from '@/components/plan/StatusBadge';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
 import { placeholderImagesForBranch } from '@/lib/placeholders';
 import { getStatusPillText } from '@/lib/statusCopyMap';
 import type { DocumentTripInputs } from '@/types/document';
-import type { DestinationCard, PlanningPhase, ViewMode } from '@/types/plan-envelope';
+import type { DestinationCard } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 
 export interface PlanHeaderProps {
@@ -54,40 +53,9 @@ export interface PlanHeaderProps {
   isRefreshing?: boolean;
   /** Callback when refresh button is clicked */
   onRefresh?: () => void;
-  /** Callback when Setup stage is clicked (navigate back to setup/config) */
-  onSetupClick?: () => void;
-  /** Callback when Plan stage is clicked (navigate to plan view) */
-  onPlanClick?: () => void;
-  /** Callback when Book stage is clicked (navigate to booking view) */
-  onBookClick?: () => void;
-  /** Whether user has minimum selections to enable Book stage */
-  hasMinimumSelections?: boolean;
   /** Whether header is collapsed (mobile scroll state) */
   isCollapsed?: boolean;
-  /** @deprecated Legacy prop - use `mode` instead for two-mode system */
-  activeView?: 'setup' | 'plan' | 'book';
-  /** @deprecated Legacy prop - always true in two-mode system */
-  canViewSetup?: boolean;
-  /** Whether Plan view is unlocked (destination exists) */
-  canViewPlan?: boolean;
-  /** Whether Book view is unlocked (tiles exist) */
-  canViewBook?: boolean;
-
-  // Two-mode system props (PLANNING + BOOKING)
-  /** Current mode in two-mode system */
-  mode?: ViewMode;
-  /** Planning phase for progress tracking */
-  planningPhase?: PlanningPhase;
-  /** Progress percentage (0-100) */
-  progress?: number;
-  /** Whether to use new ModeIndicator instead of GlassCommandBar */
-  useModeIndicator?: boolean;
-  /** Callback when mode is changed via ModeIndicator */
-  onModeChange?: (mode: ViewMode) => void;
 }
-
-/** Step key type for navigation callbacks */
-type StepKey = 'setup' | 'plan' | 'book';
 
 export function PlanHeader({
   destinationCard,
@@ -105,21 +73,7 @@ export function PlanHeader({
   hasInputChanges = false,
   isRefreshing = false,
   onRefresh,
-  onSetupClick,
-  onPlanClick,
-  onBookClick,
-  hasMinimumSelections = false,
   isCollapsed = false,
-  activeView,
-  canViewSetup = true,
-  canViewPlan = false,
-  canViewBook = false,
-  // Two-mode system props
-  mode,
-  planningPhase,
-  progress = 0,
-  useModeIndicator = false,
-  onModeChange,
 }: PlanHeaderProps) {
   // DEBUG: Log refresh-related props
   console.log('[PlanHeader] 🔍 Props received:', {
@@ -137,31 +91,10 @@ export function PlanHeader({
   void _currentStage;
   // hasDates reserved for future use
   void _hasDates;
-  // hasMinimumSelections reserved for future Book view gating
-  void hasMinimumSelections;
   // Determine variant based on whether we have a destination
   const title = destinationCard?.title || fallbackTitle || '';
   const hasDestination = Boolean(title);
   const subtitle = destinationCard?.subtitle;
-
-  // Handle step clicks - map step key to appropriate callback
-  const handleStepClick = React.useCallback(
-    (step: StepKey) => {
-      switch (step) {
-        case 'setup':
-          onSetupClick?.();
-          break;
-        case 'plan':
-          onPlanClick?.();
-          break;
-        case 'book':
-          // Navigation to Book view - canViewBook already gates this in StageStepper
-          onBookClick?.();
-          break;
-      }
-    },
-    [onSetupClick, onPlanClick, onBookClick]
-  );
 
   // Status pill text for progress indicator
   const statusPillText = getStatusPillText(isGenerating, isExpandingItinerary);
@@ -336,6 +269,11 @@ export function PlanHeader({
             {/* Subtle scrim for text readability - z-10 so pills can be above */}
             <div className="absolute inset-0 z-10 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
 
+            {/* Status Badge - top-right of postcard */}
+            <div className="absolute top-3 right-3 z-20">
+              <StatusBadge state={planViewState} />
+            </div>
+
             {/* Destination content overlay - title/subtitle only */}
             <div className="absolute inset-0 z-10 flex flex-col justify-end p-5 pb-14">
               <h2 className="text-xl font-semibold text-white drop-shadow-md">{title}</h2>
@@ -401,59 +339,6 @@ export function PlanHeader({
           </div>
         </div>
       </div>
-
-      {/* Navigation Controls - Desktop only (mobile uses bottom nav) */}
-      <div className="hidden md:block">
-        {useModeIndicator && mode && planningPhase ? (
-          // Two-mode system: ModeIndicator with PLANNING/BOOKING pills
-          <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 z-30">
-            <div className="bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md rounded-full px-4 py-2 shadow-lg border border-zinc-200/50 dark:border-zinc-700/50">
-              <ModeIndicator
-                mode={mode}
-                phase={planningPhase}
-                progress={progress}
-                onModeClick={onModeChange}
-                canViewBooking={canViewBook}
-              />
-            </div>
-          </div>
-        ) : (
-          // Legacy three-mode system: GlassCommandBar (fallback when useModeIndicator=false)
-          <GlassCommandBar
-            activeView={activeView ?? (mode === 'booking' ? 'book' : 'plan')}
-            canViewSetup={canViewSetup}
-            canViewPlan={canViewPlan}
-            canViewBook={canViewBook}
-            isGenerating={isGenerating}
-            onNavigate={(view) => handleStepClick(view as 'setup' | 'plan' | 'book')}
-          />
-        )}
-      </div>
-
-      {/* THE ARCHITECT INSTRUCTION LAYER - Early PLANNING mode only */}
-      {/* Console-style status indicator for the empty/setup state */}
-      {/* Hidden once destination exists - the Hero Image IS the confirmation */}
-      {/* Terminal Status Message - contextual based on what input is still needed */}
-      {mode === 'planning' && !hasDestination && (
-        <div className="mt-8 flex flex-col items-center justify-center space-y-2 animate-in fade-in slide-in-from-bottom-2 duration-700 delay-500">
-          <div className="flex items-center gap-3 group cursor-default">
-            {/* The Pointer (Animated '<<') */}
-            <div className="flex text-zinc-900 dark:text-emerald-400 animate-pulse">
-              <ChevronLeft className="w-3 h-3 -mr-1.5" />
-              <ChevronLeft className="w-3 h-3" />
-            </div>
-            {/* The System Text - "Typewriter Ink" (Light) / "System Pulse" (Dark) */}
-            <p className="font-mono text-[10px] uppercase tracking-[0.25em] select-none font-bold text-zinc-950 dark:text-emerald-500 dark:drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]">
-              Awaiting Input_
-            </p>
-            {/* The Blinking Cursor */}
-            <div className="w-1.5 h-2.5 bg-zinc-950 dark:bg-emerald-500 animate-blink dark:shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
-          </div>
-        </div>
-      )}
-
-      {/* Spacer to accommodate floating command bar */}
-      <div className="h-8" />
     </div>
   );
 }
