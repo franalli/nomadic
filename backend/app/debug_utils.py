@@ -656,6 +656,31 @@ class NodeTimer:
         self.outputs.update(kwargs)
 
 
+def _debug_itinerary(message: str, **kwargs: Any) -> None:
+    """Print itinerary builder debug message. Shown in full AND compact modes."""
+    mode = get_debug_mode()
+    if mode not in ("full", "compact"):
+        return
+    try:
+        max_len = 2000
+        if len(message) > max_len:
+            message = message[:max_len] + "...(truncated)"
+
+        extras_parts = []
+        for k, v in kwargs.items():
+            try:
+                v_str = str(v)
+                if len(v_str) > 200:
+                    v_str = v_str[:200] + "..."
+                extras_parts.append(f"{k}={v_str}")
+            except Exception:
+                extras_parts.append(f"{k}=<unserializable>")
+        extras = " ".join(extras_parts) if extras_parts else ""
+        _safe_print(f"[ITINERARY] {message} {extras}".strip())
+    except Exception:
+        pass
+
+
 def _debug(message: str, **kwargs: Any) -> None:
     """Print debug message. Only shown in full mode."""
     if get_debug_mode() != "full":

@@ -303,17 +303,47 @@ def generate_suggested_replies(state: GraphState) -> List[str]:
         suggestions = ["Next week", "Next month", "I'm flexible"]
     elif state.active_specialist or state.metadata.get("last_executed_specialist"):
         topic = state.active_specialist or state.metadata.get("last_executed_specialist")
-        if topic == "diving":
-            suggestions = ["Add more dives", "Show dive shops", "Check equipment"]
-        elif topic == "hiking":
-            suggestions = ["Add trail", "Check weather", "Show gear list"]
-        elif topic == "skiing":
-            suggestions = ["Add ski days", "Book lessons", "Show resorts"]
-        else:
-            suggestions = ["Add activities", "Change dates", "Show options"]
-    elif state.tiles:
+
+        # Check if specialist is feasible before suggesting specialist-specific actions
+        # Handle both dict (post-serialization) and Pydantic (pre-serialization) formats
+        strategy_sections = state.metadata.get("strategy_sections", [])
+        specialist_section = next(
+            (
+                s
+                for s in strategy_sections
+                if (
+                    s.get("specialist_type")
+                    if isinstance(s, dict)
+                    else getattr(s, "specialist_type", None)
+                )
+                == topic
+            ),
+            None,
+        )
+        feasibility = (
+            (
+                specialist_section.get("feasibility_status")
+                if isinstance(specialist_section, dict)
+                else getattr(specialist_section, "feasibility_status", "feasible")
+            )
+            if specialist_section
+            else "feasible"
+        )
+
+        # Only suggest specialist-specific actions if feasible or caveat
+        if feasibility != "infeasible":
+            if topic == "diving":
+                suggestions = ["Add more dives", "Show dive shops", "Check equipment"]
+            elif topic == "hiking":
+                suggestions = ["Add trail", "Check weather", "Show gear list"]
+            elif topic == "skiing":
+                suggestions = ["Add ski days", "Book lessons", "Show resorts"]
+            else:
+                suggestions = ["Add activities", "Change dates", "Show options"]
+        # If infeasible: fall through to generic suggestions below
+    if not suggestions and state.tiles:
         suggestions = ["Show flights", "Show hotels", "Add activities"]
-    else:
+    if not suggestions:
         suggestions = ["Search options", "Change destination", "Adjust budget"]
 
     # Ensure exactly 3 suggestions

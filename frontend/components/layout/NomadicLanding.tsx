@@ -160,55 +160,30 @@ export function NomadicLanding() {
     resetState: resetManualRegeneration,
   } = useManualRegeneration({
     onFullRegenerate: useCallback(() => {
-      console.log('🔴 [1] onFullRegenerate START');
-
       // Block Path A auto-trigger during manual refresh
       manualRefreshPendingRef.current = true;
-      console.log('🔴 [2] manualRefreshPendingRef set to true');
 
       // Trigger full plan regeneration via ChatPanel
-      const tripInputs = useDocumentStore.getState().document?.trip_inputs;
-      console.log('🔴 [3] Trip inputs:', tripInputs?.destination);
-      console.log('🔴 [4] ChatPanel ref:', !!chatPanelRef.current);
-      console.log('🔴 [5] sendMessage function:', !!chatPanelRef.current?.sendMessage);
-
       if (!chatPanelRef.current?.sendMessage) {
-        console.error('🔴 [6] ABORT - ChatPanel ref not available!');
         manualRefreshPendingRef.current = false;
         return;
       }
 
-      console.log('🔴 [7] Calling sendMessage with:', GENERATE_PLAN_TRIGGER);
       chatPanelRef.current.sendMessage(GENERATE_PLAN_TRIGGER);
-      console.log('🔴 [8] sendMessage returned');
     }, []),
     onAfterRegenerate: useCallback(() => {
       // Auto-trigger itinerary generation after plan refresh
-      // This ensures user gets new itinerary when destination/settings change
-      console.log('[NomadicLanding] 🔗 onAfterRegenerate START - Forcing itinerary generation');
-
       // CRITICAL: Clear old runId before generating new itinerary
-      // Old Bali runId would block new Paris itinerary generation
-      const oldRunId = useDocumentStore.getState().currentRunId;
-      console.log('[NomadicLanding] Old runId:', oldRunId);
       useDocumentStore.getState().abortGeneration();
-      console.log('[NomadicLanding] 🧹 Cleared old runId');
 
       // DIRECT CALL via ref: Bypass handleExpandToItinerary gates since we just completed refresh
-      // We know: 1) refresh succeeded, 2) data is valid, 3) isRegenerating was just reset
-      console.log('[NomadicLanding] proceedWithItineraryGenerationRef exists:', !!proceedWithItineraryGenerationRef.current);
-
       if (proceedWithItineraryGenerationRef.current) {
-        console.log('[NomadicLanding] 🚀 Calling proceedWithItineraryGenerationRef.current()...');
         proceedWithItineraryGenerationRef.current();
-      } else {
-        console.error('[NomadicLanding] ❌ proceedWithItineraryGenerationRef.current is null!');
       }
 
       // Clear manual refresh flag after delay (let generation start first)
       setTimeout(() => {
         manualRefreshPendingRef.current = false;
-        console.log('[NomadicLanding] 🔓 manualRefreshPendingRef cleared');
       }, 1000);
     }, []),
     onError: useCallback((error: Error) => {
@@ -497,9 +472,24 @@ export function NomadicLanding() {
 
   // NEW: Derive plan state envelope fields
   // Use backend-provided plan_state if available, otherwise derive from local state
-  // CRITICAL: Use selector for reactivity - accessing documentStore.document directly won't re-render
-  const storeDocument = useDocumentStore((state) => state.document);
-  const documentPlanState = storeDocument?.plan_state;
+  // GRANULAR SELECTORS: Each field subscribes independently to reduce re-render cascade
+  // @see docs/ux_unified_architecture.md - Performance: Zustand selector granularity
+  const docPlanState = useDocumentStore((s) => s.document?.plan_state);
+  const docDestinationCard = useDocumentStore((s) => s.document?.destination_card);
+  const docPlanViewState = useDocumentStore((s) => s.document?.plan_view_state);
+  const docStrategySections = useDocumentStore((s) => s.document?.strategy_sections);
+  const docTiles = useDocumentStore((s) => s.document?.tiles);
+  const docExecutedTopics = useDocumentStore((s) => s.document?.executed_strategy_topics);
+  const docPendingTopics = useDocumentStore((s) => s.document?.pending_strategy_topics);
+  const docDayCards = useDocumentStore((s) => s.document?.day_cards);
+  const docGeneration = useDocumentStore((s) => s.document?.generation);
+  const docOpenDecisions = useDocumentStore((s) => s.document?.open_decisions);
+  const docItineraryOverview = useDocumentStore((s) => s.document?.itinerary_overview);
+  const docItineraryAssumptions = useDocumentStore((s) => s.document?.itinerary_assumptions);
+  const docNeedsRefresh = useDocumentStore((s) => s.document?.needs_refresh);
+  const docCanExpand = useDocumentStore((s) => s.document?.can_expand_to_itinerary);
+
+  const documentPlanState = docPlanState;
   const planState: PlanState = useMemo(() => {
     if (documentPlanState) return documentPlanState;
     // Fallback: derive from local state
@@ -524,7 +514,7 @@ export function NomadicLanding() {
   // Use route-derived subtitle: "Origin → Destination · Date"
   // Include fetched destination image URL for immediate display
   const destinationCard =
-    storeDocument?.destination_card ??
+    docDestinationCard ??
     (hasDestination
       ? {
           title: tripInputs.destination ?? '',
@@ -560,13 +550,13 @@ export function NomadicLanding() {
 
   // Plan View State (for StrategyStageRenderer)
   // Use backend's plan_view_state if available, otherwise derive locally
-  const backendPlanViewState = storeDocument?.plan_view_state;
-  const hasStrategyContent = (storeDocument?.strategy_sections?.length ?? 0) > 0;
+  const backendPlanViewState = docPlanViewState;
+  const hasStrategyContent = (docStrategySections?.length ?? 0) > 0;
 
   // Update hasEverHadPlan when plan content becomes available
   // Tiles indicate plan is ready
   // Using state ensures useMemo re-computes when this changes
-  const hasTilesReady = Object.keys(storeDocument?.tiles ?? {}).length > 0;
+  const hasTilesReady = Object.keys(docTiles ?? {}).length > 0;
   useEffect(() => {
     // Legacy path: branches + strategy
     if (
@@ -592,7 +582,7 @@ export function NomadicLanding() {
   // Clear local pending topics when backend responds with executed_strategy_topics
   // Topics that appear in executed are successfully processed
   // Topics that were pending but didn't execute stay (backend didn't process them)
-  const executedTopics = storeDocument?.executed_strategy_topics ?? [];
+  const executedTopics = docExecutedTopics ?? [];
   useEffect(() => {
     if (executedTopics.length > 0) {
       setLocalPendingTopics((prev) =>
@@ -704,37 +694,41 @@ export function NomadicLanding() {
 
   // Merge pending topics: backend + local optimistic (stable ordering via Map)
   const mergedPendingTopics = useMemo(() => {
-    const backendPending = storeDocument?.pending_strategy_topics ?? [];
+    const backendPending = docPendingTopics ?? [];
     // Use Map for stable deduplication (like Python's dict.fromkeys)
     return Array.from(
       new Map([...backendPending, ...localPendingTopics].map((t) => [t, true])).keys()
     );
-  }, [storeDocument?.pending_strategy_topics, localPendingTopics]);
+  }, [docPendingTopics, localPendingTopics]);
 
-  // Plan View Model - populated from backend response via storeDocument
+  // Plan View Model - populated from backend response via granular selectors
+  // PERF: Granular deps prevent recompute when unrelated fields change
   const planViewModel: PlanViewModel = useMemo(() => {
-    // DEBUG: Log when building view model
-    console.log('[NomadicLanding] 🔄 Building planViewModel:', {
-      strategy_sections_count: storeDocument?.strategy_sections?.length ?? 0,
-      day_cards_count: storeDocument?.day_cards?.length ?? 0,
-      plan_view_state: storeDocument?.plan_view_state,
-      executed_strategy_topics: storeDocument?.executed_strategy_topics,
-    });
     return {
-      strategy_sections: storeDocument?.strategy_sections,
-      executed_strategy_topics: storeDocument?.executed_strategy_topics,
+      strategy_sections: docStrategySections,
+      executed_strategy_topics: docExecutedTopics,
       pending_strategy_topics: mergedPendingTopics,
-      open_decisions: storeDocument?.open_decisions ?? [],
-      itinerary_overview: storeDocument?.itinerary_overview ?? undefined,
-      day_cards: storeDocument?.day_cards,
-      itinerary_assumptions: storeDocument?.itinerary_assumptions ?? undefined,
-      needs_refresh: storeDocument?.needs_refresh,
-      can_expand_to_itinerary: storeDocument?.can_expand_to_itinerary,
+      open_decisions: docOpenDecisions ?? [],
+      itinerary_overview: docItineraryOverview ?? undefined,
+      day_cards: docDayCards,
+      itinerary_assumptions: docItineraryAssumptions ?? undefined,
+      needs_refresh: docNeedsRefresh,
+      can_expand_to_itinerary: docCanExpand,
     };
-  }, [storeDocument, mergedPendingTopics]);
+  }, [
+    docStrategySections,
+    docExecutedTopics,
+    mergedPendingTopics,
+    docOpenDecisions,
+    docItineraryOverview,
+    docDayCards,
+    docItineraryAssumptions,
+    docNeedsRefresh,
+    docCanExpand,
+  ]);
 
   // Merged generation state: envelope wins if present, else local UI fallback
-  const envelopeGeneration = storeDocument?.generation as GenerationState | undefined;
+  const envelopeGeneration = docGeneration as GenerationState | undefined;
   const generation: GenerationState | null = useMemo(() => {
     if (envelopeGeneration) return envelopeGeneration;
     if (uiGeneration) return uiGeneration;
@@ -744,7 +738,7 @@ export function NomadicLanding() {
   }, [envelopeGeneration, uiGeneration, isGenerating]);
 
   // Tiles from document store
-  const tiles = storeDocument?.tiles ?? {};
+  const tiles = docTiles ?? {};
 
   // Plan tab enabled when we have branches/plan content (unlocked after Build)
   const planTabEnabled = useMemo(() => {
@@ -809,30 +803,16 @@ export function NomadicLanding() {
     // RACE GUARD: Check if generation is already in progress via store
     // (checking store directly avoids stale closure issues)
     const existingRunId = useDocumentStore.getState().currentRunId;
-    if (existingRunId) {
-      console.log('[proceedWithItineraryGeneration] ⏭️ SKIPPED - generation already in progress:', existingRunId);
-      return;
-    }
+    if (existingRunId) return;
 
     // Generate runId for this generation (also serves as idempotency key)
     const runId = crypto.randomUUID();
-    console.log('[proceedWithItineraryGeneration] 🚀 Starting with runId:', runId);
 
     // Start generation in documentStore - gets AbortController and registers runId
     // ATOMIC: startGeneration returns null if another generation is already running
     const abortController = documentStore.startGeneration(runId);
 
-    if (!abortController) {
-      console.log('[proceedWithItineraryGeneration] ⏭️ SKIPPED - startGeneration returned null (another generation running)');
-      return;
-    }
-
-    console.log('[proceedWithItineraryGeneration] 🔒 Got AbortController, aborted:', abortController.signal.aborted);
-
-    // Listen for abort events
-    abortController.signal.addEventListener('abort', () => {
-      console.log('[proceedWithItineraryGeneration] ⚠️ AbortController ABORTED!');
-    });
+    if (!abortController) return;
 
     // Set local UI generation state immediately
     setUiGeneration({ active: true, stage: 'itinerary' });
@@ -869,24 +849,10 @@ export function NomadicLanding() {
       const preferredHotelIds: string[] = [];
       const preferredActivityIds: string[] = [];
 
-      // Debug: Log raw preference state BEFORE categorization
-      console.log('[expand-itinerary] 💜 Raw preferences (LIVE READ):', {
-        preferredTileIds: Array.from(preferredTileIds),
-        preferredTileIds_size: preferredTileIds.size,
-        tilesKeys: Object.keys(tiles).slice(0, 5),
-        tilesCount: Object.keys(tiles).length,
-      });
-
       // Categorize preferred tiles by type (handle various type variants)
       for (const tileId of preferredTileIds) {
         const tile = tiles[tileId];
         const tileType = (tile?.type || '').toLowerCase();
-        console.log('[expand-itinerary] 💜 Processing tile:', {
-          tileId,
-          found: !!tile,
-          type: tileType,
-          title: tile?.title?.substring(0, 30),
-        });
         if (tile) {
           // Match hotel variants
           if (tileType === 'hotel' || tileType === 'stay' || tileType === 'accommodation') {
@@ -907,34 +873,11 @@ export function NomadicLanding() {
         }
       }
 
-      // Debug: Log what we're sending
-      console.log('[expand-itinerary] 📤 Final preferences payload:', {
-        preferred_hotel_ids: preferredHotelIds,
-        preferred_activity_ids: preferredActivityIds,
-        will_send: preferredHotelIds.length > 0 || preferredActivityIds.length > 0,
-      });
-
       // SAFETY: Check if signal was aborted before making the fetch
-      if (abortController.signal.aborted) {
-        console.log('[expand-itinerary] ⚠️ Signal already aborted BEFORE fetch, skipping');
-        return;
-      }
+      if (abortController.signal.aborted) return;
 
       // SAFETY: Verify we're still the current run right before fetch
-      const stillCurrentRun = documentStore.isCurrentRun(runId);
-      console.log('[expand-itinerary] 🔍 Pre-fetch check:', {
-        runId,
-        stillCurrentRun,
-        signalAborted: abortController.signal.aborted,
-        storeRunId: useDocumentStore.getState().currentRunId,
-      });
-
-      if (!stillCurrentRun) {
-        console.log('[expand-itinerary] ⚠️ No longer current run BEFORE fetch, skipping');
-        return;
-      }
-
-      console.log('[expand-itinerary] 🚀 Making API call NOW...');
+      if (!documentStore.isCurrentRun(runId)) return;
       const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
         body: JSON.stringify({
@@ -994,6 +937,12 @@ export function NomadicLanding() {
           setLastGenerationError(null);
           // Sync preferences to track which were used in this generation
           documentStore.markPreferencesAsApplied();
+          // Log warning if some preferred activities couldn't fit
+          if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
+            console.warn(
+              `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+            );
+          }
         } else if (event.type === 'error') {
           // Check if this is a conflict error (Path A UX)
           try {
@@ -1066,7 +1015,8 @@ export function NomadicLanding() {
         setUiGeneration(null);
       }
     }
-  }, [storeDocument, shortlist.savedTileIds, documentStore]);
+  // PERF: No storeDocument in deps - function uses getState() for live reads
+  }, [shortlist.savedTileIds, documentStore]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // PATH A: Auto-Trigger Itinerary for Multi-Specialist Trips
@@ -1086,15 +1036,15 @@ export function NomadicLanding() {
   const manualRefreshPendingRef = useRef(false);
 
   // Check if itinerary content exists
-  const hasItineraryContent = (storeDocument?.day_cards?.length ?? 0) > 0;
+  const hasItineraryContent = (docDayCards?.length ?? 0) > 0;
 
   // Reset auto-trigger flag when trip changes (new session or significant state change)
   useEffect(() => {
     // Reset when entering a new planning cycle (no itinerary content yet)
-    if (!storeDocument?.day_cards?.length) {
+    if (!docDayCards?.length) {
       hasAutoTriggeredRef.current = false;
     }
-  }, [storeDocument?.day_cards?.length]);
+  }, [docDayCards?.length]);
 
   // Sync isRegenerating state to ref (prevents callback cascade when isRegenerating changes)
   useEffect(() => {
@@ -1108,41 +1058,28 @@ export function NomadicLanding() {
 
     // RACE GUARD: Skip if manual refresh is in progress
     // (onAfterRegenerate will handle itinerary generation after refresh completes)
-    if (isRefreshing) {
-      console.log('[NomadicLanding] ⏭️ Auto-trigger skipped - manual refresh in progress');
-      return;
-    }
+    if (isRefreshing) return;
 
     // RACE GUARD: Skip if manual refresh just completed (onAfterRegenerate handling it)
-    if (manualRefreshPendingRef.current) {
-      console.log('[NomadicLanding] ⏭️ Auto-trigger skipped - manual refresh pending');
-      return;
-    }
+    if (manualRefreshPendingRef.current) return;
 
     // RACE GUARD: Skip if regeneration is in progress (e.g., preference auto-regen)
-    if (isRegeneratingRef.current) {
-      console.log('[NomadicLanding] ⏭️ Auto-trigger skipped - regeneration in progress');
-      return;
-    }
+    if (isRegeneratingRef.current) return;
 
     // RACE GUARD: Skip if itinerary generation is already active
     // (handles case where onAfterRegenerate already started generation)
-    if (uiGeneration?.active) {
-      console.log('[NomadicLanding] ⏭️ Auto-trigger skipped - generation already active');
-      return;
-    }
+    if (uiGeneration?.active) return;
 
     // Check auto-trigger conditions
     const shouldAutoTrigger = shouldAutoTriggerItinerary(
       planViewState,
-      storeDocument?.executed_strategy_topics,
+      docExecutedTopics,
       hasDates,
       uiGeneration,
       hasItineraryContent
     );
 
     if (shouldAutoTrigger) {
-      console.log('[NomadicLanding] 🚀 Auto-triggering itinerary generation (Path A)');
       hasAutoTriggeredRef.current = true;
       // Use setTimeout to avoid triggering during render
       setTimeout(() => {
@@ -1151,7 +1088,7 @@ export function NomadicLanding() {
     }
   }, [
     planViewState,
-    storeDocument?.executed_strategy_topics,
+    docExecutedTopics,
     hasDates,
     uiGeneration,
     hasItineraryContent,
@@ -1173,30 +1110,19 @@ export function NomadicLanding() {
     // (storeDocument from closure may be stale when onAfterRegenerate calls this)
     const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
 
-    console.log('[handleExpandToItinerary] 🔍 Gate checks:', {
-      isRegenerating: isRegeneratingRef.current,
-      start_date: currentTripInputs?.start_date,
-      end_date: currentTripInputs?.end_date,
-      destination: currentTripInputs?.destination,
-    });
-
     // GATE 1: Require start_date
     if (!currentTripInputs?.start_date) {
-      console.log('[handleExpandToItinerary] ❌ GATE 1 FAILED - no start_date');
       addToast('Set a start date first', 'info');
       return;
     }
 
     // GATE 2: Require end_date (multi-day trips are Nomadic's core product)
     if (!currentTripInputs?.end_date) {
-      console.log('[handleExpandToItinerary] ❌ GATE 2 FAILED - no end_date');
       addToast('Add return date to see itinerary', 'info');
       return;
     }
 
     // All gates passed - proceed with itinerary generation
-    // Backend auto-selects recommended stay if none saved (no modal needed)
-    console.log('[handleExpandToItinerary] ✅ All gates passed, calling proceedWithItineraryGeneration');
     await proceedWithItineraryGeneration();
   }, [addToast, proceedWithItineraryGeneration]);
 
@@ -1213,7 +1139,7 @@ export function NomadicLanding() {
   // Handle quick pick from InlineDatePrompt
   const handleSelectNights = useCallback(
     async (nights: number) => {
-      const startDate = storeDocument?.trip_inputs?.start_date;
+      const startDate = tripInputs.start_date;
       if (!startDate) return;
 
       // Calculate end date (timezone-safe)
@@ -1229,7 +1155,7 @@ export function NomadicLanding() {
         addToast('Trip length set', 'confirmation');
       }
     },
-    [storeDocument?.trip_inputs?.start_date, addDaysUTC, documentStore, addToast]
+    [tripInputs.start_date, addDaysUTC, documentStore, addToast]
   );
 
   // Handler for "Build plan" CTA in right panel (S0BootstrapView)
@@ -1241,8 +1167,6 @@ export function NomadicLanding() {
   // Handler for conflict resolution (Path A UX)
   // User selects how to resolve the constraint conflict
   const handleResolveConflict = useCallback(async (resolution: ConflictResolution) => {
-    console.log('[NomadicLanding] 🔧 Resolving conflict:', resolution.action);
-
     // Clear conflict state
     setConflictData(null);
     // Reset auto-trigger flag to allow re-generation
@@ -1251,7 +1175,7 @@ export function NomadicLanding() {
     switch (resolution.action) {
       case 'extend_dates': {
         // Use backend's new_duration to calculate new end date
-        const startDate = storeDocument?.trip_inputs?.start_date;
+        const startDate = tripInputs.start_date;
         const newDuration = resolution.new_duration;
         if (startDate && newDuration) {
           const endDateStr = addDaysUTC(startDate, newDuration - 1);
@@ -1364,6 +1288,12 @@ export function NomadicLanding() {
                   setUiGeneration(null);
                   setLastGenerationError(null);
                   addToast(`Focused on ${keepSpecialist}`, 'success');
+                  // Log warning if some preferred activities couldn't fit
+                  if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
+                    console.warn(
+                      `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+                    );
+                  }
                 } else if (event.type === 'error') {
                   console.error('[remove-specialist] Error:', event.message);
                   setUiGeneration(null);
@@ -1391,7 +1321,7 @@ export function NomadicLanding() {
       }
       // Note: 'show_partial' removed - partial timeline auto-renders when conflicts exist
     }
-  }, [storeDocument?.trip_inputs?.start_date, documentStore, addToast, addDaysUTC, conflictData, setUiGeneration, setLastGenerationError]);
+  }, [tripInputs.start_date, documentStore, addToast, addDaysUTC, conflictData, setUiGeneration, setLastGenerationError]);
 
   // Handler for "Finalize & Unlock Booking" CTA (The Bridge)
   // Sets plan as finalized and navigates to Book view
@@ -1481,15 +1411,6 @@ export function NomadicLanding() {
   const isExpandingItinerary = generation?.stage === 'itinerary';
   const currentSubStage = generation?.stage ?? null;
 
-  // DEBUG: Log refresh props being passed to StrategyStageRenderer
-  console.log('[NomadicLanding] 📤 Passing refresh props to StrategyStageRenderer:', {
-    hasInputChanges,
-    isRefreshing,
-    hasHandleManualRefresh: !!handleManualRefresh,
-    currentDestination: tripInputs?.destination,
-    storeDestination: useDocumentStore.getState().document?.trip_inputs?.destination,
-  });
-
   // Plan View content (right panel): Stage-aware StrategyStageRenderer
   const planViewContent = (
     <StrategyStageRenderer
@@ -1547,7 +1468,7 @@ export function NomadicLanding() {
               savedTileIds={shortlist.savedTileIds}
               onSaveTile={shortlist.toggleItem}
               onOpenSheet={openSheet}
-              strategySections={storeDocument?.strategy_sections}
+              strategySections={docStrategySections}
             />
           }
           planState={planState}
@@ -1605,16 +1526,8 @@ export function NomadicLanding() {
         onOpenChange={(open) => !open && closeSheet()}
         value={tripInputs.destination || ''}
         onSave={async (value) => {
-          console.log('[NomadicLanding] 🌍 DestinationSheet onSave:', {
-            newValue: value,
-            previousValue: tripInputs.destination,
-            storeValue: useDocumentStore.getState().document?.trip_inputs?.destination,
-          });
           // SYNC: Update store immediately so RefreshButton sees new value
           documentStore.updateTripInputs({ destination: value });
-          console.log('[NomadicLanding] 🌍 After updateTripInputs, store destination:',
-            useDocumentStore.getState().document?.trip_inputs?.destination
-          );
           // ASYNC: Persist to backend
           await documentStore.commitTripInputs({ destination: value });
           closeSheet();

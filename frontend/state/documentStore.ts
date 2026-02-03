@@ -512,6 +512,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         from: previousDestination,
         to: newDestination,
       });
+
+      // Clear stale preferences from old destination
+      set({ preferredTileIds: new Set() });
+      console.log('[documentStore] 🧹 Cleared preferredTileIds (destination changed)');
     }
 
     set({

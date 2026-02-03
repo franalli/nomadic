@@ -264,13 +264,6 @@ export function StrategyStageRenderer({
   isRefreshing = false,
   onRefresh,
 }: StrategyStageRendererProps) {
-  // DEBUG: Log refresh props received
-  console.log('[StrategyStageRenderer] 🔍 Refresh props received:', {
-    hasInputChanges,
-    isRefreshing,
-    hasOnRefresh: !!onRefresh,
-  });
-
   // Unused props reserved for future use
   void _onReset;
   void _lastError;
@@ -336,12 +329,12 @@ export function StrategyStageRenderer({
 
   // Show toast when specialists become infeasible or caveat (e.g., diving in Paris)
   useEffect(() => {
-    const infeasibleSections = (viewModel.strategy_sections ?? []).filter(
+    const infullModeSections = (viewModel.strategy_sections ?? []).filter(
       section => section.feasibility_status === 'infeasible' || section.feasibility_status === 'caveat'
     );
 
     // Check for new infeasible sections
-    const newInfeasible = infeasibleSections.filter(
+    const newInfeasible = infullModeSections.filter(
       section => !prevInfeasibleRef.current.has(section.specialist_type ?? section.title)
     );
 
@@ -356,14 +349,12 @@ export function StrategyStageRenderer({
           `${specialistName} unavailable in ${destination}. ${alternatives}`,
           { type: 'warning', duration: 5000 }
         );
-
-        console.log(`[StrategyStageRenderer] ⚠️ Infeasible specialist toast: ${specialistName} in ${destination}`);
       });
     }
 
     // Update ref with current infeasible sections
     prevInfeasibleRef.current = new Set(
-      infeasibleSections.map(s => s.specialist_type ?? s.title)
+      infullModeSections.map(s => s.specialist_type ?? s.title)
     );
   }, [viewModel.strategy_sections, effectiveTripInputs?.destination, destinationCard?.title, toast]);
 
@@ -418,18 +409,65 @@ export function StrategyStageRenderer({
     }
   }, []);
 
+  // =========================================================================
+  // PERF: Sub-memos to reduce computation on unrelated state changes
+  // @see docs/ux_unified_architecture.md - Performance: Render Optimization
+  // =========================================================================
+
+  // MEMO 1: Display logic - changes when view state/density changes
+  const displayLogic = useMemo(() => {
+    const hasDates = !!effectiveTripInputs?.start_date;
+    const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
+    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
+    const isShowingMirrorLoader = generating && hasDates && !hasTiles;
+    const tripDuration = effectiveTripInputs?.trip_duration ?? 3;
+
+    return {
+      hasDates,
+      hasTiles,
+      density,
+      isShowingMirrorLoader,
+      tripDuration,
+    };
+  }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating]);
+
+  // MEMO 2: Specialist data - changes when strategy_sections change
+  // Pre-computed for ghost/bridge modes to avoid inline recalculation
+  const specialistData = useMemo(() => {
+    const fullModeSections = (viewModel.strategy_sections ?? []).filter(
+      section => section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat'
+    );
+    const totalConstraints = fullModeSections.reduce(
+      (acc, s) => acc + (s.constraints_applied?.length ?? 0),
+      0
+    );
+    const ghostDuration = effectiveTripInputs?.trip_duration ?? 5;
+    const ghostDayCards = generateGhostDayCards(fullModeSections, ghostDuration);
+    const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
+
+    return {
+      fullModeSections,
+      totalConstraints,
+      ghostDayCards,
+      ghostHasDuration,
+      filteredViewModel: {
+        ...viewModel,
+        strategy_sections: fullModeSections,
+      } as PlanViewModel,
+    };
+  }, [viewModel, effectiveTripInputs?.trip_duration, effectiveTripInputs?.end_date]);
+
   // Plan content - heavy, needs persistence
   // Uses computeDataDensity for unified rendering logic
   // @see docs/ux_unified_architecture.md Section VII - Data Density Levels
   const planContent = useMemo(() => {
+    // PERF: Use pre-computed display logic from sub-memo
+    const { density, isShowingMirrorLoader, tripDuration } = displayLogic;
+
     // MIRROR LOADER: Show skeleton when auto-fetching tiles after dates are set
     // @see docs/ux_unified_architecture.md Section VI - "Mirror Loader Strategy"
     // Rule: "Never auto-switch to an empty container"
-    const hasDates = !!effectiveTripInputs?.start_date;
-    const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
-
-    if (generating && hasDates && !hasTiles) {
-      const tripDuration = effectiveTripInputs?.trip_duration ?? 3;
+    if (isShowingMirrorLoader) {
       return (
         <div className="p-4 space-y-6">
           {/* Status indicator */}
@@ -451,44 +489,29 @@ export function StrategyStageRenderer({
       );
     }
 
-    // Compute data density using the SSoT function
-    const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
-
     // EMPTY: S0 without specialist content - hero is the view
     if (density === 'empty') {
       return null;
     }
 
+    // PERF: Use pre-computed specialist data from sub-memo
+    const {
+      fullModeSections,
+      filteredViewModel,
+    } = specialistData;
+    // Access ghostDayCards, ghostHasDuration, totalConstraints via specialistData.* in JSX
+
     // GHOST: S0 with specialist content - show "Planning Intelligence" panel + preview timeline
     // Cards are collapsed by default in SETUP mode - user can expand to see details
     // This ensures constraint visibility BEFORE date selection (core value prop)
     if (density === 'ghost') {
-      // Filter out infeasible specialists for ghost mode too
-      const ghostFeasibleSections = (viewModel.strategy_sections ?? []).filter(
-        section => section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat'
-      );
-      const ghostFilteredViewModel: PlanViewModel = {
-        ...viewModel,
-        strategy_sections: ghostFeasibleSections,
-      };
-
-      const tripDuration = effectiveTripInputs?.trip_duration ?? 5;
-      const ghostDayCards = generateGhostDayCards(ghostFeasibleSections, tripDuration);
-      const ghostHasDuration = !!effectiveTripInputs?.end_date || effectiveTripInputs?.trip_duration != null;
-
-      // Count constraints across feasible specialists for the header badge
-      const totalConstraints = ghostFeasibleSections.reduce(
-        (acc, s) => acc + (s.constraints_applied?.length ?? 0),
-        0
-      );
-
       return (
         <div className="p-4 space-y-4">
           {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
-          {destinationCard?.title && ghostFeasibleSections.length > 0 && (
+          {destinationCard?.title && fullModeSections.length > 0 && (
             <ReadyToPlanBanner
               destination={destinationCard.title}
-              questionsAsked={ghostFeasibleSections.length}
+              questionsAsked={fullModeSections.length}
               onStartPlanning={() => onOpenSheet?.('dates')}
               className="mb-2"
             />
@@ -502,16 +525,16 @@ export function StrategyStageRenderer({
                 Planning Intelligence
               </h3>
             </div>
-            {totalConstraints > 0 && (
+            {specialistData.totalConstraints > 0 && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium">
-                {totalConstraints} constraint{totalConstraints > 1 ? 's' : ''} applied
+                {specialistData.totalConstraints} constraint{specialistData.totalConstraints > 1 ? 's' : ''} applied
               </span>
             )}
           </div>
 
           {/* SPECIALIST CARDS (collapsed by default in SETUP mode) */}
           <S2StrategyView
-            viewModel={ghostFilteredViewModel}
+            viewModel={filteredViewModel}
             destinationCard={destinationCard}
             pendingTopics={viewModel.pending_strategy_topics}
             executedTopics={viewModel.executed_strategy_topics}
@@ -524,10 +547,10 @@ export function StrategyStageRenderer({
 
           {/* GHOST TIMELINE (preview of activities) */}
           <TimelineThread
-            dayCards={ghostDayCards}
+            dayCards={specialistData.ghostDayCards}
             isDraft={true}
             showPriceEstimates={false}
-            hasDuration={ghostHasDuration}
+            hasDuration={specialistData.ghostHasDuration}
             startDate={effectiveTripInputs?.start_date ?? null}
             onSelectNights={onSelectNights}
             onOpenDatePicker={() => onOpenSheet?.('dates')}
@@ -548,14 +571,9 @@ export function StrategyStageRenderer({
     // Show Strategy Cards (expert recommendations) + Map only
     // @see docs/ux_unified_architecture.md Section VII - Bridge Mode
     if (density === 'bridge') {
-      // Filter out infeasible specialists for bridge mode
-      const sections = (viewModel.strategy_sections ?? []).filter(
-        section => section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat'
-      );
-      const bridgeFilteredViewModel: PlanViewModel = {
-        ...viewModel,
-        strategy_sections: sections,
-      };
+      // PERF: Use pre-computed feasible sections from specialistData
+      const sections = specialistData.fullModeSections;
+      const bridgeFilteredViewModel = filteredViewModel;
       const mapPOIs = extractPOIsFromSections(sections);
 
       // Get destination coordinates for map center
@@ -577,23 +595,15 @@ export function StrategyStageRenderer({
       // Use POIs if available, otherwise show destination pin
       const bridgeMapItems = mapPOIs.length > 0 ? mapPOIs : bridgeDestMarker;
 
-      // SETUP vs PLAN mode detection:
-      // - No dates = SETUP mode = cards collapsed
-      // - Has dates = PLAN mode = cards auto-expand briefly
-      const hasDates = !!effectiveTripInputs?.start_date;
-
-      // Count constraints for header badge
-      const totalConstraints = sections.reduce(
-        (acc, s) => acc + (s.constraints_applied?.length ?? 0),
-        0
-      );
+      // SETUP vs PLAN mode detection handled via displayLogic.hasDates
+      // Constraints count handled via specialistData.totalConstraints
 
       return (
         <div className="flex flex-col lg:flex-row gap-6 p-4">
           {/* Left Column: Strategy Cards Only (no timeline) */}
           <div className="flex-1 min-w-0 space-y-4">
             {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
-            {!hasDates && destinationCard?.title && sections.length > 0 && (
+            {!displayLogic.hasDates && destinationCard?.title && sections.length > 0 && (
               <ReadyToPlanBanner
                 destination={destinationCard.title}
                 questionsAsked={sections.length}
@@ -603,7 +613,7 @@ export function StrategyStageRenderer({
             )}
 
             {/* PLANNING INTELLIGENCE HEADER (SETUP mode only - before dates) */}
-            {!hasDates && (
+            {!displayLogic.hasDates && (
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">⚡</span>
@@ -611,9 +621,9 @@ export function StrategyStageRenderer({
                     Planning Intelligence
                   </h3>
                 </div>
-                {totalConstraints > 0 && (
+                {specialistData.totalConstraints > 0 && (
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-medium">
-                    {totalConstraints} constraint{totalConstraints > 1 ? 's' : ''} applied
+                    {specialistData.totalConstraints} constraint{specialistData.totalConstraints > 1 ? 's' : ''} applied
                   </span>
                 )}
               </div>
@@ -628,7 +638,7 @@ export function StrategyStageRenderer({
               tiles={{}} // Empty - no booking tiles in bridge mode
               tripInputs={effectiveTripInputs}
               density="bridge"
-              autoExpandOnLoad={hasDates} // SETUP = collapsed, PLAN = brief auto-expand
+              autoExpandOnLoad={displayLogic.hasDates} // SETUP = collapsed, PLAN = brief auto-expand
               onOpenActivitySettings={onOpenActivitySettings}
             />
           </div>
@@ -665,45 +675,7 @@ export function StrategyStageRenderer({
     // Mobile: Inline map between tiles and timeline
     // @see docs/ux_unified_architecture.md - Unified Planning View
 
-    // DEBUG: Log S3 rendering state with full detail
-    console.log('[StrategyStageRenderer] 🎯 Rendering FULL density mode');
-    console.log('[StrategyStageRenderer] Current state:', state);
-    console.log('[StrategyStageRenderer] 🔬 RAW strategy_sections:', JSON.stringify(viewModel.strategy_sections, null, 2));
-
-    // Check each section's feasibility_status
-    (viewModel.strategy_sections ?? []).forEach((section, idx) => {
-      console.log(`[StrategyStageRenderer] Section ${idx}:`, {
-        title: section.title,
-        specialist_type: section.specialist_type,
-        feasibility_status: section.feasibility_status,
-        hasFeasibilityStatus: 'feasibility_status' in section
-      });
-    });
-
-    // Filter out infeasible specialists (e.g., diving in Paris)
-    // Backend marks feasibility_status='infeasible'|'caveat' when specialist doesn't apply
-    const feasibleSections = (viewModel.strategy_sections ?? []).filter(section => {
-      const isFeasible = section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat';
-      console.log(`[StrategyStageRenderer] ${section.title}: feasibility_status=${section.feasibility_status}, keeping=${isFeasible}`);
-      return isFeasible;
-    });
-    console.log('[StrategyStageRenderer] ✅ Filtered:', feasibleSections.length, 'of', viewModel.strategy_sections?.length ?? 0);
-
-    // Create a filtered viewModel for S2StrategyView (only feasible specialists)
-    const filteredViewModel: PlanViewModel = {
-      ...viewModel,
-      strategy_sections: feasibleSections,
-    };
-
-    if (state === 'S3_ITINERARY_READY') {
-      console.log('[StrategyStageRenderer] 🎯 S3_ITINERARY_READY: Showing Accordion + BookingSection + Timeline');
-      console.log('[StrategyStageRenderer] Feasible specialists:', feasibleSections.map(s => ({
-        title: s.title,
-        specialist_type: s.specialist_type,
-        feasibility_status: s.feasibility_status,
-        constraints: s.constraints_applied?.length ?? 0
-      })));
-    }
+    // PERF: fullModeSections and filteredViewModel already destructured from specialistData above
 
     // Get destination coordinates for map (used in P3+ only)
     const destCoords = getDestinationCoords(destinationCard?.title);
@@ -742,7 +714,7 @@ export function StrategyStageRenderer({
           {/* SECTION 1: SPECIALISTS */}
           <section id="specialists-section" className="relative">
             {/* ALWAYS show specialist cards + Trip DNA bar when feasible sections exist */}
-            {feasibleSections.length > 0 && (
+            {fullModeSections.length > 0 && (
               <>
                 {/* Specialist cards - always visible (ABOVE) */}
                 <S2StrategyView
@@ -762,7 +734,7 @@ export function StrategyStageRenderer({
                 <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
                   <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
                   <div className="flex gap-2 flex-wrap">
-                    {feasibleSections.map((section) => (
+                    {fullModeSections.map((section) => (
                       <button
                         key={section.id || section.title}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs"
@@ -968,33 +940,40 @@ export function StrategyStageRenderer({
       </div>
     );
   }, [
+    // PERF: Sub-memos reduce recomputation - density/specialist data pre-computed
+    displayLogic,
+    specialistData,
+    // State & view model
     state,
     viewModel,
     destinationCard,
+    // Callbacks (should be stable via useCallback in parent)
     canGeneratePlan,
     onRefineAssumptions,
     onExpandToItinerary,
     onBuildPlan,
+    onFinalizePlan,
+    onSelectNights,
+    onOpenSheet,
+    onSaveTile,
+    toggleTilePreference,
+    scrollToTile,
+    // Remaining state dependencies
     hasEverHadPlan,
     effectiveTiles,
     isDesktop,
     effectiveTripInputs,
     isRegenerating,
-    onFinalizePlan,
+    isRegenUpdating, // Store selector for preference-based regeneration
     isFinalizing,
     isExpandingItinerary,
-    onSelectNights,
-    onOpenSheet,
-    generating, // Added for Mirror Loader skeleton
-    generation, // Added for BookingSection in Plan view
+    generation,
     savedTileIds,
-    onSaveTile,
-    effectiveMode, // Two-mode system
+    effectiveMode,
     hasItineraryContent,
-    // Progressive disclosure dependencies
     preferredTileIds,
-    toggleTilePreference,
-    scrollToTile,
+    // NOTE: onOpenActivitySettings, onOpenFlightsSettings, onOpenStaysSettings intentionally
+    // excluded - they're inline arrows in parent, adding them defeats memoization
   ]);
 
   // Book content - full booking section view

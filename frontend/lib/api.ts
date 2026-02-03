@@ -54,23 +54,11 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
     }
   }
 
-  // DEBUG: Log request details
-  console.log('[apiFetch] 📡 Request:', {
-    url,
-    method: options?.method || 'GET',
-    hasCSRFToken: !!csrfToken,
-    hasSignal: !!options?.signal,
-    signalAborted: options?.signal?.aborted,
-  });
-
-  // CRITICAL DEBUG: Check signal state right before fetch
+  // CRITICAL: Check signal state before fetch to fail fast
   if (options?.signal?.aborted) {
-    console.error('[apiFetch] ⛔ SIGNAL ALREADY ABORTED BEFORE FETCH!');
-    console.error('[apiFetch] ⛔ This will cause "Failed to fetch" error');
+    console.error('[apiFetch] ⛔ Signal already aborted before fetch');
     throw new DOMException('Signal already aborted', 'AbortError');
   }
-
-  console.log('[apiFetch] 🚀 About to call fetch()...');
 
   try {
     const res = await fetch(url, {
@@ -78,9 +66,9 @@ export async function apiFetch(path: string, options?: RequestInit): Promise<Res
       credentials: 'include', // Always include cookies
       headers,
     });
-    console.log('[apiFetch] ✅ fetch() returned successfully');
 
-    console.log('[apiFetch] ✅ Response:', { url, status: res.status, ok: res.ok });
+    // Single-line success log (collapsed from 4 lines for cleaner console)
+    console.log(`[apiFetch] ✅ ${options?.method || 'GET'} ${url} → ${res.status}`);
     return res;
   } catch (error) {
     // DEBUG: Log detailed error info (Error objects don't serialize well)

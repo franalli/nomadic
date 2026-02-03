@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from app.debug_utils import _debug
+from app.debug_utils import _debug, _debug_itinerary
 from app.planner.state import ConstraintSeverity
 
 logger = logging.getLogger(__name__)
@@ -342,6 +342,7 @@ class ItineraryResult(BaseModel):
     conflicts: List[Conflict] = Field(default_factory=list)
     resolutions: List[Resolution] = Field(default_factory=list)
     error: Optional[str] = None
+    dropped_preferred_count: int = 0  # Activities that couldn't fit in available days
 
 
 @dataclass
@@ -604,7 +605,14 @@ class ItineraryBuilder:
             days = self._handle_empty_days(days, input_data.tiles)
 
             # Phase 5.25: Populate free days with user-preferred activities
-            days = self._populate_free_days_with_preferences(
+            preferred_acts = self.preferences.preferred_activity_ids if self.preferences else "None"
+            _debug_itinerary(
+                f"🔍 Phase 5.25 inputs: "
+                f"preferences={self.preferences}, "
+                f"preferred_activities={preferred_acts}, "
+                f"tiles_count={len(input_data.tiles) if input_data.tiles else 0}"
+            )
+            days, dropped_preferred_count = self._populate_free_days_with_preferences(
                 days, input_data.tiles, self.preferences
             )
 
@@ -634,6 +642,7 @@ class ItineraryBuilder:
                 overview=overview,
                 conflicts=conflicts,
                 resolutions=[],
+                dropped_preferred_count=dropped_preferred_count,
             )
 
         except Exception as e:
@@ -1297,22 +1306,27 @@ class ItineraryBuilder:
         days: List[DayCardOutput],
         tiles: Dict[str, Any],
         preferences: Optional[PreferenceOverrideInput],
-    ) -> List[DayCardOutput]:
+    ) -> tuple[List[DayCardOutput], int]:
         """
         Phase 5.25: Replace free day placeholders with user-preferred activities.
 
         After _handle_empty_days creates FreeDay placeholders, this method populates
         those days with activities the user has hearted (preferred).
 
+        Uses round-robin slot-based placement:
+        - Each free day has 3 slots (morning, afternoon, evening)
+        - Activities spread across days first, then stack when all days have 1
+        - Returns (days, dropped_count) tuple
+
         Logic:
         1. Collect preferred tile activities (ordered by user preference)
         2. Find free days (skip arrival/departure)
-        3. Replace FreeDay placeholders with preferred activity blocks
-        4. If more preferred activities than free days, drop extras (no conflicts)
+        3. Round-robin assign activities to slots (spread first, then stack)
+        4. Track dropped activities when all slots are full
         """
         if not preferences or not preferences.preferred_activity_ids:
-            _debug("[ItineraryBuilder] 📅 Phase 5.25: No preferred activities, skipping")
-            return days
+            _debug_itinerary("⏭️ Phase 5.25 skipped: no preferred activities")
+            return days, 0
 
         # Collect preferred tile activities (ordered by position in preferred_activity_ids)
         preferred_activities = []
@@ -1322,13 +1336,10 @@ class ItineraryBuilder:
                 preferred_activities.append({**tile, "id": tile_id})
 
         if not preferred_activities:
-            _debug("[ItineraryBuilder] 📅 Phase 5.25: No valid activity tiles found in preferences")
-            return days
+            _debug_itinerary("📅 Phase 5.25: No valid activity tiles found in preferences")
+            return days, 0
 
-        _debug(
-            f"[ItineraryBuilder] 📅 Phase 5.25: "
-            f"Found {len(preferred_activities)} preferred activities"
-        )
+        _debug_itinerary(f"📅 Phase 5.25: Found {len(preferred_activities)} preferred activities")
 
         # Find free days (days with free_day placeholder blocks)
         free_day_indices = []
@@ -1349,31 +1360,51 @@ class ItineraryBuilder:
             if has_free_day and not has_real_activity:
                 free_day_indices.append(idx)
 
-        _debug(
-            f"[ItineraryBuilder] 📅 Phase 5.25: "
-            f"Found {len(free_day_indices)} free days: {free_day_indices}"
+        _debug_itinerary(
+            f"📋 Free days found: {free_day_indices}, "
+            f"preferred_activities: {[t.get('title') for t in preferred_activities]}"
         )
 
-        # Assign preferred activities to free days
-        for i, tile in enumerate(preferred_activities):
-            if i >= len(free_day_indices):
-                title = tile.get("title")
-                _debug(
-                    f"[ItineraryBuilder] 📅 Dropping extra preferred activity "
-                    f"'{title}' (no free days left)"
-                )
-                break
+        if not free_day_indices:
+            _debug_itinerary("📅 Phase 5.25: No free days available for preferred activities")
+            return days, len(preferred_activities)
 
-            day_idx = free_day_indices[i]
-            day = days[day_idx]
+        # Slot-based round-robin placement
+        MAX_ACTIVITIES_PER_DAY = 3
+        PERIOD_SEQUENCE = ["morning", "afternoon", "evening"]
 
-            # Remove existing FreeDay placeholder
-            day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
+        # Track activities placed per day (0 = no activities yet)
+        day_slots: dict[int, int] = {day_idx: 0 for day_idx in free_day_indices}
+        dropped_count = 0
 
-            # Create activity block from preferred tile
+        for tile in preferred_activities:
+            # Find day with LEAST activities first (round-robin), then by day index
+            available_day = next(
+                (
+                    d
+                    for d in sorted(day_slots, key=lambda d: (day_slots[d], d))
+                    if day_slots[d] < MAX_ACTIVITIES_PER_DAY
+                ),
+                None,
+            )
+
+            if available_day is None:
+                _debug_itinerary(f"📅 Dropping '{tile.get('title')}' (all days full)")
+                dropped_count += 1
+                continue
+
+            day = days[available_day]
+            slot_idx = day_slots[available_day]
+            period = PERIOD_SEQUENCE[slot_idx]
+
+            # Remove FreeDay placeholder only on first activity placement for this day
+            if slot_idx == 0:
+                day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
+
+            # Create activity block from preferred tile with correct period
             activity_block = DayBlockOutput(
-                id=f"pref_{tile['id']}_{day_idx}",
-                period="morning",
+                id=f"pref_{tile['id']}_{available_day}_{slot_idx}",
+                period=period,
                 activity_type=tile.get("title", "Activity").lower().replace(" ", "_"),
                 intensity=tile.get("intensity"),
                 summary=tile.get("title", "Activity"),
@@ -1387,18 +1418,18 @@ class ItineraryBuilder:
 
             # Insert after any buffer blocks
             buffer_count = sum(1 for b in day.blocks if b.is_buffer)
-            day.blocks.insert(buffer_count, activity_block)
+            day.blocks.insert(buffer_count + slot_idx, activity_block)
 
             # Update day label back from "Free Day" to activity-based label
             if day.label == "Free Day":
                 day.label = f"Day {day.day_number}"
 
-            _debug(
-                f"[ItineraryBuilder] 📅 Placing preferred activity "
-                f"'{tile.get('title')}' on day {day_idx + 1}"
+            day_slots[available_day] += 1
+            _debug_itinerary(
+                f"📅 Placed '{tile.get('title')}' on day {available_day + 1} ({period})"
             )
 
-        return days
+        return days, dropped_count
 
     # =========================================================================
     # Phase 6: Tile Matching
@@ -1414,6 +1445,10 @@ class ItineraryBuilder:
 
         Applies 1.5x preference boost to user-hearted tiles.
         """
+        # Log Phase 5 entry with preference state
+        preferred_hotels = preferences.preferred_hotel_ids if preferences else []
+        _debug_itinerary(f"🏨 Phase 5 (Tile Matching): preferred_hotel_ids={preferred_hotels}")
+
         # Find hotel tiles, sorted by preference (preferred first)
         hotel_tiles = []
         for tile_id, tile in tiles.items():
@@ -1440,6 +1475,16 @@ class ItineraryBuilder:
         hotel_tile = selected_hotel["tile"] if selected_hotel else None
         is_user_preferred = selected_hotel["is_preferred"] if selected_hotel else False
 
+        # Log hotel selection result
+        if selected_hotel:
+            hotel_name = hotel_tile.get("title", "Unknown")[:30] if hotel_tile else "None"
+            _debug_itinerary(
+                f"🏨 Phase 5: Selected hotel '{hotel_name}' "
+                f"(preferred={is_user_preferred}, score={selected_hotel['adjusted_score']:.2f})"
+            )
+        else:
+            _debug_itinerary("🏨 Phase 5: No hotel tiles found")
+
         # Determine preference status
         preference_status = None
         if selected_hotel:
@@ -1453,6 +1498,10 @@ class ItineraryBuilder:
             if user_preferred:
                 alternative_tile_id = user_preferred["tile_id"]
                 preference_status = "ai_override"
+                _debug_itinerary(
+                    f"🏨 Phase 5: AI override - user preferred hotel not selected "
+                    f"(alternative={alternative_tile_id[:20]})"
+                )
 
         if hotel_tile and len(days) > 1:
             # Add check-in to Day 1 (after arrival)

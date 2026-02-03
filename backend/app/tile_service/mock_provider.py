@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import date, datetime
 from typing import List, Optional
@@ -24,6 +25,11 @@ def _parse_budget(value) -> Optional[float]:
             except ValueError:
                 return None
     return None
+
+
+def _dest_hash(dest: str) -> str:
+    """Generate a 6-char hash from destination for tile ID namespacing."""
+    return hashlib.md5(dest.lower().strip().encode()).hexdigest()[:6]
 
 
 class MockHotelProvider(Provider):
@@ -96,6 +102,7 @@ class MockHotelProvider(Provider):
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Return simple mock hotels for the given destination."""
         dest = ctx.destination or "Somewhere"
+        dest_id = _dest_hash(dest)
         tiles: List[Tile] = []
 
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
@@ -152,7 +159,7 @@ class MockHotelProvider(Provider):
 
             tiles.append(
                 Tile(
-                    id=f"tile_mock_hotel_{i}",
+                    id=f"tile_mock_hotel_{dest_id}_{i}",
                     type="hotel",
                     partner=self.name,
                     partner_product_id=f"mock_prop_{i}",
@@ -221,6 +228,7 @@ class MockFlightProvider(Provider):
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Return simple mock flights for the given route."""
         dest = ctx.destination or "Somewhere"
+        dest_id = _dest_hash(dest)
         origin = ctx.origin or "Home"
         tiles: List[Tile] = []
 
@@ -314,7 +322,7 @@ class MockFlightProvider(Provider):
 
             tiles.append(
                 Tile(
-                    id=f"tile_mock_flight_{idx + 1}",
+                    id=f"tile_mock_flight_{dest_id}_{idx + 1}",
                     type="flight",
                     partner=self.name,
                     partner_product_id=f"mock_flight_{idx + 1}",
@@ -374,6 +382,7 @@ class MockActivityProvider(Provider):
     def search(self, ctx: SearchContext) -> List[Tile]:
         """Return simple mock activities for the given destination."""
         dest = ctx.destination or "your destination"
+        dest_id = _dest_hash(dest)
         tiles: List[Tile] = []
 
         source_mode = "live" if (ctx.response_mode or "").startswith("live") else "cache"
@@ -499,7 +508,7 @@ class MockActivityProvider(Provider):
 
             tiles.append(
                 Tile(
-                    id=f"tile_mock_activity_{idx + 1}",
+                    id=f"tile_mock_activity_{dest_id}_{idx + 1}",
                     type="activity",
                     partner=self.name,
                     partner_product_id=f"mock_activity_{idx + 1}",

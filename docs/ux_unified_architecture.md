@@ -3110,13 +3110,92 @@ const storeDocument = useDocumentStore((state) => state.document);
 **Why this matters:** Without a selector, Zustand doesn't know which slice of state you're using. When `mergeEnvelope()` updates `store.document`, the component won't re-render because there's no subscription on that specific property.
 
 **Files using this pattern:**
-- `NomadicLanding.tsx:400` - `storeDocument` selector for day_cards/plan_view_state reactivity
-- `NomadicLanding.tsx:136` - `storeTripInputs` selector for trip input changes
+- `NomadicLanding.tsx:501` - Granular selectors for document fields (see Performance section below)
+- `NomadicLanding.tsx:125` - `storeTripInputs` selector for trip input changes
 
 ---
 
-### 12. Cross-Reference
+### 12. Performance: Render Optimization
+
+#### Granular Zustand Selectors (NomadicLanding)
+
+**Problem:** A single `state.document` selector causes re-renders when ANY document field changes (tiles, day_cards, strategy_sections, etc.), cascading to all children.
+
+**Solution:** Replace with granular selectors that subscribe to individual fields:
+
+```typescript
+// ❌ BEFORE: Single fat selector - re-renders on ANY document change
+const storeDocument = useDocumentStore((state) => state.document);
+
+// ✅ AFTER: Granular selectors - each only triggers on its own field
+const docPlanState = useDocumentStore((s) => s.document?.plan_state);
+const docDestinationCard = useDocumentStore((s) => s.document?.destination_card);
+const docPlanViewState = useDocumentStore((s) => s.document?.plan_view_state);
+const docStrategySections = useDocumentStore((s) => s.document?.strategy_sections);
+const docTiles = useDocumentStore((s) => s.document?.tiles);
+const docExecutedTopics = useDocumentStore((s) => s.document?.executed_strategy_topics);
+const docPendingTopics = useDocumentStore((s) => s.document?.pending_strategy_topics);
+const docDayCards = useDocumentStore((s) => s.document?.day_cards);
+const docGeneration = useDocumentStore((s) => s.document?.generation);
+// ... etc
+```
+
+**Benefit:** When `mergeEnvelope` updates tiles, only components using `docTiles` re-render. Strategy cards and day cards remain untouched.
+
+#### Sub-Memos in StrategyStageRenderer
+
+**Problem:** The `planContent` useMemo has 26+ dependencies. Any dependency change recomputes 575 lines of JSX.
+
+**Solution:** Pre-compute expensive operations in focused sub-memos:
+
+```typescript
+// MEMO 1: Display logic - changes when view state/density changes
+const displayLogic = useMemo(() => {
+  const hasDates = !!effectiveTripInputs?.start_date;
+  const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
+  const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
+  const isShowingMirrorLoader = generating && hasDates && !hasTiles;
+  return { hasDates, hasTiles, density, isShowingMirrorLoader, tripDuration };
+}, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating]);
+
+// MEMO 2: Specialist data - changes when strategy_sections change
+const specialistData = useMemo(() => {
+  const fullModeSections = (viewModel.strategy_sections ?? []).filter(
+    section => section.feasibility_status !== 'infeasible' && section.feasibility_status !== 'caveat'
+  );
+  const totalConstraints = fullModeSections.reduce((acc, s) => acc + (s.constraints_applied?.length ?? 0), 0);
+  const ghostDayCards = generateGhostDayCards(fullModeSections, tripDuration);
+  return { fullModeSections, totalConstraints, ghostDayCards, filteredViewModel };
+}, [viewModel, effectiveTripInputs?.trip_duration]);
+```
+
+**Benefit:**
+- Density calculation only runs when state/tiles/tripInputs change
+- Specialist filtering only runs when strategy_sections change
+- planContent uses pre-computed values → fewer unnecessary recomputes
+
+#### Callback Stability
+
+Callbacks passed to planContent's dependency array should be stable:
+
+| Callback | Source | Stability |
+|----------|--------|-----------|
+| `onExpandToItinerary` | `useCallback` in NomadicLanding | ✅ Stable |
+| `onBuildPlan` | `useCallback` in NomadicLanding | ✅ Stable |
+| `onFinalizePlan` | `useCallback` in NomadicLanding | ✅ Stable |
+| `onSelectNights` | `useCallback` in NomadicLanding | ✅ Stable |
+| `toggleTilePreference` | Zustand store action | ✅ Stable |
+| `scrollToTile` | `useCallback` in StrategyStageRenderer | ✅ Stable |
+| `openSheet` | `useSheetManager` hook | ✅ Stable |
+| `shortlist.toggleItem` | `useShortlist` hook | ✅ Stable |
+
+**Rule:** Do NOT add new inline arrow functions to StrategyStageRenderer props unless they're excluded from planContent dependencies.
+
+---
+
+### 13. Cross-Reference
 
 * **Visual Tokens:** See `design-system.md` for colors, typography, and materials.
 * **Data Density:** See Section VII for density computation logic.
 * **Backend SSoT:** See `plan_graph_analysis.md` for node architecture.
+* **Performance:** See Section 12 for render optimization patterns.

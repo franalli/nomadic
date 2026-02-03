@@ -75,15 +75,6 @@ export function PlanHeader({
   onRefresh,
   isCollapsed = false,
 }: PlanHeaderProps) {
-  // DEBUG: Log refresh-related props
-  console.log('[PlanHeader] 🔍 Props received:', {
-    hasInputChanges,
-    isRefreshing,
-    hasOnRefresh: !!onRefresh,
-    planViewState,
-    destination: propTripInputs?.destination,
-  });
-
   // FIX: Header needs to update immediately when dates change in store
   const tripInputs = useTripInputsWithFallback(propTripInputs);
 
@@ -115,15 +106,6 @@ export function PlanHeader({
   // Check if we should show pills (S1+ with tripInputs and handler)
   const showPills =
     planViewState !== 'S0_BOOTSTRAP' && tripInputs && onOpenSheet;
-
-  // DEBUG: Log showPills computation
-  console.log('[PlanHeader] 📊 showPills:', {
-    showPills,
-    planViewState,
-    hasTripInputs: !!tripInputs,
-    hasOnOpenSheet: !!onOpenSheet,
-    shouldShowRefresh: (hasInputChanges || isRefreshing) && !!onRefresh,
-  });
 
   // Format date range for collapsed view (must be before early return to maintain hook order)
   const startDate = tripInputs?.start_date;
@@ -306,10 +288,7 @@ export function PlanHeader({
                 {/* Inline Refresh Button - shown when inputs changed or refreshing */}
                 {(hasInputChanges || isRefreshing) && onRefresh && (
                   <button
-                    onClick={() => {
-                      console.log('[PlanHeader] 🖱️ Refresh button clicked', { hasInputChanges, isRefreshing, hasOnRefresh: !!onRefresh });
-                      onRefresh();
-                    }}
+                    onClick={onRefresh}
                     disabled={isRefreshing || !hasInputChanges}
                     aria-label={isRefreshing ? 'Refreshing...' : 'Refresh plan'}
                     className={`

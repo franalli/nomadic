@@ -215,6 +215,10 @@ class ExpandItineraryStreamEvent(BaseModel):
     plan_envelope: Optional[Dict[str, Any]] = None
     # Done events
     plan_view_state: Optional[str] = None
+    # Version sync - included in done event so frontend can sync after mergeEnvelope
+    version: Optional[int] = None
+    # Dropped activities - included in done event when preferred activities couldn't fit
+    dropped_preferred_count: Optional[int] = None
 
 
 class RemoveSpecialistRequest(BaseModel):

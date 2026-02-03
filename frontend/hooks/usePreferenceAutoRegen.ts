@@ -57,12 +57,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
   // Regeneration function
   const triggerRegeneration = useCallback(async () => {
     // Race condition guard
-    if (useDocumentStore.getState().isRegenerating) {
-      console.log('[usePreferenceAutoRegen] ⏭️ Skipping - already regenerating (race guard)');
-      return;
-    }
-
-    console.log('[usePreferenceAutoRegen] 🔄 Instant regeneration triggered');
+    if (useDocumentStore.getState().isRegenerating) return;
 
     setRegenerationState({ isRegenerating: true });
 
@@ -90,14 +85,6 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
           }
         }
       }
-
-      // Debug: Log preference payload for visibility
-      console.log('[usePreferenceAutoRegen] 💜 Preferences payload:', {
-        preferredTileIds: Array.from(prefs),
-        preferred_hotel_ids: hotelIds,
-        preferred_activity_ids: activityIds,
-        tilesCount: document?.tiles ? Object.keys(document.tiles).length : 0,
-      });
 
       const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
@@ -137,6 +124,18 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
               const event = JSON.parse(line);
               if (event.type === 'envelope') {
                 useDocumentStore.getState().mergeEnvelope(event.plan_envelope);
+              } else if (event.type === 'done') {
+                // CRITICAL: Sync version from backend to prevent 409 on next PATCH
+                // expand-itinerary persists changes which increments version
+                if (typeof event.version === 'number') {
+                  useDocumentStore.setState({ version: event.version });
+                }
+                // Log warning if some preferred activities couldn't fit
+                if (event.dropped_preferred_count && event.dropped_preferred_count > 0) {
+                  console.warn(
+                    `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
+                  );
+                }
               } else if (event.type === 'error') {
                 throw new Error(event.message || 'Regeneration failed');
               }
@@ -149,9 +148,8 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
 
       // Success - mark preferences as applied
       markPreferencesAsApplied();
-      console.log('[usePreferenceAutoRegen] ✅ Regeneration complete');
     } catch (error) {
-      console.error('[usePreferenceAutoRegen] ❌ Regeneration failed:', error);
+      console.error('[usePreferenceAutoRegen] Regeneration failed:', error);
       // No toast for preference regen - it's a background operation
     } finally {
       setRegenerationState({ isRegenerating: false });
@@ -165,7 +163,6 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     if (isInitialMount.current) {
       isInitialMount.current = false;
       lastPrefsRef.current = new Set(preferredTileIds);
-      console.log('[usePreferenceAutoRegen] 📸 Initial preferences captured');
       return;
     }
 
@@ -200,11 +197,8 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
     // Check if these preferences differ from last GENERATED preferences
     // (avoids re-triggering after regen completes and syncs)
     if (setsEqual(preferredTileIds, lastGeneratedPreferences)) {
-      console.log('[usePreferenceAutoRegen] ⏭️ Preferences match last generated, skipping');
       return;
     }
-
-    console.log('[usePreferenceAutoRegen] 💚 Preference changed:', justHeartedIdRef.current);
 
     // Trigger instant regeneration (no debounce)
     triggerRegeneration();

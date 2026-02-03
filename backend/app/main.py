@@ -3210,10 +3210,12 @@ async def expand_itinerary_endpoint(
                     except Exception as e:
                         logger.warning(f"Failed to persist itinerary: {e}")
 
-                # Emit done
+                # Emit done with version for frontend sync (prevents 409 on next PATCH)
                 event = ExpandItineraryStreamEvent(
                     type="done",
                     plan_view_state=new_plan_view_state,
+                    version=doc.version if doc else None,
+                    dropped_preferred_count=itinerary_result.dropped_preferred_count or None,
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
@@ -3528,10 +3530,12 @@ async def remove_specialist_endpoint(
                 except Exception as e:
                     logger.warning(f"Failed to persist specialist removal: {e}")
 
-                # Emit done
+                # Emit done with version for frontend sync (prevents 409 on next PATCH)
                 event = ExpandItineraryStreamEvent(
                     type="done",
                     plan_view_state=new_plan_view_state,
+                    version=doc.version if doc else None,
+                    dropped_preferred_count=itinerary_result.dropped_preferred_count or None,
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
