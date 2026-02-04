@@ -274,6 +274,8 @@ type DocumentState = {
   startGeneration: (runId: string) => AbortController | null;
   /** Abort the current generation (if any) */
   abortGeneration: () => void;
+  /** Complete the current generation - clears runId to allow re-entry */
+  completeGeneration: () => void;
   /** Check if a runId is the current run (ignore late events from stale runs) */
   isCurrentRun: (runId: string) => boolean;
 
@@ -1019,6 +1021,54 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
     }
 
+    // ============================================================
+    // STRATEGY SECTIONS MERGE (preserve content_added, add new specialists)
+    // ============================================================
+    // When same destination: merge response sections with existing content_added
+    // Backend lightweight routes (origin change, settings) don't re-run specialists
+    // so response.strategy_sections may lack content_added data
+    // BUT new specialists (e.g., "hiking too") MUST be added from response
+    const currentSections = currentDoc?.strategy_sections ?? [];
+    const responseSections = response.document.strategy_sections ?? [];
+
+    const mergedSections = (() => {
+      if (destinationChanged) return responseSections;
+      if (responseSections.length === 0) return currentSections;
+
+      // Build maps for both current and response sections
+      const currentByType = new Map(
+        currentSections.map(s => [s.specialist_type, s])
+      );
+      const responseByType = new Map(
+        responseSections.map(s => [s.specialist_type, s])
+      );
+
+      // Start with response sections, preserving content_added from current where missing
+      const merged = responseSections.map(respSection => {
+        const existing = currentByType.get(respSection.specialist_type);
+        // If response lacks content_added but we have it cached, preserve it
+        if (existing?.content_added && !respSection.content_added) {
+          return { ...respSection, content_added: existing.content_added };
+        }
+        return respSection;
+      });
+
+      // Add current sections that aren't in the response (preserve existing specialists)
+      for (const current of currentSections) {
+        if (!responseByType.has(current.specialist_type)) {
+          merged.push(current);
+        }
+      }
+
+      return merged;
+    })();
+
+    if (!destinationChanged && responseSections.length !== currentSections.length) {
+      console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: MERGED (${currentSections.length} → ${mergedSections.length} sections)`);
+    } else if (!destinationChanged && currentSections.length > 0) {
+      console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: PRESERVED content_added (${mergedSections.length} sections)`);
+    }
+
     set({
       version: response.version,
       updatedBy: response.updated_by,
@@ -1029,6 +1079,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         tiles: mergedTiles,
         trip_inputs: mergedTripInputs,
         day_cards: finalDayCards,
+        strategy_sections: mergedSections,
       },
       selectedBranchId:
         get().selectedBranchId ||
@@ -1294,6 +1345,15 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     });
   },
 
+  completeGeneration: () => {
+    // Clear generation state to allow re-entry (e.g., structural change auto-expand)
+    // Unlike abortGeneration, this doesn't abort - just clears the gate
+    set({
+      currentRunId: null,
+      abortController: null,
+    });
+  },
+
   isCurrentRun: (runId: string) => {
     return get().currentRunId === runId;
   },
@@ -1419,7 +1479,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   // Regeneration tracking - sync lastGeneratedPreferences after expand-itinerary completes
   markPreferencesAsApplied: () => {
-    const { preferredTileIds } = get();
+    const { preferredTileIds, lastGeneratedPreferences } = get();
+
+    // Early exit if preferences haven't changed (prevents cascade)
+    // Compare by value, not reference, since Sets are always new objects
+    if (preferredTileIds.size === lastGeneratedPreferences.size) {
+      let allMatch = true;
+      for (const id of preferredTileIds) {
+        if (!lastGeneratedPreferences.has(id)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        console.log('[documentStore] Preferences unchanged, skipping state update');
+        return;
+      }
+    }
+
     console.log('[documentStore] Marking preferences as applied:', preferredTileIds.size);
     set({ lastGeneratedPreferences: new Set(preferredTileIds) });
   },

@@ -29,6 +29,8 @@ interface TripSummaryPillsProps {
   disabled?: boolean; // Disable all pills during streaming/generation
   /** Use 'onImage' when pills are on hero/photo background */
   variant?: 'default' | 'onImage';
+  /** When true, make all pills except destination read-only (demo-safe for itinerary state) */
+  readOnlyExceptDestination?: boolean;
 }
 
 export function TripSummaryPills({
@@ -36,6 +38,7 @@ export function TripSummaryPills({
   onOpenSheet,
   disabled = false,
   variant = 'default',
+  readOnlyExceptDestination = false,
 }: TripSummaryPillsProps) {
   // Read booking_types from tripInputs with safe fallback for fresh/migrating docs
   const bookingTypes = tripInputs.booking_types ?? DEFAULT_BOOKING_TYPES;
@@ -85,8 +88,8 @@ export function TripSummaryPills({
           value={origin}
           placeholder="Add origin"
           tone={origin ? 'default' : 'optional'}
-          onClick={() => onOpenSheet('origin')}
-          disabled={disabled}
+          onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('origin')}
+          disabled={disabled || readOnlyExceptDestination}
           variant={variant}
         />
       )}
@@ -97,8 +100,8 @@ export function TripSummaryPills({
         value={dateRange}
         placeholder="Add dates"
         tone={dateRange ? 'default' : 'missing'}
-        onClick={() => onOpenSheet('dates')}
-        disabled={disabled}
+        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('dates')}
+        disabled={disabled || readOnlyExceptDestination}
         variant={variant}
       />
 
@@ -108,8 +111,8 @@ export function TripSummaryPills({
         value={travelers}
         placeholder="1 adult"
         tone="default"
-        onClick={() => onOpenSheet('travelers')}
-        disabled={disabled}
+        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('travelers')}
+        disabled={disabled || readOnlyExceptDestination}
         variant={variant}
       />
 
@@ -119,8 +122,8 @@ export function TripSummaryPills({
         value={budget}
         placeholder="Budget (optional)"
         tone="optional"
-        onClick={() => onOpenSheet('budget')}
-        disabled={disabled}
+        onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('budget')}
+        disabled={disabled || readOnlyExceptDestination}
         variant={variant}
       />
 

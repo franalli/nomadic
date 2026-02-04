@@ -2926,6 +2926,13 @@ async def expand_itinerary_endpoint(
                 # Compute the regeneration strategy
                 regen_strategy = compute_strategy(changed_fields)
 
+                # Force full rebuild if frontend signals structural change (new specialist)
+                if req.force_full_rebuild:
+                    _debug(
+                        "⚡ [expand-itinerary] force_full_rebuild=True - bypassing selective regen"
+                    )
+                    regen_strategy = RegenStrategy.FULL
+
                 _debug(
                     f"🔄 [expand-itinerary] Selective Regen: "
                     f"strategy={regen_strategy.value}, changed={changed_fields}"
@@ -2948,6 +2955,14 @@ async def expand_itinerary_endpoint(
                     f"strategy_sections={len(strategy_sections_data)}, "
                     f"destination={trip_inputs_data.get('destination')}, tiles={tiles_count}"
                 )
+                # Log content_added counts for each section
+                for i, section in enumerate(strategy_sections_data):
+                    content_count = len(section.get("content_added", []))
+                    spec_type = section.get("specialist_type")
+                    _debug(
+                        f"📦 [expand-itinerary] Section {i}: "
+                        f"{spec_type} content_added={content_count}"
+                    )
                 # Log first section keys for debugging schema issues
                 if strategy_sections_data:
                     first_section_keys = list(strategy_sections_data[0].keys())

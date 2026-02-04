@@ -133,7 +133,20 @@ import { S2StrategyView } from './stages/S2StrategyView';
 // import { S3EditingView } from './stages/S3EditingView';
 // import { S3ItineraryView } from './stages/S3ItineraryView';
 import { TimelineSkeleton } from './timeline/TimelineSkeleton';
-import { TimelineThread } from './TimelineThread';
+import { TimelineThread, type TimelineVariant } from './TimelineThread';
+
+/**
+ * Compute timeline variant based on current planning state.
+ * - S3_ITINERARY_READY: 'real' (finalized itinerary - no badge)
+ * - S3_EDITING/S2_STRATEGY_READY: 'draft' (work in progress)
+ * - Others: 'ghost' (preview)
+ * @see docs/ux_unified_architecture.md
+ */
+function computeTimelineVariant(state: PlanViewState): TimelineVariant {
+  if (state === 'S3_ITINERARY_READY') return 'real';
+  if (state === 'S3_EDITING' || state === 'S2_STRATEGY_READY') return 'draft';
+  return 'ghost';
+}
 
 /**
  * Get alternative destination suggestions for infeasible specialists
@@ -214,12 +227,6 @@ interface StrategyStageRendererProps {
   onOpenStaysSettings?: () => void;
   /** Callback to open flights settings sheet (for flight gear icons) */
   onOpenFlightsSettings?: () => void;
-  /** Whether trip inputs have changed since last regeneration (for inline refresh button) */
-  hasInputChanges?: boolean;
-  /** Whether regeneration is in progress (for inline refresh button) */
-  isRefreshing?: boolean;
-  /** Callback when refresh button is clicked (for inline refresh button) */
-  onRefresh?: () => void;
 }
 
 // renderStageContent - REMOVED for Unified Planning View
@@ -261,9 +268,6 @@ export function StrategyStageRenderer({
   onOpenActivitySettings,
   onOpenStaysSettings,
   onOpenFlightsSettings,
-  hasInputChanges = false,
-  isRefreshing = false,
-  onRefresh,
 }: StrategyStageRendererProps) {
   // Unused props reserved for future use
   void _onReset;
@@ -280,7 +284,7 @@ export function StrategyStageRenderer({
   const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
   const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
 
-  // Regeneration state from document store (managed by useManualRegeneration/usePreferenceAutoRegen)
+  // Regeneration state from document store (managed by usePreferenceAutoRegen)
   const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
   const preferenceCount = preferredTileIds.size;
 
@@ -575,8 +579,9 @@ export function StrategyStageRenderer({
       // PERF: Use pre-computed feasible sections from specialistData
       const sections = specialistData.fullModeSections;
       const bridgeFilteredViewModel = filteredViewModel;
-      // U5: Pass destination for demo POI fallback
-      const mapPOIs = extractPOIsFromSections(sections, destinationCard?.title);
+      // U5: Pass destination for demo POI fallback (use fallback chain for reliable lookup)
+      const effectiveDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
+      const mapPOIs = extractPOIsFromSections(sections, effectiveDestination);
 
       // Get destination coordinates for map center
       const bridgeDestCoords = getDestinationCoords(destinationCard?.title);
@@ -689,8 +694,9 @@ export function StrategyStageRenderer({
     // Map appears immediately when destination is known, not just after itinerary
     const showDesktopMap = isDesktop && !!destCoords;
 
-    // U5: Extract POIs from specialist content, with demo fallback
-    const fullModePOIs = extractPOIsFromSections(fullModeSections, destinationCard?.title);
+    // U5: Extract POIs from specialist content, with demo fallback (use fallback chain)
+    const fullModeDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
+    const fullModePOIs = extractPOIsFromSections(fullModeSections, fullModeDestination);
 
     // Destination pin for the map center
     const destinationMarker: import('@/components/map/InteractiveMap').MapItem[] = destCoords
@@ -762,15 +768,15 @@ export function StrategyStageRenderer({
                   return (
                     <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700">
                       <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
-                      <div className="flex gap-2 flex-wrap">
+                      <div className="flex gap-2 flex-wrap overflow-x-auto no-scrollbar">
                         {engineConstraints.map((c, i) => (
                           <span
                             key={`${c.rule}-${i}`}
                             title={c.reason || c.rule?.replace(/_/g, ' ')}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-amber-300 dark:border-amber-600/50 text-xs font-medium max-w-[200px] truncate"
+                            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-amber-300 dark:border-amber-600/50 text-xs font-medium whitespace-nowrap"
                           >
                             <Shield className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
-                            {getShortLabel(c)}
+                            <span className="truncate max-w-[180px] sm:max-w-[240px] md:max-w-none">{getShortLabel(c)}</span>
                           </span>
                         ))}
                       </div>
@@ -910,7 +916,7 @@ export function StrategyStageRenderer({
                 <div className="relative">
                   <TimelineThread
                     dayCards={viewModel.day_cards ?? []}
-                    variant="draft"
+                    variant={computeTimelineVariant(state)}
                     useRichBlocks={true}
                     savedTileIds={savedTileIds}
                     onOpenStaysSettings={onOpenStaysSettings}
@@ -1041,9 +1047,6 @@ export function StrategyStageRenderer({
           onOpenSheet={onOpenSheet}
           isStreaming={isStreaming}
           isCollapsed={isCollapsed}
-          hasInputChanges={hasInputChanges}
-          isRefreshing={isRefreshing}
-          onRefresh={onRefresh}
         />
 
         {/* Content - direct render, scrollable */}
@@ -1082,9 +1085,6 @@ export function StrategyStageRenderer({
         onOpenSheet={onOpenSheet}
         isStreaming={isStreaming}
         isCollapsed={!isDesktop && isCollapsed}
-        hasInputChanges={hasInputChanges}
-        isRefreshing={isRefreshing}
-        onRefresh={onRefresh}
       />
 
       {/* View container - relative positioning for absolute views */}

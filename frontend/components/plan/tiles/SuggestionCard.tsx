@@ -113,7 +113,12 @@ export function SuggestionCard({
 
         {/* Price */}
         {formattedPrice && (
-          <div className="text-sm font-medium text-zinc-300">{formattedPrice}</div>
+          <div className="text-sm font-medium text-zinc-300">
+            {formattedPrice}
+            {(tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
+              <span className="text-zinc-500">/night</span>
+            )}
+          </div>
         )}
 
         {/* Settings gear for hotel tiles */}

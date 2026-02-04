@@ -138,9 +138,9 @@ NODE_STATUS_CONFIG = {
         "estimated_duration_ms": 1000,
     },
     "local_expert": {
-        "label": "Consulting local expert...",
+        "label": "Loading local knowledge...",
         "icon_key": "building",
-        "estimated_duration_ms": 800,
+        "estimated_duration_ms": 50,
     },
     "logistics": {
         "label": "Fetching flight options...",
@@ -332,6 +332,8 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 
     # Clear per-turn flags (must be here, not in nodes - nodes don't always run)
     state.metadata["architect_ran_this_turn"] = False
+    state.metadata["origin_only_logistics"] = False  # Prevents flag bleed from origin changes
+    state.metadata["short_circuit_response"] = False  # Prevents stale short-circuit state
 
     # Convert messages
     for msg in session_state.get("messages", []):
@@ -1359,6 +1361,29 @@ def _format_result(
             continue
 
         try:
+            # ENRICH: Add content_added if missing (hiking fix)
+            # Hiking specialist creates itinerary_blocks but doesn't always populate content_added
+            if not section.get("content_added") and plan.itinerary_blocks:
+                section["content_added"] = [
+                    {
+                        "title": block.title,
+                        "day": block.day,
+                        "type": getattr(block, "type", "activity"),
+                        "description": getattr(block, "description", ""),
+                        "logic_hook": getattr(block, "logic_hook", None),
+                        "image_url": getattr(block, "image_url", None),
+                        "coordinates": getattr(block, "coordinates", None),
+                        "is_buffer": getattr(block, "is_buffer", False),
+                    }
+                    for block in plan.itinerary_blocks
+                    if getattr(block, "source_specialist", None) == section_type
+                ]
+                if section["content_added"]:
+                    _debug_log(
+                        f"  Section '{section_type}': enriched "
+                        f"content_added={len(section['content_added'])} from itinerary_blocks"
+                    )
+
             # ENRICH: Add hero_image if missing
             if not section.get("hero_image"):
                 # Try to get from content_added first

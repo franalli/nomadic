@@ -58,6 +58,7 @@ def _compute_constraint_hash(trip_plan: TripPlan, trip_inputs: dict) -> str:
         "dest": (trip_plan.destination or "").lower().strip(),
         "month": (trip_plan.start_date or "")[:7],  # YYYY-MM only (seasonal)
         "activities": activity_cats,
+        "skill": trip_inputs.get("activity_settings", {}).get("skill_level"),
     }
 
     # Only include origin if flights enabled (affects diving no-fly constraints)
@@ -103,7 +104,7 @@ class IntentClassification(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
     reasoning: str = Field(description="Brief explanation of classification")
     # Multiple specialist hints (e.g., "diving and hiking trip")
-    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "boating"]] = Field(
+    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "surfing"]] = Field(
         default_factory=list, description="List of detected specialist activities (can be multiple)"
     )
 
@@ -123,7 +124,7 @@ class RouterOutput(BaseModel):
     reasoning: str = Field(description="Brief explanation of classification")
 
     # Specialist hints
-    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "boating"]] = Field(
+    specialist_hints: List[Literal["diving", "hiking", "skiing", "cycling", "surfing"]] = Field(
         default_factory=list, description="List of detected specialist activities"
     )
 
@@ -344,11 +345,18 @@ BUDGET_PATTERNS = [
 ]
 
 # Traveler patterns - extract number of adults/children
+# IMPORTANT: Order matters! Most specific patterns first.
 TRAVELER_PATTERNS = [
-    r"(\d+)\s*(?:adult|person|people|traveler|of us)",
+    # Combined adults AND children - MUST BE FIRST to capture "4 adults 2 kids"
+    r"(\d+)\s*(?:adult|person)s?\s*(?:and|,|&)\s*(\d+)\s*(?:child|kid|children|minor)s?",
+    # Children only (e.g., "2 children", "3 kids")
+    r"(\d+)\s*(?:child|kid|children|minor)s?",
+    # Group/party size (e.g., "party of 4")
     r"(?:party of|group of|traveling with)\s*(\d+)",
-    r"(\d+)\s*(?:adult|person)s?\s*(?:and|,|&)?\s*(\d+)?\s*(?:child|kid|children)?",
-    r"(?:family of|couple|solo|alone)",  # Qualitative patterns
+    # Adults only - AFTER combined pattern (e.g., "2 adults", "4 people")
+    r"(\d+)\s*(?:adult|person|people|traveler)s?(?:\s+of us)?",
+    # Qualitative patterns - LAST (e.g., "family of 4", "couple", "solo")
+    r"(?:family of|couple|solo|alone)",
 ]
 
 # Hotel preference patterns
@@ -399,7 +407,7 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
             break
 
     # Traveler detection
-    for pattern in TRAVELER_PATTERNS:
+    for pattern_idx, pattern in enumerate(TRAVELER_PATTERNS):
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             if "solo" in text or "alone" in text:
@@ -419,12 +427,23 @@ def _detect_settings_from_message(user_text: str, state: "GraphState") -> Option
                     detected["adults"] = 2
                     detected["children"] = 2
             else:
-                # Numeric extraction
+                # Numeric extraction - handle based on pattern index
                 groups = match.groups()
-                if groups[0]:
-                    detected["adults"] = int(groups[0])
-                if len(groups) > 1 and groups[1]:
-                    detected["children"] = int(groups[1])
+                if pattern_idx == 0:  # Combined adults AND children pattern
+                    if groups[0]:
+                        detected["adults"] = int(groups[0])
+                    if len(groups) > 1 and groups[1]:
+                        detected["children"] = int(groups[1])
+                elif pattern_idx == 1:  # Children-only pattern
+                    if groups[0]:
+                        detected["children"] = int(groups[0])
+                elif pattern_idx == 2:  # Group/party size pattern
+                    if groups[0]:
+                        detected["adults"] = int(groups[0])  # Assume all adults for party
+                elif pattern_idx == 3:  # Adults-only pattern
+                    if groups[0]:
+                        detected["adults"] = int(groups[0])
+                # pattern_idx == 4 is qualitative with no numeric groups
             break
 
     # Hotel preference detection

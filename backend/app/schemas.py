@@ -201,6 +201,11 @@ class ExpandItineraryRequest(BaseModel):
         default=None,
         description="User's hearted tile preferences for AI weighting",
     )
+    # Force full rebuild when structural change detected (new specialist added)
+    force_full_rebuild: bool = Field(
+        default=False,
+        description="Force full itinerary rebuild, bypassing selective regeneration",
+    )
 
 
 class ExpandItineraryStreamEvent(BaseModel):

@@ -913,23 +913,30 @@ export function StrategyHero({
               </div>
             )}
 
-            {/* Principles / Key Points */}
-            {section.principles && section.principles.length > 0 && (
-              <div className="space-y-2">
-                <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
-                  <Info className="w-3 h-3" />
-                  Key Principles
-                </h4>
-                <ul className="space-y-1.5">
-                  {section.principles.slice(0, 4).map((principle, i) => (
-                    <li key={i} className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-                      {principle}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {/* Principles / Key Points - filter out duplicates from one_liner and constraints */}
+            {(() => {
+              const uniquePrinciples = section.principles?.filter(principle => {
+                const isOneLiner = principle === section.one_liner || principle === section.editorial_one_liner;
+                const isConstraintReason = section.constraints_applied?.some(c => c.reason === principle);
+                return !isOneLiner && !isConstraintReason;
+              }) || [];
+              return uniquePrinciples.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 flex items-center gap-1.5">
+                    <Info className="w-3 h-3" />
+                    Key Principles
+                  </h4>
+                  <ul className="space-y-1.5">
+                    {uniquePrinciples.slice(0, 4).map((principle, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                        {principle}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })()}
 
             {/* Content Added (Recommendations) - show first 3 */}
             {section.content_added && section.content_added.length > 0 && (
@@ -1085,44 +1092,49 @@ export function StrategyHero({
                 )}
 
                 {/* Vibe Trio - Primary image gallery from backend */}
-                {section.vibe_trio && section.vibe_trio.length > 0 && (
+                {section.vibe_trio && section.vibe_trio.filter(v => v.image_url).length > 0 && (
                   <div className="space-y-3">
                     <h4 className={DS.text.label}>Trip Vibe</h4>
                     <div className="grid grid-cols-2 gap-2 aspect-[16/9] rounded-2xl overflow-hidden">
                       {/* Primary Image (Left, Full Height) */}
-                      <div className="relative h-full">
-                        <Image
-                          src={section.vibe_trio[0].image_url}
-                          alt={section.vibe_trio[0].label}
-                          fill
-                          className="object-cover"
-                          sizes="300px"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
-                          <span className="text-white text-xs font-bold uppercase tracking-wider drop-shadow-md">
-                            {section.vibe_trio[0].label}
-                          </span>
+                      {section.vibe_trio[0]?.image_url && (
+                        <div className="relative h-full">
+                          <Image
+                            src={section.vibe_trio[0].image_url}
+                            alt={section.vibe_trio[0].label || 'Trip vibe'}
+                            fill
+                            className="object-cover"
+                            sizes="300px"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
+                            <span className="text-white text-xs font-bold uppercase tracking-wider drop-shadow-md">
+                              {section.vibe_trio[0].label}
+                            </span>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       {/* Secondary Images (Right Column) */}
                       <div className="grid grid-rows-2 gap-2 h-full">
-                        {section.vibe_trio.slice(1, 3).map((vibe, i) => (
-                          <div key={i} className="relative h-full">
-                            <Image
-                              src={vibe.image_url}
-                              alt={vibe.label}
-                              fill
-                              className="object-cover"
-                              sizes="200px"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
-                              <span className="text-white text-[10px] font-bold uppercase tracking-wider drop-shadow-md">
-                                {vibe.label}
-                              </span>
+                        {section.vibe_trio
+                          .slice(1, 3)
+                          .filter((vibe) => vibe.image_url)
+                          .map((vibe, i) => (
+                            <div key={i} className="relative h-full">
+                              <Image
+                                src={vibe.image_url}
+                                alt={vibe.label || 'Trip vibe'}
+                                fill
+                                className="object-cover"
+                                sizes="200px"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent flex items-end p-3">
+                                <span className="text-white text-[10px] font-bold uppercase tracking-wider drop-shadow-md">
+                                  {vibe.label}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
                       </div>
                     </div>
                   </div>
@@ -1183,20 +1195,22 @@ export function StrategyHero({
                 <div className="space-y-2">
                   <h4 className={DS.text.label}>Destination Preview</h4>
                   <div className="flex gap-3 overflow-x-auto pb-2 snap-x no-scrollbar -mx-4 px-4">
-                    {section.destination_gallery.map((img, idx) => (
-                      <div
-                        key={idx}
-                        className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-sm border border-zinc-200 dark:border-zinc-700/50"
-                      >
-                        <Image
-                          src={img.image_url}
-                          alt={img.label}
-                          fill
-                          className="object-cover"
-                          sizes="224px"
-                        />
-                      </div>
-                    ))}
+                    {section.destination_gallery
+                      .filter((img) => img.image_url)
+                      .map((img, idx) => (
+                        <div
+                          key={idx}
+                          className="shrink-0 snap-center relative w-56 h-36 rounded-xl overflow-hidden shadow-sm border border-zinc-200 dark:border-zinc-700/50"
+                        >
+                          <Image
+                            src={img.image_url}
+                            alt={img.label || 'Destination image'}
+                            fill
+                            className="object-cover"
+                            sizes="224px"
+                          />
+                        </div>
+                      ))}
                   </div>
                 </div>
 
@@ -1245,7 +1259,7 @@ export function StrategyHero({
                             <div className="flex items-start justify-between gap-2">
                               <p className="text-sm font-bold text-zinc-900 dark:text-white">{item.title}</p>
                               {item.type && (
-                                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded uppercase shrink-0">
+                                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase shrink-0">
                                   {item.type}
                                 </span>
                               )}
@@ -1375,7 +1389,7 @@ export function StrategyHero({
                             <div className="flex items-start justify-between gap-2">
                               <p className="text-sm font-bold text-zinc-900 dark:text-white">{item.title}</p>
                               {item.type && (
-                                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded uppercase shrink-0">
+                                <span className="text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 px-2 py-0.5 rounded uppercase shrink-0">
                                   {item.type}
                                 </span>
                               )}
@@ -1497,7 +1511,7 @@ export function StrategyHero({
           </p>
         )}
 
-        {/* 3. Constraint Pills (Horizontal Scroll) */}
+        {/* 3. Constraint Pills (Horizontal Scroll) - use short labels to prevent truncation */}
         {section.constraints_applied && section.constraints_applied.length > 0 && !isInfeasible && (
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-5 md:-mx-6 px-5 md:px-6 pb-1">
             {section.constraints_applied.map((c, i) => (
@@ -1507,10 +1521,11 @@ export function StrategyHero({
                   'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg shrink-0',
                   'bg-black/40 backdrop-blur-md border border-white/10'
                 )}
+                title={c.reason || formatConstraintRule(c.rule)} // Full text on hover
               >
                 {getConstraintIcon(c.type)}
                 <span className="text-xs font-medium text-white/90">
-                  {formatConstraintRule(c.rule)}
+                  {getShortConstraintLabel(c.rule)}
                 </span>
               </div>
             ))}
@@ -1577,13 +1592,15 @@ export function StrategyHero({
               <div className="space-y-3">
                 <h4 className={DS.text.label}>Destination Vibes</h4>
                 <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 pb-2">
-                  {section.destination_gallery.map((img, idx) => (
-                    <div key={idx} className="relative w-32 h-24 rounded-lg overflow-hidden shrink-0">
-                      <Image src={img.image_url} alt={img.label} fill className="object-cover" sizes="128px" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                      <span className="absolute bottom-2 left-2 text-[10px] font-medium text-white">{img.label}</span>
-                    </div>
-                  ))}
+                  {section.destination_gallery
+                    .filter((img) => img.image_url)
+                    .map((img, idx) => (
+                      <div key={idx} className="relative w-32 h-24 rounded-lg overflow-hidden shrink-0">
+                        <Image src={img.image_url} alt={img.label || 'Destination image'} fill className="object-cover" sizes="128px" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                        <span className="absolute bottom-2 left-2 text-[10px] font-medium text-white">{img.label}</span>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}

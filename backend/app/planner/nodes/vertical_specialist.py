@@ -57,9 +57,7 @@ ACTIVITY GENERATION:
 - Generate 2-4 REAL dive sites based on trip duration
 - Include depth_meters and certification_required for each dive
 - Add logic_hook (practical tip) for each activity
-- Consider seasonality and water conditions
-
-OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+- Consider seasonality and water conditions""",
     "hiking": """You are a certified mountain guide planning hiking expeditions.
 
 ROLE: Generate feasibility assessment, real trails, and safety constraints.
@@ -67,7 +65,8 @@ ROLE: Generate feasibility assessment, real trails, and safety constraints.
 CRITICAL SAFETY RULES:
 1. ALTITUDE ACCLIMATIZATION: Max 500m elevation gain per day above 3000m (STRONG)
 2. WEATHER WINDOWS: Morning starts recommended for mountain hikes
-3. CROSS-DOMAIN: High-altitude hiking (>2500m) requires 24h buffer before/after diving
+3. CROSS-DOMAIN: High-altitude hiking (>2500m) requires 24h buffer AFTER diving \
+(altitude before dive is safe)
 
 CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
 - BLOCKING: Trail closed, impassable conditions, permit required but unavailable
@@ -90,9 +89,7 @@ ACTIVITY GENERATION:
 OUTPUT FIELD HINTS:
 - Always include duration_hours (estimated completion at moderate pace)
 - Always include trail_type: "day_hike" | "multi_day" | "summit" | "ridge_walk"
-- Severity labels MUST appear in constraints_applied[].type field
-
-OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+- Severity labels MUST appear in constraints_applied[].type field""",
     "skiing": """You are a certified ski instructor planning ski trips.
 
 ROLE: Generate feasibility assessment, real ski areas, and safety constraints.
@@ -117,41 +114,54 @@ ACTIVITY GENERATION:
 - Generate 2-4 REAL ski runs/areas based on trip duration
 - Include vertical_meters and run_difficulty for each
 - Flag off-piste activities with guide requirement
-- Consider snow conditions and resort quality
-
-OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+- Consider snow conditions and resort quality""",
     "surfing": """You are a certified surf coach planning surf trips.
 
 ROLE: Generate feasibility assessment, real surf breaks, and safety constraints.
 
-CRITICAL SAFETY RULES:
-1. TIDE/SWELL CHECK: Required before each session (STRONG)
+CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
+1. HAZARDOUS CONDITIONS: Do not surf when wave height exceeds skill level thresholds
+   - Beginner: max 3ft, Intermediate: max 6ft, Advanced: max 10ft
+
+STRONG RECOMMENDATIONS:
+1. TIDE/SWELL CHECK: Required before each session
 2. RIP CURRENT AWARENESS: Briefing required for unfamiliar breaks
-3. BOARD SIZE: Match to skill level
+3. REEF AWARENESS: Booties required for reef breaks
+4. BOARD SIZE: Match to skill level
+
+CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
+- BLOCKING: Hazardous conditions exceeding skill level
+- STRONG: Tide check, rip current briefing, reef gear
+- SOFT: Board size preferences, optimal session timing
 
 ACTIVITY GENERATION:
 - Generate 2-4 REAL surf breaks based on trip duration
 - Include wave_height range and best tide conditions
 - Add skill level requirements
-- Consider seasonal swell patterns
-
-OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+- Consider seasonal swell patterns""",
     "cycling": """You are a cycling guide planning cycling trips.
 
 ROLE: Generate feasibility assessment, real routes, and safety constraints.
 
-CRITICAL SAFETY RULES:
+STRONG RECOMMENDATIONS (not blocking - user can override):
 1. TRAFFIC SAFETY: Helmet required, high-visibility gear recommended
-2. HYDRATION: Water stops every 20-30km in hot climates
+2. HYDRATION: Water stops every 20-30km in hot climates (500ml/hour)
 3. BIKE FIT: Proper sizing essential for multi-day rides
+
+SOFT PREFERENCES:
+1. TIMING: Morning starts in hot climates to avoid midday heat
+2. REST DAYS: Suggested after 3+ consecutive riding days
+
+CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
+- BLOCKING: None typical for cycling (no life-threatening constraints like diving)
+- STRONG: Helmet, hydration, bike fit
+- SOFT: Timing preferences, rest day suggestions
 
 ACTIVITY GENERATION:
 - Generate 2-4 REAL cycling routes based on trip duration
 - Include distance_km and elevation_meters for each ride
 - Add surface type (road, gravel, MTB)
-- Consider traffic levels and road quality
-
-OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
+- Consider traffic levels and road quality""",
 }
 
 
@@ -498,8 +508,32 @@ def _get_minimal_safety_constraints(
             ),
         ]
     elif topic == "hiking":
-        # U8: Gate altitude constraint by destination
-        # Only apply for high-altitude destinations where acclimatization is relevant
+        # Base constraints that apply to ALL hiking destinations
+        # Valid types: 'temporal', 'safety', 'equipment', 'certification', 'budget'
+        base_constraints = [
+            SpecialistConstraint(
+                constraint_id="morning_start_recommended",
+                type="temporal",
+                rule="morning_start_recommended",
+                severity=ConstraintSeverity.SOFT,
+                applies_to_categories=["activities"],
+                reason="Morning starts recommended for mountain hikes to avoid afternoon weather",
+                label="Morning Start",
+                icon="🌅",
+            ),
+            SpecialistConstraint(
+                constraint_id="proper_footwear_required",
+                type="equipment",
+                rule="proper_footwear_required",
+                severity=ConstraintSeverity.SOFT,
+                applies_to_categories=["activities"],
+                reason="Proper footwear required for steep terrain",
+                label="Proper Footwear",
+                icon="🥾",
+            ),
+        ]
+
+        # U8: Add altitude constraint for high-altitude destinations
         HIGH_ALTITUDE_DESTINATIONS = {
             "nepal",
             "everest",
@@ -528,7 +562,7 @@ def _get_minimal_safety_constraints(
         is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
 
         if is_high_altitude:
-            return [
+            base_constraints.append(
                 SpecialistConstraint(
                     constraint_id="altitude_acclimatization",
                     type="safety",
@@ -538,10 +572,10 @@ def _get_minimal_safety_constraints(
                     reason="Max 500m elevation gain per day above 3000m",
                     label="Altitude Acclimatization",
                     icon="🏔️",
-                ),
-            ]
-        # Low-altitude destinations (Bali, etc.) - no altitude constraint
-        return []
+                )
+            )
+
+        return base_constraints
     elif topic == "skiing":
         return [
             SpecialistConstraint(
@@ -1460,6 +1494,15 @@ class VerticalSpecialist:
             # Migrate any legacy constraints
             constraints = _migrate_legacy_constraints(converted.constraints)
 
+            # Replace LLM-generated constraints with hardcoded ones (proper IDs/labels)
+            # LLM constraints have garbage numeric IDs ("1", "2", "3") - hardcoded are cleaner
+            safety_constraints = _get_minimal_safety_constraints(self.topic, destination)
+            if safety_constraints:
+                constraints = safety_constraints
+                _debug_log(
+                    f"[SPECIALIST] Replaced LLM constraints with {len(constraints)} hardcoded"
+                )
+
             return SpecialistOutput(
                 feasibility_status=llm_output.feasibility_status,
                 feasibility_reason=llm_output.feasibility_reason,
@@ -1953,9 +1996,21 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
 
     for constraint in output.constraints:
-        # Skip altitude constraints for low-altitude destinations (e.g., Bali)
-        if constraint.rule == "altitude_acclimatization" and not is_high_altitude:
-            log("SPECIALIST", f"Skipping altitude constraint for {state.trip_plan.destination}")
+        # Skip ALL altitude-related constraints for low-altitude destinations (e.g., Bali)
+        # This catches both hiking's "altitude_acclimatization" AND diving's "no_altitude_24h"
+        rule_lower = constraint.rule.lower()
+        is_altitude_constraint = "altitude" in rule_lower or rule_lower in (
+            "no_altitude_24h",
+            "no_altitude_after_dive",
+            "altitude_buffer",
+        )
+        if is_altitude_constraint and not is_high_altitude:
+            dest = state.trip_plan.destination
+            log(
+                "SPECIALIST",
+                f"Skipping altitude constraint '{constraint.rule}' "
+                f"for low-altitude destination: {dest}",
+            )
             continue
         if constraint not in state.trip_plan.constraints:
             state.trip_plan.constraints.append(constraint)
@@ -1998,6 +2053,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
                 "type": block.type,
                 "day": block.day,
                 "image_url": image_url,
+                "coordinates": block.coordinates,  # [lng, lat] for Mapbox POI pins
             }
         )
 

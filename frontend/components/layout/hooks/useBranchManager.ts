@@ -262,14 +262,12 @@ export function useBranchManager(options: BranchManagerOptions): UseBranchManage
 
   /**
    * Regeneration state from document store.
-   * Now managed by useManualRegeneration and usePreferenceAutoRegen hooks
-   * which are wired up at NomadicLanding.tsx level.
+   * Managed by usePreferenceAutoRegen hook wired up at NomadicLanding.tsx level.
    */
   const isRegenerating = useDocumentStore((s) => s.isRegenerating);
 
   /**
-   * Plan status is now always 'ready' since regeneration is manual.
-   * The RefreshButton shows when changes are pending via useManualRegeneration.
+   * Plan status is always 'ready' since regeneration is now automatic via auto-expand.
    */
   const planStatus: PlanStatus = 'ready';
 

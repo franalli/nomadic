@@ -549,7 +549,7 @@ class Synthesizer:
         # Collect UI events
         ui_events = [
             UIEvent(
-                type="PLAN_READY" if plan.status == "ready" else "PLAN_READY",
+                type="PLAN_READY" if plan.status == "ready" else "PLAN_UPDATE",
                 agent_id=state.active_agent_id or "architect",
             )
         ]
@@ -695,7 +695,7 @@ async def synthesizer(state: GraphState) -> GraphState:
     plan = state.trip_plan
     ui_events = [
         UIEvent(
-            type="PLAN_READY" if plan.status == "ready" else "PLAN_READY",
+            type="PLAN_READY" if plan.status == "ready" else "PLAN_UPDATE",
             agent_id=state.active_agent_id or "architect",
         )
     ]

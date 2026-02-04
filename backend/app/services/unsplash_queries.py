@@ -5,7 +5,28 @@ Deterministic query mapping for Unsplash image searches.
 Maps destination names to curated search queries that return high-quality,
 representative images. Fallback to generic "{destination} travel landmark"
 for unknown destinations.
+
+Activity-specific queries override destination queries when specialist
+activities are specified (e.g., diving, hiking, skiing) to ensure
+topic-relevant images.
 """
+
+# =============================================================================
+# ACTIVITY-SPECIFIC QUERIES - Override destination queries for specialists
+# =============================================================================
+# When an activity is specified, use these queries instead of appending
+# the activity to destination queries (which produces poor results like
+# "bali rice terraces temple diving")
+ACTIVITY_QUERIES: dict[str, str] = {
+    "diving": "scuba diving underwater coral reef tropical fish",
+    "hiking": "mountain hiking trail backpacker summit view",
+    "skiing": "skiing powder snow alpine mountain slopes",
+    "surfing": "surfing ocean wave beach",
+    "climbing": "rock climbing mountaineer cliff",
+    "snorkeling": "snorkeling tropical reef underwater",
+    "kayaking": "kayaking ocean river paddle",
+    "cycling": "cycling mountain bike trail",
+}
 
 # Curated mapping for common destinations
 # Keys are lowercase for case-insensitive lookup
@@ -137,22 +158,26 @@ DESTINATION_QUERIES: dict[str, str] = {
 
 def get_query_for_destination(destination: str, activities: list[str] | None = None) -> str:
     """
-    Get a deterministic search query for a destination, optionally enhanced with activities.
+    Get a deterministic search query for a destination, optionally using activity-specific queries.
 
     Args:
         destination: The destination name (case-insensitive)
-        activities: Optional list of activity categories (e.g., ["Hiking", "Photography"])
+        activities: Optional list of activity categories (e.g., ["diving", "hiking"])
 
     Returns:
-        A curated search query for known destinations (with activity if provided),
-        or "{destination} travel landmark {activity}" for unknown ones.
+        For specialist activities (diving, hiking, skiing, etc.):
+            Uses ACTIVITY_QUERIES for topic-relevant images (e.g., underwater scenes for diving)
+        For general queries:
+            Uses DESTINATION_QUERIES for location-specific images
     """
-    normalized = destination.lower().strip()
-    base_query = DESTINATION_QUERIES.get(normalized, f"{destination} travel landmark")
-
-    # Enhance query with primary activity if provided
+    # If an activity is specified, use activity-specific query for better results
+    # This ensures diving gets underwater images, not "bali rice terraces diving"
     if activities and len(activities) > 0:
-        activity = activities[0].lower()
-        return f"{base_query} {activity}"
+        activity = activities[0].lower().strip()
+        if activity in ACTIVITY_QUERIES:
+            # Use pure activity query for specialist topics
+            return ACTIVITY_QUERIES[activity]
 
-    return base_query
+    # Fallback to destination-based query
+    normalized = destination.lower().strip()
+    return DESTINATION_QUERIES.get(normalized, f"{destination} travel landmark")

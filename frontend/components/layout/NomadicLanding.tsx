@@ -32,7 +32,6 @@ import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
-import { useManualRegeneration } from '@/hooks/useManualRegeneration';
 import { usePreferenceAutoRegen } from '@/hooks/usePreferenceAutoRegen';
 import { useSheetManager } from '@/hooks/useSheetManager';
 import { useShortlist } from '@/hooks/useShortlist';
@@ -139,59 +138,6 @@ export function NomadicLanding() {
   // ChatPanel ref - defined early so regeneration can trigger via it
   const chatPanelRef = useRef<ChatPanelHandle | null>(null);
 
-  // Ref to store itinerary generation function (defined later in file)
-  // This allows useManualRegeneration to chain itinerary generation after plan refresh
-  const expandToItineraryRef = useRef<(() => void) | null>(null);
-
-  // Ref to store proceedWithItineraryGeneration (defined later in file)
-  // Used by onAfterRegenerate to bypass gate checks after successful refresh
-  const proceedWithItineraryGenerationRef = useRef<(() => Promise<void>) | null>(null);
-
-  // Ref for toast error handler (toast is defined later in component)
-  const toastErrorRef = useRef<((error: Error) => void) | null>(null);
-
-  // Manual regeneration - shows "Refresh Plan" button when trip inputs change
-  // Pass callback to trigger full graph run via chat (ensures fresh tile fetches)
-  const {
-    hasChanges: hasInputChanges,
-    isRefreshing,
-    regenerate: handleManualRefresh,
-    markValidated,
-    resetState: resetManualRegeneration,
-  } = useManualRegeneration({
-    onFullRegenerate: useCallback(() => {
-      // Block Path A auto-trigger during manual refresh
-      manualRefreshPendingRef.current = true;
-
-      // Trigger full plan regeneration via ChatPanel
-      if (!chatPanelRef.current?.sendMessage) {
-        manualRefreshPendingRef.current = false;
-        return;
-      }
-
-      chatPanelRef.current.sendMessage(GENERATE_PLAN_TRIGGER);
-    }, []),
-    onAfterRegenerate: useCallback(() => {
-      // Auto-trigger itinerary generation after plan refresh
-      // CRITICAL: Clear old runId before generating new itinerary
-      useDocumentStore.getState().abortGeneration();
-
-      // DIRECT CALL via ref: Bypass handleExpandToItinerary gates since we just completed refresh
-      if (proceedWithItineraryGenerationRef.current) {
-        proceedWithItineraryGenerationRef.current();
-      }
-
-      // Clear manual refresh flag after delay (let generation start first)
-      setTimeout(() => {
-        manualRefreshPendingRef.current = false;
-      }, 1000);
-    }, []),
-    onError: useCallback((error: Error) => {
-      // Use ref to access toast (defined later in component)
-      toastErrorRef.current?.(error);
-    }, []),
-  });
-
   // Preference auto-regen - instant regeneration when hearts change
   usePreferenceAutoRegen();
 
@@ -233,12 +179,6 @@ export function NomadicLanding() {
 
   // Toast system - use centralized ToastProvider
   const { toast } = useToast();
-
-  // Set up error handler for manual regeneration (ref pattern to avoid hook ordering issues)
-  toastErrorRef.current = (error: Error) => {
-    toast('Refresh failed. Try again.', { type: 'error' });
-    console.error('[NomadicLanding] Regeneration error:', error);
-  };
 
   // Wrapper for legacy addToast signature (message, type) -> toast(message, { type })
   // Maps 'confirmation' type to 'success' since ToastProvider only supports standard types
@@ -359,8 +299,6 @@ export function NomadicLanding() {
     // Clear destination image
     setDestinationImageUrl(null);
     lastFetchedDestination.current = null;
-    // Reset manual regeneration state (clears hash refs for fresh trip)
-    resetManualRegeneration();
     // Close any open trip input sheet
     closeSheet();
     // Reset mobile mode to planner view (shows chat/setup)
@@ -376,7 +314,6 @@ export function NomadicLanding() {
     documentStore,
     isDesktop,
     switchToPlanner,
-    resetManualRegeneration,
   ]);
 
   // Wrapped handlers for receipt functionality
@@ -799,14 +736,20 @@ export function NomadicLanding() {
 
   // Actual itinerary generation logic - accepts optional override to avoid state race
   const STREAM_TIMEOUT_MS = 30000;
-  const proceedWithItineraryGeneration = useCallback(async () => {
+  const proceedWithItineraryGeneration = useCallback(async (options?: { forceFullRebuild?: boolean }) => {
     // RACE GUARD: Check if generation is already in progress via store
     // (checking store directly avoids stale closure issues)
     const existingRunId = useDocumentStore.getState().currentRunId;
-    if (existingRunId) return;
+    if (existingRunId) {
+      console.log('[proceedWithItineraryGeneration] ⏭️ Skipped - generation already registered:', existingRunId);
+      return;
+    }
 
     // RACE GUARD: Check if expand is already in progress (prevents cascade)
-    if (useDocumentStore.getState().expandInProgress) return;
+    if (useDocumentStore.getState().expandInProgress) {
+      console.log('[proceedWithItineraryGeneration] ⏭️ Skipped - expandInProgress flag set');
+      return;
+    }
 
     // Generate runId for this generation (also serves as idempotency key)
     const runId = crypto.randomUUID();
@@ -815,7 +758,10 @@ export function NomadicLanding() {
     // ATOMIC: startGeneration returns null if another generation is already running
     const abortController = documentStore.startGeneration(runId);
 
-    if (!abortController) return;
+    if (!abortController) {
+      console.log('[proceedWithItineraryGeneration] ⏭️ Skipped - startGeneration returned null');
+      return;
+    }
 
     // Set expand-in-progress flag to prevent cascade with preference auto-regen
     useDocumentStore.getState().setExpandInProgress(true);
@@ -842,13 +788,12 @@ export function NomadicLanding() {
     resetTimeout();
 
     try {
-      // Get current document state for context
-      const currentDoc = documentStore.document;
-
       // FIX: Read LIVE state from store to avoid stale closure
-      // documentStore.preferredTileIds is captured at render time, but we need
-      // the current value when this callback actually executes
-      const preferredTileIds = useDocumentStore.getState().preferredTileIds;
+      // The callback can be triggered immediately after a Zustand merge, but before
+      // React re-renders. Using getState() ensures we get the merged strategy_sections.
+      const freshState = useDocumentStore.getState();
+      const currentDoc = freshState.document;
+      const preferredTileIds = freshState.preferredTileIds;
 
       // Build preferences from heart state
       const tiles = currentDoc?.tiles ?? {};
@@ -884,6 +829,16 @@ export function NomadicLanding() {
 
       // SAFETY: Verify we're still the current run right before fetch
       if (!documentStore.isCurrentRun(runId)) return;
+
+      // Debug: Log what we're sending (using fresh state)
+      console.log('[proceedWithItineraryGeneration] 📦 Sending (fresh state):', {
+        strategy_sections: currentDoc?.strategy_sections?.map(s => ({
+          type: s.specialist_type,
+          content_added_count: s.content_added?.length ?? 0
+        })),
+        force_full_rebuild: options?.forceFullRebuild ?? false,
+      });
+
       const response = await apiFetch('/api/expand-itinerary', {
         method: 'POST',
         body: JSON.stringify({
@@ -900,6 +855,8 @@ export function NomadicLanding() {
                   preferred_activity_ids: preferredActivityIds,
                 }
               : null,
+          // Force full rebuild when structural change detected (new specialist added)
+          force_full_rebuild: options?.forceFullRebuild ?? false,
         }),
         signal: abortController.signal,
       });
@@ -1020,6 +977,8 @@ export function NomadicLanding() {
       // Clear expand-in-progress flag
       useDocumentStore.getState().setExpandInProgress(false);
       if (documentStore.isCurrentRun(runId)) {
+        // Clear generation state to allow re-entry (e.g., structural change auto-expand)
+        documentStore.completeGeneration();
         setUiGeneration(null);
       }
     }
@@ -1039,9 +998,6 @@ export function NomadicLanding() {
   // Track isRegenerating via ref to prevent callback cascade
   // (reading from ref avoids adding isRegenerating to useCallback deps)
   const isRegeneratingRef = useRef(false);
-
-  // Track manual refresh pending - prevents Path A from racing with onAfterRegenerate
-  const manualRefreshPendingRef = useRef(false);
 
   // Check if itinerary content exists
   const hasItineraryContent = (docDayCards?.length ?? 0) > 0;
@@ -1063,13 +1019,6 @@ export function NomadicLanding() {
   useEffect(() => {
     // Skip if already triggered
     if (hasAutoTriggeredRef.current) return;
-
-    // RACE GUARD: Skip if manual refresh is in progress
-    // (onAfterRegenerate will handle itinerary generation after refresh completes)
-    if (isRefreshing) return;
-
-    // RACE GUARD: Skip if manual refresh just completed (onAfterRegenerate handling it)
-    if (manualRefreshPendingRef.current) return;
 
     // RACE GUARD: Skip if regeneration is in progress (e.g., preference auto-regen)
     if (isRegeneratingRef.current) return;
@@ -1100,7 +1049,6 @@ export function NomadicLanding() {
     hasDates,
     uiGeneration,
     hasItineraryContent,
-    isRefreshing,
     proceedWithItineraryGeneration,
   ]);
 
@@ -1133,16 +1081,6 @@ export function NomadicLanding() {
     // All gates passed - proceed with itinerary generation
     await proceedWithItineraryGeneration();
   }, [addToast, proceedWithItineraryGeneration]);
-
-  // Keep ref in sync with handleExpandToItinerary for auto-chaining after plan refresh
-  useEffect(() => {
-    expandToItineraryRef.current = handleExpandToItinerary;
-  }, [handleExpandToItinerary]);
-
-  // Keep ref in sync with proceedWithItineraryGeneration for direct calls from onAfterRegenerate
-  useEffect(() => {
-    proceedWithItineraryGenerationRef.current = proceedWithItineraryGeneration;
-  }, [proceedWithItineraryGeneration]);
 
   // Handle quick pick from InlineDatePrompt
   const handleSelectNights = useCallback(
@@ -1417,9 +1355,6 @@ export function NomadicLanding() {
       onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       planViewState={planViewState}
       onOpenSheet={openSheet}
-      // FAB FIX: Sync trip inputs hash when chat updates them
-      // Prevents FAB from appearing for chat-originated changes (which auto-regenerate)
-      onChatTripInputsUpdated={markValidated}
       // Note: onOpenBudgetInput not wired - falls back to chat insertion.
       // Users can also click budget pill in OptionalRefinementsSection directly.
     />
@@ -1462,10 +1397,6 @@ export function NomadicLanding() {
       onOpenActivitySettings={() => setGearActivitiesSheetOpen(true)}
       onOpenStaysSettings={() => setGearStaysSheetOpen(true)}
       onOpenFlightsSettings={() => setGearFlightsSheetOpen(true)}
-      // Inline refresh button props (header integration)
-      hasInputChanges={hasInputChanges}
-      isRefreshing={isRefreshing}
-      onRefresh={handleManualRefresh}
     />
   );
 

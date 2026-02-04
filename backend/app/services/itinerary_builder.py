@@ -494,6 +494,8 @@ class ItineraryBuilder:
 
         # Store preferences for use across phases
         self.preferences = input_data.preferences
+        # Store destination for altitude constraint checks in _detect_early_conflicts
+        self.destination = input_data.destination
 
         try:
             # Parse dates
@@ -717,6 +719,9 @@ class ItineraryBuilder:
 
             # Extract content_added as activities
             content_added = section.get("content_added", [])
+            _debug_itinerary(
+                f"📦 Phase 2: {specialist_type} has {len(content_added)} content_added items"
+            )
             activities = []
 
             for content in content_added:
@@ -848,6 +853,43 @@ class ItineraryBuilder:
                 f"FOUND (rule={altitude_constraint.rule})" if altitude_constraint else "NOT FOUND"
             )
             _debug(f"[ItineraryBuilder] no_altitude_after_dive constraint: {alt_msg}")
+
+            # Layer 2 defense: Only apply altitude buffer for HIGH-ALTITUDE destinations
+            # Low-altitude destinations (Bali, Caribbean, etc.) don't need this buffer
+            if altitude_constraint:
+                HIGH_ALTITUDE_DESTINATIONS = {
+                    "nepal",
+                    "everest",
+                    "annapurna",
+                    "ladakh",
+                    "leh",
+                    "cusco",
+                    "peru",
+                    "machu picchu",
+                    "bolivia",
+                    "la paz",
+                    "kilimanjaro",
+                    "tanzania",
+                    "mt kenya",
+                    "switzerland",
+                    "chamonix",
+                    "mont blanc",
+                    "zermatt",
+                    "patagonia",
+                    "aconcagua",
+                    "colorado",
+                    "tibet",
+                }
+                dest_lower = (self.destination or "").lower()
+                is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
+
+                if not is_high_altitude:
+                    _debug(
+                        f"[ItineraryBuilder] Skipping altitude buffer - "
+                        f"low-altitude destination: {self.destination}"
+                    )
+                    altitude_constraint = None  # Disable for this trip
+
             if altitude_constraint:
                 # Need additional buffer day between diving and high-altitude activities
                 diving_days = len(activities_by_specialist.get("diving", []))
@@ -880,18 +922,37 @@ class ItineraryBuilder:
         # Account for arrival/departure days
         usable_days = total_days - 2  # First and last day are partial
 
-        # Check if we have enough days
-        required_days = total_activity_days + buffer_days
-        if required_days > usable_days:
-            specialists = list(activities_by_specialist.keys())
+        # FIX: No-fly buffer only affects DIVING placement, not total capacity
+        # Day 7 can still have hiking even though diving is blocked
+        diving_activities = activities_by_specialist.get("diving", [])
+        diving_slots = usable_days - buffer_days if nofly_constraint else usable_days
+
+        # Check diving-specific capacity (must finish 24h before departure)
+        if len(diving_activities) > diving_slots:
             conflicts.append(
                 Conflict(
                     type="insufficient_days",
                     severity=ConstraintSeverity.BLOCKING,
-                    specialists=specialists,
+                    specialists=["diving"],
                     message=(
-                        f"{total_days}-day trip insufficient for {total_activity_days} "
-                        f"activities + {buffer_days} buffer day(s)"
+                        f"Cannot fit {len(diving_activities)} dives in {diving_slots} "
+                        f"available days (24h no-fly buffer requires diving "
+                        f"to finish by day {total_days - 1})"
+                    ),
+                )
+            )
+
+        # Check total capacity: activities can share days via interleaving
+        max_capacity = usable_days * MAX_BLOCKS_PER_DAY
+        if total_activity_days > max_capacity:
+            conflicts.append(
+                Conflict(
+                    type="insufficient_days",
+                    severity=ConstraintSeverity.BLOCKING,
+                    specialists=list(activities_by_specialist.keys()),
+                    message=(
+                        f"Cannot fit {total_activity_days} activities in {usable_days} days "
+                        f"(max {max_capacity} slots with {MAX_BLOCKS_PER_DAY} per day)"
                     ),
                 )
             )
@@ -1174,7 +1235,9 @@ class ItineraryBuilder:
         specialists = list(activities_by_specialist.keys())
         remaining = {s: list(acts) for s, acts in activities_by_specialist.items()}
 
-        # Round-robin distribution
+        # Even distribution: spread activities across all available days
+        # Strategy: cycle through days, placing 1 activity per day per round
+        # This ensures Days 6-7 get activities before Days 2-3 get their 2nd
         day_ptr = 0
         specialist_ptr = 0
         periods = ["morning", "afternoon", "evening"]
@@ -1191,13 +1254,13 @@ class ItineraryBuilder:
             current_day = days[day_idx]
             current_specialist = specialists[specialist_ptr % len(specialists)]
 
-            # Check if day has capacity
+            # Check if day is truly full (at max capacity)
             non_buffer_blocks = [b for b in current_day.blocks if not b.is_buffer]
-            if len(non_buffer_blocks) >= MAX_BLOCKS_PER_DAY - 1:  # Leave room
+            if len(non_buffer_blocks) >= MAX_BLOCKS_PER_DAY:
                 day_ptr += 1
                 if day_ptr >= len(available_day_indices):
                     day_ptr = 0
-                    # If we've cycled through all days, break
+                    # If we've cycled through all days and all are full, break
                     if not any(remaining.values()):
                         break
                 continue
@@ -1235,12 +1298,12 @@ class ItineraryBuilder:
                 current_day.blocks.append(block)
                 period_ptr += 1
 
+                # EVEN DISTRIBUTION: Always advance to next day after placing
+                # This spreads activities across all days before filling any day
+                day_ptr += 1
+
             # Rotate specialist for variety
             specialist_ptr += 1
-
-            # Move to next day if we've placed something
-            if len(non_buffer_blocks) + 1 >= MAX_BLOCKS_PER_DAY - 1:
-                day_ptr += 1
 
         # =================================================================
         # GAP 6 FIX: Sort blocks within each day by time-of-day

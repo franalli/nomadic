@@ -5,7 +5,7 @@
  * Uses sticky positioning to naturally respect the panel layout.
  * Place this at the bottom of your scrollable content area.
  *
- * NOTE: expand_itinerary action is now handled by RefreshButton FAB.
+ * NOTE: expand_itinerary is handled via auto-expand in ChatPanel.
  * This component only handles finalize_plan action.
  */
 
@@ -87,14 +87,14 @@ export function NextStepBar({
     }
   }, [isFinalizing]);
 
-  // Don't render if no action or if action is expand_itinerary (handled by RefreshButton FAB)
+  // Don't render if no action or if action is expand_itinerary (handled by auto-expand)
   if (state === 'S2_STRATEGY_READY' && !nextAction) {
     return null;
   }
 
   if (!nextAction) return null;
 
-  // RefreshButton FAB handles expand_itinerary - NextStepBar only handles finalize_plan
+  // Auto-expand handles expand_itinerary - NextStepBar only handles finalize_plan
   if (nextAction === 'expand_itinerary') {
     return null;
   }

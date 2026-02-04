@@ -605,6 +605,22 @@ async def _search_hotels_and_activities(state: GraphState, plan) -> None:
     _debug_log(f"Hotels found: {len(hotel_dicts)}")
 
     state.tiles["activities"] = activity_dicts
+
+    # DEMO: Suppress logistics activities when niche specialists have curated the activity layer
+    # local_expert runs for ALL trips - only suppress when diving/hiking/skiing/etc are active
+    NICHE_SPECIALISTS = {"diving", "hiking", "skiing", "cycling", "boating"}
+    executed = state.metadata.get("executed_strategy_topics", [])
+    has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
+    if has_niche_specialist:
+        active_niche = [t for t in executed if t in NICHE_SPECIALISTS]
+        log(
+            "LOGISTICS",
+            "Suppressing logistics activities - niche specialists active",
+            data=f"specialists={active_niche}",
+        )
+        state.tiles["activities"] = []
+        activity_dicts = []  # Update for booking_summary below
+
     log("LOGISTICS", f"Found {len(activity_dicts)} activities for {plan.destination}")
     _debug_log(f"Activities found: {len(activity_dicts)}")
 

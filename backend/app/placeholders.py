@@ -7,6 +7,7 @@ the deprecated source.unsplash.com service.
 from typing import List, Optional
 
 # Curated Unsplash photo IDs by category (high-quality travel imagery)
+# Updated 2026-02 with fresh, topic-specific images
 PLACEHOLDER_IMAGES = {
     "destination": [
         "photo-1488646953014-85cb44e25828",  # Travel landscape
@@ -28,23 +29,44 @@ PLACEHOLDER_IMAGES = {
         "photo-1551632811-561732d1e306",  # Climbing
         "photo-1506905925346-21bda4d32df4",  # Mountain peak
     ],
+    # ==========================================================================
+    # DIVING - Underwater, scuba, coral reefs, marine life
+    # ==========================================================================
     "diving": [
-        "photo-1544551763-46a013bb70d5",  # Underwater coral
-        "photo-1559827260-dc66d52bef19",  # Scuba diver
-        "photo-1546026423-cc4642628d2b",  # Tropical fish
-        "photo-1582967788606-a171c1080cb0",  # Ocean reef
+        "photo-1544551763-46a013bb70d5",  # Colorful coral reef with tropical fish
+        "photo-1559827260-dc66d52bef19",  # Scuba diver exploring underwater
+        "photo-1544551763-77ef2d0cfc6c",  # Freediver in deep blue water
+        "photo-1546026423-cc4642628d2b",  # Tropical fish school on reef
+        "photo-1560275619-4662e36fa65c",  # Manta ray gliding in ocean
+        "photo-1582967788606-a171c1080cb0",  # Ocean coral reef scene
+        "photo-1583212292454-1fe6229603b7",  # Sea turtle swimming
+        "photo-1589308078059-be1415eab4c3",  # Underwater diving scene
     ],
+    # ==========================================================================
+    # HIKING - Mountain trails, trekking, summit views, backpacking
+    # ==========================================================================
     "hiking": [
-        "photo-1551632811-561732d1e306",  # Mountain trail
-        "photo-1506905925346-21bda4d32df4",  # Summit view
-        "photo-1464822759023-fed622ff2c3b",  # Mountain landscape
-        "photo-1527631746610-bca00a040d60",  # Trekking
+        "photo-1551632811-561732d1e306",  # Hikers on mountain trail
+        "photo-1506905925346-21bda4d32df4",  # Summit panoramic view
+        "photo-1464822759023-fed622ff2c3b",  # Dramatic mountain landscape
+        "photo-1527631746610-bca00a040d60",  # Backpacker on mountain trail
+        "photo-1454496522488-7a8e488e8606",  # Mountain peak sunrise view
+        "photo-1486870591958-9b9d0d1dda99",  # Alpine hiking trail
+        "photo-1501555088652-021faa106b9b",  # Outdoor adventure hiking
+        "photo-1519681393784-d120267933ba",  # Mountain landscape at dawn
     ],
+    # ==========================================================================
+    # SKIING - Powder snow, alpine slopes, ski resorts, winter sports
+    # ==========================================================================
     "skiing": [
-        "photo-1551524559-8af4e6624178",  # Ski slopes
-        "photo-1605540436563-5bca919ae766",  # Snowy mountain
-        "photo-1517483000871-1dbf64a6e1c6",  # Ski resort
-        "photo-1516939884455-1445c8652f83",  # Winter sports
+        "photo-1551524559-8af4e6624178",  # Skier carving through powder
+        "photo-1605540436563-5bca919ae766",  # Snowy alpine mountain
+        "photo-1517483000871-1dbf64a6e1c6",  # Ski resort chairlift
+        "photo-1516939884455-1445c8652f83",  # Winter skiing action
+        "photo-1483728642387-6c3bdd6c93e5",  # Snow-capped Mont Blanc peaks
+        "photo-1520681279154-51b3fb4ea0f7",  # Alpine chalet in snow
+        "photo-1548777123-e216912df7d8",  # Cozy fireplace après-ski
+        "photo-1486184885347-1464b5f10296",  # Skier on powder snow slope
     ],
     "hotel": [
         "photo-1566073771259-6a8506099945",  # Resort pool

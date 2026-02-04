@@ -703,17 +703,22 @@ def get_image_url_sync(
         logger.info(f"[UNSPLASH-SYNC] Cache HIT for {cache_key}: {url[:80]}...")
         return url
 
-    # If activity-specific cache miss, try base destination key as fallback
-    # This ensures destination images work even if activities parameter is inconsistent
+    # Fall back to activity-aware placeholder if activities specified,
+    # otherwise use Picsum for general destination images.
+    # NOTE: We intentionally do NOT fall back to base destination key (e.g., "bali:0")
+    # when activities are specified - that would return rice terraces for diving trips!
     if activities and len(activities) > 0:
-        base_key = _cache_key(destination, variant, None)
-        if base_key in _memory_cache:
-            image = _memory_cache[base_key]
-            url = build_image_url(image.image_id, width, height)
-            logger.info(f"[UNSPLASH-SYNC] Fallback to base key {base_key}: {url[:80]}...")
-            return url
+        from app.placeholders import get_activity_image
 
-    # Fall back to Picsum (deterministic based on destination + variant)
-    fallback_url = _get_picsum_fallback(destination, variant, width, height)
-    logger.info(f"[UNSPLASH-SYNC] Cache MISS for {cache_key}, using Picsum: {fallback_url}")
+        activity = activities[0].lower().strip()
+        # Use deterministic seed based on destination + variant for variety
+        seed_title = f"{destination}-{variant}"
+        fallback_url = get_activity_image(activity, destination, seed_title)
+        logger.info(
+            f"[UNSPLASH-SYNC] Cache MISS for {cache_key}, "
+            f"using activity placeholder: {fallback_url}"
+        )
+    else:
+        fallback_url = _get_picsum_fallback(destination, variant, width, height)
+        logger.info(f"[UNSPLASH-SYNC] Cache MISS for {cache_key}, using Picsum: {fallback_url}")
     return fallback_url

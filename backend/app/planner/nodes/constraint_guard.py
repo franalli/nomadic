@@ -215,6 +215,69 @@ def check_temporal_constraints(
     return violations
 
 
+def _check_diving_flight_conflict(
+    plan: TripPlan,
+    tiles: Dict[str, List[Dict[str, Any]]],
+) -> bool:
+    """
+    Check if diving activities are scheduled too close to departure flight.
+
+    Returns True if there's a conflict (diving on last day with flight scheduled).
+
+    Logic:
+    1. Calculate trip duration from start_date and end_date
+    2. Find the last day with diving activities in itinerary_blocks
+    3. Check if flights are present (user wants to fly home)
+    4. Conflict = diving on last day (or day before with early flight)
+    """
+    # Need dates to calculate trip duration
+    if not plan.start_date or not plan.end_date:
+        return False
+
+    try:
+        start = datetime.fromisoformat(plan.start_date)
+        end = datetime.fromisoformat(plan.end_date)
+        trip_days = (end - start).days + 1  # Inclusive of both days
+    except ValueError:
+        return False
+
+    if trip_days < 1:
+        return False
+
+    # Find last day with diving activity
+    last_dive_day = None
+    for block in plan.itinerary_blocks:
+        is_diving = block.source_specialist == "diving" or (
+            block.type == "activity" and "dive" in (block.title or "").lower()
+        )
+        if is_diving and block.day:
+            if last_dive_day is None or block.day > last_dive_day:
+                last_dive_day = block.day
+
+    if last_dive_day is None:
+        return False  # No diving activities found
+
+    # Check if flights are enabled/present
+    flight_tiles = tiles.get("flights", [])
+    has_departure_flight = len(flight_tiles) > 0  # Any flight tile indicates flights enabled
+
+    if not has_departure_flight:
+        return False  # No flights, no conflict
+
+    # Conflict: diving on last day or second-to-last day (needs 24h buffer)
+    # trip_days is total days, so last day = trip_days, second-to-last = trip_days - 1
+    # Conservative: flag if diving is on the last day (day N) since flight is on end_date
+    if last_dive_day >= trip_days:
+        return True  # Diving on departure day = definite conflict
+
+    # Also flag if diving on day before last (second-to-last day)
+    # because 24h buffer may not be met depending on flight time
+    if last_dive_day == trip_days - 1:
+        return True  # Diving day before departure = potential conflict
+
+    return False
+
+
 def check_specialist_constraints(
     plan: TripPlan,
     tiles: Dict[str, List[Dict[str, Any]]],
@@ -230,17 +293,30 @@ def check_specialist_constraints(
 
     for constraint in plan.constraints:
         if constraint.rule == "min_24h_buffer_after_dive":
-            # Check if there's a flight tile on the last day
-            # In real implementation, compare flight departure times
-            # For MVP, just note the constraint
-            violations.append(
-                ConstraintViolation(
-                    code="DIVING_SURFACE_INTERVAL",
-                    message="Ensure 24h between last dive and flight for safety",
-                    severity="info",
-                    category="specialist",
+            # Check for actual diving+flight conflict
+            has_conflict = _check_diving_flight_conflict(plan, tiles)
+
+            if has_conflict:
+                # Actual conflict detected - blocking severity triggers auto-fix
+                violations.append(
+                    ConstraintViolation(
+                        code="DIVING_SURFACE_INTERVAL",
+                        message="Diving scheduled too close to departure flight - need 24h buffer",
+                        severity="blocking",
+                        category="specialist",
+                        suggested_action="Move diving activities earlier or extend trip by 1 day",
+                    )
                 )
-            )
+            else:
+                # No conflict - just an informational note
+                violations.append(
+                    ConstraintViolation(
+                        code="DIVING_SURFACE_INTERVAL",
+                        message="24h no-fly buffer after diving is respected",
+                        severity="info",
+                        category="specialist",
+                    )
+                )
 
         elif constraint.rule == "altitude_acclimatization":
             violations.append(

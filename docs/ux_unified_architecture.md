@@ -179,7 +179,10 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 - Falls back to `DestinationMapPlaceholder` if coords not found
 - **POI Pins:** Activity markers from `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
   - Extracts coordinates from strategy section tiles and activities
-  - **Demo Fallback:** Uses curated `DEMO_POIS` from `destination-coords.ts` when no POIs extracted (Bali has 5 demo pins: 3 dive sites, 2 hiking trails)
+  - **Destination fallback chain:** `effectiveTripInputs?.destination ?? destinationCard?.title`
+  - **Demo Fallback:** Uses curated `DEMO_POIS` from `destination-coords.ts` when no POIs extracted
+    - Normalization: `destination.split(',')[0].trim().toLowerCase()` then capitalize
+    - Bali has 5 demo pins: 3 dive sites + 2 hiking trails
   - POI format: `{ lat, lng }` object (not array)
 
 ### Scroll Behavior
@@ -303,6 +306,26 @@ All animations use Framer Motion with `AnimatePresence` for enter/exit:
 - Legacy stage views (S3ItineraryView, S1FramingView, etc.) removed from unified flow
 - Only S2StrategyView used for specialist cards in all phases
 
+### Defensive Rendering (Image Guards)
+
+`StrategyHero.tsx` renders images from specialist content (`vibe_trio`, `destination_gallery`, `content_added`). These arrays may contain items with missing/empty `image_url` (especially for dynamically generated hiking activities).
+
+**Pattern:** Always filter before mapping:
+```tsx
+// WRONG: May render <Image src="" /> which causes browser errors
+{section.destination_gallery.map((img) => <Image src={img.image_url} />)}
+
+// CORRECT: Filter out empty URLs first
+{section.destination_gallery
+  .filter((img) => img.image_url)
+  .map((img) => <Image src={img.image_url} alt={img.label || 'Image'} />)}
+```
+
+**Guarded locations in StrategyHero.tsx:**
+- `destination_gallery.map()` - Filter before render
+- `vibe_trio` section - Guard primary image + filter secondary images
+- `content_added` items - Conditional render with `{item.image_url && ...}`
+
 ---
 
 ## I.A.2 Heart Preference System (Consolidated)
@@ -339,7 +362,19 @@ Users can heart tiles to signal preference to the AI. Hearts are preference sign
 8. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
 9. Timeline shows attribution badge: "You preferred this" on check-in blocks
 
-**Important (Stale Closure Fix):** `proceedWithItineraryGeneration` reads preferences via `useDocumentStore.getState()` at call time, not from React state captured at render time. This ensures the latest hearted tiles are always sent.
+**Important (Stale Closure Fix):** `proceedWithItineraryGeneration` reads ALL document state via `useDocumentStore.getState()` at call time, not from React state captured at render time. This ensures:
+- Latest hearted tiles are sent (`preferredTileIds`)
+- Latest strategy sections are sent (`strategy_sections`) - critical for multi-specialist flows
+
+**Multi-Specialist Auto-Expand Flow:**
+When user adds a second specialist (e.g., "hiking too" after diving):
+1. ChatPanel receives response with new hiking section
+2. `setFromPlanResponse` merges sections (2 → 3)
+3. ChatPanel detects structural change, calls `onAutoExpandItinerary`
+4. `proceedWithItineraryGeneration` reads FRESH state via `getState()` (not stale closure)
+5. Backend receives all 3 sections including hiking's `content_added`
+
+Without `getState()`, the callback would capture pre-merge state and send only 2 sections.
 
 ### Itinerary Generation with Preferences
 
@@ -688,10 +723,20 @@ function activityMatchesSpecialist(tile: Tile, specialistTypes: string[]): boole
 ```
 
 **Where Applied:**
+- **Backend (Source Suppression):** `LogisticsNode` suppresses activity tiles when niche specialists (diving, hiking, skiing, cycling, boating) are active. `local_expert` does NOT trigger suppression.
 - `SelectionsBar.tsx`: Filters hearted activities by specialist before grouping
 - `BookingSection.tsx`: Filters activity tiles in `tilesByCategory` when specialists are active
 
-**Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" in the tile browser or SelectionsBar creates expectation mismatch. Users heart generic activities but the timeline shows diving content. Filtering ensures both components show only items that can appear in the specialist timeline.
+**Backend Suppression Logic:**
+```python
+# logistics_node.py - after fetching activities
+NICHE_SPECIALISTS = {"diving", "hiking", "skiing", "cycling", "boating"}
+executed = state.metadata.get("executed_strategy_topics", [])
+if any(t in NICHE_SPECIALISTS for t in executed):
+    state.tiles["activities"] = []  # Specialists own the activity layer
+```
+
+**Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" in the tile browser or SelectionsBar creates expectation mismatch. Users heart generic activities but the timeline shows diving content. Backend suppression at the source ensures the "Activities" tab chip disappears entirely (count = 0), providing a clean demo story: *"Specialists plan your activities. You pick flights and hotels."*
 
 ### Inline Constraints Display (S3 View)
 
@@ -757,11 +802,11 @@ In S3 (itinerary ready), full specialist strategy cards are replaced with a comp
 - **S3 (itinerary ready):** Compact DNA bar showing **constraint pills** (not specialist pills)
 - Pills show: icon + constraint short label (truncated to 27 chars + ellipsis if needed)
 - Hover: Native `title` tooltip shows full constraint text
-- **Filtering:** Only shows constraints from **niche specialists** (diving, hiking, skiing, cycling, boating) — filters out Local Expert tips to focus on hard constraints
+- **Filtering:** Only shows constraints from **niche specialists** (diving, hiking, skiing, cycling, surfing) — filters out Local Expert tips to focus on hard constraints
 
 **Implementation:**
 ```tsx
-const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
+const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'surfing'];
 
 const engineConstraints = fullModeSections
   .filter((s) => NICHE_SPECIALISTS.includes(s.specialist_type || ''))
@@ -1060,7 +1105,7 @@ Each activity block shows a 4px colored left-border indicating its specialist so
 | `hiking` | Forest Green | `#10B981` |
 | `skiing` | Snow Blue | `#3B82F6` |
 | `cycling` | Lime | `#84CC16` |
-| `boating` | Indigo | `#6366F1` |
+| `surfing` | Indigo | `#6366F1` |
 
 **Visual Treatment:**
 - 4px colored left-border on each block
@@ -1644,9 +1689,22 @@ useSessionHydration() runs
 | `StrategyStageRenderer` | Data density computation, conditional rendering |
 | `S2StrategyView` | Strategy cards rendering (delegates to StrategyStack) |
 | `TimelineThread` | Renders timeline with `variant` prop (`ghost`/`draft`/`real`) |
+| `computeTimelineVariant(state)` | Maps PlanViewState to TimelineVariant (see table below) |
 | `ghost-timeline-adapter` | Transforms specialist content to DayCard[] for preview |
 | `BookingSection` | Renders booking tiles when available |
 | `NextStepBar` | Validation-aware CTA (uses `useTripValidation` for gating) |
+
+### TimelineVariant Mapping
+
+The timeline variant is computed from `PlanViewState` to control badge display:
+
+| PlanViewState | TimelineVariant | Badge |
+| --- | --- | --- |
+| `S3_ITINERARY_READY` | `real` | None (finalized itinerary) |
+| `S3_EDITING`, `S2_STRATEGY_READY` | `draft` | "Draft Itinerary" (amber) |
+| All others (`S0_*`, `S1_*`) | `ghost` | "Specialist Preview" (emerald) |
+
+**Invariant:** RefreshButton is the ONLY trigger for plan regeneration. The "Draft Itinerary" badge should NOT appear when itinerary is finalized (`S3_ITINERARY_READY`).
 
 ### State Helper Functions (`planStateHelpers.ts`)
 
@@ -1949,6 +2007,8 @@ Used in Bridge Mode when user has intent but no dates/tiles. The goal is **maxim
 * **Badge:** Frosted glass pill (`bg-white/20 backdrop-blur-md border-white/20`)
 * **Title:** White text, `text-2xl md:text-3xl font-bold`
 * **Constraints:** Horizontal scroll pills at bottom (`bg-black/40 backdrop-blur-md`)
+  - Uses `getShortConstraintLabel()` for concise 3-4 word labels (e.g., "No-Fly 24h")
+  - Full constraint text available on hover via `title` attribute
 
 **Rationale:** In Inspiration mode, we want the user to feel excited about their trip. The Magazine Cover creates emotional connection before logistics.
 
@@ -2162,7 +2222,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | `hiking` | Hiking | Mountain | Mountain trail |
 | `skiing` | Skiing | Snowflake | Ski slopes |
 | `cycling` | Cycling | Bike | Cycling road |
-| `boating` | Boating | Sailboat | Sailing yacht |
+| `surfing` | Surfing | Waves | Surfer on wave |
 
 **Visual Layout:**
 ```
@@ -2206,7 +2266,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | Field | Type | Source | Description |
 |-------|------|--------|-------------|
 | `id` | string | Backend | Unique section ID (e.g., `specialist_diving`) |
-| `specialist_type` | string | Backend | One of: `diving`, `hiking`, `skiing`, `cycling`, `boating` |
+| `specialist_type` | string | Backend | One of: `diving`, `hiking`, `skiing`, `cycling`, `surfing` |
 | `title` | string | Backend | Card title (e.g., "Diving Strategy") |
 | `one_liner` | string | Backend | Strategy logic summary (auto-generated from top constraint if missing, see below) |
 | `hero_image` | string | Backend | Primary image URL (or use fallback) |
@@ -2349,7 +2409,7 @@ if not has_anchor and plan.destination:
 interface StrategySection {
   // Identity
   id: string;                           // e.g., "strategy_local_expert", "specialist_diving"
-  specialist_type: string;              // "local_expert" | "general" | "diving" | "hiking" | "skiing" | "cycling" | "boating"
+  specialist_type: string;              // "local_expert" | "general" | "diving" | "hiking" | "skiing" | "cycling" | "surfing"
   title: string;                        // e.g., "Bali Trip Overview", "Diving Strategy"
   subtitle?: string;                    // Optional secondary title
 

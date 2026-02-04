@@ -278,7 +278,7 @@ interface ChatPanelProps {
   /** Called when user clicks Fresh Start to reset the session */
   onFreshStart?: () => void;
   /** Called when chat updates plan with existing itinerary - triggers auto-expand */
-  onAutoExpandItinerary?: () => void;
+  onAutoExpandItinerary?: (options?: { forceFullRebuild?: boolean }) => void;
   onPlanResult: (result: {
     tripContextId: number | null;
     branches: DocumentBranch[];
@@ -375,11 +375,6 @@ interface ChatPanelProps {
    * Used for optimistic UI - detect topics and show placeholder AgentCards.
    */
   onUserMessageSubmit?: (message: string) => void;
-  /**
-   * Callback when chat updates trip_inputs (e.g., origin from "from rome").
-   * Used to sync the trip inputs hash so FAB doesn't trigger for chat-originated changes.
-   */
-  onChatTripInputsUpdated?: () => void;
 }
 
 export interface ChatPanelHandle {
@@ -437,7 +432,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onOpenSheet,
       hasEverHadPlan,
       onUserMessageSubmit,
-      onChatTripInputsUpdated,
     } = props;
 
     // Reserved for future use
@@ -542,6 +536,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const abortStreamRef = useRef<(() => void) | null>(null);
     // SYNC GUARD: Prevent duplicate message sends (React StrictMode safe)
     const isSendingRef = useRef(false);
+    // Track previous specialist types and tile types for structural change detection
+    // IMPORTANT: Use specialist_type (not title) for consistent comparison
+    const prevSpecialistTypesRef = useRef<Set<string>>(new Set());
+    const prevTileTypesRef = useRef<Set<string>>(new Set());
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     // Note: missingFields now derived from planState instead of tripDetails
@@ -1000,6 +998,11 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               // Handle plan result
               const doc = data.document;
+
+              // Capture previous state BEFORE onPlanResult updates the store
+              const prevSpecialistTypes = prevSpecialistTypesRef.current;
+              const prevTileTypes = prevTileTypesRef.current;
+
               const primaryBranch =
                 doc.branches?.find((b) => b.is_primary) ?? doc.branches?.[0];
               onPlanResult({
@@ -1011,12 +1014,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 readyToGenerate: doc.ready_to_generate ?? false,
                 response: data,
               });
-
-              // FAB FIX: Sync trip inputs hash so FAB doesn't trigger for chat-originated changes
-              // Chat auto-regenerates, so user shouldn't see "Refresh" button for these changes
-              if (doc.trip_inputs) {
-                onChatTripInputsUpdated?.();
-              }
 
               // B2: Auto-focus right panel when tiles arrive
               const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
@@ -1056,33 +1053,37 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 console.log('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
               }
 
-              // AUTO-EXPAND: Chat messages should regenerate itinerary if structure changed
-              // Key insight: "from rome" only adds flight tiles - no structural change, no expand needed
-              // Only expand if strategy_sections topics changed (new specialist added)
-              const hasItinerary = (doc.day_cards?.length ?? 0) > 0;
+              // AUTO-EXPAND: Detect structural changes that require itinerary rebuild
+              // Check STORE for existing itinerary (response may not include day_cards if not rebuilt)
+              const storeDoc = useDocumentStore.getState().document;
+              const hasItinerary = (storeDoc?.day_cards?.length ?? 0) > 0;
 
-              // Capture previous state from store for comparison
-              const prevDoc = useDocumentStore.getState().document;
-              const prevStrategyTopics = prevDoc?.strategy_sections?.map(s => s.title) ?? [];
-              const newStrategyTopics = doc.strategy_sections?.map(s => s.title) ?? [];
+              // New state from response - MUST use specialist_type (not title) for consistent comparison
+              // Filter out undefined specialist_types (shouldn't happen, but TypeScript safety)
+              const newSpecialistTypes = (doc.strategy_sections?.map(s => s.specialist_type).filter((t): t is string => !!t)) ?? [];
+              const newTileTypes = new Set(Object.values(doc.tiles ?? {}).map(t => t.type));
 
-              // Compare strategy structure (topics)
-              const preHash = JSON.stringify(prevStrategyTopics.sort());
-              const postHash = JSON.stringify(newStrategyTopics.sort());
-              const structureChanged = preHash !== postHash;
+              // Detect new content
+              const hasNewSpecialist = newSpecialistTypes.some(t => !prevSpecialistTypes.has(t));
+              const hasNewTileType = [...newTileTypes].some(t => !prevTileTypes.has(t));
 
-              // Only auto-expand if structure actually changed (not just tiles added)
-              if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
-                console.log('[ChatPanel] Chat updated plan structure with existing itinerary - auto-expanding...', {
-                  prevTopics: prevStrategyTopics,
-                  newTopics: newStrategyTopics,
+              // Update refs for next comparison (use specialist_type consistently)
+              prevSpecialistTypesRef.current = new Set(newSpecialistTypes);
+              prevTileTypesRef.current = newTileTypes;
+
+              // Auto-expand if structural change detected (gated behind hasItinerary)
+              if (hasItinerary && (hasNewSpecialist || hasNewTileType) && !isSilentPlanGeneration) {
+                console.log('[ChatPanel] Structural change detected - auto-expanding...', {
+                  hasNewSpecialist,
+                  hasNewTileType,
+                  prevSpecialists: [...prevSpecialistTypes],
+                  newSpecialists: newSpecialistTypes,
                 });
-                // Trigger parent's proceedWithItineraryGeneration
                 setTimeout(() => {
-                  onAutoExpandItinerary?.();
-                }, 100); // Small delay to let state settle
-              } else if (hasItinerary && !structureChanged) {
-                console.log('[ChatPanel] Skipping auto-expand - only tiles added (additive change), itinerary intact');
+                  onAutoExpandItinerary?.({ forceFullRebuild: true });
+                }, 100);
+              } else if (hasItinerary && !hasNewSpecialist && !hasNewTileType) {
+                console.log('[ChatPanel] Additive change only, itinerary preserved');
               }
 
               // Only filter streaming message when Build Plan was clicked (silent mode)
@@ -1164,7 +1165,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, onChatTripInputsUpdated, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
     );
 
     const addAssistantMessage = useCallback((message: string) => {

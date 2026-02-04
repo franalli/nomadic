@@ -94,8 +94,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Indoor facility - Summer safe & AC controlled",
-                    # Freediver underwater - deep blue
-                    "image": "https://images.unsplash.com/photo-1544551763-77ef2d0cfc6c?w=800&q=80",
+                    # Freediver descending into deep blue water
+                    "image": "https://images.unsplash.com/photo-1682687220742-aba13b6e50ba?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 3,
                     "price_estimate": 350,
@@ -119,7 +119,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "No boat needed - shore entry",  # Matches DIVING_KNOWLEDGE
-                    # Tropical fish reef
+                    # Vibrant coral reef with tropical fish
                     "image": "https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=800&q=80",
                     "skill_level": "beginner",
                     "duration_hours": 4,
@@ -143,7 +143,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Advanced cert required - 20m depth",
-                    # Underwater wreck scene
+                    # Scuba diver exploring underwater wreck
                     "image": "https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=800&q=80",
                     "skill_level": "advanced",
                     "duration_hours": 5,
@@ -517,8 +517,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Book early AM - best snow conditions",
-                    # Skier in powder snow
-                    "image": "https://images.unsplash.com/photo-1551524559-8af4e6624178?w=800&q=80",
+                    # Skier carving through pristine powder with mountain backdrop
+                    "image": "https://images.unsplash.com/photo-1565992441121-4367c2967103?w=800&q=80",
                     "skill_level": "advanced",
                     "duration_hours": 6,
                     "price_estimate": 350,
@@ -533,7 +533,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Check avalanche conditions - off-piste paradise",
-                    # Skier carving turns
+                    # Dramatic alpine skiing with fresh powder spray
                     "image": "https://images.unsplash.com/photo-1605540436563-5bca919ae766?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 8,
@@ -551,8 +551,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Book first cable car (8 AM) for clearest views",
-                    # Mountain panorama view
-                    "image": "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
+                    # Stunning Mont Blanc panoramic mountain view
+                    "image": "https://images.unsplash.com/photo-1483728642387-6c3bdd6c93e5?w=800&q=80",
                     "duration_hours": 3,
                     "price_estimate": 65,
                     "currency": "EUR",
@@ -680,7 +680,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Shore entry - no boat needed, ideal for jet lag day",
-                    "image": "https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=800&q=80",
+                    # Shipwreck underwater with coral growth
+                    "image": "https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=800&q=80",
                     "skill_level": "beginner",
                     "duration_hours": 4,
                     "price_estimate": 95,
@@ -704,6 +705,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Book morning slot - calmer currents before noon",
+                    # Manta ray gliding in blue ocean
                     "image": "https://images.unsplash.com/photo-1560275619-4662e36fa65c?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 6,
@@ -728,7 +730,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Mola season Jul-Oct - cold thermoclines (18C), bring 5mm suit",
-                    "image": "https://images.unsplash.com/photo-1583212292454-1fe6229603b7?w=800&q=80",
+                    # Freediver in crystal clear deep blue water
+                    "image": "https://images.unsplash.com/photo-1544551763-77ef2d0cfc6c?w=800&q=80",
                     "skill_level": "advanced",
                     "duration_hours": 6,
                     "price_estimate": 165,
@@ -752,6 +755,7 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Macro paradise - bring your camera",
+                    # Vibrant coral reef teeming with colorful fish
                     "image": "https://images.unsplash.com/photo-1546026423-cc4642628d2b?w=800&q=80",
                     "skill_level": "beginner",
                     "duration_hours": 4,
@@ -778,7 +782,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "2 AM pickup - summit for 6 AM sunrise, breakfast included",
-                    "image": "https://images.unsplash.com/photo-1588668214407-6ea9a6d8c272?w=800&q=80",
+                    # Dramatic volcano summit at sunrise with hikers
+                    "image": "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 7,
                     "price_estimate": 55,
@@ -802,7 +807,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Start at 6 AM - avoid midday heat, magical morning light",
-                    "image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?w=800&q=80",
+                    # Scenic hill path with grass fields and valley views
+                    "image": "https://images.unsplash.com/photo-1501555088652-021faa106b9b?w=800&q=80",
                     "skill_level": "beginner",
                     "duration_hours": 2,
                     "price_estimate": 0,
@@ -827,7 +833,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Arrive by 8 AM to beat tour buses, wear sturdy shoes",
-                    "image": "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=800&q=80",
+                    # Lush green Bali rice terraces with palm trees
+                    "image": "https://images.unsplash.com/photo-1604999333679-b86d54738315?w=800&q=80",
                     "skill_level": "beginner",
                     "duration_hours": 3,
                     "price_estimate": 15,
@@ -851,7 +858,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Full day trip - 2.5h from Ubud, arrive before 10 AM",
-                    "image": "https://images.unsplash.com/photo-1512100356356-de1b84283e18?w=800&q=80",
+                    # Majestic tropical waterfall in lush jungle setting
+                    "image": "https://images.unsplash.com/photo-1494472155656-f34e81b17ddc?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 5,
                     "price_estimate": 25,
@@ -1097,7 +1105,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Book refugios 4-6 months ahead - sells out fast",
-                    "image": "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
+                    # Dramatic Torres del Paine granite peaks at sunrise
+                    "image": "https://images.unsplash.com/photo-1531366936337-7c912a4589a7?w=800&q=80",
                     "skill_level": "advanced",
                     "duration_hours": 96,  # 4 days
                     "price_estimate": 450,
@@ -1121,7 +1130,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Start at 4 AM for sunrise at the lagoon - worth it",
-                    "image": "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&q=80",
+                    # Iconic Fitz Roy peak reflected in alpine lagoon
+                    "image": "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 10,
                     "price_estimate": 0,
@@ -1145,7 +1155,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Big Ice (4h on glacier) vs Mini Trekking (1h) - book ahead",
-                    "image": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=800&q=80",
+                    # Massive blue glacier ice formations with trekkers
+                    "image": "https://images.unsplash.com/photo-1484910292437-025e5d13ce87?w=800&q=80",
                     "skill_level": "intermediate",
                     "duration_hours": 8,
                     "price_estimate": 180,
@@ -1169,7 +1180,8 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
                     ),
                     "type": "activity",
                     "logic_hook": "Afternoon hike OK - less crowded than Fitz Roy trail",
-                    "image": "https://images.unsplash.com/photo-1551632811-561732d1e306?w=800&q=80",
+                    # Dramatic mountain needle reflected in glacial lagoon
+                    "image": "https://images.unsplash.com/photo-1527631746610-bca00a040d60?w=800&q=80",
                     "skill_level": "beginner",
                     "duration_hours": 6,
                     "price_estimate": 0,

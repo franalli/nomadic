@@ -250,6 +250,7 @@ class UIEvent(BaseModel):
         "CONSTRAINT_VIOLATED",
         "MISSING_FIELDS",
         "PLAN_READY",
+        "PLAN_UPDATE",
     ]
     agent_id: Optional[str] = None  # "architect", "diving", "hiking", etc.
     data: Dict[str, Any] = Field(default_factory=dict)

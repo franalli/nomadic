@@ -419,7 +419,7 @@ Multi-specialist trips use color-coded visual indicators to distinguish activity
 | `hiking` | Forest Green | `#10B981` | Terrestrial activities |
 | `skiing` | Snow Blue | `#3B82F6` | Alpine activities |
 | `cycling` | Lime | `#84CC16` | Cycling activities |
-| `boating` | Indigo | `#6366F1` | Water/sailing activities |
+| `surfing` | Indigo | `#6366F1` | Wave/surfing activities |
 | `default` | Zinc | `#71717A` | Fallback for unknown types |
 
 #### Timeline Block Styling
@@ -451,7 +451,7 @@ export const SPECIALIST_COLORS: Record<string, string> = {
   hiking: '#10B981',
   skiing: '#3B82F6',
   cycling: '#84CC16',
-  boating: '#6366F1',
+  surfing: '#6366F1',
   default: '#71717A',
 };
 

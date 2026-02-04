@@ -18,7 +18,6 @@
 import { ArrowRight, Loader2 } from 'lucide-react';
 import React from 'react';
 
-import { RefreshButton } from '@/components/RefreshButton';
 import { StatusBadge } from '@/components/plan/StatusBadge';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
@@ -48,12 +47,6 @@ export interface PlanHeaderProps {
   onOpenSheet?: (sheet: SheetType) => void;
   /** Whether streaming/generation is in progress (disables pills) */
   isStreaming?: boolean;
-  /** Whether trip inputs have changed since last regeneration */
-  hasInputChanges?: boolean;
-  /** Whether regeneration is in progress */
-  isRefreshing?: boolean;
-  /** Callback when refresh button is clicked */
-  onRefresh?: () => void;
   /** Whether header is collapsed (mobile scroll state) */
   isCollapsed?: boolean;
 }
@@ -71,9 +64,6 @@ export function PlanHeader({
   tripInputs: propTripInputs,
   onOpenSheet,
   isStreaming = false,
-  hasInputChanges = false,
-  isRefreshing = false,
-  onRefresh,
   isCollapsed = false,
 }: PlanHeaderProps) {
   // FIX: Header needs to update immediately when dates change in store
@@ -275,7 +265,8 @@ export function PlanHeader({
               )}
             </div>
 
-            {/* Pills + Refresh - INSIDE the postcard, above gradient overlay */}
+            {/* Pills - INSIDE the postcard, above gradient overlay */}
+            {/* When in S3 (itinerary exists), make pills read-only except destination for demo safety */}
             {showPills && (
               <div className="absolute bottom-3 left-4 right-4 z-20 flex items-center gap-2 flex-wrap">
                 <TripSummaryPills
@@ -283,16 +274,8 @@ export function PlanHeader({
                   onOpenSheet={onOpenSheet}
                   disabled={isStreaming}
                   variant="onImage"
+                  readOnlyExceptDestination={planViewState.startsWith('S3_')}
                 />
-                {/* Inline Refresh Button - appears right next to last pill */}
-                {onRefresh && (
-                  <RefreshButton
-                    hasChanges={hasInputChanges}
-                    isRefreshing={isRefreshing}
-                    onClick={onRefresh}
-                    variant="inline"
-                  />
-                )}
               </div>
             )}
           </div>

@@ -105,7 +105,7 @@ backend/app/planner/
 │  ─────────────────────────────────────                                      │
 │  LLM-based intent classification (no regex!)                                │
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
-│  • Detects: specialist_hint (diving/hiking/skiing/cycling/boating)          │
+│  • Detects: specialist_hint (diving/hiking/skiing/cycling/surfing)          │
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
 │  • EXPLORATION → Generic Q&A using Local Expert knowledge (no LLM)          │
 │  • SOFT_TRANSITION → Routes to PLANNING when dates OR activities provided   │
@@ -125,7 +125,7 @@ backend/app/planner/
 │  Returns static    │  │  Domain expert node     │  │  • Opening hours       │
 │  response with     │  │  Topics: diving, hiking │  │  • Booking windows     │
 │  suggested_replies │  │  skiing, cycling,       │  │  • Transit passes      │
-│                    │  │  boating                │  │  • Cultural tips       │
+│                    │  │  surfing                │  │  • Cultural tips       │
 │                    │  │                         │  │                        │
 │                    │  │  Returns:               │  │  Returns:              │
 │                    │  │  • Constraints          │  │  • Constraints         │
@@ -369,7 +369,7 @@ SPECIALIST_KEYWORDS = {
     "hiking": ["hike", "trek", "trail", "mountain", "summit", "alpine", ...],
     "skiing": ["ski", "snowboard", "slope", "powder", "piste", ...],
     "cycling": ["cycle", "bike", "bicycle", "mtb", "road bike", ...],
-    "boating": ["sail", "boat", "yacht", "charter", "catamaran", ...],
+    "surfing": ["sail", "boat", "yacht", "charter", "catamaran", ...],
 }
 ```
 
@@ -648,8 +648,24 @@ Centralized tile fetching with safety logic. Runs AFTER Specialist/LocalExpert, 
 **Output:**
 - `state.tiles["flights"]` - Flight tiles for frontend display
 - `state.tiles["hotels"]` - Hotel tiles for frontend display
-- `state.tiles["activities"]` - Activity tiles for frontend display
+- `state.tiles["activities"]` - Activity tiles for frontend display (suppressed when niche specialists active)
 - `state.metadata["flight_options"]` - Backwards compatibility
+
+**Activity Suppression (Demo):**
+When niche specialists (diving, hiking, skiing, cycling, boating) have curated the activity layer, logistics activities are suppressed to avoid competing with specialist-curated content. `local_expert` does NOT trigger suppression since it runs for all trips.
+
+```python
+NICHE_SPECIALISTS = {"diving", "hiking", "skiing", "cycling", "boating"}
+executed = state.metadata.get("executed_strategy_topics", [])
+has_niche_specialist = any(t in NICHE_SPECIALISTS for t in executed)
+if has_niche_specialist:
+    state.tiles["activities"] = []  # Specialists own the activity layer
+```
+
+| Trip Type | `executed_strategy_topics` | Activities |
+|-----------|---------------------------|------------|
+| "diving + hiking in Bali" | `["local_expert", "diving", "hiking"]` | **Suppressed** |
+| "trip to Rome" | `["local_expert"]` | **Shown** |
 
 ### ConstraintGuard
 
@@ -664,7 +680,8 @@ Pure Python deterministic validation. **NO LLM calls.**
 | Temporal | end_date > start_date | blocking |
 | Temporal | Duration < 30 days | info |
 | Geographic | Diving in landlocked country | blocking |
-| Specialist | 24h surface interval | info |
+| Specialist | 24h surface interval (with conflict) | blocking |
+| Specialist | 24h surface interval (no conflict) | info |
 
 **Auto-Fix Loop with Route Error Short-Circuit:**
 ```python
@@ -753,6 +770,27 @@ Transforms specialist content + tiles into day-by-day timeline.
 │  Routing: Logistics → ItineraryBuilder → Guard → Synthesizer    │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Early Conflict Detection (Pre-Phase Validation)**
+
+Before running phases, the builder validates capacity to detect irreconcilable conflicts early:
+
+```python
+# Per-specialist capacity check (NOT global buffer subtraction)
+usable_days = total_days - 2  # Arrival/departure days
+
+# Diving: must finish 24h before departure if no-fly constraint
+diving_slots = usable_days - buffer_days if nofly_constraint else usable_days
+if len(diving_activities) > diving_slots:
+    conflict("Cannot fit dives in available days")
+
+# Total capacity: activities can share days via interleaving
+max_capacity = usable_days * MAX_BLOCKS_PER_DAY  # 3 blocks/day
+if total_activity_days > max_capacity:
+    conflict("Cannot fit activities in available slots")
+```
+
+**Key Insight:** The no-fly buffer only restricts DIVING placement, not total capacity. Day 7 of an 8-day trip can have hiking activities even though diving is blocked (24h before flight). The buffer doesn't reduce total trip capacity—it restricts which activities can go where.
 
 **Phase 5.25: Preferred Activity Placement**
 
@@ -1306,8 +1344,18 @@ if user_message.strip().lower() in PANIC_COMMANDS:
 **NOTE:** Due to "Local Expert Always First" pattern, `active_specialist` is always
 `"local_expert"` on first pass. Niche specialists are in `pending_specialists` queue.
 
+**IMPORTANT:** Order of checks matters! `origin_only_logistics` fast path must be checked
+BEFORE `active_specialist` to avoid bypassing specialists when flag bleeds across turns.
+All ephemeral flags are cleared in `_restore_graph_state()` at turn start.
+
 ```python
-def route_after_router(state: GraphState) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
+def route_after_router(state: GraphState) -> Literal["specialist", "local_expert", "logistics", "architect", "synthesizer"]:
+    # ORIGIN/SETTINGS FAST PATH: Route directly to logistics for flight/hotel fetch
+    # Skips architect/specialists - only fetches tiles and rebuilds itinerary
+    # Flag is cleared in _restore_graph_state() to prevent bleed
+    if state.metadata.get("origin_only_logistics"):
+        return "logistics"
+
     # GREETING/RESET short-circuits skip to synthesizer
     if state.metadata.get("short_circuit_response"):
         return "synthesizer"
@@ -1373,6 +1421,10 @@ if architect already ran earlier in the same turn, skip directly to guard/synthe
 def route_after_logistics(state: GraphState) -> Literal["architect", "guard", "synthesizer"]:
     """Skip architect if fields already extracted this turn."""
     # Flag is cleared in _restore_graph_state(), set at end of architect node
+    # NOTE: _restore_graph_state() clears these ephemeral per-turn flags:
+    #   - architect_ran_this_turn
+    #   - origin_only_logistics (prevents flag bleed from origin changes)
+    #   - short_circuit_response (prevents stale short-circuit state)
     if state.metadata.get("architect_ran_this_turn", False):
         return _should_run_guard(state)  # Reuse existing helper
     return "architect"
@@ -2154,13 +2206,15 @@ Phase 3: Buffer Injection
 ├─ Rest days (acclimatization for altitude)
 └─ Placed by constraint severity (BLOCKING first)
 
-Phase 4: Activity Distribution (with Preference Weighting)
+Phase 4: Activity Distribution (with Preference Weighting + Even Spread)
 ├─ Normalize activity IDs for frontend/backend matching
 ├─ Weight activities by user preferences (is_user_preferred flag)
-├─ Sort: preferred activities first, then round-robin interleaving
-├─ Max 2-3 activities per day
+├─ Sort: preferred activities first
+├─ EVEN DISTRIBUTION: Cycle through ALL days before filling any day with 2nd activity
+│   └─ Prevents packing early days (Days 2-5) while leaving late days (6-7) empty
+├─ Max 3 activities per day (only enforced after all days have 1+)
 ├─ Respect day capacity (11 usable hours)
-├─ Alternate for variety (dive → hike → dive)
+├─ Alternate specialists for variety (dive → hike → dive)
 └─ Set preference_status on blocks ('user_preferred' | null)
 
 Phase 5: Tile Matching
@@ -2552,6 +2606,7 @@ Events emitted to frontend for UI updates.
 | `CONSTRAINT_VIOLATED` | Validation failed | Show warning banner |
 | `MISSING_FIELDS` | Core fields missing | Trigger Setup Modal |
 | `PLAN_READY` | Plan complete | Enable booking |
+| `PLAN_UPDATE` | Plan updated but not complete | Update plan display |
 
 ---
 

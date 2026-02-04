@@ -30,7 +30,7 @@ interface MobilePlanFooterProps {
  *
  * Design: Sticky Bar Pattern (per user spec)
  * - Position: Above chat bar, within thumb zone
- * - RefreshButton FAB handles regeneration - CTA removed
+ * - Auto-expand handles regeneration via ChatPanel
  *
  * Structure:
  * ┌─────────────────────────────────────────┐
@@ -71,8 +71,6 @@ function MobilePlanFooterInner({
         className
       )}
     >
-      {/* CTA removed - RefreshButton FAB handles regeneration */}
-
       {/* COMMAND LINE INPUT */}
       <form onSubmit={handleSubmit} className="relative w-full">
         <input
