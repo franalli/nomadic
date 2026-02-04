@@ -38,6 +38,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
   const lastGeneratedPreferences = useDocumentStore((s) => s.lastGeneratedPreferences);
   const dayCards = useDocumentStore((s) => s.document?.day_cards);
   const isRegenerating = useDocumentStore((s) => s.isRegenerating);
+  const expandInProgress = useDocumentStore((s) => s.expandInProgress);
   const setRegenerationState = useDocumentStore((s) => s.setRegenerationState);
   const awaitPreferencePatch = useDocumentStore((s) => s.awaitPreferencePatch);
   const markPreferencesAsApplied = useDocumentStore((s) => s.markPreferencesAsApplied);
@@ -56,9 +57,12 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
 
   // Regeneration function
   const triggerRegeneration = useCallback(async () => {
-    // Race condition guard
+    // Race condition guards
     if (useDocumentStore.getState().isRegenerating) return;
+    if (useDocumentStore.getState().expandInProgress) return;
 
+    // Set expand-in-progress flag to prevent cascade
+    useDocumentStore.getState().setExpandInProgress(true);
     setRegenerationState({ isRegenerating: true });
 
     try {
@@ -153,6 +157,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
       // No toast for preference regen - it's a background operation
     } finally {
       setRegenerationState({ isRegenerating: false });
+      useDocumentStore.getState().setExpandInProgress(false);
       justHeartedIdRef.current = null;
     }
   }, [awaitPreferencePatch, markPreferencesAsApplied, setRegenerationState]);
@@ -168,6 +173,13 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
 
     // Skip if no itinerary to regenerate
     if (!hasItinerary) {
+      lastPrefsRef.current = new Set(preferredTileIds);
+      return;
+    }
+
+    // Skip if expand-itinerary is already running (prevents cascade)
+    if (expandInProgress) {
+      console.log('[usePreferenceAutoRegen] Skipping - expand in progress');
       lastPrefsRef.current = new Set(preferredTileIds);
       return;
     }
@@ -202,7 +214,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
 
     // Trigger instant regeneration (no debounce)
     triggerRegeneration();
-  }, [preferredTileIds, lastGeneratedPreferences, hasItinerary, triggerRegeneration]);
+  }, [preferredTileIds, lastGeneratedPreferences, hasItinerary, triggerRegeneration, expandInProgress]);
 
   return {
     isRegenerating,

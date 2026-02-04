@@ -622,6 +622,10 @@ class ItineraryBuilder:
             # Phase 6.5: Tag blocks with inline constraints for frontend display
             days = self._apply_constraints_to_blocks(days)
 
+            # Phase 6.75: FINAL sort - ensure chronological order after ALL phases
+            # Critical: Phases 5.5, 5.25, and 6 add blocks AFTER _distribute_activities sort
+            days = self._sort_blocks_chronologically(days)
+
             # Phase 7: Detect post-placement conflicts (overflow)
             conflicts = self._detect_temporal_conflicts(days)
             if conflicts:
@@ -1238,6 +1242,43 @@ class ItineraryBuilder:
             if len(non_buffer_blocks) + 1 >= MAX_BLOCKS_PER_DAY - 1:
                 day_ptr += 1
 
+        # =================================================================
+        # GAP 6 FIX: Sort blocks within each day by time-of-day
+        # Ensures MORNING appears before AFTERNOON before EVENING
+        # Also handles buffer types (arrival, departure, no_fly, etc.)
+        # =================================================================
+        TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
+
+        # Buffer types that pin to specific positions
+        BUFFER_SORT_PRIORITY = {
+            "arrival": (0, 0),  # First thing, before morning
+            "check_in": (0, 1),  # Right after arrival
+            "check-in": (0, 1),  # Alternative spelling
+            "acclimatization": (1, 0),  # Activity-level, morning slot
+            "surface_interval": (1, 1),  # Activity-level, between dives
+            "no_fly_buffer": (1, 3),  # Activity-level, evening (end of day)
+            "no_fly": (1, 3),  # Alternative spelling
+            "departure": (2, 0),  # Last thing
+            "check_out": (2, 0),  # Same as departure
+            "check-out": (2, 0),  # Alternative spelling
+        }
+
+        for day in days:
+            day.blocks.sort(
+                key=lambda b: (
+                    # Layer 1: Logistics bracket (0=arrival, 1=activities, 2=departure)
+                    BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[0],
+                    # Layer 2: Buffer sub-priority OR time slot
+                    (
+                        BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[1]
+                        if getattr(b, "buffer_type", None) in BUFFER_SORT_PRIORITY
+                        else TIME_SLOT_ORDER.get(
+                            (getattr(b, "period", None) or "afternoon").lower(), 1
+                        )
+                    ),
+                )
+            )
+
         return days
 
     # =========================================================================
@@ -1756,6 +1797,56 @@ class ItineraryBuilder:
                         f"to block '{block.summary}': {constraint_ids}"
                     )
 
+        return days
+
+    # =========================================================================
+    # Phase 6.75: FINAL Chronological Sorting
+    # =========================================================================
+
+    def _sort_blocks_chronologically(self, days: List[DayCardOutput]) -> List[DayCardOutput]:
+        """
+        FINAL sort: Ensure all blocks within each day are in chronological order.
+
+        This runs AFTER all phases have added blocks (5.5, 5.25, 6) to ensure
+        the final output is correctly ordered regardless of insertion order.
+
+        Sort key:
+        1. Logistics bracket: arrival(0) → activities(1) → departure(2)
+        2. Time slot OR buffer sub-priority: morning < afternoon < evening < night
+        """
+        TIME_SLOT_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
+
+        # Buffer types that pin to specific positions
+        BUFFER_SORT_PRIORITY = {
+            "arrival": (0, 0),  # First thing, before morning
+            "check_in": (0, 1),  # Right after arrival
+            "check-in": (0, 1),  # Alternative spelling
+            "acclimatization": (1, 0),  # Activity-level, morning slot
+            "surface_interval": (1, 1),  # Activity-level, between dives
+            "no_fly_buffer": (1, 3),  # Activity-level, evening (end of day)
+            "no_fly": (1, 3),  # Alternative spelling
+            "departure": (2, 0),  # Last thing
+            "check_out": (2, 0),  # Same as departure
+            "check-out": (2, 0),  # Alternative spelling
+        }
+
+        for day in days:
+            day.blocks.sort(
+                key=lambda b: (
+                    # Layer 1: Logistics bracket (0=arrival, 1=activities, 2=departure)
+                    BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[0],
+                    # Layer 2: Buffer sub-priority OR time slot
+                    (
+                        BUFFER_SORT_PRIORITY.get(getattr(b, "buffer_type", None), (1, 1))[1]
+                        if getattr(b, "buffer_type", None) in BUFFER_SORT_PRIORITY
+                        else TIME_SLOT_ORDER.get(
+                            (getattr(b, "period", None) or "afternoon").lower(), 1
+                        )
+                    ),
+                )
+            )
+
+        _debug(f"[ItineraryBuilder] 🔄 Final sort applied to {len(days)} days")
         return days
 
     # =========================================================================

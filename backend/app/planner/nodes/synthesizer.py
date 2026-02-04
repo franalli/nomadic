@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 from typing import List
 
+from jinja2 import Template
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
@@ -52,15 +53,65 @@ def _get_synthesizer_llm() -> ChatOpenAI:
     )
 
 
-def _load_system_prompt() -> str:
-    """Load the synthesizer system prompt from file."""
+def _get_response_type(state) -> str:
+    """
+    Derive response type from graph state for synthesizer prompt.
+
+    GAP 2 FIX: This enables Jinja2 conditionals in synthesizer.txt
+    to scope solver-identity tone to planning modes only.
+    """
+    meta = state.metadata or {}
+
+    # Check for greeting/reset short circuits
+    if meta.get("short_circuit_type") in ("greeting", "reset"):
+        return "greeting"
+
+    # Check for exploration mode (pre-destination)
+    if meta.get("exploration_mode"):
+        return "exploration"
+
+    # Check if specialist just ran (adding diving, hiking, etc.)
+    if (
+        meta.get("specialist_hint")
+        or meta.get("specialist_just_ran")
+        or meta.get("last_executed_specialist")
+    ):
+        return "specialist_update"
+
+    # Check for active planning (has destination)
+    if state.trip_plan and state.trip_plan.destination:
+        return "planning"
+
+    # Safe default: warm conversational tone
+    return "exploration"
+
+
+def _load_system_prompt(state=None) -> str:
+    """
+    Load and render the synthesizer system prompt from file.
+
+    If state is provided, renders Jinja2 conditionals based on response_type.
+    """
     prompt_path = Path(__file__).parent.parent.parent / "prompts" / "synthesizer.txt"
-    if prompt_path.exists():
-        return prompt_path.read_text(encoding="utf-8")
-    return (
-        "You are a helpful travel assistant. "
-        "Synthesize the trip information into a friendly response."
-    )
+    if not prompt_path.exists():
+        return (
+            "You are a helpful travel assistant. "
+            "Synthesize the trip information into a friendly response."
+        )
+
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+
+    # If state provided, render Jinja2 conditionals
+    if state is not None:
+        try:
+            response_type = _get_response_type(state)
+            template = Template(prompt_text)
+            return template.render(response_type=response_type)
+        except Exception as e:
+            logger.warning(f"Jinja2 render failed, using raw prompt: {e}")
+            return prompt_text
+
+    return prompt_text
 
 
 def _build_synthesis_context(state: GraphState) -> str:
@@ -195,7 +246,7 @@ async def synthesize_with_llm(state: GraphState) -> tuple[str | None, dict]:
     Returns tuple of (response_content, token_usage_dict).
     """
     llm = _get_synthesizer_llm()
-    system_prompt = _load_system_prompt()
+    system_prompt = _load_system_prompt(state)  # GAP 2: Pass state for Jinja2 rendering
     context = _build_synthesis_context(state)
 
     messages = [

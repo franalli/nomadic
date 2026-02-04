@@ -253,6 +253,7 @@ export type PlanViewState =
   | 'P3_EDITING'       // User editing itinerary assumptions/constraints
   | 'P3_BLOCKED'       // Itinerary requested but blocked (missing locks)
   // Legacy aliases (for migration - will be removed)
+  | 'S0_EMPTY'         // -> P0_MINIMAL (reset state)
   | 'S0_BOOTSTRAP'     // -> P0_MINIMAL
   | 'S1_FRAMING'       // -> P0_MINIMAL (merged)
   | 'S2_STRATEGY_READY' // -> P1_ENRICHED

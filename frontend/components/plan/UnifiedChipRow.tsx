@@ -195,23 +195,24 @@ const CoreChip = memo(function CoreChip({
         'inline-flex items-center gap-2 rounded-lg flex-shrink-0 cursor-pointer',
         isMobile ? 'h-10 px-4' : 'h-9 px-3.5',
         'transition-all duration-200 ease-out active:scale-[0.98]',
-        // Hover: Scale 1.02 + blue border
-        'hover:scale-[1.02] hover:border-blue-500',
-        // Dark hover
-        'dark:hover:border-blue-400',
+        // Hover: Scale 1.02 + snap-to-black/white (DS Tactile Rule)
+        'hover:scale-[1.02] hover:border-zinc-900',
+        // Dark hover: emerald accent per DS "Bioluminescent" aesthetic
+        'dark:hover:border-emerald-500/50',
 
         // --- STATE: SET (has user value) ---
+        // DS Section 3: Active pills use maximum contrast (zinc-900 light / white dark)
         isSet && [
           // Background: Very subtle grey
           'bg-zinc-50',
-          // Border: Blue at 30% opacity
-          'border border-blue-500/30',
+          // Border: Zinc-900 at 30% opacity (per DS - not blue)
+          'border border-zinc-900/30',
           // Text: Near-black
           'text-zinc-900 font-semibold',
           // Shadow for "lifted" feel
           'shadow-sm',
-          // Dark mode
-          'dark:bg-white/10 dark:text-white dark:border-blue-400/30',
+          // Dark mode: Glass Fill with emerald accent
+          'dark:bg-white/10 dark:text-white dark:border-emerald-500/30',
           'dark:hover:bg-white/15',
         ],
 
@@ -241,9 +242,9 @@ const CoreChip = memo(function CoreChip({
           'dark:hover:border-white/30 dark:hover:text-white',
         ],
 
-        // Focus ring
+        // Focus ring - zinc light / emerald dark per DS
         'focus-visible:outline-none focus-visible:ring-2',
-        'focus-visible:ring-blue-500/20 dark:focus-visible:ring-blue-400/20',
+        'focus-visible:ring-zinc-900/20 dark:focus-visible:ring-emerald-500/20',
 
         // --- STATE: DISABLED (BOOKING mode) ---
         disabled && [
@@ -255,9 +256,9 @@ const CoreChip = memo(function CoreChip({
       <Icon
         className={cn(
           'h-4 w-4 flex-shrink-0',
-          // Icon color based on state
+          // Icon color based on state - DS accent colors (zinc/emerald, not blue)
           isSet
-            ? 'text-blue-500 dark:text-blue-400'
+            ? 'text-zinc-900 dark:text-emerald-400'
             : 'text-zinc-400 dark:text-zinc-500',
           disabled && 'opacity-60'
         )}
@@ -332,32 +333,34 @@ const ModuleChip = memo(function ModuleChip({
         ],
 
         // --- STATE: ON (active - default or custom) ---
+        // DS Section 3: Active pills = maximum contrast
         isOn && [
           // Solid white background
           'bg-white',
-          // Blue border for active state
-          'border-blue-500',
+          // Zinc-900 border for active state (DS - not blue)
+          'border-zinc-900',
           // Dark text
           'text-zinc-900 font-medium',
           // Subtle shadow
           'shadow-sm',
           // Hover
           'hover:bg-zinc-50 hover:shadow-md',
-          // Dark mode: invert
-          'dark:bg-white dark:text-black dark:border-blue-400',
+          // Dark mode: invert - solid white per DS pills.active
+          'dark:bg-white dark:text-black dark:border-white',
           'dark:hover:bg-zinc-100',
         ],
 
-        // Focus ring
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20 dark:focus-visible:ring-blue-400/30',
+        // Focus ring - zinc light / emerald dark per DS
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/20 dark:focus-visible:ring-emerald-500/30',
 
         // --- STATE: DISABLED (BOOKING mode) ---
         disabled && 'opacity-60 cursor-not-allowed hover:shadow-sm'
       )}
     >
       {/* Checkmark for active state (replaces icon position) */}
+      {/* DS: zinc-900 light / emerald dark for accent elements */}
       {isOn ? (
-        <Check className="h-4 w-4 flex-shrink-0 text-blue-500 dark:text-blue-600" strokeWidth={2.5} />
+        <Check className="h-4 w-4 flex-shrink-0 text-zinc-900 dark:text-emerald-500" strokeWidth={2.5} />
       ) : (
         <Icon className="h-5 w-5 flex-shrink-0 text-zinc-400 dark:text-zinc-500" />
       )}

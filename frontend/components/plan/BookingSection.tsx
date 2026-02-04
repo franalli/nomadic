@@ -213,6 +213,13 @@ export function BookingSection({
     activities: activityTiles.length,
   };
 
+  // GAP 4 FIX: Hide entire section when no tiles exist
+  // This prevents showing an empty tab bar or placeholder noise
+  // Specialist cards + map fill the right panel instead
+  if (totalTiles === 0) {
+    return null;
+  }
+
   // Apply filters and sorting to tiles
   const applyFilters = useCallback((tilesToFilter: Tile[]): Tile[] => {
     let result = [...tilesToFilter];
@@ -402,36 +409,28 @@ export function BookingSection({
             )}
           </div>
 
-          {/* Category chips with counts */}
+          {/* Category chips with counts - U4 FIX: Only show tabs with items */}
           <div className="flex gap-2 px-4 py-3">
-            {(['stays', 'flights', 'activities'] as const).map((category) => {
-              const count = categoryCounts[category];
-              const isActive = activeCategory === category;
-              const isDisabled = count === 0;
+            {(['stays', 'flights', 'activities'] as const)
+              .filter((category) => categoryCounts[category] > 0)
+              .map((category) => {
+                const count = categoryCounts[category];
+                const isActive = activeCategory === category;
 
-              return (
-                <button
-                  key={category}
-                  onClick={() => {
-                    if (!isDisabled) {
-                      setActiveCategory(category);
-                    }
-                  }}
-                  disabled={isDisabled}
-                  className={cn(
-                    chipBase,
-                    'font-medium',
-                    isActive
-                      ? chipActive
-                      : isDisabled
-                        ? 'bg-muted/30 text-muted-foreground/50 border-border/30 cursor-not-allowed'
-                        : chipInactive
-                  )}
-                >
-                  {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
-                </button>
-              );
-            })}
+                return (
+                  <button
+                    key={category}
+                    onClick={() => setActiveCategory(category)}
+                    className={cn(
+                      chipBase,
+                      'font-medium',
+                      isActive ? chipActive : chipInactive
+                    )}
+                  >
+                    {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
+                  </button>
+                );
+              })}
           </div>
 
           {/* Filter bar */}

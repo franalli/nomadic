@@ -471,11 +471,17 @@ set feasibility_status to "infeasible" with reason"""
         return None
 
 
-def _get_minimal_safety_constraints(topic: str) -> List[SpecialistConstraint]:
+def _get_minimal_safety_constraints(
+    topic: str, destination: Optional[str] = None
+) -> List[SpecialistConstraint]:
     """
     Get minimal hardcoded safety constraints as fallback.
 
     Used when LLM generation fails to ensure critical safety rules are present.
+
+    Args:
+        topic: The specialist topic (diving, hiking, skiing)
+        destination: Optional destination for gating altitude constraints
     """
     if topic == "diving":
         return [
@@ -492,18 +498,50 @@ def _get_minimal_safety_constraints(topic: str) -> List[SpecialistConstraint]:
             ),
         ]
     elif topic == "hiking":
-        return [
-            SpecialistConstraint(
-                constraint_id="altitude_acclimatization",
-                type="safety",
-                rule="altitude_acclimatization",
-                severity=ConstraintSeverity.STRONG,
-                applies_to_categories=["activities"],
-                reason="Max 500m elevation gain per day above 3000m",
-                label="Altitude Acclimatization",
-                icon="🏔️",
-            ),
-        ]
+        # U8: Gate altitude constraint by destination
+        # Only apply for high-altitude destinations where acclimatization is relevant
+        HIGH_ALTITUDE_DESTINATIONS = {
+            "nepal",
+            "everest",
+            "annapurna",
+            "ladakh",
+            "leh",
+            "cusco",
+            "peru",
+            "machu picchu",
+            "bolivia",
+            "la paz",
+            "kilimanjaro",
+            "tanzania",
+            "mt kenya",
+            "switzerland",
+            "chamonix",
+            "mont blanc",
+            "zermatt",
+            "patagonia",
+            "aconcagua",
+            "colorado",
+            "tibet",
+        }
+
+        dest_lower = (destination or "").lower()
+        is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
+
+        if is_high_altitude:
+            return [
+                SpecialistConstraint(
+                    constraint_id="altitude_acclimatization",
+                    type="safety",
+                    rule="altitude_acclimatization",
+                    severity=ConstraintSeverity.STRONG,
+                    applies_to_categories=["activities"],
+                    reason="Max 500m elevation gain per day above 3000m",
+                    label="Altitude Acclimatization",
+                    icon="🏔️",
+                ),
+            ]
+        # Low-altitude destinations (Bali, etc.) - no altitude constraint
+        return []
     elif topic == "skiing":
         return [
             SpecialistConstraint(
@@ -1887,7 +1925,38 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         state.metadata["specialist_caveat_reason"] = output.feasibility_reason
 
     # FEASIBLE or CAVEAT: Inject constraints into trip plan
+    # U8: Filter out altitude constraints for non-high-altitude destinations
+    HIGH_ALTITUDE_DESTINATIONS = {
+        "nepal",
+        "everest",
+        "annapurna",
+        "ladakh",
+        "leh",
+        "cusco",
+        "peru",
+        "machu picchu",
+        "bolivia",
+        "la paz",
+        "kilimanjaro",
+        "tanzania",
+        "mt kenya",
+        "switzerland",
+        "chamonix",
+        "mont blanc",
+        "zermatt",
+        "patagonia",
+        "aconcagua",
+        "colorado",
+        "tibet",
+    }
+    dest_lower = (state.trip_plan.destination or "").lower()
+    is_high_altitude = any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
+
     for constraint in output.constraints:
+        # Skip altitude constraints for low-altitude destinations (e.g., Bali)
+        if constraint.rule == "altitude_acclimatization" and not is_high_altitude:
+            log("SPECIALIST", f"Skipping altitude constraint for {state.trip_plan.destination}")
+            continue
         if constraint not in state.trip_plan.constraints:
             state.trip_plan.constraints.append(constraint)
 

@@ -25,7 +25,8 @@
 
 'use client';
 
-import { AnimatePresence,motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Shield } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useToast } from '@/components/ui/toast';
@@ -574,7 +575,8 @@ export function StrategyStageRenderer({
       // PERF: Use pre-computed feasible sections from specialistData
       const sections = specialistData.fullModeSections;
       const bridgeFilteredViewModel = filteredViewModel;
-      const mapPOIs = extractPOIsFromSections(sections);
+      // U5: Pass destination for demo POI fallback
+      const mapPOIs = extractPOIsFromSections(sections, destinationCard?.title);
 
       // Get destination coordinates for map center
       const bridgeDestCoords = getDestinationCoords(destinationCard?.title);
@@ -687,6 +689,9 @@ export function StrategyStageRenderer({
     // Map appears immediately when destination is known, not just after itinerary
     const showDesktopMap = isDesktop && !!destCoords;
 
+    // U5: Extract POIs from specialist content, with demo fallback
+    const fullModePOIs = extractPOIsFromSections(fullModeSections, destinationCard?.title);
+
     // Destination pin for the map center
     const destinationMarker: import('@/components/map/InteractiveMap').MapItem[] = destCoords
       ? [{
@@ -696,6 +701,12 @@ export function StrategyStageRenderer({
           coordinates: { lat: destCoords[1], lng: destCoords[0] },
         }]
       : [];
+
+    // U5: Combine destination marker + POIs for full mode map
+    const fullModeMapItems = [
+      ...destinationMarker,
+      ...fullModePOIs,
+    ];
 
     return (
       <div className={cn(
@@ -730,23 +741,42 @@ export function StrategyStageRenderer({
                   density={density}
                   onOpenActivitySettings={onOpenActivitySettings}
                 />
-                {/* Trip DNA bar - HIDDEN for MVP
-                <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
-                  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
-                  <div className="flex gap-2 flex-wrap">
-                    {fullModeSections.map((section) => (
-                      <button
-                        key={section.id || section.title}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs"
-                      >
-                        {getSpecialistIcon(section.specialist_type)}
-                        <span className="font-medium">{section.title}</span>
-                        <span className="text-zinc-400">({section.constraints_applied?.length || 0})</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                */}
+                {/* Trip DNA bar - U6: Shows ENGINE CONSTRAINTS only (thesis proof) */}
+                {(() => {
+                  // Filter: only niche specialists (diving, hiking, skiing), not local_expert/general
+                  const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
+                  const engineConstraints = fullModeSections
+                    .filter((s) => NICHE_SPECIALISTS.includes(s.specialist_type || ''))
+                    .flatMap((s) => s.constraints_applied || []);
+
+                  if (engineConstraints.length === 0) return null;
+
+                  // Short label: label > reason (truncated) > rule (title-cased)
+                  // Matches chat language ("24h No-Fly Buffer" not "No Fly 24h")
+                  const getShortLabel = (c: { label?: string; rule?: string; reason?: string }) =>
+                    c.label ||
+                    (c.reason && c.reason.length > 30 ? c.reason.slice(0, 27) + '…' : c.reason) ||
+                    (c.rule?.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())) ||
+                    'Constraint';
+
+                  return (
+                    <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700">
+                      <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
+                      <div className="flex gap-2 flex-wrap">
+                        {engineConstraints.map((c, i) => (
+                          <span
+                            key={`${c.rule}-${i}`}
+                            title={c.reason || c.rule?.replace(/_/g, ' ')}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-amber-300 dark:border-amber-600/50 text-xs font-medium max-w-[200px] truncate"
+                          >
+                            <Shield className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
+                            {getShortLabel(c)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </>
             )}
 
@@ -847,7 +877,7 @@ export function StrategyStageRenderer({
                 {destCoords ? (
                   <MapErrorBoundary className="h-full w-full">
                     <InteractiveMap
-                      items={[]}
+                      items={fullModeMapItems}
                       activeItemId={null}
                       defaultCenter={mapCenter}
                       className="h-full w-full"
@@ -925,7 +955,7 @@ export function StrategyStageRenderer({
                 <div className="h-full w-full">
                   <MapErrorBoundary className="h-full w-full">
                     <InteractiveMap
-                      items={destinationMarker}
+                      items={fullModeMapItems}
                       activeItemId={null}
                       defaultCenter={mapCenter}
                       className="h-full w-full"

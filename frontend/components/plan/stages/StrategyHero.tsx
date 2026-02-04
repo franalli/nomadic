@@ -823,7 +823,7 @@ export function StrategyHero({
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
               )}
             </div>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 truncate">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 line-clamp-2">
               {section.one_liner || section.editorial_one_liner || summaryText}
             </p>
           </div>

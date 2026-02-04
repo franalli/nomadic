@@ -156,6 +156,7 @@ export function NomadicLanding() {
     hasChanges: hasInputChanges,
     isRefreshing,
     regenerate: handleManualRefresh,
+    markValidated,
     resetState: resetManualRegeneration,
   } = useManualRegeneration({
     onFullRegenerate: useCallback(() => {
@@ -804,6 +805,9 @@ export function NomadicLanding() {
     const existingRunId = useDocumentStore.getState().currentRunId;
     if (existingRunId) return;
 
+    // RACE GUARD: Check if expand is already in progress (prevents cascade)
+    if (useDocumentStore.getState().expandInProgress) return;
+
     // Generate runId for this generation (also serves as idempotency key)
     const runId = crypto.randomUUID();
 
@@ -812,6 +816,9 @@ export function NomadicLanding() {
     const abortController = documentStore.startGeneration(runId);
 
     if (!abortController) return;
+
+    // Set expand-in-progress flag to prevent cascade with preference auto-regen
+    useDocumentStore.getState().setExpandInProgress(true);
 
     // Set local UI generation state immediately
     setUiGeneration({ active: true, stage: 'itinerary' });
@@ -1010,6 +1017,8 @@ export function NomadicLanding() {
       setLastGenerationError('Something went wrong. Please try again.');
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
+      // Clear expand-in-progress flag
+      useDocumentStore.getState().setExpandInProgress(false);
       if (documentStore.isCurrentRun(runId)) {
         setUiGeneration(null);
       }
@@ -1408,6 +1417,9 @@ export function NomadicLanding() {
       onAcknowledgeLLMUpdate={acknowledgeLLMUpdate}
       planViewState={planViewState}
       onOpenSheet={openSheet}
+      // FAB FIX: Sync trip inputs hash when chat updates them
+      // Prevents FAB from appearing for chat-originated changes (which auto-regenerate)
+      onChatTripInputsUpdated={markValidated}
       // Note: onOpenBudgetInput not wired - falls back to chat insertion.
       // Users can also click budget pill in OptionalRefinementsSection directly.
     />

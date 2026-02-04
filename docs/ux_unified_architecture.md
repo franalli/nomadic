@@ -177,6 +177,10 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 - Static destination pin centered on map (zoom level 6)
 - Uses `getDestinationCoords()` lookup for ~90 destinations
 - Falls back to `DestinationMapPlaceholder` if coords not found
+- **POI Pins:** Activity markers from `extractPOIsFromSections()` in `ghost-timeline-adapter.ts`
+  - Extracts coordinates from strategy section tiles and activities
+  - **Demo Fallback:** Uses curated `DEMO_POIS` from `destination-coords.ts` when no POIs extracted (Bali has 5 demo pins: 3 dive sites, 2 hiking trails)
+  - POI format: `{ lat, lng }` object (not array)
 
 ### Scroll Behavior
 - **Strategy Cards:** Collapsed by default, user can expand
@@ -428,19 +432,46 @@ User edits date chip → Inline Amber pill appears → User clicks REFRESH → R
 2. Backend graph runs (IntentRouter → LogisticsNode/Specialist → Synthesizer)
 3. Graph completes → SSE `onComplete` handler checks:
    - `hasItinerary = (day_cards?.length ?? 0) > 0`
-   - `planWasUpdated = tiles exist OR executed_strategy_topics exist`
+   - `structureChanged = strategy_sections topics differ (not just tiles added)`
 4. If both true → auto-call `proceedWithItineraryGeneration()` after 100ms
 5. Itinerary regenerates with new tiles/strategy (selective strategy computation)
 6. No user action required - plan reacts to conversation
 
+**Strategy Hash Check (Cascade Prevention):**
+```typescript
+// Only auto-expand if structure actually changed (not just tiles added)
+const prevStrategyTopics = prevDoc?.strategy_sections?.map(s => s.topic) ?? [];
+const newStrategyTopics = doc.strategy_sections?.map(s => s.topic) ?? [];
+const preHash = JSON.stringify(prevStrategyTopics.sort());
+const postHash = JSON.stringify(newStrategyTopics.sort());
+const structureChanged = preHash !== postHash;
+
+if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
+  onAutoExpandItinerary?.();  // Structural change - needs itinerary rebuild
+} else if (hasItinerary && !structureChanged) {
+  // Additive-only change (e.g., flights) - skip expand, itinerary intact
+}
+```
+
 **Example flows:**
-- "from rome" with existing plan → Flights fetched → Itinerary auto-updates
-- "add hiking" with itinerary → Hiking specialist runs → Itinerary auto-updates with activities
+- "from rome" with existing plan → Flights added (tiles only) → **No auto-expand** → Itinerary preserved
+- "add hiking" with itinerary → Hiking specialist runs (structure change) → Itinerary auto-updates
 - "thanks" acknowledgment → No plan changes → No auto-expand
 
 **Origin-only handling:**
 - "from rome" without destination → Sets origin, prompts for destination (IntentRouter)
 - "from rome" with destination → Sets origin, routes to LogisticsNode, fetches flights immediately
+
+**FAB Suppression for Chat Changes:**
+Chat-originated changes update `trip_inputs` (e.g., origin from "from rome"). Without suppression, the FAB would appear because the hash changed. The fix:
+1. `ChatPanel.onComplete` calls `onChatTripInputsUpdated` when `doc.trip_inputs` exists
+2. `NomadicLanding` passes `markValidated` (from `useManualRegeneration`) as the callback
+3. Hash is synced immediately after chat completes → `hasChanges = false` → FAB stays hidden
+
+**Files:**
+- `ChatPanel.tsx` - Calls `onChatTripInputsUpdated` in SSE `onComplete`
+- `NomadicLanding.tsx` - Wires `onChatTripInputsUpdated={markValidated}`
+- `useManualRegeneration.ts` - `markValidated` updates `lastValidatedHashRef.current`
 
 #### Manual Regeneration (Chip/Settings Edits)
 
@@ -501,14 +532,30 @@ const handleAddDestination = async (destination: string) => {
 
 **Flow:**
 1. User hearts a hotel → preference change detected
-2. 500ms debounce starts (prevents thrashing on rapid heart toggles)
+2. **Instant trigger** (no debounce for responsive UX)
 3. Auto-calls `/api/expand-itinerary` with current preferences
 4. Itinerary rebuilds with new preference weighting
 5. `markPreferencesAsApplied()` updates last-generated state
 
+**Cascade Prevention Guards:**
+```typescript
+// Guard 1: Skip if regeneration already running
+if (useDocumentStore.getState().isRegenerating) return;
+
+// Guard 2: Skip if expand-itinerary already running (prevents cascade)
+if (useDocumentStore.getState().expandInProgress) return;
+
+// Guard 3: Skip in useEffect if expand in progress
+if (expandInProgress) {
+  lastPrefsRef.current = new Set(preferredTileIds);
+  return;  // Update tracking but don't trigger
+}
+```
+
 **State tracking:**
 - `documentStore.preferredTileIds` - Current preferences (Set)
 - `documentStore.lastGeneratedPreferences` - Preferences at last generation
+- `documentStore.expandInProgress` - Mutex flag for expand-itinerary calls
 - `hasPreferenceChanges()` - Computed: true if sets differ
 - `markPreferencesAsApplied()` - Snapshots current preferences after regeneration
 
@@ -546,12 +593,17 @@ SelectionsBar displays hearted tiles grouped by type AND by specialist with sema
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 💚 YOUR SELECTIONS  3   [Updating...]
+ 💚 YOUR SELECTIONS  5   [Updating...]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  STAY (1)
  ┌──────┐
  │ img  │  Four Seasons
  └──────┘
+ ────────────────────────────────────
+ FLIGHTS (2)
+ ┌──────┐ ┌──────┐
+ │ img  │ │ img  │  Qatar Airways, Emirates
+ └──────┘ └──────┘
  ────────────────────────────────────
  DIVING (1)
  ┌──────┐
@@ -569,7 +621,17 @@ SelectionsBar displays hearted tiles grouped by type AND by specialist with sema
 | Group | Label | Behavior |
 |-------|-------|----------|
 | Stays | "STAY (n)" | Single-select (max 1) |
+| Flights | "FLIGHTS (n)" | Multi-select |
 | Activities | Grouped by specialist (e.g., "DIVING (n)", "HIKING (n)") | Multi-select |
+
+**Type Detection:**
+```typescript
+import { isFlightType, isHotelType } from '@/lib/utils';
+
+if (isHotelType(tile.type)) stays.push(tile);
+else if (isFlightType(tile.type)) flights.push(tile);  // NEW
+else /* activities by specialist */
+```
 
 **Visual rules:**
 - Empty groups don't render
@@ -577,6 +639,17 @@ SelectionsBar displays hearted tiles grouped by type AND by specialist with sema
 - Compact thumbnails (80×56px) for density
 - "Updating..." indicator shows during auto-regeneration
 - Activities are grouped by detected specialist type for visual clarity
+
+**Compact Mode (≤2 selections):**
+When there are only 1-2 selections, the bar renders as a slim one-line badge to reduce visual weight:
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 💚  2 selections  · Four Seasons  · Crystal Bay
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+- Titles truncated to 20 chars max
+- Native `title` tooltip shows full name on hover
+- Loader spinner appears at end when regenerating
 
 ### Specialist Filtering (Domain Mode)
 
@@ -670,40 +743,55 @@ See `docs/design-system.md` Section 4 "Inline Constraint Badge Colors" for full 
 
 ### Trip DNA Bar (S3 View)
 
-In S3 (itinerary ready), full specialist strategy cards are replaced with a compact "Trip DNA" bar. This preserves specialist context without taking up timeline real estate.
+In S3 (itinerary ready), full specialist strategy cards are replaced with a compact "Trip DNA" bar. This bar is **constraint-forward** — it shows the actual constraints that shaped the plan, not just specialist names.
 
 **Visual Layout:**
 ```
-┌──────────────────────────────────────────────────────────────┐
-│ TRIP DNA:  [🌊 Diving (3)]  [🏝️ Local Expert (5)]           │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 🧬 ENGINE CONSTRAINTS:  [🚫 24H No-fly Buffer]  [⚡ 18m Max Depth]  [📍 ...]  │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Behavior:**
 - **S2 (strategy ready):** Full specialist cards with expandable constraint lists
-- **S3 (itinerary ready):** Compact DNA bar with pill buttons per specialist
-- Pill shows: icon + title + constraint count
-- Click: Currently visual indicator only (no modal)
+- **S3 (itinerary ready):** Compact DNA bar showing **constraint pills** (not specialist pills)
+- Pills show: icon + constraint short label (truncated to 27 chars + ellipsis if needed)
+- Hover: Native `title` tooltip shows full constraint text
+- **Filtering:** Only shows constraints from **niche specialists** (diving, hiking, skiing, cycling, boating) — filters out Local Expert tips to focus on hard constraints
 
 **Implementation:**
 ```tsx
-{hasItineraryContent && viewModel.strategy_sections?.length > 0 ? (
-  // S3: Compact DNA bar
-  <div className="flex items-center gap-2 mb-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60">
-    <span className="text-xs uppercase font-semibold text-zinc-500">Trip DNA:</span>
-    <div className="flex gap-2 flex-wrap">
-      {viewModel.strategy_sections.map((section) => (
-        <button key={section.id} className="...">
-          {getSpecialistIcon(section.specialist_type)}
-          <span>{section.title}</span>
-          <span>({section.constraints_applied?.length || 0})</span>
-        </button>
-      ))}
-    </div>
+const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
+
+const engineConstraints = fullModeSections
+  .filter((s) => NICHE_SPECIALISTS.includes(s.specialist_type || ''))
+  .flatMap((s) => s.constraints_applied || []);
+
+// Short label extraction: label > reason (truncated) > rule (title-cased)
+const getShortLabel = (c) =>
+  c.label ||
+  (c.reason && c.reason.length > 30 ? c.reason.slice(0, 27) + '…' : c.reason) ||
+  (c.rule?.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())) ||
+  'Constraint';
+
+{engineConstraints.length > 0 && (
+  <div className="flex flex-wrap items-center gap-2 px-4 py-2 border border-zinc-300 rounded-lg">
+    <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+      🧬 Engine Constraints:
+    </span>
+    {engineConstraints.slice(0, 5).map((c, i) => (
+      <span
+        key={c.constraint_id || i}
+        title={c.reason || c.label || c.rule}
+        className="px-2 py-0.5 rounded-full text-xs bg-zinc-800 text-zinc-300"
+      >
+        {getConstraintIcon(c.type)} {getShortLabel(c)}
+      </span>
+    ))}
+    {engineConstraints.length > 5 && (
+      <span className="text-xs text-zinc-500">+{engineConstraints.length - 5} more</span>
+    )}
   </div>
-) : (
-  // S2: Full specialist cards
-  <S2StrategyView ... />
 )}
 ```
 
@@ -2120,7 +2208,7 @@ For `specialist_type === 'general'` (Trip Overview):
 | `id` | string | Backend | Unique section ID (e.g., `specialist_diving`) |
 | `specialist_type` | string | Backend | One of: `diving`, `hiking`, `skiing`, `cycling`, `boating` |
 | `title` | string | Backend | Card title (e.g., "Diving Strategy") |
-| `one_liner` | string | Backend | Strategy logic summary |
+| `one_liner` | string | Backend | Strategy logic summary (auto-generated from top constraint if missing, see below) |
 | `hero_image` | string | Backend | Primary image URL (or use fallback) |
 | `constraints_applied` | array | Backend | `[{rule, type, reason}]` - CRITICAL for safety |
 | `principles` | array | Backend | Checklist items (strings) |
@@ -2129,6 +2217,32 @@ For `specialist_type === 'general'` (Trip Overview):
 | `optional_upgrades` | array | Backend | Nice-to-have suggestions |
 | `feasibility_status` | string | Backend | `"feasible"`, `"caveat"`, or `"infeasible"` |
 | `feasibility_reason` | string | Backend | Explanation if not fully feasible |
+
+**One-Liner Auto-Generation (plan_graph.py):**
+When `one_liner` is missing, the backend generates a headline from the top constraint:
+
+```python
+# Defensive field mapping: constraint fields vary between Pydantic and serialized formats
+SEVERITY_ORDER = {"blocking": 0, "strong": 1, "soft": 2}
+SEVERITY_KEYWORDS = set(SEVERITY_ORDER.keys())
+
+def _get_constraint_headline(c: dict) -> str:
+    """Extract human-readable text, skipping severity keywords."""
+    for field in ("label", "reason", "rule"):
+        val = (c.get(field) or "").strip()
+        if val and val.lower() not in SEVERITY_KEYWORDS:
+            # Clean machine-readable names: "min_24h_buffer" → "Min 24H Buffer"
+            if "_" in val and " " not in val:
+                val = val.replace("_", " ").title()
+            return val
+    return ""
+
+# Sort by severity (blocking first), extract headline from top constraint
+sorted_constraints = sorted(constraints, key=_get_constraint_severity)
+headline = _get_constraint_headline(sorted_constraints[0])
+extra = f" (+{len(constraints)-1} more)" if len(constraints) > 1 else ""
+section["one_liner"] = f"{headline[:100]}{extra}"
+```
 
 **Constraint Icons by Type:**
 | `type` | Icon | Color |
@@ -2685,25 +2799,58 @@ if (destinationChanged) {
 
 **2. `setFromPlanResponse()` - Full API response:**
 ```typescript
-// Same destination change detection
-if (destinationChanged) {
-  useChatStore.getState().resetChat();
-  // Clear day_cards to prevent stale itinerary
-  const finalDayCards = (destinationChanged || viewStateReverted) ? [] : response.document.day_cards;
-}
+// View state ordering for downgrade protection
+const VIEW_STATE_ORDER = { S0_EMPTY: 0, S1_DESTINATION_SET: 1, S2_STRATEGY_READY: 2, S3_ITINERARY_READY: 3 };
+
+// GUARD: Never downgrade view state when itinerary exists
+// EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
+const wouldDowngrade = hasDayCards &&
+  newViewState !== 'S0_EMPTY' &&
+  VIEW_STATE_ORDER[newViewState] < VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'];
+
+const finalViewState = wouldDowngrade ? prevViewState : newViewState;
+
+// Tile merge: additive for same destination, replace for new destination
+const mergedTiles = destinationChanged
+  ? response.document.tiles
+  : { ...currentDoc?.tiles, ...response.document.tiles };
+
+// Day cards: only clear on destination change, NOT on view state changes
+const finalDayCards = destinationChanged
+  ? []
+  : (hasDayCards ? currentDayCards : response.document.day_cards);
 ```
 
-**View State Revert Handling:**
-When view state goes from S3_ITINERARY_READY → S2_STRATEGY_READY, day_cards are cleared:
+**View State Downgrade Protection:**
+Backend may return S2 for benign reasons (e.g., "from rome" only runs LogisticsNode). Previously this cleared day_cards. Now the frontend blocks S3→S2 downgrade when itinerary exists:
+- `S3 → S2` with day_cards → **Blocked** (itinerary preserved)
+- `S3 → S0` (RESET) → **Allowed** (user explicit intent)
+- Destination change → **Tiles replaced**, day_cards cleared (clean slate)
+
+**Expand-In-Progress Mutex:**
 ```typescript
-const viewStateReverted = currentDoc.plan_view_state === 'S3_ITINERARY_READY' &&
-  envelope.plan_view_state === 'S2_STRATEGY_READY';
-if (viewStateReverted) {
-  dayCardsToMerge = [];
-}
+// documentStore state
+expandInProgress: boolean;
+setExpandInProgress: (inProgress: boolean) => void;
+
+// Guards in usePreferenceAutoRegen
+if (expandInProgress) return;  // Skip preference regen during expand
+
+// proceedWithItineraryGeneration wraps expand call
+setExpandInProgress(true);
+try { await expandItinerary(); }
+finally { setExpandInProgress(false); }
 ```
+This prevents the cascade: expand-itinerary → markPreferencesAsApplied → preference PATCH → preference auto-regen → expand-itinerary loop.
 
 **Debug Logs (expected sequence):**
+```
+[documentStore.setFromPlanResponse] 🛡️ Blocked view state downgrade: S3_ITINERARY_READY → S2_STRATEGY_READY (day_cards exist: 5)
+[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (itinerary exists: 5 cards)
+[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)
+```
+
+**Destination change sequence:**
 ```
 [documentStore.mergeEnvelope] 🌍 Destination changed: "bali" → "london"
 [documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)

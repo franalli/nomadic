@@ -1373,14 +1373,48 @@ def _format_result(
                 section["hero_image"] = hero_img
 
             # ENRICH: Add one_liner if missing
+            # GAP 1 FIX: Defensive field mapping to extract actual constraint headline
             if not section.get("one_liner"):
-                constraint_count = len(section.get("constraints_applied", []))
-                if constraint_count > 0:
-                    suffix = "s" if constraint_count > 1 else ""
-                    section["one_liner"] = (
-                        f"{section_type.title()} mode active. "
-                        f"{constraint_count} safety constraint{suffix} applied."
-                    )
+                constraints = section.get("constraints_applied", [])
+                if constraints:
+                    # Severity keywords to skip when extracting headline text
+                    SEVERITY_ORDER = {"blocking": 0, "strong": 1, "soft": 2}
+                    SEVERITY_KEYWORDS = set(SEVERITY_ORDER.keys())
+
+                    def _get_constraint_severity(
+                        c: dict,
+                        severity_order: dict = SEVERITY_ORDER,
+                    ) -> int:
+                        """Extract severity rank, checking both possible field locations."""
+                        for field in ("severity", "reason"):
+                            val = (c.get(field) or "").strip().lower()
+                            if val in severity_order:
+                                return severity_order[val]
+                        return 2  # default: soft
+
+                    def _get_constraint_headline(
+                        c: dict,
+                        severity_keywords: set = SEVERITY_KEYWORDS,
+                    ) -> str:
+                        """Extract human-readable text, skipping severity keywords."""
+                        for field in ("label", "reason", "rule"):
+                            val = (c.get(field) or "").strip()
+                            if val and val.lower() not in severity_keywords:
+                                # Clean machine-readable names: "min_24h_buffer" → "Min 24H Buffer"
+                                if "_" in val and " " not in val:
+                                    val = val.replace("_", " ").title()
+                                return val
+                        return ""
+
+                    sorted_constraints = sorted(constraints, key=_get_constraint_severity)
+                    best = sorted_constraints[0]
+                    headline = _get_constraint_headline(best)
+
+                    if not headline:
+                        headline = f"{section_type.title()} constraint applied"
+
+                    extra = f" (+{len(constraints)-1} more)" if len(constraints) > 1 else ""
+                    section["one_liner"] = f"{headline[:100]}{extra}"
                 else:
                     section["one_liner"] = (
                         f"{section_type.title()} recommendations for "

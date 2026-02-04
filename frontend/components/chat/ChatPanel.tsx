@@ -375,6 +375,11 @@ interface ChatPanelProps {
    * Used for optimistic UI - detect topics and show placeholder AgentCards.
    */
   onUserMessageSubmit?: (message: string) => void;
+  /**
+   * Callback when chat updates trip_inputs (e.g., origin from "from rome").
+   * Used to sync the trip inputs hash so FAB doesn't trigger for chat-originated changes.
+   */
+  onChatTripInputsUpdated?: () => void;
 }
 
 export interface ChatPanelHandle {
@@ -432,6 +437,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       onOpenSheet,
       hasEverHadPlan,
       onUserMessageSubmit,
+      onChatTripInputsUpdated,
     } = props;
 
     // Reserved for future use
@@ -534,6 +540,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const isUserScrolledUpRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const abortStreamRef = useRef<(() => void) | null>(null);
+    // SYNC GUARD: Prevent duplicate message sends (React StrictMode safe)
+    const isSendingRef = useRef(false);
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     // Note: missingFields now derived from planState instead of tripDetails
@@ -679,6 +687,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       setNodeStatus(null);
       setHasReceivedFirstToken(false);
       setIsLoading(false);
+      isSendingRef.current = false; // Clear send guard
       delayedLoader.reset(); // Clear delayed loader on interrupt
     }, [streamingMessageId, messages, updateMessage, delayedLoader]);
 
@@ -788,6 +797,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       async (messageText: string, options?: { suggestionClicked?: string }) => {
         const trimmed = messageText.trim();
 
+        // SYNC GUARD: Prevent duplicate sends (React StrictMode safe)
+        if (isSendingRef.current) {
+          console.log('[ChatPanel] ⏭️ Skipping - already sending (ref guard)');
+          return;
+        }
+
         // Check for generate trigger FIRST (before isLoading guard)
         const isGenerateTrigger = trimmed === GENERATE_PLAN_TRIGGER || trimmed.toLowerCase() === 'build plan';
 
@@ -868,6 +883,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
         setSuggestedResponses([]); // Clear suggestions when user sends a message
         setLastUserMessage(trimmed); // Tier 11.12: Track for retry capability
         setIsLoading(true);
+        isSendingRef.current = true; // Set ref to prevent duplicate sends
 
         // Create a message bubble for streaming tokens into - but NOT for plan generation
         // Plan content should appear on right panel, not in chat
@@ -996,6 +1012,12 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 response: data,
               });
 
+              // FAB FIX: Sync trip inputs hash so FAB doesn't trigger for chat-originated changes
+              // Chat auto-regenerates, so user shouldn't see "Refresh" button for these changes
+              if (doc.trip_inputs) {
+                onChatTripInputsUpdated?.();
+              }
+
               // B2: Auto-focus right panel when tiles arrive
               const hasTiles = doc.tiles && Object.keys(doc.tiles).length > 0;
 
@@ -1034,19 +1056,33 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 console.log('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
               }
 
-              // AUTO-EXPAND: Chat messages should regenerate itinerary if plan was updated
-              // Check if this turn updated plan content (tiles or strategy) AND itinerary exists
+              // AUTO-EXPAND: Chat messages should regenerate itinerary if structure changed
+              // Key insight: "from rome" only adds flight tiles - no structural change, no expand needed
+              // Only expand if strategy_sections topics changed (new specialist added)
               const hasItinerary = (doc.day_cards?.length ?? 0) > 0;
-              const planWasUpdated =
-                (doc.tiles && Object.keys(doc.tiles).length > 0) || // Has tiles
-                (doc.executed_strategy_topics && doc.executed_strategy_topics.length > 0); // Has strategy
 
-              if (hasItinerary && planWasUpdated && !isSilentPlanGeneration) {
-                console.log('[ChatPanel] Chat updated plan with existing itinerary - auto-expanding...');
+              // Capture previous state from store for comparison
+              const prevDoc = useDocumentStore.getState().document;
+              const prevStrategyTopics = prevDoc?.strategy_sections?.map(s => s.title) ?? [];
+              const newStrategyTopics = doc.strategy_sections?.map(s => s.title) ?? [];
+
+              // Compare strategy structure (topics)
+              const preHash = JSON.stringify(prevStrategyTopics.sort());
+              const postHash = JSON.stringify(newStrategyTopics.sort());
+              const structureChanged = preHash !== postHash;
+
+              // Only auto-expand if structure actually changed (not just tiles added)
+              if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
+                console.log('[ChatPanel] Chat updated plan structure with existing itinerary - auto-expanding...', {
+                  prevTopics: prevStrategyTopics,
+                  newTopics: newStrategyTopics,
+                });
                 // Trigger parent's proceedWithItineraryGeneration
                 setTimeout(() => {
                   onAutoExpandItinerary?.();
                 }, 100); // Small delay to let state settle
+              } else if (hasItinerary && !structureChanged) {
+                console.log('[ChatPanel] Skipping auto-expand - only tiles added (additive change), itinerary intact');
               }
 
               // Only filter streaming message when Build Plan was clicked (silent mode)
@@ -1101,6 +1137,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               }
 
               setIsLoading(false);
+              isSendingRef.current = false; // Clear send guard
               resolve();
             },
             onError: (error: Error) => {
@@ -1121,12 +1158,13 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               }
 
               setIsLoading(false);
+              isSendingRef.current = false; // Clear send guard
               resolve(); // Resolve instead of reject to prevent unhandled promise rejection
             },
           });
         });
       },
-      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
+      [isLoading, onPlanResult, onGeneratePlanStart, selectedBranchId, sessionState, addMessage, appendToMessage, filterMessages, updateMessageId, updateMessage, setSessionState, delayedLoader, actionLoader, triggerContext, hasBranches, collapseSetupMessages, hasEverHadPlan, onUserMessageSubmit, onChatTripInputsUpdated, tripInputs?.adults, tripInputs?.destination, tripInputs?.start_date]
     );
 
     const addAssistantMessage = useCallback((message: string) => {
@@ -1577,25 +1615,25 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                       sendMessageCore(suggestion, { suggestionClicked: suggestion });
                     }}
                     className={cn(
-                      'px-4 py-2 rounded-lg',
+                      'px-4 py-2.5 rounded-lg',
                       'text-xs font-bold uppercase tracking-wide',
-                      'transition-all active:scale-95',
+                      'transition-all duration-150 active:scale-95',
                       'max-w-full truncate',
                       // Planning trigger chips: emerald highlight to draw attention
                       isPlanningTrigger ? [
                         'bg-emerald-50 dark:bg-emerald-950/30',
-                        'border border-emerald-500/40 dark:border-emerald-500/30',
+                        'border-2 border-emerald-500/40 dark:border-emerald-500/30',
                         'text-emerald-700 dark:text-emerald-400',
                         'shadow-[0_0_12px_-3px_rgba(16,185,129,0.2)]',
                         'hover:bg-emerald-100 hover:border-emerald-500 hover:shadow-md',
                         'dark:hover:bg-emerald-900/40 dark:hover:border-emerald-400/50',
                       ] : [
-                        'bg-white dark:bg-transparent',
-                        'border border-zinc-200 dark:border-white/10',
-                        'shadow-[0_2px_4px_rgba(0,0,0,0.02)]',
+                        // DS Tactile Rule: border-2 for visible buttons, snap-to-black hover
+                        'bg-white dark:bg-white/5',
+                        'border-2 border-zinc-200 dark:border-white/15',
                         'text-zinc-600 dark:text-zinc-400',
-                        'hover:border-zinc-900 hover:text-zinc-900 hover:shadow-md',
-                        'dark:hover:border-white/30 dark:hover:text-white',
+                        'hover:border-zinc-900 hover:bg-zinc-50 hover:text-zinc-900',
+                        'dark:hover:bg-white/10 dark:hover:border-white/40 dark:hover:text-white',
                       ]
                     )}
                   >

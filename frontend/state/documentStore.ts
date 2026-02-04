@@ -130,6 +130,16 @@ export type LLMUpdatableField =
   | 'transport_settings.bus';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// View State Ordering (for downgrade protection)
+// ─────────────────────────────────────────────────────────────────────────────
+const VIEW_STATE_ORDER: Record<string, number> = {
+  S0_EMPTY: 0,
+  S1_DESTINATION_SET: 1,
+  S2_STRATEGY_READY: 2,
+  S3_ITINERARY_READY: 3,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Commit Mutex
 // ─────────────────────────────────────────────────────────────────────────────
 // Prevents concurrent commit operations using a Promise-based lock.
@@ -198,6 +208,10 @@ type DocumentState = {
   isPending: boolean;
   remainingSeconds: number;
   setRegenerationState: (state: { isRegenerating?: boolean; isPending?: boolean; remainingSeconds?: number }) => void;
+
+  // Expand-itinerary mutex (prevents cascade between auto-expand and preference regen)
+  expandInProgress: boolean;
+  setExpandInProgress: (inProgress: boolean) => void;
 
   // Cart state (for BOOKING mode)
   cartTileIds: Set<string>;
@@ -296,6 +310,8 @@ const initialState = {
   isRegenerating: false,
   isPending: false,
   remainingSeconds: 0,
+  // Expand-itinerary mutex
+  expandInProgress: false,
   // Cart state
   cartTileIds: new Set<string>(),
 };
@@ -900,13 +916,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       console.log('[documentStore.setFromPlanResponse] 💬 Chat: CLEARED (destination changed)');
     }
 
-    // Detect view state revert (S3 → S2)
+    // ============================================================
+    // VIEW STATE DOWNGRADE PROTECTION
+    // ============================================================
     const prevViewState = currentDoc?.plan_view_state;
     const newViewState = response.document.plan_view_state;
-    const viewStateReverted = prevViewState === 'S3_ITINERARY_READY' && newViewState === 'S2_STRATEGY_READY';
+    const currentDayCards = currentDoc?.day_cards ?? [];
+    const hasDayCards = currentDayCards.length > 0;
 
-    if (viewStateReverted) {
-      console.log(`[documentStore.setFromPlanResponse] 🔄 View state reverted: ${prevViewState} → ${newViewState}`);
+    // GUARD: Never downgrade view state when itinerary exists
+    // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
+    const wouldDowngrade = hasDayCards &&
+      newViewState !== 'S0_EMPTY' &&
+      VIEW_STATE_ORDER[newViewState ?? 'S0_EMPTY'] < VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'];
+
+    const finalViewState = wouldDowngrade ? prevViewState : newViewState;
+
+    if (wouldDowngrade) {
+      console.log(`[documentStore.setFromPlanResponse] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
     }
 
     // DEBUG: Log document state when setting
@@ -918,7 +945,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       tiles_count: Object.keys(response.document.tiles ?? {}).length,
       tiles_keys: Object.keys(response.document.tiles ?? {}),
       destinationChanged,
-      viewStateReverted,
+      wouldDowngrade,
+      finalViewState,
     });
 
     // Merge locally-set trip_inputs with response
@@ -968,13 +996,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ? new Set(responsePreferences)
       : currentPreferences;
 
-    // Clear day_cards if destination changed or view state reverted (prevent stale itinerary)
-    const finalDayCards = (destinationChanged || viewStateReverted)
-      ? []
-      : response.document.day_cards;
+    // ============================================================
+    // TILE MERGE (conditional on destination)
+    // ============================================================
+    // Merge tiles only for same destination (additive like flights)
+    // Full replace on destination change (avoid stale tiles from wrong country)
+    const mergedTiles = destinationChanged
+      ? response.document.tiles
+      : { ...currentDoc?.tiles, ...response.document.tiles };
 
-    if (destinationChanged || viewStateReverted) {
-      console.log('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (destination changed or view reverted)');
+    // ============================================================
+    // DAY CARDS PRESERVE (only clear on destination change)
+    // ============================================================
+    // Only clear day_cards on destination change - NOT on view state changes
+    const finalDayCards = destinationChanged
+      ? []
+      : (hasDayCards ? currentDayCards : response.document.day_cards);
+
+    if (destinationChanged) {
+      console.log('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (destination changed)');
+    } else if (hasDayCards) {
+      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
     }
 
     set({
@@ -983,6 +1025,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       updatedAt: response.updated_at,
       document: {
         ...response.document,
+        plan_view_state: finalViewState,
+        tiles: mergedTiles,
         trip_inputs: mergedTripInputs,
         day_cards: finalDayCards,
       },
@@ -1025,13 +1069,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       console.log('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
     }
 
-    // Detect plan view state revert (S3 → S2) - happens when backend says "start fresh"
-    const viewStateReverted =
-      currentDoc.plan_view_state === 'S3_ITINERARY_READY' &&
-      envelope.plan_view_state === 'S2_STRATEGY_READY';
+    // ============================================================
+    // VIEW STATE DOWNGRADE PROTECTION
+    // ============================================================
+    const prevViewState = currentDoc.plan_view_state;
+    const newViewState = envelope.plan_view_state;
+    const currentDayCards = currentDoc.day_cards ?? [];
+    const hasDayCards = currentDayCards.length > 0;
 
-    if (viewStateReverted) {
-      console.log('[documentStore.mergeEnvelope] 🔄 View state reverted: S3 → S2');
+    // GUARD: Never downgrade view state when itinerary exists
+    // EXCEPTION: S0_EMPTY = genuine RESET intent (user said "start over"), always accept
+    const wouldDowngrade = hasDayCards && newViewState &&
+      newViewState !== 'S0_EMPTY' &&
+      VIEW_STATE_ORDER[newViewState] < VIEW_STATE_ORDER[prevViewState ?? 'S0_EMPTY'];
+
+    const finalViewState = wouldDowngrade ? prevViewState : (newViewState ?? prevViewState);
+
+    if (wouldDowngrade) {
+      console.log(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
     }
 
     // DEBUG: Log what's in the envelope
@@ -1039,7 +1094,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       hasTiles: envelope.tiles !== undefined,
       tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
       destinationChanged,
-      viewStateReverted,
+      wouldDowngrade,
+      finalViewState,
     });
 
     // Compute tile merge strategy BEFORE building updatedDoc
@@ -1051,8 +1107,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         tilesToMerge = envelope.tiles;
         console.log('[documentStore.mergeEnvelope] 🔄 Tiles: REPLACED (destination changed)');
       } else if (Object.keys(envelope.tiles).length > 0) {
-        // Same destination + non-empty: MERGE
-        tilesToMerge = envelope.tiles;
+        // Same destination + non-empty: MERGE with existing tiles (additive)
+        tilesToMerge = { ...currentDoc.tiles, ...envelope.tiles };
         console.log('[documentStore.mergeEnvelope] 🔄 Tiles: MERGED (same destination)');
       } else {
         // Same destination + empty: SKIP (preserve existing)
@@ -1076,25 +1132,30 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       }
     }
 
-    // Compute day_cards merge strategy (similar to tiles)
-    // On destination change OR view state revert: CLEAR existing day_cards to prevent stale itinerary
+    // ============================================================
+    // DAY CARDS PRESERVE (only clear on destination change)
+    // ============================================================
     let dayCardsToMerge: DayCard[] | undefined;
 
     if (envelope.day_cards !== undefined) {
       // If day_cards explicitly provided, use them
       dayCardsToMerge = envelope.day_cards;
       console.log(`[documentStore.mergeEnvelope] 📅 Day Cards: ${envelope.day_cards.length} cards provided`);
-    } else if (destinationChanged || viewStateReverted) {
-      // Destination changed OR view state reverted: CLEAR day_cards
+    } else if (destinationChanged) {
+      // Destination changed: CLEAR day_cards
       dayCardsToMerge = [];
-      console.log('[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (destination changed or view reverted)');
+      console.log('[documentStore.mergeEnvelope] 📅 Day Cards: CLEARED (destination changed)');
+    } else if (hasDayCards) {
+      // Preserve existing day_cards when itinerary exists
+      dayCardsToMerge = currentDayCards;
+      console.log(`[documentStore.mergeEnvelope] 📅 Day Cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
     }
 
     // Merge envelope fields into current document
     const updatedDoc: PlanDocumentData = {
       ...currentDoc,
-      // Plan view state fields
-      ...(envelope.plan_view_state !== undefined && { plan_view_state: envelope.plan_view_state }),
+      // Plan view state fields (use guarded finalViewState)
+      ...(finalViewState !== undefined && { plan_view_state: finalViewState }),
       ...(sectionsToMerge !== undefined && { strategy_sections: sectionsToMerge }),
       ...(envelope.open_decisions !== undefined && { open_decisions: envelope.open_decisions }),
       ...(envelope.itinerary_overview !== undefined && { itinerary_overview: envelope.itinerary_overview }),
@@ -1370,6 +1431,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       ...(state.isPending !== undefined && { isPending: state.isPending }),
       ...(state.remainingSeconds !== undefined && { remainingSeconds: state.remainingSeconds }),
     });
+  },
+
+  // Expand-itinerary mutex setter
+  setExpandInProgress: (inProgress: boolean) => {
+    set({ expandInProgress: inProgress });
   },
 
   // Cart actions (for BOOKING mode)

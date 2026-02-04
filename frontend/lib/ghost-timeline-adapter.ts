@@ -159,7 +159,8 @@ export interface MapPOI {
  * @returns Array of MapPOI items for InteractiveMap
  */
 export function extractPOIsFromSections(
-  strategySections: StrategySection[] | undefined
+  strategySections: StrategySection[] | undefined,
+  destination?: string  // GAP 3: Added for demo POI fallback
 ): MapPOI[] {
   if (!strategySections) return [];
 
@@ -189,6 +190,27 @@ export function extractPOIsFromSections(
       }
     });
   });
+
+  // U5: Demo fallback - if no POIs extracted, use curated pins for known destinations
+  if (pois.length === 0 && destination) {
+    // Normalize: "Bali, Indonesia" -> "Bali"
+    const normalizedDest = destination
+      .split(',')[0]
+      .trim()
+      .toLowerCase()
+      .replace(/^\w/, (c) => c.toUpperCase());
+
+    // Import is at module level, lazy access here
+    const { DEMO_POIS } = require('@/lib/destination-coords');
+    const demoPois = DEMO_POIS[normalizedDest] || [];
+
+    return demoPois.map((p: { lat: number; lng: number; title: string; specialist: string }, i: number) => ({
+      id: `demo-poi-${i}`,
+      title: p.title,
+      type: p.specialist,
+      coordinates: { lat: p.lat, lng: p.lng },
+    }));
+  }
 
   return pois;
 }

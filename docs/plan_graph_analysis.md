@@ -192,11 +192,22 @@ backend/app/planner/
 │  Synthesizer (LLM - Writer)                                                 │
 │  ───────────────────────────                                                │
 │  Unified response generation                                                │
-│  • Consistent voice across all response types                               │
+│  • Response type-aware tone (planning = solver, greeting = warm)            │
 │  • Generates suggested_replies (always 3 chips)                             │
 │  • Enriches content with Unsplash images                                    │
 │  • Handles constraint warnings gracefully                                   │
-│  • Templates: greeting, inspiration, planning                               │
+│  • Templates: greeting, exploration, planning, specialist_update            │
+│                                                                             │
+│  Response Type Classification:                                              │
+│  • greeting: short_circuit_type in ("greeting", "reset")                    │
+│  • exploration: exploration_mode flag set                                   │
+│  • specialist_update: specialist_hint OR specialist_just_ran                │
+│  • planning: trip_plan.destination exists (default solver tone)             │
+│                                                                             │
+│  Solver Identity (planning/specialist_update):                              │
+│  - Lead with what the ENGINE DID, not what the destination IS               │
+│  - Mention constraints by name (24h no-fly buffer, surface intervals)       │
+│  - 2-3 sentences max, no travel-brochure adjectives                         │
 │                                                                             │
 │  Key Principle: "One voice, regardless of which agents contributed"         │
 └──────────────────────────────────┬──────────────────────────────────────────┘
@@ -1434,6 +1445,22 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
 | `altitude_acclimatization` | safety | Max 500m/day above 3000m |
 | `proper_footwear_required` | equipment | Hiking boots for mountain trails |
 
+**Altitude Constraint Gating:** The `altitude_acclimatization` constraint is only applied to high-altitude destinations. Low-altitude destinations like Bali (max ~3000m at Agung summit, typical hikes 200-800m) are excluded.
+
+```python
+HIGH_ALTITUDE_DESTINATIONS = {
+    "nepal", "everest", "annapurna", "ladakh", "leh",
+    "cusco", "peru", "machu picchu", "bolivia", "la paz",
+    "kilimanjaro", "tanzania", "mt kenya",
+    "switzerland", "chamonix", "mont blanc", "zermatt",
+    "patagonia", "aconcagua", "colorado", "tibet",
+}
+
+def _should_apply_altitude_constraint(destination: str) -> bool:
+    dest_lower = (destination or "").lower()
+    return any(kw in dest_lower for kw in HIGH_ALTITUDE_DESTINATIONS)
+```
+
 **Note:** Hiking is affected by diving's `no_altitude_after_dive` constraint (one-directional: diving → hiking).
 
 **Top Destinations:**
@@ -1993,7 +2020,7 @@ backend/app/prompts/
 | File | Used By | Purpose |
 |------|---------|---------|
 | `architect_system_prompt.txt` | TripArchitect | Core planning instructions, SSoT management |
-| `synthesizer.txt` | Synthesizer | Response generation, voice consistency |
+| `synthesizer.txt` | Synthesizer | Response generation, Jinja2 template with `response_type` conditional for solver vs conversational tone |
 | `local_expert.txt` | LocalExpert | City logistics prompt (if LLM enabled) |
 | `specialists/diving.txt` | VerticalSpecialist | Diving domain knowledge |
 | `specialists/hiking.txt` | VerticalSpecialist | Hiking domain knowledge |
@@ -2149,6 +2176,19 @@ Phase 6: Constraint Tagging (Inline Display)
 │   └─ surface_interval: Between consecutive dive days
 ├─ Constraint structure: { id, severity, icon, title, description }
 └─ Stored in block.active_constraints[]
+
+Phase 6.75: FINAL Chronological Sort (CRITICAL)
+├─ Runs AFTER all phases have added blocks (5.5, 5.25, 6)
+├─ Sort by logistics bracket (arrival → activities → departure)
+├─ Then by time slot (morning < afternoon < evening < night)
+├─ Buffer types have fixed positions:
+│   ├─ arrival: (0,0) First thing
+│   ├─ check_in: (0,1) Right after arrival
+│   ├─ acclimatization: (1,0) Activity slot, morning
+│   ├─ surface_interval: (1,1) Activity slot, between dives
+│   ├─ no_fly_buffer: (1,3) Activity slot, evening
+│   └─ departure/check_out: (2,0) Last thing
+└─ Ensures correct display order regardless of insertion order
 ```
 
 ### Preference Weighting Implementation
