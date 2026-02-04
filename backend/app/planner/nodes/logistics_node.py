@@ -32,6 +32,7 @@ from app.debug_utils import (
     _debug_node_start,
     log,
 )
+from app.planner.hashing import stable_hash
 from app.planner.state.schemas import GraphState
 from app.tile_service.curated_provider import CuratedProvider
 from app.tile_service.mock_provider import MockActivityProvider, MockHotelProvider
@@ -39,6 +40,39 @@ from app.tile_service.models import SearchContext
 from app.tools.amadeus_client import city_to_airport_code
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Cache Key Helper
+# =============================================================================
+def _logistics_input_hash(state: GraphState) -> str:
+    """
+    Hash all inputs that affect tile search results.
+    This ensures cache is busted when any logistics-relevant parameter changes:
+    - Origin/destination
+    - Dates
+    - Travelers
+    - Budget
+    - Hotel settings (stars, amenities)
+    - Flight settings (cabin, direct)
+    - Activity skill level
+    """
+    tp = state.trip_plan
+    ti = state.metadata.get("trip_inputs", {})
+    return stable_hash(
+        {
+            "destination": (tp.destination or "").lower(),
+            "origin": (tp.origin or "").lower(),
+            "start_date": tp.start_date,
+            "end_date": tp.end_date,
+            "adults": tp.adults,
+            "children": tp.children,
+            "budget": tp.budget,
+            "hotel_settings": ti.get("hotel_settings"),
+            "flight_settings": ti.get("flight_settings"),
+            "activity_skill_level": ti.get("activity_skill_level"),
+        }
+    )
 
 
 # =============================================================================
@@ -71,8 +105,9 @@ async def logistics_node(state: GraphState) -> GraphState:
     clog.node_start("LOGISTICS", dest=plan.destination, origin=plan.origin or "None")
 
     # ==========================================================================
-    # SELECTIVE REGENERATION: Check if cached tiles can be reused
-    # Logistics tiles are destination + travelers + budget dependent
+    # SELECTIVE REGENERATION: Hash-based cache check for all logistics inputs
+    # Busts cache when ANY logistics-relevant parameter changes:
+    # origin, destination, dates, travelers, budget, hotel/flight/activity settings
     # @see docs/plan_graph_analysis.md - Selective Regeneration Strategy
     # ==========================================================================
     has_cached_tiles = bool(
@@ -80,12 +115,12 @@ async def logistics_node(state: GraphState) -> GraphState:
     )
 
     if has_cached_tiles:
-        # Check if destination is the same (tiles are destination-specific)
-        cached_destination = state.metadata.get("tiles_destination")
-        current_destination = plan.destination
+        # Compute hash of all logistics-relevant inputs
+        current_hash = _logistics_input_hash(state)
+        cached_hash = state.metadata.get("_logistics_hash")
 
-        if cached_destination and cached_destination == current_destination:
-            log("LOGISTICS", f"Cache HIT: Reusing cached tiles for {current_destination}")
+        if cached_hash and current_hash == cached_hash:
+            log("LOGISTICS", f"Cache HIT: inputs unchanged for {plan.destination}")
             _debug_log(
                 f"Tiles cache hit - hotels={len(state.tiles.get('hotels', []))}, "
                 f"activities={len(state.tiles.get('activities', []))}, "
@@ -103,7 +138,7 @@ async def logistics_node(state: GraphState) -> GraphState:
             state.metadata["logistics_attempted"] = True
 
             # Compact logging: cache hit
-            clog.event("cache_hit", "Tiles (all categories)", dest=current_destination)
+            clog.event("cache_hit", "Tiles (all categories)", dest=plan.destination)
             duration_ms = int((time.time() - node_start_time) * 1000)
             clog.node_end(
                 "LOGISTICS",
@@ -114,21 +149,21 @@ async def logistics_node(state: GraphState) -> GraphState:
             )
             return state
 
-        # Destination changed - INVALIDATE cached tiles
-        if cached_destination and cached_destination != current_destination:
-            log("LOGISTICS", f"Cache INVALIDATE: {cached_destination} → {current_destination}")
+        # Hash changed - INVALIDATE cached tiles
+        if cached_hash:
+            log("LOGISTICS", f"Cache BUST: inputs changed for {plan.destination}")
             _debug_log(
-                f"Destination changed - clearing cached tiles "
-                f"(hotels={len(state.tiles.get('hotels', []))}, "
-                f"activities={len(state.tiles.get('activities', []))})"
+                f"Logistics inputs changed - refetching tiles "
+                f"(old_hash={cached_hash[:8]}..., new_hash={current_hash[:8]}...)"
             )
             # Clear stale tiles
             state.tiles = {"hotels": [], "activities": [], "flights": []}
             state.metadata["tiles_destination"] = None
-            clog.event("cache_invalidate", f"{cached_destination} → {current_destination}")
+            clog.event("cache_invalidate", f"inputs changed for {plan.destination}")
 
-    # Store current destination for future cache checks
+    # Store current destination and input hash for future cache checks
     state.metadata["tiles_destination"] = plan.destination
+    state.metadata["_logistics_hash"] = _logistics_input_hash(state)
 
     # Mark that logistics has been attempted (prevents infinite loop in route_after_architect)
     state.metadata["logistics_attempted"] = True

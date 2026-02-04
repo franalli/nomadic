@@ -15,9 +15,10 @@
 
 'use client';
 
-import { ArrowRight, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowRight, Loader2 } from 'lucide-react';
 import React from 'react';
 
+import { RefreshButton } from '@/components/RefreshButton';
 import { StatusBadge } from '@/components/plan/StatusBadge';
 import { TripSummaryPills } from '@/components/plan/TripSummaryPills';
 import { useTripInputsWithFallback } from '@/hooks/useTripInputsWithFallback';
@@ -276,42 +277,21 @@ export function PlanHeader({
 
             {/* Pills + Refresh - INSIDE the postcard, above gradient overlay */}
             {showPills && (
-              <div className="absolute bottom-3 left-4 right-4 z-20 flex items-center gap-2">
-                <div className="flex-1 min-w-0">
-                  <TripSummaryPills
-                    tripInputs={tripInputs}
-                    onOpenSheet={onOpenSheet}
-                    disabled={isStreaming}
-                    variant="onImage"
-                  />
-                </div>
-                {/* Inline Refresh Button - shown when inputs changed or refreshing */}
-                {(hasInputChanges || isRefreshing) && onRefresh && (
-                  <button
+              <div className="absolute bottom-3 left-4 right-4 z-20 flex items-center gap-2 flex-wrap">
+                <TripSummaryPills
+                  tripInputs={tripInputs}
+                  onOpenSheet={onOpenSheet}
+                  disabled={isStreaming}
+                  variant="onImage"
+                />
+                {/* Inline Refresh Button - appears right next to last pill */}
+                {onRefresh && (
+                  <RefreshButton
+                    hasChanges={hasInputChanges}
+                    isRefreshing={isRefreshing}
                     onClick={onRefresh}
-                    disabled={isRefreshing || !hasInputChanges}
-                    aria-label={isRefreshing ? 'Refreshing...' : 'Refresh plan'}
-                    className={`
-                      flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full
-                      text-xs font-semibold transition-all duration-200
-                      ${isRefreshing
-                        ? 'bg-zinc-200/90 text-zinc-600 cursor-wait'
-                        : 'bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-lg shadow-amber-500/30 hover:scale-105 active:scale-95 animate-pulse'
-                      }
-                    `}
-                  >
-                    {isRefreshing ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Refreshing</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        <span>Refresh</span>
-                      </>
-                    )}
-                  </button>
+                    variant="inline"
+                  />
                 )}
               </div>
             )}

@@ -44,6 +44,14 @@ CARRIER_MAP: Dict[str, Dict[str, str]] = {
     "6X": {"name": "Rex Airlines", "logo": "ZL"},
     "1X": {"name": "Qatar Airways", "logo": "QR"},
     "2X": {"name": "Etihad", "logo": "EY"},
+    # Bali carriers
+    "GA": {"name": "Garuda Indonesia", "logo": "GA"},
+    "SQ": {"name": "Singapore Airlines", "logo": "SQ"},
+    "QZ": {"name": "AirAsia Indonesia", "logo": "QZ"},
+    "JT": {"name": "Lion Air", "logo": "JT"},
+    # Patagonia carriers
+    "AR": {"name": "Aerolineas Argentinas", "logo": "AR"},
+    "LA": {"name": "LATAM Airlines", "logo": "LA"},
 }
 
 # =============================================================================
@@ -634,6 +642,732 @@ DEMO_MANIFEST: Dict[str, Dict[str, Any]] = {
             "best_skiing_months": ["December", "January", "February", "March"],
             "nearest_airport": "Geneva (GVA) - 1h15 transfer",
             "altitude": "1035m (town), 3842m (Aiguille du Midi)",
+        },
+    },
+    # =========================================================================
+    # BALI - Hero Destination (Diving + Hiking Focus)
+    # =========================================================================
+    "bali": {
+        # Hero: Iconic Bali temple on water at sunset
+        "hero_image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?w=1920&q=80",
+        "hero_image_alt": "Tanah Lot temple at sunset, Bali",
+        "tagline": "Island of the Gods",
+        # Destination Gallery - "Vibe Trio" for Local Expert card
+        "destination_gallery": [
+            {
+                "url": "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=400&q=80",
+                "alt": "Bali rice terraces with palm trees",
+            },
+            {
+                "url": "https://images.unsplash.com/photo-1573790387438-4da905039392?w=400&q=80",
+                "alt": "Traditional Balinese temple gate",
+            },
+            {
+                "url": "https://images.unsplash.com/photo-1518548419970-58e3b4079ab2?w=400&q=80",
+                "alt": "Bali beach sunset",
+            },
+        ],
+        # Specialist Activities - Domain-specific content
+        "specialist_content": {
+            "diving": [
+                {
+                    "id": "curated_bali_dive_001",
+                    "title": "USAT Liberty Wreck",
+                    "description": (
+                        "World-famous WWII shipwreck just 30m offshore in Tulamben. "
+                        "Suitable for all certification levels with depths from 5-30m. "
+                        "Shore entry makes this the perfect first dive of your trip."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Shore entry - no boat needed, ideal for jet lag day",
+                    "image": "https://images.unsplash.com/photo-1544551763-46a013bb70d5?w=800&q=80",
+                    "skill_level": "beginner",
+                    "duration_hours": 4,
+                    "price_estimate": 95,
+                    "currency": "USD",
+                    "location": "Tulamben",
+                    "coordinates": [115.5931, -8.2762],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "120m WWII wreck",
+                        "Shore entry - no boat",
+                        "5-30m depth range",
+                        "Abundant coral growth",
+                        "Resident school of bumphead parrotfish",
+                    ],
+                },
+                {
+                    "id": "curated_bali_dive_002",
+                    "title": "Manta Point Nusa Penida",
+                    "description": (
+                        "Encounter majestic manta rays at this famous cleaning station. "
+                        "Best visibility March-June. Moderate currents require good buoyancy."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Book morning slot - calmer currents before noon",
+                    "image": "https://images.unsplash.com/photo-1560275619-4662e36fa65c?w=800&q=80",
+                    "skill_level": "intermediate",
+                    "duration_hours": 6,
+                    "price_estimate": 145,
+                    "currency": "USD",
+                    "location": "Nusa Penida",
+                    "coordinates": [115.5271, -8.7935],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Manta ray cleaning station",
+                        "5-18m depth",
+                        "45 min boat ride from Sanur",
+                        "Best March-June",
+                        "Possible bamboo shark sightings",
+                    ],
+                },
+                {
+                    "id": "curated_bali_dive_003",
+                    "title": "Crystal Bay",
+                    "description": (
+                        "Hunt for the elusive Mola Mola (sunfish) at this world-renowned site. "
+                        "Peak season July-October. Strong thermoclines possible."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Mola season Jul-Oct - cold thermoclines (18C), bring 5mm suit",
+                    "image": "https://images.unsplash.com/photo-1583212292454-1fe6229603b7?w=800&q=80",
+                    "skill_level": "advanced",
+                    "duration_hours": 6,
+                    "price_estimate": 165,
+                    "currency": "USD",
+                    "location": "Nusa Penida",
+                    "coordinates": [115.4486, -8.7179],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Mola Mola (sunfish) sightings",
+                        "Strong currents - advanced skills needed",
+                        "Cold thermoclines 18-22C",
+                        "Peak season July-October",
+                        "Stunning hard coral garden",
+                    ],
+                },
+                {
+                    "id": "curated_bali_dive_004",
+                    "title": "Blue Lagoon Padangbai",
+                    "description": (
+                        "Gentle macro diving paradise with seahorses, nudibranchs, and frogfish. "
+                        "Protected bay perfect for beginners and underwater photographers."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Macro paradise - bring your camera",
+                    "image": "https://images.unsplash.com/photo-1546026423-cc4642628d2b?w=800&q=80",
+                    "skill_level": "beginner",
+                    "duration_hours": 4,
+                    "price_estimate": 85,
+                    "currency": "USD",
+                    "location": "Padangbai",
+                    "coordinates": [115.5088, -8.5331],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Protected bay - calm conditions",
+                        "Macro paradise: nudis, seahorses, frogfish",
+                        "Max depth 15m",
+                        "Great for photography",
+                        "Morning dives for best visibility",
+                    ],
+                },
+            ],
+            "hiking": [
+                {
+                    "id": "curated_bali_hike_001",
+                    "title": "Mount Batur Sunrise Trek",
+                    "description": (
+                        "Iconic sunrise hike up Bali's active volcano. 2-hour ascent rewards "
+                        "with panoramic views over Lake Batur and Mount Agung at dawn."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "2 AM pickup - summit for 6 AM sunrise, breakfast included",
+                    "image": "https://images.unsplash.com/photo-1588668214407-6ea9a6d8c272?w=800&q=80",
+                    "skill_level": "intermediate",
+                    "duration_hours": 7,
+                    "price_estimate": 55,
+                    "currency": "USD",
+                    "location": "Kintamani",
+                    "coordinates": [115.3756, -8.2417],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Active volcano (1717m)",
+                        "Sunrise breakfast at summit",
+                        "Guide required by local regulations",
+                        "700m elevation gain",
+                        "Views of Mt Agung & Lake Batur",
+                    ],
+                },
+                {
+                    "id": "curated_bali_hike_002",
+                    "title": "Campuhan Ridge Walk",
+                    "description": (
+                        "Scenic ridge walk between two valleys in Ubud. Easy morning stroll "
+                        "through swaying grass fields with valley views. Perfect sunrise activity."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Start at 6 AM - avoid midday heat, magical morning light",
+                    "image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?w=800&q=80",
+                    "skill_level": "beginner",
+                    "duration_hours": 2,
+                    "price_estimate": 0,
+                    "currency": "USD",
+                    "location": "Ubud",
+                    "coordinates": [115.2580, -8.4952],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Free - no entrance fee",
+                        "2km easy walk",
+                        "Best at sunrise",
+                        "Instagram-famous views",
+                        "Starts near Ibah Luxury Villas",
+                    ],
+                },
+                {
+                    "id": "curated_bali_hike_003",
+                    "title": "Tegallalang Rice Terrace Walk",
+                    "description": (
+                        "Explore Bali's most photogenic rice terraces carved "
+                        "into the hillside. Walk through the traditional subak "
+                        "irrigation system dating back centuries."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Arrive by 8 AM to beat tour buses, wear sturdy shoes",
+                    "image": "https://images.unsplash.com/photo-1555400038-63f5ba517a47?w=800&q=80",
+                    "skill_level": "beginner",
+                    "duration_hours": 3,
+                    "price_estimate": 15,
+                    "currency": "USD",
+                    "location": "Tegallalang",
+                    "coordinates": [115.2791, -8.4343],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "UNESCO-recognized subak system",
+                        "Multiple photo spots",
+                        "Coffee plantation nearby",
+                        "20 min from Ubud",
+                        "Swing experiences available",
+                    ],
+                },
+                {
+                    "id": "curated_bali_hike_004",
+                    "title": "Sekumpul Waterfall Trek",
+                    "description": (
+                        "Bali's most majestic waterfall hidden in the northern highlands. "
+                        "Steep descent through jungle rewards with a twin 80m cascade."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Full day trip - 2.5h from Ubud, arrive before 10 AM",
+                    "image": "https://images.unsplash.com/photo-1512100356356-de1b84283e18?w=800&q=80",
+                    "skill_level": "intermediate",
+                    "duration_hours": 5,
+                    "price_estimate": 25,
+                    "currency": "USD",
+                    "location": "Singaraja",
+                    "coordinates": [115.1847, -8.1768],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Twin 80m waterfalls",
+                        "Steep jungle descent (30-45 min)",
+                        "Swimming allowed at base",
+                        "Local guide recommended",
+                        "Bali's most beautiful waterfall",
+                    ],
+                },
+            ],
+            "general": [
+                {
+                    "id": "curated_bali_gen_001",
+                    "title": "Tanah Lot Temple Sunset",
+                    "description": (
+                        "Visit Bali's most iconic sea temple perched on a rocky outcrop. "
+                        "Time your visit for sunset when the temple silhouettes against "
+                        "the golden sky."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Arrive 4:30 PM for sunset - temple closes at dark",
+                    "image": "https://images.unsplash.com/photo-1537996194471-e657df975ab4?w=800&q=80",
+                    "duration_hours": 3,
+                    "price_estimate": 10,
+                    "currency": "USD",
+                    "location": "Tanah Lot",
+                    "coordinates": [115.0867, -8.6213],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Iconic sea temple",
+                        "Best at sunset",
+                        "Sea snakes in rock caves",
+                        "Traditional market nearby",
+                    ],
+                },
+                {
+                    "id": "curated_bali_gen_002",
+                    "title": "Ubud Monkey Forest & Art Walk",
+                    "description": (
+                        "Explore the sacred monkey sanctuary followed by a stroll through "
+                        "Ubud's art galleries and craft workshops. Perfect rest day activity."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Morning visit - monkeys less aggressive, cooler temps",
+                    "image": "https://images.unsplash.com/photo-1578469550956-0e16b69c6a3d?w=800&q=80",
+                    "duration_hours": 4,
+                    "price_estimate": 20,
+                    "currency": "USD",
+                    "location": "Ubud",
+                    "coordinates": [115.2588, -8.5185],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "700+ Balinese long-tailed macaques",
+                        "Ancient temple ruins",
+                        "Ubud art galleries",
+                        "Traditional craft workshops",
+                    ],
+                },
+                {
+                    "id": "curated_bali_gen_003",
+                    "title": "Seminyak Beach Club Day",
+                    "description": (
+                        "Relax at a premium beach club with infinity pool, day beds, "
+                        "and sunset cocktails. Perfect no-fly day activity after diving."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Perfect for 24h no-fly buffer day - no altitude stress",
+                    "image": "https://images.unsplash.com/photo-1540541338287-41700207dee6?w=800&q=80",
+                    "duration_hours": 6,
+                    "price_estimate": 75,
+                    "currency": "USD",
+                    "location": "Seminyak",
+                    "coordinates": [115.1614, -8.6900],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Infinity pool",
+                        "Day bed included",
+                        "Sunset cocktails",
+                        "Great food menu",
+                        "Perfect dive recovery day",
+                    ],
+                },
+            ],
+        },
+        # Curated Hotels - Range from luxury to budget
+        "curated_hotels": [
+            {
+                "id": "curated_bali_hotel_001",
+                "name": "COMO Uma Ubud",
+                "description": (
+                    "Luxury hillside retreat overlooking the Tjampuhan Valley. "
+                    "Award-winning COMO Shambhala spa and farm-to-table dining."
+                ),
+                "price_estimate": 450,
+                "currency": "USD",
+                "rating": 5,
+                "image": "https://images.unsplash.com/photo-1582719508461-905c673771fd?w=800&q=80",
+                "logic_hook": "Central Ubud - 30 min to Campuhan Ridge, 2h to Tulamben",
+                "amenities": ["pool", "spa", "yoga", "restaurant", "valley_view"],
+                "location": "Ubud",
+                "coordinates": [115.2614, -8.5039],  # [lng, lat] Ubud
+                "distance_to_dive_sites": "2h to Tulamben (USAT Liberty)",
+            },
+            {
+                "id": "curated_bali_hotel_002",
+                "name": "Alila Manggis",
+                "description": (
+                    "Beachfront boutique resort in East Bali. Perfect base for "
+                    "Tulamben diving and Mount Batur hiking with stunning Lombok views."
+                ),
+                "price_estimate": 180,
+                "currency": "USD",
+                "rating": 4,
+                "image": "https://images.unsplash.com/photo-1571896349842-33c89424de2d?w=800&q=80",
+                "logic_hook": "East Bali base - 45 min to Tulamben, 1h to Mt Batur",
+                "amenities": ["pool", "beach", "dive_center_nearby", "spa", "restaurant"],
+                "location": "Candidasa",
+                "coordinates": [115.5633, -8.5097],  # [lng, lat] Candidasa
+                "distance_to_dive_sites": "45 min to Tulamben",
+            },
+            {
+                "id": "curated_bali_hotel_003",
+                "name": "Puri Bagus Lovina",
+                "description": (
+                    "Affordable beachfront resort in North Bali with private beach. "
+                    "Close to Sekumpul Waterfall and dolphin watching tours."
+                ),
+                "price_estimate": 85,
+                "currency": "USD",
+                "rating": 3,
+                "image": "https://images.unsplash.com/photo-1590490360182-c33d57733427?w=800&q=80",
+                "logic_hook": "Budget pick - 40 min to Sekumpul, sunrise dolphin tours",
+                "amenities": ["pool", "beach", "restaurant", "spa"],
+                "location": "Lovina",
+                "coordinates": [115.0269, -8.1553],  # [lng, lat] Lovina
+                "distance_to_dive_sites": "1h to Tulamben",
+            },
+        ],
+        # Curated Flights - To Ngurah Rai (DPS)
+        "curated_flights": [
+            {
+                "id": "curated_bali_flight_001",
+                "carrier_code": "GA",
+                "carrier_name": "Garuda Indonesia",
+                "departure_time": "08:30",
+                "duration": "PT4H15M",
+                "price": 380,
+                "currency": "USD",
+                "logic_hook": None,  # Calculated by logistics node
+            },
+            {
+                "id": "curated_bali_flight_002",
+                "carrier_code": "SQ",
+                "carrier_name": "Singapore Airlines",
+                "departure_time": "14:00",
+                "duration": "PT5H30M",
+                "price": 520,
+                "currency": "USD",
+                "logic_hook": None,  # Via Singapore
+            },
+            {
+                "id": "curated_bali_flight_003",
+                "carrier_code": "QR",
+                "carrier_name": "Qatar Airways",
+                "departure_time": "19:30",
+                "duration": "PT14H00M",
+                "price": 680,
+                "currency": "USD",
+                "logic_hook": None,  # Via Doha - premium option
+            },
+            {
+                "id": "curated_bali_flight_004",
+                "carrier_code": "QZ",
+                "carrier_name": "AirAsia Indonesia",
+                "departure_time": "22:15",
+                "duration": "PT4H45M",
+                "price": 195,
+                "currency": "USD",
+                "logic_hook": None,  # Budget option - late departure safe for diving
+            },
+        ],
+        # Local logistics tips
+        "logistics": {
+            "best_diving_months": ["April", "May", "June", "September", "October", "November"],
+            "best_hiking_months": ["April", "May", "June", "July", "August", "September"],
+            "mola_season": ["July", "August", "September", "October"],
+            "water_temp_range": "26-30C (18-22C at Crystal Bay thermoclines)",
+            "visibility_range": "15-40m",
+            "timezone": "WITA (UTC+8)",
+            "currency": "IDR",
+            "tipping": "10% service charge usually included, small tips appreciated",
+            "dive_constraints": {
+                "24h_no_fly": True,
+                "altitude_after_diving": "Avoid Mt Batur (1717m) within 24h of diving",
+            },
+            "hiking_constraints": {
+                "mt_batur_altitude": "1717m - no acclimatization needed for healthy adults",
+                "guide_required": "Mt Batur requires licensed guide (local regulation)",
+            },
+            "airport": "Ngurah Rai International (DPS)",
+            "transfer_times": {
+                "airport_to_ubud": "1h 30min",
+                "airport_to_seminyak": "30min",
+                "ubud_to_tulamben": "2h",
+                "ubud_to_kintamani": "1h",
+            },
+        },
+    },
+    # =========================================================================
+    # PATAGONIA - Hero Destination (Hiking Focus)
+    # =========================================================================
+    "patagonia": {
+        # Hero: Torres del Paine peaks
+        "hero_image": "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1920&q=80",
+        "hero_image_alt": "Torres del Paine granite peaks at sunrise",
+        "tagline": "The End of the World",
+        # Destination Gallery - "Vibe Trio" for Local Expert card
+        "destination_gallery": [
+            {
+                "url": "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=400&q=80",
+                "alt": "Fitz Roy mountain at dawn",
+            },
+            {
+                "url": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=400&q=80",
+                "alt": "Perito Moreno Glacier",
+            },
+            {
+                "url": "https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&q=80",
+                "alt": "Guanacos in Patagonian steppe",
+            },
+        ],
+        # Specialist Activities - Hiking focus
+        "specialist_content": {
+            "hiking": [
+                {
+                    "id": "curated_pata_hike_001",
+                    "title": "Torres del Paine W Trek",
+                    "description": (
+                        "The iconic W Trek covers 80km through Patagonia's most dramatic scenery. "
+                        "Visit the three Torres, French Valley, and Grey Glacier over 4-5 days."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Book refugios 4-6 months ahead - sells out fast",
+                    "image": "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=800&q=80",
+                    "skill_level": "advanced",
+                    "duration_hours": 96,  # 4 days
+                    "price_estimate": 450,
+                    "currency": "USD",
+                    "location": "Torres del Paine National Park",
+                    "coordinates": [-72.9667, -50.9423],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "80km over 4-5 days",
+                        "Refugio or camping",
+                        "Base of the Torres viewpoint",
+                        "French Valley panoramas",
+                        "Grey Glacier crossing",
+                    ],
+                },
+                {
+                    "id": "curated_pata_hike_002",
+                    "title": "Laguna de los Tres (Fitz Roy)",
+                    "description": (
+                        "Classic day hike to the iconic viewpoint of Mount Fitz Roy. "
+                        "10-hour round trip with 1000m elevation gain. Sunrise recommended."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Start at 4 AM for sunrise at the lagoon - worth it",
+                    "image": "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=800&q=80",
+                    "skill_level": "intermediate",
+                    "duration_hours": 10,
+                    "price_estimate": 0,
+                    "currency": "USD",
+                    "location": "El Chalten",
+                    "coordinates": [-72.8867, -49.3314],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Free - no entrance fee",
+                        "25km round trip",
+                        "1000m elevation gain",
+                        "Iconic Fitz Roy view",
+                        "Best at sunrise",
+                    ],
+                },
+                {
+                    "id": "curated_pata_hike_003",
+                    "title": "Perito Moreno Glacier Trek",
+                    "description": (
+                        "Walk on one of the world's last advancing glaciers. "
+                        "Includes crampons, ice trekking, and whiskey with glacier ice."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Big Ice (4h on glacier) vs Mini Trekking (1h) - book ahead",
+                    "image": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=800&q=80",
+                    "skill_level": "intermediate",
+                    "duration_hours": 8,
+                    "price_estimate": 180,
+                    "currency": "USD",
+                    "location": "Los Glaciares National Park",
+                    "coordinates": [-73.0486, -50.4967],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Walk ON the glacier",
+                        "Crampons provided",
+                        "Whiskey with glacier ice",
+                        "One of few advancing glaciers",
+                        "Spectacular ice formations",
+                    ],
+                },
+                {
+                    "id": "curated_pata_hike_004",
+                    "title": "Cerro Torre Viewpoint",
+                    "description": (
+                        "Half-day hike to Laguna Torre with views of the impossible needle "
+                        "of Cerro Torre. Easier than Fitz Roy, equally dramatic."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Afternoon hike OK - less crowded than Fitz Roy trail",
+                    "image": "https://images.unsplash.com/photo-1551632811-561732d1e306?w=800&q=80",
+                    "skill_level": "beginner",
+                    "duration_hours": 6,
+                    "price_estimate": 0,
+                    "currency": "USD",
+                    "location": "El Chalten",
+                    "coordinates": [-72.9500, -49.3200],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Free - no entrance fee",
+                        "18km round trip",
+                        "400m elevation gain",
+                        "Cerro Torre needle views",
+                        "Laguna Torre reflection",
+                    ],
+                },
+            ],
+            "general": [
+                {
+                    "id": "curated_pata_gen_001",
+                    "title": "Perito Moreno Walkways",
+                    "description": (
+                        "Extensive boardwalk system facing the glacier with multiple viewpoints. "
+                        "Watch and hear ice calving into Lago Argentino."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Afternoon best for calving - ice warms and breaks more",
+                    "image": "https://images.unsplash.com/photo-1503614472-8c93d56e92ce?w=800&q=80",
+                    "duration_hours": 4,
+                    "price_estimate": 35,
+                    "currency": "USD",
+                    "location": "Los Glaciares National Park",
+                    "coordinates": [-73.0486, -50.4967],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Multiple viewpoint levels",
+                        "Watch ice calving live",
+                        "Thunderous crack sounds",
+                        "Cafe and facilities on site",
+                    ],
+                },
+                {
+                    "id": "curated_pata_gen_002",
+                    "title": "Estancia Day Visit",
+                    "description": (
+                        "Experience traditional Patagonian ranch life. Includes horseback riding, "
+                        "sheep shearing demo, and asado (BBQ) lunch."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "Book for rest day between big hikes - perfect recovery",
+                    "image": "https://images.unsplash.com/photo-1548199973-03cce0bbc87b?w=800&q=80",
+                    "duration_hours": 6,
+                    "price_estimate": 120,
+                    "currency": "USD",
+                    "location": "El Calafate",
+                    "coordinates": [-72.2761, -50.3378],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Traditional asado lunch",
+                        "Horseback riding included",
+                        "Sheep shearing demo",
+                        "Gaucho culture experience",
+                    ],
+                },
+                {
+                    "id": "curated_pata_gen_003",
+                    "title": "Lago Argentino Boat Tour",
+                    "description": (
+                        "Cruise among icebergs to the Upsala and Spegazzini glaciers. "
+                        "Full day on the water with lunch included."
+                    ),
+                    "type": "activity",
+                    "logic_hook": "All-weather activity - boat runs rain or shine",
+                    "image": "https://images.unsplash.com/photo-1501785888041-af3ef285b470?w=800&q=80",
+                    "duration_hours": 8,
+                    "price_estimate": 150,
+                    "currency": "USD",
+                    "location": "El Calafate",
+                    "coordinates": [-72.8000, -50.3300],  # [lng, lat] Mapbox format
+                    "highlights": [
+                        "Multiple glaciers",
+                        "Floating icebergs",
+                        "Lunch included",
+                        "Weather-proof activity",
+                    ],
+                },
+            ],
+        },
+        # Curated Hotels - Range from luxury to budget
+        "curated_hotels": [
+            {
+                "id": "curated_pata_hotel_001",
+                "name": "Explora Patagonia",
+                "description": (
+                    "All-inclusive luxury lodge in Torres del Paine with guided expeditions. "
+                    "Floor-to-ceiling windows frame the Paine massif."
+                ),
+                "price_estimate": 1200,
+                "currency": "USD",
+                "rating": 5,
+                "image": "https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&q=80",
+                "logic_hook": "All-inclusive with expert guides - worth the splurge",
+                "amenities": ["spa", "restaurant", "guided_hikes", "horseback", "bar"],
+                "location": "Torres del Paine",
+                "coordinates": [-72.9667, -50.9423],  # [lng, lat]
+                "distance_to_trailheads": "On-site access to park trails",
+            },
+            {
+                "id": "curated_pata_hotel_002",
+                "name": "Hosteria Helsingfors",
+                "description": (
+                    "Historic estancia on Lago Viedma with Fitz Roy views. "
+                    "Authentic Patagonian hospitality with modern comforts."
+                ),
+                "price_estimate": 280,
+                "currency": "USD",
+                "rating": 4,
+                "image": "https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=800&q=80",
+                "logic_hook": "Between El Chalten and El Calafate - strategic location",
+                "amenities": ["restaurant", "bar", "lake_view", "horseback"],
+                "location": "Lago Viedma",
+                "coordinates": [-72.6000, -49.6000],  # [lng, lat]
+                "distance_to_trailheads": "1h to El Chalten trailheads",
+            },
+            {
+                "id": "curated_pata_hotel_003",
+                "name": "America del Sur Hostel",
+                "description": (
+                    "Popular backpacker hostel in El Calafate with private rooms available. "
+                    "Great common areas and kitchen. Walking distance to town center."
+                ),
+                "price_estimate": 45,
+                "currency": "USD",
+                "rating": 3,
+                "image": "https://images.unsplash.com/photo-1590490360182-c33d57733427?w=800&q=80",
+                "logic_hook": "Budget pick - best hostel in El Calafate, book private room",
+                "amenities": ["kitchen", "common_room", "wifi", "luggage_storage"],
+                "location": "El Calafate",
+                "coordinates": [-72.2761, -50.3378],  # [lng, lat]
+                "distance_to_trailheads": "1.5h to Perito Moreno",
+            },
+        ],
+        # Curated Flights - To El Calafate (FTE)
+        "curated_flights": [
+            {
+                "id": "curated_pata_flight_001",
+                "carrier_code": "AR",
+                "carrier_name": "Aerolineas Argentinas",
+                "departure_time": "06:30",
+                "duration": "PT3H15M",
+                "price": 320,
+                "currency": "USD",
+                "logic_hook": "Direct from Buenos Aires (AEP) - morning arrival",
+            },
+            {
+                "id": "curated_pata_flight_002",
+                "carrier_code": "AR",
+                "carrier_name": "Aerolineas Argentinas",
+                "departure_time": "14:00",
+                "duration": "PT3H15M",
+                "price": 350,
+                "currency": "USD",
+                "logic_hook": "Afternoon flight - arrive for sunset at El Calafate",
+            },
+            {
+                "id": "curated_pata_flight_003",
+                "carrier_code": "LA",
+                "carrier_name": "LATAM Airlines",
+                "departure_time": "09:45",
+                "duration": "PT3H30M",
+                "price": 380,
+                "currency": "USD",
+                "logic_hook": "Via Santiago option available",
+            },
+        ],
+        # Local logistics tips
+        "logistics": {
+            "best_hiking_months": [
+                "October",
+                "November",
+                "December",
+                "January",
+                "February",
+                "March",
+            ],
+            "weather_warning": "Patagonian weather is extreme and unpredictable - pack layers",
+            "wind_season": "September-March brings strong winds (up to 120km/h)",
+            "timezone": "ART (UTC-3)",
+            "currency": "ARS (US dollars widely accepted)",
+            "tipping": "10% at restaurants, round up for guides",
+            "hiking_constraints": {
+                "max_altitude": "1200m - no acclimatization needed",
+                "wind_factor": "High winds can close trails - check daily",
+                "permit_required": "W Trek requires advance refugio/camping booking",
+            },
+            "airport": "El Calafate International (FTE)",
+            "transfer_times": {
+                "airport_to_el_calafate": "20min",
+                "el_calafate_to_perito_moreno": "1h 30min",
+                "el_calafate_to_el_chalten": "3h",
+                "el_calafate_to_torres_del_paine": "5h (cross border to Chile)",
+            },
         },
     },
 }

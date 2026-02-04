@@ -48,6 +48,11 @@ CRITICAL SAFETY RULES (BLOCKING - cannot be violated):
 3. CERTIFICATION: Open Water = 18m max depth, Advanced = 30m max depth
 4. SURFACE INTERVALS: Minimum 18h between multi-day diving
 
+CROSS-DOMAIN CONSTRAINTS:
+- Diving affects skiing: No high-altitude skiing (>2500m) within 24h after diving
+- Same decompression physics as no-fly rule — altitude reduces ambient pressure
+- This is a BLOCKING constraint
+
 ACTIVITY GENERATION:
 - Generate 2-4 REAL dive sites based on trip duration
 - Include depth_meters and certification_required for each dive
@@ -64,11 +69,28 @@ CRITICAL SAFETY RULES:
 2. WEATHER WINDOWS: Morning starts recommended for mountain hikes
 3. CROSS-DOMAIN: High-altitude hiking (>2500m) requires 24h buffer before/after diving
 
+CONSTRAINT SEVERITY LABELS (CRITICAL - always include in output):
+- BLOCKING: Trail closed, impassable conditions, permit required but unavailable
+- STRONG: Altitude >3000m requires acclimatization day, daily elevation gain >1000m
+- SOFT: Prefer morning starts, suggested rest day after 2 consecutive hard days
+
+SEASONALITY (REGIONAL AWARENESS):
+- High alpine (Alps, Himalaya): June-September for summer hiking
+- Southern Hemisphere (NZ, Patagonia): November-March
+- Monsoon regions (Nepal, India): Avoid June-September
+- If trip dates fall OUTSIDE hiking season: set feasibility_status="caveat" or "infeasible"
+- Exception: Lower-elevation trails may be accessible year-round
+
 ACTIVITY GENERATION:
 - Generate 2-4 REAL hiking trails based on trip duration
 - Include elevation_meters and distance_km for each hike
 - Add difficulty progression (easier trails first)
 - Consider fitness requirements and acclimatization needs
+
+OUTPUT FIELD HINTS:
+- Always include duration_hours (estimated completion at moderate pace)
+- Always include trail_type: "day_hike" | "multi_day" | "summit" | "ridge_walk"
+- Severity labels MUST appear in constraints_applied[].type field
 
 OUTPUT: Return JSON with feasibility_status, activities[], and constraints[].""",
     "skiing": """You are a certified ski instructor planning ski trips.
@@ -84,6 +106,12 @@ SEASONALITY:
 - Northern Hemisphere: December-April
 - Southern Hemisphere: June-September
 - Indoor facilities: Year-round
+
+CROSS-DOMAIN CONSTRAINTS:
+- If trip includes diving: High-altitude skiing (>2500m) requires 24h buffer AFTER diving
+- Ski resorts often sit at 2000-3500m elevation — flag altitude conflict for diving combos
+- Plan diving activities BEFORE high-altitude skiing days, not after
+- This is a BLOCKING constraint (same physiological basis as no-fly rule)
 
 ACTIVITY GENERATION:
 - Generate 2-4 REAL ski runs/areas based on trip duration
@@ -367,6 +395,9 @@ async def generate_specialist_output_llm(
         except ValueError:
             pass
 
+    # NOTE: JSON schema is NOT included here - it's handled by .with_structured_output()
+    # OpenAI's function calling API receives the Pydantic schema directly.
+    # Including redundant JSON instructions wastes ~200-500 tokens per call.
     user_prompt = f"""Plan {topic} activities for {destination}.
 
 TRIP DETAILS:
@@ -374,44 +405,17 @@ TRIP DETAILS:
 - Travelers: {trip_plan.adults} adults, {trip_plan.children} children
 - Activity days available: {max(1, duration_days - 2)} (excluding arrival/departure)
 
-REQUIRED OUTPUT (JSON):
-{{
-  "feasibility_status": "feasible" | "infeasible" | "conditional",
-  "feasibility_reason": "explanation if not feasible",
-  "activities": [
-    {{
-      "title": "Real site/trail/run name",
-      "description": "Brief description",
-      "location": "Specific location",
-      "duration_hours": 3.0,
-      "difficulty": "beginner|intermediate|advanced",
-      "depth_meters": 18,  // diving only
-      "elevation_meters": 1200,  // hiking only
-      "distance_km": 8.5,  // hiking/cycling only
-      "certification_required": "Open Water",  // diving only
-      "vertical_meters": 800,  // skiing only
-      "logic_hook": "Pro tip for this activity"
-    }}
-  ],
-  "constraints": [
-    {{
-      "constraint_id": "no_fly_24h",
-      "constraint_type": "blocking|strong|soft",
-      "applies_to_categories": ["flights", "hiking"],
-      "buffer_hours": 24,
-      "reason": "Why this constraint exists",
-      "label": "24h No-Fly Buffer",
-      "icon": "🚫"
-    }}
-  ]
-}}
-
-IMPORTANT:
+REQUIREMENTS:
 - Use REAL sites/trails/runs - no made-up names
 - Generate 2-4 activities based on available days
+- Include topic-specific fields (depth_meters for diving, elevation_meters for hiking, etc.)
 - Include cross-domain constraints explicitly (e.g., diving affects hiking)
-- For infeasible destinations (e.g., diving in landlocked areas), return infeasible status"""
+- For infeasible destinations (e.g., diving in landlocked areas), \
+set feasibility_status to "infeasible" with reason"""
 
+    import time
+
+    llm_start = time.time()
     try:
         from langchain_openai import ChatOpenAI
 
@@ -429,8 +433,10 @@ IMPORTANT:
             ]
         )
 
+        elapsed = time.time() - llm_start
         _debug_log(
-            f"[LLM_SPECIALIST] Success: status={output.feasibility_status}, "
+            f"[LLM_SPECIALIST] ✅ Success for {topic} in {elapsed:.1f}s: "
+            f"status={output.feasibility_status}, "
             f"activities={len(output.activities)}, constraints={len(output.constraints)}"
         )
 
@@ -455,7 +461,13 @@ IMPORTANT:
         return output
 
     except Exception as e:
-        _debug_log(f"[LLM_SPECIALIST] Error generating output: {e}")
+        elapsed = time.time() - llm_start
+        # Log exception type to diagnose: OutputParserException = schema mismatch,
+        # TimeoutError = LLM slow, ValidationError = Pydantic rejected field
+        _debug_log(
+            f"[LLM_SPECIALIST] ❌ FAILED for {topic} after {elapsed:.1f}s | "
+            f"type={type(e).__name__} | msg={str(e)[:300]}"
+        )
         return None
 
 
@@ -531,13 +543,16 @@ def convert_llm_output_to_specialist_output(
     Convert LLM output to SpecialistOutput format for the graph.
 
     Maps LLMActivity -> ItineraryBlock and LLMConstraint -> SpecialistConstraint.
+    Images are fetched from Unsplash (activity-aware) with Picsum fallback.
     """
-    from app.placeholders import get_activity_image
+    from app.services.unsplash import get_image_url_sync
 
     # Convert activities to ItineraryBlocks
     content_blocks: List[ItineraryBlock] = []
     for i, activity in enumerate(llm_output.activities):
-        image_url = get_activity_image(topic, destination, activity.title)
+        # Use Unsplash service with activity context for location-specific images
+        # Variant cycles through prefetched images (0-5)
+        image_url = get_image_url_sync(destination, variant=i % 6, activities=[topic])
         content_blocks.append(
             ItineraryBlock(
                 day=i + 2,  # Start from day 2 (day 1 is arrival)
@@ -1287,7 +1302,7 @@ class VerticalSpecialist:
 
         return blocks
 
-    def generate_output(self, state: GraphState) -> SpecialistOutput:
+    async def generate_output(self, state: GraphState) -> SpecialistOutput:
         """
         Generate the complete specialist output.
 
@@ -1340,32 +1355,10 @@ class VerticalSpecialist:
             if use_llm and destination:
                 _debug_log(f"[SPECIALIST] Trying LLM generation for {self.topic} in {destination}")
                 try:
-                    import asyncio
-
-                    # Try to get or create event loop
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            # We're in an async context, use run_coroutine_threadsafe
-
-                            future = asyncio.run_coroutine_threadsafe(
-                                generate_specialist_output_llm(
-                                    self.topic, destination, state.trip_plan
-                                ),
-                                loop,
-                            )
-                            llm_output = future.result(timeout=30)
-                        else:
-                            llm_output = loop.run_until_complete(
-                                generate_specialist_output_llm(
-                                    self.topic, destination, state.trip_plan
-                                )
-                            )
-                    except RuntimeError:
-                        # No event loop, create one
-                        llm_output = asyncio.run(
-                            generate_specialist_output_llm(self.topic, destination, state.trip_plan)
-                        )
+                    # Native async - no event loop blocking
+                    llm_output = await generate_specialist_output_llm(
+                        self.topic, destination, state.trip_plan
+                    )
                 except Exception as e:
                     _debug_log(f"[SPECIALIST] LLM generation failed: {e}, using hardcoded fallback")
 
@@ -1390,6 +1383,28 @@ class VerticalSpecialist:
                     critique=None,
                     enhancements=[],
                 )
+
+            # Prefetch activity-specific images from Unsplash (fire-and-forget)
+            # This populates the memory cache so get_image_url_sync returns Unsplash images
+            # Don't await - get_hero_image() fallback handles missing images
+            try:
+                import asyncio
+
+                from app.services.unsplash import prefetch_destination_images
+
+                task = asyncio.create_task(
+                    prefetch_destination_images(destination, activities=[self.topic])
+                )
+                # Suppress "Task exception was never retrieved" log spam if Unsplash fails
+                task.add_done_callback(
+                    lambda t: t.exception() if t.done() and not t.cancelled() else None
+                )
+                _debug_log(
+                    f"[SPECIALIST] Unsplash prefetch started (fire-and-forget) "
+                    f"for {destination}/{self.topic}"
+                )
+            except Exception as e:
+                _debug_log(f"[SPECIALIST] Unsplash prefetch setup error (non-fatal): {e}")
 
             # Convert LLM output to SpecialistOutput format
             converted = convert_llm_output_to_specialist_output(llm_output, self.topic, destination)
@@ -1817,7 +1832,7 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     specialist = VerticalSpecialist(topic)
 
     # Generate output (includes feasibility check)
-    output = specialist.generate_output(state)
+    output = await specialist.generate_output(state)
 
     # Store specialist output in metadata (always, for UI rendering)
     state.metadata["specialist_output"] = output.model_dump()

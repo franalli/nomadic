@@ -680,7 +680,7 @@ export function StrategyStageRenderer({
     // Get destination coordinates for map (used in P3+ only)
     const destCoords = getDestinationCoords(destinationCard?.title);
     const mapCenter = destCoords
-      ? { lng: destCoords[0], lat: destCoords[1], zoom: 8 }
+      ? { lng: destCoords[0], lat: destCoords[1], zoom: 6 }
       : { lng: 0, lat: 0, zoom: 2 }; // Fallback world view
 
     // Desktop: Show sticky map sidebar when destination is set
@@ -910,7 +910,7 @@ export function StrategyStageRenderer({
           )}
         </div>
 
-        {/* RIGHT COLUMN: Sticky map - shows when destination is set (Desktop only, fixed 400px width) */}
+        {/* RIGHT COLUMN: Sticky full-height map - shows when destination is set (Desktop only) */}
         <AnimatePresence>
           {showDesktopMap && (
             <motion.div
@@ -921,9 +921,8 @@ export function StrategyStageRenderer({
               className="shrink-0"
               style={{ width: 400, maxWidth: '35vw' }}
             >
-              <div className="sticky top-20 z-10">
-                {/* Explicit height wrapper ensures Mapbox initializes correctly */}
-                <div style={{ height: 400 }} className="rounded-xl overflow-hidden border border-border/50">
+              <div className="sticky top-0 h-screen overflow-hidden">
+                <div className="h-full w-full">
                   <MapErrorBoundary className="h-full w-full">
                     <InteractiveMap
                       items={destinationMarker}

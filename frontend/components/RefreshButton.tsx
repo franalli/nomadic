@@ -2,8 +2,9 @@
  * RefreshButton
  *
  * High-contrast badge button that appears when trip inputs have changed.
- * Positioned above map controls for optimal visibility.
- * Uses portal to render to document.body, escaping any container constraints.
+ * Supports two variants:
+ * - floating: Fixed position above map controls (uses portal)
+ * - inline: Rendered inline at end of chip bar (no portal)
  *
  * @see docs/design-system.md - DS.actions.primary
  */
@@ -11,7 +12,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { Loader2, RefreshCw, RotateCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -24,9 +25,11 @@ interface RefreshButtonProps {
   isRefreshing: boolean;
   /** Callback when button is clicked */
   onClick: () => void;
+  /** Rendering variant - floating FAB or inline pill */
+  variant?: 'floating' | 'inline';
 }
 
-export function RefreshButton({ hasChanges, isRefreshing, onClick }: RefreshButtonProps) {
+export function RefreshButton({ hasChanges, isRefreshing, onClick, variant = 'floating' }: RefreshButtonProps) {
   // Track if we're mounted (needed for portal)
   const [mounted, setMounted] = useState(false);
 
@@ -45,12 +48,55 @@ export function RefreshButton({ hasChanges, isRefreshing, onClick }: RefreshButt
   // Hide when: no changes AND not refreshing (plan is current)
   const shouldShow = hasChanges || isRefreshing;
 
-  // Don't render until mounted (SSR safety)
-  if (!mounted) return null;
-
   // Don't render if nothing to show
   if (!shouldShow) return null;
 
+  // Inline variant: rendered directly in chip bar (no portal, no SSR check needed)
+  if (variant === 'inline') {
+    return (
+      <button
+        onClick={handleClick}
+        disabled={isRefreshing}
+        className={cn(
+          'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full',
+          'text-xs font-medium shadow-md',
+          'transition-all duration-200',
+          'disabled:opacity-50 disabled:cursor-not-allowed',
+          'animate-in fade-in slide-in-from-right-2 duration-200',
+          // Active state
+          hasChanges &&
+            !isRefreshing && [
+              'bg-gradient-to-r from-amber-500 to-orange-500',
+              'text-white',
+              'hover:from-amber-600 hover:to-orange-600',
+            ],
+          // Refreshing state
+          isRefreshing && [
+            'bg-zinc-200 text-zinc-600',
+            'dark:bg-zinc-800 dark:text-zinc-400',
+            'cursor-wait',
+          ]
+        )}
+      >
+        {isRefreshing ? (
+          <>
+            <Loader2 className="w-3 h-3 animate-spin" />
+            <span>Refreshing...</span>
+          </>
+        ) : (
+          <>
+            <RotateCw className="w-3 h-3" />
+            <span>Refresh</span>
+          </>
+        )}
+      </button>
+    );
+  }
+
+  // Don't render floating variant until mounted (SSR safety)
+  if (!mounted) return null;
+
+  // Floating variant: fixed position with portal
   return createPortal(
     <AnimatePresence>
       {shouldShow && (

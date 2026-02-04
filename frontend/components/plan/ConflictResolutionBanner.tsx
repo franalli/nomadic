@@ -82,8 +82,11 @@ export function ConflictResolutionBanner({
   onDismiss,
   className,
 }: ConflictResolutionBannerProps) {
-  // Use provided resolutions or defaults
-  const resolutions = conflict.resolutions ?? DEFAULT_RESOLUTIONS;
+  // Use provided resolutions or defaults, filtering out dead buttons
+  // (remove_specialist endpoint doesn't exist yet)
+  const resolutions = (conflict.resolutions ?? DEFAULT_RESOLUTIONS).filter(
+    (r) => r.action !== 'remove_specialist' && r.action !== 'reduce_activities'
+  );
 
   // Build resolution labels with context
   const getResolutionLabel = (resolution: ConflictResolution): string => {

@@ -138,13 +138,14 @@ class TestVerticalSpecialist:
         constraint_rules = [c.rule for c in constraints]
         assert "min_24h_buffer_after_dive" in constraint_rules
 
-    def test_specialist_output_structure(self):
+    @pytest.mark.asyncio
+    async def test_specialist_output_structure(self):
         """Should return both constraints and content."""
         specialist = VerticalSpecialist("diving")
         state = GraphState()
         state.trip_plan.destination = "Bali"
 
-        output = specialist.generate_output(state)
+        output = await specialist.generate_output(state)
 
         assert len(output.constraints) > 0
         assert len(output.content_blocks) > 0

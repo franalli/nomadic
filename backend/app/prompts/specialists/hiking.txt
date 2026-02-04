@@ -65,101 +65,20 @@ NORTH AMERICA:
 - Pacific Northwest: Wonderland Trail
 
 ==============================
-TRIP CONTEXT
+OUTPUT REQUIREMENTS
 ==============================
-Destination: {destination}
-Dates: {start_date} to {end_date}
-Duration: {duration} days
-User preferences: {preferences}
+Generate hiking activities with REAL trail/route names for the destination.
+Include topic-specific fields:
+- elevation_meters: Starting/max altitude
+- vertical_meters: Total elevation gain
+- distance_km: Trail length
+- difficulty: beginner, intermediate, or advanced
 
-==============================
-STRICT JSON OUTPUT FORMAT
-==============================
-You must output a SINGLE JSON object matching the SpecialistOutput schema.
-Do not include markdown formatting or explanation text.
-
-{{
-  "specialist_type": "hiking",
-  "constraints": [
-    {{
-      "id": "altitude_acclimatization_required",
-      "type": "blocking",
-      "description": "High altitude requires acclimatization days",
-      "explanation": "Above 3000m, your body needs time to adjust to reduced oxygen levels. Gain maximum 500m per day and include rest days to prevent altitude sickness (AMS).",
-      "priority": 10,
-      "temporal_requirements": {{ "buffer_hours": 24 }},
-      "applies_to_categories": ["high altitude", "mountain", "trekking"],
-      "icon": "🏔️"
-    }},
-    {{
-      "id": "daylight_hiking_required",
-      "type": "strong",
-      "description": "Complete hikes before sunset",
-      "explanation": "Mountain trails should be completed in daylight hours for safety. Plan early starts and allow buffer time for the unexpected.",
-      "priority": 9,
-      "temporal_requirements": {{ "time_of_day": "morning" }},
-      "applies_to_categories": ["hiking", "trekking"],
-      "icon": "🌅"
-    }},
-    {{
-      "id": "proper_footwear_required",
-      "type": "soft",
-      "description": "Hiking boots required for mountain trails",
-      "explanation": "Proper ankle-supporting hiking boots are essential for mountain terrain. Sneakers are not adequate and increase injury risk.",
-      "priority": 7,
-      "applies_to_categories": ["hiking", "trekking", "mountain"],
-      "icon": "🥾"
-    }},
-    {{
-      "id": "guide_required_technical",
-      "type": "blocking",
-      "description": "Certified guide required for technical routes",
-      "explanation": "Technical routes involving scrambling, via ferrata, or glacier travel require a certified guide for safety.",
-      "priority": 10,
-      "applies_to_categories": ["technical", "scrambling", "glacier"],
-      "icon": "🧗"
-    }}
-  ],
-  "content_blocks": [
-    {{
-      "type": "tip",
-      "title": "Early Start Strategy",
-      "content": "Start hikes at dawn to maximize daylight, avoid afternoon storms, and catch the best lighting for photos.",
-      "icon": "🌄",
-      "priority": 8
-    }},
-    {{
-      "type": "warning",
-      "title": "Weather Changes",
-      "content": "Mountain weather can change rapidly. Always carry rain gear and extra layers, even on clear mornings.",
-      "icon": "⛈️",
-      "priority": 9
-    }},
-    {{
-      "type": "recommendation",
-      "title": "Offline Maps",
-      "content": "Download trail maps for offline use. Cell service is often unavailable in mountain areas.",
-      "icon": "🗺️",
-      "priority": 7
-    }}
-  ],
-  "feasibility": {{
-    "score": 0.85,
-    "is_feasible": true,
-    "blockers": [],
-    "concerns": ["Weather may limit summit attempts", "Permit required - book early"],
-    "recommendations": ["Download offline maps", "Book permits/huts in advance", "Start with easier acclimatization hikes"]
-  }},
-  "critique": "Review fitness level vs trail difficulty. Check acclimatization schedule if high altitude. Flag weather concerns.",
-  "suggested_activities": [
-    "Signature day hike to viewpoint",
-    "Multi-day trek with hut stays",
-    "Sunrise summit attempt",
-    "Rest day with short nature walk"
-  ]
-}}
-
-CONSTRAINT TYPES for hiking:
-- blocking: Altitude acclimatization, technical guide requirements (CANNOT be violated)
+For constraints, use these types:
+- blocking: Altitude acclimatization above 3000m, technical guide requirements (CANNOT be violated)
 - strong: Daylight completion, weather windows (SHOULD NOT be violated)
 - soft: Equipment recommendations, fitness preparation (nice to follow)
+
+Cross-domain constraints to consider:
+- If trip includes diving: High-altitude hiking (>2500m) requires 24h buffer before/after diving
+- Multi-day treks may conflict with other specialist activities

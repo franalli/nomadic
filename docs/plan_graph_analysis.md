@@ -151,9 +151,12 @@ backend/app/planner/
 │  Outputs to: state.tiles["flights"], ["hotels"], ["activities"]             │
 └──────────────────────────────────┬──────────────────────────────────────────┘
                                    │
-                                   ▼
+                    ┌──────────────┴──────────────┐
+                    │ route_after_logistics()     │
+                    │ Skip if architect ran       │
+                    ▼                             ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  TripArchitect (LLM - Smart)                                                │
+│  TripArchitect (LLM - Smart) [SKIPPED if already ran this turn]             │
 │  ────────────────────────────                                               │
 │  "The Boss" - General Agent in UI                                           │
 │  • Manages TripPlan (SSoT)                                                  │
@@ -438,6 +441,10 @@ async def generate_specialist_output_llm(topic, destination, trip_plan):
     llm = ChatOpenAI(model="gpt-4o", temperature=0.2)
     return await llm.with_structured_output(LLMSpecialistOutput).ainvoke(...)
 ```
+
+**Token Optimization:** The user prompt does NOT include a JSON schema example - OpenAI's
+function calling API receives the Pydantic schema from `.with_structured_output()` directly.
+This saves ~200-500 tokens per specialist call while maintaining schema enforcement at the API level.
 
 **Fallback Mechanism:** If LLM fails (parse error, timeout), falls back to minimal safety constraints:
 ```python
@@ -1340,11 +1347,27 @@ Entry: router
 router → specialist/local_expert/architect/synthesizer (conditional)
 specialist → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
 local_expert → specialist (recursion) OR logistics (booking) OR architect (general) OR synthesizer (speculative)
-logistics → architect (always)
+logistics → architect/guard/synthesizer (conditional - skip architect if already ran)
 architect → guard/synthesizer (conditional)
 guard → architect/synthesizer (conditional - auto-fix loop)
 synthesizer → END
 ```
+
+### Route After Logistics (Skip Double Architect)
+
+**Optimization:** Architect runs once per turn for field extraction. After logistics fetches tiles,
+if architect already ran earlier in the same turn, skip directly to guard/synthesizer.
+
+```python
+def route_after_logistics(state: GraphState) -> Literal["architect", "guard", "synthesizer"]:
+    """Skip architect if fields already extracted this turn."""
+    # Flag is cleared in _restore_graph_state(), set at end of architect node
+    if state.metadata.get("architect_ran_this_turn", False):
+        return _should_run_guard(state)  # Reuse existing helper
+    return "architect"
+```
+
+**Performance Impact:** Saves ~800ms + one GPT-4o call per plan with tiles.
 
 ### Should Run Guard
 

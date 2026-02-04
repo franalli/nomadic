@@ -21,6 +21,7 @@ Usage:
     result = await run_turn(user_message, session_state)
 """
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -41,6 +42,37 @@ from app.planner.nodes.vertical_specialist import vertical_specialist
 from app.planner.state import GraphState, TripPlan
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Domain Default Principles (for strategy sections)
+# Used by _format_result() for both enrichment and new section paths
+# =============================================================================
+
+DOMAIN_DEFAULT_PRINCIPLES: Dict[str, list] = {
+    "diving": [
+        "24-hour no-fly buffer after dives",
+        "Depth and time limits for safe diving",
+        "Equipment and certification requirements",
+    ],
+    "hiking": [
+        "Altitude acclimatization schedule",
+        "Daily elevation gain limits",
+        "Rest day planning",
+    ],
+    "skiing": [
+        "Slope difficulty progression",
+        "Weather window optimization",
+        "Equipment rental coordination",
+    ],
+}
+
+# Fallback for unknown specialist types (use .format(specialist_type=...) to substitute)
+DOMAIN_DEFAULT_FALLBACK = [
+    "{specialist_type} safety protocols active",
+    "Expert recommendations applied",
+    "Optimized scheduling",
+]
 
 
 # =============================================================================
@@ -79,6 +111,9 @@ DEBUG = bool(os.getenv("DEBUG_PLAN_MESSAGES"))
 # Build identifiers for cache compatibility
 PLANNER_BUILD_ID = "1.0.0"
 CACHE_SCHEMA_VERSION = "1"
+
+# Graph execution timeout (seconds) - prevents infinite spinners on node hangs
+GRAPH_TIMEOUT_SECONDS = 45
 
 
 # =============================================================================
@@ -295,6 +330,9 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 
     state = GraphState()
 
+    # Clear per-turn flags (must be here, not in nodes - nodes don't always run)
+    state.metadata["architect_ran_this_turn"] = False
+
     # Convert messages
     for msg in session_state.get("messages", []):
         if isinstance(msg, dict):
@@ -348,10 +386,11 @@ def _restore_graph_state(session_state: Optional[Dict[str, Any]]) -> GraphState:
 
 def route_after_router(
     state: GraphState,
-) -> Literal["specialist", "local_expert", "architect", "synthesizer"]:
+) -> Literal["specialist", "local_expert", "architect", "synthesizer", "logistics"]:
     """
     Route based on intent classification.
 
+    If origin_only_logistics → LogisticsNode (fast path for origin/settings changes)
     If short_circuit_response (GREETING/RESET) → Synthesizer (skip architect)
     If specialist topic detected → VerticalSpecialist or LocalExpert
     Otherwise → TripArchitect (extracts destination first)
@@ -361,6 +400,16 @@ def route_after_router(
     Architect extracts destination, then route_after_architect() sends to specialists.
     """
     from app.debug_utils import _debug_log
+
+    # ORIGIN/SETTINGS FAST PATH: Route directly to logistics for flight/hotel fetch
+    # Skips architect/specialists - only fetches tiles and rebuilds itinerary
+    # @see intent_router origin detection block
+    if state.metadata.get("origin_only_logistics"):
+        _debug_log(
+            f"Origin/settings change detected - fast path to logistics "
+            f"(origin={state.trip_plan.origin})"
+        )
+        return "logistics"
 
     # Short-circuit responses (GREETING/RESET) skip to synthesizer
     if state.metadata.get("short_circuit_response"):
@@ -592,6 +641,25 @@ def _should_run_guard(state: GraphState) -> Literal["guard", "synthesizer"]:
     return "synthesizer"
 
 
+def route_after_logistics(state: GraphState) -> Literal["architect", "guard", "synthesizer"]:
+    """
+    Skip architect if fields already extracted this turn.
+
+    After logistics fetches tiles, architect typically runs to "finalize" the plan.
+    But if architect already ran earlier in the same turn (extracted fields, set mode),
+    there's nothing new to extract - skip to guard/synthesizer.
+
+    This saves ~800ms + one GPT-4o call per plan with tiles.
+    """
+    from app.debug_utils import _debug_log
+
+    # If architect already ran this turn, skip to guard/synthesizer
+    if state.metadata.get("architect_ran_this_turn", False):
+        _debug_log("[LOGISTICS→] Skipping architect (already ran this turn)")
+        return _should_run_guard(state)  # Reuse existing helper
+    return "architect"
+
+
 def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     """
     Route based on constraint violations.
@@ -658,7 +726,7 @@ def create_optimized_graph() -> StateGraph:
     workflow.set_entry_point("router")
 
     # Router → Specialist, LocalExpert, Architect, or Synthesizer (conditional)
-    # GREETING/RESET short-circuits skip directly to Synthesizer
+    # Route after router: specialists, architect, synthesizer, or logistics (fast path)
     workflow.add_conditional_edges(
         "router",
         route_after_router,
@@ -667,6 +735,7 @@ def create_optimized_graph() -> StateGraph:
             "local_expert": "local_expert",
             "architect": "architect",
             "synthesizer": "synthesizer",  # For GREETING/RESET short-circuits
+            "logistics": "logistics",  # For origin/settings fast path (skip architect)
         },
     )
 
@@ -700,9 +769,18 @@ def create_optimized_graph() -> StateGraph:
         },
     )
 
-    # Logistics → Architect (always)
+    # Logistics → Architect (conditional: skip if architect already ran)
     # Logistics sanitizes flight data, then Architect builds the plan
-    workflow.add_edge("logistics", "architect")
+    # OPTIMIZATION: If architect already extracted fields this turn, skip to guard
+    workflow.add_conditional_edges(
+        "logistics",
+        route_after_logistics,
+        {
+            "architect": "architect",
+            "guard": "guard",
+            "synthesizer": "synthesizer",
+        },
+    )
 
     # Architect → LocalExpert, Logistics, Guard, or Synthesizer (conditional)
     # LOCAL EXPERT: If destination extracted and general intent, route to local_expert
@@ -784,14 +862,55 @@ async def run_turn(
     # Add user message
     state.messages.append(HumanMessage(content=user_message))
 
-    # Run the graph
+    # Run the graph with timeout to prevent infinite spinners
     try:
-        result = await graph.ainvoke(state)
+        result = await asyncio.wait_for(
+            graph.ainvoke(state),
+            timeout=GRAPH_TIMEOUT_SECONDS,
+        )
         # LangGraph returns dict, convert back to Pydantic
         if isinstance(result, dict):
             result_state = GraphState(**result)
         else:
             result_state = result
+    except asyncio.TimeoutError:
+        logger.error(f"Graph execution timed out after {GRAPH_TIMEOUT_SECONDS}s")
+        # Return graceful degradation response
+        return {
+            "assistant_message": (
+                "I'm taking longer than expected to plan this. "
+                "Could you try again? If the issue persists, try simplifying your request."
+            ),
+            "suggested_responses": ["Try again", "Start over"],
+            "session_state": session_state or {},
+            "branches": [],
+            "trip_inputs": session_state.get("trip_inputs", {}) if session_state else {},
+            "ready_to_generate": False,
+            "ui_events": ["UI_TIMEOUT"],
+            "document": {
+                "trip_inputs": session_state.get("trip_inputs", {}) if session_state else {},
+                "assistant_message": "I'm taking longer than expected. Please try again.",
+                "suggested_responses": ["Try again", "Start over"],
+                "plan_view_state": (
+                    session_state.get("metadata", {}).get("plan_view_state", "S0_BOOTSTRAP")
+                    if session_state
+                    else "S0_BOOTSTRAP"
+                ),
+                "strategy_sections": (
+                    session_state.get("metadata", {}).get("strategy_sections", [])
+                    if session_state
+                    else []
+                ),
+                "tiles": {},
+                "ready_to_generate": False,
+            },
+            "version": 1,
+            "updated_by": "ai",
+            "updated_at": datetime.now().isoformat(),
+            "changes_made": False,
+            "request_id": state.metadata.get("request_id", ""),
+            "errors": [],
+        }
     except Exception as e:
         logger.error(f"Graph execution failed: {e}")
         raise
@@ -864,71 +983,74 @@ async def run_turn_streaming(
 
         # Use astream_events to tap into LLM streaming
         # This runs the full graph and captures token events from the Synthesizer
-        async for event in graph.astream_events(state, version="v2"):
-            event_type = event.get("event")
+        # Wrap with asyncio.timeout to cancel if node hangs (no events = suspended loop)
+        async with asyncio.timeout(GRAPH_TIMEOUT_SECONDS):
+            async for event in graph.astream_events(state, version="v2"):
+                event_type = event.get("event")
 
-            # Track node transitions via chain events
-            if event_type == "on_chain_start":
-                node_name = event.get("metadata", {}).get("langgraph_node")
-                if node_name and node_name != current_node:
-                    # Emit completion for previous node
-                    if current_node:
-                        yield {
-                            "type": "node_status",
-                            "data": {"node": current_node, "status": "completed"},
-                        }
-                    # Emit start for new node
-                    current_node = node_name
-                    yield {
-                        "type": "node_status",
-                        "data": {
-                            "node": node_name,
-                            "status": "started",
-                            "label": _get_node_label(node_name),
-                            "icon_key": _get_node_icon(node_name),
-                            "estimated_duration_ms": _get_node_duration(node_name),
-                        },
-                    }
-
-            # Stream tokens from Synthesizer's LLM
-            elif event_type == "on_chat_model_stream":
-                # Only stream from synthesizer node
-                node = event.get("metadata", {}).get("langgraph_node")
-                if node == "synthesizer":
-                    chunk = event.get("data", {}).get("chunk")
-                    if chunk and hasattr(chunk, "content") and chunk.content:
-                        streamed_tokens.append(chunk.content)
-                        # NOTE: Key must be "data" to match frontend SSE parsing
-                        yield {"type": "token", "data": chunk.content}
-
-            # Capture final state on chain end - be more permissive
-            elif event_type == "on_chain_end":
-                node = event.get("metadata", {}).get("langgraph_node")
-                output = event.get("data", {}).get("output")
-                if output is not None:
-                    # Always capture the latest output - it might be a dict or GraphState
-                    final_output = output
-
-                    # Logic Terminal: Emit routing decision when router completes (DS Section 19.C)
-                    # This creates the ">> ROUTING: DIVING" line in the frontend terminal
-                    if node == "router":
-                        # Extract active_specialist from output (dict or GraphState)
-                        active_specialist = None
-                        if isinstance(output, dict):
-                            active_specialist = output.get("active_specialist")
-                        elif hasattr(output, "active_specialist"):
-                            active_specialist = output.active_specialist
-
-                        # Emit logic_reveal for non-general specialists
-                        if active_specialist and active_specialist not in ("general", None):
+                # Track node transitions via chain events
+                if event_type == "on_chain_start":
+                    node_name = event.get("metadata", {}).get("langgraph_node")
+                    if node_name and node_name != current_node:
+                        # Emit completion for previous node
+                        if current_node:
                             yield {
                                 "type": "node_status",
-                                "data": {
-                                    "node": "logic_reveal",
-                                    "label": f"ROUTING: {active_specialist.upper()}",
-                                    "status": "completed",
-                                },
+                                "data": {"node": current_node, "status": "completed"},
                             }
+                        # Emit start for new node
+                        current_node = node_name
+                        yield {
+                            "type": "node_status",
+                            "data": {
+                                "node": node_name,
+                                "status": "started",
+                                "label": _get_node_label(node_name),
+                                "icon_key": _get_node_icon(node_name),
+                                "estimated_duration_ms": _get_node_duration(node_name),
+                            },
+                        }
+
+                # Stream tokens from Synthesizer's LLM
+                elif event_type == "on_chat_model_stream":
+                    # Only stream from synthesizer node
+                    node = event.get("metadata", {}).get("langgraph_node")
+                    if node == "synthesizer":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            streamed_tokens.append(chunk.content)
+                            # NOTE: Key must be "data" to match frontend SSE parsing
+                            yield {"type": "token", "data": chunk.content}
+
+                # Capture final state on chain end - be more permissive
+                elif event_type == "on_chain_end":
+                    node = event.get("metadata", {}).get("langgraph_node")
+                    output = event.get("data", {}).get("output")
+                    if output is not None:
+                        # Always capture the latest output - it might be a dict or GraphState
+                        final_output = output
+
+                        # Logic Terminal: Emit routing decision when router
+                        # completes (DS Section 19.C). This creates the
+                        # ">> ROUTING: DIVING" line in the frontend terminal
+                        if node == "router":
+                            # Extract active_specialist from output (dict or GraphState)
+                            active_specialist = None
+                            if isinstance(output, dict):
+                                active_specialist = output.get("active_specialist")
+                            elif hasattr(output, "active_specialist"):
+                                active_specialist = output.active_specialist
+
+                            # Emit logic_reveal for non-general specialists
+                            if active_specialist and active_specialist not in ("general", None):
+                                yield {
+                                    "type": "node_status",
+                                    "data": {
+                                        "node": "logic_reveal",
+                                        "label": f"ROUTING: {active_specialist.upper()}",
+                                        "status": "completed",
+                                    },
+                                }
 
         # Emit final node completion
         if current_node:
@@ -944,6 +1066,27 @@ async def run_turn_streaming(
                     result_state = GraphState(**final_output)
                 except Exception as e:
                     logger.warning(f"Failed to parse final output as GraphState: {e}")
+                    # PARTIAL RECOVERY: Extract key fields even if full parse fails
+                    # This preserves tiles/sections instead of losing all node-computed state
+                    try:
+                        partial_state = state  # Start from input state
+                        if "tiles" in final_output and final_output["tiles"]:
+                            partial_state.tiles = final_output["tiles"]
+                        if "trip_plan" in final_output:
+                            if isinstance(final_output["trip_plan"], dict):
+                                partial_state.trip_plan = TripPlan(**final_output["trip_plan"])
+                            elif isinstance(final_output["trip_plan"], TripPlan):
+                                partial_state.trip_plan = final_output["trip_plan"]
+                        if "metadata" in final_output and isinstance(
+                            final_output["metadata"], dict
+                        ):
+                            partial_state.metadata.update(final_output["metadata"])
+                        if streamed_tokens:
+                            partial_state.last_summary = "".join(streamed_tokens)
+                        result_state = partial_state
+                        logger.info("Partial state recovery succeeded — tiles/plan preserved")
+                    except Exception as e2:
+                        logger.warning(f"Partial state recovery also failed: {e2}")
             elif isinstance(final_output, GraphState):
                 result_state = final_output
 
@@ -979,6 +1122,13 @@ async def run_turn_streaming(
             "type": "complete",
             "data": final_result,
         }
+
+    except TimeoutError:
+        # asyncio.timeout() raises TimeoutError when deadline expires
+        logger.error(f"Streaming execution timed out after {GRAPH_TIMEOUT_SECONDS}s")
+        yield {"type": "token", "data": "\n\n(Taking longer than expected, please try again)"}
+        yield {"type": "error", "message": "Request timed out. Please try again."}
+        return
 
     except Exception as e:
         import traceback
@@ -1208,74 +1358,62 @@ def _format_result(
         if section_type in ("general", "local_expert", None):
             continue
 
-        # ENRICH: Add hero_image if missing
-        if not section.get("hero_image"):
-            # Try to get from content_added first
-            hero_img = None
-            for item in section.get("content_added", []):
-                if item.get("image_url"):
-                    hero_img = item["image_url"]
-                    break
-            # Fallback to curated placeholder
-            if not hero_img:
-                hero_img = get_hero_image(section_type, plan.destination)
-            section["hero_image"] = hero_img
+        try:
+            # ENRICH: Add hero_image if missing
+            if not section.get("hero_image"):
+                # Try to get from content_added first
+                hero_img = None
+                for item in section.get("content_added", []):
+                    if item.get("image_url"):
+                        hero_img = item["image_url"]
+                        break
+                # Fallback to curated placeholder
+                if not hero_img:
+                    hero_img = get_hero_image(section_type, plan.destination)
+                section["hero_image"] = hero_img
 
-        # ENRICH: Add one_liner if missing
-        if not section.get("one_liner"):
-            constraint_count = len(section.get("constraints_applied", []))
-            if constraint_count > 0:
-                suffix = "s" if constraint_count > 1 else ""
-                section["one_liner"] = (
-                    f"{section_type.title()} mode active. "
-                    f"{constraint_count} safety constraint{suffix} applied."
-                )
-            else:
-                section["one_liner"] = (
-                    f"{section_type.title()} recommendations for "
-                    f"{plan.destination or 'your destination'}"
-                )
-            # Also set editorial_one_liner for niche specialists
-            section["editorial_one_liner"] = section["one_liner"]
-
-        # ENRICH: Add principles if missing or empty
-        if not section.get("principles"):
-            principles = []
-            # 1. Try from constraints
-            for c in section.get("constraints_applied", [])[:4]:
-                if c.get("reason"):
-                    principles.append(c["reason"])
+            # ENRICH: Add one_liner if missing
+            if not section.get("one_liner"):
+                constraint_count = len(section.get("constraints_applied", []))
+                if constraint_count > 0:
+                    suffix = "s" if constraint_count > 1 else ""
+                    section["one_liner"] = (
+                        f"{section_type.title()} mode active. "
+                        f"{constraint_count} safety constraint{suffix} applied."
+                    )
                 else:
-                    rule_text = c.get("rule", "").replace("_", " ").title()
-                    principles.append(f"{rule_text} applied")
-            # 2. Fallback to domain defaults
-            if not principles:
-                domain_defaults = {
-                    "diving": [
-                        "24-hour no-fly buffer after dives",
-                        "Depth and time limits for safe diving",
-                        "Equipment and certification requirements",
-                    ],
-                    "hiking": [
-                        "Altitude acclimatization schedule",
-                        "Daily elevation gain limits",
-                        "Rest day planning",
-                    ],
-                    "skiing": [
-                        "Slope difficulty progression",
-                        "Weather window optimization",
-                        "Equipment rental coordination",
-                    ],
-                }
-                principles = domain_defaults.get(
-                    section_type,
-                    [
-                        f"{section_type.title()} safety protocols active",
-                        "Expert recommendations applied",
-                        "Optimized scheduling",
-                    ],
-                )
-            section["principles"] = principles
+                    section["one_liner"] = (
+                        f"{section_type.title()} recommendations for "
+                        f"{plan.destination or 'your destination'}"
+                    )
+                # Also set editorial_one_liner for niche specialists
+                section["editorial_one_liner"] = section["one_liner"]
+
+            # ENRICH: Add principles if missing or empty
+            if not section.get("principles"):
+                principles = []
+                # 1. Try from constraints
+                for c in section.get("constraints_applied", [])[:4]:
+                    if c.get("reason"):
+                        principles.append(c["reason"])
+                    else:
+                        rule_text = c.get("rule", "").replace("_", " ").title()
+                        principles.append(f"{rule_text} applied")
+                # 2. Fallback to domain defaults
+                if not principles:
+                    principles = DOMAIN_DEFAULT_PRINCIPLES.get(
+                        section_type,
+                        [
+                            p.format(specialist_type=section_type.title())
+                            for p in DOMAIN_DEFAULT_FALLBACK
+                        ],
+                    )
+                section["principles"] = principles
+
+        except Exception as e:
+            logger.warning(f"_format_result: Failed to enrich section '{section_type}': {e}")
+            # Section survives with whatever fields it already has
+            continue
 
     if needs_section:
         # Build bullets from available data
@@ -1289,7 +1427,7 @@ def _format_result(
                 date_str = f"{plan.start_date} to {plan.end_date}"
             bullets.append(f"Dates: {date_str}")
         if plan.adults or plan.children:
-            travelers = plan.adults + plan.children
+            travelers = (plan.adults or 0) + (plan.children or 0)
             bullets.append(f"{travelers} traveler{'s' if travelers > 1 else ''}")
 
         # Add tile summary
@@ -1448,29 +1586,11 @@ def _format_result(
 
             # 3. Fallback: Domain-specific defaults
             if not principles:
-                domain_defaults = {
-                    "diving": [
-                        "24-hour no-fly buffer after dives",
-                        "Depth and time limits for safe diving",
-                        "Equipment and certification requirements",
-                    ],
-                    "hiking": [
-                        "Altitude acclimatization schedule",
-                        "Daily elevation gain limits",
-                        "Rest day planning",
-                    ],
-                    "skiing": [
-                        "Slope difficulty progression",
-                        "Weather window optimization",
-                        "Equipment rental coordination",
-                    ],
-                }
-                principles = domain_defaults.get(
+                principles = DOMAIN_DEFAULT_PRINCIPLES.get(
                     specialist_type,
                     [
-                        f"{specialist_type.title()} safety protocols active",
-                        "Expert recommendations applied",
-                        "Optimized scheduling",
+                        p.format(specialist_type=specialist_type.title())
+                        for p in DOMAIN_DEFAULT_FALLBACK
                     ],
                 )
 
@@ -1643,7 +1763,13 @@ def _format_result(
         "strategy_sections": strategy_sections,
         "pending_strategy_topics": state.metadata.get("pending_strategy_topics", []),
         "executed_strategy_topics": executed_topics,
+        # Origin update flag for frontend to trigger flight fetch
+        "origin_just_set": state.metadata.get("origin_just_set", False),
     }
+
+    # DEBUG: Log origin_just_set for troubleshooting
+    if state.metadata.get("origin_just_set"):
+        logger.info(f"[_format_result] origin_just_set=True, origin={trip_inputs.get('origin')}")
 
     return {
         # PlanDocumentResponse fields

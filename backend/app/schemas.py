@@ -770,6 +770,13 @@ class PlanDocumentData(BaseModel):
     # Heart-selected tiles - 1.5x weight in tile matching
     preferred_tile_ids: List[str] = Field(default_factory=list)
 
+    # ==========================================================================
+    # Origin Update Flag (for frontend flight fetch trigger)
+    # ==========================================================================
+    # True when origin was just set via chat (e.g., "from rome")
+    # Frontend should trigger flight fetch when this is True
+    origin_just_set: bool = False
+
 
 class PlanDocumentResponse(BaseModel):
     """Response when fetching the plan document."""

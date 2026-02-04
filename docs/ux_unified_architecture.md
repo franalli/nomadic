@@ -111,9 +111,9 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 │  Heart = preference signal for AI weighting     │
 │  Component: BookingSection.tsx                  │
 ├─────────────────────────────────────────────────┤
-│  RefreshButton FAB (fixed, bottom-right)        │  ← Shows when inputs change
-│  Amber badge: "REFRESH PLAN" - triggers regen   │
-│  Component: RefreshButton.tsx (portal-based)    │
+│  Inline Refresh Pill (end of chip bar)         │  ← Shows when chips change
+│  Amber pill: "Refresh" - triggers regen        │
+│  Component: RefreshButton.tsx (inline variant)  │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -153,10 +153,9 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | Component | File | Purpose |
 |-----------|------|---------|
 | SelectionsBar | `components/plan/SelectionsBar.tsx` | Grouped carousel of hearted tiles (Stays + Activities sections) |
-| RefreshButton | `components/RefreshButton.tsx` | Amber FAB that appears when trip inputs change; triggers manual regeneration |
-| RefreshOverlay | `components/RefreshOverlay.tsx` | Full-screen glass overlay during regeneration with spinner |
-| useManualRegeneration | `hooks/useManualRegeneration.ts` | Tracks trip input changes via hash; provides manual regeneration trigger |
-| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change |
+| RefreshButton | `components/RefreshButton.tsx` | Inline Amber pill at end of chip bar; triggers manual regeneration (chat auto-regenerates) |
+| useManualRegeneration | `hooks/useManualRegeneration.ts` | Tracks trip input changes via hash; provides manual regeneration trigger for chip/setting edits |
+| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (500ms debounce) |
 
 ### Progressive Disclosure Rules
 
@@ -394,44 +393,74 @@ Frontend categorizes tiles by type (case-insensitive):
 | Activities | `activity`, `experience`, `tour`, `attraction`, `excursion`, `ticket`, `event` |
 | Flights | `flight` (not currently used in preferences) |
 
-### Regeneration Flow (Manual Trigger + Auto-Preference)
+### Regeneration Flow (Three-Tier Policy)
 
-Regeneration uses a **two-system approach**: manual refresh for trip input changes, automatic regeneration for preference changes.
+Regeneration uses a **three-tier approach** based on input method:
 
 ```
-TRIP INPUT CHANGES (destination, dates, settings):
-User changes destination → Amber FAB appears → User clicks REFRESH → Full regeneration
+CHAT MESSAGES:
+User: "from rome" → Auto-regenerate + auto-expand itinerary (no FAB needed)
+User: "add hiking" → Auto-regenerate + auto-expand itinerary (no FAB needed)
 
 PREFERENCE CHANGES (hearts):
 User hearts a tile → Auto-regen after 500ms debounce → Itinerary updates
+
+CHIP/SETTINGS CHANGES:
+User edits date chip → Inline Amber pill appears → User clicks REFRESH → Regeneration
 ```
 
-**Why this split:**
-- Trip input changes require explicit user intent (FAB makes state visible)
-- Preference changes are low-stakes exploration (auto-regen feels natural)
-- Prevents accidental regeneration on incomplete input changes
-- High-contrast FAB ensures users never miss pending changes
+**Why this policy:**
+- **Chat = Auto**: User typed natural language → intent is fully expressed → immediate action
+- **Hearts = Auto**: Single atomic action, low-stakes exploration, instant feedback
+- **Chips/Settings = Manual**: User may batch multiple edits (dates + travelers + budget) → FAB allows commit once
+- Spatial proximity: Inline pill appears where user just edited (Fitts's law)
 
-#### Manual Regeneration (Trip Inputs)
+#### Chat Auto-Regeneration
 
-**Trigger:** User changes destination, dates, origin, or settings (hotel stars, amenities, flight cabin, activity categories)
+**Trigger:** User sends chat message that updates plan content (origin, destination, activities, dates)
 
 **Components:**
-- `RefreshButton` - Amber gradient FAB (`z-50`, bottom-right) with "REFRESH PLAN" text
-- `RefreshOverlay` - Full-screen glass overlay during regeneration with spinner
+- `ChatPanel` - Detects plan updates in SSE `onComplete` handler
+- `onAutoExpandItinerary` callback - Triggers itinerary expansion when chat updates plan with existing itinerary
+
+**Flow:**
+1. User sends chat message (e.g., "from rome", "add hiking")
+2. Backend graph runs (IntentRouter → LogisticsNode/Specialist → Synthesizer)
+3. Graph completes → SSE `onComplete` handler checks:
+   - `hasItinerary = (day_cards?.length ?? 0) > 0`
+   - `planWasUpdated = tiles exist OR executed_strategy_topics exist`
+4. If both true → auto-call `proceedWithItineraryGeneration()` after 100ms
+5. Itinerary regenerates with new tiles/strategy (selective strategy computation)
+6. No user action required - plan reacts to conversation
+
+**Example flows:**
+- "from rome" with existing plan → Flights fetched → Itinerary auto-updates
+- "add hiking" with itinerary → Hiking specialist runs → Itinerary auto-updates with activities
+- "thanks" acknowledgment → No plan changes → No auto-expand
+
+**Origin-only handling:**
+- "from rome" without destination → Sets origin, prompts for destination (IntentRouter)
+- "from rome" with destination → Sets origin, routes to LogisticsNode, fetches flights immediately
+
+#### Manual Regeneration (Chip/Settings Edits)
+
+**Trigger:** User changes destination, dates, origin, or settings via chip bar or settings sheets
+
+**Components:**
+- `RefreshButton` - Inline Amber pill at end of chip bar (variant="inline")
 - `useManualRegeneration` - Hook tracking trip input hash changes
 
 **Flow:**
-1. User modifies trip inputs (e.g., changes destination from "Bali" to "Paris")
+1. User modifies trip inputs (e.g., changes destination chip from "Bali" to "Paris")
 2. `updateTripInputs()` writes to store **synchronously** (tiles NOT cleared - old content stays visible)
-3. Hash changes → `hasChanges = true` → Amber FAB appears
-4. User clicks FAB → `isRefreshing = true` → RefreshOverlay blocks UI
+3. Hash changes → `hasChanges = true` → Inline Amber pill appears at end of chip bar
+4. User clicks inline Refresh button → `isRefreshing = true`
 5. Full plan regeneration via chat system (GENERATE_PLAN_NOW trigger)
 6. Backend forces tile cache clear on GENERATE_PLAN_NOW → fetches fresh tiles
 7. Polling detects document changes (tiles, plan_view_state, or destination)
 8. `isRegenerating` flags reset BEFORE `onAfterRegenerate` (prevents gate blocking)
 9. `onAfterRegenerate` clears old runId → calls `proceedWithItineraryGeneration` directly
-10. New itinerary generates → FAB disappears → overlay clears
+10. New itinerary generates → Inline button disappears
 
 **State tracking:**
 - `documentStore.updateTripInputs()` - Sync local state write (before validation)
@@ -442,11 +471,12 @@ User hearts a tile → Auto-regen after 500ms debounce → Itinerary updates
 - `lastValidatedHashRef` - Hash after last successful regeneration
 - `isRefreshingRef` - Mutex preventing double-clicks (ref-based for sync check)
 
-**RefreshButton styling:**
-- Position: `fixed bottom-24 right-6 z-50` (above map controls)
-- Size: `min-w-[160px] h-14 px-6 rounded-full` (pill badge)
-- Active: Amber gradient (`from-amber-500 to-orange-500`), pulsing animation
+**RefreshButton styling (inline variant):**
+- Position: Inline at end of chip bar (inside postcard, above gradient)
+- Size: `px-3 py-1.5 rounded-full` (compact pill)
+- Active: Amber gradient (`from-amber-500 to-orange-500`), no pulse animation
 - Refreshing: Zinc background, disabled state, spinner icon
+- Spatial proximity: Appears right where user just edited (Fitts's law optimization)
 
 **Controlled input pattern:**
 ```typescript

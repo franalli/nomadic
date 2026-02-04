@@ -29,7 +29,6 @@ import {
   TravelersSheet,
 } from '@/components/plan/sheets';
 import { StrategyStageRenderer } from '@/components/plan/StrategyStageRenderer';
-import { RefreshOverlay } from '@/components/RefreshOverlay';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/toast';
 import { MobileModeProvider, useMobileMode } from '@/contexts/MobileModeContext';
@@ -1038,13 +1037,13 @@ export function NomadicLanding() {
   // Check if itinerary content exists
   const hasItineraryContent = (docDayCards?.length ?? 0) > 0;
 
-  // Reset auto-trigger flag when trip changes (new session or significant state change)
+  // Reset auto-trigger flag when itinerary is cleared and we're back at S2
+  // This handles the S3 → S2 revert when a new specialist is added
   useEffect(() => {
-    // Reset when entering a new planning cycle (no itinerary content yet)
-    if (!docDayCards?.length) {
+    if (!hasItineraryContent && planViewState === 'S2_STRATEGY_READY') {
       hasAutoTriggeredRef.current = false;
     }
-  }, [docDayCards?.length]);
+  }, [hasItineraryContent, planViewState]);
 
   // Sync isRegenerating state to ref (prevents callback cascade when isRegenerating changes)
   useEffect(() => {
@@ -1173,17 +1172,23 @@ export function NomadicLanding() {
     hasAutoTriggeredRef.current = false;
 
     switch (resolution.action) {
-      case 'extend_dates': {
-        // Use backend's new_duration to calculate new end date
+      case 'extend_dates':
+      case 'extend_trip': {
+        // Use backend's new_duration, or calculate fallback from conflict specialists
         const startDate = tripInputs.start_date;
-        const newDuration = resolution.new_duration;
+        // Fallback heuristic: each specialist needs ~3 days, plus buffer
+        const fallbackDuration = conflictData?.specialists?.length
+          ? Math.max(5, conflictData.specialists.length * 3 + 2)
+          : undefined;
+        const newDuration = resolution.new_duration ?? fallbackDuration;
+
         if (startDate && newDuration) {
           const endDateStr = addDaysUTC(startDate, newDuration - 1);
           await documentStore.commitTripInputs({ end_date: endDateStr });
           addToast(`Trip extended to ${newDuration} days`, 'success');
         } else {
-          // Fallback: open date picker
-          addToast('Adjust your dates to fit all activities', 'info');
+          // Last resort: show info toast
+          addToast('Unable to calculate extension - adjust dates manually', 'info');
         }
         // Auto-trigger will re-fire due to state change
         break;
@@ -1354,6 +1359,7 @@ export function NomadicLanding() {
       onPlanResult={handlePlanResultWithReceipt}
       onGeneratePlanStart={handleGeneratePlanStartWithSnapshot}
       onFreshStart={handleStartNewSession}
+      onAutoExpandItinerary={proceedWithItineraryGeneration}
       fullHeight={false}
       hasBranches={hasBranchesReady}
       readyToGenerate={readyToGenerate}
@@ -1514,9 +1520,7 @@ export function NomadicLanding() {
         />
 
         {/* Floating RefreshButton REMOVED - now inline in PlanHeader */}
-
-        {/* Full-screen overlay during refresh */}
-        <RefreshOverlay isRefreshing={isRefreshing} />
+        {/* RefreshOverlay REMOVED - inline button provides feedback */}
       </div>
 
       {/* Trip input sheets - shared between header pills and chat panel */}

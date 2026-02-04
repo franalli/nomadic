@@ -1308,21 +1308,18 @@ class ItineraryBuilder:
         preferences: Optional[PreferenceOverrideInput],
     ) -> tuple[List[DayCardOutput], int]:
         """
-        Phase 5.25: Replace free day placeholders with user-preferred activities.
+        Phase 5.25: Place user-preferred activities into available day slots.
 
-        After _handle_empty_days creates FreeDay placeholders, this method populates
-        those days with activities the user has hearted (preferred).
+        Uses UNIFIED SLOT MODEL instead of free-days-only approach:
+        - Every day has 3 periods: morning, afternoon, evening
+        - Arrival day: morning+afternoon locked (travel), evening FREE
+        - Departure day: morning FREE, afternoon+evening locked (travel)
+        - Regular days: periods occupied by specialist blocks are locked
+        - Buffer blocks (no-fly, etc.) don't lock periods - they mean
+          "don't fly", not "don't do anything"
 
-        Uses round-robin slot-based placement:
-        - Each free day has 3 slots (morning, afternoon, evening)
-        - Activities spread across days first, then stack when all days have 1
-        - Returns (days, dropped_count) tuple
-
-        Logic:
-        1. Collect preferred tile activities (ordered by user preference)
-        2. Find free days (skip arrival/departure)
-        3. Round-robin assign activities to slots (spread first, then stack)
-        4. Track dropped activities when all slots are full
+        Round-robin placement spreads activities across days, filling least-loaded first.
+        Returns (days, dropped_count) tuple.
         """
         if not preferences or not preferences.preferred_activity_ids:
             _debug_itinerary("⏭️ Phase 5.25 skipped: no preferred activities")
@@ -1341,69 +1338,90 @@ class ItineraryBuilder:
 
         _debug_itinerary(f"📅 Phase 5.25: Found {len(preferred_activities)} preferred activities")
 
-        # Find free days (days with free_day placeholder blocks)
-        free_day_indices = []
+        # =====================================================================
+        # UNIFIED SLOT MODEL: Build slot map for ALL days
+        # =====================================================================
+        MAX_SLOTS_PER_DAY = 3
+        PERIODS = ["morning", "afternoon", "evening"]
+
+        # Track which periods are occupied per day (using sets)
+        day_slots: dict[int, set[str]] = {}
+
         for idx, day in enumerate(days):
-            # Skip first day (arrival) and last day (departure/buffer)
-            if idx == 0 or idx == len(days) - 1:
+            # Arrival day: morning+afternoon locked (travel), evening FREE
+            if idx == 0:
+                day_slots[idx] = {"morning", "afternoon"}
                 continue
 
-            # Check if day has a free_day placeholder (no real activities)
-            has_free_day = any(b.activity_type == "free_day" for b in day.blocks)
-            has_real_activity = any(
-                not b.is_buffer
-                and b.activity_type
-                not in ("check-in", "check-out", "arrival", "departure", "free_day")
-                for b in day.blocks
-            )
+            # Departure day: morning FREE, afternoon+evening locked (travel)
+            if idx == len(days) - 1:
+                day_slots[idx] = {"afternoon", "evening"}
+                continue
 
-            if has_free_day and not has_real_activity:
-                free_day_indices.append(idx)
+            # Regular days: check which periods are occupied by existing blocks
+            used: set[str] = set()
+            for block in day.blocks:
+                # Buffer blocks don't lock periods - "don't fly" != "don't do anything"
+                if block.is_buffer:
+                    continue
+                # Skip logistics/placeholder blocks
+                if block.activity_type in (
+                    "check-in",
+                    "check-out",
+                    "arrival",
+                    "departure",
+                    "free_day",
+                ):
+                    continue
+                # Specialist/activity blocks occupy their declared period (default: morning)
+                period = block.period or "morning"
+                used.add(period)
+            day_slots[idx] = used
 
+        # Defensive: ensure we never reference days beyond trip length
+        valid_day_indices = set(range(len(days)))
+        day_slots = {d: slots for d, slots in day_slots.items() if d in valid_day_indices}
+
+        # Log slot availability
+        slot_summary = {d: MAX_SLOTS_PER_DAY - len(slots) for d, slots in day_slots.items()}
+        total_capacity = sum(slot_summary.values())
         _debug_itinerary(
-            f"📋 Free days found: {free_day_indices}, "
-            f"preferred_activities: {[t.get('title') for t in preferred_activities]}"
+            f"📋 Slot availability: {slot_summary}, total_capacity={total_capacity}, "
+            f"activities_to_place={len(preferred_activities)}"
         )
 
-        if not free_day_indices:
-            _debug_itinerary("📅 Phase 5.25: No free days available for preferred activities")
+        if total_capacity == 0:
+            _debug_itinerary("📅 Phase 5.25: No slots available for preferred activities")
             return days, len(preferred_activities)
 
-        # Slot-based round-robin placement
-        MAX_ACTIVITIES_PER_DAY = 3
-        PERIOD_SEQUENCE = ["morning", "afternoon", "evening"]
-
-        # Track activities placed per day (0 = no activities yet)
-        day_slots: dict[int, int] = {day_idx: 0 for day_idx in free_day_indices}
+        # =====================================================================
+        # ROUND-ROBIN PLACEMENT: Spread activities across days
+        # =====================================================================
         dropped_count = 0
 
         for tile in preferred_activities:
-            # Find day with LEAST activities first (round-robin), then by day index
-            available_day = next(
-                (
-                    d
-                    for d in sorted(day_slots, key=lambda d: (day_slots[d], d))
-                    if day_slots[d] < MAX_ACTIVITIES_PER_DAY
-                ),
-                None,
-            )
-
-            if available_day is None:
+            # Find day with LEAST occupied slots (most capacity), then by day index
+            available_days = [d for d in day_slots if len(day_slots[d]) < MAX_SLOTS_PER_DAY]
+            if not available_days:
                 _debug_itinerary(f"📅 Dropping '{tile.get('title')}' (all days full)")
                 dropped_count += 1
                 continue
 
-            day = days[available_day]
-            slot_idx = day_slots[available_day]
-            period = PERIOD_SEQUENCE[slot_idx]
+            best_day = min(available_days, key=lambda d: (len(day_slots[d]), d))
+            day = days[best_day]
 
-            # Remove FreeDay placeholder only on first activity placement for this day
-            if slot_idx == 0:
+            # Pick first free period
+            period = next(p for p in PERIODS if p not in day_slots[best_day])
+            day_slots[best_day].add(period)
+
+            # Remove FreeDay placeholder if this is the first real activity on this day
+            has_free_day_placeholder = any(b.activity_type == "free_day" for b in day.blocks)
+            if has_free_day_placeholder:
                 day.blocks = [b for b in day.blocks if b.activity_type != "free_day"]
 
             # Create activity block from preferred tile with correct period
             activity_block = DayBlockOutput(
-                id=f"pref_{tile['id']}_{available_day}_{slot_idx}",
+                id=f"pref_{tile['id']}_{best_day}_{period}",
                 period=period,
                 activity_type=tile.get("title", "Activity").lower().replace(" ", "_"),
                 intensity=tile.get("intensity"),
@@ -1416,18 +1434,24 @@ class ItineraryBuilder:
                 booked_tile=tile,
             )
 
-            # Insert after any buffer blocks
+            # Insert after any buffer blocks, respecting period order
             buffer_count = sum(1 for b in day.blocks if b.is_buffer)
-            day.blocks.insert(buffer_count + slot_idx, activity_block)
+            # Find insertion index based on period order
+            period_order = {"morning": 0, "afternoon": 1, "evening": 2}
+            insert_idx = buffer_count
+            for i, b in enumerate(day.blocks[buffer_count:], start=buffer_count):
+                block_period = getattr(b, "period", None) or "morning"
+                if period_order.get(block_period, 0) > period_order.get(period, 0):
+                    insert_idx = i
+                    break
+                insert_idx = i + 1
+            day.blocks.insert(insert_idx, activity_block)
 
             # Update day label back from "Free Day" to activity-based label
             if day.label == "Free Day":
                 day.label = f"Day {day.day_number}"
 
-            day_slots[available_day] += 1
-            _debug_itinerary(
-                f"📅 Placed '{tile.get('title')}' on day {available_day + 1} ({period})"
-            )
+            _debug_itinerary(f"📅 Placed '{tile.get('title')}' on day {best_day + 1} ({period})")
 
         return days, dropped_count
 

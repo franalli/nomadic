@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import re
-from typing import List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
@@ -320,6 +320,183 @@ SPECIALIST_PATTERNS = {
     "boating": [r"\b(boating|boat|sailing|yacht|cruise)\b"],
 }
 
+# Origin specification patterns - detect "from [city]" as departure city
+# These patterns identify when user is specifying origin, NOT a destination to explore
+ORIGIN_PATTERNS = [
+    r"^(?:i(?:'m|'m| am)\s+)?(?:leaving|departing|flying|coming|traveling)?\s*from\s+(\S.+)$",
+    r"^(?:departure|depart(?:ing)?|leav(?:e|ing))\s+from\s+(\S.+)$",
+    r"^from\s+(\S.+)$",  # Most common: "from rome"
+]
+
+# =============================================================================
+# SETTINGS PATTERNS - Detect trip setting changes from chat messages
+# These trigger LogisticsNode to refetch tiles with updated parameters
+# =============================================================================
+
+# Budget patterns - extract numeric budget values
+BUDGET_PATTERNS = [
+    r"(?:budget|spend|spending)\s*(?:is|of|around|about)?\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?",
+    r"\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?\s*budget",
+    # Pattern: "have/got $X to spend" or "have/got $X for the trip"
+    r"(?:have|got)\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?"
+    r"\s*(?:to spend|for (?:the |this )?trip)?",
+    r"(?:up to|max(?:imum)?|around|about)\s*\$?([\d,]+(?:\.\d{2})?)\s*(?:k|K|thousand)?",
+]
+
+# Traveler patterns - extract number of adults/children
+TRAVELER_PATTERNS = [
+    r"(\d+)\s*(?:adult|person|people|traveler|of us)",
+    r"(?:party of|group of|traveling with)\s*(\d+)",
+    r"(\d+)\s*(?:adult|person)s?\s*(?:and|,|&)?\s*(\d+)?\s*(?:child|kid|children)?",
+    r"(?:family of|couple|solo|alone)",  # Qualitative patterns
+]
+
+# Hotel preference patterns
+HOTEL_PATTERNS = [
+    r"(\d)\s*[-]?\s*star\s*(?:hotel|resort|accommodation)?",
+    r"(?:luxury|boutique|budget|mid-range|upscale)\s*(?:hotel|resort|stay)?",
+    r"(?:beachfront|oceanview|city center|downtown|airport)\s*(?:hotel|resort|stay)?",
+    r"(?:with|want|need)\s*(?:pool|spa|gym|breakfast|parking|wifi)",
+]
+
+# Flight preference patterns
+FLIGHT_PATTERNS = [
+    r"(?:direct|non-?stop|connecting)\s*(?:flight|flights)?",
+    r"(?:business|first|economy|premium)\s*(?:class)?",
+    r"(?:morning|afternoon|evening|red-?eye|overnight)\s*(?:flight|departure)?",
+    r"(?:flexible|fixed)\s*(?:dates|schedule)?",
+]
+
+
+def _detect_settings_from_message(user_text: str, state: "GraphState") -> Optional[Dict[str, Any]]:
+    """
+    Detect if user message is specifying trip settings (budget, travelers, hotel/flight prefs).
+    Returns dict of detected settings if found, None otherwise.
+
+    Only triggers for active plans (has destination) to avoid false positives during exploration.
+    """
+    if not state.trip_plan.destination:
+        return None
+
+    text = user_text.strip().lower()
+    detected = {}
+
+    # Budget detection
+    for pattern in BUDGET_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            amount_str = match.group(1).replace(",", "")
+            try:
+                amount = float(amount_str)
+                # Handle "k" suffix (5k = 5000)
+                if "k" in text.lower() or "thousand" in text.lower():
+                    # Check if the k/thousand is near the number
+                    if re.search(rf"{amount_str}\s*(?:k|K|thousand)", text, re.IGNORECASE):
+                        amount *= 1000
+                detected["budget"] = int(amount)
+            except ValueError:
+                pass
+            break
+
+    # Traveler detection
+    for pattern in TRAVELER_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            if "solo" in text or "alone" in text:
+                detected["adults"] = 1
+                detected["children"] = 0
+            elif "couple" in text:
+                detected["adults"] = 2
+                detected["children"] = 0
+            elif "family" in text:
+                # Default family size if not specified
+                fam_match = re.search(r"family of (\d+)", text)
+                if fam_match:
+                    total = int(fam_match.group(1))
+                    detected["adults"] = min(2, total)
+                    detected["children"] = max(0, total - 2)
+                else:
+                    detected["adults"] = 2
+                    detected["children"] = 2
+            else:
+                # Numeric extraction
+                groups = match.groups()
+                if groups[0]:
+                    detected["adults"] = int(groups[0])
+                if len(groups) > 1 and groups[1]:
+                    detected["children"] = int(groups[1])
+            break
+
+    # Hotel preference detection
+    hotel_settings = {}
+    for pattern in HOTEL_PATTERNS:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            # Star rating
+            star_match = re.search(r"(\d)\s*[-]?\s*star", text, re.IGNORECASE)
+            if star_match:
+                hotel_settings["min_stars"] = int(star_match.group(1))
+
+            # Hotel type keywords
+            if "luxury" in text or "upscale" in text:
+                hotel_settings["min_stars"] = max(hotel_settings.get("min_stars", 0), 4)
+            elif "boutique" in text:
+                hotel_settings["style"] = "boutique"
+            elif "budget" in text:
+                hotel_settings["min_stars"] = 0
+                hotel_settings["budget_friendly"] = True
+
+            # Amenities
+            amenities = []
+            if "pool" in text:
+                amenities.append("pool")
+            if "spa" in text:
+                amenities.append("spa")
+            if "gym" in text or "fitness" in text:
+                amenities.append("gym")
+            if "breakfast" in text:
+                amenities.append("breakfast")
+            if amenities:
+                hotel_settings["amenities"] = amenities
+
+            # Location preferences
+            if "beachfront" in text or "oceanview" in text or "ocean view" in text:
+                hotel_settings["location"] = "beachfront"
+            elif "city center" in text or "downtown" in text:
+                hotel_settings["location"] = "city_center"
+
+    if hotel_settings:
+        detected["hotel_settings"] = hotel_settings
+
+    # Flight preference detection
+    flight_settings = {}
+    for pattern in FLIGHT_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            # Direct/non-stop preference
+            if "direct" in text or "non-stop" in text or "nonstop" in text:
+                flight_settings["direct_only"] = True
+
+            # Cabin class
+            if "business" in text:
+                flight_settings["cabin_class"] = "business"
+            elif "first" in text and "class" in text:
+                flight_settings["cabin_class"] = "first"
+            elif "premium" in text:
+                flight_settings["cabin_class"] = "premium_economy"
+            elif "economy" in text:
+                flight_settings["cabin_class"] = "economy"
+
+            # Time preferences
+            if "morning" in text:
+                flight_settings["departure_time"] = "morning"
+            elif "evening" in text or "red-eye" in text or "overnight" in text:
+                flight_settings["departure_time"] = "evening"
+
+    if flight_settings:
+        detected["flight_settings"] = flight_settings
+
+    return detected if detected else None
+
 
 def get_new_specialists_from_text(text: str, existing_specialists: List[str]) -> List[str]:
     """
@@ -384,17 +561,32 @@ def _extract_destination_context(text: str, state: "GraphState") -> Optional[str
     Extract destination from question or use conversation context.
 
     Priority:
-    1. Check if destination mentioned in current question
+    1. Check if destination mentioned in current question (excluding origin cities)
     2. Use last_destination_context from state
     3. Use trip_plan.destination if set
+
+    NOTE: Cities following origin indicators (e.g., "from rome") are NOT destinations.
     """
     from app.planner.nodes.local_expert import LOCAL_EXPERT_KNOWLEDGE
 
     text_lower = text.lower()
 
+    # Extract cities that follow origin patterns - these are NOT destinations
+    origin_cities = set()
+    for pattern in ORIGIN_PATTERNS:
+        match = re.match(pattern, text, re.IGNORECASE)
+        if match:
+            city = match.group(1).strip().rstrip(".!?,").lower()
+            # Add both full match and first word (handles "rome italy")
+            origin_cities.add(city)
+            if city:
+                origin_cities.add(city.split()[0])
+
     # Check LOCAL_EXPERT_KNOWLEDGE keys first (known destinations)
+    # But SKIP cities that appear in origin context
     for dest_key in LOCAL_EXPERT_KNOWLEDGE.keys():
-        if dest_key.lower() in text_lower:
+        dest_lower = dest_key.lower()
+        if dest_lower in text_lower and dest_lower not in origin_cities:
             return dest_key.capitalize()
 
     # Fallback to conversation context
@@ -424,6 +616,39 @@ def _check_exact_match_greeting(text: str) -> Optional[IntentClassification]:
             reasoning="Exact match greeting - no LLM needed",
             specialist_hints=[],
         )
+
+    return None
+
+
+def _detect_origin_from_message(user_text: str) -> Optional[str]:
+    """
+    Detect if user message is specifying an origin/departure city.
+    Returns normalized city name if detected, None otherwise.
+
+    Must run BEFORE exploration mode check to prevent "from rome" being
+    interpreted as exploring Rome when user means "departing from Rome".
+
+    Examples:
+        "from rome" → "Rome"
+        "flying from london" → "London"
+        "leaving from NYC" → "New York"
+        "tell me about rome" → None (not an origin pattern)
+    """
+    text = user_text.strip()
+
+    # Quick reject: if message doesn't contain "from", skip
+    if "from" not in text.lower():
+        return None
+
+    for pattern in ORIGIN_PATTERNS:
+        match = re.match(pattern, text, re.IGNORECASE)
+        if match:
+            city = match.group(1).strip().rstrip(".!?,")
+            # Normalize: "rome italy" → "Rome", remove country suffixes
+            city = _normalize_city_name(city)
+            if city:
+                # Title case the city name for display
+                return city.title()
 
     return None
 
@@ -1714,12 +1939,183 @@ async def intent_router(state: GraphState) -> GraphState:
             log("ROUTER", f"🔮 Speculative Trigger Detected for {state.trip_plan.destination}")
 
     # ==========================================================================
+    # ORIGIN DETECTION: Check if user is specifying departure city
+    # CRITICAL: Must run BEFORE exploration/classification checks
+    # ==========================================================================
+    from app.debug_utils import log
+
+    detected_origin = _detect_origin_from_message(user_text)
+    if detected_origin:
+        log(
+            "ROUTER",
+            f"[ORIGIN] Detected origin: {detected_origin} "
+            f"(destination: {state.trip_plan.destination or 'not set'})",
+        )
+
+        # Set origin on trip_plan
+        state.trip_plan.origin = detected_origin
+
+        # Sync to metadata.trip_inputs for LogisticsNode
+        trip_inputs = state.metadata.get("trip_inputs", {})
+        trip_inputs["origin"] = detected_origin
+        state.metadata["trip_inputs"] = trip_inputs
+
+        # Mark for frontend
+        state.metadata["origin_just_set"] = True
+
+        # Enable flights in booking_types
+        if "extracted_settings" not in state.metadata:
+            state.metadata["extracted_settings"] = {}
+        state.metadata["extracted_settings"]["flights_toggle"] = "suggested"
+
+        # Also sync to trip_inputs.booking_types
+        if "booking_types" not in trip_inputs:
+            trip_inputs["booking_types"] = {}
+        trip_inputs["booking_types"]["flights"] = "suggested"
+        state.metadata["trip_inputs"] = trip_inputs
+
+        # ROUTE TO LOGISTICS: Only use fast-path if destination exists (allows flight search)
+        # Otherwise, fall through to Architect for destination extraction
+        # This is a "fast path" - skip LLM calls, go directly to LogisticsNode
+        # @see plan_graph.py - route_after_router checks for origin_only_logistics
+        if state.trip_plan.destination:
+            state.metadata["origin_only_logistics"] = True
+            state.metadata["skip_architect"] = True
+            state.metadata["skip_specialists"] = True
+
+            # Pre-set the response message (synthesizer will append flight count)
+            dest = state.trip_plan.destination
+            state.last_summary = (
+                f"Got it - departing from **{detected_origin}**. "
+                f"Searching for flights from {detected_origin} to {dest}..."
+            )
+            state.suggested_replies = [
+                "Direct flights only",
+                "Flexible dates",
+                "Show me hotels too",
+            ]
+
+            _debug_node_end("router", "🧭", intent="ORIGIN_TO_LOGISTICS", origin=detected_origin)
+            # Return immediately to prevent exploration mode from short-circuiting
+            # The fast-path flags will route to LogisticsNode for flight fetch
+            return state
+        else:
+            # Origin captured but no destination - let Architect handle extraction
+            # The origin is already synced to trip_inputs, Architect will preserve it
+            state.last_summary = (
+                f"Got it - I've set your departure city to **{detected_origin}**. "
+                f"Where would you like to go?"
+            )
+            state.suggested_replies = ["Paris", "Tokyo", "New York"]
+
+            _debug_node_end("router", "🧭", intent="ORIGIN_ONLY_PLANNING", origin=detected_origin)
+            # Fall through to planning mode - Architect will extract destination
+    # ==========================================================================
+    # END ORIGIN DETECTION
+    # ==========================================================================
+
+    # ==========================================================================
     # EXPLORATION MODE: Check if this is a generic travel question
     # ==========================================================================
     # Before falling through to LLM classification, check if this is an exploration
     # question that we can answer directly using Local Expert knowledge.
     if classification is None:
-        from app.debug_utils import log
+        # ======================================================================
+        # SETTINGS DETECTION: Check if user is specifying trip settings
+        # Budget, travelers, hotel/flight preferences → route to logistics
+        # ======================================================================
+        detected_settings = _detect_settings_from_message(user_text, state)
+        if detected_settings and state.trip_plan.destination:
+            log(
+                "ROUTER",
+                f"[SETTINGS] Detected settings change: {list(detected_settings.keys())} "
+                f"(destination: {state.trip_plan.destination})",
+            )
+
+            # Sync settings to trip_inputs for LogisticsNode
+            trip_inputs = state.metadata.get("trip_inputs", {})
+
+            # Apply detected settings
+            if "budget" in detected_settings:
+                trip_inputs["budget"] = detected_settings["budget"]
+                state.trip_plan.budget = detected_settings["budget"]
+
+            if "adults" in detected_settings:
+                trip_inputs["adults"] = detected_settings["adults"]
+                state.trip_plan.adults = detected_settings["adults"]
+
+            if "children" in detected_settings:
+                trip_inputs["children"] = detected_settings["children"]
+                state.trip_plan.children = detected_settings["children"]
+
+            if "hotel_settings" in detected_settings:
+                existing_hotel = trip_inputs.get("hotel_settings", {})
+                trip_inputs["hotel_settings"] = {
+                    **existing_hotel,
+                    **detected_settings["hotel_settings"],
+                }
+
+            if "flight_settings" in detected_settings:
+                existing_flight = trip_inputs.get("flight_settings", {})
+                trip_inputs["flight_settings"] = {
+                    **existing_flight,
+                    **detected_settings["flight_settings"],
+                }
+
+            state.metadata["trip_inputs"] = trip_inputs
+
+            # Mark for frontend
+            state.metadata["settings_just_updated"] = True
+            state.metadata["updated_settings"] = list(detected_settings.keys())
+
+            # ROUTE TO LOGISTICS: Refetch tiles with new settings
+            # Skip architect/specialists - only need to refresh tiles
+            state.metadata["origin_only_logistics"] = True  # Reuse the same fast path
+            state.metadata["skip_architect"] = True
+            state.metadata["skip_specialists"] = True
+
+            # Build response message based on what changed
+            changes = []
+            if "budget" in detected_settings:
+                changes.append(f"budget of **${detected_settings['budget']:,}**")
+            if "adults" in detected_settings or "children" in detected_settings:
+                adults = detected_settings.get("adults", trip_inputs.get("adults", 1))
+                children = detected_settings.get("children", trip_inputs.get("children", 0))
+                traveler_str = f"{adults} adult{'s' if adults > 1 else ''}"
+                if children:
+                    traveler_str += f" and {children} child{'ren' if children > 1 else ''}"
+                changes.append(traveler_str)
+            if "hotel_settings" in detected_settings:
+                hotel = detected_settings["hotel_settings"]
+                if "min_stars" in hotel:
+                    changes.append(f"{hotel['min_stars']}-star hotels")
+                elif "style" in hotel:
+                    changes.append(f"{hotel['style']} hotels")
+            if "flight_settings" in detected_settings:
+                flight = detected_settings["flight_settings"]
+                if flight.get("direct_only"):
+                    changes.append("direct flights")
+                if "cabin_class" in flight:
+                    changes.append(f"{flight['cabin_class']} class")
+
+            change_str = ", ".join(changes)
+            state.last_summary = (
+                f"Got it - updating your trip for {change_str}. Refreshing options..."
+            )
+            state.suggested_replies = ["Show me more options", "Change budget", "Update travelers"]
+
+            _debug_node_end(
+                "router",
+                "🧭",
+                intent="SETTINGS_TO_LOGISTICS",
+                settings=list(detected_settings.keys()),
+            )
+            # Return immediately to prevent exploration mode from short-circuiting
+            # The fast-path flags will route to LogisticsNode for tile refresh
+            return state
+        # ======================================================================
+        # END SETTINGS DETECTION
+        # ======================================================================
 
         # Check for planning readiness
         planning_intent = detect_planning_intent(user_text, state)
@@ -1878,42 +2274,58 @@ async def intent_router(state: GraphState) -> GraphState:
 
         # If exploring and we have destination context, generate comprehensive answer
         elif planning_intent == "exploring" and destination:
-            qtype, section = classify_question_type(user_text)
-            log("ROUTER", f"[EXPLORATION] Detected question type: {qtype}, section: {section}")
+            # SAFETY GATE: Don't enter exploration for short messages when active plan exists
+            # This prevents "from rome" edge cases where origin detection didn't match
+            has_active_plan = state.trip_plan.destination and state.metadata.get(
+                "plan_view_state"
+            ) in ("S2_STRATEGY_READY", "S3_ITINERARY_READY")
+            word_count = len(user_text.strip().split())
 
-            # Generate comprehensive answer
-            answer, ending = await generate_comprehensive_answer(
-                user_text, destination, qtype, section, state
-            )
+            if has_active_plan and word_count <= 5:
+                log(
+                    "ROUTER",
+                    f"[EXPLORATION] Active plan exists, skipping exploration for short message "
+                    f"({word_count} words) - falling through to LLM",
+                )
+                state.metadata["exploration_mode"] = False
+                # Fall through to LLM classification which has full conversation context
+            else:
+                qtype, section = classify_question_type(user_text)
+                log("ROUTER", f"[EXPLORATION] Detected question type: {qtype}, section: {section}")
 
-            # Update conversation tracking
-            count = state.metadata.get("generic_question_count", 0) + 1
-            state.metadata["generic_question_count"] = count
-            state.metadata["last_destination_context"] = destination
-            state.metadata["exploration_mode"] = True
+                # Generate comprehensive answer
+                answer, ending = await generate_comprehensive_answer(
+                    user_text, destination, qtype, section, state
+                )
 
-            # Set short-circuit response
-            state.last_summary = f"{answer}\n\n{ending}"
-            state.suggested_replies = _get_exploration_suggestions(qtype, destination)
-            state.metadata["short_circuit_response"] = True
-            state.metadata["short_circuit_type"] = "exploration"
+                # Update conversation tracking
+                count = state.metadata.get("generic_question_count", 0) + 1
+                state.metadata["generic_question_count"] = count
+                state.metadata["last_destination_context"] = destination
+                state.metadata["exploration_mode"] = True
 
-            # Pre-set destination for when they're ready to plan
-            if not state.trip_plan.destination:
-                state.trip_plan.destination = destination
+                # Set short-circuit response
+                state.last_summary = f"{answer}\n\n{ending}"
+                state.suggested_replies = _get_exploration_suggestions(qtype, destination)
+                state.metadata["short_circuit_response"] = True
+                state.metadata["short_circuit_type"] = "exploration"
 
-            log("ROUTER", f"[EXPLORATION] Returning exploration response (question #{count})")
+                # Pre-set destination for when they're ready to plan
+                if not state.trip_plan.destination:
+                    state.trip_plan.destination = destination
 
-            _debug_node_end(
-                "router",
-                "🧭",
-                intent="EXPLORATION",
-                destination=destination,
-                question_type=qtype,
-                question_count=count,
-                short_circuit=True,
-            )
-            return state
+                log("ROUTER", f"[EXPLORATION] Returning exploration response (question #{count})")
+
+                _debug_node_end(
+                    "router",
+                    "🧭",
+                    intent="EXPLORATION",
+                    destination=destination,
+                    question_type=qtype,
+                    question_count=count,
+                    short_circuit=True,
+                )
+                return state
 
         # Soft transition: has date OR activity but exploring question format
         elif planning_intent == "soft_transition" and destination:

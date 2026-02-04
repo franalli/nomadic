@@ -60,85 +60,20 @@ PACIFIC:
 - Galapagos: Hammerheads, mantas, marine iguanas
 
 ==============================
-TRIP CONTEXT
+OUTPUT REQUIREMENTS
 ==============================
-Destination: {destination}
-Dates: {start_date} to {end_date}
-Duration: {duration} days
-User preferences: {preferences}
+Generate diving activities with REAL dive site names for the destination.
+Include topic-specific fields:
+- depth_meters: Maximum depth of the dive
+- certification_required: e.g., "Open Water", "Advanced", "Deep Diver"
+- difficulty: beginner, intermediate, or advanced
 
-==============================
-STRICT JSON OUTPUT FORMAT
-==============================
-You must output a SINGLE JSON object matching the SpecialistOutput schema.
-Do not include markdown formatting or explanation text.
-
-{{
-  "specialist_type": "diving",
-  "constraints": [
-    {{
-      "id": "min_24h_buffer_after_dive",
-      "type": "blocking",
-      "description": "No flying within 24 hours of last dive",
-      "explanation": "Diving safety requires a 24-hour surface interval before flying to prevent decompression sickness. Nitrogen absorbed during dives needs time to safely leave your body.",
-      "priority": 10,
-      "temporal_requirements": {{ "buffer_hours": 24 }},
-      "applies_to_categories": ["dive", "scuba", "underwater"],
-      "icon": "🚫"
-    }},
-    {{
-      "id": "min_18h_surface_interval",
-      "type": "strong",
-      "description": "18 hour minimum surface interval between dive days",
-      "explanation": "For safety, you need 18 hours between dive sessions to allow nitrogen to clear from your body. This is especially important for multiple consecutive dive days.",
-      "priority": 9,
-      "temporal_requirements": {{ "buffer_hours": 18 }},
-      "applies_to_categories": ["dive", "scuba"],
-      "icon": "⏰"
-    }},
-    {{
-      "id": "advanced_cert_required_for_deep",
-      "type": "blocking",
-      "description": "Dives below 18m require Advanced Open Water certification",
-      "explanation": "Depths greater than 18 meters require Advanced Open Water certification or equivalent. This ensures you have the training to handle increased pressure and nitrogen narcosis risks.",
-      "priority": 10,
-      "applies_to_categories": ["deep dive", "advanced"],
-      "icon": "📜"
-    }}
-  ],
-  "content_blocks": [
-    {{
-      "type": "tip",
-      "title": "Best Dive Sites",
-      "content": "Research local dive operators and their safety records. Book popular sites in advance, especially during peak season.",
-      "icon": "🤿",
-      "priority": 8
-    }},
-    {{
-      "type": "warning",
-      "title": "No-Fly Buffer",
-      "content": "Plan your last dive for the day BEFORE your departure flight. This ensures the 24-hour no-fly buffer is respected.",
-      "icon": "✈️",
-      "priority": 10
-    }}
-  ],
-  "feasibility": {{
-    "score": 0.85,
-    "is_feasible": true,
-    "blockers": [],
-    "concerns": ["Trip duration only allows 2 dive days due to no-fly buffer"],
-    "recommendations": ["Consider extending trip by 1 day to allow 3 dive days", "Book dive operators in advance"]
-  }},
-  "critique": "Review any safety concerns with the current plan here. Check if no-fly buffer is respected.",
-  "suggested_activities": [
-    "Morning dive at signature site",
-    "Night dive experience",
-    "Snorkeling excursion for non-dive days",
-    "Underwater photography session"
-  ]
-}}
-
-CONSTRAINT TYPES for diving:
-- blocking: No-fly time (24h), certification requirements (CANNOT be violated)
-- strong: Surface intervals (18h), buddy system (SHOULD NOT be violated)
+For constraints, use these types:
+- blocking: No-fly time (24h after diving), certification requirements (CANNOT be violated)
+- strong: Surface intervals (18h between dive days), buddy system (SHOULD NOT be violated)
 - soft: Equipment recommendations, timing preferences (nice to follow)
+
+Cross-domain constraints to consider:
+- Diving affects flights: 24h no-fly buffer required after last dive
+- Diving affects hiking: No high-altitude hiking (>2500m) within 24h of diving
+- Plan last dive day to be 2 days before departure to ensure safe flying

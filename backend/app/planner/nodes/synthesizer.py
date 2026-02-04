@@ -602,6 +602,14 @@ async def synthesizer(state: GraphState) -> GraphState:
                 # Use the pre-computed response from router - already in state.last_summary
                 message = state.last_summary
                 log("SYNTH", f"Pre-computed {short_circuit_type} ({len(message)} chars)")
+            elif state.metadata.get("origin_just_set"):
+                # Origin was just set via chat - use pre-computed message
+                message = state.metadata.get("origin_update_message", "")
+                # Append flight search results if available
+                flights_count = len([t for t in state.tiles.get("flights", []) if t])
+                if flights_count > 0:
+                    message += f"\n\nFound **{flights_count} flight options** for your trip!"
+                log("SYNTH", f"Origin update response ({len(message)} chars)")
             else:
                 # Use templates for simple responses (greetings, pre-core)
                 output = synth.generate_response(state)

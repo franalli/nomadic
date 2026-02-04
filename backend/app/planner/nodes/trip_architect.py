@@ -919,4 +919,7 @@ async def trip_architect(state: GraphState) -> GraphState:
         tiles=sum(len(v) for v in state.tiles.values()),
     )
 
+    # Mark that architect ran this turn (for post-logistics skip optimization)
+    state.metadata["architect_ran_this_turn"] = True
+
     return state

@@ -277,6 +277,8 @@ interface ChatPanelProps {
   onGeneratePlanStart?: () => void;
   /** Called when user clicks Fresh Start to reset the session */
   onFreshStart?: () => void;
+  /** Called when chat updates plan with existing itinerary - triggers auto-expand */
+  onAutoExpandItinerary?: () => void;
   onPlanResult: (result: {
     tripContextId: number | null;
     branches: DocumentBranch[];
@@ -386,6 +388,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const {
       onPlanResult,
       onGeneratePlanStart,
+      onAutoExpandItinerary,
       selectedBranchId,
       fullHeight,
       hasBranches,
@@ -1023,6 +1026,28 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               // Update suggested responses from LLM (if provided)
               setSuggestedResponses(doc.suggested_responses || []);
+
+              // Origin update from chat (e.g., "from rome") is handled by backend
+              // Backend routes through LogisticsNode to fetch flights automatically
+              // Tiles (including flights) come back in the response
+              if (doc.origin_just_set && doc.trip_inputs?.origin) {
+                console.log('[ChatPanel] Origin set via chat:', doc.trip_inputs.origin, '- flights fetched by backend');
+              }
+
+              // AUTO-EXPAND: Chat messages should regenerate itinerary if plan was updated
+              // Check if this turn updated plan content (tiles or strategy) AND itinerary exists
+              const hasItinerary = (doc.day_cards?.length ?? 0) > 0;
+              const planWasUpdated =
+                (doc.tiles && Object.keys(doc.tiles).length > 0) || // Has tiles
+                (doc.executed_strategy_topics && doc.executed_strategy_topics.length > 0); // Has strategy
+
+              if (hasItinerary && planWasUpdated && !isSilentPlanGeneration) {
+                console.log('[ChatPanel] Chat updated plan with existing itinerary - auto-expanding...');
+                // Trigger parent's proceedWithItineraryGeneration
+                setTimeout(() => {
+                  onAutoExpandItinerary?.();
+                }, 100); // Small delay to let state settle
+              }
 
               // Only filter streaming message when Build Plan was clicked (silent mode)
               // During Setup, chat should be conversational - show all messages

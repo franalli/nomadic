@@ -219,6 +219,9 @@ export type PlanDocumentData = {
 
   /** Generation progress - envelope wins if present, else use local UI state */
   generation?: GenerationState;
+
+  /** Origin update flag - frontend should trigger flight fetch when true */
+  origin_just_set?: boolean;
 };
 
 export type PlanDocumentResponse = {

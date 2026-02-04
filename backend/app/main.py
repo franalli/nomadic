@@ -1683,6 +1683,9 @@ async def graph_plan_endpoint(
             for tile_id, tile_data in graph_tiles.items()
         }
 
+    # Copy origin_just_set flag for frontend flight fetch trigger
+    response_document.origin_just_set = graph_document.get("origin_just_set", False)
+
     # --- Build and return response ---
     return GraphPlanResponse(
         document=response_document,
@@ -2184,6 +2187,9 @@ async def graph_plan_stream_endpoint(
                     )
                     for tile_id, tile_data in graph_tiles.items()
                 }
+
+            # Copy origin_just_set flag for frontend flight fetch trigger
+            response_document.origin_just_set = graph_document.get("origin_just_set", False)
 
             _debug(
                 f"[MAIN.PY] Graph output: plan_view_state={response_document.plan_view_state}, "

@@ -76,109 +76,21 @@ OTHER:
 - Verbier (Switzerland): Extreme skiing, Mont Fort
 
 ==============================
-TRIP CONTEXT
+OUTPUT REQUIREMENTS
 ==============================
-Destination: {destination}
-Dates: {start_date} to {end_date}
-Duration: {duration} days
-User preferences: {preferences}
+Generate skiing activities with REAL resort/run names for the destination.
+Include topic-specific fields:
+- elevation_meters: Resort base/peak altitude
+- vertical_meters: Vertical drop
+- difficulty: beginner, intermediate, advanced, or expert
 
-==============================
-STRICT JSON OUTPUT FORMAT
-==============================
-You must output a SINGLE JSON object matching the SpecialistOutput schema.
-Do not include markdown formatting or explanation text.
-
-{{
-  "specialist_type": "skiing",
-  "constraints": [
-    {{
-      "id": "guide_required_offpiste",
-      "type": "blocking",
-      "description": "Certified guide required for off-piste skiing",
-      "explanation": "Backcountry and off-piste skiing requires a certified mountain guide. They assess avalanche risk, choose safe routes, and can perform rescue if needed.",
-      "priority": 10,
-      "applies_to_categories": ["backcountry", "off-piste", "freeride"],
-      "icon": "🎿"
-    }},
-    {{
-      "id": "avalanche_gear_required",
-      "type": "blocking",
-      "description": "Avalanche safety gear required for off-piste",
-      "explanation": "Beacon, probe, and shovel are mandatory for any off-piste skiing. You must know how to use them before venturing into backcountry.",
-      "priority": 10,
-      "applies_to_categories": ["backcountry", "off-piste"],
-      "icon": "🏔️"
-    }},
-    {{
-      "id": "check_snow_conditions",
-      "type": "strong",
-      "description": "Verify snow conditions and avalanche reports before backcountry skiing",
-      "explanation": "Check daily avalanche bulletins and snow reports. Conditions can change rapidly and affect route safety.",
-      "priority": 9,
-      "temporal_requirements": {{ "time_of_day": "morning" }},
-      "applies_to_categories": ["backcountry", "off-piste"],
-      "icon": "❄️"
-    }},
-    {{
-      "id": "skill_level_terrain_match",
-      "type": "strong",
-      "description": "Terrain must match skier ability level",
-      "explanation": "Skiing terrain above your skill level is dangerous. Beginners should stick to green runs, intermediates to blue/red, and only experts should attempt black diamond terrain.",
-      "priority": 9,
-      "applies_to_categories": ["skiing", "snowboarding"],
-      "icon": "⛷️"
-    }},
-    {{
-      "id": "helmet_required",
-      "type": "soft",
-      "description": "Helmet required at most resorts",
-      "explanation": "Many ski resorts now require helmets. Even where not mandatory, helmets significantly reduce head injury risk.",
-      "priority": 7,
-      "applies_to_categories": ["skiing", "snowboarding"],
-      "icon": "⛑️"
-    }}
-  ],
-  "content_blocks": [
-    {{
-      "type": "tip",
-      "title": "First Day Strategy",
-      "content": "Spend your first day on easier terrain to warm up and adjust to the altitude and snow conditions.",
-      "icon": "🎿",
-      "priority": 8
-    }},
-    {{
-      "type": "warning",
-      "title": "Off-Season Risk",
-      "content": "If traveling outside peak season, verify snow conditions. Low-altitude resorts may have limited coverage.",
-      "icon": "⚠️",
-      "priority": 9
-    }},
-    {{
-      "type": "recommendation",
-      "title": "Equipment Rental",
-      "content": "Book equipment rental in advance, especially during peak season. Properly fitted boots are crucial for comfort and control.",
-      "icon": "🏂",
-      "priority": 7
-    }}
-  ],
-  "feasibility": {{
-    "score": 0.85,
-    "is_feasible": true,
-    "blockers": [],
-    "concerns": ["Weather may affect visibility", "Lift queues expected during peak season"],
-    "recommendations": ["Book ski pass in advance for discounts", "Consider private lessons for faster progress", "Plan rest day mid-trip"]
-  }},
-  "critique": "Review terrain vs skill level match. Flag if beginner on advanced terrain or if backcountry without guide. Check season compatibility.",
-  "suggested_activities": [
-    "Resort skiing with varied terrain",
-    "Guided off-piste excursion",
-    "Ski lesson with certified instructor",
-    "Après-ski and mountain dining"
-  ]
-}}
-
-CONSTRAINT TYPES for skiing:
-- blocking: Guide required for off-piste, avalanche gear (CANNOT be violated)
-- strong: Skill-terrain matching, weather checks (SHOULD NOT be violated)
+For constraints, use these types:
+- blocking: Guide required for off-piste, avalanche gear required (CANNOT be violated)
+- strong: Skill-terrain matching, weather/visibility checks (SHOULD NOT be violated)
 - soft: Helmet recommendation, equipment quality (nice to follow)
+
+CRITICAL SEASONALITY CHECK:
+- Northern Hemisphere (Alps, Rockies, Japan): December to April only
+- Southern Hemisphere (NZ, Chile, Argentina): June to September only
+- If trip dates fall OUTSIDE ski season, set feasibility_status to "infeasible"
+- Exception: Glacier skiing available year-round at Zermatt, Hintertux, Les 2 Alpes
