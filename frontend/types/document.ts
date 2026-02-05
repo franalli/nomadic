@@ -222,6 +222,27 @@ export type PlanDocumentData = {
 
   /** Origin update flag - frontend should trigger flight fetch when true */
   origin_just_set?: boolean;
+
+  // ==========================================================================
+  // Constraint Validation (Trip DNA bar badges)
+  // ==========================================================================
+  /** Constraints that passed validation (green badges) */
+  constraints_validated?: Array<{
+    constraint_id: string;
+    rule: string;
+    status: 'satisfied';
+    specialist: string;
+    label: string;
+  }>;
+  /** Constraints that were violated (amber badges) */
+  constraint_violations?: Array<{
+    code: string;
+    message: string;
+    severity: string;
+    category: string;
+    rule?: string;
+    suggested_action?: string;
+  }>;
 };
 
 export type PlanDocumentResponse = {

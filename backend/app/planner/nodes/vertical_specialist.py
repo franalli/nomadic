@@ -308,6 +308,10 @@ async def generate_all_specialists_parallel(
     # =========================================================================
     # STEP 1: Batch cache lookup (sequential, single session)
     # =========================================================================
+    _debug_log(
+        f"[LLM_SPECIALIST] Parallel lookup: topics={topics} "
+        f"dest={destination} dates={trip_plan.start_date}→{trip_plan.end_date}"
+    )
     if db is not None:
         from app.services.specialist_cache import get_cached_specialist_output
 
@@ -1787,8 +1791,11 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     # =========================================================================
     cached_key = state.metadata.get("_last_specialist_key", "")
     current_dest = (state.trip_plan.destination or "").lower().strip()
-    current_month = state.trip_plan.start_date[:7] if state.trip_plan.start_date else "no-dates"
-    current_key = f"{current_dest}:{current_month}"
+    # CRITICAL: Use full date range, not just month - dates within same month matter!
+    # "Feb 11-18" vs "Feb 11-14" must invalidate cache (different trip durations)
+    start_date = state.trip_plan.start_date or "no-start"
+    end_date = state.trip_plan.end_date or "no-end"
+    current_key = f"{current_dest}:{start_date}:{end_date}"
 
     if cached_key and cached_key != current_key:
         _debug_log(
@@ -1840,14 +1847,20 @@ async def vertical_specialist(state: GraphState) -> GraphState:
     cached_section = next((s for s in existing_sections if s.get("specialist_type") == topic), None)
 
     if cached_section:
-        # Check if destination matches cached section
+        # Check if destination AND dates match cached section
+        # CRITICAL: Dates must match - same destination with different dates = different content
         cached_destination = cached_section.get("subtitle")  # subtitle = destination
+        cached_dates = cached_section.get("_cache_dates")  # dates when section was generated
         current_destination = state.trip_plan.destination
+        current_dates = f"{state.trip_plan.start_date}:{state.trip_plan.end_date}"
 
-        if cached_destination and cached_destination == current_destination:
+        destination_match = cached_destination and cached_destination == current_destination
+        dates_match = cached_dates and cached_dates == current_dates
+
+        if destination_match and dates_match:
             _debug_log(
                 f"🤿 SPECIALIST [{topic}] Cache HIT: Reusing cached output "
-                f"(destination={current_destination})"
+                f"(destination={current_destination}, dates={current_dates})"
             )
 
             # Still need to track execution for downstream nodes
@@ -1868,8 +1881,9 @@ async def vertical_specialist(state: GraphState) -> GraphState:
             return state  # No-op, output already in state
 
         _debug_log(
-            f"🤿 SPECIALIST [{topic}] Cache MISS: destination changed "
-            f"({cached_destination} -> {current_destination})"
+            f"🤿 SPECIALIST [{topic}] Cache MISS: context changed "
+            f"(dest: {cached_destination}->{current_destination}, "
+            f"dates: {cached_dates}->{current_dates})"
         )
 
     _debug_node_start(
@@ -1961,10 +1975,11 @@ async def vertical_specialist(state: GraphState) -> GraphState:
 
             try:
                 async with async_session_factory() as db:
-                    # STEP 1: Check cache
+                    # STEP 1: Check cache - log dates for debugging stale cache issues
                     _debug_log(
                         f"[SPECIALIST_CACHE] Looking up cache for {topic} "
-                        f"in {state.trip_plan.destination}"
+                        f"in {state.trip_plan.destination} "
+                        f"dates={state.trip_plan.start_date}→{state.trip_plan.end_date}"
                     )
                     cached_result = await get_cached_specialist_output(
                         db=db,
@@ -2119,6 +2134,14 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         if block not in state.trip_plan.itinerary_blocks:
             state.trip_plan.itinerary_blocks.append(block)
 
+    # Persist specialist constraints to metadata for cross-turn survival
+    # Guard will merge these back if trip_plan.constraints gets cleared on subsequent turns
+    if output.constraints:
+        specialist_store = state.metadata.setdefault("specialist_constraints", {})
+        # Store full model dict for proper reconstruction
+        specialist_store[topic] = [c.model_dump() for c in output.constraints]
+        log("SPECIALIST", f"Persisted {len(output.constraints)} constraints to metadata['{topic}']")
+
     # Log constraints and content
     if output.constraints:
         constraint_rules = ", ".join([c.rule for c in output.constraints])
@@ -2195,6 +2218,9 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         "id": f"specialist_{topic}",
         "title": f"{topic.title()} Specialist",
         "specialist_type": topic,
+        "subtitle": state.trip_plan.destination,  # For cache comparison
+        # Cache invalidation key: must match destination AND dates
+        "_cache_dates": f"{state.trip_plan.start_date}:{state.trip_plan.end_date}",
         "feasibility_status": output.feasibility_status,
         "feasibility_reason": output.feasibility_reason,
         "alternative_suggestion": output.alternative_suggestion,

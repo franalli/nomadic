@@ -738,6 +738,29 @@ if any(t in NICHE_SPECIALISTS for t in executed):
 
 **Rationale:** When a diving specialist is active, showing "Night market" or "Sunrise ridge" in the tile browser or SelectionsBar creates expectation mismatch. Users heart generic activities but the timeline shows diving content. Backend suppression at the source ensures the "Activities" tab chip disappears entirely (count = 0), providing a clean demo story: *"Specialists plan your activities. You pick flights and hotels."*
 
+### Empty Specialist Card Filtering
+
+**Problem:** When a specialist (e.g., skiing) runs but returns no useful content for a destination (e.g., Bali), an empty card appears in the UI. This looks broken.
+
+**Solution:** Filter specialist cards on **output** (content_added), not **input** (specialist requested). This is destination-agnostic and handles every case.
+
+**Location:** `S2StrategyView.tsx`
+
+```typescript
+// Filter out domain specialists with no content (e.g., skiing in tropical destinations)
+const strategy_sections = rawStrategySections.filter((section) => {
+  // Always show general/local_expert sections (they have context even without activities)
+  const isGeneralType = ['general', 'local_expert'].includes(section.specialist_type || '');
+  if (isGeneralType) return true;
+  // For niche specialists, only show if they returned content
+  return section.content_added && section.content_added.length > 0;
+});
+```
+
+**Why frontend filtering?** A backend hardcoded `SKIING_EXCLUDED_DESTINATIONS` set creates a maintenance trap — silently fails for any destination not in the list. Frontend filter on output works everywhere.
+
+**Verify:** Search "Bali hiking and skiing" → skiing card should NOT appear (no skiing content for Bali).
+
 ### Inline Constraints Display (S3 View)
 
 Activity and logistics blocks display inline constraint badges to show constraint-first optimization. This makes the builder's constraint enforcement visible to users.
@@ -3404,12 +3427,53 @@ const specialistData = useMemo(() => {
   const ghostDayCards = generateGhostDayCards(fullModeSections, tripDuration);
   return { fullModeSections, totalConstraints, ghostDayCards, filteredViewModel };
 }, [viewModel, effectiveTripInputs?.trip_duration]);
+
+// MEMO 3: POI extraction - MUST be isolated from planContent
+// Uses fingerprint-based dependency for true content stability
+const fullModePOIs = useMemo(() => {
+  const destination = effectiveTripInputs?.destination ?? destinationCard?.title;
+  return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [dayCardsFingerprint, specialistData.fullModeSections, effectiveTripInputs?.destination, destinationCard?.title]);
 ```
 
 **Benefit:**
 - Density calculation only runs when state/tiles/tripInputs change
 - Specialist filtering only runs when strategy_sections change
+- POI extraction only runs when fingerprint changes (~3-4 times, not ~50)
 - planContent uses pre-computed values → fewer unnecessary recomputes
+
+#### Content-Based Fingerprints for Stable Dependencies
+
+**Problem:** Zustand selectors like `s.document?.day_cards` return new array references on every `mergeEnvelope` update, even when array contents are unchanged. `useShallow` doesn't help because it compares array element **references**, not content.
+
+**Solution:** Create a content-based "fingerprint" selector that only changes when actual content changes:
+
+```typescript
+// ❌ BEFORE: useShallow doesn't help - elements are new objects on each update
+const storeDayCards = useDocumentStore(useShallow((s) => s.document?.day_cards));
+
+// ✅ AFTER: Fingerprint based on content, not references
+const dayCardsFingerprint = useDocumentStore((s) => {
+  const cards = s.document?.day_cards;
+  if (!cards || cards.length === 0) return null;
+  // Fingerprint: count + IDs of blocks with coordinates (the ones that affect POIs)
+  const blockIds = cards
+    .flatMap(c => c.blocks || [])
+    .filter(b => b.coordinates)
+    .map(b => b.id)
+    .join(',');
+  return `${cards.length}:${blockIds}`;
+});
+
+// Use fingerprint as dependency, actual data in computation
+const fullModePOIs = useMemo(() => {
+  return extractPOIsFromDayCards(effectiveDayCards, sections, destination);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [dayCardsFingerprint, sections, destination]); // fingerprint, not effectiveDayCards
+```
+
+**Key Insight:** `useShallow` alone is NOT sufficient. If the memoized computation is inside a larger `useMemo` with many dependencies, it still runs on every dependency change. Extract expensive operations into their OWN `useMemo` with minimal deps.
 
 #### Callback Stability
 

@@ -76,7 +76,11 @@ export function PlanHeader({
   // Determine variant based on whether we have a destination
   const title = destinationCard?.title || fallbackTitle || '';
   const hasDestination = Boolean(title);
-  const subtitle = destinationCard?.subtitle;
+  // Gate hero image layer on both title AND image - prevents flash during image load
+  const showHeroImage = hasDestination && Boolean(destinationCard?.image_url);
+  // Subtitle: Show route when origin is set, otherwise hide (date is redundant with chip)
+  const origin = tripInputs?.origin;
+  const subtitle = origin ? `${origin} → ${title}` : null;
 
   // Status pill text for progress indicator
   const statusPillText = getStatusPillText(isGenerating, isExpandingItinerary);
@@ -119,8 +123,8 @@ export function PlanHeader({
     return startFormatted;
   }, [startDate, endDate]);
 
-  // Shared hero height for both states - prevents layout shift on transition
-  const HERO_HEIGHT = 'h-40 lg:h-56';
+  // Shared hero height - fluid clamp for continuous scaling across viewports
+  const HERO_HEIGHT = 'h-[clamp(140px,20vw,300px)]';
 
   // COLLAPSED STATE: Compact header bar when scrolled
   if (isCollapsed) {
@@ -208,10 +212,10 @@ export function PlanHeader({
           {/* Reduced in light mode, prominent in dark mode */}
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(16,185,129,0.06)_0%,_transparent_55%)] dark:bg-[radial-gradient(ellipse_at_center,_rgba(16,185,129,0.12)_0%,_transparent_55%)] z-0" />
 
-          {/* Setup prompt text - fades out when destination exists */}
+          {/* Setup prompt text - fades out when destination image is ready */}
           <div
             className={`absolute inset-0 flex flex-col items-center justify-center text-center px-4 pb-6 transition-opacity duration-500 z-20 ${
-              hasDestination ? 'opacity-0' : 'opacity-100'
+              showHeroImage ? 'opacity-0' : 'opacity-100'
             }`}
           >
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight drop-shadow-sm text-black dark:text-white dark:drop-shadow-lg">
@@ -225,9 +229,10 @@ export function PlanHeader({
 
         {/* LAYER 2: Destination Image - "Glossy Postcard" style */}
         {/* Physical photo sitting on the architect's desk - rounded, shadowed, crisp */}
+        {/* Only shows when image is loaded - prevents flash during image fetch */}
         <div
           className={`absolute inset-4 z-20 transition-all duration-700 ${
-            hasDestination ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
+            showHeroImage ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none'
           }`}
         >
           <div className="relative h-full w-full rounded-2xl overflow-hidden shadow-2xl ring-1 ring-black/10 dark:ring-white/10">
@@ -266,9 +271,10 @@ export function PlanHeader({
             </div>
 
             {/* Pills - INSIDE the postcard, above gradient overlay */}
+            {/* Frosted glass strip separates chips from image for readability */}
             {/* When in S3 (itinerary exists), make pills read-only except destination for demo safety */}
             {showPills && (
-              <div className="absolute bottom-3 left-4 right-4 z-20 flex items-center gap-2 flex-wrap">
+              <div className="absolute bottom-3 left-4 right-4 z-20 backdrop-blur-md bg-black/30 rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap">
                 <TripSummaryPills
                   tripInputs={tripInputs}
                   onOpenSheet={onOpenSheet}

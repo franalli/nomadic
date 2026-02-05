@@ -114,9 +114,8 @@ export const SplitLayoutView = memo(function SplitLayoutView({
           'flex-1 overflow-hidden min-h-0', // min-h-0 fixes flexbox height collapse on mobile
           // Mobile: flex column for mode switching
           'flex flex-col',
-          // Desktop: Grid with 40/60 split (min 360px, max 480px on ultrawide)
-          'lg:grid lg:grid-cols-[minmax(360px,40%)_1fr]',
-          '2xl:grid-cols-[480px_1fr]'
+          // Desktop: Grid with fluid chat panel width (clamp for continuous scaling)
+          'lg:grid lg:grid-cols-[clamp(320px,28vw,480px)_1fr]'
         )}
       >
         {/* ─────────────────────────────────────────────────────────────────── */}

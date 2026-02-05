@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
 from app.planner.state import GraphState, TripPlan
+from app.planner.state.schemas import SpecialistConstraint
 
 # =============================================================================
 # Place Validation Helper
@@ -83,6 +84,38 @@ class ConstraintViolation:
         if self.suggested_specialist:
             result["suggested_specialist"] = self.suggested_specialist
         return result
+
+
+# =============================================================================
+# Constraint Rule Canonicalization
+# =============================================================================
+
+# Canonical constraint rule names — LLMs generate aliases
+# NOTE: itinerary_builder.py has similar CONSTRAINT_ALIASES dict.
+# Post-demo: extract to shared backend/app/planner/constraint_defs.py
+# For now, keep in sync manually or risk mismatch bugs.
+CONSTRAINT_ALIASES = {
+    "min_24h_buffer_after_dive": [
+        "no_fly_24h",
+        "24h_no_fly",
+        "diving_no_fly_buffer",
+        "no_fly_after_dive",
+        "24h_buffer_after_dive",
+    ],
+    "morning_start_recommended": ["early_start", "morning_activity", "am_start"],
+    "guide_required": ["requires_guide", "guided_activity", "professional_guide"],
+}
+
+
+def canonicalize_rule(rule: str) -> str:
+    """Normalize to canonical constraint name."""
+    if not rule:
+        return rule
+    normalized = rule.lower().replace("-", "_").replace(" ", "_")
+    for canonical, aliases in CONSTRAINT_ALIASES.items():
+        if normalized == canonical or any(normalized == a.lower() for a in aliases):
+            return canonical
+    return normalized
 
 
 # =============================================================================
@@ -307,16 +340,7 @@ def check_specialist_constraints(
                         suggested_action="Move diving activities earlier or extend trip by 1 day",
                     )
                 )
-            else:
-                # No conflict - just an informational note
-                violations.append(
-                    ConstraintViolation(
-                        code="DIVING_SURFACE_INTERVAL",
-                        message="24h no-fly buffer after diving is respected",
-                        severity="info",
-                        category="specialist",
-                    )
-                )
+            # No else branch - satisfied constraints don't add violations
 
         elif constraint.rule == "altitude_acclimatization":
             violations.append(
@@ -595,7 +619,18 @@ async def constraint_guard(state: GraphState) -> GraphState:
 
     Pure Python validation - no LLM calls.
     """
+    import logging
+
     from app.debug_utils import _debug_node_end, _debug_node_start
+
+    logger = logging.getLogger(__name__)
+
+    # STATE IN logging - critical for debugging state mutations between nodes
+    logger.info(
+        f"[GUARD] STATE IN: tiles={len(state.tiles)} "
+        f"strategy={len(state.metadata.get('strategy_sections', []))} "
+        f"retry={state.guard_retry_count}"
+    )
 
     _debug_node_start(
         "guard",
@@ -605,14 +640,108 @@ async def constraint_guard(state: GraphState) -> GraphState:
         specialist_constraints=len(state.trip_plan.constraints),
     )
 
-    guard = ConstraintGuard()
+    # RESET: Clear previous validation receipts before re-evaluation
+    # Prevents stale green badges if guard runs multiple times (auto-fix loop)
+    state.metadata["constraints_validated"] = []
 
+    # =========================================================================
+    # Merge Persisted Specialist Constraints
+    # Specialists store their constraints in metadata on emit. On subsequent turns,
+    # trip_plan.constraints may be cleared, but persisted constraints remain.
+    # This ensures guard sees ALL constraints from ALL specialists that ever ran.
+    # =========================================================================
     from app.debug_utils import log
 
+    persisted = state.metadata.get("specialist_constraints", {})
+    existing_rules = {canonicalize_rule(c.rule) for c in state.trip_plan.constraints}
+    merged_count = 0
+    for topic, constraint_dicts in persisted.items():
+        for cd in constraint_dicts:
+            rule = cd.get("rule", "")
+            if canonicalize_rule(rule) not in existing_rules:
+                try:
+                    # Use model_validate for proper Pydantic reconstruction from stored dict
+                    constraint = SpecialistConstraint.model_validate(cd)
+                    state.trip_plan.constraints.append(constraint)
+                    existing_rules.add(canonicalize_rule(rule))
+                    merged_count += 1
+                except Exception as e:
+                    log("GUARD", f"⚠️ Failed to merge constraint from {topic}: {e}")
+
+    if merged_count > 0:
+        log("GUARD", f"Merged {merged_count} persisted constraints from metadata")
+    log(
+        "GUARD",
+        f"After merge: trip_plan.constraints={[c.rule for c in state.trip_plan.constraints]}",
+    )
+
+    guard = ConstraintGuard()
+
+    # DEBUG: Log constraint sources for validation receipt logic
+    log(
+        "GUARD",
+        f"Constraint sources: trip_plan={[c.rule for c in state.trip_plan.constraints]}, "
+        f"executed_topics={state.metadata.get('executed_strategy_topics', [])}",
+    )
     log("GUARD", "Validation (pure Python, no LLM)...")
 
     # Run all checks (pure Python, no LLM)
     violations, has_blocking = guard.check_all(state)
+
+    # =========================================================================
+    # Flight-Independent Diving Capacity Check
+    # Pure math: validates diving is physically possible given trip duration
+    # Works even before flights are added (Turn 1-2 of demo arc)
+    # =========================================================================
+    has_diving_constraint_for_capacity = any(
+        canonicalize_rule(c.rule) == "min_24h_buffer_after_dive"
+        for c in state.trip_plan.constraints
+    )
+    if (
+        has_diving_constraint_for_capacity
+        and state.trip_plan.start_date
+        and state.trip_plan.end_date
+        and not any(v.code == "DIVING_SURFACE_INTERVAL" for v in violations)
+    ):
+        try:
+            from datetime import datetime
+
+            start = datetime.fromisoformat(state.trip_plan.start_date)
+            end = datetime.fromisoformat(state.trip_plan.end_date)
+            total_days = (end - start).days + 1
+            usable_days = total_days - 2  # arrival + departure
+            diving_available = max(0, usable_days - 1)  # 24h no-fly buffer
+
+            # Count diving content blocks from strategy sections
+            strategy_sections = state.metadata.get("strategy_sections", [])
+            diving_blocks = [
+                b
+                for s in strategy_sections
+                if s.get("specialist_type") == "diving"
+                for b in s.get("content_added", [])
+                if b.get("type") == "activity"
+            ]
+
+            if len(diving_blocks) > diving_available:
+                violations.append(
+                    ConstraintViolation(
+                        code="DIVING_SURFACE_INTERVAL",
+                        severity="blocking",
+                        category="capacity",
+                        message=(
+                            f"Need {len(diving_blocks)} dive days but only {diving_available} "
+                            f"available (24h no-fly buffer requires 1 rest day before departure)"
+                        ),
+                    )
+                )
+                has_blocking = True
+                log(
+                    "CONSTRAINT",
+                    f"❌ DIVING_SURFACE_INTERVAL (blocking) - capacity check: "
+                    f"{len(diving_blocks)} dives > {diving_available} available days",
+                )
+        except Exception as e:
+            log("GUARD", f"Capacity check error (non-fatal): {e}")
 
     log("GUARD", f"Violations found: {len(violations)}")
     for v in violations:
@@ -620,11 +749,72 @@ async def constraint_guard(state: GraphState) -> GraphState:
         log("CONSTRAINT", f"{severity_icon} {v.code} ({v.severity})", data=v.message, sleep=0.2)
 
     if has_blocking:
-        log("SOLVER", "Blocking violations detected - triggering auto-fix loop")
+        log("SOLVER", "Blocking violations detected - routing to synthesizer (state preserved)")
     elif violations:
         log("GUARD", "No blocking violations - proceeding to synthesis")
     else:
         log("GUARD", "All constraints satisfied")
+
+    # =========================================================================
+    # Emit Validation Receipts for Constraints that PASSED
+    # These surface as green badges in the Trip DNA bar
+    #
+    # NOTE: Specialist constraints are now merged from metadata at top of guard,
+    # so trip_plan.constraints contains ALL constraints from ALL specialists.
+    # No more executed_topics fallback needed.
+    # =========================================================================
+    validated = []
+
+    # Diving no-fly buffer - check trip_plan.constraints (includes merged persisted)
+    has_diving_constraint = any(
+        canonicalize_rule(c.rule) == "min_24h_buffer_after_dive"
+        for c in state.trip_plan.constraints
+    )
+    has_diving_violation = any(v.code == "DIVING_SURFACE_INTERVAL" for v in violations)
+
+    if has_diving_constraint and not has_diving_violation:
+        validated.append(
+            {
+                "constraint_id": "diving_no_fly",
+                "rule": "min_24h_buffer_after_dive",  # Always canonical
+                "status": "satisfied",
+                "specialist": "diving",
+                "label": "24h No-Fly Buffer",
+            }
+        )
+
+    # Temporal validity - if no DATE_ORDER_INVALID or TRIP_TOO_* violations
+    has_temporal_violation = any(v.code.startswith(("DATE_ORDER", "TRIP_TOO")) for v in violations)
+    if state.trip_plan.start_date and not has_temporal_violation:
+        validated.append(
+            {
+                "constraint_id": "temporal_valid",
+                "rule": "valid_date_range",
+                "status": "satisfied",
+                "specialist": "system",
+                "label": "Valid Date Range",
+            }
+        )
+
+    # Budget - if no BUDGET_* violations
+    has_budget_violation = any(v.code.startswith("BUDGET_") for v in violations)
+    if state.trip_plan.budget and not has_budget_violation:
+        validated.append(
+            {
+                "constraint_id": "budget_ok",
+                "rule": "budget_within_limits",
+                "status": "satisfied",
+                "specialist": "system",
+                "label": "Budget Within Limits",
+            }
+        )
+
+    # Store in metadata
+    state.metadata["constraints_validated"] = validated
+
+    # Log validated constraints (terminal visibility for demo)
+    for v in validated:
+        log("CONSTRAINT", f"✅ {v['constraint_id']} (satisfied) └─ {v['label']}")
 
     # Update state
     state.constraints_violated = [v.message for v in violations]
@@ -673,6 +863,22 @@ async def constraint_guard(state: GraphState) -> GraphState:
     # Add UI event if violations found
     if violations:
         state.ui_events.append("CONSTRAINT_VIOLATED")
+
+    # Determine routing decision for logging
+    unfixable_categories = {"route", "specialist"}
+    is_unfixable = any(
+        v.code in ("SAME_CITY_ERROR", "UNKNOWN_DESTINATION_ERROR")
+        or v.category in unfixable_categories
+        for v in violations
+    )
+    route_destination = "synth" if is_unfixable or not has_blocking else "architect"
+
+    # STATE OUT logging - shows where state goes next and what changed
+    logger.info(
+        f"[GUARD] STATE OUT: tiles={len(state.tiles)} "
+        f"strategy={len(state.metadata.get('strategy_sections', []))} "
+        f"route={route_destination}"
+    )
 
     _debug_node_end(
         "guard",

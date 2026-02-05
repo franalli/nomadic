@@ -1148,7 +1148,15 @@ export function S2StrategyView({
   void _destinationCard;
   void _canExpandToItinerary;
 
-  const { strategy_sections = [], open_decisions = [] } = viewModel;
+  const { strategy_sections: rawStrategySections = [], open_decisions = [] } = viewModel;
+
+  // Filter out domain specialists with no content (e.g., skiing in tropical destinations)
+  // General/local_expert always show; domain specialists need content_added to be visible
+  const strategy_sections = rawStrategySections.filter((section) => {
+    const isGeneralType = ['general', 'local_expert'].includes(section.specialist_type || '');
+    if (isGeneralType) return true;
+    return section.content_added && section.content_added.length > 0;
+  });
 
   // Use viewModel's executed_strategy_topics if not provided via props
   const resolvedExecutedTopics = executedTopics ?? viewModel.executed_strategy_topics ?? [];
@@ -1294,7 +1302,7 @@ export function S2StrategyView({
   }
 
   return (
-    <div className={cn('flex flex-col', useMagazineStyle ? 'gap-2' : 'p-4 space-y-4')}>
+    <div className={cn('flex flex-col', useMagazineStyle ? 'gap-2' : 'p-[clamp(8px,1vw,16px)] space-y-[clamp(8px,1vw,16px)]')}>
       {useMagazineStyle ? (
         <>
           {/* Collapse All button (shown when 2+ accordion cards are expanded) */}

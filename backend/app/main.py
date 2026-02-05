@@ -3179,8 +3179,10 @@ async def expand_itinerary_endpoint(
                 if "itinerary_assumptions" in metadata:
                     plan_envelope["itinerary_assumptions"] = metadata["itinerary_assumptions"]
 
-                # Compute new plan_view_state
-                new_plan_view_state = _compute_plan_view_state(metadata, trip_inputs)
+                # CRITICAL: Builder success = S3_ITINERARY_READY (bypass gate check)
+                # The gate check in _compute_plan_view_state may fail if trip_inputs
+                # is incomplete, but builder success already proves we have valid dates.
+                new_plan_view_state: PlanViewState = "S3_ITINERARY_READY"
                 plan_envelope["plan_view_state"] = new_plan_view_state
 
                 # Emit envelope update

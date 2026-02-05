@@ -62,12 +62,9 @@ export function TripSummaryPills({
   return (
     <div
       className={cn(
-        'flex items-center gap-1.5 overflow-x-auto no-scrollbar',
-        // Premium scroll: snap + fade mask on right edge
-        'snap-x snap-mandatory',
-        '[mask-image:linear-gradient(to_right,black_85%,transparent_100%)]',
+        'flex items-center gap-1.5 flex-wrap',
         // Prevent pills from shrinking
-        '[&>*]:shrink-0 [&>*]:snap-start'
+        '[&>*]:shrink-0'
       )}
     >
       <CoreChip
@@ -79,6 +76,7 @@ export function TripSummaryPills({
         onClick={() => onOpenSheet('destination')}
         disabled={disabled}
         variant={variant}
+        className={variant === 'onImage' ? 'text-white font-semibold' : undefined}
       />
 
       {showOrigin && (
@@ -91,6 +89,7 @@ export function TripSummaryPills({
           onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('origin')}
           disabled={disabled || readOnlyExceptDestination}
           variant={variant}
+          className={variant === 'onImage' ? 'text-zinc-300 font-normal' : 'text-zinc-400 dark:text-zinc-500 font-normal'}
         />
       )}
 
@@ -103,6 +102,7 @@ export function TripSummaryPills({
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('dates')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
+        className={variant === 'onImage' ? 'text-white font-semibold' : undefined}
       />
 
       <CoreChip
@@ -114,6 +114,7 @@ export function TripSummaryPills({
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('travelers')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
+        className={variant === 'onImage' ? 'text-zinc-300 font-normal' : 'text-zinc-400 dark:text-zinc-500 font-normal'}
       />
 
       <CoreChip
@@ -125,10 +126,8 @@ export function TripSummaryPills({
         onClick={readOnlyExceptDestination ? undefined : () => onOpenSheet('budget')}
         disabled={disabled || readOnlyExceptDestination}
         variant={variant}
+        className={variant === 'onImage' ? 'text-zinc-400 font-normal italic' : 'text-zinc-500 dark:text-zinc-600 font-normal italic'}
       />
-
-      {/* Spacer to prevent last pill from being cut off by fade */}
-      <div className="w-4 shrink-0" aria-hidden="true" />
     </div>
   );
 }

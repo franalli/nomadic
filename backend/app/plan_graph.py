@@ -676,17 +676,32 @@ def route_after_guard(state: GraphState) -> Literal["architect", "synthesizer"]:
     retry_count = state.guard_retry_count
     violations = state.metadata.get("constraint_violations", [])
 
-    # 1. ROUTE ERROR SHORT-CIRCUIT
-    # Route errors are unfixable by Architect - skip auto-fix loop.
-    # Rollback already happened in constraint_guard node.
-    is_route_error = any(v.get("category") == "route" for v in violations)
-    if is_route_error:
-        logger.debug("Route error detected - skipping auto-fix, going to Synthesizer")
+    # 1. UNFIXABLE CONSTRAINT SHORT-CIRCUIT
+    # Route and specialist errors are unfixable by Architect - skip auto-fix loop.
+    # - Route: Rome->Rome, invalid destination (rollback already happened in constraint_guard)
+    # - Specialist: DIVING_SURFACE_INTERVAL, altitude (Architect can't reschedule)
+    unfixable_categories = {"route", "specialist"}
+    is_unfixable = any(v.get("category") in unfixable_categories for v in violations)
+
+    # Determine destination for logging
+    if is_unfixable:
+        destination = "synthesizer"
+    elif has_blocking and retry_count < 1:
+        destination = "architect"
+    else:
+        destination = "synthesizer"
+
+    # Route decision logging - shows exactly what routing decision was made and why
+    logger.info(
+        f"[ROUTE] after_guard: blocking={has_blocking} unfixable={is_unfixable} "
+        f"retry={retry_count} → {destination}"
+    )
+
+    if is_unfixable:
         return "synthesizer"
 
     # 2. OPTIMIZATION AUTO-FIX (Budget/Schedule - Safe to retry)
     if has_blocking and retry_count < 1:
-        logger.debug(f"Auto-fix loop triggered: routing back to Architect (retry {retry_count})")
         return "architect"
 
     return "synthesizer"
@@ -1274,21 +1289,30 @@ def _format_result(
 
     # ==========================================================================
     # BLOCKING VIOLATION CHECK
-    # When there's a blocking constraint violation (e.g., SAME_CITY_ERROR),
-    # don't show strategy sections or tiles - return to S0_BOOTSTRAP state.
-    # The error message from synthesizer tells user what went wrong.
+    # Route errors (SAME_CITY_ERROR, invalid destination) → wipe state, S0_BOOTSTRAP
+    # Specialist violations (DIVING_SURFACE_INTERVAL) → preserve state, explain constraint
     # ==========================================================================
     has_blocking_violations = state.metadata.get("has_blocking_violations", False)
     if has_blocking_violations:
-        logger.warning("[_format_result] Blocking violations detected - clearing tiles/sections")
-        # Clear tiles and strategy sections - user needs to fix the error first
-        flattened_tiles = {}
-        plan_view_state = "S0_BOOTSTRAP"
-        # Clear strategy sections from metadata so they don't persist
-        state.metadata["strategy_sections"] = []
-        state.metadata["executed_strategy_topics"] = []
-        # Clear tiles so they don't persist in session
-        state.tiles = {}
+        violations = state.metadata.get("constraint_violations", [])
+        is_route_error = any(v.get("category") == "route" for v in violations)
+
+        if is_route_error:
+            # Route errors are catastrophic - user gave invalid destination
+            # Wipe state and return to S0_BOOTSTRAP
+            logger.warning("[_format_result] Route error - clearing tiles/sections")
+            flattened_tiles = {}
+            plan_view_state = "S0_BOOTSTRAP"
+            state.metadata["strategy_sections"] = []
+            state.metadata["executed_strategy_topics"] = []
+            state.tiles = {}
+        else:
+            # Specialist violations (diving buffer, altitude, etc.) - preserve state
+            # User can still see their plan, Synthesizer explains the constraint
+            logger.info("[_format_result] Specialist violation - preserving tiles/sections")
+            flattened_tiles = _flatten_tiles_to_id_map(state.tiles)
+            plan_view_state = _compute_plan_view_state(state)
+            # Don't clear strategy_sections - keep them for the response
     else:
         # Normal path - flatten tiles for frontend
         flattened_tiles = _flatten_tiles_to_id_map(state.tiles)
@@ -1780,14 +1804,18 @@ def _format_result(
     # CRITICAL: Write accumulated sections back to state.metadata for persistence
     # This ensures sections are preserved across turns via session_state
     # Apply anchor rule: local_expert/general always at index 0
-    # BUT: Skip persistence when there are blocking violations (user needs to fix error first)
-    if not has_blocking_violations:
-        state.metadata["strategy_sections"] = _sort_sections_anchor_first(strategy_sections)
-        state.metadata["executed_strategy_topics"] = executed_topics
-    else:
-        # Keep sections/topics cleared (set earlier in blocking violations check)
+    # Only skip persistence for ROUTE errors (catastrophic), preserve for specialist violations
+    violations = state.metadata.get("constraint_violations", [])
+    is_route_error = any(v.get("category") == "route" for v in violations)
+
+    if has_blocking_violations and is_route_error:
+        # Route errors - clear sections (user needs to fix destination)
         strategy_sections = []
         executed_topics = []
+    else:
+        # Normal path OR specialist violations - persist sections
+        state.metadata["strategy_sections"] = _sort_sections_anchor_first(strategy_sections)
+        state.metadata["executed_strategy_topics"] = executed_topics
 
     # CRITICAL: Capture session_state AFTER metadata is updated (not before!)
     # This ensures strategy_sections are persisted for the next turn
@@ -1824,6 +1852,9 @@ def _format_result(
         "executed_strategy_topics": executed_topics,
         # Origin update flag for frontend to trigger flight fetch
         "origin_just_set": state.metadata.get("origin_just_set", False),
+        # Constraint validation receipts for Trip DNA bar badges
+        "constraints_validated": state.metadata.get("constraints_validated", []),
+        "constraint_violations": state.metadata.get("constraint_violations", []),
     }
 
     # DEBUG: Log origin_just_set for troubleshooting

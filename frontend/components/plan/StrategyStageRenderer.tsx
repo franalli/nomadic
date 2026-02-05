@@ -26,8 +26,8 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { Shield } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { AlertTriangle, CheckCircle, Shield } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
 
@@ -58,6 +58,24 @@ import {
 } from '@/types/plan-envelope';
 import type { SheetType } from '@/types/sheets';
 import type { Tile } from '@/types/tile';
+
+// =============================================================================
+// Stable Empty Arrays (prevent infinite re-render loops with Zustand selectors)
+// =============================================================================
+const EMPTY_CONSTRAINTS_VALIDATED: Array<{
+  constraint_id: string;
+  rule: string;
+  status: 'satisfied';
+  specialist: string;
+  label: string;
+}> = [];
+const EMPTY_CONSTRAINT_VIOLATIONS: Array<{
+  code: string;
+  message: string;
+  severity: string;
+  category: string;
+  rule?: string;
+}> = [];
 
 // =============================================================================
 // Data Density Computation (Grand Unification)
@@ -280,6 +298,24 @@ export function StrategyStageRenderer({
   const storeTiles = useDocumentStore((s) => s.document?.tiles);
   const effectiveTiles = storeTiles ?? tiles;
 
+  // FIX: Use content-based selector for day_cards to prevent spurious re-renders
+  // useShallow doesn't help because mergeEnvelope creates new DayCard objects
+  // Instead, we extract a stable "fingerprint" (count + first/last block IDs) that only changes when content changes
+  const dayCardsFingerprint = useDocumentStore((s) => {
+    const cards = s.document?.day_cards;
+    if (!cards || cards.length === 0) return null;
+    // Fingerprint: count + IDs of blocks with coordinates (the ones that affect POIs)
+    const blockIds = cards
+      .flatMap(c => c.blocks || [])
+      .filter(b => b.coordinates)
+      .map(b => b.id)
+      .join(',');
+    return `${cards.length}:${blockIds}`;
+  });
+  const storeDayCards = useDocumentStore((s) => s.document?.day_cards);
+  const effectiveDayCards = storeDayCards ?? viewModel.day_cards;
+
+
   // Heart preference system for SelectionsBar
   const preferredTileIds = useDocumentStore((s) => s.preferredTileIds);
   const toggleTilePreference = useDocumentStore((s) => s.toggleTilePreference);
@@ -287,6 +323,21 @@ export function StrategyStageRenderer({
   // Regeneration state from document store (managed by usePreferenceAutoRegen)
   const isRegenUpdating = useDocumentStore((s) => s.isRegenerating);
   const preferenceCount = preferredTileIds.size;
+
+  // Constraint validation state for Trip DNA bar badges
+  // NOTE: Using stable selectors - fallback arrays defined outside component to avoid infinite loops
+  const constraintsValidated = useDocumentStore((s) => s.document?.constraints_validated) ?? EMPTY_CONSTRAINTS_VALIDATED;
+  const constraintViolations = useDocumentStore((s) => s.document?.constraint_violations) ?? EMPTY_CONSTRAINT_VIOLATIONS;
+
+  // Memoized sets for efficient rule lookup
+  const validatedRules = useMemo(
+    () => new Set(constraintsValidated.map((v) => v.rule)),
+    [constraintsValidated]
+  );
+  const violatedRules = useMemo(
+    () => new Set(constraintViolations.filter((v) => v.rule).map((v) => v.rule!)),
+    [constraintViolations]
+  );
 
   // Unified regeneration state - combine plan regen (prop) and itinerary regen (store)
   // Shows overlay when EITHER is regenerating, locks UI during any regeneration
@@ -302,6 +353,8 @@ export function StrategyStageRenderer({
   // Timeline ref for auto-scroll
   const timelineSectionRef = useRef<HTMLDivElement>(null);
   const prevHasItineraryRef = useRef(false);
+  // Scroll freeze ref - captures position when expansion starts
+  const frozenScrollRef = useRef<number | null>(null);
 
   // Enforce content policy in development
   useEffect(() => {
@@ -312,17 +365,38 @@ export function StrategyStageRenderer({
   const hasItineraryContent: boolean = state === 'S3_ITINERARY_READY' || state === 'S3_EDITING' ||
     Boolean(viewModel.day_cards && viewModel.day_cards.length > 0);
 
-  // Auto-scroll to timeline when itinerary is generated
+  // Toggle for showing/hiding specialist cards in S3 (collapsed by default)
+  const [showConstraints, setShowConstraints] = useState(false);
+
+  // Debounced density state to prevent layout flash during transitions
+  // Updated via requestAnimationFrame to let browser paint current frame first
+  const [stableDensity, setStableDensity] = useState<'empty' | 'ghost' | 'bridge' | 'full'>('empty');
+
+  // Capture scroll position when expansion starts (before DOM changes)
   useEffect(() => {
-    // Only scroll when hasItineraryContent changes from false to true
+    if (isExpandingItinerary && !hasItineraryContent) {
+      frozenScrollRef.current = window.scrollY;
+    }
+  }, [isExpandingItinerary, hasItineraryContent]);
+
+  // Restore scroll position synchronously BEFORE paint when itinerary arrives
+  // useLayoutEffect runs after DOM mutations but before browser paint
+  useLayoutEffect(() => {
+    if (hasItineraryContent && !prevHasItineraryRef.current && frozenScrollRef.current !== null) {
+      window.scrollTo(0, frozenScrollRef.current);
+      frozenScrollRef.current = null; // Clear after restore
+    }
+  }, [hasItineraryContent]);
+
+  // Smooth scroll to timeline after content arrives (runs after paint)
+  useEffect(() => {
     if (hasItineraryContent && !prevHasItineraryRef.current) {
-      // Small delay to ensure DOM is rendered
       const timer = setTimeout(() => {
         timelineSectionRef.current?.scrollIntoView({
           behavior: 'smooth',
           block: 'start',
         });
-      }, 300);
+      }, 100); // Short delay - scroll freeze already handled
       return () => clearTimeout(timer);
     }
     prevHasItineraryRef.current = hasItineraryContent;
@@ -445,6 +519,15 @@ export function StrategyStageRenderer({
     };
   }, [state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs, generating]);
 
+  // Debounce density transitions with rAF to prevent layout flash
+  // Ensures browser paints current frame before switching layouts
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      setStableDensity(displayLogic.density);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [displayLogic.density]);
+
   // MEMO 2: Specialist data - changes when strategy_sections change
   // Pre-computed for ghost/bridge modes to avoid inline recalculation
   const specialistData = useMemo(() => {
@@ -471,12 +554,27 @@ export function StrategyStageRenderer({
     };
   }, [viewModel, effectiveTripInputs?.trip_duration, effectiveTripInputs?.end_date]);
 
+  // MEMO 3: POI extraction - isolated from planContent to prevent 50+ recalculations
+  // Hard stop: Only extract POIs when day_cards exist (no fallback to strategy sections)
+  // DEMO_POIS from destination-coords.ts handles pre-itinerary map via destination pin logic
+  const fullModePOIs = useMemo(() => {
+    // Hard stop — no day_cards, no POIs (DEMO_POIS handles pre-itinerary)
+    if (!dayCardsFingerprint) {
+      return [];
+    }
+    const destination = effectiveTripInputs?.destination ?? destinationCard?.title;
+    return extractPOIsFromDayCards(effectiveDayCards, specialistData.fullModeSections, destination);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dayCardsFingerprint is content-based proxy
+  }, [dayCardsFingerprint, effectiveTripInputs?.destination, destinationCard?.title]);
+
   // Plan content - heavy, needs persistence
   // Uses computeDataDensity for unified rendering logic
   // @see docs/ux_unified_architecture.md Section VII - Data Density Levels
   const planContent = useMemo(() => {
     // PERF: Use pre-computed display logic from sub-memo
-    const { density, isShowingMirrorLoader, tripDuration } = displayLogic;
+    const { isShowingMirrorLoader, tripDuration } = displayLogic;
+    // Use stableDensity for layout decisions (debounced via rAF to prevent flash)
+    const density = stableDensity;
 
     // MIRROR LOADER: Show skeleton when auto-fetching tiles after dates are set
     // @see docs/ux_unified_architecture.md Section VI - "Mirror Loader Strategy"
@@ -619,15 +717,8 @@ export function StrategyStageRenderer({
         <div className="flex flex-col lg:flex-row gap-6 p-4">
           {/* Left Column: Strategy Cards Only (no timeline) */}
           <div className="flex-1 min-w-0 space-y-4">
-            {/* READY TO PLAN BANNER - prompts user to set dates after exploration */}
-            {!displayLogic.hasDates && destinationCard?.title && sections.length > 0 && (
-              <ReadyToPlanBanner
-                destination={destinationCard.title}
-                questionsAsked={sections.length}
-                onStartPlanning={() => onOpenSheet?.('dates')}
-                className="mb-2"
-              />
-            )}
+            {/* NOTE: ReadyToPlanBanner removed from bridge mode - P1_ENRICHED means planning started
+                The banner belongs only in ghost mode (P0_MINIMAL exploration phase) */}
 
             {/* PLANNING INTELLIGENCE HEADER (SETUP mode only - before dates) */}
             {!displayLogic.hasDates && (
@@ -704,14 +795,8 @@ export function StrategyStageRenderer({
     // Map appears immediately when destination is known, not just after itinerary
     const showDesktopMap = isDesktop && !!destCoords;
 
-    // U5: Extract POIs from actual itinerary (day_cards) when available, else from strategy sections
-    // This ensures map pins match the generated itinerary, not the specialist's original suggestions
-    const fullModeDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
-    const fullModePOIs = extractPOIsFromDayCards(
-      viewModel.day_cards,
-      fullModeSections,
-      fullModeDestination
-    );
+    // U5: POIs for full mode map - pre-computed in MEMO 3 (fullModePOIs) to avoid recalculation
+    // See MEMO 3 above: extractPOIsFromDayCards is memoized with minimal dependencies
 
     // Destination pin for the map center
     const destinationMarker: import('@/components/map/InteractiveMap').MapItem[] = destCoords
@@ -748,21 +833,41 @@ export function StrategyStageRenderer({
             {/* ALWAYS show specialist cards + Trip DNA bar when feasible sections exist */}
             {fullModeSections.length > 0 && (
               <>
-                {/* Specialist cards - always visible (ABOVE) */}
-                <S2StrategyView
-                  key={`strategy-${destinationCard?.title}`}
-                  viewModel={filteredViewModel}
-                  destinationCard={destinationCard}
-                  onRefineAssumptions={onRefineAssumptions}
-                  canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
-                  pendingTopics={viewModel.pending_strategy_topics}
-                  executedTopics={viewModel.executed_strategy_topics}
-                  tiles={effectiveTiles}
-                  tripInputs={effectiveTripInputs}
-                  density={density}
-                  onOpenActivitySettings={onOpenActivitySettings}
-                />
-                {/* Trip DNA bar - U6: Shows ENGINE CONSTRAINTS only (thesis proof) */}
+                {/* Specialist cards - collapsible in S3 (itinerary ready) */}
+                {!hasItineraryContent ? (
+                  <S2StrategyView
+                    key={`strategy-${destinationCard?.title}`}
+                    viewModel={filteredViewModel}
+                    destinationCard={destinationCard}
+                    onRefineAssumptions={onRefineAssumptions}
+                    canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
+                    pendingTopics={viewModel.pending_strategy_topics}
+                    executedTopics={viewModel.executed_strategy_topics}
+                    tiles={effectiveTiles}
+                    tripInputs={effectiveTripInputs}
+                    density={density}
+                    onOpenActivitySettings={onOpenActivitySettings}
+                  />
+                ) : (
+                  <>
+                    {showConstraints && (
+                      <S2StrategyView
+                        key={`strategy-${destinationCard?.title}`}
+                        viewModel={filteredViewModel}
+                        destinationCard={destinationCard}
+                        onRefineAssumptions={onRefineAssumptions}
+                        canExpandToItinerary={viewModel.can_expand_to_itinerary ?? false}
+                        pendingTopics={viewModel.pending_strategy_topics}
+                        executedTopics={viewModel.executed_strategy_topics}
+                        tiles={effectiveTiles}
+                        tripInputs={effectiveTripInputs}
+                        density={density}
+                        onOpenActivitySettings={onOpenActivitySettings}
+                      />
+                    )}
+                  </>
+                )}
+                {/* Trip DNA bar - U6: Shows ENGINE CONSTRAINTS with validation state */}
                 {(() => {
                   // Filter: only niche specialists (diving, hiking, skiing), not local_expert/general
                   const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
@@ -772,29 +877,102 @@ export function StrategyStageRenderer({
 
                   if (engineConstraints.length === 0) return null;
 
-                  // Short label: label > reason (truncated) > rule (title-cased)
+                  // Short label: label > reason > rule (title-cased) - NO truncation
                   // Matches chat language ("24h No-Fly Buffer" not "No Fly 24h")
                   const getShortLabel = (c: { label?: string; rule?: string; reason?: string }) =>
                     c.label ||
-                    (c.reason && c.reason.length > 30 ? c.reason.slice(0, 27) + '…' : c.reason) ||
+                    c.reason ||
                     (c.rule?.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())) ||
                     'Constraint';
 
+                  // Three-state styling: violated > validated > unchecked (with priority coloring)
+                  const getPillStyle = (c: { rule?: string; type?: string; reason?: string }) => {
+                    const rule = c.rule;
+                    const isViolated = rule && violatedRules.has(rule);
+                    const isValidated = rule && validatedRules.has(rule);
+
+                    if (isViolated) {
+                      return {
+                        // Amber with ring for violated - draws attention without anxiety
+                        pillClass: 'bg-amber-50 dark:bg-amber-900/30 border-amber-400 dark:border-amber-500/60 ring-2 ring-amber-400/60',
+                        iconClass: 'text-amber-600 dark:text-amber-400',
+                        Icon: AlertTriangle,
+                      };
+                    }
+                    if (isValidated) {
+                      return {
+                        // Emerald for validated - constraint satisfied
+                        pillClass: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-300 dark:border-emerald-600/50',
+                        iconClass: 'text-emerald-600 dark:text-emerald-400',
+                        Icon: CheckCircle,
+                      };
+                    }
+                    // Unchecked: color by priority (blocking > strong > soft)
+                    // Check type, rule, AND reason for keyword matching
+                    const t = `${c.type || ''} ${c.rule || ''} ${c.reason || ''}`.toLowerCase();
+                    // Blocking: safety constraints, flight buffers, altitude restrictions
+                    // Blocking: safety constraints, flight buffers, altitude restrictions, scuba rules
+                    const blocking = ['no_fly', 'no-fly', 'nofly', 'safety', 'altitude', 'buffer', '24h', '24 hour', 'diving', 'dive', 'scuba', 'decompression', 'fly', 'flight'];
+                    // Strong: timing, equipment requirements
+                    const strong = ['morning', 'footwear', 'gear', 'timing', 'equipment', 'certification'];
+
+                    if (blocking.some(k => t.includes(k))) {
+                      return {
+                        pillClass: 'border-red-500/30 bg-red-500/10 text-red-300 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-300',
+                        iconClass: '', // Inherit from pill
+                        Icon: Shield,
+                      };
+                    }
+                    if (strong.some(k => t.includes(k))) {
+                      return {
+                        pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300',
+                        iconClass: '', // Inherit from pill
+                        Icon: Shield,
+                      };
+                    }
+                    // Default soft priority
+                    return {
+                      pillClass: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-400 dark:border-zinc-500/40 dark:bg-zinc-500/15 dark:text-zinc-400',
+                      iconClass: '', // Inherit from pill
+                      Icon: Shield,
+                    };
+                  };
+
                   return (
-                    <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700">
+                    <div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
                       <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
-                      <div className="flex gap-2 flex-wrap overflow-x-auto no-scrollbar">
-                        {engineConstraints.map((c, i) => (
-                          <span
-                            key={`${c.rule}-${i}`}
-                            title={c.reason || c.rule?.replace(/_/g, ' ')}
-                            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-amber-300 dark:border-amber-600/50 text-xs font-medium whitespace-nowrap"
-                          >
-                            <Shield className="w-3 h-3 text-amber-600 dark:text-amber-400 shrink-0" />
-                            <span className="truncate max-w-[180px] sm:max-w-[240px] md:max-w-none">{getShortLabel(c)}</span>
-                          </span>
-                        ))}
+                      <div className="relative flex-1 min-w-0">
+                        <div className="flex gap-2 overflow-x-auto no-scrollbar pr-8">
+                          {engineConstraints.map((c, i) => {
+                            const { pillClass, iconClass, Icon } = getPillStyle(c);
+                            return (
+                              <span
+                                key={`${c.rule}-${i}`}
+                                title={c.reason || c.rule?.replace(/_/g, ' ')}
+                                className={cn(
+                                  'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap',
+                                  pillClass
+                                )}
+                              >
+                                <Icon className={cn('w-3 h-3 shrink-0', iconClass)} />
+                                <span>{getShortLabel(c)}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {/* Right fade gradient */}
+                        <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-zinc-100 dark:from-zinc-950 to-transparent pointer-events-none" />
                       </div>
+                      {/* Toggle for specialist cards - inside Trip DNA bar, right-aligned */}
+                      {hasItineraryContent && (
+                        <button
+                          type="button"
+                          onClick={() => setShowConstraints(!showConstraints)}
+                          className="text-xs text-zinc-500 hover:text-zinc-400 underline cursor-pointer shrink-0 ml-2"
+                        >
+                          {showConstraints ? 'Hide' : 'Details'}
+                        </button>
+                      )}
                     </div>
                   );
                 })()}
@@ -885,50 +1063,56 @@ export function StrategyStageRenderer({
             </section>
           )}
 
-          {/* SECTION 3: TIMELINE - fades in after generation */}
-          <AnimatePresence>
-            {hasItineraryContent && (
-              <motion.section
-                key="timeline-section"
-                ref={timelineSectionRef}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: REVEAL_TIMING.TIMELINE_FADE / 1000 }}
-                id="timeline-section"
-                className="px-4 py-4"
-              >
-                {/* Relative wrapper for regeneration overlay */}
-                <div className="relative">
-                  <TimelineThread
-                    dayCards={viewModel.day_cards ?? []}
-                    variant={computeTimelineVariant(state)}
-                    useRichBlocks={true}
-                    savedTileIds={savedTileIds}
-                    onOpenStaysSettings={onOpenStaysSettings}
-                    onOpenFlightsSettings={onOpenFlightsSettings}
-                  />
+          {/* SECTION 3: TIMELINE - skeleton reserves space, then swaps to real content */}
+          {/* Single conditional ensures skeleton and timeline occupy same DOM position */}
+          {hasItineraryContent ? (
+            <motion.section
+              key="timeline-section"
+              ref={timelineSectionRef}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: REVEAL_TIMING.TIMELINE_FADE / 1000 }}
+              id="timeline-section"
+              className="px-4 py-4"
+            >
+              {/* Relative wrapper for regeneration overlay */}
+              <div className="relative">
+                <TimelineThread
+                  dayCards={viewModel.day_cards ?? []}
+                  variant={computeTimelineVariant(state)}
+                  useRichBlocks={true}
+                  savedTileIds={savedTileIds}
+                  onOpenStaysSettings={onOpenStaysSettings}
+                  onOpenFlightsSettings={onOpenFlightsSettings}
+                />
 
-                  {/* Regeneration overlay - dims timeline during update */}
-                  {isRegenUpdating && (
-                    <div className="absolute inset-0 bg-black/50 z-10 flex items-center justify-center rounded-lg">
-                      <div className="flex items-center gap-2 text-white bg-zinc-900/80 px-4 py-2 rounded-full">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        <span className="text-sm">Updating with {preferenceCount} preferences...</span>
-                      </div>
+                {/* Regeneration overlay - dims timeline during update */}
+                {isRegenUpdating && (
+                  <div className="absolute inset-0 bg-black/50 z-10 flex items-center justify-center rounded-lg">
+                    <div className="flex items-center gap-2 text-white bg-zinc-900/80 px-4 py-2 rounded-full">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm">Updating with {preferenceCount} preferences...</span>
                     </div>
-                  )}
+                  </div>
+                )}
+              </div>
+            </motion.section>
+          ) : isExpandingItinerary ? (
+            /* Skeleton reserves ~300px BEFORE day_cards arrive - prevents layout jump */
+            <section ref={timelineSectionRef} className="px-4 py-6 space-y-4 animate-pulse">
+              {[1, 2].map(i => (
+                <div key={i} className="space-y-3">
+                  <div className="h-6 w-24 bg-zinc-800 rounded" />
+                  <div className="h-20 bg-zinc-800/40 rounded-lg" />
+                  <div className="h-20 bg-zinc-800/40 rounded-lg" />
                 </div>
-              </motion.section>
-            )}
-          </AnimatePresence>
-
-          {/* LOADING STATE: Show during itinerary generation */}
-          {isExpandingItinerary && !hasItineraryContent && (
-            <section className="flex flex-col items-center justify-center py-16 gap-3">
-              <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
-              <span className="text-sm text-muted-foreground">Building your itinerary...</span>
+              ))}
+              <div className="flex items-center justify-center gap-2 pt-4">
+                <Loader2 className="w-4 h-4 animate-spin text-emerald-500" />
+                <span className="text-sm text-muted-foreground">Building your itinerary...</span>
+              </div>
             </section>
-          )}
+          ) : null}
         </div>
 
         {/* RIGHT COLUMN: Sticky full-height map - shows when destination is set (Desktop only) */}
@@ -963,6 +1147,7 @@ export function StrategyStageRenderer({
     // PERF: Sub-memos reduce recomputation - density/specialist data pre-computed
     displayLogic,
     specialistData,
+    stableDensity, // Debounced density for layout decisions (prevents flash)
     // State & view model
     state,
     viewModel,
@@ -981,6 +1166,7 @@ export function StrategyStageRenderer({
     // Remaining state dependencies
     hasEverHadPlan,
     effectiveTiles,
+    fullModePOIs, // Pre-computed POIs from MEMO 3 (replaces inline extractPOIsFromDayCards)
     isDesktop,
     effectiveTripInputs,
     isRegenerating,
@@ -991,6 +1177,7 @@ export function StrategyStageRenderer({
     savedTileIds,
     effectiveMode,
     hasItineraryContent,
+    showConstraints,
     preferredTileIds,
     // NOTE: onOpenActivitySettings, onOpenFlightsSettings, onOpenStaysSettings intentionally
     // excluded - they're inline arrows in parent, adding them defeats memoization

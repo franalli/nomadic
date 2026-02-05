@@ -55,17 +55,15 @@ export function generateTileHeader(
 
   const categoryLabels = {
     stays: {
-      title: hasSpecialists
-        ? `Suggested Accommodations for your ${phrase} adventure`
-        : 'Suggested Accommodations',
+      title: 'Stays',
       subtitle: hasSpecialists
-        ? `Based on your ${phrase} activities`
+        ? `Matching ${phrase} constraints`
         : 'Based on your trip preferences',
     },
     flights: {
-      title: 'Flight Options',
+      title: 'Flights',
       subtitle: hasSpecialists
-        ? `Timed for your ${phrase} schedule`
+        ? `Matching ${phrase} constraints`
         : 'Based on your travel dates',
     },
     activities: {

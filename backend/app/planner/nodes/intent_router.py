@@ -307,16 +307,17 @@ DATE_INDICATORS = [
 ]
 
 ACTIVITY_INDICATORS = [
-    r"\b(diving|dive|scuba|snorkel)\b",
-    r"\b(hiking|trek|climb|trail)\b",
-    r"\b(skiing|snowboard|ski)\b",
+    r"\b(diving|dive|scuba|snorkel|divng|diveing|snorkle|scubba)\b",
+    r"\b(hiking|trek|climb|trail|hikeing|hikng|trekk|treking)\b",
+    r"\b(skiing|snowboard|ski|skii|skiig|skking|sking|snowbord)\b",
 ]
 
 # Specialist detection patterns (map activity words to specialist type)
+# Include common typos for demo safety
 SPECIALIST_PATTERNS = {
-    "diving": [r"\b(diving|dive|scuba|snorkel|underwater)\b"],
-    "hiking": [r"\b(hiking|hike|trek|trekking|climb|trail|mountain)\b"],
-    "skiing": [r"\b(skiing|ski|snowboard|snow|slopes)\b"],
+    "diving": [r"\b(diving|dive|scuba|snorkel|underwater|divng|diveing|snorkle|scubba)\b"],
+    "hiking": [r"\b(hiking|hike|trek|trekking|climb|trail|mountain|hikeing|hikng|trekk|treking)\b"],
+    "skiing": [r"\b(skiing|ski|snowboard|snow|slopes|skii|skiig|skking|sking|snowbord)\b"],
     "cycling": [r"\b(cycling|bike|bicycle|biking)\b"],
     "boating": [r"\b(boating|boat|sailing|yacht|cruise)\b"],
 }
@@ -743,6 +744,12 @@ SPECIALIST_KEYWORDS = {
         "night dive",
         "cave dive",
         "cenote",
+        # Common typos (demo safety)
+        "divng",
+        "diveing",
+        "snorkle",
+        "snorkeling",
+        "scubba",
     ],
     "hiking": [
         "hike",
@@ -762,6 +769,11 @@ SPECIALIST_KEYWORDS = {
         "alpine",
         "elevation",
         "altitude",
+        # Common typos (demo safety)
+        "hikeing",
+        "hikng",
+        "trekk",
+        "treking",
     ],
     "skiing": [
         "ski",
@@ -780,6 +792,12 @@ SPECIALIST_KEYWORDS = {
         "mogul",
         "backcountry",
         "off-piste",
+        # Common typos (demo safety)
+        "skii",
+        "skiig",
+        "skking",
+        "sking",
+        "snowbord",
     ],
     "cycling": [
         "cycle",
@@ -1833,11 +1851,14 @@ def _populate_trip_plan_from_router_output(
 
     # INVERSE: Calculate end_date if we have start_date + duration but no end_date
     # Handles cases like "a week in March" where LLM extracts start + duration
-    if router_output.start_date and router_output.duration_days and not router_output.end_date:
+    # FIX: Use accumulated start_date from previous turns, not just this-turn's extraction
+    # This allows "make it 4 days" to work when start_date was set in a prior message
+    start_date_to_use = router_output.start_date or state.trip_plan.start_date
+    if start_date_to_use and router_output.duration_days and not router_output.end_date:
         try:
             from datetime import timedelta
 
-            start = datetime.strptime(router_output.start_date, "%Y-%m-%d")
+            start = datetime.strptime(start_date_to_use, "%Y-%m-%d")
             end = start + timedelta(days=router_output.duration_days - 1)  # Inclusive
             state.trip_plan.end_date = end.strftime("%Y-%m-%d")
             state.trip_plan.duration_days = router_output.duration_days
@@ -2145,6 +2166,10 @@ async def intent_router(state: GraphState) -> GraphState:
         # that contains extractable data, regardless of planning intent.
         # This ensures dates mentioned during exploration are NOT lost.
         # =====================================================================
+        # Capture old dates BEFORE extraction so we can detect date changes
+        old_start_date = state.trip_plan.start_date
+        old_end_date = state.trip_plan.end_date
+
         text_lower = user_text.lower()
         has_date_in_message = any(re.search(p, text_lower) for p in DATE_INDICATORS)
 
@@ -2352,6 +2377,12 @@ async def intent_router(state: GraphState) -> GraphState:
             # route to the specialist instead of soft_transition
             plan_has_dates = state.trip_plan.start_date and state.trip_plan.end_date
 
+            # Detect if dates CHANGED (not just exist) - compare to pre-extraction values
+            dates_changed = (
+                state.trip_plan.start_date != old_start_date
+                or state.trip_plan.end_date != old_end_date
+            ) and plan_has_dates  # Only if we have valid dates now
+
             # Get existing specialists from strategy sections
             existing_specialists = [
                 s.get("specialist_type")
@@ -2367,6 +2398,11 @@ async def intent_router(state: GraphState) -> GraphState:
             # 2. destination + activities (e.g., "bali diving")
             # Input parameters have highest priority - don't ask exploration questions
             if plan_has_dates or new_specialists:
+                # CRITICAL FIX: Persist destination to state so route_after_router
+                # can dispatch specialists (it checks has_destination before routing)
+                if destination and not state.trip_plan.destination:
+                    state.trip_plan.destination = destination
+
                 if plan_has_dates:
                     log(
                         "ROUTER",
@@ -2384,7 +2420,46 @@ async def intent_router(state: GraphState) -> GraphState:
                     s.get("specialist_type") for s in state.metadata.get("strategy_sections", [])
                 ]
 
-                if has_local_expert and new_specialists:
+                # DATE CHANGE: Re-queue existing specialists to regenerate content
+                # for the new date range. This ensures specialists recalculate max_activities.
+                if dates_changed and existing_specialists:
+                    log(
+                        "ROUTER",
+                        f"[SOFT_TRANSITION] Dates changed, re-queuing: {existing_specialists}",
+                    )
+
+                    # Merge new specialists with existing (preserving order, deduping)
+                    all_specialists = list(dict.fromkeys(new_specialists + existing_specialists))
+
+                    # Clear stale content from re-queued specialists
+                    # (strategy_sections is stored in metadata, not trip_plan)
+                    current_sections = state.metadata.get("strategy_sections", [])
+                    state.metadata["strategy_sections"] = [
+                        s
+                        for s in current_sections
+                        if s.get("specialist_type") not in existing_specialists
+                    ]
+
+                    # Clear constraint hash so guard re-validates
+                    state.metadata["constraint_hash"] = None
+
+                    # CRITICAL: Clear in-memory specialist cache so LLM re-runs with new dates
+                    # Without this, specialists return stale 8-day content for 4-day trips
+                    state.metadata.pop("parallel_llm_results", None)
+
+                    # CRITICAL: Clear fast-path flags so route_after_router
+                    # picks up active_specialist instead of jumping to logistics
+                    state.metadata.pop("origin_only_logistics", None)
+                    state.metadata.pop("skip_specialists", None)
+
+                    # Queue all specialists (existing + new)
+                    state.pending_specialists = (
+                        all_specialists[1:] if len(all_specialists) > 1 else []
+                    )
+                    state.active_specialist = all_specialists[0]
+                    state.active_agent_id = all_specialists[0]
+
+                elif has_local_expert and new_specialists:
                     # Local expert already ran, just queue the new niche specialists
                     state.pending_specialists = (
                         new_specialists[1:] if len(new_specialists) > 1 else []

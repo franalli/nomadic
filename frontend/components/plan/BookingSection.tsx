@@ -27,7 +27,8 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { MiniCardSkeleton } from '@/components/tiles/MiniCard';
 import { TileDetailsModal } from '@/components/tiles/TileDetailsModal';
-import { TileFilterBar, type TileFilters } from '@/components/tiles/TileFilterBar';
+// TileFilterBar hidden for demo - re-enable post-launch
+import { type TileFilters } from '@/components/tiles/TileFilterBar';
 import { TileSectionHeader } from '@/components/tiles/TileSectionHeader';
 import { chipActive, chipBase, chipInactive } from '@/lib/chipStyles';
 import { getActiveSpecialists } from '@/lib/specialist-utils';
@@ -262,22 +263,22 @@ export function BookingSection({
     return result;
   }, [filters]);
 
-  // Get max price for current category (for filter presets)
-  const maxPriceInCategory = useMemo(() => {
-    const categoryTiles = activeCategory === 'stays' ? stayTiles
-      : activeCategory === 'flights' ? flightTiles
-      : activityTiles;
-    const prices = categoryTiles
-      .map((t) => t.total_inclusive ?? t.price_estimate)
-      .filter((p): p is number => p != null);
-    return prices.length > 0 ? Math.max(...prices) : undefined;
-  }, [activeCategory, stayTiles, flightTiles, activityTiles]);
+  // Get max price for current category (for filter presets) - hidden for demo
+  // const maxPriceInCategory = useMemo(() => {
+  //   const categoryTiles = activeCategory === 'stays' ? stayTiles
+  //     : activeCategory === 'flights' ? flightTiles
+  //     : activityTiles;
+  //   const prices = categoryTiles
+  //     .map((t) => t.total_inclusive ?? t.price_estimate)
+  //     .filter((p): p is number => p != null);
+  //   return prices.length > 0 ? Math.max(...prices) : undefined;
+  // }, [activeCategory, stayTiles, flightTiles, activityTiles]);
 
-  // Get currency from first tile with price
-  const currency = useMemo(() => {
-    const tile = tileArray.find((t) => t.currency);
-    return tile?.currency === 'EUR' ? '€' : tile?.currency === 'GBP' ? '£' : '$';
-  }, [tileArray]);
+  // Get currency from first tile with price - hidden for demo
+  // const currency = useMemo(() => {
+  //   const tile = tileArray.find((t) => t.currency);
+  //   return tile?.currency === 'EUR' ? '€' : tile?.currency === 'GBP' ? '£' : '$';
+  // }, [tileArray]);
 
   // Get filtered tiles for active category (max 6 for S2 preview)
   const getFilteredCategoryTiles = useCallback((category: TileCategory): Tile[] => {
@@ -409,57 +410,43 @@ export function BookingSection({
             )}
           </div>
 
-          {/* Category chips with counts - U4 FIX: Only show tabs with items */}
-          <div className="flex gap-2 px-4 py-3">
-            {(['stays', 'flights', 'activities'] as const)
-              .filter((category) => categoryCounts[category] > 0)
-              .map((category) => {
-                const count = categoryCounts[category];
-                const isActive = activeCategory === category;
+          {/* Category chips + expand/collapse - consolidated row */}
+          <div className="flex items-center justify-between px-4 py-3">
+            <div className="flex gap-2">
+              {(['stays', 'flights', 'activities'] as const)
+                .filter((category) => categoryCounts[category] > 0)
+                .map((category) => {
+                  const count = categoryCounts[category];
+                  const isActive = activeCategory === category;
 
-                return (
-                  <button
-                    key={category}
-                    onClick={() => setActiveCategory(category)}
-                    className={cn(
-                      chipBase,
-                      'font-medium',
-                      isActive ? chipActive : chipInactive
-                    )}
-                  >
-                    {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
-                  </button>
-                );
-              })}
-          </div>
-
-          {/* Filter bar */}
-          <div className="px-4 pb-2">
-            <TileFilterBar
-              filters={filters}
-              onFiltersChange={setFilters}
-              currency={currency}
-              maxPriceInSet={maxPriceInCategory}
-            />
-          </div>
-
-          {/* Expand/collapse toggle */}
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="flex w-full items-center justify-between px-4 py-2 text-sm transition-colors hover:bg-muted"
-          >
-            <span className="text-muted-foreground">
-              {isExpanded ? 'Hide' : 'Show'} {filteredCount} {activeCategory}
-              {filteredCount !== categoryTotalCount && (
-                <span className="text-muted-foreground/70"> (of {categoryTotalCount})</span>
+                  return (
+                    <button
+                      key={category}
+                      onClick={() => setActiveCategory(category)}
+                      className={cn(
+                        chipBase,
+                        'font-medium',
+                        isActive ? chipActive : chipInactive
+                      )}
+                    >
+                      {category.charAt(0).toUpperCase() + category.slice(1)} ({count})
+                    </button>
+                  );
+                })}
+            </div>
+            {/* Expand/collapse toggle - inline */}
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <span>{isExpanded ? 'Hide' : 'Show'}</span>
+              {isExpanded ? (
+                <ChevronUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
               )}
-            </span>
-            {isExpanded ? (
-              <ChevronUp className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-            )}
-          </button>
+            </button>
+          </div>
 
           {/* Tile cards grid - mode-aware rendering */}
           {isExpanded && (

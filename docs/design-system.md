@@ -464,29 +464,49 @@ export function getSpecialistBorderColor(specialistType?: string): string {
 
 #### Trip DNA Bar
 
-The Trip DNA bar shows a compact summary of activated specialists. It appears BELOW the specialist accordion cards and ABOVE the itinerary.
+The Trip DNA bar shows engine constraints from niche specialists (diving, hiking, skiing). It appears BELOW the specialist accordion cards and ABOVE the itinerary.
 
 **Layout Order (StrategyStageRenderer):**
-1. Specialist Analysis (collapsed accordion cards) - S2StrategyView
-2. Trip DNA bar (compact badges)
+1. Specialist Analysis (collapsed accordion cards, hidden in S3 by default)
+2. Trip DNA bar (constraint pills with priority coloring)
 3. Day-by-day Itinerary
+
+**Constraint Priority Colors:**
+| Priority | Keywords | Border | Background | Text |
+|----------|----------|--------|------------|------|
+| **Blocking** | `no_fly`, `safety`, `dive`, `scuba`, `flight`, `decompression` | `border-red-500/30` | `bg-red-500/10` | `text-red-300` |
+| **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment` | `border-amber-500/30` | `bg-amber-500/10` | `text-amber-300` |
+| **Soft** | Default (all others) | `border-zinc-500/30` | `bg-zinc-500/10` | `text-zinc-400` |
+
+**Three-State Validation Override:**
+- If constraint is **violated** → Red with AlertTriangle icon
+- If constraint is **validated** → Green with CheckCircle icon
+- Otherwise → Priority coloring above
 
 **Styling:**
 ```tsx
-<div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700">
-  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400">Trip DNA:</span>
-  <div className="flex gap-2 flex-wrap">
-    {/* Specialist badge pills */}
-    <button className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white dark:bg-zinc-800/40 border border-zinc-200 dark:border-zinc-700 hover:border-emerald-500 transition-colors text-xs">
-      {getSpecialistIcon(section.specialist_type)}
-      <span className="font-medium">{section.title}</span>
-      <span className="text-zinc-400">({section.constraints_applied?.length || 0})</span>
-    </button>
+<div className="flex items-center gap-2 my-4 mx-4 p-3 rounded-lg bg-zinc-100 dark:bg-zinc-950 border border-zinc-300 dark:border-zinc-700">
+  <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
+  <div className="relative flex-1 min-w-0">
+    <div className="flex gap-2 overflow-x-auto no-scrollbar pr-8">
+      {/* Constraint pills with priority coloring */}
+      <span className={cn(
+        "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border",
+        pillClass // Priority-based: red/amber/zinc
+      )}>
+        <Shield className="w-3 h-3 shrink-0" />
+        {constraintLabel}
+      </span>
+    </div>
+    {/* Right fade gradient */}
+    <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-zinc-100 dark:from-zinc-950 to-transparent pointer-events-none" />
   </div>
 </div>
 ```
 
-**Visibility:** Always visible when `strategy_sections.length > 0` (before AND after refresh).
+**Visibility:** Only shows when `engineConstraints.length > 0` (niche specialist constraints exist).
+
+**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (lines 870-980)
 
 ### Inline Constraint Badge Colors
 
@@ -1667,6 +1687,52 @@ The "Awaiting Input" terminal-style text reinforces the "Architect/AI" persona. 
 
 - Desktop: `frontend/components/plan/PlanHeader.tsx` (line ~348)
 - Mobile: `frontend/components/chat/ChatPanel.tsx` (line ~1160)
+
+---
+
+## 17.5. Hero Chip Bar ("Frosted Glass Strip")
+
+Trip summary chips displayed on the hero image need special treatment for readability against varying photo backgrounds.
+
+### Design Philosophy
+
+**Problem:** Semi-transparent chips on a photo create text competition with the image. Different photos have different light/dark areas, making chip readability inconsistent.
+
+**Solution:** A frosted glass strip behind the entire chip row creates consistent readability while maintaining the "postcard on desk" aesthetic.
+
+### Visual Specifications
+
+**Container:**
+```tsx
+<div className="backdrop-blur-md bg-black/30 rounded-xl px-3 py-2 flex items-center gap-2 flex-wrap">
+  <TripSummaryPills variant="onImage" ... />
+</div>
+```
+
+**Chip Hierarchy (onImage variant):**
+| Chip | Class | Visual Weight |
+|------|-------|---------------|
+| **Destination** | `text-white font-semibold` | Primary - pops |
+| **Dates** | `text-white font-semibold` | Primary - pops |
+| **Origin** | `text-zinc-300 font-normal` | Secondary - recedes |
+| **Travelers** | `text-zinc-300 font-normal` | Secondary - recedes |
+| **Budget** | `text-zinc-400 font-normal italic` | Tertiary - most subtle |
+
+### Hero Subtitle Logic
+
+The subtitle under the destination title follows this priority:
+1. **Route** (when origin is set): "Rome → Bali" with ArrowRight icon
+2. **Hidden** (when no origin): Date is redundant with chip below
+
+```tsx
+const subtitle = origin ? `${origin} → ${title}` : null;
+```
+
+### Implementation Reference
+
+- Hero header: `frontend/components/plan/PlanHeader.tsx`
+- Chip components: `frontend/components/plan/TripSummaryPills.tsx`
+- CoreChip: `frontend/components/plan/CoreChip.tsx`
 
 ---
 

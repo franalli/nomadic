@@ -718,8 +718,18 @@ async def trip_architect(state: GraphState) -> GraphState:
         # Store violations for prompt injection, then clear the trigger
         state.metadata["current_violations_to_fix"] = violations_for_retry
         state.metadata["violations_for_retry"] = None
-        # Clear previous tiles so we can fetch new ones with corrections
-        state.tiles = {}
+
+        # PRESERVE TILES on guard retry - don't clear them!
+        # Clearing tiles wipes hotels/flights the user already saw.
+        # The Architect retry is for constraint fixes (budget/schedule), not tile regeneration.
+        # Tiles are only re-fetched if logistics determines they're needed.
+        # NOTE: route_after_guard now short-circuits unfixable violations (specialist, route)
+        # directly to Synthesizer, so this path only runs for fixable violations.
+        # state.tiles = {}  # REMOVED - preserve existing tiles
+
+        # CRITICAL: Reset logistics_attempted so route_after_architect sends us to logistics
+        # Without this, tiles stay empty and guard sees nothing to validate
+        state.metadata["logistics_attempted"] = False
 
     _debug_node_start(
         "architect",

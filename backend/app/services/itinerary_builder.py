@@ -648,8 +648,8 @@ class ItineraryBuilder:
             # Compute overview
             overview = self._compute_overview(days)
 
-            _debug(
-                f"[ItineraryBuilder] ✅ Success: generated {len(days)} day cards with "
+            _debug_itinerary(
+                f"✅ Success: generated {len(days)} day cards with "
                 f"{sum(len(d.blocks) for d in days)} total blocks"
             )
             return ItineraryResult(
@@ -717,6 +717,13 @@ class ItineraryBuilder:
 
         for section in strategy_sections:
             specialist_type = section.get("specialist_type", "general")
+
+            # Skip INFEASIBLE specialists - don't add skiing blocks to Bali itinerary
+            # Infeasible sections still have content_added (for UI display) but shouldn't
+            # contribute to the actual itinerary timeline
+            if section.get("feasibility_status") == "infeasible":
+                _debug_itinerary(f"⏭️ Phase 2: Skipping {specialist_type} (infeasible)")
+                continue
 
             # Skip general/local_expert for activity extraction
             # (they provide context, not bookable activities)
@@ -1305,6 +1312,12 @@ class ItineraryBuilder:
         periods = ["morning", "afternoon", "evening"]
         period_ptr = 0
 
+        # Safety net: Track specialist count per day to prevent activity cramming
+        # Max 1 activity per specialist per day (e.g., 1 dive + 1 hike per day is OK)
+        from collections import defaultdict
+
+        specialist_count_per_day: dict = defaultdict(lambda: defaultdict(int))
+
         max_iterations = 100  # Safety limit
         iteration = 0
 
@@ -1325,6 +1338,13 @@ class ItineraryBuilder:
                     # If we've cycled through all days and all are full, break
                     if not any(remaining.values()):
                         break
+                continue
+
+            # Safety net: Max 1 activity per specialist per day
+            # Skip if this specialist already has an activity on this day
+            if specialist_count_per_day[day_idx][current_specialist] >= 1:
+                # Move to next day for this specialist
+                day_ptr += 1
                 continue
 
             # Get next activity from current specialist
@@ -1358,6 +1378,7 @@ class ItineraryBuilder:
                     }
 
                 current_day.blocks.append(block)
+                specialist_count_per_day[day_idx][current_specialist] += 1
                 period_ptr += 1
 
                 # EVEN DISTRIBUTION: Always advance to next day after placing
@@ -1565,6 +1586,12 @@ class ItineraryBuilder:
         # =====================================================================
         dropped_count = 0
 
+        # Safety net: Track specialist count per day to prevent activity cramming
+        # Max 1 activity per specialist per day (e.g., 1 dive + 1 hike per day is OK)
+        from collections import defaultdict
+
+        specialist_count_per_day: dict = defaultdict(lambda: defaultdict(int))
+
         for tile in preferred_activities:
             # Find day with LEAST occupied slots (most capacity), then by day index
             available_days = [d for d in day_slots if len(day_slots[d]) < MAX_SLOTS_PER_DAY]
@@ -1574,6 +1601,21 @@ class ItineraryBuilder:
                 continue
 
             best_day = min(available_days, key=lambda d: (len(day_slots[d]), d))
+
+            # Check specialist-per-day cap (max 1 activity per specialist per day)
+            source_specialist = tile.get("source_specialist") or tile.get("meta", {}).get(
+                "specialist_type"
+            )
+            if source_specialist and specialist_count_per_day[best_day][source_specialist] >= 1:
+                _debug_itinerary(
+                    f"📅 Dropping '{tile.get('title')}' "
+                    f"(already have {source_specialist} on day {best_day + 1})"
+                )
+                dropped_count += 1
+                continue
+            if source_specialist:
+                specialist_count_per_day[best_day][source_specialist] += 1
+
             day = days[best_day]
 
             # Pick first free period
@@ -1635,9 +1677,9 @@ class ItineraryBuilder:
 
         Applies 1.5x preference boost to user-hearted tiles.
         """
-        # Log Phase 5 entry with preference state
+        # Log Phase 6 entry with preference state
         preferred_hotels = preferences.preferred_hotel_ids if preferences else []
-        _debug_itinerary(f"🏨 Phase 5 (Tile Matching): preferred_hotel_ids={preferred_hotels}")
+        _debug_itinerary(f"🏨 Phase 6 (Tile Matching): preferred_hotel_ids={preferred_hotels}")
 
         # Find hotel tiles, sorted by preference (preferred first)
         hotel_tiles = []
@@ -1669,11 +1711,11 @@ class ItineraryBuilder:
         if selected_hotel:
             hotel_name = hotel_tile.get("title", "Unknown")[:30] if hotel_tile else "None"
             _debug_itinerary(
-                f"🏨 Phase 5: Selected hotel '{hotel_name}' "
+                f"🏨 Phase 6: Selected hotel '{hotel_name}' "
                 f"(preferred={is_user_preferred}, score={selected_hotel['adjusted_score']:.2f})"
             )
         else:
-            _debug_itinerary("🏨 Phase 5: No hotel tiles found")
+            _debug_itinerary("🏨 Phase 6: No hotel tiles found")
 
         # Determine preference status
         preference_status = None
@@ -1689,7 +1731,7 @@ class ItineraryBuilder:
                 alternative_tile_id = user_preferred["tile_id"]
                 preference_status = "ai_override"
                 _debug_itinerary(
-                    f"🏨 Phase 5: AI override - user preferred hotel not selected "
+                    f"🏨 Phase 6: AI override - user preferred hotel not selected "
                     f"(alternative={alternative_tile_id[:20]})"
                 )
 
@@ -1740,8 +1782,8 @@ class ItineraryBuilder:
         constraint badges directly in the timeline.
         """
         departure_day = len(days)
-        _debug(
-            f"[ItineraryBuilder] 🏷️ Applying constraint tags to {len(days)} days, "
+        _debug_itinerary(
+            f"🏷️ Phase 6.5: Applying constraint tags to {len(days)} days, "
             f"departure_day={departure_day}"
         )
 

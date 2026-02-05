@@ -77,7 +77,14 @@ const getModeVerb = (mode?: string): string => {
 
 export function SystemReceipt({ ackStatus, ackUpdates, mode }: SystemReceiptProps) {
   const isRejected = ackStatus === 'rejected';
-  const verb = isRejected ? 'REJECTED' : getModeVerb(mode);
+
+  // For demo: Don't show rejection receipts - the natural language response already explains
+  // the rejection better than a technical ">> REJECTED: ROUTE" badge
+  if (isRejected) {
+    return null;
+  }
+
+  const verb = getModeVerb(mode);
   const fields = ackUpdates.map((u) => formatField(u.field));
 
   return (

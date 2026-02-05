@@ -26,9 +26,15 @@ export type TimeSlot = 'MORNING' | 'AFTERNOON' | 'EVENING';
  * 3. Block index position → synthesize from order
  */
 export function getDisplayTime(block: DayBlock, blockIndex: number): DisplayTime {
-  // Priority 1: Exact scheduled time from backend
+  // Priority 1: Exact scheduled time from backend (format ISO to readable)
   if (block.scheduled_time) {
-    return { type: 'exact', value: block.scheduled_time };
+    const date = new Date(block.scheduled_time);
+    const formatted = date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
+    return { type: 'exact', value: formatted };
   }
 
   // Priority 2: Use period field if available

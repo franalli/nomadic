@@ -51,7 +51,8 @@ import type { Tile } from '@/types/tile';
 
 import { ChatSkeleton } from './ChatSkeleton';
 import { CollapsedSetupSummary } from './CollapsedSetupSummary';
-import { HoldToDeleteButton } from './HoldToDeleteButton';
+// HoldToDeleteButton removed for demo - re-enable post-launch
+// import { HoldToDeleteButton } from './HoldToDeleteButton';
 import { MobileChatCompactHeader } from './MobileChatCompactHeader';
 import { MobileSetupCollapsedHeader } from './MobileSetupCollapsedHeader';
 // NodeProgress removed - replaced by Live Logic Status Pill above input
@@ -466,16 +467,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     const loadHistory = useChatStore((state) => state.loadHistory);
     const sessionState = useChatStore((state) => state.sessionState);
     const setSessionState = useChatStore((state) => state.setSessionState);
-    const deleteLastMessageFromStore = useChatStore((state) => state.deleteLastMessage);
-
-    // Document store for restoring trip inputs on delete
-    const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
+    // Delete functionality removed for demo - re-enable post-launch
+    // const deleteLastMessageFromStore = useChatStore((state) => state.deleteLastMessage);
+    // const restoreTripInputs = useDocumentStore((state) => state.restoreTripInputs);
 
     // Get desktop mode to determine if right panel with "Build Plan" button is visible
     const { isDesktop } = useMobileMode();
 
     const [input, setInput] = useState('');
-    const [isDeleting, setIsDeleting] = useState(false);
+    // const [isDeleting, setIsDeleting] = useState(false); // Delete removed for demo
     const [isLoading, setIsLoading] = useState(false);
     const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
     const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
@@ -1088,20 +1088,54 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // Detect new content
               const hasNewSpecialist = newSpecialistTypes.some(t => !prevSpecialistTypes.has(t));
               const hasNewTileType = [...newTileTypes].some(t => !prevTileTypes.has(t));
+              // Flights are additive data, not a constraint change - don't trigger structural rebuild
+              const hasStructuralNewTileType = [...newTileTypes].some(t => t !== 'flight' && !prevTileTypes.has(t));
 
               // Update refs for next comparison (use specialist_type consistently)
               prevSpecialistTypesRef.current = new Set(newSpecialistTypes);
               prevTileTypesRef.current = newTileTypes;
 
+              // EXPAND gate check logging - shows why expand fires or skips
+              const tileCount = Object.keys(doc.tiles ?? {}).length;
+              const viewState = doc.plan_view_state ?? 'unknown';
+              const shouldExpandStructural = hasItinerary && (hasNewSpecialist || hasStructuralNewTileType) && !isSilentPlanGeneration;
+              // Pre-compute date change for logging (actual handling below)
+              const _prevInputs = prevTripInputsRef.current;
+              const _newInputs = freshState.document?.trip_inputs;
+              const _datesChanged = _prevInputs && (
+                _prevInputs.start_date !== _newInputs?.start_date ||
+                _prevInputs.end_date !== _newInputs?.end_date
+              );
+              const _hasStrategy = (doc.strategy_sections?.length ?? 0) > 0;
+              const shouldExpandDates = _datesChanged && _hasStrategy && !isSilentPlanGeneration;
+              const shouldExpandCatchAll = _hasStrategy && !hasItinerary && hasDates && !isSilentPlanGeneration;
+              const expandPath = shouldExpandStructural ? 'STRUCTURAL'
+                : shouldExpandDates ? 'DATE_CHANGE'
+                : shouldExpandCatchAll ? 'CATCH_ALL'
+                : 'SKIP';
+              console.log(
+                `[EXPAND] gate check: strategy=${newSpecialistTypes.length} tiles=${tileCount} ` +
+                `viewState=${viewState} hasItinerary=${hasItinerary} silent=${isSilentPlanGeneration} ` +
+                `newSpecialist=${hasNewSpecialist} newTileType=${hasNewTileType} structuralTileType=${hasStructuralNewTileType} datesChanged=${!!_datesChanged} → ${expandPath}`
+              );
+
               // Auto-expand if structural change detected (gated behind hasItinerary)
-              if (hasItinerary && (hasNewSpecialist || hasNewTileType) && !isSilentPlanGeneration) {
+              // Priority gate: structural wins over trip inputs (structural rebuild incorporates inputs anyway)
+              let structuralRebuildTriggered = false;
+              if (shouldExpandStructural) {
                 console.log('[ChatPanel] Structural change detected - auto-expanding...', {
                   hasNewSpecialist,
                   hasNewTileType,
                   prevSpecialists: [...prevSpecialistTypes],
                   newSpecialists: newSpecialistTypes,
                 });
+                structuralRebuildTriggered = true;
                 setTimeout(() => {
+                  // RE-CHECK: Ensure generation isn't already complete from another path
+                  if (useDocumentStore.getState().expandInProgress) {
+                    console.log('[ChatPanel] ⏭️ STRUCTURAL skipped - expand already in progress');
+                    return;
+                  }
                   onAutoExpandItinerary?.({ forceFullRebuild: true });
                 }, 100);
               } else if (hasItinerary && !hasNewSpecialist && !hasNewTileType) {
@@ -1111,32 +1145,83 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
               // AUTO-EXPAND: Detect trip_inputs changes that require itinerary adjustment
               // Handles chat updates like "Feb 11-15" or "2 adults"
               // IMPORTANT: Read from STORE (freshState.document), not response (doc) - response may not include trip_inputs
-              if (hasItinerary && prevTripInputsRef.current && !isSilentPlanGeneration) {
-                const newTripInputs = freshState.document?.trip_inputs;
-                const prev = prevTripInputsRef.current;
+              // SKIP if structural rebuild already triggered (structural includes inputs)
+              const newTripInputs = freshState.document?.trip_inputs;
+              const prevInputs = prevTripInputsRef.current;
 
-                const datesChanged =
-                  prev.start_date !== newTripInputs?.start_date ||
-                  prev.end_date !== newTripInputs?.end_date;
+              // DATE CHANGE: Special handling - date changes clear day_cards, so hasItinerary becomes false
+              // Must detect date changes BEFORE the hasItinerary gate, since clearing is intentional
+              const datesChanged = prevInputs && (
+                prevInputs.start_date !== newTripInputs?.start_date ||
+                prevInputs.end_date !== newTripInputs?.end_date
+              );
+              const hasStrategyContent = (doc.strategy_sections?.length ?? 0) > 0;
+
+              if (datesChanged && hasStrategyContent && !isSilentPlanGeneration && !structuralRebuildTriggered) {
+                console.log('[ChatPanel] Dates changed - triggering itinerary rebuild...', {
+                  prev: `${prevInputs.start_date} - ${prevInputs.end_date}`,
+                  new: `${newTripInputs?.start_date} - ${newTripInputs?.end_date}`,
+                  hasItinerary, // Will be false because date change cleared day_cards
+                });
+                structuralRebuildTriggered = true; // Prevent duplicate trigger from other checks
+                setTimeout(() => {
+                  // RE-CHECK: Ensure generation isn't already complete from another path
+                  if (useDocumentStore.getState().expandInProgress) {
+                    console.log('[ChatPanel] ⏭️ DATE_CHANGE skipped - expand already in progress');
+                    return;
+                  }
+                  onAutoExpandItinerary?.({ forceFullRebuild: true });
+                }, 100);
+              }
+
+              // OTHER TRIP INPUT CHANGES: travelers, budget, origin (requires existing itinerary)
+              if (hasItinerary && prevInputs && !isSilentPlanGeneration && !structuralRebuildTriggered) {
                 const travelersChanged =
-                  prev.adults !== newTripInputs?.adults ||
-                  prev.children !== newTripInputs?.children;
-                const budgetChanged = prev.budget !== newTripInputs?.budget;
-                const originChanged = prev.origin !== newTripInputs?.origin;
+                  prevInputs.adults !== newTripInputs?.adults ||
+                  prevInputs.children !== newTripInputs?.children;
+                const budgetChanged = prevInputs.budget !== newTripInputs?.budget;
+                const originChanged = prevInputs.origin !== newTripInputs?.origin;
 
-                const tripInputsChanged = datesChanged || travelersChanged || budgetChanged || originChanged;
+                const otherInputsChanged = travelersChanged || budgetChanged || originChanged;
 
-                if (tripInputsChanged) {
+                if (otherInputsChanged) {
                   console.log('[ChatPanel] Trip inputs changed - auto-rebuilding itinerary...', {
-                    datesChanged, travelersChanged, budgetChanged, originChanged,
-                    prev: { dates: `${prev.start_date} - ${prev.end_date}`, adults: prev.adults },
-                    new: { dates: `${newTripInputs?.start_date} - ${newTripInputs?.end_date}`, adults: newTripInputs?.adults },
+                    travelersChanged, budgetChanged, originChanged,
+                    prev: { adults: prevInputs.adults, budget: prevInputs.budget },
+                    new: { adults: newTripInputs?.adults, budget: newTripInputs?.budget },
                   });
-
+                  structuralRebuildTriggered = true;
                   setTimeout(() => {
+                    // RE-CHECK: Ensure generation isn't already complete from another path
+                    if (useDocumentStore.getState().expandInProgress) {
+                      console.log('[ChatPanel] ⏭️ TRIP_INPUTS skipped - expand already in progress');
+                      return;
+                    }
                     onAutoExpandItinerary?.({ forceFullRebuild: true });
                   }, 100);
                 }
+              }
+
+              // CATCH-ALL: Strategy exists but no itinerary (Guard violations, cleared day_cards)
+              // This ensures itinerary generation even when backend clears day_cards
+              // Example: Guard violation during session - strategy preserved, day_cards cleared
+              // Gate: Requires dates - without dates, ItineraryBuilder can't create DayCard[] scaffold
+              if (hasStrategyContent && !hasItinerary && hasDates && !isSilentPlanGeneration && !structuralRebuildTriggered) {
+                console.log('[ChatPanel] Strategy exists but no itinerary - triggering rebuild...', {
+                  strategyCount: doc.strategy_sections?.length,
+                  hasItinerary,
+                  viewState,
+                });
+                structuralRebuildTriggered = true;
+                setTimeout(() => {
+                  // RE-CHECK: If itinerary was generated by another path, skip
+                  const freshDayCards = useDocumentStore.getState().document?.day_cards;
+                  if (freshDayCards && freshDayCards.length > 0) {
+                    console.log('[ChatPanel] ⏭️ CATCH-ALL skipped - itinerary already exists');
+                    return;
+                  }
+                  onAutoExpandItinerary?.({ forceFullRebuild: true });
+                }, 100);
               }
 
               // Only filter streaming message when Build Plan was clicked (silent mode)
@@ -1235,28 +1320,22 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
       });
     }, [scrollPanelIntoView, addMessage]);
 
-    // Handle deleting the last user message (undo)
-    const handleDeleteLastMessage = useCallback(async () => {
-      if (isDeleting || isLoading) return;
-
-      setIsDeleting(true);
-      try {
-        const result = await deleteLastMessageFromStore();
-        if (result.success && result.restoredTripInputs) {
-          // Restore trip inputs in document store
-          restoreTripInputs(result.restoredTripInputs as DocumentTripInputs);
-        }
-      } catch (error) {
-        console.error('Failed to delete message:', error);
-      } finally {
-        setIsDeleting(false);
-      }
-    }, [isDeleting, isLoading, deleteLastMessageFromStore, restoreTripInputs]);
-
-    // Find the last user message ID for showing delete button
-    const lastUserMessageId = messages
-      .filter((m) => m.role === 'user')
-      .at(-1)?.id ?? null;
+    // Delete functionality removed for demo - re-enable post-launch
+    // const handleDeleteLastMessage = useCallback(async () => {
+    //   if (isDeleting || isLoading) return;
+    //   setIsDeleting(true);
+    //   try {
+    //     const result = await deleteLastMessageFromStore();
+    //     if (result.success && result.restoredTripInputs) {
+    //       restoreTripInputs(result.restoredTripInputs as DocumentTripInputs);
+    //     }
+    //   } catch (error) {
+    //     console.error('Failed to delete message:', error);
+    //   } finally {
+    //     setIsDeleting(false);
+    //   }
+    // }, [isDeleting, isLoading, deleteLastMessageFromStore, restoreTripInputs]);
+    // const lastUserMessageId = messages.filter((m) => m.role === 'user').at(-1)?.id ?? null;
 
     // Count user messages for exploration progress indicator
     const userMessageCount = messages.filter((m) => m.role === 'user').length;
@@ -1480,7 +1559,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
                 // For user messages, wrap in a relative container for delete button positioning
                 const isUserMessage = m.role === 'user';
-                const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
+                // DISABLED: Delete functionality removed for demo
+                // const showDeleteButton = isUserMessage && originalId === lastUserMessageId && !isLoading;
 
                 // Setup phase messages should appear faded (past tense visual treatment)
                 const isSetupPhase = m.phase === 'setup';
@@ -1530,8 +1610,8 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                     className={`${isUserMessage ? 'text-right' : 'text-left'} message-enter ${spacingClass} ${isSetupPhase ? 'opacity-60' : ''}`}
                     style={{ animationDelay: `${Math.min(idx * 30, 150)}ms` }}
                   >
-                    {/* Relative container for absolute delete button positioning */}
-                    <div className={`inline-block relative max-w-[85%] ${showDeleteButton ? 'group/msg' : ''}`}>
+                    {/* Message container */}
+                    <div className="inline-block relative max-w-[85%]">
                       {/* "Command & Receipt" pattern: User message + SystemReceipt below */}
                       {isUserMessage ? (
                         <div className="flex flex-col items-end">
@@ -1601,15 +1681,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                             )}
                         </div>
                       )}
-                      {/* Delete button - positioned at bottom-right corner, visible only on hover */}
-                      {showDeleteButton && (
-                        <div className="absolute -bottom-4 right-1 opacity-0 group-hover/msg:opacity-100 transition-opacity z-[999]">
-                          <HoldToDeleteButton
-                            onDelete={handleDeleteLastMessage}
-                            disabled={isDeleting}
-                          />
-                        </div>
-                      )}
+                      {/* Delete button removed for demo - re-enable post-launch */}
                     </div>
                   </div>
                 );

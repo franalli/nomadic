@@ -10,6 +10,8 @@
 
 import type { DayBlock, DayCard, StrategySection } from '@/types/plan-envelope';
 
+import { debugLog } from './debug';
+
 /**
  * Generate ghost day cards from specialist strategy sections.
  *
@@ -226,14 +228,14 @@ export function extractPOIsFromDayCards(
   destination?: string
 ): MapPOI[] {
   if (!dayCards || dayCards.length === 0) {
-    console.log('[extractPOIsFromDayCards] No day_cards, falling back to strategy sections');
+    debugLog('[extractPOIsFromDayCards] No day_cards, falling back to strategy sections');
     return extractPOIsFromSections(strategySections, destination);
   }
 
   const pois: MapPOI[] = [];
 
   // Debug: Log day_cards structure
-  console.log('[extractPOIsFromDayCards] Processing day_cards:', {
+  debugLog('[extractPOIsFromDayCards] Processing day_cards:', {
     count: dayCards.length,
     blocks: dayCards.map(dc => ({
       day: dc.day_number,
@@ -251,7 +253,7 @@ export function extractPOIsFromDayCards(
       if (block.coordinates?.lat && block.coordinates?.lng) {
         // Use block.id if available, otherwise match TimelineThread's format
         const blockId = block.id || `block-${dayCard.day_number}-${idx}`;
-        console.log('[extractPOIsFromDayCards] Adding POI:', { blockId, title: block.summary, hasBlockId: !!block.id });
+        debugLog('[extractPOIsFromDayCards] Adding POI:', { blockId, title: block.summary, hasBlockId: !!block.id });
         pois.push({
           id: blockId,
           title: block.summary || block.activity_type,
@@ -259,16 +261,16 @@ export function extractPOIsFromDayCards(
           coordinates: block.coordinates,
         });
       } else {
-        console.log('[extractPOIsFromDayCards] Skipping block (no coords):', { day: dayCard.day_number, idx, summary: block.summary, coords: block.coordinates });
+        debugLog('[extractPOIsFromDayCards] Skipping block (no coords):', { day: dayCard.day_number, idx, summary: block.summary, coords: block.coordinates });
       }
     });
   });
 
-  console.log('[extractPOIsFromDayCards] Extracted POIs:', pois.length);
+  debugLog('[extractPOIsFromDayCards] Extracted POIs:', pois.length);
 
   // If itinerary exists but no coordinates, fall back to strategy sections
   if (pois.length === 0 && strategySections) {
-    console.log('[extractPOIsFromDayCards] No POIs from day_cards, falling back to strategy sections');
+    debugLog('[extractPOIsFromDayCards] No POIs from day_cards, falling back to strategy sections');
     return extractPOIsFromSections(strategySections, destination);
   }
 

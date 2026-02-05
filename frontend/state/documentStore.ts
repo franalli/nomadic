@@ -132,10 +132,23 @@ export type LLMUpdatableField =
 // ─────────────────────────────────────────────────────────────────────────────
 // View State Ordering (for downgrade protection)
 // ─────────────────────────────────────────────────────────────────────────────
+// IMPORTANT: All states from backend must be mapped here for downgrade protection to work!
+// Backend states: S0_BOOTSTRAP, S1_FRAMING, S2_STRATEGY_READY, S2_BLOCKED, S3_ITINERARY_READY, S3_EDITING, S3_BLOCKED
+// Frontend also uses: S0_EMPTY (reset), S1_DESTINATION_SET, S3_PARTIAL_CONFLICT
 const VIEW_STATE_ORDER: Record<string, number> = {
+  // Stage 0 - Bootstrap/Setup
   S0_EMPTY: 0,
+  S0_BOOTSTRAP: 0,
+  // Stage 1 - Framing
   S1_DESTINATION_SET: 1,
+  S1_FRAMING: 1,
+  // Stage 2 - Strategy
+  S2_BLOCKED: 1.5,  // Blocked is less than ready
   S2_STRATEGY_READY: 2,
+  // Stage 3 - Itinerary
+  S3_BLOCKED: 2.5,
+  S3_EDITING: 2.5,
+  S3_PARTIAL_CONFLICT: 2.5,  // Conflict state (has partial day_cards)
   S3_ITINERARY_READY: 3,
 };
 
@@ -1008,11 +1021,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // Hydrate preferences from response (keep existing if not in response)
+    // FIX: Only create new Set if content actually changed - prevents spurious rebuild triggers
     const currentPreferences = get().preferredTileIds;
     const responsePreferences = response.document.preferred_tile_ids;
-    const mergedPreferences = responsePreferences && responsePreferences.length > 0
-      ? new Set(responsePreferences)
-      : currentPreferences;
+    let mergedPreferences = currentPreferences;
+    if (responsePreferences && responsePreferences.length > 0) {
+      // Check if content actually changed before creating new Set
+      const responsePrefSet = new Set(responsePreferences);
+      const contentChanged = responsePrefSet.size !== currentPreferences.size ||
+        [...responsePrefSet].some(id => !currentPreferences.has(id));
+      if (contentChanged) {
+        mergedPreferences = responsePrefSet;
+      }
+    }
 
     // ============================================================
     // TILE MERGE (conditional on destination)
@@ -1024,15 +1045,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       : { ...currentDoc?.tiles, ...response.document.tiles };
 
     // ============================================================
-    // DAY CARDS PRESERVE (only clear on destination change)
+    // DAY CARDS PRESERVE (clear on destination OR date change)
     // ============================================================
-    // Only clear day_cards on destination change - NOT on view state changes
-    const finalDayCards = destinationChanged
+    // Clear day_cards on destination change OR date change (trip duration changed)
+    // When dates shorten (8 days → 4 days), existing day_cards are stale
+    const shouldClearDayCards = destinationChanged || datesChanged;
+    const finalDayCards = shouldClearDayCards
       ? []
       : (hasDayCards ? currentDayCards : response.document.day_cards);
 
-    if (destinationChanged) {
-      console.log('[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (destination changed)');
+    if (shouldClearDayCards) {
+      const reason = destinationChanged ? 'destination changed' : 'dates changed';
+      console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: CLEARED (${reason})`);
     } else if (hasDayCards) {
       console.log(`[documentStore.setFromPlanResponse] 📅 Day cards: PRESERVED (itinerary exists: ${currentDayCards.length} cards)`);
     }
@@ -1173,10 +1197,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       console.log(`[documentStore.mergeEnvelope] 🛡️ Blocked view state downgrade: ${prevViewState} → ${newViewState} (day_cards exist: ${currentDayCards.length})`);
     }
 
-    // DEBUG: Log what's in the envelope
+    // DEBUG: Log what's in the envelope (including plan_view_state transition)
     console.log('[documentStore.mergeEnvelope] 📥 Received envelope:', {
       hasTiles: envelope.tiles !== undefined,
       tilesCount: envelope.tiles ? Object.keys(envelope.tiles).length : 0,
+      hasDayCards,
+      dayCardsInEnvelope: envelope.day_cards?.length ?? 0,
+      prevViewState,
+      newViewState,
       destinationChanged,
       wouldDowngrade,
       finalViewState,
@@ -1254,6 +1282,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       // Update trip_inputs if present
       ...(envelope.trip_inputs !== undefined && {
         trip_inputs: { ...currentDoc.trip_inputs, ...envelope.trip_inputs },
+      }),
+      // Constraint validation receipts for Trip DNA bar badges
+      ...(envelope.constraints_validated !== undefined && {
+        constraints_validated: envelope.constraints_validated,
+      }),
+      ...(envelope.constraint_violations !== undefined && {
+        constraint_violations: envelope.constraint_violations,
       }),
     };
 

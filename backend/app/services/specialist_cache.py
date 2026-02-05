@@ -79,29 +79,27 @@ def _specialist_cache_key(
     topic: str, destination: str, start_date: Optional[str], end_date: Optional[str]
 ) -> str:
     """
-    Generate stable cache key: specialist:{topic}:{dest}:{month}:{duration}
+    Generate stable cache key: specialist:{topic}:{dest}:{start}:{end}
 
     Key components:
     - topic: "diving", "hiking", "skiing", etc.
     - destination: normalized lowercase, stripped
-    - month: "2025-02" (seasonality matters for activities)
-    - duration: trip length in days (affects activity count)
+    - start_date: full date "2025-02-11" (exact trip dates matter)
+    - end_date: full date "2025-02-14" (duration affects activity count)
 
-    Example: "specialist:diving:bali:2025-02:14"
+    Example: "specialist:diving:bali:2025-02-11:2025-02-14"
+
+    NOTE: Using full dates instead of month:duration to avoid cache collisions
+    when trip dates change within the same month (e.g., 8 days → 4 days).
     """
     dest_normalized = destination.lower().strip() if destination else "unknown"
-    month = start_date[:7] if start_date else "unknown"  # "2025-02"
+    start = start_date if start_date else "unknown"
+    end = end_date if end_date else "unknown"
 
-    duration_days = 5  # default
-    if start_date and end_date:
-        try:
-            start = datetime.strptime(start_date, "%Y-%m-%d")
-            end = datetime.strptime(end_date, "%Y-%m-%d")
-            duration_days = (end - start).days + 1
-        except ValueError:
-            pass
-
-    return f"specialist:{topic}:{dest_normalized}:{month}:{duration_days}"
+    key = f"specialist:{topic}:{dest_normalized}:{start}:{end}"
+    # Debug: Log full cache key for diagnosing stale cache issues
+    logger.info(f"[CACHE_KEY] Generated: {key}")
+    return key
 
 
 # =============================================================================
@@ -140,10 +138,11 @@ async def get_cached_specialist_output(
     cached = _cache_get(cache_key)
     if cached is not None:
         _increment_stat("l1_hits")
-        logger.debug(f"[SPECIALIST_CACHE] L1 HIT: {cache_key}")
+        logger.info(f"[CACHE] key={cache_key} → HIT (L1)")
         return cached
 
     _increment_stat("l1_misses")
+    logger.info(f"[CACHE] key={cache_key} → MISS (L1)")
 
     # L2: Database check
     try:
@@ -157,7 +156,7 @@ async def get_cached_specialist_output(
 
         if row:
             _increment_stat("l2_hits")
-            logger.info(f"[SPECIALIST_CACHE] L2 HIT: {cache_key}")
+            logger.info(f"[CACHE] key={cache_key} → HIT (L2)")
 
             # Promote to L1
             _cache_set(cache_key, row.response_json)
@@ -177,7 +176,7 @@ async def get_cached_specialist_output(
             return row.response_json
 
         _increment_stat("l2_misses")
-        logger.debug(f"[SPECIALIST_CACHE] L2 MISS: {cache_key}")
+        logger.info(f"[CACHE] key={cache_key} → MISS (L2)")
         return None
 
     except Exception as e:

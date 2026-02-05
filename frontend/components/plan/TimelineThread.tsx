@@ -413,7 +413,9 @@ export function TimelineThread({
                 >
                   Day {card.day_number}
                 </h3>
-                <p className="text-sm text-muted-foreground truncate">{card.label}</p>
+                {card.label && !/^Day \d+$/i.test(card.label) && (
+                  <p className="text-sm text-muted-foreground truncate">{card.label}</p>
+                )}
               </div>
             </button>
 

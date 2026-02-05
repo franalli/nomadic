@@ -27,6 +27,8 @@ export interface CoreChipProps {
   disabled?: boolean;         // Disable during streaming/loading
   /** Use 'onImage' when chip is on a hero/photo background */
   variant?: 'default' | 'onImage';
+  /** Optional className override for visual hierarchy */
+  className?: string;
 }
 
 export const CoreChip = memo(function CoreChip({
@@ -38,6 +40,7 @@ export const CoreChip = memo(function CoreChip({
   tone = 'default',
   disabled = false,
   variant = 'default',
+  className,
 }: CoreChipProps) {
   const hasValue = !!value;
   const displayText = value || placeholder || label;
@@ -81,7 +84,9 @@ export const CoreChip = memo(function CoreChip({
         !isOnImage && !disabled && hasValue && 'hover:border-[var(--chip-active-border)]',
 
         // Focus ring
-        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50'
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--chip-active-icon)]/50',
+        // Custom className override
+        className
       )}
     >
       <Icon
