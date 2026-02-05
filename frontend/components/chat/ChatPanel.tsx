@@ -540,6 +540,15 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
     // IMPORTANT: Use specialist_type (not title) for consistent comparison
     const prevSpecialistTypesRef = useRef<Set<string>>(new Set());
     const prevTileTypesRef = useRef<Set<string>>(new Set());
+    // Track previous trip inputs for change detection (dates, travelers, budget, origin)
+    const prevTripInputsRef = useRef<{
+      start_date: string | null;
+      end_date: string | null;
+      adults: number | null;
+      children: number | null;
+      budget: number | null;
+      origin: string | null;
+    } | null>(null);
 
     // Compute effective suggestions: use backend suggestions if available, otherwise fallback based on missing fields
     // Note: missingFields now derived from planState instead of tripDetails
@@ -894,6 +903,18 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         // Use SSE streaming for real-time token display
         const currentTripInputs = useDocumentStore.getState().document?.trip_inputs;
+
+        // Capture trip inputs BEFORE API call for change detection
+        // Same pattern as structural change detection (lines 1056-1087)
+        prevTripInputsRef.current = currentTripInputs ? {
+          start_date: currentTripInputs.start_date ?? null,
+          end_date: currentTripInputs.end_date ?? null,
+          adults: currentTripInputs.adults ?? null,
+          children: currentTripInputs.children ?? null,
+          budget: currentTripInputs.budget ?? null,
+          origin: currentTripInputs.origin ?? null,
+        } : null;
+
         const body: Parameters<typeof streamGraphPlan>[0] = {
           message: trimmed,
           session_state: sessionState ?? undefined,
@@ -1055,8 +1076,9 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
               // AUTO-EXPAND: Detect structural changes that require itinerary rebuild
               // Check STORE for existing itinerary (response may not include day_cards if not rebuilt)
-              const storeDoc = useDocumentStore.getState().document;
-              const hasItinerary = (storeDoc?.day_cards?.length ?? 0) > 0;
+              // IMPORTANT: Read from store.document (preserved by setFromPlanResponse), not from response
+              const freshState = useDocumentStore.getState();
+              const hasItinerary = (freshState.document?.day_cards?.length ?? 0) > 0;
 
               // New state from response - MUST use specialist_type (not title) for consistent comparison
               // Filter out undefined specialist_types (shouldn't happen, but TypeScript safety)
@@ -1084,6 +1106,37 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                 }, 100);
               } else if (hasItinerary && !hasNewSpecialist && !hasNewTileType) {
                 console.log('[ChatPanel] Additive change only, itinerary preserved');
+              }
+
+              // AUTO-EXPAND: Detect trip_inputs changes that require itinerary adjustment
+              // Handles chat updates like "Feb 11-15" or "2 adults"
+              // IMPORTANT: Read from STORE (freshState.document), not response (doc) - response may not include trip_inputs
+              if (hasItinerary && prevTripInputsRef.current && !isSilentPlanGeneration) {
+                const newTripInputs = freshState.document?.trip_inputs;
+                const prev = prevTripInputsRef.current;
+
+                const datesChanged =
+                  prev.start_date !== newTripInputs?.start_date ||
+                  prev.end_date !== newTripInputs?.end_date;
+                const travelersChanged =
+                  prev.adults !== newTripInputs?.adults ||
+                  prev.children !== newTripInputs?.children;
+                const budgetChanged = prev.budget !== newTripInputs?.budget;
+                const originChanged = prev.origin !== newTripInputs?.origin;
+
+                const tripInputsChanged = datesChanged || travelersChanged || budgetChanged || originChanged;
+
+                if (tripInputsChanged) {
+                  console.log('[ChatPanel] Trip inputs changed - auto-rebuilding itinerary...', {
+                    datesChanged, travelersChanged, budgetChanged, originChanged,
+                    prev: { dates: `${prev.start_date} - ${prev.end_date}`, adults: prev.adults },
+                    new: { dates: `${newTripInputs?.start_date} - ${newTripInputs?.end_date}`, adults: newTripInputs?.adults },
+                  });
+
+                  setTimeout(() => {
+                    onAutoExpandItinerary?.({ forceFullRebuild: true });
+                  }, 100);
+                }
               }
 
               // Only filter streaming message when Build Plan was clicked (silent mode)
@@ -1561,11 +1614,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
                   </div>
                 );
               })}
-              {/* Smart Loader: Single mutating status line - DS Section 19.C */}
-              {/* Shows current processing state with dynamic icon */}
-              {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
-                <SmartLoader status={activeStatus} />
-              )}
               {/* Invisible sentinel for smooth scroll-to-bottom */}
               <div ref={bottomSentinelRef} aria-hidden="true" className="h-px" />
             </>
@@ -1574,6 +1622,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
 
         {/* Input area with suggestions - grouped together at bottom */}
         <div className="mt-auto space-y-3 pb-0">
+          {/* Smart Loader: Status line above input - DS Section 19.C */}
+          {isLoading && activeStatus && visibleMessages[visibleMessages.length - 1]?.role === 'user' && (
+            <SmartLoader status={activeStatus} />
+          )}
           {/* Constraint chips - conversation primers that insert starter text */}
           {showSuggestions && (
             <div className="flex flex-wrap justify-center gap-2 py-1">

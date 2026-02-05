@@ -906,6 +906,12 @@ export function NomadicLanding() {
               `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
             );
           }
+          // Show toast for activity reductions (e.g., diving truncated due to no-fly buffer)
+          if (event.warnings && event.warnings.length > 0) {
+            event.warnings.forEach((warning: string) => {
+              addToast(warning, 'info');
+            });
+          }
         } else if (event.type === 'error') {
           // Check if this is a conflict error (Path A UX)
           try {
@@ -1246,6 +1252,12 @@ export function NomadicLanding() {
                       `[itinerary] ⚠️ ${event.dropped_preferred_count} preferred activities couldn't fit — not enough free days`
                     );
                   }
+                  // Show toast for activity reductions
+                  if (event.warnings && event.warnings.length > 0) {
+                    event.warnings.forEach((warning: string) => {
+                      addToast(warning, 'info');
+                    });
+                  }
                 } else if (event.type === 'error') {
                   console.error('[remove-specialist] Error:', event.message);
                   setUiGeneration(null);
@@ -1517,7 +1529,12 @@ export function NomadicLanding() {
             end_date: endStr,
           });
           closeSheet();
-          // Toast is already shown by DatesSheet, no need for duplicate
+
+          // Trigger itinerary rebuild if one exists
+          const hasItinerary = (useDocumentStore.getState().document?.day_cards?.length ?? 0) > 0;
+          if (hasItinerary) {
+            proceedWithItineraryGeneration({ forceFullRebuild: true });
+          }
         }}
       />
 

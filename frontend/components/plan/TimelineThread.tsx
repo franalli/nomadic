@@ -240,6 +240,7 @@ export function TimelineThread({
             type={block.buffer_type}
             time={getDisplayTime(block, blockIndex)}
             details={block.logistics_details}
+            hotelImage={block.booked_tile?.image_url || block.image_url}
             onOpenFlightsSettings={onOpenFlightsSettings}
           />
         );
@@ -254,6 +255,7 @@ export function TimelineThread({
             type="checkin"
             time={getDisplayTime(block, blockIndex)}
             hotelName={block.hotel_name}
+            hotelImage={block.booked_tile?.image_url}
             details={block.logistics_details}
             // Preference attribution for hotels
             preferenceStatus={block.preference_status}
@@ -269,6 +271,7 @@ export function TimelineThread({
             type="checkout"
             time={getDisplayTime(block, blockIndex)}
             hotelName={block.hotel_name}
+            hotelImage={block.booked_tile?.image_url || block.image_url}
             details={block.logistics_details}
           />
         );
@@ -430,7 +433,12 @@ export function TimelineThread({
                   );
                 }
 
-                return blocksToRender.map((block, blockIndex) => {
+                return blocksToRender.map((block, _filteredIndex) => {
+                  // Find original index in card.blocks for consistent ID generation
+                  // (needed because filterBlocks may reindex the array)
+                  const originalIndex = card.blocks.indexOf(block);
+                  const blockIndex = originalIndex !== -1 ? originalIndex : _filteredIndex;
+
                   // Skeleton block rendering for ghost timeline
                   if (block.is_skeleton) {
                     return (

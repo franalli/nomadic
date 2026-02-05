@@ -250,6 +250,7 @@ export function InteractiveMap({
   const mapRef = useRef<MapRef>(null);
   const isMountedRef = useRef(true);
   const [isMapReady, setIsMapReady] = useState(false);
+  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
 
   // Track mounted state for safe async operations
   useEffect(() => {
@@ -367,6 +368,8 @@ export function InteractiveMap({
             item.dayNumber !== undefined &&
             item.dayNumber !== highlightedDay;
           const isSpecialistPoi = item.source === 'specialist';
+          const isHovered = item.id === hoveredItemId;
+          const showTooltip = isActive || isHovered;
 
           return (
             <Marker
@@ -375,17 +378,20 @@ export function InteractiveMap({
               latitude={item.coordinates.lat}
               anchor="bottom"
               onClick={() => onMarkerClick?.(item.id)}
+              style={{ zIndex: isActive ? 100 : isHovered ? 90 : 1 }}
             >
               <div
                 className={cn(
                   'transition-all duration-300 transform cursor-pointer',
-                  isActive ? 'scale-125 z-50' : 'scale-100',
+                  isActive ? 'scale-125' : isHovered ? 'scale-110' : 'scale-100',
                   isDimmed
                     ? 'opacity-30'
-                    : isSpecialistPoi && !isActive
+                    : isSpecialistPoi && !isActive && !isHovered
                       ? 'opacity-70 hover:opacity-100'
                       : 'opacity-100 hover:opacity-100'
                 )}
+                onMouseEnter={() => setHoveredItemId(item.id)}
+                onMouseLeave={() => setHoveredItemId(null)}
               >
                 <div
                   className={cn(
@@ -402,16 +408,17 @@ export function InteractiveMap({
                   />
                 </div>
 
-                {item.dayNumber && !isActive && (
+                {item.dayNumber && !isActive && !isHovered && (
                   <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-zinc-800 border border-white/30 flex items-center justify-center">
                     <span className="text-[8px] font-bold text-white">{item.dayNumber}</span>
                   </div>
                 )}
 
-                {isActive && (
-                  <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur px-2 py-1 rounded text-[10px] text-white whitespace-nowrap pointer-events-none">
+                {showTooltip && (
+                  <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 z-[9999] bg-black/90 backdrop-blur-sm px-2.5 py-1.5 rounded-md text-[11px] text-white whitespace-nowrap pointer-events-none shadow-lg border border-white/10">
                     {item.dayNumber && <span className="text-emerald-400">Day {item.dayNumber} • </span>}
-                    {item.title}
+                    <span className="font-medium">{item.title}</span>
+                    {!item.dayNumber && <span className="text-zinc-400 ml-1">· {item.type}</span>}
                   </div>
                 )}
               </div>

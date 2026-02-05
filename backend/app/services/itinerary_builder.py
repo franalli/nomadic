@@ -343,6 +343,9 @@ class ItineraryResult(BaseModel):
     resolutions: List[Resolution] = Field(default_factory=list)
     error: Optional[str] = None
     dropped_preferred_count: int = 0  # Activities that couldn't fit in available days
+    warnings: List[str] = Field(
+        default_factory=list
+    )  # User-facing warnings (e.g., "Reduced diving from 4 to 1")
 
 
 @dataclass
@@ -384,6 +387,7 @@ class PreferenceOverrideInput:
 
     preferred_hotel_ids: List[str] = field(default_factory=list)
     preferred_activity_ids: List[str] = field(default_factory=list)
+    preferred_flight_ids: List[str] = field(default_factory=list)
 
     def is_hotel_preferred(self, tile_id: str) -> bool:
         """Check if a hotel tile is user-preferred."""
@@ -392,6 +396,10 @@ class PreferenceOverrideInput:
     def is_activity_preferred(self, tile_id: str) -> bool:
         """Check if an activity tile is user-preferred."""
         return tile_id in self.preferred_activity_ids
+
+    def is_flight_preferred(self, tile_id: str) -> bool:
+        """Check if a flight tile is user-preferred."""
+        return tile_id in self.preferred_flight_ids
 
 
 @dataclass
@@ -496,6 +504,8 @@ class ItineraryBuilder:
         self.preferences = input_data.preferences
         # Store destination for altitude constraint checks in _detect_early_conflicts
         self.destination = input_data.destination
+        # Track warnings for user display (e.g., "Reduced diving from 4 to 1")
+        self._warnings: List[str] = []
 
         try:
             # Parse dates
@@ -649,6 +659,7 @@ class ItineraryBuilder:
                 conflicts=conflicts,
                 resolutions=[],
                 dropped_preferred_count=dropped_preferred_count,
+                warnings=self._warnings,
             )
 
         except Exception as e:
@@ -927,35 +938,45 @@ class ItineraryBuilder:
         diving_activities = activities_by_specialist.get("diving", [])
         diving_slots = usable_days - buffer_days if nofly_constraint else usable_days
 
-        # Check diving-specific capacity (must finish 24h before departure)
+        # Auto-truncate diving activities to fit available slots (no conflict)
         if len(diving_activities) > diving_slots:
-            conflicts.append(
-                Conflict(
-                    type="insufficient_days",
-                    severity=ConstraintSeverity.BLOCKING,
-                    specialists=["diving"],
-                    message=(
-                        f"Cannot fit {len(diving_activities)} dives in {diving_slots} "
-                        f"available days (24h no-fly buffer requires diving "
-                        f"to finish by day {total_days - 1})"
-                    ),
-                )
+            original_count = len(diving_activities)
+            activities_by_specialist["diving"] = diving_activities[:diving_slots]
+            logger.info(
+                f"[ITINERARY] ⚠️ Auto-reduced diving: {original_count} → {diving_slots} "
+                f"(no-fly buffer requires finishing by day {total_days - 1})"
             )
+            # Track warning for user display
+            if diving_slots == 0:
+                self._warnings.append(
+                    f"Diving isn't possible on a {total_days}-day trip "
+                    f"due to the 24h no-fly buffer. Consider extending to 4+ days."
+                )
+            else:
+                self._warnings.append(
+                    f"Adjusted to {diving_slots} dive{'s' if diving_slots > 1 else ''} to fit your "
+                    f"{total_days}-day trip (24h no-fly buffer maintained)."
+                )
 
-        # Check total capacity: activities can share days via interleaving
+        # Auto-truncate if total activities exceed capacity
+        # Recalculate total after diving truncation
+        total_activity_days = sum(len(acts) for acts in activities_by_specialist.values())
         max_capacity = usable_days * MAX_BLOCKS_PER_DAY
         if total_activity_days > max_capacity:
-            conflicts.append(
-                Conflict(
-                    type="insufficient_days",
-                    severity=ConstraintSeverity.BLOCKING,
-                    specialists=list(activities_by_specialist.keys()),
-                    message=(
-                        f"Cannot fit {total_activity_days} activities in {usable_days} days "
-                        f"(max {max_capacity} slots with {MAX_BLOCKS_PER_DAY} per day)"
-                    ),
-                )
+            excess = total_activity_days - max_capacity
+            logger.info(
+                f"[ITINERARY] ⚠️ Auto-reducing activities: {total_activity_days} → {max_capacity} "
+                f"(trimming {excess} activities to fit {usable_days} days)"
             )
+            # Trim proportionally from each specialist (skip diving - already handled)
+            for specialist, acts in activities_by_specialist.items():
+                if specialist == "diving" or len(acts) == 0:
+                    continue
+                # Calculate how many to keep (proportional to capacity)
+                keep_ratio = max_capacity / total_activity_days
+                keep_count = max(1, int(len(acts) * keep_ratio))
+                if keep_count < len(acts):
+                    activities_by_specialist[specialist] = acts[:keep_count]
 
         # Build partial schedule if conflicts detected
         if conflicts:
@@ -1057,34 +1078,75 @@ class ItineraryBuilder:
         tiles: Dict[str, Any],
         origin: Optional[str],
     ) -> List[DayCardOutput]:
-        """Place arrival/departure blocks based on flight tiles."""
+        """Place arrival/departure blocks based on flight tiles.
+
+        Prioritizes user-preferred flights over heuristic selection.
+        """
         if not days:
             return days
 
-        # Find flight tiles
-        inbound_flight = None
-        outbound_flight = None
-
-        for _tile_id, tile in tiles.items():
+        # Collect all flight tiles with preference info
+        flight_tiles = []
+        for tile_id, tile in tiles.items():
             if not isinstance(tile, dict):
                 continue
             if tile.get("type") != "flight":
                 continue
+            is_preferred = bool(self.preferences and self.preferences.is_flight_preferred(tile_id))
+            flight_tiles.append(
+                {
+                    "tile_id": tile_id,
+                    "tile": tile,
+                    "is_preferred": is_preferred,
+                }
+            )
 
-            # Heuristic: inbound if in title or going TO destination
-            title = tile.get("title", "").lower()
-            if "inbound" in title or "arrival" in title:
-                inbound_flight = tile
-            elif "outbound" in title or "departure" in title:
-                outbound_flight = tile
-            elif origin and origin.lower() in title:
-                inbound_flight = tile
-            else:
-                # Default: first flight is inbound, second is outbound
-                if not inbound_flight:
-                    inbound_flight = tile
-                elif not outbound_flight:
-                    outbound_flight = tile
+        # Sort by preference (preferred first)
+        flight_tiles.sort(key=lambda x: -x["is_preferred"])
+
+        # Find inbound/outbound from preferred flights first, then fallback to heuristics
+        inbound_flight = None
+        outbound_flight = None
+
+        # Separate preferred and non-preferred flights
+        preferred_flights = [ft["tile"] for ft in flight_tiles if ft["is_preferred"]]
+        non_preferred_flights = [ft["tile"] for ft in flight_tiles if not ft["is_preferred"]]
+
+        # If user has preferred flights, use them (round-trip assumption: same tile for both legs)
+        if preferred_flights:
+            # Use first preferred flight for inbound
+            inbound_flight = preferred_flights[0]
+            # Use second preferred flight for outbound if available,
+            # otherwise same flight (round-trip)
+            outbound_flight = (
+                preferred_flights[1] if len(preferred_flights) > 1 else preferred_flights[0]
+            )
+        else:
+            # No preferred flights - use heuristics
+            for tile in non_preferred_flights:
+                title = tile.get("title", "").lower()
+
+                if "inbound" in title or "arrival" in title:
+                    if not inbound_flight:
+                        inbound_flight = tile
+                elif "outbound" in title or "departure" in title:
+                    if not outbound_flight:
+                        outbound_flight = tile
+                elif origin and origin.lower() in title:
+                    if not inbound_flight:
+                        inbound_flight = tile
+                else:
+                    # Default: first flight is inbound, second is outbound
+                    if not inbound_flight:
+                        inbound_flight = tile
+                    elif not outbound_flight:
+                        outbound_flight = tile
+
+            # If only one flight found, use it for both (round-trip)
+            if inbound_flight and not outbound_flight:
+                outbound_flight = inbound_flight
+            elif outbound_flight and not inbound_flight:
+                inbound_flight = outbound_flight
 
         # Day 1: Arrival
         if len(days) > 0:
@@ -1655,6 +1717,7 @@ class ItineraryBuilder:
                 activity_type="check-out",
                 summary=f"Check out: {hotel_tile.get('title', 'Hotel')}",
                 hotel_name=hotel_tile.get("title"),
+                booked_tile=hotel_tile,
             )
             # Insert before departure block
             departure_idx = next(

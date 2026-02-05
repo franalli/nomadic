@@ -135,8 +135,20 @@ export function ActivityMiniCard({
 
           {/* Specialist badge */}
           {block.specialist_type && (
-            <span className={cn('text-xs px-2 py-0.5 rounded font-medium', badgeBgClass)}>
+            <span className={cn('text-xs px-2 py-0.5 rounded font-medium uppercase', badgeBgClass)}>
               {block.specialist_type}
+            </span>
+          )}
+
+          {/* Difficulty badge - color-coded independently of specialist */}
+          {block.intensity && (
+            <span className={cn(
+              'text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border',
+              block.intensity === 'light' && 'bg-green-500/20 text-green-400 border-green-500/30',
+              block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+              block.intensity === 'challenging' && 'bg-red-500/20 text-red-400 border-red-500/30'
+            )}>
+              {block.intensity === 'light' ? 'easy' : block.intensity}
             </span>
           )}
 
@@ -155,6 +167,13 @@ export function ActivityMiniCard({
         )}>
           {normalizeTitle(block.activity_type || block.summary)}
         </h4>
+
+        {/* Description - show summary if different from title */}
+        {block.summary && block.summary !== normalizeTitle(block.activity_type || block.summary) && (
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+            {block.summary}
+          </p>
+        )}
 
         {/* Unschedulable reason */}
         {isUnschedulable && block.unschedulable_reason && (

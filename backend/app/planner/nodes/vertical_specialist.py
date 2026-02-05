@@ -34,6 +34,66 @@ from app.planner.state import (
 )
 
 # =============================================================================
+# Activity Coordinates Lookup (for LLM-generated activities)
+# Format: [longitude, latitude] per GeoJSON/Mapbox convention
+# =============================================================================
+
+ACTIVITY_COORDINATES: Dict[str, List[float]] = {
+    # === BALI DIVING ===
+    "usat liberty": [115.5931, -8.2762],
+    "liberty wreck": [115.5931, -8.2762],
+    "tulamben": [115.5931, -8.2762],
+    "manta point": [115.5271, -8.7935],
+    "crystal bay": [115.4486, -8.7179],
+    "padang bai": [115.5088, -8.5331],
+    "blue lagoon": [115.5088, -8.5331],
+    "amed": [115.6461, -8.3474],
+    "jemeluk": [115.6461, -8.3474],
+    # === BALI HIKING ===
+    "mount batur": [115.3756, -8.2417],
+    "batur": [115.3756, -8.2417],
+    "campuhan ridge": [115.2580, -8.4952],
+    "tegallalang": [115.2791, -8.4343],
+    "rice terrace": [115.2791, -8.4343],
+    "sekumpul": [115.1847, -8.1768],
+    "gitgit": [115.0867, -8.6213],
+    "munduk": [115.0867, -8.6213],
+    "tirta gangga": [115.5147, -8.4116],
+    "mount agung": [115.5079, -8.3427],
+    # === DUBAI DIVING ===
+    "zainab": [55.3075, 25.1177],
+    "anchor barge": [55.1850, 25.2048],
+    "mv dara": [55.6000, 25.5700],
+    # === CHAMONIX SKIING ===
+    "grands montets": [6.9608, 45.9763],
+    "vallee blanche": [6.8694, 45.8762],
+    "les houches": [6.7983, 45.8908],
+    "brevent": [6.8398, 45.9330],
+    "flegere": [6.8850, 45.9590],
+    # === NISEKO SKIING ===
+    "grand hirafu": [140.6892, 42.8636],
+    "hirafu": [140.6892, 42.8636],
+    "niseko village": [140.6789, 42.8467],
+    "annupuri": [140.6458, 42.8556],
+    "hanazono": [140.7128, 42.8847],
+    # === PATAGONIA HIKING ===
+    "torres del paine": [-72.9667, -50.9423],
+    "grey glacier": [-73.0486, -50.4967],
+    "perito moreno": [-73.0486, -50.4967],
+    "fitz roy": [-72.8867, -49.3314],
+}
+
+
+def _lookup_coordinates(title: str) -> Optional[List[float]]:
+    """Lookup coordinates by activity title (case-insensitive partial match)."""
+    title_lower = title.lower()
+    for key, coords in ACTIVITY_COORDINATES.items():
+        if key in title_lower:
+            return coords
+    return None
+
+
+# =============================================================================
 # LLM Specialist System Prompts (Zero-Template Architecture)
 # =============================================================================
 
@@ -625,6 +685,8 @@ def convert_llm_output_to_specialist_output(
         # Use Unsplash service with activity context for location-specific images
         # Variant cycles through prefetched images (0-5)
         image_url = get_image_url_sync(destination, variant=i % 6, activities=[topic])
+        # Lookup coordinates by activity title
+        coordinates = _lookup_coordinates(activity.title)
         content_blocks.append(
             ItineraryBlock(
                 day=i + 2,  # Start from day 2 (day 1 is arrival)
@@ -637,6 +699,7 @@ def convert_llm_output_to_specialist_output(
                 image_url=image_url,
                 duration_hours=activity.duration_hours,
                 location=activity.location,
+                coordinates=coordinates,  # [lng, lat] for Mapbox POI pins
             )
         )
 
@@ -1186,8 +1249,17 @@ class VerticalSpecialist:
             for i, activity in enumerate(activities[:max_activities]):
                 _debug_log(
                     f"[SPECIALIST] Creating block: {activity.get('title')}, "
-                    f"image={bool(activity.get('image'))}"
+                    f"image={bool(activity.get('image'))}, coords={activity.get('coordinates')}"
                 )
+                # Default skill_level by specialist type if not in curated data
+                default_skill = {
+                    "diving": "intermediate",
+                    "hiking": "intermediate",
+                    "skiing": "advanced",
+                    "cycling": "intermediate",
+                    "surfing": "intermediate",
+                }.get(self.topic, "intermediate")
+
                 blocks.append(
                     ItineraryBlock(
                         day=i + 2,  # Start from day 2 (day 1 is arrival)
@@ -1195,7 +1267,7 @@ class VerticalSpecialist:
                         description=activity.get("description", ""),
                         type=activity.get("type", "activity"),
                         source_specialist=self.topic,
-                        skill_level=activity.get("skill_level"),
+                        skill_level=activity.get("skill_level", default_skill),
                         logic_hook=activity.get("logic_hook"),
                         image_url=activity.get("image"),  # Curated image URL
                         coordinates=activity.get("coordinates"),  # [lng, lat] for Mapbox
@@ -1400,7 +1472,40 @@ class VerticalSpecialist:
         )
 
         # =====================================================================
-        # STEP 0: Check for cached parallel LLM results (PERFORMANCE OPTIMIZATION)
+        # STEP 0a: Early feasibility check - trip too short for this activity?
+        # =====================================================================
+        activity_days = self._calculate_activity_days(state)
+        if activity_days <= 0:
+            # Trip is too short for this specialist's activities
+            min_days_needed = {
+                "diving": 4,  # arrival + dive + no-fly buffer + departure
+                "hiking": 3,  # arrival + hike + departure
+                "skiing": 3,  # arrival + ski + departure
+            }.get(self.topic, 3)
+
+            reason = (
+                f"{self.topic.title()} requires at least {min_days_needed} days "
+                f"(your trip is too short). "
+            )
+            if self.topic == "diving":
+                reason += "The 24h no-fly safety buffer leaves no time for diving."
+
+            _debug_log(f"[SPECIALIST] INFEASIBLE: Trip too short for {self.topic}")
+            return SpecialistOutput(
+                feasibility_status="infeasible",
+                feasibility_reason=reason,
+                alternative_suggestion=(
+                    f"Consider extending your trip to {min_days_needed}+ days, "
+                    f"or explore other activities."
+                ),
+                constraints=[],
+                content_blocks=[],
+                critique=None,
+                enhancements=[],
+            )
+
+        # =====================================================================
+        # STEP 0b: Check for cached parallel LLM results (PERFORMANCE OPTIMIZATION)
         # =====================================================================
         parallel_results = state.metadata.get("parallel_llm_results", {})
         cached_result = parallel_results.get(self.topic)
@@ -1456,27 +1561,21 @@ class VerticalSpecialist:
                     enhancements=[],
                 )
 
-            # Prefetch activity-specific images from Unsplash (fire-and-forget)
+            # Prefetch activity-specific images from Unsplash BEFORE conversion
             # This populates the memory cache so get_image_url_sync returns Unsplash images
-            # Don't await - get_hero_image() fallback handles missing images
+            # MUST await - otherwise cache is empty and fallback shows generic placeholders
             try:
-                import asyncio
-
                 from app.services.unsplash import prefetch_destination_images
 
-                task = asyncio.create_task(
-                    prefetch_destination_images(destination, activities=[self.topic])
-                )
-                # Suppress "Task exception was never retrieved" log spam if Unsplash fails
-                task.add_done_callback(
-                    lambda t: t.exception() if t.done() and not t.cancelled() else None
+                prefetch_count = await prefetch_destination_images(
+                    destination, activities=[self.topic]
                 )
                 _debug_log(
-                    f"[SPECIALIST] Unsplash prefetch started (fire-and-forget) "
+                    f"[SPECIALIST] Unsplash prefetch completed: {prefetch_count} images "
                     f"for {destination}/{self.topic}"
                 )
             except Exception as e:
-                _debug_log(f"[SPECIALIST] Unsplash prefetch setup error (non-fatal): {e}")
+                _debug_log(f"[SPECIALIST] Unsplash prefetch error (non-fatal): {e}")
 
             # Convert LLM output to SpecialistOutput format
             converted = convert_llm_output_to_specialist_output(llm_output, self.topic, destination)
@@ -2045,17 +2144,45 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         image_url = block.image_url or _get_curated_image(
             topic, state.trip_plan.destination, block.title
         )
-        content_added.append(
-            {
-                "title": block.title,
-                "description": block.description,
-                "logic_hook": block.logic_hook,
-                "type": block.type,
-                "day": block.day,
-                "image_url": image_url,
-                "coordinates": block.coordinates,  # [lng, lat] for Mapbox POI pins
-            }
+        # Map skill_level to intensity for frontend display
+        # Handles both formats: beginner/intermediate/advanced AND easy/moderate/hard
+        skill_to_intensity = {
+            "beginner": "light",
+            "easy": "light",
+            "intermediate": "moderate",
+            "moderate": "moderate",
+            "advanced": "challenging",
+            "hard": "challenging",
+            "challenging": "challenging",
+        }
+        # Default intensity by specialist type if skill_level not set
+        default_intensity = {
+            "diving": "moderate",
+            "hiking": "moderate",
+            "skiing": "challenging",
+            "cycling": "moderate",
+            "surfing": "moderate",
+        }
+        # Normalize skill_level to lowercase for case-insensitive matching
+        skill_key = block.skill_level.lower() if block.skill_level else None
+        intensity = (
+            skill_to_intensity.get(skill_key)
+            if skill_key
+            else default_intensity.get(topic, "moderate")
         )
+
+        content_item = {
+            "title": block.title,
+            "description": block.description,
+            "logic_hook": block.logic_hook,
+            "type": block.type,
+            "day": block.day,
+            "image_url": image_url,
+            "coordinates": block.coordinates,  # [lng, lat] for Mapbox POI pins
+            "intensity": intensity,  # light/moderate/challenging for difficulty badge
+            "duration_hours": block.duration_hours,
+        }
+        content_added.append(content_item)
 
     # Determine hero_image: use first content image or generate fallback
     hero_image = None

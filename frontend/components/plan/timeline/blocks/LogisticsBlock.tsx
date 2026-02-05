@@ -9,7 +9,7 @@
 
 'use client';
 
-import { DoorOpen, Key, type LucideIcon,PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
+import { DoorOpen, Key, type LucideIcon, PlaneLanding, PlaneTakeoff, Settings } from 'lucide-react';
 
 import { cn, normalizeTitle } from '@/lib/utils';
 
@@ -33,6 +33,8 @@ interface LogisticsBlockProps {
   time?: DisplayTime;
   details?: string;
   hotelName?: string;
+  /** Hotel thumbnail image URL for check-in blocks */
+  hotelImage?: string;
   /** Preference attribution for check-in blocks */
   preferenceStatus?: PreferenceStatus;
   alternativeTileId?: string;
@@ -84,6 +86,7 @@ export function LogisticsBlock({
   time,
   details,
   hotelName,
+  hotelImage,
   preferenceStatus,
   alternativeTileId,
   onSwitchToAlternative,
@@ -140,7 +143,18 @@ export function LogisticsBlock({
           <Settings className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
         </button>
       )}
-      <Icon className={cn('w-5 h-5 shrink-0', config.iconColor)} />
+      {/* Image for all logistics types when available, icon fallback */}
+      {hotelImage ? (
+        <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden bg-zinc-200 dark:bg-zinc-700">
+          <img
+            src={hotelImage}
+            alt={hotelName || config.label}
+            className="w-full h-full object-cover"
+          />
+        </div>
+      ) : (
+        <Icon className={cn('w-5 h-5 shrink-0', config.iconColor)} />
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           {time && (

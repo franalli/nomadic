@@ -78,7 +78,8 @@
       "Bash(npx --yes eslint:*)",
       "Bash(test:*)",
       "Bash(copy:*)",
-      "Bash(Copy-Item \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\public\\\\nomadic_logo.png\" \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\app\\\\icon.png\")"
+      "Bash(Copy-Item \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\public\\\\nomadic_logo.png\" \"c:\\\\Users\\\\Filippo\\\\Desktop\\\\nomadic\\\\frontend\\\\app\\\\icon.png\")",
+      "Bash(git restore:*)"
     ],
     "deny": [],
     "ask": []

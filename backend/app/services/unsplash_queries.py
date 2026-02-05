@@ -171,11 +171,17 @@ def get_query_for_destination(destination: str, activities: list[str] | None = N
             Uses DESTINATION_QUERIES for location-specific images
     """
     # If an activity is specified, use activity-specific query for better results
-    # This ensures diving gets underwater images, not "bali rice terraces diving"
+    # Underwater activities (diving) use pure activity queries - coral reefs look similar everywhere
+    # Land activities (hiking, skiing) combine destination + activity for location-specific views
     if activities and len(activities) > 0:
         activity = activities[0].lower().strip()
         if activity in ACTIVITY_QUERIES:
-            # Use pure activity query for specialist topics
+            # Land-based activities: combine destination for location-specific imagery
+            # e.g., "bali hiking mountain trail" instead of generic "mountain hiking trail"
+            land_based = {"hiking", "skiing", "climbing", "cycling", "surfing"}
+            if activity in land_based:
+                return f"{destination} {activity} {ACTIVITY_QUERIES[activity]}"
+            # Underwater activities: use pure activity query (coral looks the same everywhere)
             return ACTIVITY_QUERIES[activity]
 
     # Fallback to destination-based query

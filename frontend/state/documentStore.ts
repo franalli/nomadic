@@ -919,6 +919,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
 
     // ============================================================
+    // DATE CHANGE DETECTION (triggers strategy section refresh)
+    // ============================================================
+    const prevStartDate = currentDoc?.trip_inputs?.start_date;
+    const prevEndDate = currentDoc?.trip_inputs?.end_date;
+    const newStartDate = response.document.trip_inputs?.start_date;
+    const newEndDate = response.document.trip_inputs?.end_date;
+    const datesChanged = (prevStartDate && newStartDate && prevStartDate !== newStartDate) ||
+                         (prevEndDate && newEndDate && prevEndDate !== newEndDate);
+
+    if (datesChanged) {
+      console.log(
+        `[documentStore.setFromPlanResponse] 📅 Dates changed: ${prevStartDate}→${prevEndDate} to ${newStartDate}→${newEndDate}`
+      );
+    }
+
+    // ============================================================
     // VIEW STATE DOWNGRADE PROTECTION
     // ============================================================
     const prevViewState = currentDoc?.plan_view_state;
@@ -1032,7 +1048,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const responseSections = response.document.strategy_sections ?? [];
 
     const mergedSections = (() => {
-      if (destinationChanged) return responseSections;
+      // Full replacement on destination OR date change (specialists re-run with new activity counts)
+      if (destinationChanged || datesChanged) return responseSections;
       if (responseSections.length === 0) return currentSections;
 
       // Build maps for both current and response sections
@@ -1063,7 +1080,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return merged;
     })();
 
-    if (!destinationChanged && responseSections.length !== currentSections.length) {
+    if (datesChanged) {
+      console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: REPLACED (dates changed, ${responseSections.length} sections)`);
+    } else if (!destinationChanged && responseSections.length !== currentSections.length) {
       console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: MERGED (${currentSections.length} → ${mergedSections.length} sections)`);
     } else if (!destinationChanged && currentSections.length > 0) {
       console.log(`[documentStore.setFromPlanResponse] 📝 Strategy sections: PRESERVED content_added (${mergedSections.length} sections)`);
@@ -1118,6 +1137,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const { useChatStore } = require('./chatStore');
       useChatStore.getState().resetChat();
       console.log('[documentStore.mergeEnvelope] 💬 Chat: CLEARED (destination changed)');
+    }
+
+    // Detect date changes (for logging/debugging)
+    const prevStartDate = currentDoc.trip_inputs?.start_date;
+    const prevEndDate = currentDoc.trip_inputs?.end_date;
+    const newStartDate = envelope.trip_inputs?.start_date;
+    const newEndDate = envelope.trip_inputs?.end_date;
+    const datesChanged = (prevStartDate && newStartDate && prevStartDate !== newStartDate) ||
+                         (prevEndDate && newEndDate && prevEndDate !== newEndDate);
+
+    if (datesChanged) {
+      console.log(
+        `[documentStore.mergeEnvelope] 📅 Dates changed: ${prevStartDate}→${prevEndDate} to ${newStartDate}→${newEndDate}`
+      );
     }
 
     // ============================================================

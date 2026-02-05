@@ -274,7 +274,7 @@ export function PlanHeader({
                   onOpenSheet={onOpenSheet}
                   disabled={isStreaming}
                   variant="onImage"
-                  readOnlyExceptDestination={planViewState.startsWith('S3_')}
+                  readOnlyExceptDestination={false}
                 />
               </div>
             )}

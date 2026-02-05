@@ -80,14 +80,19 @@ export function SuggestionCard({
     return (
       <div
         className={cn(
-          'flex items-center gap-3 p-2 rounded-lg',
-          'bg-zinc-800/30 border border-zinc-700/30',
-          'hover:bg-zinc-800/50 transition-colors',
+          'flex items-center gap-3 p-3 rounded-xl',
+          // Light: White glass with visible border (Tactile Rule)
+          'bg-white/90 border border-zinc-200 shadow-sm',
+          'hover:border-zinc-300 hover:shadow-md',
+          // Dark: Glass fill with subtle border
+          'dark:bg-white/5 dark:border-white/10',
+          'dark:hover:bg-white/10 dark:hover:border-white/20',
+          'transition-all duration-150',
           className
         )}
       >
         {/* Thumbnail */}
-        <div className="relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+        <div className="relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 ring-1 ring-black/5 dark:ring-white/10">
           <Image
             src={imageUrl}
             alt={tile.title}
@@ -101,22 +106,22 @@ export function SuggestionCard({
         {/* Content */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-medium text-emerald-400 uppercase tracking-wide">
+            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
               Suggested
             </span>
           </div>
-          <p className="text-sm font-medium text-zinc-200 truncate">{tile.title}</p>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{tile.title}</p>
           {tile.subtitle && (
-            <p className="text-xs text-zinc-400 truncate">{tile.subtitle}</p>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{tile.subtitle}</p>
           )}
         </div>
 
         {/* Price */}
         {formattedPrice && (
-          <div className="text-sm font-medium text-zinc-300">
+          <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
             {formattedPrice}
             {(tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
-              <span className="text-zinc-500">/night</span>
+              <span className="font-normal text-zinc-500 dark:text-zinc-400">/night</span>
             )}
           </div>
         )}
@@ -128,7 +133,7 @@ export function SuggestionCard({
               e.stopPropagation();
               onOpenStaysSettings();
             }}
-            className="p-2 rounded-full transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50"
+            className="p-2 rounded-full transition-colors text-zinc-400 hover:text-zinc-900 hover:bg-zinc-100 dark:hover:text-zinc-200 dark:hover:bg-white/10"
             aria-label="Hotel preferences"
           >
             <Settings className="w-4 h-4" />
@@ -141,8 +146,8 @@ export function SuggestionCard({
           className={cn(
             'p-2 rounded-full transition-colors',
             isSaved
-              ? 'text-emerald-400 bg-emerald-400/10'
-              : 'text-zinc-400 hover:text-emerald-400 hover:bg-zinc-700/50'
+              ? 'text-emerald-500 bg-emerald-500/10'
+              : 'text-zinc-400 hover:text-emerald-500 hover:bg-zinc-100 dark:hover:bg-white/10'
           )}
         >
           <Heart className={cn('w-4 h-4', isSaved && 'fill-current')} />
@@ -156,7 +161,11 @@ export function SuggestionCard({
     <div
       className={cn(
         'rounded-xl overflow-hidden',
-        'bg-zinc-800/40 border border-zinc-700/30',
+        // Light: White glass with visible border and shadow
+        'bg-white/95 border border-zinc-200 shadow-md',
+        // Dark: Glass fill with subtle border
+        'dark:bg-white/5 dark:border-white/10',
+        'transition-all duration-150',
         className
       )}
     >
@@ -231,31 +240,31 @@ export function SuggestionCard({
             {tile.rating && (
               <div className="flex items-center gap-1">
                 <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                <span className="text-sm font-medium text-zinc-200">{tile.rating.toFixed(1)}</span>
+                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{tile.rating.toFixed(1)}</span>
               </div>
             )}
             {tile.location_label && (
-              <span className="text-sm text-zinc-400">{tile.location_label}</span>
+              <span className="text-sm text-zinc-500 dark:text-zinc-400">{tile.location_label}</span>
             )}
           </div>
           {formattedPrice && (
-            <div className="text-zinc-400 text-sm">
-              <span className="text-zinc-200 font-medium">{formattedPrice}</span>
-              {tile.type === 'hotel' && <span>/night</span>}
+            <div className="text-sm">
+              <span className="text-zinc-900 dark:text-zinc-100 font-semibold">{formattedPrice}</span>
+              {tile.type === 'hotel' && <span className="text-zinc-500 dark:text-zinc-400">/night</span>}
             </div>
           )}
         </div>
 
         {/* Why this suggestion? - Expandable */}
         {reasoning && (
-          <div className="rounded-lg bg-zinc-900/50 border border-zinc-700/30">
+          <div className="rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-700/30">
             <button
               onClick={() => setIsReasoningExpanded(!isReasoningExpanded)}
               className="w-full flex items-center justify-between p-3 text-left"
             >
               <div className="flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-emerald-400" />
-                <span className="text-sm font-medium text-zinc-300">Why this suggestion?</span>
+                <Sparkles className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
+                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Why this suggestion?</span>
               </div>
               {isReasoningExpanded ? (
                 <ChevronUp className="w-4 h-4 text-zinc-400" />
@@ -265,7 +274,7 @@ export function SuggestionCard({
             </button>
             {isReasoningExpanded && (
               <div className="px-3 pb-3">
-                <p className="text-sm text-zinc-400 leading-relaxed">{reasoning}</p>
+                <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">{reasoning}</p>
               </div>
             )}
           </div>
@@ -275,14 +284,14 @@ export function SuggestionCard({
         <div className="flex items-center gap-2">
           <button
             onClick={onViewAlternatives}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-zinc-300 bg-zinc-700/50 hover:bg-zinc-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-700/50 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
           >
             <RefreshCw className="w-4 h-4" />
             Change
           </button>
           <button
             onClick={() => onDetailsClick?.(tile)}
-            className="flex-1 px-3 py-2 rounded-lg text-sm font-medium text-zinc-300 bg-zinc-700/50 hover:bg-zinc-700 transition-colors text-center"
+            className="flex-1 px-3 py-2 rounded-lg text-sm font-medium text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-700/50 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors text-center"
           >
             View Details
           </button>
@@ -291,8 +300,8 @@ export function SuggestionCard({
             className={cn(
               'px-4 py-2 rounded-lg text-sm font-medium transition-colors',
               isSaved
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                : 'bg-zinc-900 dark:bg-emerald-600 text-white hover:bg-zinc-800 dark:hover:bg-emerald-500'
             )}
           >
             {isSaved ? 'Saved' : 'Save to Trip'}

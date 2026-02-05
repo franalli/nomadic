@@ -43,19 +43,19 @@ export interface MiniCardProps {
  */
 export const MiniCardSkeleton = memo(function MiniCardSkeleton() {
   return (
-    <div className="relative rounded-lg border border-border bg-card shadow-sm p-3">
+    <div className="relative rounded-lg border border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-white/5 shadow-sm p-3">
       <div className="flex items-start gap-3">
-        <Skeleton className="h-16 w-16 flex-shrink-0 rounded-md bg-muted/50" />
+        <Skeleton className="h-16 w-16 flex-shrink-0 rounded-md bg-zinc-200/50 dark:bg-zinc-700/50" />
         <div className="flex min-w-0 flex-1 flex-col gap-2">
-          <Skeleton className="h-4 w-3/4 bg-muted/50" />
-          <Skeleton className="h-3 w-1/2 bg-muted/50" />
+          <Skeleton className="h-4 w-3/4 bg-zinc-200/50 dark:bg-zinc-700/50" />
+          <Skeleton className="h-3 w-1/2 bg-zinc-200/50 dark:bg-zinc-700/50" />
           <div className="flex gap-1.5">
-            <Skeleton className="h-5 w-14 rounded bg-muted/50" />
-            <Skeleton className="h-5 w-16 rounded bg-muted/50" />
+            <Skeleton className="h-5 w-14 rounded bg-zinc-200/50 dark:bg-zinc-700/50" />
+            <Skeleton className="h-5 w-16 rounded bg-zinc-200/50 dark:bg-zinc-700/50" />
           </div>
-          <Skeleton className="h-5 w-20 mt-1 bg-muted/50" />
+          <Skeleton className="h-5 w-20 mt-1 bg-zinc-200/50 dark:bg-zinc-700/50" />
           {/* Logic hook hint - emerald tinted */}
-          <Skeleton className="h-6 w-full rounded-md bg-emerald-900/10 mt-1" />
+          <Skeleton className="h-6 w-full rounded-md bg-emerald-100/50 dark:bg-emerald-900/10 mt-1" />
         </div>
       </div>
     </div>
@@ -218,10 +218,18 @@ export const MiniCard = memo(function MiniCard({
         }
       }}
       className={cn(
-        'relative rounded-lg border bg-card shadow-sm transition-all cursor-pointer',
+        'relative rounded-lg border transition-all cursor-pointer',
         // Safety Shield: Zinc border for unsafe flights (warning)
-        isUnsafe ? 'border-zinc-500/50 bg-zinc-950/10' : 'border-border',
-        'hover:border-border/80 hover:shadow-md hover:translate-y-[-1px]',
+        isUnsafe
+          ? 'border-zinc-500/50 bg-zinc-950/10'
+          : [
+              // Light: Tactile Rule - white glass with visible border and shadow
+              'bg-white/95 border-zinc-200 shadow-sm',
+              'hover:border-zinc-300 hover:shadow-md hover:translate-y-[-1px]',
+              // Dark: Glass fill with subtle border
+              'dark:bg-white/5 dark:border-white/10',
+              'dark:hover:bg-white/8 dark:hover:border-white/20',
+            ],
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
         isExpanded && 'ring-1 ring-primary/20'
       )}
@@ -265,12 +273,12 @@ export const MiniCard = memo(function MiniCard({
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           {/* Row 1: Name + Rating + Save */}
           <div className="flex items-start justify-between gap-2">
-            <h4 className="line-clamp-1 text-sm font-medium text-card-foreground">
+            <h4 className="line-clamp-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
               {tile.title}
             </h4>
             <div className="flex shrink-0 items-center gap-2">
               {tile.rating != null && (
-                <div className="flex items-center gap-0.5 text-xs text-muted-foreground">
+                <div className="flex items-center gap-0.5 text-xs text-zinc-500 dark:text-zinc-400">
                   <Star className="h-3 w-3 fill-emerald-400 text-emerald-400" />
                   <span>{tile.rating.toFixed(1)}</span>
                 </div>
@@ -283,7 +291,7 @@ export const MiniCard = memo(function MiniCard({
                   'flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors',
                   isSaved
                     ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
-                    : 'text-muted-foreground hover:bg-muted hover:text-card-foreground'
+                    : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100'
                 )}
               >
                 <Heart
@@ -296,7 +304,7 @@ export const MiniCard = memo(function MiniCard({
 
           {/* Row 2: Area */}
           {tile.location_label && (
-            <p className="line-clamp-1 text-xs text-muted-foreground">
+            <p className="line-clamp-1 text-xs text-zinc-500 dark:text-zinc-400">
               {tile.location_label}
             </p>
           )}
@@ -311,7 +319,7 @@ export const MiniCard = memo(function MiniCard({
                     'rounded px-1.5 py-0.5 text-[10px] font-medium',
                     perk === 'Free cancel'
                       ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
-                      : 'bg-muted text-muted-foreground'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
                   )}
                 >
                   {perk}
@@ -322,7 +330,7 @@ export const MiniCard = memo(function MiniCard({
 
           {/* Row 4: Price */}
           <div className="mt-1">
-            <span className="text-sm font-semibold text-card-foreground">
+            <span className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
               {priceDisplay}
             </span>
           </div>
@@ -346,13 +354,13 @@ export const MiniCard = memo(function MiniCard({
       </div>
 
       {/* Quick facts toggle row - separate from card click */}
-      <div className="border-t border-border/50">
+      <div className="border-t border-zinc-200/50 dark:border-white/10">
         <button
           type="button"
           onClick={handleQuickFactsToggle}
           aria-expanded={isExpanded}
           aria-controls={quickFactsPanelId}
-          className="flex w-full items-center gap-1.5 px-3 py-2 min-h-[44px] text-xs text-muted-foreground transition-colors hover:text-foreground hover:bg-muted/50"
+          className="flex w-full items-center gap-1.5 px-3 py-2 min-h-[44px] text-xs text-zinc-500 dark:text-zinc-400 transition-colors hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-100/50 dark:hover:bg-white/5"
         >
           <ChevronDown
             className={cn(
@@ -368,15 +376,15 @@ export const MiniCard = memo(function MiniCard({
       {isExpanded && (
         <div
           id={quickFactsPanelId}
-          className="border-t border-border/50 px-3 pb-3 pt-2 space-y-2"
+          className="border-t border-zinc-200/50 dark:border-white/10 px-3 pb-3 pt-2 space-y-2"
         >
           {/* Key facts - 2-3 bullets max */}
           {(cancellationText || checkTimes.checkIn || checkTimes.checkOut) && (
             <div className="space-y-1">
-              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                 Key facts
               </h5>
-              <ul className="space-y-0.5 text-xs text-card-foreground">
+              <ul className="space-y-0.5 text-xs text-zinc-900 dark:text-zinc-100">
                 {checkTimes.checkIn && (
                   <li>• Check-in: {checkTimes.checkIn}</li>
                 )}
@@ -391,20 +399,20 @@ export const MiniCard = memo(function MiniCard({
           {/* Amenities - 4 chips max */}
           {amenities.length > 0 && (
             <div className="space-y-1">
-              <h5 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              <h5 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wide">
                 Amenities
               </h5>
               <div className="flex flex-wrap gap-1">
                 {amenities.slice(0, 4).map((amenity) => (
                   <span
                     key={amenity}
-                    className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                    className="rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-600 dark:text-zinc-400"
                   >
                     {amenity}
                   </span>
                 ))}
                 {amenities.length > 4 && (
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/70">
+                  <span className="rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500/70 dark:text-zinc-500">
                     +{amenities.length - 4} more
                   </span>
                 )}
@@ -415,7 +423,7 @@ export const MiniCard = memo(function MiniCard({
           {/* Provider + Booking Data Tooltip */}
           <div className="flex items-center justify-between">
             {tile.provider && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
                 via {tile.provider}
               </p>
             )}
@@ -426,17 +434,17 @@ export const MiniCard = memo(function MiniCard({
                   <button
                     type="button"
                     onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-card-foreground transition-colors"
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                   >
                     <Code2 className="h-3 w-3" />
                     <span>API</span>
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
-                  <p className="text-[10px] text-muted-foreground mb-1 font-medium">
+                  <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mb-1 font-medium">
                     Booking API Payload
                   </p>
-                  <pre className="text-[10px] font-mono bg-muted/50 rounded p-2 overflow-auto max-h-40">
+                  <pre className="text-[10px] font-mono bg-zinc-100/50 dark:bg-zinc-800/50 rounded p-2 overflow-auto max-h-40">
                     {JSON.stringify(getDeepLinkParams(tile), null, 2)}
                   </pre>
                 </TooltipContent>

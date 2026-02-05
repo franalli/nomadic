@@ -14,7 +14,7 @@ import type { GenerationState } from '@/types/plan-envelope';
 export type StreamEvent =
   | { type: 'progress'; stage: GenerationState['stage']; message?: string; pct?: number }
   | { type: 'envelope'; plan_envelope: Partial<PlanDocumentData> }
-  | { type: 'done'; plan_view_state: string; dropped_preferred_count?: number }
+  | { type: 'done'; plan_view_state: string; dropped_preferred_count?: number; warnings?: string[] }
   | { type: 'error'; message: string };
 
 /**

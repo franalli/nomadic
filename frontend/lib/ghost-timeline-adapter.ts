@@ -216,6 +216,66 @@ export function extractPOIsFromSections(
 }
 
 /**
+ * Extract POIs from actual itinerary day_cards (source of truth after generation).
+ * Use this instead of extractPOIsFromSections when itinerary exists.
+ * Falls back to strategy sections if day_cards don't have coordinates.
+ */
+export function extractPOIsFromDayCards(
+  dayCards: import('@/types/plan-envelope').DayCard[] | undefined,
+  strategySections?: import('@/types/plan-envelope').StrategySection[],
+  destination?: string
+): MapPOI[] {
+  if (!dayCards || dayCards.length === 0) {
+    console.log('[extractPOIsFromDayCards] No day_cards, falling back to strategy sections');
+    return extractPOIsFromSections(strategySections, destination);
+  }
+
+  const pois: MapPOI[] = [];
+
+  // Debug: Log day_cards structure
+  console.log('[extractPOIsFromDayCards] Processing day_cards:', {
+    count: dayCards.length,
+    blocks: dayCards.map(dc => ({
+      day: dc.day_number,
+      blockCount: dc.blocks?.length ?? 0,
+      blocksWithCoords: dc.blocks?.filter(b => b.coordinates?.lat && b.coordinates?.lng).length ?? 0,
+    })),
+  });
+
+  dayCards.forEach((dayCard) => {
+    dayCard.blocks?.forEach((block, idx) => {
+      // Skip buffer/skeleton blocks
+      if (block.is_buffer || block.is_skeleton) return;
+
+      // Only include if block has coordinates
+      if (block.coordinates?.lat && block.coordinates?.lng) {
+        // Use block.id if available, otherwise match TimelineThread's format
+        const blockId = block.id || `block-${dayCard.day_number}-${idx}`;
+        console.log('[extractPOIsFromDayCards] Adding POI:', { blockId, title: block.summary, hasBlockId: !!block.id });
+        pois.push({
+          id: blockId,
+          title: block.summary || block.activity_type,
+          type: block.specialist_type || 'activity',
+          coordinates: block.coordinates,
+        });
+      } else {
+        console.log('[extractPOIsFromDayCards] Skipping block (no coords):', { day: dayCard.day_number, idx, summary: block.summary, coords: block.coordinates });
+      }
+    });
+  });
+
+  console.log('[extractPOIsFromDayCards] Extracted POIs:', pois.length);
+
+  // If itinerary exists but no coordinates, fall back to strategy sections
+  if (pois.length === 0 && strategySections) {
+    console.log('[extractPOIsFromDayCards] No POIs from day_cards, falling back to strategy sections');
+    return extractPOIsFromSections(strategySections, destination);
+  }
+
+  return pois;
+}
+
+/**
  * Calculate center point from POIs for map initialization.
  * Returns average of all coordinates, or Dubai default if no POIs.
  */

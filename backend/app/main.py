@@ -2994,15 +2994,19 @@ async def expand_itinerary_endpoint(
                 if req.preferences:
                     hotel_ids = req.preferences.preferred_hotel_ids or []
                     activity_ids = req.preferences.preferred_activity_ids or []
+                    flight_ids = req.preferences.preferred_flight_ids or []
                     _debug(
                         f"🎯 [expand-itinerary] Preferences received: "
-                        f"hotels={len(hotel_ids)}, activities={len(activity_ids)}"
+                        f"hotels={len(hotel_ids)}, activities={len(activity_ids)}, "
+                        f"flights={len(flight_ids)}"
                     )
                     _debug(f"🎯 [expand-itinerary] Hotel IDs: {hotel_ids}")
                     _debug(f"🎯 [expand-itinerary] Activity IDs: {activity_ids}")
+                    _debug(f"🎯 [expand-itinerary] Flight IDs: {flight_ids}")
                     preferences_input = PreferenceOverrideInput(
                         preferred_hotel_ids=hotel_ids,
                         preferred_activity_ids=activity_ids,
+                        preferred_flight_ids=flight_ids,
                     )
                 else:
                     _debug("🎯 [expand-itinerary] No preferences in request")
@@ -3237,6 +3241,7 @@ async def expand_itinerary_endpoint(
                     plan_view_state=new_plan_view_state,
                     version=doc.version if doc else None,
                     dropped_preferred_count=itinerary_result.dropped_preferred_count or None,
+                    warnings=itinerary_result.warnings if itinerary_result.warnings else None,
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 
@@ -3399,6 +3404,7 @@ async def remove_specialist_endpoint(
                     preferences_input = PreferenceOverrideInput(
                         preferred_hotel_ids=req.preferences.preferred_hotel_ids or [],
                         preferred_activity_ids=req.preferences.preferred_activity_ids or [],
+                        preferred_flight_ids=req.preferences.preferred_flight_ids or [],
                     )
 
                 # Validate dates
@@ -3557,6 +3563,7 @@ async def remove_specialist_endpoint(
                     plan_view_state=new_plan_view_state,
                     version=doc.version if doc else None,
                     dropped_preferred_count=itinerary_result.dropped_preferred_count or None,
+                    warnings=itinerary_result.warnings if itinerary_result.warnings else None,
                 )
                 yield json.dumps(event.model_dump(exclude_none=True)) + "\n"
 

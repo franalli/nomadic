@@ -73,9 +73,10 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
       const document = useDocumentStore.getState().document;
       const prefs = useDocumentStore.getState().preferredTileIds;
 
-      // Separate hotel and activity preferences
+      // Separate hotel, activity, and flight preferences
       const hotelIds: string[] = [];
       const activityIds: string[] = [];
+      const flightIds: string[] = [];
 
       if (document?.tiles) {
         for (const id of prefs) {
@@ -85,6 +86,8 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
               hotelIds.push(id);
             } else if (tile.type === 'activity') {
               activityIds.push(id);
+            } else if (tile.type === 'flight') {
+              flightIds.push(id);
             }
           }
         }
@@ -100,6 +103,7 @@ export function usePreferenceAutoRegen(): UsePreferenceAutoRegenReturn {
           preferences: {
             preferred_hotel_ids: hotelIds,
             preferred_activity_ids: activityIds,
+            preferred_flight_ids: flightIds,
           },
         }),
       });

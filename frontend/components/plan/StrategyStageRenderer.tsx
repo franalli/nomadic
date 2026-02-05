@@ -41,6 +41,7 @@ import { guardedEnforcePolicy } from '@/lib/contentPolicyGuard';
 import { getDestinationCoords } from '@/lib/destination-coords';
 import {
   calculateMapCenter,
+  extractPOIsFromDayCards,
   extractPOIsFromSections,
   generateGhostDayCards,
   hasSpecialistContent,
@@ -127,7 +128,6 @@ import {
   isMultiSpecialistTrip,
 } from './planStateHelpers';
 import { ReadyToPlanBanner } from './ReadyToPlanBanner';
-import { SelectionsBar } from './SelectionsBar';
 import { S2StrategyView } from './stages/S2StrategyView';
 // import { S3BlockedView } from './stages/S3BlockedView';
 // import { S3EditingView } from './stages/S3EditingView';
@@ -425,7 +425,16 @@ export function StrategyStageRenderer({
     const hasTiles = effectiveTiles && Object.keys(effectiveTiles).length > 0;
     const density = computeDataDensity(state, viewModel.strategy_sections, effectiveTiles, effectiveTripInputs);
     const isShowingMirrorLoader = generating && hasDates && !hasTiles;
-    const tripDuration = effectiveTripInputs?.trip_duration ?? 3;
+
+    // Calculate actual trip duration from dates (more accurate than stored trip_duration)
+    // This ensures POI filtering matches the current date range when dates change
+    let tripDuration = effectiveTripInputs?.trip_duration ?? 3;
+    if (effectiveTripInputs?.start_date && effectiveTripInputs?.end_date) {
+      const start = new Date(effectiveTripInputs.start_date);
+      const end = new Date(effectiveTripInputs.end_date);
+      const diffDays = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      if (diffDays > 0) tripDuration = diffDays;
+    }
 
     return {
       hasDates,
@@ -580,13 +589,14 @@ export function StrategyStageRenderer({
       const sections = specialistData.fullModeSections;
       const bridgeFilteredViewModel = filteredViewModel;
       // U5: Pass destination for demo POI fallback (use fallback chain for reliable lookup)
+      // Bridge mode: no itinerary yet, show all specialist suggestions
       const effectiveDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
       const mapPOIs = extractPOIsFromSections(sections, effectiveDestination);
 
       // Get destination coordinates for map center
       const bridgeDestCoords = getDestinationCoords(destinationCard?.title);
       const bridgeMapCenter = bridgeDestCoords
-        ? { lng: bridgeDestCoords[0], lat: bridgeDestCoords[1], zoom: 8 }
+        ? { lng: bridgeDestCoords[0], lat: bridgeDestCoords[1], zoom: 10 }
         : calculateMapCenter(mapPOIs);
 
       // Destination pin for the map (shown when no POIs available)
@@ -687,16 +697,21 @@ export function StrategyStageRenderer({
     // Get destination coordinates for map (used in P3+ only)
     const destCoords = getDestinationCoords(destinationCard?.title);
     const mapCenter = destCoords
-      ? { lng: destCoords[0], lat: destCoords[1], zoom: 6 }
-      : { lng: 0, lat: 0, zoom: 2 }; // Fallback world view
+      ? { lng: destCoords[0], lat: destCoords[1], zoom: 8 }
+      : { lng: 0, lat: 0, zoom: 4 }; // Fallback world view
 
     // Desktop: Show sticky map sidebar when destination is set
     // Map appears immediately when destination is known, not just after itinerary
     const showDesktopMap = isDesktop && !!destCoords;
 
-    // U5: Extract POIs from specialist content, with demo fallback (use fallback chain)
+    // U5: Extract POIs from actual itinerary (day_cards) when available, else from strategy sections
+    // This ensures map pins match the generated itinerary, not the specialist's original suggestions
     const fullModeDestination = effectiveTripInputs?.destination ?? destinationCard?.title;
-    const fullModePOIs = extractPOIsFromSections(fullModeSections, fullModeDestination);
+    const fullModePOIs = extractPOIsFromDayCards(
+      viewModel.day_cards,
+      fullModeSections,
+      fullModeDestination
+    );
 
     // Destination pin for the map center
     const destinationMarker: import('@/components/map/InteractiveMap').MapItem[] = destCoords
@@ -814,36 +829,6 @@ export function StrategyStageRenderer({
                 />
               </div>
             )}
-
-          {/* SELECTIONS BAR - slides in when user has hearted tiles */}
-          <AnimatePresence>
-            {preferredTileIds.size > 0 && (
-              <motion.div
-                initial={{ y: -40, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -40, opacity: 0 }}
-                transition={{
-                  type: 'spring',
-                  stiffness: SPRING_CONFIG.SLIDE.stiffness,
-                  damping: SPRING_CONFIG.SLIDE.damping,
-                }}
-                className={cn(
-                  'sticky top-0 z-20',
-                  isDesktop && 'mx-4'
-                )}
-              >
-                <SelectionsBar
-                  tiles={effectiveTiles}
-                  preferredTileIds={preferredTileIds}
-                  onRemovePreference={toggleTilePreference}
-                  onTileClick={scrollToTile}
-                  isSticky={isDesktop}
-                  isRegenerating={isRegenUpdating}
-                  activeSpecialistTypes={viewModel.strategy_sections?.map(s => s.specialist_type).filter(Boolean) as string[] || []}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
 
           {/* SECTION 2: TILE BROWSER - fades in when tiles available */}
           <AnimatePresence>

@@ -204,6 +204,43 @@ def _build_synthesis_context(state: GraphState) -> str:
         for v in state.constraints_violated:
             parts.append(f"- {v}")
 
+    # Specialist feasibility alerts (trip too short, wrong season, etc.)
+    strategy_sections = state.metadata.get("strategy_sections", [])
+    infeasible_sections = [
+        s
+        for s in strategy_sections
+        if (
+            s.get("feasibility_status")
+            if isinstance(s, dict)
+            else getattr(s, "feasibility_status", "feasible")
+        )
+        == "infeasible"
+    ]
+    if infeasible_sections:
+        parts.append("\n## ⚠️ ACTIVITY INFEASIBLE (address this!)")
+        for section in infeasible_sections:
+            specialist = (
+                section.get("specialist_type")
+                if isinstance(section, dict)
+                else getattr(section, "specialist_type", "unknown")
+            )
+            reason = (
+                section.get("feasibility_reason")
+                if isinstance(section, dict)
+                else getattr(section, "feasibility_reason", "")
+            )
+            suggestion = (
+                section.get("alternative_suggestion")
+                if isinstance(section, dict)
+                else getattr(section, "alternative_suggestion", "")
+            )
+            parts.append(f"- {specialist.title()}: {reason}")
+            if suggestion:
+                parts.append(f"  Suggestion: {suggestion}")
+        parts.append(
+            "YOUR TASK: Explain why the activity can't be scheduled and suggest alternatives."
+        )
+
     # REJECTION ALERT: If route error detected, inject explicit guidance
     constraint_violations = state.metadata.get("constraint_violations", [])
     route_violations = [v for v in constraint_violations if v.get("category") == "route"]

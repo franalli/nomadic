@@ -178,6 +178,10 @@ class PreferenceOverride(BaseModel):
         default_factory=list,
         description="Tile IDs of activities the user has hearted/preferred",
     )
+    preferred_flight_ids: List[str] = Field(
+        default_factory=list,
+        description="Tile IDs of flights the user has hearted/preferred",
+    )
 
 
 class ExpandItineraryRequest(BaseModel):
@@ -224,6 +228,8 @@ class ExpandItineraryStreamEvent(BaseModel):
     version: Optional[int] = None
     # Dropped activities - included in done event when preferred activities couldn't fit
     dropped_preferred_count: Optional[int] = None
+    # User-facing warnings (e.g., "Adjusted to 1 dive to fit your 4-day trip")
+    warnings: Optional[List[str]] = None
 
 
 class RemoveSpecialistRequest(BaseModel):
