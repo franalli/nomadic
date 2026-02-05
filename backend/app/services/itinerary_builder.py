@@ -1735,7 +1735,15 @@ class ItineraryBuilder:
                     f"(alternative={alternative_tile_id[:20]})"
                 )
 
-        if hotel_tile and len(days) > 1:
+        # Only add check-in/check-out blocks if user explicitly preferred a hotel
+        # Tiles are suggestions in PLANNING mode - auto-selecting contradicts UX spec
+        if hotel_tile and len(days) > 1 and not is_user_preferred:
+            _debug_itinerary(
+                f"🏨 Phase 6: Skipping hotel block - no user preference "
+                f"({len(hotel_tiles)} hotels available as suggestions)"
+            )
+
+        if hotel_tile and len(days) > 1 and is_user_preferred:
             # Add check-in to Day 1 (after arrival)
             checkin_block = DayBlockOutput(
                 id="checkin_001",

@@ -141,16 +141,26 @@ export function ActivityMiniCard({
           )}
 
           {/* Difficulty badge - color-coded independently of specialist */}
-          {block.intensity && (
-            <span className={cn(
-              'text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border',
-              block.intensity === 'light' && 'bg-green-500/20 text-green-400 border-green-500/30',
-              block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-              block.intensity === 'challenging' && 'bg-red-500/20 text-red-400 border-red-500/30'
-            )}>
-              {block.intensity === 'light' ? 'easy' : block.intensity}
-            </span>
-          )}
+          {/* Hide for free/rest days, buffer blocks, and local_expert (non-activity) content */}
+          {block.intensity && !block.is_buffer && block.specialist_type !== 'local_expert' && (() => {
+            // Don't show intensity for "free day" style activities
+            const activityLower = (block.activity_type || '').toLowerCase();
+            const summaryLower = (block.summary || '').toLowerCase();
+            const isFreeDay = ['free', 'rest', 'leisure', 'explore', 'relax', 'recovery'].some(
+              keyword => activityLower.includes(keyword) || summaryLower.includes(keyword)
+            );
+            if (isFreeDay) return null;
+            return (
+              <span className={cn(
+                'text-[10px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wide border',
+                block.intensity === 'light' && 'bg-green-500/20 text-green-400 border-green-500/30',
+                block.intensity === 'moderate' && 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+                block.intensity === 'challenging' && 'bg-red-500/20 text-red-400 border-red-500/30'
+              )}>
+                {block.intensity === 'light' ? 'easy' : block.intensity}
+              </span>
+            );
+          })()}
 
           {/* Duration */}
           {block.duration && (

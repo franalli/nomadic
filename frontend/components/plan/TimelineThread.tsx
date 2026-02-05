@@ -536,11 +536,20 @@ export function TimelineThread({
                             >
                               {block.period}
                             </span>
-                            {block.intensity && (
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                                {block.intensity}
-                              </span>
-                            )}
+                            {/* Intensity badge - hide for free/rest/buffer days */}
+                            {block.intensity && !block.is_buffer && (() => {
+                              const activityLower = (block.activity_type || '').toLowerCase();
+                              const summaryLower = (block.summary || '').toLowerCase();
+                              const isFreeDay = ['free', 'rest', 'leisure', 'explore', 'relax', 'recovery'].some(
+                                keyword => activityLower.includes(keyword) || summaryLower.includes(keyword)
+                              );
+                              if (isFreeDay) return null;
+                              return (
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                  {block.intensity}
+                                </span>
+                              );
+                            })()}
                             {/* Specialist type badge for ghost timeline blocks */}
                             {block.specialist_type && (
                               <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">

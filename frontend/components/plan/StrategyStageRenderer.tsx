@@ -26,7 +26,7 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertTriangle, CheckCircle, Shield } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Clock, Shield } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui/toast';
@@ -328,6 +328,12 @@ export function StrategyStageRenderer({
   // NOTE: Using stable selectors - fallback arrays defined outside component to avoid infinite loops
   const constraintsValidated = useDocumentStore((s) => s.document?.constraints_validated) ?? EMPTY_CONSTRAINTS_VALIDATED;
   const constraintViolations = useDocumentStore((s) => s.document?.constraint_violations) ?? EMPTY_CONSTRAINT_VIOLATIONS;
+
+  // DEBUG: Log raw document constraint data
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[Trip DNA] document.constraints_validated:', constraintsValidated);
+    console.log('[Trip DNA] document.constraint_violations:', constraintViolations);
+  }
 
   // Memoized sets for efficient rule lookup
   const validatedRules = useMemo(
@@ -886,10 +892,24 @@ export function StrategyStageRenderer({
                     'Constraint';
 
                   // Three-state styling: violated > validated > unchecked (with priority coloring)
+                  // DEBUG: Log rule matching to diagnose icon issues
+                  if (process.env.NODE_ENV === 'development') {
+                    console.log('[Trip DNA] violatedRules:', [...violatedRules]);
+                    console.log('[Trip DNA] validatedRules:', [...validatedRules]);
+                    console.log('[Trip DNA] constraint rules:', engineConstraints.map(c => c.rule));
+                  }
+
                   const getPillStyle = (c: { rule?: string; type?: string; reason?: string }) => {
                     const rule = c.rule;
-                    const isViolated = rule && violatedRules.has(rule);
-                    const isValidated = rule && validatedRules.has(rule);
+                    // Check both exact rule match AND partial match for robustness
+                    const isViolated = rule && (
+                      violatedRules.has(rule) ||
+                      [...violatedRules].some(vr => vr?.includes(rule) || rule.includes(vr || ''))
+                    );
+                    const isValidated = rule && (
+                      validatedRules.has(rule) ||
+                      [...validatedRules].some(vr => vr?.includes(rule) || rule.includes(vr || ''))
+                    );
 
                     if (isViolated) {
                       return {
@@ -918,21 +938,24 @@ export function StrategyStageRenderer({
 
                     if (blocking.some(k => t.includes(k))) {
                       return {
-                        pillClass: 'border-red-500/30 bg-red-500/10 text-red-300 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-300',
+                        // Light: red-600 for visibility | Dark: red-300
+                        pillClass: 'border-red-500/40 bg-red-500/10 text-red-600 dark:border-red-500/40 dark:bg-red-500/15 dark:text-red-300',
                         iconClass: '', // Inherit from pill
                         Icon: Shield,
                       };
                     }
                     if (strong.some(k => t.includes(k))) {
                       return {
-                        pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300',
+                        // Light: amber-600 for visibility | Dark: amber-300
+                        pillClass: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300',
                         iconClass: '', // Inherit from pill
                         Icon: Shield,
                       };
                     }
                     // Default soft priority
                     return {
-                      pillClass: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-400 dark:border-zinc-500/40 dark:bg-zinc-500/15 dark:text-zinc-400',
+                      // Light: zinc-600 for visibility | Dark: zinc-400
+                      pillClass: 'border-zinc-400/40 bg-zinc-500/10 text-zinc-600 dark:border-zinc-500/40 dark:bg-zinc-500/15 dark:text-zinc-400',
                       iconClass: '', // Inherit from pill
                       Icon: Shield,
                     };
@@ -944,17 +967,29 @@ export function StrategyStageRenderer({
                       <div className="relative flex-1 min-w-0">
                         <div className="flex gap-2 overflow-x-auto no-scrollbar pr-8">
                           {engineConstraints.map((c, i) => {
-                            const { pillClass, iconClass, Icon } = getPillStyle(c);
+                            const style = getPillStyle(c);
                             return (
                               <span
                                 key={`${c.rule}-${i}`}
                                 title={c.reason || c.rule?.replace(/_/g, ' ')}
                                 className={cn(
                                   'inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-medium whitespace-nowrap',
-                                  pillClass
+                                  style.pillClass
                                 )}
                               >
-                                <Icon className={cn('w-3 h-3 shrink-0', iconClass)} />
+                                {/* Icon by priority: blocking=AlertTriangle, strong=Clock, soft=Shield */}
+                                {(() => {
+                                  const t = `${c.type || ''} ${c.rule || ''} ${c.reason || ''}`.toLowerCase();
+                                  const blocking = ['no_fly', 'no-fly', 'nofly', 'safety', 'altitude', 'buffer', '24h', '24 hour', 'diving', 'dive', 'scuba', 'decompression', 'fly', 'flight'];
+                                  const strong = ['morning', 'footwear', 'gear', 'timing', 'equipment', 'certification'];
+                                  if (blocking.some(k => t.includes(k))) {
+                                    return <AlertTriangle className="w-4 h-4 shrink-0" />;
+                                  }
+                                  if (strong.some(k => t.includes(k))) {
+                                    return <Clock className="w-4 h-4 shrink-0" />;
+                                  }
+                                  return <Shield className="w-4 h-4 shrink-0" />;
+                                })()}
                                 <span>{getShortLabel(c)}</span>
                               </span>
                             );

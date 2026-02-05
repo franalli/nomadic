@@ -143,18 +143,28 @@ export function LogisticsBlock({
           <Settings className="w-3.5 h-3.5 text-zinc-600 dark:text-zinc-400" />
         </button>
       )}
-      {/* Image for all logistics types when available, icon fallback */}
-      {hotelImage ? (
-        <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden bg-zinc-200 dark:bg-zinc-700">
+      {/* Thumbnail: consistent w-10 h-10 for all logistics blocks */}
+      {/* With image: flights get white bg, hotels get cover fill */}
+      {/* Without image: icon fallback in same container */}
+      <div className={cn(
+        'w-10 h-10 shrink-0 rounded-lg overflow-hidden flex items-center justify-center',
+        hotelImage
+          ? (type === 'arrival' || type === 'departure') ? 'bg-white' : 'bg-zinc-200 dark:bg-zinc-700'
+          : 'bg-zinc-100 dark:bg-zinc-800'
+      )}>
+        {hotelImage ? (
           <img
             src={hotelImage}
             alt={hotelName || config.label}
-            className="w-full h-full object-cover"
+            className={(type === 'arrival' || type === 'departure')
+              ? 'w-7 h-7 object-contain'
+              : 'w-full h-full object-cover'
+            }
           />
-        </div>
-      ) : (
-        <Icon className={cn('w-5 h-5 shrink-0', config.iconColor)} />
-      )}
+        ) : (
+          <Icon className={cn('w-5 h-5', config.iconColor)} />
+        )}
+      </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           {time && (

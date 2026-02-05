@@ -33,7 +33,7 @@ async def test_unsplash():
     api_key = settings.unsplash_access_key
     print("\n1. API Key Check:")
     if api_key:
-        print(f"   [OK] API key configured (length={len(api_key)}, starts with: {api_key[:8]}...)")
+        print(f"   [OK] API key configured (length={len(api_key)})")
     else:
         print("   [FAIL] UNSPLASH_ACCESS_KEY not set!")
         return

@@ -12,8 +12,42 @@
 
 'use client';
 
-import { ChevronDown, Code2, Heart, Settings, Star } from 'lucide-react';
+import { ChevronDown, Code2, Heart, Settings } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
+
+/**
+ * Amenity icon mapping for inline display (max 3 shown)
+ */
+const AMENITY_ICONS: Record<string, string> = {
+  pool: '🏊',
+  'swimming pool': '🏊',
+  breakfast: '🍳',
+  'breakfast included': '🍳',
+  wifi: '📶',
+  'free wifi': '📶',
+  parking: '🅿️',
+  'free parking': '🅿️',
+  spa: '💆',
+  gym: '🏋️',
+  fitness: '🏋️',
+  'fitness center': '🏋️',
+  restaurant: '🍽️',
+  bar: '🍸',
+  'air conditioning': '❄️',
+  'pet friendly': '🐕',
+  // Curated destination amenities
+  beach: '🏖️',
+  yoga: '🧘',
+  dive_center: '🤿',
+  dive_center_nearby: '🤿',
+  ski_room: '🎿',
+  rooftop_bar: '🍸',
+  garden: '🌿',
+  valley_view: '🏞️',
+  lake_view: '🏞️',
+  horseback: '🐴',
+  guided_hikes: '🥾',
+};
 
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -155,6 +189,37 @@ function getCheckTimes(tile: Tile): { checkIn?: string; checkOut?: string } {
   };
 }
 
+/**
+ * Get inline amenity icons with labels (max 3) for hotel tiles
+ */
+function getAmenityIconsWithLabels(tile: Tile): Array<{ icon: string; label: string }> {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  const amenities = (meta?.amenities as string[]) || [];
+  const result: Array<{ icon: string; label: string }> = [];
+  const seenIcons = new Set<string>();
+
+  for (const amenity of amenities) {
+    const key = amenity.toLowerCase();
+    const icon = AMENITY_ICONS[key];
+    if (icon && !seenIcons.has(icon)) {
+      seenIcons.add(icon);
+      const label = amenity.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+      result.push({ icon, label });
+      if (result.length >= 3) break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Render star rating as repeated stars for hotels
+ */
+function renderStarRating(rating: number): string {
+  const stars = Math.round(rating);
+  return '★'.repeat(Math.min(stars, 5));
+}
+
 export const MiniCard = memo(function MiniCard({
   tile,
   isSaved = false,
@@ -169,6 +234,7 @@ export const MiniCard = memo(function MiniCard({
 
   const perks = useMemo(() => getPerks(tile), [tile]);
   const priceDisplay = useMemo(() => formatPrice(tile), [tile]);
+  const amenityIcons = useMemo(() => getAmenityIconsWithLabels(tile), [tile]);
 
   // Safety Shield Logic - for flight cards with diving constraints
   const isFlight = isFlightType(tile.type || '');
@@ -236,8 +302,13 @@ export const MiniCard = memo(function MiniCard({
     >
       {/* Main content area */}
       <div className="flex items-start gap-3 p-3">
-        {/* Thumbnail */}
-        <div className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded-md bg-muted">
+        {/* Thumbnail - white circle for flight logos (transparent PNGs) */}
+        <div className={cn(
+          'relative flex-shrink-0 overflow-hidden',
+          isFlight
+            ? 'h-12 w-12 rounded-full bg-white flex items-center justify-center'
+            : 'h-16 w-16 rounded-md bg-muted'
+        )}>
           <img
             src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
             alt={tile.title}
@@ -245,7 +316,10 @@ export const MiniCard = memo(function MiniCard({
             onLoad={() => setImageLoaded(true)}
             onError={() => setImageError(true)}
             className={cn(
-              'h-full w-full object-cover transition-opacity duration-300',
+              'transition-opacity duration-300',
+              isFlight
+                ? 'h-10 w-10 object-contain'
+                : 'h-full w-full object-cover',
               !imageLoaded && 'opacity-0'
             )}
           />
@@ -278,9 +352,15 @@ export const MiniCard = memo(function MiniCard({
             </h4>
             <div className="flex shrink-0 items-center gap-2">
               {tile.rating != null && (
-                <div className="flex items-center gap-0.5 text-xs text-zinc-500 dark:text-zinc-400">
-                  <Star className="h-3 w-3 fill-emerald-400 text-emerald-400" />
-                  <span>{tile.rating.toFixed(1)}</span>
+                <div className="flex items-center gap-0.5 text-xs">
+                  {isHotelType(tile.type || '') ? (
+                    <span className="text-amber-400">{renderStarRating(tile.rating)}</span>
+                  ) : (
+                    <>
+                      <span className="text-amber-400">★</span>
+                      <span className="text-zinc-500 dark:text-zinc-400">{tile.rating.toFixed(1)}</span>
+                    </>
+                  )}
                 </div>
               )}
               {/* Save button */}
@@ -302,11 +382,23 @@ export const MiniCard = memo(function MiniCard({
             </div>
           </div>
 
-          {/* Row 2: Area */}
-          {tile.location_label && (
-            <p className="line-clamp-1 text-xs text-zinc-500 dark:text-zinc-400">
-              {tile.location_label}
-            </p>
+          {/* Row 2: Area + Amenity Icons */}
+          {(tile.location_label || amenityIcons.length > 0) && (
+            <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+              {tile.location_label && (
+                <span className="line-clamp-1">{tile.location_label}</span>
+              )}
+              {amenityIcons.length > 0 && (
+                <>
+                  {tile.location_label && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
+                  <span className="flex gap-0.5">
+                    {amenityIcons.map(({ icon, label }) => (
+                      <span key={label} title={label} >{icon}</span>
+                    ))}
+                  </span>
+                </>
+              )}
+            </div>
           )}
 
           {/* Row 3: Perk chips */}

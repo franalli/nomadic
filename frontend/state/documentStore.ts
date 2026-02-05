@@ -1147,6 +1147,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       current_destination: currentDoc.trip_inputs?.destination,
     });
 
+    // DEBUG: Log constraint validation data from envelope
+    if (envelope.constraints_validated !== undefined || envelope.constraint_violations !== undefined) {
+      console.log('[DEBUG mergeEnvelope] Constraint data:', {
+        constraints_validated: envelope.constraints_validated,
+        constraint_violations: envelope.constraint_violations,
+      });
+    }
+
     // Detect destination change
     const prevDestination = currentDoc.trip_inputs?.destination?.toLowerCase().trim();
     const newDestination = envelope.trip_inputs?.destination?.toLowerCase().trim();

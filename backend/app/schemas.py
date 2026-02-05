@@ -788,6 +788,13 @@ class PlanDocumentData(BaseModel):
     # Frontend should trigger flight fetch when this is True
     origin_just_set: bool = False
 
+    # ==========================================================================
+    # Constraint Validation State (for Trip DNA badges)
+    # ==========================================================================
+    # Populated by ConstraintGuard node when constraints are checked
+    constraints_validated: List[Dict[str, Any]] = Field(default_factory=list)
+    constraint_violations: List[Dict[str, Any]] = Field(default_factory=list)
+
 
 class PlanDocumentResponse(BaseModel):
     """Response when fetching the plan document."""

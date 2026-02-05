@@ -153,16 +153,32 @@ export function SuggestionBlock({
 
         {/* Main content row */}
         <div className="flex gap-3">
-          {/* Thumbnail */}
-          <div className="relative w-16 h-16 rounded-lg overflow-hidden flex-shrink-0">
-            <Image
-              src={imageUrl}
-              alt={tile.title}
-              fill
-              className="object-cover"
-              sizes="64px"
-              onError={handleImageError}
-            />
+          {/* Thumbnail: consistent w-12 h-12 rounded-lg */}
+          {/* Flights: white bg + centered logo | Hotels: cover fill photo */}
+          <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+            {suggestionType === 'flight' ? (
+              <div className="w-full h-full bg-white flex items-center justify-center">
+                <Image
+                  src={imageUrl}
+                  alt={tile.title}
+                  width={32}
+                  height={32}
+                  className="object-contain"
+                  onError={handleImageError}
+                />
+              </div>
+            ) : (
+              <div className="relative w-full h-full">
+                <Image
+                  src={imageUrl}
+                  alt={tile.title}
+                  fill
+                  className="object-cover"
+                  sizes="48px"
+                  onError={handleImageError}
+                />
+              </div>
+            )}
           </div>
 
           {/* Details */}

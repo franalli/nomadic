@@ -472,15 +472,29 @@ The Trip DNA bar shows engine constraints from niche specialists (diving, hiking
 3. Day-by-day Itinerary
 
 **Constraint Priority Colors:**
-| Priority | Keywords | Border | Background | Text |
-|----------|----------|--------|------------|------|
-| **Blocking** | `no_fly`, `safety`, `dive`, `scuba`, `flight`, `decompression` | `border-red-500/30` | `bg-red-500/10` | `text-red-300` |
-| **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment` | `border-amber-500/30` | `bg-amber-500/10` | `text-amber-300` |
-| **Soft** | Default (all others) | `border-zinc-500/30` | `bg-zinc-500/10` | `text-zinc-400` |
+| Priority | Keywords | Icon | Border | Background | Text (Light) | Text (Dark) |
+|----------|----------|------|--------|------------|--------------|-------------|
+| **Blocking** | `no_fly`, `safety`, `dive`, `scuba`, `flight`, `decompression`, `altitude` | `AlertTriangle` | `border-red-500/40` | `bg-red-500/10` | `text-red-600` | `text-red-300` |
+| **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment`, `certification` | `Clock` | `border-amber-500/40` | `bg-amber-500/10` | `text-amber-600` | `text-amber-300` |
+| **Soft** | Default (all others) | `Shield` | `border-zinc-400/40` | `bg-zinc-500/10` | `text-zinc-600` | `text-zinc-400` |
 
-**Three-State Validation Override:**
-- If constraint is **violated** → Red with AlertTriangle icon
-- If constraint is **validated** → Green with CheckCircle icon
+> **Light Mode Fix:** Text colors use `-600` suffix for light mode visibility (red-600, amber-600, zinc-600) instead of `-300` which is invisible on white backgrounds.
+
+**Priority-Based Icons:**
+Icons are selected based on constraint keyword matching, not validation state:
+```tsx
+const blocking = ['no_fly', 'no-fly', 'safety', 'altitude', 'diving', 'dive', 'scuba', 'decompression', 'flight'];
+const strong = ['morning', 'footwear', 'gear', 'timing', 'equipment', 'certification'];
+
+if (blocking.some(k => constraintText.includes(k))) return <AlertTriangle />;
+if (strong.some(k => constraintText.includes(k))) return <Clock />;
+return <Shield />;
+```
+
+**Future: Three-State Validation Override:**
+When backend populates `constraints_validated` and `constraint_violations`:
+- If constraint is **violated** → Amber ring with AlertTriangle icon
+- If constraint is **validated** → Emerald with CheckCircle icon
 - Otherwise → Priority coloring above
 
 **Styling:**
@@ -489,12 +503,13 @@ The Trip DNA bar shows engine constraints from niche specialists (diving, hiking
   <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 shrink-0">Trip DNA:</span>
   <div className="relative flex-1 min-w-0">
     <div className="flex gap-2 overflow-x-auto no-scrollbar pr-8">
-      {/* Constraint pills with priority coloring */}
+      {/* Constraint pills with priority-based icons and coloring */}
       <span className={cn(
         "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border",
-        pillClass // Priority-based: red/amber/zinc
+        pillClass // Priority-based: red/amber/zinc with light/dark variants
       )}>
-        <Shield className="w-3 h-3 shrink-0" />
+        {/* Icon by priority: AlertTriangle (blocking), Clock (strong), Shield (soft) */}
+        <AlertTriangle className="w-4 h-4 shrink-0" />
         {constraintLabel}
       </span>
     </div>

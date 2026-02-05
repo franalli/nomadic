@@ -1,4 +1,4 @@
-import { Check, Heart, MapPin, Settings, Star } from 'lucide-react';
+import { Check, Heart, MapPin, Settings } from 'lucide-react';
 import {
   type KeyboardEvent,
   memo,
@@ -9,6 +9,40 @@ import {
   useRef,
   useState,
 } from 'react';
+
+/**
+ * Amenity icon mapping for inline display (max 3 shown)
+ */
+const AMENITY_ICONS: Record<string, string> = {
+  pool: '🏊',
+  'swimming pool': '🏊',
+  breakfast: '🍳',
+  'breakfast included': '🍳',
+  wifi: '📶',
+  'free wifi': '📶',
+  parking: '🅿️',
+  'free parking': '🅿️',
+  spa: '💆',
+  gym: '🏋️',
+  fitness: '🏋️',
+  'fitness center': '🏋️',
+  restaurant: '🍽️',
+  bar: '🍸',
+  'air conditioning': '❄️',
+  'pet friendly': '🐕',
+  // Curated destination amenities
+  beach: '🏖️',
+  yoga: '🧘',
+  dive_center: '🤿',
+  dive_center_nearby: '🤿',
+  ski_room: '🎿',
+  rooftop_bar: '🍸',
+  garden: '🌿',
+  valley_view: '🏞️',
+  lake_view: '🏞️',
+  horseback: '🐴',
+  guided_hikes: '🥾',
+};
 
 import { TaxesFeesTooltip } from '@/components/tiles/TaxesFeesTooltip';
 import { Button } from '@/components/ui/button';
@@ -63,6 +97,37 @@ const getFeaturesForTile = (tile: Tile): string[] => {
 
   // No mock fallback - return empty array
   return [];
+};
+
+/**
+ * Get inline amenity icons with labels (max 3) for hotel tiles
+ */
+const getAmenityIconsWithLabels = (tile: Tile): Array<{ icon: string; label: string }> => {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  const amenities = (meta?.amenities as string[]) || [];
+  const result: Array<{ icon: string; label: string }> = [];
+  const seenIcons = new Set<string>();
+
+  for (const amenity of amenities) {
+    const key = amenity.toLowerCase();
+    const icon = AMENITY_ICONS[key];
+    if (icon && !seenIcons.has(icon)) {
+      seenIcons.add(icon);
+      const label = amenity.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+      result.push({ icon, label });
+      if (result.length >= 3) break;
+    }
+  }
+
+  return result;
+};
+
+/**
+ * Render star rating as repeated stars for hotels
+ */
+const renderStarRating = (rating: number): string => {
+  const stars = Math.round(rating);
+  return '★'.repeat(Math.min(stars, 5));
 };
 
 /**
@@ -121,6 +186,9 @@ export const TileCard = memo(function TileCard({
 
   const features = useMemo(() => getFeaturesForTile(tile), [tile]);
   const relevanceBadges = useMemo(() => getRelevanceBadges(tile), [tile]);
+  const amenityIcons = useMemo(() => getAmenityIconsWithLabels(tile), [tile]);
+  const isFlight = isFlightType(tile.type || '');
+  const isHotel = tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay');
 
   // Detect when tile becomes selected and trigger animation
   useEffect(() => {
@@ -219,23 +287,43 @@ export const TileCard = memo(function TileCard({
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
-      <div className="relative aspect-[16/9] w-full overflow-hidden">
+      <div className={cn(
+        'relative w-full overflow-hidden',
+        isFlight ? 'aspect-[16/10] bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center' : 'aspect-[16/9]'
+      )}>
         {/* Tier 11.7: Skeleton shown while image loads */}
-        {!imageLoaded && (
+        {!imageLoaded && !isFlight && (
           <Skeleton className="absolute inset-0 h-full w-full rounded-none" />
         )}
-        <img
-          src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
-          alt={tile.title}
-          loading="lazy"
-          onLoad={() => setImageLoaded(true)}
-          onError={() => setImageError(true)}
-          className={cn(
-            'h-full w-full object-cover transition duration-700 group-hover:scale-105',
-            !imageLoaded && 'opacity-0'
-          )}
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+        {/* Flight tiles: white circle with airline logo */}
+        {isFlight ? (
+          <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center shadow-sm">
+            <img
+              src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
+              alt={tile.title}
+              loading="lazy"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageError(true)}
+              className={cn(
+                'w-12 h-12 object-contain transition-opacity duration-300',
+                !imageLoaded && 'opacity-0'
+              )}
+            />
+          </div>
+        ) : (
+          <img
+            src={imageError ? placeholderImageForTile(tile) : (tile.image_url || placeholderImageForTile(tile))}
+            alt={tile.title}
+            loading="lazy"
+            onLoad={() => setImageLoaded(true)}
+            onError={() => setImageError(true)}
+            className={cn(
+              'h-full w-full object-cover transition duration-700 group-hover:scale-105',
+              !imageLoaded && 'opacity-0'
+            )}
+          />
+        )}
+        {!isFlight && <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />}
 
         {/* Heart preference button - emerald when preferred, zinc outline when not */}
         <TooltipProvider delayDuration={300}>
@@ -329,17 +417,37 @@ export const TileCard = memo(function TileCard({
             {tile.title}
           </div>
           {tile.rating != null && (
-            <div className="text-foreground flex shrink-0 items-center gap-1 text-sm font-medium">
-              <Star className="h-4 w-4 fill-emerald-400 text-emerald-400" />
-              <span>{tile.rating.toFixed(1)}</span>
+            <div className="flex shrink-0 items-center gap-1 text-sm font-medium">
+              {isHotel ? (
+                <span className="text-amber-400">{renderStarRating(tile.rating)}</span>
+              ) : (
+                <>
+                  <span className="text-amber-400">★</span>
+                  <span className="text-foreground">{tile.rating.toFixed(1)}</span>
+                </>
+              )}
             </div>
           )}
         </div>
 
-        {tile.location_label && (
+        {(tile.location_label || amenityIcons.length > 0) && (
           <div className="text-muted-foreground -mt-1 flex items-center gap-1.5 text-sm">
-            <MapPin className="h-4 w-4 shrink-0" />
-            <span className="line-clamp-1">{tile.location_label}</span>
+            {tile.location_label && (
+              <>
+                <MapPin className="h-4 w-4 shrink-0" />
+                <span className="line-clamp-1">{tile.location_label}</span>
+              </>
+            )}
+            {amenityIcons.length > 0 && (
+              <>
+                {tile.location_label && <span className="text-zinc-500">·</span>}
+                <span className="flex gap-0.5">
+                  {amenityIcons.map(({ icon, label }) => (
+                    <span key={label} title={label} >{icon}</span>
+                  ))}
+                </span>
+              </>
+            )}
           </div>
         )}
 

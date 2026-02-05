@@ -9,13 +9,79 @@
 
 'use client';
 
-import { ChevronDown, ChevronUp, Heart, RefreshCw, Settings, Sparkles, Star } from 'lucide-react';
+import { ChevronDown, ChevronUp, Heart, RefreshCw, Sparkles, Star } from 'lucide-react';
 import Image from 'next/image';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { placeholderImageForTile } from '@/lib/placeholders';
-import { cn } from '@/lib/utils';
+import { cn, isFlightType } from '@/lib/utils';
 import type { Tile } from '@/types/tile';
+
+/**
+ * Amenity icon mapping for inline display (max 3 shown)
+ */
+const AMENITY_ICONS: Record<string, string> = {
+  pool: '🏊',
+  'swimming pool': '🏊',
+  breakfast: '🍳',
+  'breakfast included': '🍳',
+  wifi: '📶',
+  'free wifi': '📶',
+  parking: '🅿️',
+  'free parking': '🅿️',
+  spa: '💆',
+  gym: '🏋️',
+  fitness: '🏋️',
+  'fitness center': '🏋️',
+  restaurant: '🍽️',
+  bar: '🍸',
+  'air conditioning': '❄️',
+  'pet friendly': '🐕',
+  // Curated destination amenities
+  beach: '🏖️',
+  yoga: '🧘',
+  dive_center: '🤿',
+  dive_center_nearby: '🤿',
+  ski_room: '🎿',
+  rooftop_bar: '🍸',
+  garden: '🌿',
+  valley_view: '🏞️',
+  lake_view: '🏞️',
+  horseback: '🐴',
+  guided_hikes: '🥾',
+};
+
+/**
+ * Get inline amenity icons with labels (max 3) for hotel tiles
+ */
+function getAmenityIconsWithLabels(tile: Tile): Array<{ icon: string; label: string }> {
+  const meta = tile.meta as Record<string, unknown> | undefined;
+  const amenities = (meta?.amenities as string[]) || [];
+  const result: Array<{ icon: string; label: string }> = [];
+  const seenIcons = new Set<string>();
+
+  for (const amenity of amenities) {
+    const key = amenity.toLowerCase();
+    const icon = AMENITY_ICONS[key];
+    if (icon && !seenIcons.has(icon)) {
+      seenIcons.add(icon);
+      // Format label: "dive_center_nearby" -> "Dive center nearby"
+      const label = amenity.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase());
+      result.push({ icon, label });
+      if (result.length >= 3) break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Render star rating as repeated stars for hotels
+ */
+function renderStarRating(rating: number): string {
+  const stars = Math.round(rating);
+  return '★'.repeat(Math.min(stars, 5));
+}
 
 // =============================================================================
 // Types
@@ -51,12 +117,16 @@ export function SuggestionCard({
   onSave,
   onViewAlternatives,
   onDetailsClick,
-  onOpenStaysSettings,
+  onOpenStaysSettings: _onOpenStaysSettings,
   variant = 'expanded',
   className,
 }: SuggestionCardProps) {
   const [isReasoningExpanded, setIsReasoningExpanded] = useState(false);
   const [imageError, setImageError] = useState(false);
+
+  // Memoize amenity icons with labels for tooltips
+  const amenityIcons = useMemo(() => getAmenityIconsWithLabels(tile), [tile]);
+  const isHotel = tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay');
 
   // Format price
   const price = tile.price_estimate ?? tile.total_inclusive;
@@ -75,6 +145,9 @@ export function SuggestionCard({
     setImageError(true);
   }, []);
 
+  // Detect flight tiles for special logo handling
+  const isFlight = isFlightType(tile.type || '');
+
   // Compact variant - single row
   if (variant === 'compact') {
     return (
@@ -91,14 +164,21 @@ export function SuggestionCard({
           className
         )}
       >
-        {/* Thumbnail */}
-        <div className="relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 ring-1 ring-black/5 dark:ring-white/10">
+        {/* Thumbnail - white circle for flight logos (transparent PNGs from avs.io) */}
+        <div className={cn(
+          'relative flex-shrink-0 overflow-hidden',
+          isFlight
+            ? 'w-10 h-10 rounded-full bg-white flex items-center justify-center ring-1 ring-black/5'
+            : 'w-12 h-12 rounded-lg ring-1 ring-black/5 dark:ring-white/10'
+        )}>
           <Image
             src={imageUrl}
             alt={tile.title}
-            fill
-            sizes="48px"
-            className="object-cover"
+            fill={!isFlight}
+            width={isFlight ? 32 : undefined}
+            height={isFlight ? 32 : undefined}
+            sizes={isFlight ? '32px' : '48px'}
+            className={isFlight ? 'object-contain' : 'object-cover'}
             onError={handleImageError}
           />
         </div>
@@ -109,11 +189,26 @@ export function SuggestionCard({
             <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
               Suggested
             </span>
+            {/* Star rating for hotels */}
+            {isHotel && tile.rating != null && (
+              <span className="text-[10px] text-amber-400">{renderStarRating(tile.rating)}</span>
+            )}
           </div>
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{tile.title}</p>
-          {tile.subtitle && (
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{tile.subtitle}</p>
-          )}
+          {/* Location + amenity icons */}
+          <div className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {tile.subtitle && <span className="truncate">{tile.subtitle}</span>}
+            {amenityIcons.length > 0 && (
+              <>
+                {tile.subtitle && <span className="text-zinc-300 dark:text-zinc-600">·</span>}
+                <span className="flex gap-0.5">
+                  {amenityIcons.map(({ icon, label }) => (
+                    <span key={label} title={label} >{icon}</span>
+                  ))}
+                </span>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Price */}
@@ -126,7 +221,7 @@ export function SuggestionCard({
           </div>
         )}
 
-        {/* Settings gear for hotel tiles */}
+        {/* TODO: Post-demo - wire up hotel filtering
         {onOpenStaysSettings && (tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
           <button
             onClick={(e) => {
@@ -139,6 +234,7 @@ export function SuggestionCard({
             <Settings className="w-4 h-4" />
           </button>
         )}
+        */}
 
         {/* Save button */}
         <button
@@ -194,7 +290,7 @@ export function SuggestionCard({
 
         {/* Top-right action buttons */}
         <div className="absolute top-3 right-3 flex items-center gap-1.5">
-          {/* Settings gear for hotel tiles */}
+          {/* TODO: Post-demo - wire up hotel filtering
           {onOpenStaysSettings && (tile.type === 'hotel' || tile.type?.toLowerCase().includes('stay')) && (
             <button
               onClick={(e) => {
@@ -207,6 +303,7 @@ export function SuggestionCard({
               <Settings className="w-4 h-4" />
             </button>
           )}
+          */}
           {/* Save button */}
           <button
             onClick={() => onSave?.(tile)}
@@ -239,12 +336,25 @@ export function SuggestionCard({
           <div className="flex items-center gap-2">
             {tile.rating && (
               <div className="flex items-center gap-1">
-                <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
-                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{tile.rating.toFixed(1)}</span>
+                {isHotel ? (
+                  <span className="text-sm text-amber-400">{renderStarRating(tile.rating)}</span>
+                ) : (
+                  <>
+                    <Star className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{tile.rating.toFixed(1)}</span>
+                  </>
+                )}
               </div>
             )}
             {tile.location_label && (
               <span className="text-sm text-zinc-500 dark:text-zinc-400">{tile.location_label}</span>
+            )}
+            {amenityIcons.length > 0 && (
+              <span className="flex gap-0.5 text-sm">
+                {amenityIcons.map(({ icon, label }) => (
+                  <span key={label} title={label} >{icon}</span>
+                ))}
+              </span>
             )}
           </div>
           {formattedPrice && (

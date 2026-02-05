@@ -816,16 +816,28 @@ In S3 (itinerary ready), full specialist strategy cards are replaced with a comp
 **Visual Layout:**
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ 🧬 ENGINE CONSTRAINTS:  [🚫 24H No-fly Buffer]  [⚡ 18m Max Depth]  [📍 ...]  │
+│ Trip DNA:  [⚠️ 24H No-fly Buffer]  [🕐 Morning only]  [🛡️ Reef protection]   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Behavior:**
 - **S2 (strategy ready):** Full specialist cards with expandable constraint lists
 - **S3 (itinerary ready):** Compact DNA bar showing **constraint pills** (not specialist pills)
-- Pills show: icon + constraint short label (truncated to 27 chars + ellipsis if needed)
+- Pills show: icon + constraint short label (full text, horizontally scrollable)
 - Hover: Native `title` tooltip shows full constraint text
 - **Filtering:** Only shows constraints from **niche specialists** (diving, hiking, skiing, cycling, surfing) — filters out Local Expert tips to focus on hard constraints
+
+**Icon Selection (Priority-Based):**
+
+Icons are selected based on constraint priority/severity, not validation state:
+
+| Priority | Keywords | Icon | Color | Example |
+|----------|----------|------|-------|---------|
+| **Blocking** | `no_fly`, `safety`, `altitude`, `diving`, `decompression`, `flight` | `AlertTriangle` | Red | 24h no-fly buffer |
+| **Strong** | `morning`, `footwear`, `gear`, `timing`, `equipment`, `certification` | `Clock` | Amber | Morning departures only |
+| **Soft** | (default) | `Shield` | Zinc | Reef-safe sunscreen |
+
+> **Note:** Backend emits `constraints_validated` and `constraint_violations` for future validation state styling (violated=amber ring, validated=emerald). Currently icons use priority-based logic since validation data may not always be populated.
 
 **Implementation:**
 ```tsx
@@ -1613,6 +1625,13 @@ plan_documents.document (JSONB)
 │       └── blocks: List[Block]             # Activities, logistics
 ├── can_expand_to_itinerary: bool           # ✅ PERSISTED
 │
+│ ─── Constraint Validation State ───────────────────────────
+│
+├── constraints_validated: List[Dict]       # ✅ Response (Trip DNA badges)
+│   └── [{ rule, specialist, satisfied_at }]  # Constraints that passed
+├── constraint_violations: List[Dict]       # ✅ Response (Trip DNA badges)
+│   └── [{ rule, specialist, category, severity, message }]  # Failed constraints
+│
 │ ─── Response-Only Fields (NOT Persisted) ────────────────
 │
 ├── assistant_message: string               # ❌ Response only
@@ -1638,6 +1657,8 @@ plan_documents.document (JSONB)
 | `executed_strategy_topics` | ✅ Yes | ✅ Yes | Graph execution |
 | `can_expand_to_itinerary` | ✅ Yes | ✅ Yes | Stage 3 gate |
 | `preferred_tile_ids` | ✅ Yes | ✅ Yes | Heart actions (PATCH /api/document) |
+| `constraints_validated` | ❌ No | ❌ No | ConstraintGuard node |
+| `constraint_violations` | ❌ No | ❌ No | ConstraintGuard node |
 | `assistant_message` | ❌ No | ❌ No | LLM response |
 | `destination_card` | ❌ No | ❌ No | Unsplash API |
 | `booking_status` | ❌ No | ❌ No | Computed from tiles |
@@ -2670,17 +2691,19 @@ frontend/components/plan/timeline/blocks/
 
 Gear icons provide quick access to category-wide settings sheets from timeline blocks and tile cards:
 
-| Block/Card Type | Gear Location | Opens Sheet | Callback Prop |
-|-----------------|---------------|-------------|---------------|
-| `AgentCard` (diving/hiking/skiing/cycling/sailing) | Header right | `ActivitiesSheet` | `onOpenActivitySettings` |
-| `SuggestionCard` (hotel) | Image top-right, beside heart | `StaysSheet` | `onOpenStaysSettings` |
-| `LogisticsBlock` (arrival/departure) | Top-right | `FlightsSheet` | `onOpenFlightsSettings` |
-| `LogisticsBlock` (check-in) | Top-right | `StaysSheet` | `onOpenStaysSettings` |
-| `TileCard` (hotel) | Image overlay, beside heart | `StaysSheet` | `onOpenStaysSettings` |
-| `MiniCard` (hotel) | Thumbnail corner | `StaysSheet` | `onOpenStaysSettings` |
+| Block/Card Type | Gear Location | Opens Sheet | Callback Prop | Status |
+|-----------------|---------------|-------------|---------------|--------|
+| `AgentCard` (diving/hiking/skiing/cycling/sailing) | Header right | `ActivitiesSheet` | `onOpenActivitySettings` | Active |
+| `SuggestionCard` (hotel) | Image top-right, beside heart | `StaysSheet` | `onOpenStaysSettings` | **Hidden** (TODO) |
+| `LogisticsBlock` (arrival/departure) | Top-right | `FlightsSheet` | `onOpenFlightsSettings` | Active |
+| `LogisticsBlock` (check-in) | Top-right | `StaysSheet` | `onOpenStaysSettings` | Active |
+| `TileCard` (hotel) | Image overlay, beside heart | `StaysSheet` | `onOpenStaysSettings` | **Hidden** (TODO) |
+| `MiniCard` (hotel) | Thumbnail corner | `StaysSheet` | `onOpenStaysSettings` | **Hidden** (TODO) |
+
+> **Note:** Hotel/stays gear icons are currently hidden (commented out in `SuggestionCard.tsx`) as the filtering modal is not yet wired up. Non-functional controls are worse than no controls for demo purposes.
 
 **Behavior:**
-- Gear icons are **always visible** for discoverability
+- Gear icons are **always visible** for discoverability (when active)
 - Click triggers sheet open → user adjusts settings → sheet closes → auto-regen triggers
 - Settings changes propagate via `documentStore.commitTripInputs()`
 - Changes trigger `LOGISTICS` strategy regen (~500ms, no LLM)

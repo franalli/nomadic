@@ -194,9 +194,12 @@ def get_activity_season_conflict(
         return None
 
     season = get_season(date_str, destination)
+    hemisphere = get_hemisphere(destination)
 
     if activity_type == "hiking":
-        if season == "winter":
+        # Skip snow warning for tropical destinations - they don't have snow
+        # Tropical "winter" is actually dry season, often the BEST time for hiking
+        if season == "winter" and hemisphere != "tropical":
             return (
                 f"Hiking trails in {destination} are typically closed or dangerous "
                 f"in winter due to snow",

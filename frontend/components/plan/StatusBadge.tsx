@@ -17,16 +17,17 @@ export function StatusBadge({ state }: StatusBadgeProps) {
   if (!config) return null;
 
   return (
-    <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-black/40 backdrop-blur-sm">
-      <div
-        className={cn(
-          'h-2 w-2 rounded-full',
-          config.active
-            ? 'bg-emerald-500 animate-pulse'
-            : 'bg-white/60'
-        )}
-      />
-      <span className="font-mono text-[10px] uppercase tracking-widest font-bold text-white/90">
+    <div className={cn(
+      'flex items-center gap-2 px-3 py-1.5 rounded-full shadow-lg',
+      config.active
+        // Light: white bg with dark text (matches chat) | Dark: emerald solid
+        ? 'bg-white text-zinc-900 dark:bg-emerald-500 dark:text-white'
+        : 'bg-black/60 backdrop-blur-sm text-white/90'
+    )}>
+      {config.active && (
+        <div className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-white animate-pulse" />
+      )}
+      <span className="font-mono text-[10px] uppercase tracking-widest font-bold">
         {config.label}
       </span>
     </div>
