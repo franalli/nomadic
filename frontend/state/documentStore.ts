@@ -914,7 +914,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const primaryBranch = response.document.branches.find((b) => b.is_primary);
 
     // ============================================================
-    // DESTINATION CHANGE DETECTION (same as mergeEnvelope)
+    // DESTINATION LOCK: Once set, destination can only change via full trip reset
+    // ============================================================
+    const currentDestination = currentDoc?.trip_inputs?.destination;
+    const incomingDestination = response.document.trip_inputs?.destination;
+
+    if (currentDestination && incomingDestination &&
+        currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
+      console.log(
+        `[documentStore.setFromPlanResponse] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
+      );
+      // Preserve current destination in the response
+      response.document.trip_inputs.destination = currentDestination;
+    }
+
+    // ============================================================
+    // DESTINATION CHANGE DETECTION (now should never trigger due to lock above)
     // ============================================================
     const prevDestination = currentDoc?.trip_inputs?.destination?.toLowerCase().trim();
     const newDestination = response.document.trip_inputs?.destination?.toLowerCase().trim();
@@ -1138,6 +1153,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const { document: currentDoc } = get();
     if (!currentDoc) return;
 
+    // ============================================================
+    // DESTINATION LOCK: Once set, destination can only change via full trip reset
+    // This prevents LLM from changing destination mid-plan (invalidates all content)
+    // ============================================================
+    const currentDestination = currentDoc.trip_inputs?.destination;
+    const incomingDestination = envelope.trip_inputs?.destination;
+
+    if (currentDestination && incomingDestination &&
+        currentDestination.toLowerCase().trim() !== incomingDestination.toLowerCase().trim()) {
+      console.log(
+        `[documentStore.mergeEnvelope] 🔒 BLOCKED destination change: "${currentDestination}" → "${incomingDestination}" (destination locked once set)`
+      );
+      // Strip destination from incoming trip_inputs to preserve current value
+      if (envelope.trip_inputs) {
+        const { destination: _blocked, ...restTripInputs } = envelope.trip_inputs;
+        envelope = { ...envelope, trip_inputs: restTripInputs };
+      }
+    }
+
     // DEBUG: Log envelope structure for diagnostics
     console.log('[DEBUG mergeEnvelope] Envelope structure:', {
       has_trip_inputs: !!envelope.trip_inputs,
@@ -1155,7 +1189,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       });
     }
 
-    // Detect destination change
+    // Detect destination change (now should never happen due to lock above)
     const prevDestination = currentDoc.trip_inputs?.destination?.toLowerCase().trim();
     const newDestination = envelope.trip_inputs?.destination?.toLowerCase().trim();
     const destinationChanged = prevDestination && newDestination && prevDestination !== newDestination;

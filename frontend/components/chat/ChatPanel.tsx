@@ -1522,6 +1522,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(
             onOpenFlights={() => setFlightsSheetOpen(true)}
             onOpenStays={() => setStaysSheetOpen(true)}
             onOpenActivities={() => setActivitiesSheetOpen(true)}
+            destinationLocked={!!destination}
           />
         )}
 

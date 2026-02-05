@@ -1489,8 +1489,9 @@ export function NomadicLanding() {
 
       {/* Trip input sheets - shared between header pills and chat panel */}
       {/* In S1+, header pills are the ONLY interactive surface for trip inputs */}
+      {/* Destination sheet LOCKED once set - can only change via full trip reset */}
       <DestinationSheet
-        open={activeSheet === 'destination'}
+        open={activeSheet === 'destination' && !tripInputs.destination}
         onOpenChange={(open) => !open && closeSheet()}
         value={tripInputs.destination || ''}
         onSave={async (value) => {

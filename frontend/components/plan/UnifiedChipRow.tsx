@@ -68,6 +68,8 @@ export interface UnifiedChipRowProps {
   // Two-mode system support
   /** Current mode - chips are read-only in 'booking' mode */
   mode?: ViewMode;
+  /** Lock destination chip - once set, can only change via full trip reset */
+  destinationLocked?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -406,6 +408,7 @@ function UnifiedChipRowInner({
   onOpenActivities,
   // Mode
   mode,
+  destinationLocked,
 }: UnifiedChipRowProps) {
   const { isDesktop } = useMobileMode();
   const isMobile = !isDesktop;
@@ -447,7 +450,7 @@ function UnifiedChipRowInner({
           icon={MapPin}
           label="Destination"
           value={destination}
-          onClick={onOpenDestination}
+          onClick={destinationLocked ? undefined : onOpenDestination}
           isMobile={isMobile}
           disabled={isBookingMode}
         />

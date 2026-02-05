@@ -73,7 +73,7 @@ export function TripSummaryPills({
         value={destination}
         placeholder="Add destination"
         tone={destination ? 'default' : 'missing'}
-        onClick={() => onOpenSheet('destination')}
+        onClick={destination ? undefined : () => onOpenSheet('destination')}
         disabled={disabled}
         variant={variant}
         className={variant === 'onImage' ? 'text-white font-semibold' : undefined}
