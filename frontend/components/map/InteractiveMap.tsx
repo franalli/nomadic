@@ -210,8 +210,8 @@ function getMarkerColor(type: string): string {
   if (lowerType === 'hiking' || lowerType.includes('hike')) return 'bg-green-500';
   if (lowerType.includes('hotel') || lowerType.includes('stay')) return 'bg-purple-500';
   if (lowerType.includes('flight')) return 'bg-blue-500';
-  if (lowerType.includes('temple')) return 'bg-amber-500';
-  if (lowerType.includes('food')) return 'bg-orange-500';
+  if (lowerType.includes('temple')) return 'bg-rose-500';
+  if (lowerType.includes('food')) return 'bg-pink-500';
 
   return 'bg-emerald-500';
 }

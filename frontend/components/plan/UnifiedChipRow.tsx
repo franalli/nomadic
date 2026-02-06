@@ -240,7 +240,7 @@ const CoreChip = memo(function CoreChip({
           // Text: Muted grey
           'text-zinc-400',
           // Dark mode
-          'dark:bg-transparent dark:text-zinc-500 dark:border-white/10',
+          'dark:bg-white/5 dark:text-zinc-500 dark:border-white/10',
           'dark:hover:border-white/30 dark:hover:text-white',
         ],
 

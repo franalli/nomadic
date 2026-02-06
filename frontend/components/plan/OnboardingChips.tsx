@@ -66,7 +66,7 @@ const Chip = memo(function Chip({ icon: Icon, label, value, onClick, disabled = 
           // Inactive/Default state: subtle, clickable appearance
           : cn(
               'border border-zinc-200 bg-white text-zinc-500',
-              'dark:border-white/10 dark:bg-transparent dark:text-zinc-400'
+              'dark:border-white/10 dark:bg-white/5 dark:text-zinc-400'
             ),
         // Hover states
         !hasValue && !disabled && 'hover:border-zinc-400 dark:hover:border-white/30',

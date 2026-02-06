@@ -506,6 +506,7 @@ class ItineraryBuilder:
         self.destination = input_data.destination
         # Track warnings for user display (e.g., "Reduced diving from 4 to 1")
         self._warnings: List[str] = []
+        self._nofly_buffer_days: int = 0
 
         try:
             # Parse dates
@@ -850,6 +851,7 @@ class ItineraryBuilder:
         nofly_constraint = _find_constraint(constraints, "min_24h_buffer_after_dive")
         if nofly_constraint:
             buffer_days = 1
+            self._nofly_buffer_days = buffer_days
             _debug(f"[ItineraryBuilder] No-fly constraint found: rule={nofly_constraint.rule}")
 
         # Cross-domain check: diving + high-altitude activity conflict
@@ -1329,6 +1331,21 @@ class ItineraryBuilder:
             current_day = days[day_idx]
             current_specialist = specialists[specialist_ptr % len(specialists)]
 
+            # No-fly buffer: prevent diving placement too close to departure
+            if current_specialist == "diving" and self._nofly_buffer_days > 0:
+                departure_idx = len(days) - 1
+                latest_dive_idx = departure_idx - 1 - self._nofly_buffer_days
+                if day_idx > latest_dive_idx:
+                    # Wrap to earlier day — retry same dive, don't skip it
+                    day_ptr = (day_ptr + 1) % len(available_day_indices)
+                    dive_wrap_attempts = getattr(self, "_dive_wrap_attempts", 0) + 1
+                    self._dive_wrap_attempts = dive_wrap_attempts
+                    if dive_wrap_attempts >= len(available_day_indices):
+                        # All valid days exhausted for diving — skip this activity
+                        specialist_ptr += 1
+                        self._dive_wrap_attempts = 0
+                    continue
+
             # Check if day is truly full (at max capacity)
             non_buffer_blocks = [b for b in current_day.blocks if not b.is_buffer]
             if len(non_buffer_blocks) >= MAX_BLOCKS_PER_DAY:
@@ -1380,6 +1397,7 @@ class ItineraryBuilder:
                 current_day.blocks.append(block)
                 specialist_count_per_day[day_idx][current_specialist] += 1
                 period_ptr += 1
+                self._dive_wrap_attempts = 0  # Reset on successful placement
 
                 # EVEN DISTRIBUTION: Always advance to next day after placing
                 # This spreads activities across all days before filling any day

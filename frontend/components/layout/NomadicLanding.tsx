@@ -1456,7 +1456,7 @@ export function NomadicLanding() {
                   <Compass className="text-primary h-5 w-5" />
                   <span className="text-foreground text-lg font-semibold">Nomadic</span>
                 </div>
-                <span className="text-muted-foreground/50 hidden text-sm sm:inline">
+                <span className="text-foreground hidden text-sm sm:inline">
                   <span className="text-muted-foreground/30 mx-2">|</span>
                   Change your mind. Keep the plan.
                 </span>

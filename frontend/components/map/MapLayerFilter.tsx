@@ -66,12 +66,12 @@ const LAYER_CONFIG: Record<string, LayerConfig> = {
   temple: {
     icon: Landmark,
     label: 'Culture',
-    activeColor: 'bg-amber-500 text-white border-amber-500',
+    activeColor: 'bg-rose-500 text-white border-rose-500',
   },
   food: {
     icon: Utensils,
     label: 'Food',
-    activeColor: 'bg-orange-500 text-white border-orange-500',
+    activeColor: 'bg-pink-500 text-white border-pink-500',
   },
   local: {
     icon: MapPin,

@@ -68,6 +68,8 @@ backend/
 │   │   │   ├── intent_router.py       # Intent classification
 │   │   │   ├── local_expert.py        # Local knowledge node
 │   │   │   ├── logistics_node.py      # Flights/hotels data fetcher
+│   │   │   ├── specialist_llm.py      # Specialist LLM generation logic
+│   │   │   ├── specialist_schemas.py  # Specialist Pydantic schemas
 │   │   │   ├── synthesizer.py         # Response synthesizer
 │   │   │   ├── trip_architect.py      # Main planning architect
 │   │   │   └── vertical_specialist.py # Domain experts (diving/hiking/skiing)
@@ -86,13 +88,14 @@ backend/
 │   │
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── itinerary_builder.py  # Itinerary construction + constraint alias normalization
-│   │   ├── regen_strategy.py     # Selective regeneration strategy computation
-│   │   ├── router_cache.py       # Thread-safe L1 cache for router extraction (context-aware)
-│   │   ├── specialist_cache.py   # Thread-safe L1+L2 cache for specialist LLM outputs
-│   │   ├── tile_cache.py         # Thread-safe L1+L2 cache for tile provider data (24h TTL)
-│   │   ├── unsplash.py           # Unsplash image service
-│   │   └── unsplash_queries.py   # Unsplash query helpers
+│   │   ├── base_cache.py           # Base cache class
+│   │   ├── itinerary_builder.py    # Itinerary construction + constraint alias normalization
+│   │   ├── regen_strategy.py       # Selective regeneration strategy computation
+│   │   ├── router_cache.py         # Thread-safe L1 cache for router extraction (context-aware)
+│   │   ├── specialist_cache.py     # Thread-safe L1+L2 cache for specialist LLM outputs
+│   │   ├── tile_cache.py           # Thread-safe L1+L2 cache for tile provider data (24h TTL)
+│   │   ├── unsplash.py             # Unsplash image service
+│   │   └── unsplash_queries.py     # Unsplash query helpers
 │   │
 │   ├── tile_service/           # Tile data providers
 │   │   ├── __init__.py
@@ -213,13 +216,14 @@ frontend/
 │   │       ├── useBranchState.ts
 │   │       ├── useDateRangeSelector.ts
 │   │       ├── useLocalBookingSettings.ts
-│   │       ├── usePlanRegeneration.ts
 │   │       ├── useSessionHydration.ts
 │   │       ├── useTileSelection.ts
 │   │       └── useTripInputsEditor.ts
 │   │
 │   ├── map/                    # Map components
 │   │   ├── InteractiveMap.tsx
+│   │   ├── MapboxErrorSuppressor.tsx
+│   │   ├── MapErrorBoundary.tsx
 │   │   └── MapLayerFilter.tsx
 │   │
 │   ├── nomadic/                # Marketing/landing components
@@ -239,6 +243,7 @@ frontend/
 │   │   ├── BookingSection.tsx
 │   │   ├── ConflictResolutionBanner.tsx  # Path A: Conflict resolution options for constraint clashes
 │   │   ├── CoreChip.tsx
+│   │   ├── ExplorationProgress.tsx
 │   │   ├── DaySection.tsx
 │   │   ├── DestinationMapPlaceholder.tsx
 │   │   ├── DocumentHeader.tsx
@@ -248,12 +253,15 @@ frontend/
 │   │   ├── NextStepPanel.tsx
 │   │   ├── OnboardingChips.tsx
 │   │   ├── OptionalRefinementsSection.tsx
+│   │   ├── OriginPromptCard.tsx
 │   │   ├── PlanDocument.tsx
 │   │   ├── PlanHeader.tsx
 │   │   ├── PlanningProgress.tsx
 │   │   ├── planStateHelpers.ts
+│   │   ├── ReadyToPlanBanner.tsx
 │   │   ├── Segment.tsx
 │   │   ├── SelectionsBar.tsx       # Hearted tiles carousel (sticky bar of preferred tiles)
+│   │   ├── StatusBadge.tsx
 │   │   ├── StrategyStageRenderer.tsx  # Main orchestrator: 60/40 map layout when destination set
 │   │   ├── TimelineDivider.tsx     # Visual separator before timeline (unused)
 │   │   ├── TimelineThread.tsx
@@ -270,7 +278,8 @@ frontend/
 │   │   ├── modals/
 │   │   │   ├── AlternativesModal.tsx
 │   │   │   ├── ConflictResolutionModal.tsx
-│   │   │   └── index.ts
+│   │   │   ├── index.ts
+│   │   │   └── RegenerateConfirmModal.tsx
 │   │   │
 │   │   ├── sheets/             # Bottom sheets
 │   │   │   ├── ActivitiesSheet.tsx
@@ -371,6 +380,8 @@ frontend/
 │   ├── api.ts                  # API client
 │   ├── chipStyles.ts           # Chip styling utilities
 │   ├── contentPolicyGuard.ts   # Content policy validation
+│   ├── date-utils.ts           # Date formatting/parsing utilities
+│   ├── debug.ts                # Debug/logging utilities
 │   ├── design-system.ts        # Design system tokens
 │   ├── destination-coords.ts   # Destination coordinate lookup (~90 destinations)
 │   ├── format-utils.ts         # Formatting utilities

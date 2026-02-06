@@ -77,9 +77,9 @@ const FALLBACK_IMAGES: Record<string, string> = {
 const SPECIALIST_COLORS: Record<string, { light: string; icon: string }> = {
   diving: { light: 'bg-blue-50', icon: 'text-blue-600 dark:text-blue-400' },
   hiking: { light: 'bg-green-50', icon: 'text-green-600 dark:text-green-400' },
-  skiing: { light: 'bg-amber-50', icon: 'text-amber-600 dark:text-amber-400' },
+  skiing: { light: 'bg-blue-50', icon: 'text-blue-600 dark:text-blue-400' },
   boating: { light: 'bg-cyan-50', icon: 'text-cyan-600 dark:text-cyan-400' },
-  cycling: { light: 'bg-orange-50', icon: 'text-orange-600 dark:text-orange-400' },
+  cycling: { light: 'bg-lime-50', icon: 'text-lime-600 dark:text-lime-400' },
   local_expert: { light: 'bg-purple-50', icon: 'text-purple-600 dark:text-purple-400' },
   general: { light: 'bg-emerald-50', icon: 'text-emerald-600 dark:text-emerald-400' },
 };
@@ -261,7 +261,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
         <div className="pt-2 space-y-2">
           {bool('visa_on_arrival') !== undefined && (
             <p className="flex items-center gap-2">
-              <span className={bool('visa_on_arrival') ? 'text-emerald-500' : 'text-amber-500'}>
+              <span className={bool('visa_on_arrival') ? 'text-emerald-500' : 'text-red-500'}>
                 {bool('visa_on_arrival') ? '✓' : '✗'}
               </span>
               Visa on arrival: {bool('visa_on_arrival') ? 'Yes' : 'No'}
@@ -289,7 +289,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
           {str('overall_safety') && <p><strong>Safety:</strong> {str('overall_safety')}</p>}
           {bool('tap_water_safe') !== undefined && (
             <p className="flex items-center gap-2">
-              <span className={bool('tap_water_safe') ? 'text-emerald-500' : 'text-amber-500'}>
+              <span className={bool('tap_water_safe') ? 'text-emerald-500' : 'text-red-500'}>
                 {bool('tap_water_safe') ? '✓' : '✗'}
               </span>
               Tap water: {bool('tap_water_safe') ? 'Safe' : 'Not safe - drink bottled'}
@@ -299,7 +299,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
           {str('nearest_hospital') && <p><strong>Hospital:</strong> {str('nearest_hospital')}</p>}
           {arr('common_concerns').length > 0 && (
             <div>
-              <p className="font-medium text-amber-600 dark:text-amber-400 text-xs uppercase mt-2">⚠️ Watch out for:</p>
+              <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">⚠️ Watch out for:</p>
               <ul className="list-disc list-inside space-y-0.5 text-xs">
                 {(arr('common_concerns') as string[]).map((c, i) => <li key={i}>{c}</li>)}
               </ul>
@@ -466,7 +466,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
                     {item.why && <p className="text-zinc-500 mt-0.5">{item.why}</p>}
                     <div className="flex gap-2 mt-1 text-[10px]">
                       {item.cost && <span className="text-emerald-600">{item.cost}</span>}
-                      {item.booking && <span className="text-amber-600">{item.booking}</span>}
+                      {item.booking && <span className="text-zinc-500 dark:text-zinc-400">{item.booking}</span>}
                     </div>
                   </div>
                 ))}
@@ -508,7 +508,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
           )}
           {avoidStaying.length > 0 && (
             <div>
-              <p className="font-medium text-amber-600 dark:text-amber-400 text-xs uppercase mt-2">⚠️ Avoid:</p>
+              <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">⚠️ Avoid:</p>
               <ul className="list-disc list-inside space-y-0.5 text-xs">
                 {avoidStaying.map((a, i) => <li key={i}>{a}</li>)}
               </ul>
@@ -539,7 +539,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
           {bookingPlatforms.length > 0 && (
             <p className="text-xs"><strong>Book on:</strong> {bookingPlatforms.join(', ')}</p>
           )}
-          {str('book_ahead') && <p className="text-xs italic text-amber-600">📅 {str('book_ahead')}</p>}
+          {str('book_ahead') && <p className="text-xs italic text-zinc-600 dark:text-zinc-400">📅 {str('book_ahead')}</p>}
         </div>
       );
     }
@@ -560,7 +560,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
             </div>
           )}
           {str('taxi_scam_tip') && (
-            <p className="text-xs p-2 rounded bg-amber-50 dark:bg-amber-900/20">🚕 {str('taxi_scam_tip')}</p>
+            <p className="text-xs p-2 rounded bg-zinc-50 dark:bg-zinc-800/50">🚕 {str('taxi_scam_tip')}</p>
           )}
           {str('general_advice') && (
             <p className="text-xs italic text-zinc-500">{str('general_advice')}</p>
@@ -588,7 +588,7 @@ function TravelIntelligenceContent({ sectionKey, data }: TravelIntelligenceConte
           )}
           {dontBring.length > 0 && (
             <div>
-              <p className="font-medium text-amber-600 dark:text-amber-400 text-xs uppercase mt-2">✗ Don&apos;t Bring</p>
+              <p className="font-medium text-red-600 dark:text-red-400 text-xs uppercase mt-2">✗ Don&apos;t Bring</p>
               <ul className="list-disc list-inside space-y-0.5 text-xs">
                 {dontBring.map((p, i) => <li key={i}>{p}</li>)}
               </ul>

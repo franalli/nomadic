@@ -111,9 +111,9 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 │  Heart = preference signal for AI weighting     │
 │  Component: BookingSection.tsx                  │
 ├─────────────────────────────────────────────────┤
-│  Inline Refresh Pill (end of chip bar)         │  ← Shows when chips change
-│  Amber pill: "Refresh" - triggers regen        │
-│  Component: RefreshButton.tsx (inline variant)  │
+│  Build Itinerary CTA                           │  ← Shows when dates set
+│  Triggers itinerary generation                 │
+│  Component: StrategyStageRenderer.tsx          │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -153,9 +153,7 @@ PLANNING mode uses a **single-scroll layout** that progressively reveals content
 | Component | File | Purpose |
 |-----------|------|---------|
 | SelectionsBar | `components/plan/SelectionsBar.tsx` | Grouped carousel of hearted tiles (Stays + Activities sections) |
-| RefreshButton | `components/RefreshButton.tsx` | Inline Amber pill at end of chip bar; triggers manual regeneration (chat auto-regenerates) |
-| useManualRegeneration | `hooks/useManualRegeneration.ts` | Tracks trip input changes via hash; provides manual regeneration trigger for chip/setting edits |
-| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (500ms debounce) |
+| usePreferenceAutoRegen | `hooks/usePreferenceAutoRegen.ts` | Auto-triggers itinerary regeneration when preferences (hearts) change (instant, no debounce) |
 
 ### Progressive Disclosure Rules
 
@@ -356,7 +354,7 @@ Users can heart tiles to signal preference to the AI. Hearts are preference sign
 4. `preferredTileIds` stored in Zustand + persisted to DB via PATCH `/api/document`
 5. On page refresh, `fetchDocument()` hydrates `preferredTileIds` from DB
 6. `useShortlist` syncs local metadata (category, isPrimary) from hydrated IDs
-7. On RefreshButton FAB click OR auto-regen trigger (1.5s after preference change):
+7. On auto-regen trigger (instant after preference change via `usePreferenceAutoRegen`):
    - Preferences read via `useDocumentStore.getState().preferredTileIds` (live read)
    - Categorized by tile type and sent to backend
 8. Backend applies 1.5x score multiplier to preferred tiles in `ItineraryBuilder`
@@ -378,7 +376,7 @@ Without `getState()`, the callback would capture pre-merge state and send only 2
 
 ### Itinerary Generation with Preferences
 
-When user clicks RefreshButton FAB (or auto-regen triggers), preferences flow to backend:
+When auto-regen triggers (preference change or chat-based regeneration), preferences flow to backend:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -442,17 +440,16 @@ User: "from rome" → Auto-regenerate + auto-expand itinerary (no FAB needed)
 User: "add hiking" → Auto-regenerate + auto-expand itinerary (no FAB needed)
 
 PREFERENCE CHANGES (hearts):
-User hearts a tile → Auto-regen after 500ms debounce → Itinerary updates
+User hearts a tile → Instant auto-regen (no debounce) → Itinerary updates
 
 CHIP/SETTINGS CHANGES:
-User edits date chip → Inline Amber pill appears → User clicks REFRESH → Regeneration
+User edits date chip → GENERATE_PLAN_TRIGGER sent → Full regeneration
 ```
 
 **Why this policy:**
 - **Chat = Auto**: User typed natural language → intent is fully expressed → immediate action
-- **Hearts = Auto**: Single atomic action, low-stakes exploration, instant feedback
-- **Chips/Settings = Manual**: User may batch multiple edits (dates + travelers + budget) → FAB allows commit once
-- Spatial proximity: Inline pill appears where user just edited (Fitts's law)
+- **Hearts = Auto (instant)**: Single atomic action, low-stakes exploration, instant feedback via `usePreferenceAutoRegen`
+- **Chips/Settings = Auto via chat trigger**: Changes sent as GENERATE_PLAN_TRIGGER message for full regeneration
 
 #### Chat Auto-Regeneration
 
@@ -498,51 +495,26 @@ if (hasItinerary && structureChanged && !isSilentPlanGeneration) {
 - "from rome" with destination → Sets origin, routes to LogisticsNode, fetches flights immediately
 
 **FAB Suppression for Chat Changes:**
-Chat-originated changes update `trip_inputs` (e.g., origin from "from rome"). Without suppression, the FAB would appear because the hash changed. The fix:
-1. `ChatPanel.onComplete` calls `onChatTripInputsUpdated` when `doc.trip_inputs` exists
-2. `NomadicLanding` passes `markValidated` (from `useManualRegeneration`) as the callback
-3. Hash is synced immediately after chat completes → `hasChanges = false` → FAB stays hidden
+Chat-originated changes update `trip_inputs` (e.g., origin from "from rome"). The chat auto-regeneration flow handles these changes automatically without manual user intervention.
 
 **Files:**
 - `ChatPanel.tsx` - Calls `onChatTripInputsUpdated` in SSE `onComplete`
-- `NomadicLanding.tsx` - Wires `onChatTripInputsUpdated={markValidated}`
-- `useManualRegeneration.ts` - `markValidated` updates `lastValidatedHashRef.current`
+- `NomadicLanding.tsx` - Handles regeneration via `proceedWithItineraryGeneration`
 
-#### Manual Regeneration (Chip/Settings Edits)
+#### Chip/Settings Regeneration
 
 **Trigger:** User changes destination, dates, origin, or settings via chip bar or settings sheets
-
-**Components:**
-- `RefreshButton` - Inline Amber pill at end of chip bar (variant="inline")
-- `useManualRegeneration` - Hook tracking trip input hash changes
 
 **Flow:**
 1. User modifies trip inputs (e.g., changes destination chip from "Bali" to "Paris")
 2. `updateTripInputs()` writes to store **synchronously** (tiles NOT cleared - old content stays visible)
-3. Hash changes → `hasChanges = true` → Inline Amber pill appears at end of chip bar
-4. User clicks inline Refresh button → `isRefreshing = true`
-5. Full plan regeneration via chat system (GENERATE_PLAN_NOW trigger)
-6. Backend forces tile cache clear on GENERATE_PLAN_NOW → fetches fresh tiles
-7. Polling detects document changes (tiles, plan_view_state, or destination)
-8. `isRegenerating` flags reset BEFORE `onAfterRegenerate` (prevents gate blocking)
-9. `onAfterRegenerate` clears old runId → calls `proceedWithItineraryGeneration` directly
-10. New itinerary generates → Inline button disappears
+3. GENERATE_PLAN_TRIGGER sent via chat system
+4. Backend forces tile cache clear → fetches fresh tiles
+5. New itinerary generates automatically
 
 **State tracking:**
 - `documentStore.updateTripInputs()` - Sync local state write (before validation)
 - `documentStore.commitTripInputs()` - Async API persist (after validation)
-- `computeTripInputsHash()` - Stable JSON hash of:
-  - Core: destination, dates, origin
-  - Settings: hotel_stars, hotel_amenities, flight_cabin, flight_direct, activity_categories, activity_skill
-- `lastValidatedHashRef` - Hash after last successful regeneration
-- `isRefreshingRef` - Mutex preventing double-clicks (ref-based for sync check)
-
-**RefreshButton styling (inline variant):**
-- Position: Inline at end of chip bar (inside postcard, above gradient)
-- Size: `px-3 py-1.5 rounded-full` (compact pill)
-- Active: Amber gradient (`from-amber-500 to-orange-500`), no pulse animation
-- Refreshing: Zinc background, disabled state, spinner icon
-- Spatial proximity: Appears right where user just edited (Fitts's law optimization)
 
 **Controlled input pattern:**
 ```typescript
@@ -841,7 +813,7 @@ Icons are selected based on constraint priority/severity, not validation state:
 
 **Implementation:**
 ```tsx
-const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'surfing'];
+const NICHE_SPECIALISTS = ['diving', 'hiking', 'skiing', 'cycling', 'boating'];
 
 const engineConstraints = fullModeSections
   .filter((s) => NICHE_SPECIALISTS.includes(s.specialist_type || ''))
@@ -1140,7 +1112,7 @@ Each activity block shows a 4px colored left-border indicating its specialist so
 | `hiking` | Forest Green | `#10B981` |
 | `skiing` | Snow Blue | `#3B82F6` |
 | `cycling` | Lime | `#84CC16` |
-| `surfing` | Indigo | `#6366F1` |
+| `boating` | Indigo | `#6366F1` |
 
 **Visual Treatment:**
 - 4px colored left-border on each block
@@ -1748,7 +1720,7 @@ The timeline variant is computed from `PlanViewState` to control badge display:
 | `S3_EDITING`, `S2_STRATEGY_READY` | `draft` | "Draft Itinerary" (amber) |
 | All others (`S0_*`, `S1_*`) | `ghost` | "Specialist Preview" (emerald) |
 
-**Invariant:** RefreshButton is the ONLY trigger for plan regeneration. The "Draft Itinerary" badge should NOT appear when itinerary is finalized (`S3_ITINERARY_READY`).
+**Invariant:** Regeneration is triggered via chat auto-regen, preference auto-regen, or the Build Itinerary CTA. The "Draft Itinerary" badge should NOT appear when itinerary is finalized (`S3_ITINERARY_READY`).
 
 ### State Helper Functions (`planStateHelpers.ts`)
 
@@ -1839,55 +1811,25 @@ We separate **Conversation** (Talking to the Architect) from **Commitment** (Loc
 
 The canvas uses two distinct action buttons for different phases:
 
-#### A. RefreshButton FAB (Regeneration Trigger)
+#### A. Regeneration Triggers (Distributed Architecture)
 
-| Property | Value |
-| --- | --- |
-| **Label** | "REFRESH PLAN" (amber badge) |
-| **Location** | Fixed, bottom-right corner (portal-based, z-50) |
-| **Visibility** | Visible ONLY when trip inputs change (destination, dates, settings) |
-| **Action** | Triggers full plan regeneration via chat system |
-| **Component** | `RefreshButton.tsx` using `useManualRegeneration` hook |
+The standalone RefreshButton FAB has been removed. Regeneration is now handled by multiple distributed mechanisms:
 
-**When it appears:**
-- User changes destination (e.g., "Bali" → "NYC")
-- User changes dates or trip duration
-- User changes hotel/flight/activity settings (stars, amenities, cabin class)
-
-**Visual Design:**
-- Amber gradient badge (high contrast against map backgrounds)
-- Pulsing animation to draw attention
-- "REFRESH PLAN" text label with refresh icon
-- Shadow for depth (shadow-2xl shadow-amber-500/50)
+| Trigger | Method | Component |
+| --- | --- | --- |
+| **Chat messages** | Auto-regen on structural plan changes | `ChatPanel.tsx` → `onAutoExpandItinerary` |
+| **Preference changes** | Instant auto-regen via hook | `usePreferenceAutoRegen.ts` |
+| **Build Itinerary CTA** | Manual click to generate itinerary | `StrategyStageRenderer.tsx` |
+| **GENERATE_PLAN_TRIGGER** | Full regeneration via chat system | `NomadicLanding.tsx` → `proceedWithItineraryGeneration` |
 
 **Implementation:**
 ```typescript
-// NomadicLanding.tsx - useManualRegeneration configuration
-const { hasChanges, isRefreshing, regenerate } = useManualRegeneration({
-  onFullRegenerate: () => {
-    manualRefreshPendingRef.current = true; // Block Path A during refresh
-    chatPanelRef.current?.sendMessage(GENERATE_PLAN_TRIGGER);
-  },
-  onAfterRegenerate: () => {
-    // Clear stale runId that would block new itinerary generation
-    useDocumentStore.getState().abortGeneration();
-    // Direct call to proceedWithItineraryGeneration via ref (bypass gate checks)
-    proceedWithItineraryGenerationRef.current?.();
-    setTimeout(() => { manualRefreshPendingRef.current = false; }, 1000);
-  },
-});
-
-// RefreshButton visibility: only when inputs changed and not refreshing
-if (!hasChanges || isRefreshing) return null;
+// NomadicLanding.tsx - proceedWithItineraryGeneration handles all regen paths
+// Reads FRESH state via useDocumentStore.getState() (avoids stale closures)
+// Supports forceFullRebuild flag for structural changes
 ```
 
-**Critical Flow Details:**
-1. `onFullRegenerate` sets `manualRefreshPendingRef` to block Path A auto-trigger
-2. `useManualRegeneration` resets `isRegenerating` flags BEFORE calling `onAfterRegenerate`
-3. `onAfterRegenerate` clears old runId via `abortGeneration()` to prevent blocking
-4. Direct call to `proceedWithItineraryGenerationRef` bypasses `handleExpandToItinerary` gate checks
-
-**Invariant:** RefreshButton is the ONLY trigger for plan regeneration after inputs change. Tiles stay visible until backend returns new data.
+**Invariant:** Tiles stay visible until backend returns new data. Regeneration paths are event-driven, not gated behind a single FAB.
 
 #### B. NextStepBar (Finalization CTA)
 
@@ -2016,8 +1958,8 @@ Used when user chooses "Focus on [specialist]" resolution.
 
 **Single-Specialist Behavior:**
 For single-specialist trips, users trigger generation via:
-1. `FloatingBuildButton` - Initial plan generation (S0 → S2)
-2. `RefreshButton FAB` - Regeneration when inputs change
+1. `FloatingBuildButton` / Build Itinerary CTA - Initial plan generation (S0 → S2)
+2. Chat auto-regen / preference auto-regen - Regeneration when inputs or preferences change
 
 ### 3. Button Separation Rationale
 
@@ -2672,7 +2614,7 @@ active_constraints: ActiveConstraint[]
 The `no_altitude_after_dive` constraint is emitted by the diving specialist but targets hiking/skiing activities. This is enforced in the `ItineraryBuilder._detect_early_conflicts()` method, which detects when a trip is too short to accommodate both diving and high-altitude activities with the required 24h buffer.
 
 **Integration:**
-- Backend: `itinerary_builder.py::_apply_constraints_to_blocks()`, `_detect_early_conflicts()`
+- Backend: `itinerary_builder.py::_apply_constraints_to_blocks()`, `_detect_early_conflicts()`, `_distribute_activities()` (no-fly day placement restriction)
 - Frontend: `ActivityMiniCard.tsx`, `LogisticsBlock.tsx`
 
 **Component Files:**

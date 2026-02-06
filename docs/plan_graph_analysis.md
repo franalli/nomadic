@@ -64,26 +64,23 @@ backend/app/planner/
 ├── hashing.py               # Stable hashing utilities
 ├── meta.py                  # Metadata helpers
 ├── meta_keys.py             # Metadata key constants
-├── streaming.py             # Streaming infrastructure
+├── season.py                # Season detection logic
 ├── telemetry.py             # Telemetry instrumentation
 ├── test_mode.py             # Test mode detection
-├── node_utils.py            # Simple utilities for module-level imports
 ├── nodes/                   # Node implementations
 │   ├── __init__.py          # Node exports
 │   ├── intent_router.py     # LLM-based intent classification
 │   ├── trip_architect.py    # Core planning node (The Boss)
 │   ├── vertical_specialist.py # Domain specialist (diving/hiking/skiing)
-│   ├── local_expert.py      # City logistics concierge (NEW)
-│   ├── logistics_node.py    # Flight fetching + safety logic (NEW)
+│   ├── specialist_llm.py    # Specialist LLM generation logic
+│   ├── specialist_schemas.py # Specialist Pydantic schemas
+│   ├── local_expert.py      # City logistics concierge
+│   ├── logistics_node.py    # Flight fetching + safety logic
 │   ├── constraint_guard.py  # Pure Python validation
 │   └── synthesizer.py       # Unified response generation
-├── state/
-│   ├── __init__.py          # State exports
-│   └── schemas.py           # State models (GraphState, TripPlan)
-└── cache/
-    ├── __init__.py          # Cache exports
-    ├── framework.py         # CacheNode ABC + all cache implementations
-    └── compat.py            # Backward-compatible function signatures
+└── state/
+    ├── __init__.py          # State exports
+    └── schemas.py           # State models (GraphState, TripPlan)
 ```
 
 ---
@@ -105,7 +102,7 @@ backend/app/planner/
 │  ─────────────────────────────────────                                      │
 │  LLM-based intent classification (no regex!)                                │
 │  • Classifies: GREETING, RESET, or PLANNING                                 │
-│  • Detects: specialist_hint (diving/hiking/skiing/cycling/surfing)          │
+│  • Detects: specialist_hint (diving/hiking/skiing/cycling/boating)          │
 │  • GREETING/RESET → Static response, skip to Synthesizer                    │
 │  • EXPLORATION → Generic Q&A using Local Expert knowledge (no LLM)          │
 │  • SOFT_TRANSITION → Routes to PLANNING when dates OR activities provided   │
@@ -125,7 +122,7 @@ backend/app/planner/
 │  Returns static    │  │  Domain expert node     │  │  • Opening hours       │
 │  response with     │  │  Topics: diving, hiking │  │  • Booking windows     │
 │  suggested_replies │  │  skiing, cycling,       │  │  • Transit passes      │
-│                    │  │  surfing                │  │  • Cultural tips       │
+│                    │  │  boating                │  │  • Cultural tips       │
 │                    │  │                         │  │                        │
 │                    │  │  Returns:               │  │  Returns:              │
 │                    │  │  • Constraints          │  │  • Constraints         │
@@ -264,7 +261,7 @@ on day blocks (`user_preferred`, `ai_selected`, or `ai_override`).
 | `router` | "Reading your message..." | brain | 300ms |
 | `architect` | "Understanding your request..." | building | 800ms |
 | `specialist` | "Consulting expert..." | star | 1000ms |
-| `local_expert` | "Consulting local expert..." | building | 800ms |
+| `local_expert` | "Loading local knowledge..." | building | 50ms |
 | `logistics` | "Fetching flight options..." | plane | 2000ms |
 | `guard` | "Checking constraints..." | shield | 100ms |
 | `synthesizer` | "Writing response..." | pen | 1500ms |
@@ -290,11 +287,11 @@ LLM-based intent classification AND field extraction using GPT-4o-mini with Pyda
 | `GREETING` | "Hi", "Hello", "Thanks!" (no planning content) | Static response, skip architect |
 | `RESET` | "Start over", "Reset", "Begin again" | Clear state, static response |
 | `PLANNING` | Everything else (trip-related) | Extract fields → Pass to Specialist or LocalExpert |
-| `GENERATE_PLAN_NOW` | "GENERATE_PLAN_TRIGGER" (frontend Refresh button) | Force clear tiles → Full regeneration |
+| `GENERATE_PLAN_TRIGGER` | "GENERATE_PLAN_TRIGGER" message from frontend | Trigger mechanism (sets intent to `"booking"`) → Force clear tiles → Full regeneration |
 
-**GENERATE_PLAN_NOW Handling (Refresh Button):**
+**GENERATE_PLAN_TRIGGER Handling:**
 
-When the frontend Refresh button triggers `GENERATE_PLAN_NOW`:
+When the frontend sends the `GENERATE_PLAN_TRIGGER` message, the router detects it via `is_generate_trigger` flag and sets `state.intent = "booking"` (not a separate intent type):
 ```python
 # intent_router.py - forced tile cache clear
 elif is_generate_trigger:
@@ -369,7 +366,7 @@ SPECIALIST_KEYWORDS = {
     "hiking": ["hike", "trek", "trail", "mountain", "summit", "alpine", ...],
     "skiing": ["ski", "snowboard", "slope", "powder", "piste", ...],
     "cycling": ["cycle", "bike", "bicycle", "mtb", "road bike", ...],
-    "surfing": ["sail", "boat", "yacht", "charter", "catamaran", ...],
+    "boating": ["sail", "boat", "yacht", "charter", "catamaran", ...],
 }
 ```
 
@@ -792,6 +789,10 @@ if total_activity_days > max_capacity:
 
 **Key Insight:** The no-fly buffer only restricts DIVING placement, not total capacity. Day 7 of an 8-day trip can have hiking activities even though diving is blocked (24h before flight). The buffer doesn't reduce total trip capacity—it restricts which activities can go where.
 
+**Two-Layer No-Fly Enforcement:**
+1. **Phase 2b (Count):** Truncates diving activity count to fit available slots (`diving_slots = usable_days - buffer_days`)
+2. **Phase 4 (Placement):** Restricts diving to days at or before `departure - 1 - buffer_days` (e.g., Day 2 at latest for a 4-day trip). If the round-robin lands on a restricted day for diving, it wraps to an earlier valid day. Other specialists (hiking, etc.) are unaffected and can still use those days.
+
 **Phase 5.25: Preferred Activity Placement**
 
 After creating free day placeholders, the builder populates free days with user-preferred activities (hearted tiles). This ensures hearted activities appear in the itinerary:
@@ -822,7 +823,7 @@ Each specialist type has its own constraint generator:
 - `advanced_terrain` (info): Applied when `intensity == "challenging"`
 
 **Surfing Constraints:**
-- `tide_timing` (info): Applied to all surfing activities
+- `tide_timing` (info): Applied to all boating activities
 
 **Hotel Constraints:**
 - `proximity_optimized` (success): Applied to check-in blocks, lists active specialists (e.g., "Proximity to diving, hiking activities")
@@ -836,7 +837,7 @@ Each specialist type has its own constraint generator:
 | `early_start_recommended` | info | hiking | Morning departure recommended |
 | `avalanche_awareness` | warning | skiing | Off-piste/backcountry safety |
 | `advanced_terrain` | info | skiing | Black diamond skill level |
-| `tide_timing` | info | surfing | Check swell/tide forecast |
+| `tide_timing` | info | boating | Check swell/tide forecast |
 | `proximity_optimized` | success | hotel | Location optimized for activities |
 
 **Frontend Rendering:** See `docs/ux_unified_architecture.md` Section I.A.2 "Inline Constraints Display"
@@ -2210,6 +2211,10 @@ Phase 4: Activity Distribution (with Preference Weighting + Even Spread)
 ├─ Normalize activity IDs for frontend/backend matching
 ├─ Weight activities by user preferences (is_user_preferred flag)
 ├─ Sort: preferred activities first
+├─ NO-FLY DAY RESTRICTION: Diving activities blocked from days within buffer_days of departure
+│   ├─ latest_dive_day = departure_idx - 1 - buffer_days (e.g., Day 2 for a 4-day trip)
+│   ├─ Round-robin wraps to earlier valid days if current day is restricted
+│   └─ Other specialists (hiking, etc.) unaffected — can still use restricted days
 ├─ EVEN DISTRIBUTION: Cycle through ALL days before filling any day with 2nd activity
 │   └─ Prevents packing early days (Days 2-5) while leaving late days (6-7) empty
 ├─ Max 3 activities per day (only enforced after all days have 1+)

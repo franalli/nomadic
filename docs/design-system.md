@@ -97,18 +97,18 @@ Stepper buttons (`+`/`-`) follow the Tactile Rule with additional emphasis:
 
 | State | Light Mode | Dark Mode |
 |-------|------------|-----------|
-| **Enabled Default** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-transparent border-2 border-zinc-600 text-zinc-400` |
+| **Enabled Default** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-transparent border-2 border-white/15 text-zinc-400` |
 | **Enabled Hover** | `hover:border-zinc-900 hover:bg-zinc-900 hover:text-white` | `hover:border-white hover:bg-white hover:text-black` |
-| **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-transparent border-2 border-zinc-800 text-zinc-700` |
+| **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-transparent border-2 border-white/5 text-zinc-700` |
 
 **Code Example:**
 
 ```tsx
 // Tactile Stepper Button
 const buttonEnabled = cn(
-  'w-9 h-9 rounded-full flex items-center justify-center',
+  'w-10 h-10 rounded-full flex items-center justify-center',
   'bg-white dark:bg-transparent',
-  'border-2 border-zinc-300 dark:border-zinc-600',
+  'border-2 border-zinc-300 dark:border-white/15',
   'text-zinc-700 dark:text-zinc-400',
   'transition-all duration-150',
   // Hover: Snap to black (invert colors)
@@ -142,19 +142,19 @@ Info boxes should feel like a **recessed technical panel**, not a warning sign.
 
 | Token | Light Mode | Dark Mode | Description |
 |-------|------------|-----------|-------------|
-| `DS.infoBox.container` | `bg-zinc-50 border border-zinc-200 p-5` | `bg-white/[0.02] border border-white/5` | Clean, cool surface |
-| `DS.infoBox.icon` | `text-zinc-400` | `text-zinc-500` | Subtle icon, not alarming |
+| `DS.infoBox.container` | `bg-zinc-50 border border-zinc-100 p-4` | `bg-white/[0.02] border border-white/5` | Clean, cool surface |
+| `DS.infoBox.icon` | `text-zinc-400` | `text-zinc-400` | Subtle icon, not alarming |
 | `DS.infoBox.text` | `text-zinc-600` | `text-zinc-400` | Body text |
 
 **Code Example:**
 
 ```tsx
 <div className={cn(
-  'p-5 rounded-xl flex gap-4 items-start',
+  'p-4 rounded-xl flex gap-4 items-start',
   'bg-zinc-50 dark:bg-white/[0.02]',
-  'border border-zinc-200 dark:border-white/5'
+  'border border-zinc-100 dark:border-white/5'
 )}>
-  <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-500" />
+  <AlertCircle className="h-5 w-5 text-zinc-400 dark:text-zinc-400" />
   <div>
     <p className="text-sm text-zinc-600 dark:text-zinc-400">
       To include flights, set Origin + Destination.
@@ -419,7 +419,7 @@ Multi-specialist trips use color-coded visual indicators to distinguish activity
 | `hiking` | Forest Green | `#10B981` | Terrestrial activities |
 | `skiing` | Snow Blue | `#3B82F6` | Alpine activities |
 | `cycling` | Lime | `#84CC16` | Cycling activities |
-| `surfing` | Indigo | `#6366F1` | Wave/surfing activities |
+| `boating` | Indigo | `#6366F1` | Boating/sailing activities |
 | `default` | Zinc | `#71717A` | Fallback for unknown types |
 
 #### Timeline Block Styling
@@ -451,7 +451,7 @@ export const SPECIALIST_COLORS: Record<string, string> = {
   hiking: '#10B981',
   skiing: '#3B82F6',
   cycling: '#84CC16',
-  surfing: '#6366F1',
+  boating: '#6366F1',
   default: '#71717A',
 };
 
@@ -521,7 +521,7 @@ When backend populates `constraints_validated` and `constraint_violations`:
 
 **Visibility:** Only shows when `engineConstraints.length > 0` (niche specialist constraints exist).
 
-**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (lines 870-980)
+**Implementation:** `frontend/components/plan/StrategyStageRenderer.tsx` (lines ~876-1013)
 
 ### Inline Constraint Badge Colors
 
@@ -1018,7 +1018,7 @@ Stepper buttons in Dark Mode also need the Glass Fill treatment:
 
 | State | Light Mode | Dark Mode |
 |-------|------------|-----------|
-| **Enabled** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-white/5 border-white/10 text-zinc-400` |
+| **Enabled** | `bg-white border-2 border-zinc-300 text-zinc-700` | `bg-white/5 border-white/15 text-zinc-400` |
 | **Hover** | `hover:border-zinc-900 hover:bg-zinc-900 hover:text-white` | `hover:bg-white hover:border-white hover:text-black` |
 | **Disabled** | `bg-zinc-50 border-2 border-zinc-200 text-zinc-300` | `bg-white/[0.02] border-white/5 text-zinc-700` |
 
@@ -1030,7 +1030,7 @@ const buttonEnabled = cn(
   // Light: White with strong border
   'bg-white border-2 border-zinc-300 text-zinc-700',
   // Dark: Glass Fill - visible substance
-  'dark:bg-white/5 dark:border-white/10 dark:text-zinc-400',
+  'dark:bg-white/5 dark:border-white/15 dark:text-zinc-400',
   'transition-all duration-150',
   // Hover: Snap to black (Light) / white (Dark)
   'hover:border-zinc-900 hover:bg-zinc-900 hover:text-white',
@@ -1510,7 +1510,7 @@ isActive && [
 
 ### Implementation Reference
 
-The primary navigation is implemented in `frontend/components/plan/GlassCommandBar.tsx`.
+The primary navigation is implemented via a split layout on desktop (`frontend/components/layout/SplitLayoutView.tsx`) and mode switching on mobile (`frontend/components/layout/MobileModeHeader.tsx`).
 
 ---
 
@@ -1893,7 +1893,7 @@ The Reset button allows users to start over with a fresh planning session. It mu
 
 ### Implementation Reference
 - SystemReceipt: `frontend/components/chat/SystemReceipt.tsx`
-- ThinkingTerminal: `frontend/components/chat/ThinkingTerminal.tsx`
+- SmartLoader: `frontend/components/chat/SmartLoader.tsx`
 - Integration: `frontend/components/chat/ChatPanel.tsx`
 - Backend telemetry: `backend/app/plan_graph.py` (emits `logic_reveal` events)
 
@@ -2044,13 +2044,16 @@ const { hasChanges, isRefreshing, regenerate, resetState } = useManualRegenerati
 | **RefreshButton FAB** | `expand_itinerary` (regeneration) | When trip inputs change |
 | **NextStepBar** | `finalize_plan` (booking) | S3_ITINERARY_READY only |
 
-**Invariant:** RefreshButton is the ONLY trigger for plan regeneration. NextStepBar only handles finalization.
+**Note:** The standalone RefreshButton FAB has been removed. Regeneration is now triggered via:
+- **Chat auto-regen:** Structural plan changes trigger automatic itinerary rebuild
+- **Preference auto-regen:** Heart changes trigger via `usePreferenceAutoRegen` hook
+- **Manual build:** "Build Itinerary" CTA in `StrategyStageRenderer.tsx`
 
 ### Implementation Reference
 
-- Component: `frontend/components/RefreshButton.tsx`
-- Overlay: `frontend/components/RefreshOverlay.tsx`
-- Hook: `frontend/hooks/useManualRegeneration.ts`
+- Preference auto-regen: `frontend/hooks/usePreferenceAutoRegen.ts`
+- Build CTA: `frontend/components/plan/StrategyStageRenderer.tsx`
+- Generation logic: `frontend/components/layout/NomadicLanding.tsx` (`proceedWithItineraryGeneration`)
 - UX Flow: `docs/ux_unified_architecture.md` (Regeneration Flow section)
 
 ---

@@ -2207,6 +2207,15 @@ async def vertical_specialist(state: GraphState) -> GraphState:
         }
         content_added.append(content_item)
 
+    # TRIM: Limit activities to what fits in the trip duration.
+    # Cached/hardcoded content may have more activities than the current dates allow
+    # (e.g. dates shortened from 6 to 4 days but content was generated for 6).
+    max_activities = specialist._calculate_activity_days(state)
+    if max_activities > 0 and len(content_added) > max_activities:
+        original_count = len(content_added)
+        content_added = content_added[:max_activities]
+        log("SPECIALIST", f"Trimmed activities: {original_count} → {max_activities}")
+
     # Determine hero_image: use first content image or generate fallback
     hero_image = None
     if content_added:

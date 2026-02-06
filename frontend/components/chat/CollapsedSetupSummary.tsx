@@ -126,7 +126,7 @@ function TripBrief({ tripInputs, executedTopics }: TripBriefProps) {
               className={cn(
                 'text-xs px-2.5 py-1 rounded-lg font-medium transition-colors',
                 // All pills: Monochromatic zinc styling
-                'bg-white dark:bg-transparent',
+                'bg-white dark:bg-white/5',
                 'border border-zinc-200 dark:border-white/10',
                 'text-zinc-600 dark:text-zinc-400'
               )}

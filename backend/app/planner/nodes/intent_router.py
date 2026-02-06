@@ -78,7 +78,7 @@ def _clear_stale_specialist_content(state: GraphState) -> None:
     """
     Wipe old specialist data so we don't merge 'Aspen Skiing' into 'Hawaii'.
 
-    Clears: itinerary_blocks, constraints, tiles, strategy_sections
+    Clears: itinerary_blocks, constraints, tiles, strategy_sections, infeasibility flags
     Preserves: trip_plan core fields (destination, dates, travelers, budget)
     """
     state.trip_plan.itinerary_blocks = []
@@ -88,6 +88,11 @@ def _clear_stale_specialist_content(state: GraphState) -> None:
     # Clear UI sections but keep structure ready
     if "strategy_sections" in state.metadata:
         state.metadata["strategy_sections"] = []
+
+    # Clear infeasibility flags so specialists get fresh evaluation
+    state.metadata.pop("specialist_infeasible", None)
+    state.metadata.pop("specialist_infeasible_reason", None)
+    state.metadata.pop("specialist_alternative", None)
 
     logger.info("[Router] Cleared stale specialist content for constraint change")
 
@@ -2262,6 +2267,12 @@ async def intent_router(state: GraphState) -> GraphState:
                     state.ui_events.append("SPECIALIST_ACTIVE")
                     log("ROUTER", f"[READY] Specialists queue: {all_specialists}")
 
+                    # Store niche specialists so infeasible ones can be
+                    # resurrected when constraints (e.g. dates) change
+                    niche = [s for s in all_specialists if s not in ("general", "local_expert")]
+                    if niche:
+                        state.metadata["requested_specialists"] = niche
+
                 # CRITICAL: Set constraint hash for future change detection
                 # This ensures subsequent destination changes trigger tile clearing
                 trip_inputs = state.metadata.get("trip_inputs", {})
@@ -2384,14 +2395,30 @@ async def intent_router(state: GraphState) -> GraphState:
             ) and plan_has_dates  # Only if we have valid dates now
 
             # Get existing specialists from strategy sections
-            existing_specialists = [
+            existing_from_sections = [
                 s.get("specialist_type")
                 for s in state.metadata.get("strategy_sections", [])
                 if s.get("specialist_type") not in ("general", "local_expert")
             ]
+            # Include previously requested specialists that may have been
+            # infeasible (e.g. diving was too short, now dates extended)
+            requested = state.metadata.get("requested_specialists", [])
+            existing_specialists = list(
+                dict.fromkeys(
+                    existing_from_sections
+                    + [s for s in requested if s not in ("general", "local_expert")]
+                )
+            )
 
             # Detect NEW specialists from the message
             new_specialists = get_new_specialists_from_text(user_text, existing_specialists)
+
+            # Track all requested specialists (persists across turns so infeasible
+            # ones can be resurrected when constraints like dates change)
+            if new_specialists:
+                prev_requested = state.metadata.get("requested_specialists", [])
+                updated = list(dict.fromkeys(prev_requested + new_specialists))
+                state.metadata["requested_specialists"] = updated
 
             # CRITICAL: Route to planning immediately when user provides actionable input:
             # 1. dates + destination (e.g., "bali Mar 1-9")
@@ -2451,6 +2478,17 @@ async def intent_router(state: GraphState) -> GraphState:
                     # picks up active_specialist instead of jumping to logistics
                     state.metadata.pop("origin_only_logistics", None)
                     state.metadata.pop("skip_specialists", None)
+
+                    # Clear infeasibility flags so re-queued specialists
+                    # get a fresh evaluation with new dates
+                    state.metadata.pop("specialist_infeasible", None)
+                    state.metadata.pop("specialist_infeasible_reason", None)
+                    state.metadata.pop("specialist_alternative", None)
+
+                    # Persist merged list so infeasible specialists survive
+                    niche = [s for s in all_specialists if s not in ("general", "local_expert")]
+                    if niche:
+                        state.metadata["requested_specialists"] = niche
 
                     # Queue all specialists (existing + new)
                     state.pending_specialists = (
@@ -2664,6 +2702,8 @@ async def intent_router(state: GraphState) -> GraphState:
     current_hash = _compute_constraint_hash(state.trip_plan, trip_inputs)
     previous_hash = state.last_constraint_hash
     executed = state.metadata.get("executed_strategy_topics", [])
+    # Include requested specialists that may have been infeasible
+    requested = state.metadata.get("requested_specialists", [])
 
     # Debug logging - CRITICAL for debugging reactivity
     from app.debug_utils import log
@@ -2689,7 +2729,10 @@ async def intent_router(state: GraphState) -> GraphState:
     # Re-run specialists in two cases:
     # 1. Constraints changed (destination, dates, budget, etc. modified)
     # 2. GENERATE_PLAN_NOW + specialists were executed before (ensures fresh run with complete data)
-    should_rerun_specialists = (constraints_changed or is_generate_trigger) and executed
+    # NOTE: Use (executed or requested) so infeasible specialists get resurrected
+    should_rerun_specialists = (constraints_changed or is_generate_trigger) and (
+        executed or requested
+    )
 
     log(
         "ROUTER",
@@ -2699,7 +2742,10 @@ async def intent_router(state: GraphState) -> GraphState:
 
     if should_rerun_specialists:
         # Filter to niche specialists only (not local_expert/general which run automatically)
-        niche_specialists = [t for t in executed if t not in ("general", "local_expert")]
+        # Merge executed + requested so infeasible specialists are resurrected
+        niche_specialists = [
+            t for t in dict.fromkeys(executed + requested) if t not in ("general", "local_expert")
+        ]
 
         if niche_specialists:
             if constraints_changed:
@@ -2756,6 +2802,13 @@ async def intent_router(state: GraphState) -> GraphState:
         state.active_specialist = first_specialist
         state.active_agent_id = first_specialist
         state.ui_events.append("SPECIALIST_ACTIVE")
+
+        # Track niche specialists for resurrection if they become infeasible
+        niche = [s for s in all_specialists if s not in ("general", "local_expert")]
+        if niche:
+            prev_requested = state.metadata.get("requested_specialists", [])
+            updated = list(dict.fromkeys(prev_requested + niche))
+            state.metadata["requested_specialists"] = updated
 
         from app.debug_utils import log
 
